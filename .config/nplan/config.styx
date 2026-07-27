@@ -1,7 +1,7 @@
 platforms (
     {
         platform "rust"
-        files (Cargo.toml Cargo.lock src/**/*.rs)
+        files (Cargo.toml Cargo.lock src/**)
         checks {
             format {
                 cmd "cargo fmt --all -- --check"

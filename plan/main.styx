@@ -41,5 +41,21 @@ children (
         title "Track translated symbols in nested Rust modules"
         priority 0
         deps (ninja-upstream-tests)
+        sealed true
+        log (
+            {
+                at 2026-07-27T14:27:14.9874772Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-07-27T14:29:30.178372466Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
     }
 )

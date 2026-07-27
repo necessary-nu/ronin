@@ -1,7 +1,5 @@
 use super::*;
 
-// [spec:samurai:def:build.formatstatus-fn]
-// [spec:samurai:sem:build.formatstatus-fn]
 pub fn format_progress_status(state: &BuildState, template: &str) -> String {
     let mut output = String::new();
     let mut characters = template.chars();
@@ -69,8 +67,6 @@ fn formatstatus(state: &BuildState) -> String {
     format_progress_status(state, &state.options.statusfmt)
 }
 
-// [spec:samurai:def:build.printstatus-fn]
-// [spec:samurai:sem:build.printstatus-fn]
 fn printstatus(state: &BuildState, command: &SamuraiString) -> String {
     format!(
         "{}{}",
@@ -79,8 +75,6 @@ fn printstatus(state: &BuildState, command: &SamuraiString) -> String {
     )
 }
 
-// [spec:samurai:def:build.jobstart-fn]
-// [spec:samurai:sem:build.jobstart-fn]
 fn jobstart(state: &mut BuildState, edge: EdgeRef, command: SamuraiString) -> Job {
     state.started += 1;
     Job {
@@ -91,8 +85,6 @@ fn jobstart(state: &mut BuildState, edge: EdgeRef, command: SamuraiString) -> Jo
     }
 }
 
-// [spec:samurai:def:build.nodedone-fn]
-// [spec:samurai:sem:build.nodedone-fn]
 fn nodedone(state: &mut BuildState, node: &NodeRef, prune: bool) {
     let uses = node
         .borrow()
@@ -142,8 +134,6 @@ fn nodedone(state: &mut BuildState, node: &NodeRef, prune: bool) {
     }
 }
 
-// [spec:samurai:def:build.shouldprune-fn]
-// [spec:samurai:sem:build.shouldprune-fn]
 fn shouldprune(edge: &EdgeRef, node: &NodeRef, old_mtime: i64) -> bool {
     if node.borrow().mtime != old_mtime {
         return false;
@@ -172,8 +162,6 @@ fn shouldprune(edge: &EdgeRef, node: &NodeRef, old_mtime: i64) -> bool {
     true
 }
 
-// [spec:samurai:def:build.edgedone-fn]
-// [spec:samurai:sem:build.edgedone-fn]
 fn edgedone(state: &mut BuildState, edge: &EdgeRef) {
     let restat = crate::env::edgevar(edge, "restat", false).is_some_and(|value| value.n != 0);
     for output in &edge.borrow().out {
@@ -199,8 +187,6 @@ fn edgedone(state: &mut BuildState, edge: &EdgeRef) {
     }
 }
 
-// [spec:samurai:def:build.jobdone-fn]
-// [spec:samurai:sem:build.jobdone-fn]
 fn jobdone(state: &mut BuildState, job: Job) {
     state.finished += 1;
     if let Some(pool) = &job.edge.borrow().pool {
@@ -212,15 +198,11 @@ fn jobdone(state: &mut BuildState, job: Job) {
     }
 }
 
-// [spec:samurai:def:build.jobwork-fn]
-// [spec:samurai:sem:build.jobwork-fn]
 fn jobwork(job: &mut Job, bytes: &[u8]) -> bool {
     job.output.extend_from_slice(bytes);
     !bytes.is_empty()
 }
 
-// [spec:samurai:def:build.queryload-fn]
-// [spec:samurai:sem:build.queryload-fn]
 pub(super) fn queryload() -> f64 {
     fs::read_to_string("/proc/loadavg")
         .ok()
@@ -228,14 +210,10 @@ pub(super) fn queryload() -> f64 {
         .unwrap_or(0.0)
 }
 
-// [spec:samurai:def:build.catchsig-fn]
-// [spec:samurai:sem:build.catchsig-fn]
 fn catchsig(signal: i32) -> i32 {
     signal
 }
 
-// [spec:samurai:def:build.build-fn]
-// [spec:samurai:sem:build.build-fn]
 pub fn build(state: &mut BuildState) -> Vec<String> {
     let mut status = Vec::new();
     while !state.work.is_empty() {

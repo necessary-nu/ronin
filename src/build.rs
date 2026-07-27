@@ -1272,6 +1272,28 @@ fn node_path_string(node: &NodeRef) -> String {
     String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned()
 }
 
+// [spec:samurai:def:build.formatstatus-fn]
+// [spec:samurai:sem:build.formatstatus-fn]
+// [spec:samurai:def:build.printstatus-fn]
+// [spec:samurai:sem:build.printstatus-fn]
+// [spec:samurai:def:build.jobstart-fn]
+// [spec:samurai:sem:build.jobstart-fn]
+// [spec:samurai:def:build.nodedone-fn]
+// [spec:samurai:sem:build.nodedone-fn]
+// [spec:samurai:def:build.shouldprune-fn]
+// [spec:samurai:sem:build.shouldprune-fn]
+// [spec:samurai:def:build.edgedone-fn]
+// [spec:samurai:sem:build.edgedone-fn]
+// [spec:samurai:def:build.jobdone-fn]
+// [spec:samurai:sem:build.jobdone-fn]
+// [spec:samurai:def:build.jobwork-fn]
+// [spec:samurai:sem:build.jobwork-fn]
+// [spec:samurai:def:build.queryload-fn]
+// [spec:samurai:sem:build.queryload-fn]
+// [spec:samurai:def:build.catchsig-fn]
+// [spec:samurai:sem:build.catchsig-fn]
+// [spec:samurai:def:build.build-fn]
+// [spec:samurai:sem:build.build-fn]
 mod legacy;
 pub use legacy::{build, format_progress_status};
 
