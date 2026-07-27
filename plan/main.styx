@@ -25,6 +25,21 @@ children (
                 kind @status
                 text "Doing → Done (nplan complete)"
             }
+
+            {
+                at 2026-07-27T14:26:38.987683675Z
+                author "brendan@bbqsrc.net"
+                kind @errata
+                text "After the quality refactor moved 11 translated build symbols into src/build/legacy.rs, `nplan port check` reported 164/175 because the nested Rust module was outside the effective target scan. The implementation and tests remained present; a follow-up node will restore nested-module coverage and re-run the terminal port gate."
+                after_done true
+            }
         )
+    }
+
+    {
+        id port-scan-nested-modules
+        title "Track translated symbols in nested Rust modules"
+        priority 0
+        deps (ninja-upstream-tests)
     }
 )
