@@ -13,6 +13,8 @@ static const char *logtmpname = ".ninja_log.tmp";
 static const char *logfmt = "# ninja log v%d\n";
 static const int logver = 7;
 
+// [spec:samurai:def:log.nextfield-fn]
+// [spec:samurai:sem:log.nextfield-fn]
 static char *
 nextfield(char **end)
 {
@@ -29,6 +31,8 @@ nextfield(char **end)
 	return s;
 }
 
+// [spec:samurai:def:log.loginit-fn]
+// [spec:samurai:sem:log.loginit-fn]
 void
 loginit(const char *builddir)
 {
@@ -146,6 +150,8 @@ rewrite:
 	}
 }
 
+// [spec:samurai:def:log.logclose-fn]
+// [spec:samurai:sem:log.logclose-fn]
 void
 logclose(void)
 {
@@ -155,6 +161,8 @@ logclose(void)
 	fclose(logfile);
 }
 
+// [spec:samurai:def:log.logrecord-fn]
+// [spec:samurai:sem:log.logrecord-fn]
 void
 logrecord(struct node *n)
 {

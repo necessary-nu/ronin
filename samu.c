@@ -16,6 +16,8 @@
 
 const char *argv0;
 
+// [spec:samurai:def:samu.usage-fn]
+// [spec:samurai:sem:samu.usage-fn]
 static void
 usage(void)
 {
@@ -23,6 +25,8 @@ usage(void)
 	exit(2);
 }
 
+// [spec:samurai:def:samu.getbuilddir-fn]
+// [spec:samurai:sem:samu.getbuilddir-fn]
 static char *
 getbuilddir(void)
 {
@@ -36,6 +40,8 @@ getbuilddir(void)
 	return builddir->s;
 }
 
+// [spec:samurai:def:samu.debugflag-fn]
+// [spec:samurai:sem:samu.debugflag-fn]
 static void
 debugflag(const char *flag)
 {
@@ -49,6 +55,8 @@ debugflag(const char *flag)
 		fatal("unknown debug flag '%s'", flag);
 }
 
+// [spec:samurai:def:samu.loadflag-fn]
+// [spec:samurai:sem:samu.loadflag-fn]
 static void
 loadflag(const char *flag)
 {
@@ -66,6 +74,8 @@ loadflag(const char *flag)
 #endif
 }
 
+// [spec:samurai:def:samu.warnflag-fn]
+// [spec:samurai:sem:samu.warnflag-fn]
 static void
 warnflag(const char *flag)
 {
@@ -77,6 +87,8 @@ warnflag(const char *flag)
 		fatal("unknown warning flag '%s'", flag);
 }
 
+// [spec:samurai:def:samu.jobsflag-fn]
+// [spec:samurai:sem:samu.jobsflag-fn]
 static void
 jobsflag(const char *flag)
 {
@@ -89,6 +101,8 @@ jobsflag(const char *flag)
 	buildopts.maxjobs = num > 0 ? num : -1;
 }
 
+// [spec:samurai:def:samu.parseenvargs-fn]
+// [spec:samurai:sem:samu.parseenvargs-fn]
 static void
 parseenvargs(char *env)
 {
@@ -126,6 +140,8 @@ parseenvargs(char *env)
 	free(env);
 }
 
+// [spec:samurai:def:samu.progname-fn]
+// [spec:samurai:sem:samu.progname-fn]
 static const char *
 progname(const char *arg, const char *def)
 {
@@ -137,6 +153,8 @@ progname(const char *arg, const char *def)
 	return slash ? slash + 1 : arg;
 }
 
+// [spec:samurai:def:samu.main-fn]
+// [spec:samurai:sem:samu.main-fn]
 int
 main(int argc, char *argv[])
 {

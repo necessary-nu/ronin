@@ -6,6 +6,7 @@
 #include "tree.h"
 #include "util.h"
 
+// [spec:samurai:def:env.environment]
 struct environment {
 	struct environment *parent;
 	struct treenode *bindings;
@@ -23,6 +24,8 @@ static void addpool(struct pool *);
 static void delpool(void *);
 static void delrule(void *);
 
+// [spec:samurai:def:env.envinit-fn]
+// [spec:samurai:sem:env.envinit-fn]
 void
 envinit(void)
 {
@@ -44,6 +47,8 @@ envinit(void)
 	addpool(&consolepool);
 }
 
+// [spec:samurai:def:env.addvar-fn]
+// [spec:samurai:sem:env.addvar-fn]
 static void
 addvar(struct treenode **tree, char *var, void *val)
 {
@@ -54,6 +59,8 @@ addvar(struct treenode **tree, char *var, void *val)
 		free(old);
 }
 
+// [spec:samurai:def:env.mkenv-fn]
+// [spec:samurai:sem:env.mkenv-fn]
 struct environment *
 mkenv(struct environment *parent)
 {
@@ -69,6 +76,8 @@ mkenv(struct environment *parent)
 	return env;
 }
 
+// [spec:samurai:def:env.envvar-fn]
+// [spec:samurai:sem:env.envvar-fn]
 struct string *
 envvar(struct environment *env, char *var)
 {
@@ -84,12 +93,16 @@ envvar(struct environment *env, char *var)
 	return NULL;
 }
 
+// [spec:samurai:def:env.envaddvar-fn]
+// [spec:samurai:sem:env.envaddvar-fn]
 void
 envaddvar(struct environment *env, char *var, struct string *val)
 {
 	addvar(&env->bindings, var, val);
 }
 
+// [spec:samurai:def:env.merge-fn]
+// [spec:samurai:sem:env.merge-fn]
 static struct string *
 merge(struct evalstring *str, size_t n)
 {
@@ -110,6 +123,8 @@ merge(struct evalstring *str, size_t n)
 	return result;
 }
 
+// [spec:samurai:def:env.enveval-fn]
+// [spec:samurai:sem:env.enveval-fn]
 struct string *
 enveval(struct environment *env, struct evalstring *str)
 {
@@ -130,6 +145,8 @@ enveval(struct environment *env, struct evalstring *str)
 	return res;
 }
 
+// [spec:samurai:def:env.envaddrule-fn]
+// [spec:samurai:sem:env.envaddrule-fn]
 void
 envaddrule(struct environment *env, struct rule *r)
 {
@@ -137,6 +154,8 @@ envaddrule(struct environment *env, struct rule *r)
 		fatal("rule '%s' redefined", r->name);
 }
 
+// [spec:samurai:def:env.envrule-fn]
+// [spec:samurai:sem:env.envrule-fn]
 struct rule *
 envrule(struct environment *env, char *name)
 {
@@ -152,6 +171,8 @@ envrule(struct environment *env, char *name)
 	return NULL;
 }
 
+// [spec:samurai:def:env.pathlist-fn]
+// [spec:samurai:sem:env.pathlist-fn]
 static struct string *
 pathlist(struct node **nodes, size_t n, char sep, bool escape)
 {
@@ -178,6 +199,8 @@ pathlist(struct node **nodes, size_t n, char sep, bool escape)
 	return result;
 }
 
+// [spec:samurai:def:env.mkrule-fn]
+// [spec:samurai:sem:env.mkrule-fn]
 struct rule *
 mkrule(char *name)
 {
@@ -190,6 +213,8 @@ mkrule(char *name)
 	return r;
 }
 
+// [spec:samurai:def:env.delrule-fn]
+// [spec:samurai:sem:env.delrule-fn]
 static void
 delrule(void *ptr)
 {
@@ -202,12 +227,16 @@ delrule(void *ptr)
 	free(r);
 }
 
+// [spec:samurai:def:env.ruleaddvar-fn]
+// [spec:samurai:sem:env.ruleaddvar-fn]
 void
 ruleaddvar(struct rule *r, char *var, struct evalstring *val)
 {
 	addvar(&r->bindings, var, val);
 }
 
+// [spec:samurai:def:env.edgevar-fn]
+// [spec:samurai:sem:env.edgevar-fn]
 struct string *
 edgevar(struct edge *e, char *var, bool escape)
 {
@@ -243,6 +272,8 @@ edgevar(struct edge *e, char *var, bool escape)
 	return merge(str, len);
 }
 
+// [spec:samurai:def:env.addpool-fn]
+// [spec:samurai:sem:env.addpool-fn]
 static void
 addpool(struct pool *p)
 {
@@ -250,6 +281,8 @@ addpool(struct pool *p)
 		fatal("pool '%s' redefined", p->name);
 }
 
+// [spec:samurai:def:env.mkpool-fn]
+// [spec:samurai:sem:env.mkpool-fn]
 struct pool *
 mkpool(char *name)
 {
@@ -265,6 +298,8 @@ mkpool(char *name)
 	return p;
 }
 
+// [spec:samurai:def:env.delpool-fn]
+// [spec:samurai:sem:env.delpool-fn]
 static void
 delpool(void *ptr)
 {
@@ -276,6 +311,8 @@ delpool(void *ptr)
 	free(p);
 }
 
+// [spec:samurai:def:env.poolget-fn]
+// [spec:samurai:sem:env.poolget-fn]
 struct pool *
 poolget(char *name)
 {

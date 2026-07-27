@@ -1,14 +1,17 @@
+// [spec:samurai:def:util.buffer]
 struct buffer {
 	char *data;
 	size_t len, cap;
 };
 
+// [spec:samurai:def:util.string]
 struct string {
 	size_t n;
 	char s[];
 };
 
 /* an unevaluated string */
+// [spec:samurai:def:util.evalstring]
 struct evalstring {
 	char *var;
 	struct string *str;

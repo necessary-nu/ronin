@@ -1,0 +1,40 @@
+generated_at 2026-07-27T09:07:48.080802815Z
+
+seal 6db7856a6bd5f2ae
+
+files (
+    {path Makefile, code_loc 49, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path README.md, code_loc 0, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path arg.h, code_loc 18, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path build.c, code_loc 607, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path build.h, code_loc 11, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path deps.c, code_loc 443, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path deps.h, code_loc 5, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path env.c, code_loc 243, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 2}
+    {path env.h, code_loc 26, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path graph.c, code_loc 189, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path graph.h, code_loc 47, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path htab.c, code_loc 218, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path htab.h, code_loc 12, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path log.c, code_loc 151, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path log.h, code_loc 4, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path os-posix.c, code_loc 150, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path os.h, code_loc 8, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path parse.c, code_loc 256, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path parse.h, code_loc 13, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path plan/main.styx, code_loc 6, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path samu.c, code_loc 241, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path scan.c, code_loc 320, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 1}
+    {path scan.h, code_loc 27, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path tool.c, code_loc 458, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path tool.h, code_loc 5, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path tree.c, code_loc 100, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path tree.h, code_loc 9, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path util.c, code_loc 196, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+    {path util.h, code_loc 27, function_count 0, max_cyclomatic 0, duplicate_memberships 0, trivial_function_count 0}
+)
+
+directories (
+    {path "", test_ratio_milli 0}
+    {path plan, test_ratio_milli 0}
+)

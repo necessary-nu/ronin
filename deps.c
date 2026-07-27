@@ -42,11 +42,13 @@ specified previously in node records.
 /* maximum record size (in bytes) */
 #define MAX_RECORD_SIZE (1 << 19)
 
+// [spec:samurai:def:deps.nodearray]
 struct nodearray {
 	struct node **node;
 	size_t len;
 };
 
+// [spec:samurai:def:deps.entry]
 struct entry {
 	struct node *node;
 	struct nodearray deps;
@@ -61,6 +63,8 @@ static FILE *depsfile;
 static struct entry *entries;
 static size_t entrieslen, entriescap;
 
+// [spec:samurai:def:deps.depswrite-fn]
+// [spec:samurai:sem:deps.depswrite-fn]
 static void
 depswrite(const void *p, size_t n, size_t m)
 {
@@ -68,6 +72,8 @@ depswrite(const void *p, size_t n, size_t m)
 		fatal("deps log write:");
 }
 
+// [spec:samurai:def:deps.recordid-fn]
+// [spec:samurai:sem:deps.recordid-fn]
 static bool
 recordid(struct node *n)
 {
@@ -90,6 +96,8 @@ recordid(struct node *n)
 	return true;
 }
 
+// [spec:samurai:def:deps.recorddeps-fn]
+// [spec:samurai:sem:deps.recorddeps-fn]
 static void
 recorddeps(struct node *out, struct nodearray *deps, int64_t mtime)
 {
@@ -110,6 +118,8 @@ recorddeps(struct node *out, struct nodearray *deps, int64_t mtime)
 		depswrite(&deps->node[i]->id, 4, 1);
 }
 
+// [spec:samurai:def:deps.depsinit-fn]
+// [spec:samurai:sem:deps.depsinit-fn]
 void
 depsinit(const char *builddir)
 {
@@ -286,6 +296,8 @@ rewrite:
 	}
 }
 
+// [spec:samurai:def:deps.depsclose-fn]
+// [spec:samurai:sem:deps.depsclose-fn]
 void
 depsclose(void)
 {
@@ -295,6 +307,8 @@ depsclose(void)
 	fclose(depsfile);
 }
 
+// [spec:samurai:def:deps.depsparse-fn]
+// [spec:samurai:sem:deps.depsparse-fn]
 static struct nodearray *
 depsparse(const char *name, bool allowmissing)
 {
@@ -416,6 +430,8 @@ err:
 	return NULL;
 }
 
+// [spec:samurai:def:deps.depsload-fn]
+// [spec:samurai:sem:deps.depsload-fn]
 void
 depsload(struct edge *e)
 {
@@ -449,6 +465,8 @@ depsload(struct edge *e)
 	}
 }
 
+// [spec:samurai:def:deps.depsrecord-fn]
+// [spec:samurai:sem:deps.depsrecord-fn]
 void
 depsrecord(struct edge *e)
 {

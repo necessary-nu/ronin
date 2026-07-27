@@ -11,6 +11,8 @@
 static struct hashtable *allnodes;
 struct edge *alledges;
 
+// [spec:samurai:def:graph.delnode-fn]
+// [spec:samurai:sem:graph.delnode-fn]
 static void
 delnode(void *p)
 {
@@ -23,6 +25,8 @@ delnode(void *p)
 	free(n);
 }
 
+// [spec:samurai:def:graph.graphinit-fn]
+// [spec:samurai:sem:graph.graphinit-fn]
 void
 graphinit(void)
 {
@@ -40,6 +44,8 @@ graphinit(void)
 	allnodes = mkhtab(1024);
 }
 
+// [spec:samurai:def:graph.mknode-fn]
+// [spec:samurai:sem:graph.mknode-fn]
 struct node *
 mknode(struct string *path)
 {
@@ -68,6 +74,8 @@ mknode(struct string *path)
 	return n;
 }
 
+// [spec:samurai:def:graph.nodeget-fn]
+// [spec:samurai:sem:graph.nodeget-fn]
 struct node *
 nodeget(const char *path, size_t len)
 {
@@ -79,12 +87,16 @@ nodeget(const char *path, size_t len)
 	return htabget(allnodes, &k);
 }
 
+// [spec:samurai:def:graph.nodestat-fn]
+// [spec:samurai:sem:graph.nodestat-fn]
 void
 nodestat(struct node *n)
 {
 	n->mtime = osmtime(n->path->s);
 }
 
+// [spec:samurai:def:graph.nodepath-fn]
+// [spec:samurai:sem:graph.nodepath-fn]
 struct string *
 nodepath(struct node *n, bool escape)
 {
@@ -122,6 +134,8 @@ nodepath(struct node *n, bool escape)
 	return n->shellpath;
 }
 
+// [spec:samurai:def:graph.nodeuse-fn]
+// [spec:samurai:sem:graph.nodeuse-fn]
 void
 nodeuse(struct node *n, struct edge *e)
 {
@@ -131,6 +145,8 @@ nodeuse(struct node *n, struct edge *e)
 	n->use[n->nuse++] = e;
 }
 
+// [spec:samurai:def:graph.mkedge-fn]
+// [spec:samurai:sem:graph.mkedge-fn]
 struct edge *
 mkedge(struct environment *parent)
 {
@@ -150,6 +166,8 @@ mkedge(struct environment *parent)
 	return e;
 }
 
+// [spec:samurai:def:graph.edgehash-fn]
+// [spec:samurai:sem:graph.edgehash-fn]
 void
 edgehash(struct edge *e)
 {
@@ -176,6 +194,8 @@ edgehash(struct edge *e)
 	}
 }
 
+// [spec:samurai:def:graph.mkphony-fn]
+// [spec:samurai:sem:graph.mkphony-fn]
 static struct edge *
 mkphony(struct node *n)
 {
@@ -193,6 +213,8 @@ mkphony(struct node *n)
 	return e;
 }
 
+// [spec:samurai:def:graph.edgeadddeps-fn]
+// [spec:samurai:sem:graph.edgeadddeps-fn]
 void
 edgeadddeps(struct edge *e, struct node **deps, size_t ndeps)
 {

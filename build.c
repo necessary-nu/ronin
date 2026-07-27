@@ -19,6 +19,7 @@
 #include "os.h"
 #include "util.h"
 
+// [spec:samurai:def:build.job]
 struct job {
 	struct string *cmd;
 	struct edge *edge;
@@ -36,6 +37,8 @@ static bool consoleused;
 static struct timespec starttime;
 static int sigfd[2];
 
+// [spec:samurai:def:build.buildreset-fn]
+// [spec:samurai:sem:build.buildreset-fn]
 void
 buildreset(void)
 {
@@ -46,6 +49,8 @@ buildreset(void)
 }
 
 /* returns whether n1 is newer than n2, or false if n1 is NULL */
+// [spec:samurai:def:build.isnewer-fn]
+// [spec:samurai:sem:build.isnewer-fn]
 static bool
 isnewer(struct node *n1, struct node *n2)
 {
@@ -53,6 +58,8 @@ isnewer(struct node *n1, struct node *n2)
 }
 
 /* returns whether this output node is dirty in relation to the newest input */
+// [spec:samurai:def:build.isdirty-fn]
+// [spec:samurai:sem:build.isdirty-fn]
 static bool
 isdirty(struct node *n, struct node *newest, bool generator, bool restat)
 {
@@ -107,6 +114,8 @@ isdirty(struct node *n, struct node *newest, bool generator, bool restat)
 }
 
 /* add an edge to the work queue */
+// [spec:samurai:def:build.queue-fn]
+// [spec:samurai:sem:build.queue-fn]
 static void
 queue(struct edge *e)
 {
@@ -122,6 +131,8 @@ queue(struct edge *e)
 	*front = e;
 }
 
+// [spec:samurai:def:build.buildadd-fn]
+// [spec:samurai:sem:build.buildadd-fn]
 void
 buildadd(struct node *n)
 {
@@ -198,6 +209,8 @@ buildadd(struct node *n)
 	e->flags &= ~FLAG_CYCLE;
 }
 
+// [spec:samurai:def:build.formatstatus-fn]
+// [spec:samurai:sem:build.formatstatus-fn]
 static size_t
 formatstatus(char *buf, size_t len)
 {
@@ -266,6 +279,8 @@ formatstatus(char *buf, size_t len)
 	return ret;
 }
 
+// [spec:samurai:def:build.printstatus-fn]
+// [spec:samurai:sem:build.printstatus-fn]
 static void
 printstatus(struct edge *e, struct string *cmd)
 {
@@ -280,6 +295,8 @@ printstatus(struct edge *e, struct string *cmd)
 	puts(description->s);
 }
 
+// [spec:samurai:def:build.jobstart-fn]
+// [spec:samurai:sem:build.jobstart-fn]
 static int
 jobstart(struct job *j, struct edge *e)
 {
@@ -349,6 +366,8 @@ err0:
 	return -1;
 }
 
+// [spec:samurai:def:build.nodedone-fn]
+// [spec:samurai:sem:build.nodedone-fn]
 static void
 nodedone(struct node *n, bool prune)
 {
@@ -374,6 +393,8 @@ nodedone(struct node *n, bool prune)
 	}
 }
 
+// [spec:samurai:def:build.shouldprune-fn]
+// [spec:samurai:sem:build.shouldprune-fn]
 static bool
 shouldprune(struct edge *e, struct node *n, int64_t old)
 {
@@ -395,6 +416,8 @@ shouldprune(struct edge *e, struct node *n, int64_t old)
 	return true;
 }
 
+// [spec:samurai:def:build.edgedone-fn]
+// [spec:samurai:sem:build.edgedone-fn]
 static void
 edgedone(struct edge *e)
 {
@@ -424,6 +447,8 @@ edgedone(struct edge *e)
 	}
 }
 
+// [spec:samurai:def:build.jobdone-fn]
+// [spec:samurai:sem:build.jobdone-fn]
 static void
 jobdone(struct job *j)
 {
@@ -473,6 +498,8 @@ jobdone(struct job *j)
 }
 
 /* returns whether a job still has work to do. if not, sets j->failed */
+// [spec:samurai:def:build.jobwork-fn]
+// [spec:samurai:sem:build.jobwork-fn]
 static bool
 jobwork(struct job *j)
 {
@@ -509,6 +536,8 @@ done:
 }
 
 /* queries the system load average */
+// [spec:samurai:def:build.queryload-fn]
+// [spec:samurai:sem:build.queryload-fn]
 static double
 queryload(void)
 {
@@ -526,12 +555,16 @@ queryload(void)
 #endif
 }
 
+// [spec:samurai:def:build.catchsig-fn]
+// [spec:samurai:sem:build.catchsig-fn]
 static void
 catchsig(int sig)
 {
 	write(sigfd[1], &sig, sizeof(sig));
 }
 
+// [spec:samurai:def:build.build-fn]
+// [spec:samurai:sem:build.build-fn]
 void
 build(void)
 {

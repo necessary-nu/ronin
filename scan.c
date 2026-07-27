@@ -11,6 +11,8 @@ struct evalstring **paths;
 size_t npaths;
 static struct buffer buf;
 
+// [spec:samurai:def:scan.scaninit-fn]
+// [spec:samurai:sem:scan.scaninit-fn]
 void
 scaninit(struct scanner *s, const char *path)
 {
@@ -23,12 +25,16 @@ scaninit(struct scanner *s, const char *path)
 	s->chr = getc(s->f);
 }
 
+// [spec:samurai:def:scan.scanclose-fn]
+// [spec:samurai:sem:scan.scanclose-fn]
 void
 scanclose(struct scanner *s)
 {
 	fclose(s->f);
 }
 
+// [spec:samurai:def:scan.scanerror-fn]
+// [spec:samurai:sem:scan.scanerror-fn]
 void
 scanerror(struct scanner *s, const char *fmt, ...)
 {
@@ -43,6 +49,8 @@ scanerror(struct scanner *s, const char *fmt, ...)
 	exit(1);
 }
 
+// [spec:samurai:def:scan.next-fn]
+// [spec:samurai:sem:scan.next-fn]
 static int
 next(struct scanner *s)
 {
@@ -57,18 +65,24 @@ next(struct scanner *s)
 	return s->chr;
 }
 
+// [spec:samurai:def:scan.issimplevar-fn]
+// [spec:samurai:sem:scan.issimplevar-fn]
 static int
 issimplevar(int c)
 {
 	return isalnum(c) || c == '_' || c == '-';
 }
 
+// [spec:samurai:def:scan.isvar-fn]
+// [spec:samurai:sem:scan.isvar-fn]
 static int
 isvar(int c)
 {
 	return issimplevar(c) || c == '.';
 }
 
+// [spec:samurai:def:scan.newline-fn]
+// [spec:samurai:sem:scan.newline-fn]
 static bool
 newline(struct scanner *s)
 {
@@ -84,6 +98,8 @@ newline(struct scanner *s)
 	return false;
 }
 
+// [spec:samurai:def:scan.singlespace-fn]
+// [spec:samurai:sem:scan.singlespace-fn]
 static bool
 singlespace(struct scanner *s)
 {
@@ -102,6 +118,8 @@ singlespace(struct scanner *s)
 	return false;
 }
 
+// [spec:samurai:def:scan.space-fn]
+// [spec:samurai:sem:scan.space-fn]
 static bool
 space(struct scanner *s)
 {
@@ -112,6 +130,8 @@ space(struct scanner *s)
 	return true;
 }
 
+// [spec:samurai:def:scan.comment-fn]
+// [spec:samurai:sem:scan.comment-fn]
 static bool
 comment(struct scanner *s)
 {
@@ -122,6 +142,8 @@ comment(struct scanner *s)
 	return true;
 }
 
+// [spec:samurai:def:scan.name-fn]
+// [spec:samurai:sem:scan.name-fn]
 static void
 name(struct scanner *s)
 {
@@ -136,6 +158,8 @@ name(struct scanner *s)
 	space(s);
 }
 
+// [spec:samurai:def:scan.scankeyword-fn]
+// [spec:samurai:sem:scan.scankeyword-fn]
 int
 scankeyword(struct scanner *s, char **var)
 {
@@ -187,6 +211,8 @@ scankeyword(struct scanner *s, char **var)
 	}
 }
 
+// [spec:samurai:def:scan.scanname-fn]
+// [spec:samurai:sem:scan.scanname-fn]
 char *
 scanname(struct scanner *s)
 {
@@ -194,6 +220,8 @@ scanname(struct scanner *s)
 	return xmemdup(buf.data, buf.len);
 }
 
+// [spec:samurai:def:scan.addstringpart-fn]
+// [spec:samurai:sem:scan.addstringpart-fn]
 static void
 addstringpart(struct evalstring ***end, bool var)
 {
@@ -215,6 +243,8 @@ addstringpart(struct evalstring ***end, bool var)
 	buf.len = 0;
 }
 
+// [spec:samurai:def:scan.escape-fn]
+// [spec:samurai:sem:scan.escape-fn]
 static void
 escape(struct scanner *s, struct evalstring ***end)
 {
@@ -253,6 +283,8 @@ escape(struct scanner *s, struct evalstring ***end)
 	}
 }
 
+// [spec:samurai:def:scan.scanstring-fn]
+// [spec:samurai:sem:scan.scanstring-fn]
 struct evalstring *
 scanstring(struct scanner *s, bool path)
 {
@@ -289,6 +321,8 @@ out:
 	return str;
 }
 
+// [spec:samurai:def:scan.scanpaths-fn]
+// [spec:samurai:sem:scan.scanpaths-fn]
 void
 scanpaths(struct scanner *s)
 {
@@ -304,6 +338,8 @@ scanpaths(struct scanner *s)
 	}
 }
 
+// [spec:samurai:def:scan.scanchar-fn]
+// [spec:samurai:sem:scan.scanchar-fn]
 void
 scanchar(struct scanner *s, int c)
 {
@@ -313,6 +349,8 @@ scanchar(struct scanner *s, int c)
 	space(s);
 }
 
+// [spec:samurai:def:scan.scanpipe-fn]
+// [spec:samurai:sem:scan.scanpipe-fn]
 int
 scanpipe(struct scanner *s, int n)
 {
@@ -332,6 +370,8 @@ scanpipe(struct scanner *s, int n)
 	return 2;
 }
 
+// [spec:samurai:def:scan.scanindent-fn]
+// [spec:samurai:sem:scan.scanindent-fn]
 bool
 scanindent(struct scanner *s)
 {
@@ -344,6 +384,8 @@ scanindent(struct scanner *s)
 	}
 }
 
+// [spec:samurai:def:scan.scannewline-fn]
+// [spec:samurai:sem:scan.scannewline-fn]
 void
 scannewline(struct scanner *s)
 {

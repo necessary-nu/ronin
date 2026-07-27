@@ -1,0 +1,76 @@
+platforms (
+    {
+        platform "rust"
+        files (Cargo.toml Cargo.lock src/**/*.rs)
+        checks {
+            format {
+                cmd "cargo fmt --all -- --check"
+                fix "cargo fmt --all"
+            }
+            test {
+                cmd "cargo test --no-fail-fast --quiet"
+            }
+            check {
+                cmd "cargo check --all-targets --quiet"
+            }
+        }
+    }
+)
+
+commit {
+    type-prefix "required"
+}
+
+adoption {
+    scope "porting"
+}
+
+quality {
+    exempt-paths (src/build/tests.rs)
+    function-density {
+        exempt-test-scope true
+    }
+    duplication {
+        exempt-test-scope true
+    }
+    trivial-function {
+        // These compatibility entry points and named conversion helpers
+        // intentionally preserve the translated C API.
+        allow-names (
+            edge_identity
+            add_target
+            queue
+            wanted_edges
+            is_empty
+            already_up_to_date
+            ran_edge
+            depswrite
+            depsclose
+            depsentry
+            addvar
+            envaddvar
+            ruleaddvar
+            nodeget
+            nodeuse
+            explicit
+            create_client
+            logentry
+            write_file
+            oschdir
+            scanname
+            path_bytes
+            cleanpath
+            cleanedge
+            cleantarget
+            treeinsert
+            warn
+            xreallocarray
+            xmemdup
+            split_string_piece
+            join_string_piece
+            to_lower_ascii
+            equals_case_insensitive_ascii
+            formatstatus
+        )
+    }
+}

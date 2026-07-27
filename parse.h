@@ -1,6 +1,7 @@
 struct environment;
 struct node;
 
+// [spec:samurai:def:parse.parseoptions]
 struct parseoptions {
 	_Bool dupbuildwarn;
 };

@@ -8,6 +8,8 @@
 
 extern const char *argv0;
 
+// [spec:samurai:def:util.vwarn-fn]
+// [spec:samurai:sem:util.vwarn-fn]
 static void
 vwarn(const char *fmt, va_list ap)
 {
@@ -21,6 +23,8 @@ vwarn(const char *fmt, va_list ap)
 	}
 }
 
+// [spec:samurai:def:util.warn-fn]
+// [spec:samurai:sem:util.warn-fn]
 void
 warn(const char *fmt, ...)
 {
@@ -31,6 +35,8 @@ warn(const char *fmt, ...)
 	va_end(ap);
 }
 
+// [spec:samurai:def:util.fatal-fn]
+// [spec:samurai:sem:util.fatal-fn]
 void
 fatal(const char *fmt, ...)
 {
@@ -42,6 +48,8 @@ fatal(const char *fmt, ...)
 	exit(1);
 }
 
+// [spec:samurai:def:util.xmalloc-fn]
+// [spec:samurai:sem:util.xmalloc-fn]
 void *
 xmalloc(size_t n)
 {
@@ -54,6 +62,8 @@ xmalloc(size_t n)
 	return p;
 }
 
+// [spec:samurai:def:util.reallocarray-fn]
+// [spec:samurai:sem:util.reallocarray-fn]
 static void *
 reallocarray_(void *p, size_t n, size_t m)
 {
@@ -64,6 +74,8 @@ reallocarray_(void *p, size_t n, size_t m)
 	return realloc(p, n * m);
 }
 
+// [spec:samurai:def:util.xreallocarray-fn]
+// [spec:samurai:sem:util.xreallocarray-fn]
 void *
 xreallocarray(void *p, size_t n, size_t m)
 {
@@ -74,6 +86,8 @@ xreallocarray(void *p, size_t n, size_t m)
 	return p;
 }
 
+// [spec:samurai:def:util.xmemdup-fn]
+// [spec:samurai:sem:util.xmemdup-fn]
 char *
 xmemdup(const char *s, size_t n)
 {
@@ -85,6 +99,8 @@ xmemdup(const char *s, size_t n)
 	return p;
 }
 
+// [spec:samurai:def:util.xasprintf-fn]
+// [spec:samurai:sem:util.xasprintf-fn]
 int
 xasprintf(char **s, const char *fmt, ...)
 {
@@ -108,6 +124,8 @@ xasprintf(char **s, const char *fmt, ...)
 	return ret;
 }
 
+// [spec:samurai:def:util.bufadd-fn]
+// [spec:samurai:sem:util.bufadd-fn]
 void
 bufadd(struct buffer *buf, char c)
 {
@@ -120,6 +138,8 @@ bufadd(struct buffer *buf, char c)
 	buf->data[buf->len++] = c;
 }
 
+// [spec:samurai:def:util.mkstr-fn]
+// [spec:samurai:sem:util.mkstr-fn]
 struct string *
 mkstr(size_t n)
 {
@@ -131,6 +151,8 @@ mkstr(size_t n)
 	return str;
 }
 
+// [spec:samurai:def:util.delevalstr-fn]
+// [spec:samurai:sem:util.delevalstr-fn]
 void
 delevalstr(void *ptr)
 {
@@ -147,6 +169,8 @@ delevalstr(void *ptr)
 	}
 }
 
+// [spec:samurai:def:util.canonpath-fn]
+// [spec:samurai:sem:util.canonpath-fn]
 void
 canonpath(struct string *path)
 {
@@ -203,6 +227,8 @@ canonpath(struct string *path)
 	path->n = d - path->s;
 }
 
+// [spec:samurai:def:util.writefile-fn]
+// [spec:samurai:sem:util.writefile-fn]
 int
 writefile(const char *name, struct string *s)
 {

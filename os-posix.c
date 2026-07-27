@@ -13,6 +13,8 @@
 #include "os.h"
 #include "util.h"
 
+// [spec:samurai:def:os-posix.osgetcwd-fn]
+// [spec:samurai:sem:os-posix.osgetcwd-fn]
 void
 osgetcwd(char *buf, size_t len)
 {
@@ -20,6 +22,8 @@ osgetcwd(char *buf, size_t len)
 		fatal("getcwd:");
 }
 
+// [spec:samurai:def:os-posix.oschdir-fn]
+// [spec:samurai:sem:os-posix.oschdir-fn]
 void
 oschdir(const char *dir)
 {
@@ -27,6 +31,8 @@ oschdir(const char *dir)
 		fatal("chdir %s:", dir);
 }
 
+// [spec:samurai:def:os-posix.osmkdirs-fn]
+// [spec:samurai:sem:os-posix.osmkdirs-fn]
 int
 osmkdirs(struct string *path, bool parent)
 {
@@ -64,6 +70,8 @@ osmkdirs(struct string *path, bool parent)
 	return ret;
 }
 
+// [spec:samurai:def:os-posix.osmtime-fn]
+// [spec:samurai:sem:os-posix.osmtime-fn]
 int64_t
 osmtime(const char *name)
 {
@@ -89,6 +97,8 @@ https://www.illumos.org/issues/13327
 	}
 }
 
+// [spec:samurai:def:os-posix.osnproc-fn]
+// [spec:samurai:sem:os-posix.osnproc-fn]
 long
 osnproc(void)
 {
@@ -99,6 +109,8 @@ osnproc(void)
 #endif
 }
 
+// [spec:samurai:def:os-posix.osspawn-fn]
+// [spec:samurai:sem:os-posix.osspawn-fn]
 pid_t
 osspawn(char *const argv[], int outfd)
 {

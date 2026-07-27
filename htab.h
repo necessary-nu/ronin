@@ -1,5 +1,6 @@
 #include <stdint.h>  /* for uint64_t */
 
+// [spec:samurai:def:htab.hashtablekey]
 struct hashtablekey {
 	uint64_t hash;
 	const char *str;

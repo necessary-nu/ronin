@@ -11,6 +11,8 @@
 #include "tool.h"
 #include "util.h"
 
+// [spec:samurai:def:tool.cleanpath-fn]
+// [spec:samurai:sem:tool.cleanpath-fn]
 static int
 cleanpath(struct string *path)
 {
@@ -26,6 +28,8 @@ cleanpath(struct string *path)
 	return 0;
 }
 
+// [spec:samurai:def:tool.cleanedge-fn]
+// [spec:samurai:sem:tool.cleanedge-fn]
 static int
 cleanedge(struct edge *e)
 {
@@ -44,6 +48,8 @@ cleanedge(struct edge *e)
 	return ret;
 }
 
+// [spec:samurai:def:tool.cleantarget-fn]
+// [spec:samurai:sem:tool.cleantarget-fn]
 static int
 cleantarget(struct node *n)
 {
@@ -62,6 +68,8 @@ cleantarget(struct node *n)
 	return ret;
 }
 
+// [spec:samurai:def:tool.clean-fn]
+// [spec:samurai:sem:tool.clean-fn]
 static int
 clean(int argc, char *argv[])
 {
@@ -126,6 +134,8 @@ clean(int argc, char *argv[])
 }
 
 /* depth-first traversal */
+// [spec:samurai:def:tool.targetcommands-fn]
+// [spec:samurai:sem:tool.targetcommands-fn]
 static void
 targetcommands(struct node *n)
 {
@@ -143,6 +153,8 @@ targetcommands(struct node *n)
 		puts(command->s);
 }
 
+// [spec:samurai:def:tool.commands-fn]
+// [spec:samurai:sem:tool.commands-fn]
 static int
 commands(int argc, char *argv[])
 {
@@ -165,6 +177,8 @@ commands(int argc, char *argv[])
 	return 0;
 }
 
+// [spec:samurai:def:tool.printquoted-fn]
+// [spec:samurai:sem:tool.printquoted-fn]
 static void
 printquoted(const char *s, size_t n, bool join)
 {
@@ -189,6 +203,8 @@ printquoted(const char *s, size_t n, bool join)
 	}
 }
 
+// [spec:samurai:def:tool.compdb-fn]
+// [spec:samurai:sem:tool.compdb-fn]
 static int
 compdb(int argc, char *argv[])
 {
@@ -258,6 +274,8 @@ compdb(int argc, char *argv[])
 	return 0;
 }
 
+// [spec:samurai:def:tool.graphnode-fn]
+// [spec:samurai:sem:tool.graphnode-fn]
 static void
 graphnode(struct node *n)
 {
@@ -289,6 +307,8 @@ graphnode(struct node *n)
 	}
 }
 
+// [spec:samurai:def:tool.graph-fn]
+// [spec:samurai:sem:tool.graph-fn]
 static int
 graph(int argc, char *argv[])
 {
@@ -318,6 +338,8 @@ graph(int argc, char *argv[])
 	return 0;
 }
 
+// [spec:samurai:def:tool.query-fn]
+// [spec:samurai:sem:tool.query-fn]
 static int
 query(int argc, char *argv[])
 {
@@ -354,6 +376,8 @@ query(int argc, char *argv[])
 	return 0;
 }
 
+// [spec:samurai:def:tool.targetsdepth-fn]
+// [spec:samurai:sem:tool.targetsdepth-fn]
 static void
 targetsdepth(struct node *n, size_t depth, size_t indent)
 {
@@ -373,6 +397,8 @@ targetsdepth(struct node *n, size_t depth, size_t indent)
 	}
 }
 
+// [spec:samurai:def:tool.targetsusage-fn]
+// [spec:samurai:sem:tool.targetsusage-fn]
 static void
 targetsusage(void)
 {
@@ -384,6 +410,8 @@ targetsusage(void)
 	exit(2);
 }
 
+// [spec:samurai:def:tool.targets-fn]
+// [spec:samurai:sem:tool.targets-fn]
 static int
 targets(int argc, char *argv[])
 {
@@ -443,6 +471,8 @@ static const struct tool tools[] = {
 	{"targets", targets},
 };
 
+// [spec:samurai:def:tool.toolget-fn]
+// [spec:samurai:sem:tool.toolget-fn]
 const struct tool *
 toolget(const char *name)
 {

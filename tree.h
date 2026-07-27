@@ -1,4 +1,5 @@
 /* binary tree node, such that keys are sorted lexicographically for fast lookup */
+// [spec:samurai:def:tree.treenode]
 struct treenode {
 	char *key;
 	void *value;

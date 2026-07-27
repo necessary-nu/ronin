@@ -1,3 +1,4 @@
+// [spec:samurai:def:scan.token]
 enum token {
 	BUILD,
 	DEFAULT,
@@ -8,6 +9,7 @@ enum token {
 	VARIABLE,
 };
 
+// [spec:samurai:def:scan.scanner]
 struct scanner {
 	FILE *f;
 	const char *path;

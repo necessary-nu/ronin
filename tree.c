@@ -7,6 +7,8 @@
 
 #define MAXH (sizeof(void *) * 8 * 3 / 2)
 
+// [spec:samurai:def:tree.deltree-fn]
+// [spec:samurai:sem:tree.deltree-fn]
 void
 deltree(struct treenode *n, void delkey(void *), void delval(void *))
 {
@@ -21,12 +23,16 @@ deltree(struct treenode *n, void delkey(void *), void delval(void *))
 	free(n);
 }
 
+// [spec:samurai:def:tree.height-fn]
+// [spec:samurai:sem:tree.height-fn]
 static inline int
 height(struct treenode *n)
 {
 	return n ? n->height : 0;
 }
 
+// [spec:samurai:def:tree.rot-fn]
+// [spec:samurai:sem:tree.rot-fn]
 static int
 rot(struct treenode **p, struct treenode *x, int dir /* deeper side */)
 {
@@ -70,6 +76,8 @@ rot(struct treenode **p, struct treenode *x, int dir /* deeper side */)
 	return z->height - hx;
 }
 
+// [spec:samurai:def:tree.balance-fn]
+// [spec:samurai:sem:tree.balance-fn]
 static int
 balance(struct treenode **p)
 {
@@ -85,6 +93,8 @@ balance(struct treenode **p)
 	return rot(p, n, h0 < h1);
 }
 
+// [spec:samurai:def:tree.treefind-fn]
+// [spec:samurai:sem:tree.treefind-fn]
 struct treenode *
 treefind(struct treenode *n, const char *key)
 {
@@ -99,6 +109,8 @@ treefind(struct treenode *n, const char *key)
 	return NULL;
 }
 
+// [spec:samurai:def:tree.treeinsert-fn]
+// [spec:samurai:sem:tree.treeinsert-fn]
 void *
 treeinsert(struct treenode **rootp, char *key, void *value)
 {

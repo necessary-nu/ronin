@@ -12,6 +12,8 @@ struct parseoptions parseopts;
 static struct node **deftarg;
 static size_t ndeftarg;
 
+// [spec:samurai:def:parse.parseinit-fn]
+// [spec:samurai:sem:parse.parseinit-fn]
 void
 parseinit(void)
 {
@@ -20,6 +22,8 @@ parseinit(void)
 	ndeftarg = 0;
 }
 
+// [spec:samurai:def:parse.parselet-fn]
+// [spec:samurai:sem:parse.parselet-fn]
 static void
 parselet(struct scanner *s, struct evalstring **val)
 {
@@ -28,6 +32,8 @@ parselet(struct scanner *s, struct evalstring **val)
 	scannewline(s);
 }
 
+// [spec:samurai:def:parse.parserule-fn]
+// [spec:samurai:sem:parse.parserule-fn]
 static void
 parserule(struct scanner *s, struct environment *env)
 {
@@ -58,6 +64,8 @@ parserule(struct scanner *s, struct environment *env)
 	envaddrule(env, r);
 }
 
+// [spec:samurai:def:parse.parseedge-fn]
+// [spec:samurai:sem:parse.parseedge-fn]
 static void
 parseedge(struct scanner *s, struct environment *env)
 {
@@ -136,6 +144,8 @@ parseedge(struct scanner *s, struct environment *env)
 		e->pool = poolget(val->s);
 }
 
+// [spec:samurai:def:parse.parseinclude-fn]
+// [spec:samurai:sem:parse.parseinclude-fn]
 static void
 parseinclude(struct scanner *s, struct environment *env, bool newscope)
 {
@@ -154,6 +164,8 @@ parseinclude(struct scanner *s, struct environment *env, bool newscope)
 	free(path);
 }
 
+// [spec:samurai:def:parse.parsedefault-fn]
+// [spec:samurai:sem:parse.parsedefault-fn]
 static void
 parsedefault(struct scanner *s, struct environment *env)
 {
@@ -176,6 +188,8 @@ parsedefault(struct scanner *s, struct environment *env)
 	npaths = 0;
 }
 
+// [spec:samurai:def:parse.parsepool-fn]
+// [spec:samurai:sem:parse.parsepool-fn]
 static void
 parsepool(struct scanner *s, struct environment *env)
 {
@@ -203,6 +217,8 @@ parsepool(struct scanner *s, struct environment *env)
 		fatal("pool '%s' has no depth", p->name);
 }
 
+// [spec:samurai:def:parse.checkversion-fn]
+// [spec:samurai:sem:parse.checkversion-fn]
 static void
 checkversion(const char *ver)
 {
@@ -214,6 +230,8 @@ checkversion(const char *ver)
 		fatal("ninja_required_version %s is newer than %d.%d", ver, ninjamajor, ninjaminor);
 }
 
+// [spec:samurai:def:parse.parse-fn]
+// [spec:samurai:sem:parse.parse-fn]
 void
 parse(const char *name, struct environment *env)
 {
@@ -257,6 +275,8 @@ parse(const char *name, struct environment *env)
 	}
 }
 
+// [spec:samurai:def:parse.defaultnodes-fn]
+// [spec:samurai:sem:parse.defaultnodes-fn]
 void
 defaultnodes(void fn(struct node *))
 {

@@ -1,0 +1,780 @@
+generated_at 2026-07-27T09:07:52.34556968Z
+
+source_lang c
+
+symbols (
+    {id build.job, kind @struct, name job, qualified job, signature "struct job", members (
+        "struct string *cmd"
+        "struct edge *edge"
+        "struct buffer buf"
+        "size_t next"
+        "pid_t pid"
+        "int fd"
+        "bool failed"
+    ), file build.c, line_start 22, line_end 30, rules (
+        {verb def, id build.job}
+    )}
+    {id build.buildreset-fn, kind @function, name buildreset, qualified buildreset, signature "void buildreset(void)", file build.c, line_start 39, line_end 46, rules (
+        {verb def, id build.buildreset-fn}
+        {verb sem, id build.buildreset-fn}
+    )}
+    {id build.isnewer-fn, kind @function, name isnewer, qualified isnewer, signature "static bool isnewer(struct node *n1, struct node *n2)", file build.c, line_start 49, line_end 53, rules (
+        {verb def, id build.isnewer-fn}
+        {verb sem, id build.isnewer-fn}
+    )}
+    {id build.isdirty-fn, kind @function, name isdirty, qualified isdirty, signature "static bool isdirty(struct node *n, struct node *newest, bool generator, bool restat)", file build.c, line_start 56, line_end 107, rules (
+        {verb def, id build.isdirty-fn}
+        {verb sem, id build.isdirty-fn}
+    )}
+    {id build.queue-fn, kind @function, name queue, qualified queue, signature "static void queue(struct edge *e)", file build.c, line_start 110, line_end 123, rules (
+        {verb def, id build.queue-fn}
+        {verb sem, id build.queue-fn}
+    )}
+    {id build.buildadd-fn, kind @function, name buildadd, qualified buildadd, signature "void buildadd(struct node *n)", file build.c, line_start 125, line_end 199, rules (
+        {verb def, id build.buildadd-fn}
+        {verb sem, id build.buildadd-fn}
+    )}
+    {id build.formatstatus-fn, kind @function, name formatstatus, qualified formatstatus, signature "static size_t formatstatus(char *buf, size_t len)", file build.c, line_start 201, line_end 267, rules (
+        {verb def, id build.formatstatus-fn}
+        {verb sem, id build.formatstatus-fn}
+    )}
+    {id build.printstatus-fn, kind @function, name printstatus, qualified printstatus, signature "static void printstatus(struct edge *e, struct string *cmd)", file build.c, line_start 269, line_end 281, rules (
+        {verb def, id build.printstatus-fn}
+        {verb sem, id build.printstatus-fn}
+    )}
+    {id build.jobstart-fn, kind @function, name jobstart, qualified jobstart, signature "static int jobstart(struct job *j, struct edge *e)", file build.c, line_start 283, line_end 350, rules (
+        {verb def, id build.jobstart-fn}
+        {verb sem, id build.jobstart-fn}
+    )}
+    {id build.nodedone-fn, kind @function, name nodedone, qualified nodedone, signature "static void nodedone(struct node *n, bool prune)", file build.c, line_start 352, line_end 375, rules (
+        {verb def, id build.nodedone-fn}
+        {verb sem, id build.nodedone-fn}
+    )}
+    {id build.shouldprune-fn, kind @function, name shouldprune, qualified shouldprune, signature "static bool shouldprune(struct edge *e, struct node *n, int64_t old)", file build.c, line_start 377, line_end 396, rules (
+        {verb def, id build.shouldprune-fn}
+        {verb sem, id build.shouldprune-fn}
+    )}
+    {id build.edgedone-fn, kind @function, name edgedone, qualified edgedone, signature "static void edgedone(struct edge *e)", file build.c, line_start 398, line_end 425, rules (
+        {verb def, id build.edgedone-fn}
+        {verb sem, id build.edgedone-fn}
+    )}
+    {id build.jobdone-fn, kind @function, name jobdone, qualified jobdone, signature "static void jobdone(struct job *j)", file build.c, line_start 427, line_end 473, rules (
+        {verb def, id build.jobdone-fn}
+        {verb sem, id build.jobdone-fn}
+    )}
+    {id build.jobwork-fn, kind @function, name jobwork, qualified jobwork, signature "static bool jobwork(struct job *j)", file build.c, line_start 476, line_end 509, rules (
+        {verb def, id build.jobwork-fn}
+        {verb sem, id build.jobwork-fn}
+    )}
+    {id build.queryload-fn, kind @function, name queryload, qualified queryload, signature "static double queryload(void)", file build.c, line_start 512, line_end 527, rules (
+        {verb def, id build.queryload-fn}
+        {verb sem, id build.queryload-fn}
+    )}
+    {id build.catchsig-fn, kind @function, name catchsig, qualified catchsig, signature "static void catchsig(int sig)", file build.c, line_start 529, line_end 533, rules (
+        {verb def, id build.catchsig-fn}
+        {verb sem, id build.catchsig-fn}
+    )}
+    {id build.build-fn, kind @function, name build, qualified build, signature "void build(void)", file build.c, line_start 535, line_end 666, rules (
+        {verb def, id build.build-fn}
+        {verb sem, id build.build-fn}
+    )}
+    {id build.buildoptions, kind @struct, name buildoptions, qualified buildoptions, signature "struct buildoptions", members (
+        "size_t maxjobs, maxfail"
+        "_Bool verbose, explain, keepdepfile, keeprsp, dryrun"
+        "const char *statusfmt"
+        "double maxload"
+    ), file build.h, line_start 3, line_end 8, rules (
+        {verb def, id build.buildoptions}
+    )}
+    {id deps.nodearray, kind @struct, name nodearray, qualified nodearray, signature "struct nodearray", members (
+        "struct node **node"
+        "size_t len"
+    ), file deps.c, line_start 45, line_end 48, rules (
+        {verb def, id deps.nodearray}
+    )}
+    {id deps.entry, kind @struct, name entry, qualified entry, signature "struct entry", members (
+        "struct node *node"
+        "struct nodearray deps"
+        "int64_t mtime"
+    ), file deps.c, line_start 50, line_end 54, rules (
+        {verb def, id deps.entry}
+    )}
+    {id deps.depswrite-fn, kind @function, name depswrite, qualified depswrite, signature "static void depswrite(const void *p, size_t n, size_t m)", file deps.c, line_start 64, line_end 69, rules (
+        {verb def, id deps.depswrite-fn}
+        {verb sem, id deps.depswrite-fn}
+    )}
+    {id deps.recordid-fn, kind @function, name recordid, qualified recordid, signature "static bool recordid(struct node *n)", file deps.c, line_start 71, line_end 91, rules (
+        {verb def, id deps.recordid-fn}
+        {verb sem, id deps.recordid-fn}
+    )}
+    {id deps.recorddeps-fn, kind @function, name recorddeps, qualified recorddeps, signature "static void recorddeps(struct node *out, struct nodearray *deps, int64_t mtime)", file deps.c, line_start 93, line_end 111, rules (
+        {verb def, id deps.recorddeps-fn}
+        {verb sem, id deps.recorddeps-fn}
+    )}
+    {id deps.depsinit-fn, kind @function, name depsinit, qualified depsinit, signature "void depsinit(const char *builddir)", file deps.c, line_start 113, line_end 287, rules (
+        {verb def, id deps.depsinit-fn}
+        {verb sem, id deps.depsinit-fn}
+    )}
+    {id deps.depsclose-fn, kind @function, name depsclose, qualified depsclose, signature "void depsclose(void)", file deps.c, line_start 289, line_end 296, rules (
+        {verb def, id deps.depsclose-fn}
+        {verb sem, id deps.depsclose-fn}
+    )}
+    {id deps.depsparse-fn, kind @function, name depsparse, qualified depsparse, signature "static struct nodearray * depsparse(const char *name, bool allowmissing)", file deps.c, line_start 298, line_end 417, rules (
+        {verb def, id deps.depsparse-fn}
+        {verb sem, id deps.depsparse-fn}
+    )}
+    {id deps.depsload-fn, kind @function, name depsload, qualified depsload, signature "void depsload(struct edge *e)", file deps.c, line_start 419, line_end 450, rules (
+        {verb def, id deps.depsload-fn}
+        {verb sem, id deps.depsload-fn}
+    )}
+    {id deps.depsrecord-fn, kind @function, name depsrecord, qualified depsrecord, signature "void depsrecord(struct edge *e)", file deps.c, line_start 452, line_end 503, rules (
+        {verb def, id deps.depsrecord-fn}
+        {verb sem, id deps.depsrecord-fn}
+    )}
+    {id env.environment, kind @struct, name environment, qualified environment, signature "struct environment", members (
+        "struct environment *parent"
+        "struct treenode *bindings"
+        "struct treenode *rules"
+        "struct environment *allnext"
+    ), file env.c, line_start 9, line_end 14, rules (
+        {verb def, id env.environment}
+    )}
+    {id env.envinit-fn, kind @function, name envinit, qualified envinit, signature "void envinit(void)", file env.c, line_start 26, line_end 45, rules (
+        {verb def, id env.envinit-fn}
+        {verb sem, id env.envinit-fn}
+    )}
+    {id env.addvar-fn, kind @function, name addvar, qualified addvar, signature "static void addvar(struct treenode **tree, char *var, void *val)", file env.c, line_start 47, line_end 55, rules (
+        {verb def, id env.addvar-fn}
+        {verb sem, id env.addvar-fn}
+    )}
+    {id env.mkenv-fn, kind @function, name mkenv, qualified mkenv, signature "struct environment * mkenv(struct environment *parent)", file env.c, line_start 57, line_end 70, rules (
+        {verb def, id env.mkenv-fn}
+        {verb sem, id env.mkenv-fn}
+    )}
+    {id env.envvar-fn, kind @function, name envvar, qualified envvar, signature "struct string * envvar(struct environment *env, char *var)", file env.c, line_start 72, line_end 85, rules (
+        {verb def, id env.envvar-fn}
+        {verb sem, id env.envvar-fn}
+    )}
+    {id env.envaddvar-fn, kind @function, name envaddvar, qualified envaddvar, signature "void envaddvar(struct environment *env, char *var, struct string *val)", file env.c, line_start 87, line_end 91, rules (
+        {verb def, id env.envaddvar-fn}
+        {verb sem, id env.envaddvar-fn}
+    )}
+    {id env.merge-fn, kind @function, name merge, qualified merge, signature "static struct string * merge(struct evalstring *str, size_t n)", file env.c, line_start 93, line_end 111, rules (
+        {verb def, id env.merge-fn}
+        {verb sem, id env.merge-fn}
+    )}
+    {id env.enveval-fn, kind @function, name enveval, qualified enveval, signature "struct string * enveval(struct environment *env, struct evalstring *str)", file env.c, line_start 113, line_end 131, rules (
+        {verb def, id env.enveval-fn}
+        {verb sem, id env.enveval-fn}
+    )}
+    {id env.envaddrule-fn, kind @function, name envaddrule, qualified envaddrule, signature "void envaddrule(struct environment *env, struct rule *r)", file env.c, line_start 133, line_end 138, rules (
+        {verb def, id env.envaddrule-fn}
+        {verb sem, id env.envaddrule-fn}
+    )}
+    {id env.envrule-fn, kind @function, name envrule, qualified envrule, signature "struct rule * envrule(struct environment *env, char *name)", file env.c, line_start 140, line_end 153, rules (
+        {verb def, id env.envrule-fn}
+        {verb sem, id env.envrule-fn}
+    )}
+    {id env.pathlist-fn, kind @function, name pathlist, qualified pathlist, signature "static struct string * pathlist(struct node **nodes, size_t n, char sep, bool escape)", file env.c, line_start 155, line_end 179, rules (
+        {verb def, id env.pathlist-fn}
+        {verb sem, id env.pathlist-fn}
+    )}
+    {id env.mkrule-fn, kind @function, name mkrule, qualified mkrule, signature "struct rule * mkrule(char *name)", file env.c, line_start 181, line_end 191, rules (
+        {verb def, id env.mkrule-fn}
+        {verb sem, id env.mkrule-fn}
+    )}
+    {id env.delrule-fn, kind @function, name delrule, qualified delrule, signature "static void delrule(void *ptr)", file env.c, line_start 193, line_end 203, rules (
+        {verb def, id env.delrule-fn}
+        {verb sem, id env.delrule-fn}
+    )}
+    {id env.ruleaddvar-fn, kind @function, name ruleaddvar, qualified ruleaddvar, signature "void ruleaddvar(struct rule *r, char *var, struct evalstring *val)", file env.c, line_start 205, line_end 209, rules (
+        {verb def, id env.ruleaddvar-fn}
+        {verb sem, id env.ruleaddvar-fn}
+    )}
+    {id env.edgevar-fn, kind @function, name edgevar, qualified edgevar, signature "struct string * edgevar(struct edge *e, char *var, bool escape)", file env.c, line_start 211, line_end 244, rules (
+        {verb def, id env.edgevar-fn}
+        {verb sem, id env.edgevar-fn}
+    )}
+    {id env.addpool-fn, kind @function, name addpool, qualified addpool, signature "static void addpool(struct pool *p)", file env.c, line_start 246, line_end 251, rules (
+        {verb def, id env.addpool-fn}
+        {verb sem, id env.addpool-fn}
+    )}
+    {id env.mkpool-fn, kind @function, name mkpool, qualified mkpool, signature "struct pool * mkpool(char *name)", file env.c, line_start 253, line_end 266, rules (
+        {verb def, id env.mkpool-fn}
+        {verb sem, id env.mkpool-fn}
+    )}
+    {id env.delpool-fn, kind @function, name delpool, qualified delpool, signature "static void delpool(void *ptr)", file env.c, line_start 268, line_end 277, rules (
+        {verb def, id env.delpool-fn}
+        {verb sem, id env.delpool-fn}
+    )}
+    {id env.poolget-fn, kind @function, name poolget, qualified poolget, signature "struct pool * poolget(char *name)", file env.c, line_start 279, line_end 289, rules (
+        {verb def, id env.poolget-fn}
+        {verb sem, id env.poolget-fn}
+    )}
+    {id env.rule, kind @struct, name rule, qualified rule, signature "struct rule", members (
+        "char *name"
+        "struct treenode *bindings"
+    ), file env.h, line_start 4, line_end 7, rules (
+        {verb def, id env.rule}
+    )}
+    {id env.pool, kind @struct, name pool, qualified pool, signature "struct pool", members (
+        "char *name"
+        "int numjobs, maxjobs"
+        "struct edge *work"
+    ), file env.h, line_start 9, line_end 15, rules (
+        {verb def, id env.pool}
+    )}
+    {id graph.delnode-fn, kind @function, name delnode, qualified delnode, signature "static void delnode(void *p)", file graph.c, line_start 14, line_end 24, rules (
+        {verb def, id graph.delnode-fn}
+        {verb sem, id graph.delnode-fn}
+    )}
+    {id graph.graphinit-fn, kind @function, name graphinit, qualified graphinit, signature "void graphinit(void)", file graph.c, line_start 26, line_end 41, rules (
+        {verb def, id graph.graphinit-fn}
+        {verb sem, id graph.graphinit-fn}
+    )}
+    {id graph.mknode-fn, kind @function, name mknode, qualified mknode, signature "struct node * mknode(struct string *path)", file graph.c, line_start 43, line_end 69, rules (
+        {verb def, id graph.mknode-fn}
+        {verb sem, id graph.mknode-fn}
+    )}
+    {id graph.nodeget-fn, kind @function, name nodeget, qualified nodeget, signature "struct node * nodeget(const char *path, size_t len)", file graph.c, line_start 71, line_end 80, rules (
+        {verb def, id graph.nodeget-fn}
+        {verb sem, id graph.nodeget-fn}
+    )}
+    {id graph.nodestat-fn, kind @function, name nodestat, qualified nodestat, signature "void nodestat(struct node *n)", file graph.c, line_start 82, line_end 86, rules (
+        {verb def, id graph.nodestat-fn}
+        {verb sem, id graph.nodestat-fn}
+    )}
+    {id graph.nodepath-fn, kind @function, name nodepath, qualified nodepath, signature "struct string * nodepath(struct node *n, bool escape)", file graph.c, line_start 88, line_end 123, rules (
+        {verb def, id graph.nodepath-fn}
+        {verb sem, id graph.nodepath-fn}
+    )}
+    {id graph.nodeuse-fn, kind @function, name nodeuse, qualified nodeuse, signature "void nodeuse(struct node *n, struct edge *e)", file graph.c, line_start 125, line_end 132, rules (
+        {verb def, id graph.nodeuse-fn}
+        {verb sem, id graph.nodeuse-fn}
+    )}
+    {id graph.mkedge-fn, kind @function, name mkedge, qualified mkedge, signature "struct edge * mkedge(struct environment *parent)", file graph.c, line_start 134, line_end 151, rules (
+        {verb def, id graph.mkedge-fn}
+        {verb sem, id graph.mkedge-fn}
+    )}
+    {id graph.edgehash-fn, kind @function, name edgehash, qualified edgehash, signature "void edgehash(struct edge *e)", file graph.c, line_start 153, line_end 177, rules (
+        {verb def, id graph.edgehash-fn}
+        {verb sem, id graph.edgehash-fn}
+    )}
+    {id graph.mkphony-fn, kind @function, name mkphony, qualified mkphony, signature "static struct edge * mkphony(struct node *n)", file graph.c, line_start 179, line_end 194, rules (
+        {verb def, id graph.mkphony-fn}
+        {verb sem, id graph.mkphony-fn}
+    )}
+    {id graph.edgeadddeps-fn, kind @function, name edgeadddeps, qualified edgeadddeps, signature "void edgeadddeps(struct edge *e, struct node **deps, size_t ndeps)", file graph.c, line_start 196, line_end 215, rules (
+        {verb def, id graph.edgeadddeps-fn}
+        {verb sem, id graph.edgeadddeps-fn}
+    )}
+    {id graph.node, kind @struct, name node, qualified node, signature "struct node", members (
+        "struct string *path, *shellpath"
+        "int64_t mtime, logmtime"
+        "struct edge *gen, **use"
+        "size_t nuse"
+        "uint64_t hash"
+        "int32_t id"
+        "_Bool dirty"
+    ), file graph.h, line_start 11, line_end 30, rules (
+        {verb def, id graph.node}
+    )}
+    {id graph.edge, kind @struct, name edge, qualified edge, signature "struct edge", members (
+        "struct rule *rule"
+        "struct pool *pool"
+        "struct environment *env"
+        "struct node **out, **in"
+        "size_t nout, nin"
+        "size_t outimpidx"
+        "size_t inimpidx, inorderidx"
+        "uint64_t hash"
+        "size_t nblock"
+        "size_t nprune"
+        "enum { FLAG_WORK = 1 << 0, /* scheduled for build */ FLAG_HASH = 1 << 1, /* calculated the command hash */ FLAG_DIRTY_IN = 1 << 3, /* dirty input */ FLAG_DIR..."
+        "struct edge *worknext"
+        "struct edge *allnext"
+    ), file graph.h, line_start 33, line_end 69, rules (
+        {verb def, id graph.edge}
+    )}
+    {id htab.hashtable, kind @struct, name hashtable, qualified hashtable, signature "struct hashtable", members (
+        "size_t len, cap"
+        "struct hashtablekey *keys"
+        "void **vals"
+    ), file htab.c, line_start 10, line_end 14, rules (
+        {verb def, id htab.hashtable}
+    )}
+    {id htab.htabkey-fn, kind @function, name htabkey, qualified htabkey, signature "void htabkey(struct hashtablekey *k, const char *s, size_t n)", file htab.c, line_start 16, line_end 22, rules (
+        {verb def, id htab.htabkey-fn}
+        {verb sem, id htab.htabkey-fn}
+    )}
+    {id htab.mkhtab-fn, kind @function, name mkhtab, qualified mkhtab, signature "struct hashtable * mkhtab(size_t cap)", file htab.c, line_start 24, line_end 40, rules (
+        {verb def, id htab.mkhtab-fn}
+        {verb sem, id htab.mkhtab-fn}
+    )}
+    {id htab.delhtab-fn, kind @function, name delhtab, qualified delhtab, signature "void delhtab(struct hashtable *h, void del(void *))", file htab.c, line_start 42, line_end 58, rules (
+        {verb def, id htab.delhtab-fn}
+        {verb sem, id htab.delhtab-fn}
+    )}
+    {id htab.keyequal-fn, kind @function, name keyequal, qualified keyequal, signature "static bool keyequal(struct hashtablekey *k1, struct hashtablekey *k2)", file htab.c, line_start 60, line_end 66, rules (
+        {verb def, id htab.keyequal-fn}
+        {verb sem, id htab.keyequal-fn}
+    )}
+    {id htab.keyindex-fn, kind @function, name keyindex, qualified keyindex, signature "static size_t keyindex(struct hashtable *h, struct hashtablekey *k)", file htab.c, line_start 68, line_end 77, rules (
+        {verb def, id htab.keyindex-fn}
+        {verb sem, id htab.keyindex-fn}
+    )}
+    {id htab.htabput-fn, kind @function, name htabput, qualified htabput, signature "void ** htabput(struct hashtable *h, struct hashtablekey *k)", file htab.c, line_start 79, line_end 113, rules (
+        {verb def, id htab.htabput-fn}
+        {verb sem, id htab.htabput-fn}
+    )}
+    {id htab.htabget-fn, kind @function, name htabget, qualified htabget, signature "void * htabget(struct hashtable *h, struct hashtablekey *k)", file htab.c, line_start 115, line_end 122, rules (
+        {verb def, id htab.htabget-fn}
+        {verb sem, id htab.htabget-fn}
+    )}
+    {id htab.getle32-fn, kind @function, name getle32, qualified getle32, signature "static inline uint_least32_t getle32(const void *p)", file htab.c, line_start 124, line_end 135, rules (
+        {verb def, id htab.getle32-fn}
+        {verb sem, id htab.getle32-fn}
+    )}
+    {id htab.getle64-fn, kind @function, name getle64, qualified getle64, signature "static inline uint_least64_t getle64(const void *p)", file htab.c, line_start 137, line_end 152, rules (
+        {verb def, id htab.getle64-fn}
+        {verb sem, id htab.getle64-fn}
+    )}
+    {id htab.mum-fn, kind @function, name mum, qualified mum, signature "static inline void mum(uint64_t *a, uint64_t *b)", file htab.c, line_start 160, line_end 189, rules (
+        {verb def, id htab.mum-fn}
+        {verb sem, id htab.mum-fn}
+    )}
+    {id htab.mix-fn, kind @function, name mix, qualified mix, signature "static inline uint64_t mix(uint64_t a, uint64_t b)", file htab.c, line_start 191, line_end 196, rules (
+        {verb def, id htab.mix-fn}
+        {verb sem, id htab.mix-fn}
+    )}
+    {id htab.rapidhashv1-fn, kind @function, name rapidhashv1, qualified rapidhashv1, signature "uint64_t rapidhashv1(const void *ptr, size_t len)", file htab.c, line_start 198, line_end 245, rules (
+        {verb def, id htab.rapidhashv1-fn}
+        {verb sem, id htab.rapidhashv1-fn}
+    )}
+    {id htab.hashtablekey, kind @struct, name hashtablekey, qualified hashtablekey, signature "struct hashtablekey", members (
+        "uint64_t hash"
+        "const char *str"
+        "size_t len"
+    ), file htab.h, line_start 3, line_end 7, rules (
+        {verb def, id htab.hashtablekey}
+    )}
+    {id log.nextfield-fn, kind @function, name nextfield, qualified nextfield, signature "static char * nextfield(char **end)", file log.c, line_start 16, line_end 30, rules (
+        {verb def, id log.nextfield-fn}
+        {verb sem, id log.nextfield-fn}
+    )}
+    {id log.loginit-fn, kind @function, name loginit, qualified loginit, signature "void loginit(const char *builddir)", file log.c, line_start 32, line_end 147, rules (
+        {verb def, id log.loginit-fn}
+        {verb sem, id log.loginit-fn}
+    )}
+    {id log.logclose-fn, kind @function, name logclose, qualified logclose, signature "void logclose(void)", file log.c, line_start 149, line_end 156, rules (
+        {verb def, id log.logclose-fn}
+        {verb sem, id log.logclose-fn}
+    )}
+    {id log.logrecord-fn, kind @function, name logrecord, qualified logrecord, signature "void logrecord(struct node *n)", file log.c, line_start 158, line_end 162, rules (
+        {verb def, id log.logrecord-fn}
+        {verb sem, id log.logrecord-fn}
+    )}
+    {id os-posix.osgetcwd-fn, kind @function, name osgetcwd, qualified osgetcwd, signature "void osgetcwd(char *buf, size_t len)", file os-posix.c, line_start 16, line_end 21, rules (
+        {verb def, id os-posix.osgetcwd-fn}
+        {verb sem, id os-posix.osgetcwd-fn}
+    )}
+    {id os-posix.oschdir-fn, kind @function, name oschdir, qualified oschdir, signature "void oschdir(const char *dir)", file os-posix.c, line_start 23, line_end 28, rules (
+        {verb def, id os-posix.oschdir-fn}
+        {verb sem, id os-posix.oschdir-fn}
+    )}
+    {id os-posix.osmkdirs-fn, kind @function, name osmkdirs, qualified osmkdirs, signature "int osmkdirs(struct string *path, bool parent)", file os-posix.c, line_start 30, line_end 65, rules (
+        {verb def, id os-posix.osmkdirs-fn}
+        {verb sem, id os-posix.osmkdirs-fn}
+    )}
+    {id os-posix.osmtime-fn, kind @function, name osmtime, qualified osmtime, signature "int64_t osmtime(const char *name)", file os-posix.c, line_start 67, line_end 90, rules (
+        {verb def, id os-posix.osmtime-fn}
+        {verb sem, id os-posix.osmtime-fn}
+    )}
+    {id os-posix.osnproc-fn, kind @function, name osnproc, qualified osnproc, signature "long osnproc(void)", file os-posix.c, line_start 92, line_end 100, rules (
+        {verb def, id os-posix.osnproc-fn}
+        {verb sem, id os-posix.osnproc-fn}
+    )}
+    {id os-posix.osspawn-fn, kind @function, name osspawn, qualified osspawn, signature "pid_t osspawn(char *const argv[], int outfd)", file os-posix.c, line_start 102, line_end 168, rules (
+        {verb def, id os-posix.osspawn-fn}
+        {verb sem, id os-posix.osspawn-fn}
+    )}
+    {id os.osgetcwd-fn, kind @function, name osgetcwd, qualified osgetcwd, signature "void osgetcwd(char *, size_t)", file os.h, line_start 5, line_end 5, rules (
+        {verb def, id os.osgetcwd-fn}
+        {verb sem, id os.osgetcwd-fn}
+    )}
+    {id os.oschdir-fn, kind @function, name oschdir, qualified oschdir, signature "void oschdir(const char *)", file os.h, line_start 7, line_end 7, rules (
+        {verb def, id os.oschdir-fn}
+        {verb sem, id os.oschdir-fn}
+    )}
+    {id os.osmkdirs-fn, kind @function, name osmkdirs, qualified osmkdirs, signature "int osmkdirs(struct string *, _Bool)", file os.h, line_start 9, line_end 9, rules (
+        {verb def, id os.osmkdirs-fn}
+        {verb sem, id os.osmkdirs-fn}
+    )}
+    {id os.osmtime-fn, kind @function, name osmtime, qualified osmtime, signature "int64_t osmtime(const char *)", file os.h, line_start 11, line_end 11, rules (
+        {verb def, id os.osmtime-fn}
+        {verb sem, id os.osmtime-fn}
+    )}
+    {id os.osnproc-fn, kind @function, name osnproc, qualified osnproc, signature "long osnproc(void)", file os.h, line_start 13, line_end 13, rules (
+        {verb def, id os.osnproc-fn}
+        {verb sem, id os.osnproc-fn}
+    )}
+    {id os.osspawn-fn, kind @function, name osspawn, qualified osspawn, signature "pid_t osspawn(char *const argv[], int fd)", file os.h, line_start 15, line_end 15, rules (
+        {verb def, id os.osspawn-fn}
+        {verb sem, id os.osspawn-fn}
+    )}
+    {id parse.parseinit-fn, kind @function, name parseinit, qualified parseinit, signature "void parseinit(void)", file parse.c, line_start 15, line_end 21, rules (
+        {verb def, id parse.parseinit-fn}
+        {verb sem, id parse.parseinit-fn}
+    )}
+    {id parse.parselet-fn, kind @function, name parselet, qualified parselet, signature "static void parselet(struct scanner *s, struct evalstring **val)", file parse.c, line_start 23, line_end 29, rules (
+        {verb def, id parse.parselet-fn}
+        {verb sem, id parse.parselet-fn}
+    )}
+    {id parse.parserule-fn, kind @function, name parserule, qualified parserule, signature "static void parserule(struct scanner *s, struct environment *env)", file parse.c, line_start 31, line_end 59, rules (
+        {verb def, id parse.parserule-fn}
+        {verb sem, id parse.parserule-fn}
+    )}
+    {id parse.parseedge-fn, kind @function, name parseedge, qualified parseedge, signature "static void parseedge(struct scanner *s, struct environment *env)", file parse.c, line_start 61, line_end 137, rules (
+        {verb def, id parse.parseedge-fn}
+        {verb sem, id parse.parseedge-fn}
+    )}
+    {id parse.parseinclude-fn, kind @function, name parseinclude, qualified parseinclude, signature "static void parseinclude(struct scanner *s, struct environment *env, bool newscope)", file parse.c, line_start 139, line_end 155, rules (
+        {verb def, id parse.parseinclude-fn}
+        {verb sem, id parse.parseinclude-fn}
+    )}
+    {id parse.parsedefault-fn, kind @function, name parsedefault, qualified parsedefault, signature "static void parsedefault(struct scanner *s, struct environment *env)", file parse.c, line_start 157, line_end 177, rules (
+        {verb def, id parse.parsedefault-fn}
+        {verb sem, id parse.parsedefault-fn}
+    )}
+    {id parse.parsepool-fn, kind @function, name parsepool, qualified parsepool, signature "static void parsepool(struct scanner *s, struct environment *env)", file parse.c, line_start 179, line_end 204, rules (
+        {verb def, id parse.parsepool-fn}
+        {verb sem, id parse.parsepool-fn}
+    )}
+    {id parse.checkversion-fn, kind @function, name checkversion, qualified checkversion, signature "static void checkversion(const char *ver)", file parse.c, line_start 206, line_end 215, rules (
+        {verb def, id parse.checkversion-fn}
+        {verb sem, id parse.checkversion-fn}
+    )}
+    {id parse.parse-fn, kind @function, name parse, qualified parse, signature "void parse(const char *name, struct environment *env)", file parse.c, line_start 217, line_end 258, rules (
+        {verb def, id parse.parse-fn}
+        {verb sem, id parse.parse-fn}
+    )}
+    {id parse.defaultnodes-fn, kind @function, name defaultnodes, qualified defaultnodes, signature "void defaultnodes(void fn(struct node *))", file parse.c, line_start 260, line_end 280, rules (
+        {verb def, id parse.defaultnodes-fn}
+        {verb sem, id parse.defaultnodes-fn}
+    )}
+    {id parse.parseoptions, kind @struct, name parseoptions, qualified parseoptions, signature "struct parseoptions", members (
+        "_Bool dupbuildwarn"
+    ), file parse.h, line_start 4, line_end 6, rules (
+        {verb def, id parse.parseoptions}
+    )}
+    {id samu.usage-fn, kind @function, name usage, qualified usage, signature "static void usage(void)", file samu.c, line_start 19, line_end 24, rules (
+        {verb def, id samu.usage-fn}
+        {verb sem, id samu.usage-fn}
+    )}
+    {id samu.getbuilddir-fn, kind @function, name getbuilddir, qualified getbuilddir, signature "static char * getbuilddir(void)", file samu.c, line_start 26, line_end 37, rules (
+        {verb def, id samu.getbuilddir-fn}
+        {verb sem, id samu.getbuilddir-fn}
+    )}
+    {id samu.debugflag-fn, kind @function, name debugflag, qualified debugflag, signature "static void debugflag(const char *flag)", file samu.c, line_start 39, line_end 50, rules (
+        {verb def, id samu.debugflag-fn}
+        {verb sem, id samu.debugflag-fn}
+    )}
+    {id samu.loadflag-fn, kind @function, name loadflag, qualified loadflag, signature "static void loadflag(const char *flag)", file samu.c, line_start 52, line_end 67, rules (
+        {verb def, id samu.loadflag-fn}
+        {verb sem, id samu.loadflag-fn}
+    )}
+    {id samu.warnflag-fn, kind @function, name warnflag, qualified warnflag, signature "static void warnflag(const char *flag)", file samu.c, line_start 69, line_end 78, rules (
+        {verb def, id samu.warnflag-fn}
+        {verb sem, id samu.warnflag-fn}
+    )}
+    {id samu.jobsflag-fn, kind @function, name jobsflag, qualified jobsflag, signature "static void jobsflag(const char *flag)", file samu.c, line_start 80, line_end 90, rules (
+        {verb def, id samu.jobsflag-fn}
+        {verb sem, id samu.jobsflag-fn}
+    )}
+    {id samu.parseenvargs-fn, kind @function, name parseenvargs, qualified parseenvargs, signature "static void parseenvargs(char *env)", file samu.c, line_start 92, line_end 127, rules (
+        {verb def, id samu.parseenvargs-fn}
+        {verb sem, id samu.parseenvargs-fn}
+    )}
+    {id samu.progname-fn, kind @function, name progname, qualified progname, signature "static const char * progname(const char *arg, const char *def)", file samu.c, line_start 129, line_end 138, rules (
+        {verb def, id samu.progname-fn}
+        {verb sem, id samu.progname-fn}
+    )}
+    {id samu.main-fn, kind @function, name main, qualified main, signature "int main(int argc, char *argv[])", file samu.c, line_start 140, line_end 274, rules (
+        {verb def, id samu.main-fn}
+        {verb sem, id samu.main-fn}
+    )}
+    {id scan.scaninit-fn, kind @function, name scaninit, qualified scaninit, signature "void scaninit(struct scanner *s, const char *path)", file scan.c, line_start 14, line_end 24, rules (
+        {verb def, id scan.scaninit-fn}
+        {verb sem, id scan.scaninit-fn}
+    )}
+    {id scan.scanclose-fn, kind @function, name scanclose, qualified scanclose, signature "void scanclose(struct scanner *s)", file scan.c, line_start 26, line_end 30, rules (
+        {verb def, id scan.scanclose-fn}
+        {verb sem, id scan.scanclose-fn}
+    )}
+    {id scan.scanerror-fn, kind @function, name scanerror, qualified scanerror, signature "void scanerror(struct scanner *s, const char *fmt, ...)", file scan.c, line_start 32, line_end 44, rules (
+        {verb def, id scan.scanerror-fn}
+        {verb sem, id scan.scanerror-fn}
+    )}
+    {id scan.next-fn, kind @function, name next, qualified next, signature "static int next(struct scanner *s)", file scan.c, line_start 46, line_end 58, rules (
+        {verb def, id scan.next-fn}
+        {verb sem, id scan.next-fn}
+    )}
+    {id scan.issimplevar-fn, kind @function, name issimplevar, qualified issimplevar, signature "static int issimplevar(int c)", file scan.c, line_start 60, line_end 64, rules (
+        {verb def, id scan.issimplevar-fn}
+        {verb sem, id scan.issimplevar-fn}
+    )}
+    {id scan.isvar-fn, kind @function, name isvar, qualified isvar, signature "static int isvar(int c)", file scan.c, line_start 66, line_end 70, rules (
+        {verb def, id scan.isvar-fn}
+        {verb sem, id scan.isvar-fn}
+    )}
+    {id scan.newline-fn, kind @function, name newline, qualified newline, signature "static bool newline(struct scanner *s)", file scan.c, line_start 72, line_end 85, rules (
+        {verb def, id scan.newline-fn}
+        {verb sem, id scan.newline-fn}
+    )}
+    {id scan.singlespace-fn, kind @function, name singlespace, qualified singlespace, signature "static bool singlespace(struct scanner *s)", file scan.c, line_start 87, line_end 103, rules (
+        {verb def, id scan.singlespace-fn}
+        {verb sem, id scan.singlespace-fn}
+    )}
+    {id scan.space-fn, kind @function, name space, qualified space, signature "static bool space(struct scanner *s)", file scan.c, line_start 105, line_end 113, rules (
+        {verb def, id scan.space-fn}
+        {verb sem, id scan.space-fn}
+    )}
+    {id scan.comment-fn, kind @function, name comment, qualified comment, signature "static bool comment(struct scanner *s)", file scan.c, line_start 115, line_end 123, rules (
+        {verb def, id scan.comment-fn}
+        {verb sem, id scan.comment-fn}
+    )}
+    {id scan.name-fn, kind @function, name name, qualified name, signature "static void name(struct scanner *s)", file scan.c, line_start 125, line_end 137, rules (
+        {verb def, id scan.name-fn}
+        {verb sem, id scan.name-fn}
+    )}
+    {id scan.scankeyword-fn, kind @function, name scankeyword, qualified scankeyword, signature "int scankeyword(struct scanner *s, char **var)", file scan.c, line_start 139, line_end 188, rules (
+        {verb def, id scan.scankeyword-fn}
+        {verb sem, id scan.scankeyword-fn}
+    )}
+    {id scan.scanname-fn, kind @function, name scanname, qualified scanname, signature "char * scanname(struct scanner *s)", file scan.c, line_start 190, line_end 195, rules (
+        {verb def, id scan.scanname-fn}
+        {verb sem, id scan.scanname-fn}
+    )}
+    {id scan.addstringpart-fn, kind @function, name addstringpart, qualified addstringpart, signature "static void addstringpart(struct evalstring ***end, bool var)", file scan.c, line_start 197, line_end 216, rules (
+        {verb def, id scan.addstringpart-fn}
+        {verb sem, id scan.addstringpart-fn}
+    )}
+    {id scan.escape-fn, kind @function, name escape, qualified escape, signature "static void escape(struct scanner *s, struct evalstring ***end)", file scan.c, line_start 218, line_end 254, rules (
+        {verb def, id scan.escape-fn}
+        {verb sem, id scan.escape-fn}
+    )}
+    {id scan.scanstring-fn, kind @function, name scanstring, qualified scanstring, signature "struct evalstring * scanstring(struct scanner *s, bool path)", file scan.c, line_start 256, line_end 290, rules (
+        {verb def, id scan.scanstring-fn}
+        {verb sem, id scan.scanstring-fn}
+    )}
+    {id scan.scanpaths-fn, kind @function, name scanpaths, qualified scanpaths, signature "void scanpaths(struct scanner *s)", file scan.c, line_start 292, line_end 305, rules (
+        {verb def, id scan.scanpaths-fn}
+        {verb sem, id scan.scanpaths-fn}
+    )}
+    {id scan.scanchar-fn, kind @function, name scanchar, qualified scanchar, signature "void scanchar(struct scanner *s, int c)", file scan.c, line_start 307, line_end 314, rules (
+        {verb def, id scan.scanchar-fn}
+        {verb sem, id scan.scanchar-fn}
+    )}
+    {id scan.scanpipe-fn, kind @function, name scanpipe, qualified scanpipe, signature "int scanpipe(struct scanner *s, int n)", file scan.c, line_start 316, line_end 333, rules (
+        {verb def, id scan.scanpipe-fn}
+        {verb sem, id scan.scanpipe-fn}
+    )}
+    {id scan.scanindent-fn, kind @function, name scanindent, qualified scanindent, signature "bool scanindent(struct scanner *s)", file scan.c, line_start 335, line_end 345, rules (
+        {verb def, id scan.scanindent-fn}
+        {verb sem, id scan.scanindent-fn}
+    )}
+    {id scan.scannewline-fn, kind @function, name scannewline, qualified scannewline, signature "void scannewline(struct scanner *s)", file scan.c, line_start 347, line_end 352, rules (
+        {verb def, id scan.scannewline-fn}
+        {verb sem, id scan.scannewline-fn}
+    )}
+    {id scan.token, kind @enum, name token, qualified token, signature "enum token", members (
+        BUILD
+        DEFAULT
+        INCLUDE
+        POOL
+        RULE
+        SUBNINJA
+        VARIABLE
+    ), file scan.h, line_start 1, line_end 9, rules (
+        {verb def, id scan.token}
+    )}
+    {id scan.scanner, kind @struct, name scanner, qualified scanner, signature "struct scanner", members (
+        "FILE *f"
+        "const char *path"
+        "int chr, line, col"
+    ), file scan.h, line_start 11, line_end 15, rules (
+        {verb def, id scan.scanner}
+    )}
+    {id tool.cleanpath-fn, kind @function, name cleanpath, qualified cleanpath, signature "static int cleanpath(struct string *path)", file tool.c, line_start 14, line_end 27, rules (
+        {verb def, id tool.cleanpath-fn}
+        {verb sem, id tool.cleanpath-fn}
+    )}
+    {id tool.cleanedge-fn, kind @function, name cleanedge, qualified cleanedge, signature "static int cleanedge(struct edge *e)", file tool.c, line_start 29, line_end 45, rules (
+        {verb def, id tool.cleanedge-fn}
+        {verb sem, id tool.cleanedge-fn}
+    )}
+    {id tool.cleantarget-fn, kind @function, name cleantarget, qualified cleantarget, signature "static int cleantarget(struct node *n)", file tool.c, line_start 47, line_end 63, rules (
+        {verb def, id tool.cleantarget-fn}
+        {verb sem, id tool.cleantarget-fn}
+    )}
+    {id tool.clean-fn, kind @function, name clean, qualified clean, signature "static int clean(int argc, char *argv[])", file tool.c, line_start 65, line_end 126, rules (
+        {verb def, id tool.clean-fn}
+        {verb sem, id tool.clean-fn}
+    )}
+    {id tool.targetcommands-fn, kind @function, name targetcommands, qualified targetcommands, signature "static void targetcommands(struct node *n)", file tool.c, line_start 129, line_end 144, rules (
+        {verb def, id tool.targetcommands-fn}
+        {verb sem, id tool.targetcommands-fn}
+    )}
+    {id tool.commands-fn, kind @function, name commands, qualified commands, signature "static int commands(int argc, char *argv[])", file tool.c, line_start 146, line_end 166, rules (
+        {verb def, id tool.commands-fn}
+        {verb sem, id tool.commands-fn}
+    )}
+    {id tool.printquoted-fn, kind @function, name printquoted, qualified printquoted, signature "static void printquoted(const char *s, size_t n, bool join)", file tool.c, line_start 168, line_end 190, rules (
+        {verb def, id tool.printquoted-fn}
+        {verb sem, id tool.printquoted-fn}
+    )}
+    {id tool.compdb-fn, kind @function, name compdb, qualified compdb, signature "static int compdb(int argc, char *argv[])", file tool.c, line_start 192, line_end 259, rules (
+        {verb def, id tool.compdb-fn}
+        {verb sem, id tool.compdb-fn}
+    )}
+    {id tool.graphnode-fn, kind @function, name graphnode, qualified graphnode, signature "static void graphnode(struct node *n)", file tool.c, line_start 261, line_end 290, rules (
+        {verb def, id tool.graphnode-fn}
+        {verb sem, id tool.graphnode-fn}
+    )}
+    {id tool.graph-fn, kind @function, name graph, qualified graph, signature "static int graph(int argc, char *argv[])", file tool.c, line_start 292, line_end 319, rules (
+        {verb def, id tool.graph-fn}
+        {verb sem, id tool.graph-fn}
+    )}
+    {id tool.query-fn, kind @function, name query, qualified query, signature "static int query(int argc, char *argv[])", file tool.c, line_start 321, line_end 355, rules (
+        {verb def, id tool.query-fn}
+        {verb sem, id tool.query-fn}
+    )}
+    {id tool.targetsdepth-fn, kind @function, name targetsdepth, qualified targetsdepth, signature "static void targetsdepth(struct node *n, size_t depth, size_t indent)", file tool.c, line_start 357, line_end 374, rules (
+        {verb def, id tool.targetsdepth-fn}
+        {verb sem, id tool.targetsdepth-fn}
+    )}
+    {id tool.targetsusage-fn, kind @function, name targetsusage, qualified targetsusage, signature "static void targetsusage(void)", file tool.c, line_start 376, line_end 385, rules (
+        {verb def, id tool.targetsusage-fn}
+        {verb sem, id tool.targetsusage-fn}
+    )}
+    {id tool.targets-fn, kind @function, name targets, qualified targets, signature "static int targets(int argc, char *argv[])", file tool.c, line_start 387, line_end 435, rules (
+        {verb def, id tool.targets-fn}
+        {verb sem, id tool.targets-fn}
+    )}
+    {id tool.toolget-fn, kind @function, name toolget, qualified toolget, signature "const struct tool * toolget(const char *name)", file tool.c, line_start 446, line_end 463, rules (
+        {verb def, id tool.toolget-fn}
+        {verb sem, id tool.toolget-fn}
+    )}
+    {id tool.tool, kind @struct, name tool, qualified tool, signature "struct tool", members (
+        "const char *name"
+    ), file tool.h, line_start 1, line_end 4, rules (
+        {verb def, id tool.tool}
+    )}
+    {id tool.tool.run-fn, kind @method, name "(*run)", qualified tool.run, signature "int (*run)(int, char *[])", file tool.h, line_start 3, line_end 3, rules (
+        {verb def, id tool.tool.run-fn}
+        {verb sem, id tool.tool.run-fn}
+    )}
+    {id tree.deltree-fn, kind @function, name deltree, qualified deltree, signature "void deltree(struct treenode *n, void delkey(void *), void delval(void *))", file tree.c, line_start 10, line_end 22, rules (
+        {verb def, id tree.deltree-fn}
+        {verb sem, id tree.deltree-fn}
+    )}
+    {id tree.height-fn, kind @function, name height, qualified height, signature "static inline int height(struct treenode *n)", file tree.c, line_start 24, line_end 28, rules (
+        {verb def, id tree.height-fn}
+        {verb sem, id tree.height-fn}
+    )}
+    {id tree.rot-fn, kind @function, name rot, qualified rot, signature "static int rot(struct treenode **p, struct treenode *x, int dir /* deeper side */)", file tree.c, line_start 30, line_end 71, rules (
+        {verb def, id tree.rot-fn}
+        {verb sem, id tree.rot-fn}
+    )}
+    {id tree.balance-fn, kind @function, name balance, qualified balance, signature "static int balance(struct treenode **p)", file tree.c, line_start 73, line_end 86, rules (
+        {verb def, id tree.balance-fn}
+        {verb sem, id tree.balance-fn}
+    )}
+    {id tree.treefind-fn, kind @function, name treefind, qualified treefind, signature "struct treenode * treefind(struct treenode *n, const char *key)", file tree.c, line_start 88, line_end 100, rules (
+        {verb def, id tree.treefind-fn}
+        {verb sem, id tree.treefind-fn}
+    )}
+    {id tree.treeinsert-fn, kind @function, name treeinsert, qualified treeinsert, signature "void * treeinsert(struct treenode **rootp, char *key, void *value)", file tree.c, line_start 102, line_end 130, rules (
+        {verb def, id tree.treeinsert-fn}
+        {verb sem, id tree.treeinsert-fn}
+    )}
+    {id tree.treenode, kind @struct, name treenode, qualified treenode, signature "struct treenode", members (
+        "char *key"
+        "void *value"
+        "struct treenode *child[2]"
+        "int height"
+    ), file tree.h, line_start 2, line_end 7, rules (
+        {verb def, id tree.treenode}
+    )}
+    {id util.vwarn-fn, kind @function, name vwarn, qualified vwarn, signature "static void vwarn(const char *fmt, va_list ap)", file util.c, line_start 11, line_end 22, rules (
+        {verb def, id util.vwarn-fn}
+        {verb sem, id util.vwarn-fn}
+    )}
+    {id util.warn-fn, kind @function, name warn, qualified warn, signature "void warn(const char *fmt, ...)", file util.c, line_start 24, line_end 32, rules (
+        {verb def, id util.warn-fn}
+        {verb sem, id util.warn-fn}
+    )}
+    {id util.fatal-fn, kind @function, name fatal, qualified fatal, signature "void fatal(const char *fmt, ...)", file util.c, line_start 34, line_end 43, rules (
+        {verb def, id util.fatal-fn}
+        {verb sem, id util.fatal-fn}
+    )}
+    {id util.xmalloc-fn, kind @function, name xmalloc, qualified xmalloc, signature "void * xmalloc(size_t n)", file util.c, line_start 45, line_end 55, rules (
+        {verb def, id util.xmalloc-fn}
+        {verb sem, id util.xmalloc-fn}
+    )}
+    {id util.reallocarray-fn, kind @function, name reallocarray_, qualified reallocarray, signature "static void * reallocarray_(void *p, size_t n, size_t m)", file util.c, line_start 57, line_end 65, rules (
+        {verb def, id util.reallocarray-fn}
+        {verb sem, id util.reallocarray-fn}
+    )}
+    {id util.xreallocarray-fn, kind @function, name xreallocarray, qualified xreallocarray, signature "void * xreallocarray(void *p, size_t n, size_t m)", file util.c, line_start 67, line_end 75, rules (
+        {verb def, id util.xreallocarray-fn}
+        {verb sem, id util.xreallocarray-fn}
+    )}
+    {id util.xmemdup-fn, kind @function, name xmemdup, qualified xmemdup, signature "char * xmemdup(const char *s, size_t n)", file util.c, line_start 77, line_end 86, rules (
+        {verb def, id util.xmemdup-fn}
+        {verb sem, id util.xmemdup-fn}
+    )}
+    {id util.xasprintf-fn, kind @function, name xasprintf, qualified xasprintf, signature "int xasprintf(char **s, const char *fmt, ...)", file util.c, line_start 88, line_end 109, rules (
+        {verb def, id util.xasprintf-fn}
+        {verb sem, id util.xasprintf-fn}
+    )}
+    {id util.bufadd-fn, kind @function, name bufadd, qualified bufadd, signature "void bufadd(struct buffer *buf, char c)", file util.c, line_start 111, line_end 121, rules (
+        {verb def, id util.bufadd-fn}
+        {verb sem, id util.bufadd-fn}
+    )}
+    {id util.mkstr-fn, kind @function, name mkstr, qualified mkstr, signature "struct string * mkstr(size_t n)", file util.c, line_start 123, line_end 132, rules (
+        {verb def, id util.mkstr-fn}
+        {verb sem, id util.mkstr-fn}
+    )}
+    {id util.delevalstr-fn, kind @function, name delevalstr, qualified delevalstr, signature "void delevalstr(void *ptr)", file util.c, line_start 134, line_end 148, rules (
+        {verb def, id util.delevalstr-fn}
+        {verb sem, id util.delevalstr-fn}
+    )}
+    {id util.canonpath-fn, kind @function, name canonpath, qualified canonpath, signature "void canonpath(struct string *path)", file util.c, line_start 150, line_end 204, rules (
+        {verb def, id util.canonpath-fn}
+        {verb sem, id util.canonpath-fn}
+    )}
+    {id util.writefile-fn, kind @function, name writefile, qualified writefile, signature "int writefile(const char *name, struct string *s)", file util.c, line_start 206, line_end 225, rules (
+        {verb def, id util.writefile-fn}
+        {verb sem, id util.writefile-fn}
+    )}
+    {id util.buffer, kind @struct, name buffer, qualified buffer, signature "struct buffer", members (
+        "char *data"
+        "size_t len, cap"
+    ), file util.h, line_start 1, line_end 4, rules (
+        {verb def, id util.buffer}
+    )}
+    {id util.string, kind @struct, name string, qualified string, signature "struct string", members (
+        "size_t n"
+        "char s[]"
+    ), file util.h, line_start 6, line_end 9, rules (
+        {verb def, id util.string}
+    )}
+    {id util.evalstring, kind @struct, name evalstring, qualified evalstring, signature "struct evalstring", members (
+        "char *var"
+        "struct string *str"
+        "struct evalstring *next"
+    ), file util.h, line_start 12, line_end 16, rules (
+        {verb def, id util.evalstring}
+    )}
+)

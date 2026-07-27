@@ -1,11 +1,13 @@
 struct evalstring;
 struct string;
 
+// [spec:samurai:def:env.rule]
 struct rule {
 	char *name;
 	struct treenode *bindings;
 };
 
+// [spec:samurai:def:env.pool]
 struct pool {
 	char *name;
 	int numjobs, maxjobs;

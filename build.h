@@ -1,5 +1,6 @@
 struct node;
 
+// [spec:samurai:def:build.buildoptions]
 struct buildoptions {
 	size_t maxjobs, maxfail;
 	_Bool verbose, explain, keepdepfile, keeprsp, dryrun;

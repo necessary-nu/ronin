@@ -1,0 +1,91 @@
+# samu.c
+
+> [spec:samurai:def:samu.debugflag-fn]
+> static void debugflag(const char *flag)
+
+> [spec:samurai:sem:samu.debugflag-fn]
+> Compares `flag` with the supported debug switches. `explain` enables
+> build-explanation output, `keepdepfile` preserves depfiles, and `keeprsp`
+> preserves response files. Any other value is a fatal configuration error.
+
+> [spec:samurai:def:samu.getbuilddir-fn]
+> static char * getbuilddir(void)
+
+> [spec:samurai:sem:samu.getbuilddir-fn]
+> Looks up `builddir` in the root build environment. If it is absent, returns
+> null. Otherwise creates that directory hierarchy without treating an
+> existing directory as an error; exits unsuccessfully if that operation
+> fails, and returns the environment string's stored path without copying it.
+
+> [spec:samurai:def:samu.jobsflag-fn]
+> static void jobsflag(const char *flag)
+
+> [spec:samurai:sem:samu.jobsflag-fn]
+> Parses the complete argument as a base-10 signed integer. A trailing
+> non-numeric character or a negative value is fatal. A positive value becomes
+> the maximum job count; zero selects the sentinel `-1` meaning unlimited
+> jobs.
+
+> [spec:samurai:def:samu.loadflag-fn]
+> static void loadflag(const char *flag)
+
+> [spec:samurai:sem:samu.loadflag-fn]
+> On platforms with load-average support, parses the entire argument as a
+> non-negative floating-point value and stores it as the scheduler's maximum
+> load. Conversion errors, trailing characters, and negative values are
+> fatal. On other platforms it leaves scheduling unchanged and emits a warning
+> that the option is unsupported.
+
+> [spec:samurai:def:samu.main-fn]
+> int main(int argc, char *argv[])
+
+> [spec:samurai:sem:samu.main-fn]
+> Derives the program name, applies `SAMUFLAGS`, and parses command-line
+> options for directory, manifest, limits, debug and warning switches,
+> verbosity, dry-run mode, version output, and a selected tool. Invalid or
+> incomplete options print usage and exit. It chooses a default job count from
+> the processor count (2 for at most one processor, 3 for two, otherwise CPUs
+> plus 2), obtains `NINJA_STATUS` or the default status format, and line-buffers
+> standard output. For each manifest attempt it reinitializes graph,
+> environment, and parser state, then parses the manifest. A selected tool runs
+> immediately with the remaining positional arguments. Otherwise it opens the
+> build and dependency logs, rebuilds a generated manifest when it is dirty,
+> retrying parsing up to 100 times after a real (non-dry-run) manifest rebuild
+> that dirties its output or prunes dependencies. It resets build state after
+> that special build. Finally it adds each requested target (failing for an
+> unknown target), or all declared default targets, performs the build, closes
+> both logs, and returns success.
+
+> [spec:samurai:def:samu.parseenvargs-fn]
+> static void parseenvargs(char *env)
+
+> [spec:samurai:sem:samu.parseenvargs-fn]
+> Does nothing for a null environment value. Otherwise duplicates it, splits
+> it only on ASCII space (without quote or escape processing), and builds a
+> temporary argument vector with an empty program slot. More than 62 supplied
+> tokens is fatal. It accepts only `-j` (using the job parser), `-v` (enable
+> verbosity), and `-l` (using the load parser); any other option is fatal.
+> Frees the duplicate after successful option processing.
+
+> [spec:samurai:def:samu.progname-fn]
+> static const char * progname(const char *arg, const char *def)
+
+> [spec:samurai:sem:samu.progname-fn]
+> Returns `def` when `arg` is null; otherwise returns the substring following
+> the final `/` in `arg`, or `arg` itself when no slash is present. It returns a
+> borrowed pointer rather than allocating a new name.
+
+> [spec:samurai:def:samu.usage-fn]
+> static void usage(void)
+
+> [spec:samurai:sem:samu.usage-fn]
+> Writes the supported command synopsis, using the global program name, to
+> standard error and terminates the process with exit status 2.
+
+> [spec:samurai:def:samu.warnflag-fn]
+> static void warnflag(const char *flag)
+
+> [spec:samurai:sem:samu.warnflag-fn]
+> Recognizes only duplicate-build diagnostics: `dupbuild=err` disables the
+> duplicate-build warning mode, while `dupbuild=warn` enables it. Any other
+> warning switch is fatal.

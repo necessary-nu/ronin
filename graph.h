@@ -8,6 +8,7 @@ enum {
 	MTIME_MISSING = -2,
 };
 
+// [spec:samurai:def:graph.node]
 struct node {
 	/* shellpath is the escaped shell path, and is populated as needed by nodepath */
 	struct string *path, *shellpath;
@@ -30,6 +31,7 @@ struct node {
 };
 
 /* build rule, i.e., edge between inputs and outputs */
+// [spec:samurai:def:graph.edge]
 struct edge {
 	struct rule *rule;
 	struct pool *pool;

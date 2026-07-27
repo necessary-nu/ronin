@@ -7,12 +7,15 @@
 #include "util.h"
 #include "htab.h"
 
+// [spec:samurai:def:htab.hashtable]
 struct hashtable {
 	size_t len, cap;
 	struct hashtablekey *keys;
 	void **vals;
 };
 
+// [spec:samurai:def:htab.htabkey-fn]
+// [spec:samurai:sem:htab.htabkey-fn]
 void
 htabkey(struct hashtablekey *k, const char *s, size_t n)
 {
@@ -21,6 +24,8 @@ htabkey(struct hashtablekey *k, const char *s, size_t n)
 	k->hash = rapidhashv1(s, n);
 }
 
+// [spec:samurai:def:htab.mkhtab-fn]
+// [spec:samurai:sem:htab.mkhtab-fn]
 struct hashtable *
 mkhtab(size_t cap)
 {
@@ -39,6 +44,8 @@ mkhtab(size_t cap)
 	return h;
 }
 
+// [spec:samurai:def:htab.delhtab-fn]
+// [spec:samurai:sem:htab.delhtab-fn]
 void
 delhtab(struct hashtable *h, void del(void *))
 {
@@ -57,6 +64,8 @@ delhtab(struct hashtable *h, void del(void *))
 	free(h);
 }
 
+// [spec:samurai:def:htab.keyequal-fn]
+// [spec:samurai:sem:htab.keyequal-fn]
 static bool
 keyequal(struct hashtablekey *k1, struct hashtablekey *k2)
 {
@@ -65,6 +74,8 @@ keyequal(struct hashtablekey *k1, struct hashtablekey *k2)
 	return memcmp(k1->str, k2->str, k1->len) == 0;
 }
 
+// [spec:samurai:def:htab.keyindex-fn]
+// [spec:samurai:sem:htab.keyindex-fn]
 static size_t
 keyindex(struct hashtable *h, struct hashtablekey *k)
 {
@@ -76,6 +87,8 @@ keyindex(struct hashtable *h, struct hashtablekey *k)
 	return i;
 }
 
+// [spec:samurai:def:htab.htabput-fn]
+// [spec:samurai:sem:htab.htabput-fn]
 void **
 htabput(struct hashtable *h, struct hashtablekey *k)
 {
@@ -112,6 +125,8 @@ htabput(struct hashtable *h, struct hashtablekey *k)
 	return &h->vals[i];
 }
 
+// [spec:samurai:def:htab.htabget-fn]
+// [spec:samurai:sem:htab.htabget-fn]
 void *
 htabget(struct hashtable *h, struct hashtablekey *k)
 {
@@ -121,6 +136,8 @@ htabget(struct hashtable *h, struct hashtablekey *k)
 	return h->keys[i].str ? h->vals[i] : NULL;
 }
 
+// [spec:samurai:def:htab.getle32-fn]
+// [spec:samurai:sem:htab.getle32-fn]
 static inline uint_least32_t
 getle32(const void *p)
 {
@@ -134,6 +151,8 @@ getle32(const void *p)
 	return v;
 }
 
+// [spec:samurai:def:htab.getle64-fn]
+// [spec:samurai:sem:htab.getle64-fn]
 static inline uint_least64_t
 getle64(const void *p)
 {
@@ -157,6 +176,8 @@ getle64(const void *p)
 #define uint128 __uint128_t
 #endif
 
+// [spec:samurai:def:htab.mum-fn]
+// [spec:samurai:sem:htab.mum-fn]
 static inline void
 mum(uint64_t *a, uint64_t *b)
 {
@@ -188,6 +209,8 @@ mum(uint64_t *a, uint64_t *b)
 #endif
 }
 
+// [spec:samurai:def:htab.mix-fn]
+// [spec:samurai:sem:htab.mix-fn]
 static inline uint64_t
 mix(uint64_t a, uint64_t b)
 {
@@ -195,6 +218,8 @@ mix(uint64_t a, uint64_t b)
 	return a ^ b;
 }
 
+// [spec:samurai:def:htab.rapidhashv1-fn]
+// [spec:samurai:sem:htab.rapidhashv1-fn]
 uint64_t
 rapidhashv1(const void *ptr, size_t len)
 {

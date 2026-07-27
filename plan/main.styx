@@ -1,0 +1,30 @@
+name samurai
+
+source {
+    url "git@github.com:necessary-nu/samurai.git"
+    ref master
+}
+
+children (
+    {
+        id ninja-upstream-tests
+        title "Port Ninja upstream unit-test coverage to Rust"
+        priority 0
+        sealed true
+        log (
+            {
+                at 2026-07-27T10:06:28.585721183Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-07-27T12:40:39.73628072Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
+    }
+)
