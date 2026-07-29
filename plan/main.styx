@@ -58,4 +58,368 @@ children (
             }
         )
     }
+
+    {
+        id ronin-idiomatization
+        title "Idiomatize Ronin while preserving Ninja compatibility"
+        children (
+            {
+                id ronin-compatibility-contract
+                title "Codify Ronin identity and Ninja compatibility contract"
+                priority 0
+                sealed true
+                log (
+                    {
+                        at 2026-07-29T14:36:52.699420889Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Define a reviewable compatibility matrix for Ninja build-language semantics, CLI behavior, tool modes, pools, depfiles, dyndeps, logs, jobserver behavior, output ordering, exit status, and version reporting. Preserve Ninja-owned names and wire formats including .ninja_log, .ninja_deps, # ninjadeps, and ninja_required_version. Record SAMUFLAGS as explicitly unsupported. Add the necessary spec rules and attach their ownership to the downstream WBS nodes."
+                    }
+
+                    {
+                        at 2026-07-29T14:40:23.199458222Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T14:42:48.460448631Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Compatibility oracle pinned to upstream Ninja 1.14.0.git commit b51a1e37c2fb89bbefa600bd155e1ce13983f09d. Ronin owns product identity; Ninja-owned build-language tokens, NINJA_STATUS, tool names, and persistent wire formats remain unchanged. SAMUFLAGS is deliberately outside the compatibility surface. Sixteen cross-cutting requirements are assigned uniquely to downstream WBS owners."
+                    }
+
+                    {
+                        at 2026-07-29T14:43:16.619792904Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id ronin-product-identity
+                title "Rename product and CLI to Ronin and remove SAMUFLAGS"
+                priority 0
+                implements {
+                    target-impl (
+                        [spec:samurai:req:product.ronin-identity]
+                        [spec:samurai:req:product.no-samuflags]
+                        [spec:samurai:req:compat.version-reporting]
+                        [spec:samurai:req:compat.ninja-owned-names]
+                    )
+                }
+                deps (ronin-compatibility-contract)
+                log (
+                    {
+                        at 2026-07-29T14:36:52.781901212Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Rename the Cargo package, executable, supported library surface, CLI module, diagnostics, documentation, and Ronin-owned test/temp prefixes. Remove SAMUFLAGS lookup, parsing, diagnostics, and tests. Do not introduce a SAMUFLAGS compatibility alias; RONINFLAGS is not required by this scope. Keep Ninja-owned compatibility names unchanged."
+                    }
+                )
+            }
+
+            {
+                id ronin-architecture-decisions
+                title "Record core data, parser, scheduler, and I/O architecture decisions"
+                priority 0
+                deps (ronin-compatibility-contract)
+                log (
+                    {
+                        at 2026-07-29T14:36:52.876176412Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Create AKM elements and decisions covering byte/path representation, typed arena identities, deterministic iteration and output, graph mutation and invalidation, parser ownership, completion-driven scheduling, process supervision, jobserver tokens, output delivery, and Ninja compatibility boundaries."
+                    }
+                )
+            }
+
+            {
+                id ronin-performance-baseline
+                title "Establish Ninja differential and performance baselines"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:performance.reproducible-baseline])
+                }
+                deps (ronin-product-identity)
+                log (
+                    {
+                        at 2026-07-29T14:36:52.936496305Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Add reproducible baselines before structural optimization: upstream Ninja fake-manifest load and command evaluation, no-op CLI builds, canonicalization, depfile parsing, log loading, wide and deep graphs, and a scheduler-barrier workload. Compare Ronin with upstream Ninja and the original C samurai where applicable; record wall time, allocations or peak RSS, and stable benchmark inputs."
+                    }
+                )
+            }
+
+            {
+                id ronin-byte-data-model
+                title "Adopt byte-exact strings, paths, and evaluation parts"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.byte-inputs])
+                }
+                deps (ronin-architecture-decisions ronin-performance-baseline)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.025087424Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Replace SamuraiString and boxed EvalString fragments with byte-exact owned and borrowed types plus a vector of evaluation parts. Preserve arbitrary Unix path bytes, convert through OsStr/Path only at OS boundaries, avoid lossy path conversion, canonicalize without per-component allocations, and define explicit shell-escaped display behavior."
+                    }
+                )
+            }
+
+            {
+                id ronin-graph-arenas
+                title "Replace reference-counted graph ownership with typed arenas"
+                priority 0
+                deps (ronin-byte-data-model)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.117292729Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Introduce NodeId, EdgeId, RuleId, PoolId, and EnvironmentId over stable arenas. Replace Rc<RefCell>, Weak links, pointer identities, and reference-cloning adjacency with IDs and graph-owned mutation helpers. Preserve append/dyndep behavior, deterministic tie-breaking, and the existing graph semantic tests."
+                    }
+                )
+            }
+
+            {
+                id ronin-graph-evaluation
+                title "Make graph evaluation iterative, memoized, and ID-indexed"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.graph-semantics])
+                }
+                deps (ronin-graph-arenas)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.215814701Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Use iterative worklists, dense ID-indexed state, generation markers, and an actual priority heap. Avoid repeated per-target DFS passes and adjacency clones; define invalidation for command completion, restat, depfile changes, and dyndep mutations. Preserve cycle diagnostics, dirty-state semantics, validations, pools, and stable scheduling ties."
+                    }
+                )
+            }
+
+            {
+                id ronin-byte-parser
+                title "Unify manifest scanning and parsing over bytes and spans"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.manifest-semantics])
+                }
+                deps (ronin-graph-arenas)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.310164012Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Consolidate scan.rs and parse.rs into one byte-oriented lexer/parser using spans or borrowed slices. Avoid Vec<char>, Vec<String> logical-line rebuilding, and boxed fragments; preserve includes, subninja scopes, escapes, CRLF, diagnostics, duplicate-output policy, dynamic dependencies, and every Ninja parser/lexer conformance case."
+                    }
+                )
+            }
+
+            {
+                id ronin-dependency-io
+                title "Linearize depfile, dyndep, and Ninja log processing"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.persistent-state])
+                }
+                deps (ronin-graph-arenas)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.379553396Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Make depfile deduplication linear while preserving order; use typed IDs for deps and dyndep lookup; remove whole-graph identity scans; reuse buffers or stream log parsing where beneficial. Preserve Ninja .ninja_log and .ninja_deps signatures, versions, truncation recovery, recompact behavior, durability requirements, and cross-tool readability."
+                    }
+                )
+            }
+
+            {
+                id ronin-event-scheduler
+                title "Replace batch barriers with completion-driven scheduling"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.scheduling])
+                }
+                deps (ronin-graph-evaluation)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.470304763Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Replace batch-wide joins with an event loop that handles one completion at a time, releases dependents, and immediately fills newly available capacity. Preserve critical-path ordering, failure limits, restat and dyndep replanning, console exclusivity, pools, dry-run semantics, and load limiting."
+                    }
+                )
+            }
+
+            {
+                id ronin-process-integration
+                title "Integrate subprocess, pools, jobserver, signals, and console execution"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.process-integration])
+                }
+                deps (ronin-event-scheduler)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.548472654Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Connect the active builder to one process subsystem. Use RAII process and descriptor ownership, completion messages keyed by EdgeId, correct stdout/stderr capture, console passthrough, signal and process-group handling, pool accounting, and GNU Make jobserver token acquisition/release on supported platforms."
+                    }
+                )
+            }
+
+            {
+                id ronin-command-runtime
+                title "Cache command evaluation and stream build output"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.command-runtime])
+                }
+                deps (ronin-byte-parser ronin-dependency-io ronin-process-integration)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.613644257Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Evaluate and cache prepared commands only after depfile/dyndep inputs are final, with explicit invalidation when effective inputs or bindings change. Hash incrementally without concatenation, write response files once, stream status and command output through injectable sinks, and preserve Ninja-visible output ordering, verbose, explain, and failure behavior."
+                    }
+                )
+            }
+
+            {
+                id ronin-runtime-consolidation
+                title "Retire duplicate compatibility paths and connect supported Ninja tools"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.cli-and-tools])
+                }
+                deps (ronin-command-runtime)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.772448341Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Remove the duplicate legacy builder, unused scanner/parser path, synchronous subprocess facade, duplicate priority queue, obsolete tree/hash-table compatibility APIs, and duplicated OS adapters only after the live implementation carries their semantic coverage. Connect every Ninja tool mode required by the compatibility matrix; narrow module visibility to the supported Ronin surface."
+                    }
+                )
+            }
+
+            {
+                id ronin-ninja-conformance
+                title "Pass Ninja differential, upstream, and on-disk compatibility gates"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:compat.upstream-conformance])
+                }
+                deps (ronin-runtime-consolidation)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.836015244Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Run the complete relevant upstream Ninja test suite plus Rust unit/integration tests and differential CLI fixtures. Verify build-language results, scheduling constraints, tools, diagnostics where contractually relevant, exit status, signals, and bidirectional .ninja_log/.ninja_deps interoperability. Do not add SAMUFLAGS expectations."
+                    }
+                )
+            }
+
+            {
+                id ronin-performance-validation
+                title "Measure and close performance regressions against baselines"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:performance.no-unexplained-regression])
+                }
+                deps (ronin-ninja-conformance)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.899780329Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Re-run every recorded baseline after the structural work. Reject unexplained regressions, profile remaining time and allocation hot spots, and create follow-up WBS nodes for measured work rather than speculative micro-optimization. Preserve conformance while tuning."
+                    }
+                )
+            }
+
+            {
+                id ronin-error-api
+                title "Introduce typed errors and narrow the supported Rust API"
+                priority 1
+                deps (ronin-performance-validation)
+                log (
+                    {
+                        at 2026-07-29T14:36:53.961528398Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Replace Result<_, String> plumbing with structured CLI, manifest, graph, build, and log errors while preserving required Ninja-compatible display text and sources. Make modules and fields private or pub(crate) by default and explicitly document any supported ronin_core API."
+                    }
+                )
+            }
+
+            {
+                id ronin-idiom-polish
+                title "Resolve idiom, safety, formatting, and lint debt"
+                priority 1
+                deps (ronin-error-api)
+                log (
+                    {
+                        at 2026-07-29T14:36:54.006565973Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Resolve remaining pedantic and nursery Clippy findings by design, remove C lifecycle shims, isolate and document unavoidable unsafe code, use standard naming and iterator/borrowing conventions, update Rust-focused documentation, and keep cargo fmt clean throughout."
+                    }
+                )
+            }
+
+            {
+                id ronin-release-tuning
+                title "Apply measured release-profile and remaining hot-path tuning"
+                priority 1
+                deps (ronin-idiom-polish)
+                log (
+                    {
+                        at 2026-07-29T14:36:54.109653251Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Apply release profile changes, alternative hashers, buffer sizing, LTO, codegen-unit changes, PGO, or platform-specific fast paths only when the benchmark and profiler evidence justifies them. Keep deterministic and adversarial-input behavior explicit."
+                    }
+                )
+            }
+
+            {
+                id ronin-release-gate
+                title "Run final Ninja compatibility, performance, packaging, and nplan gates"
+                priority 1
+                implements {
+                    target-impl ([spec:samurai:req:release.compatibility-gate])
+                }
+                deps (ronin-release-tuning)
+                log (
+                    {
+                        at 2026-07-29T14:36:54.159349202Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Require cargo fmt --check, cargo check, all Rust tests, full relevant Ninja conformance and differential suites, release build/package verification under the Ronin name, performance thresholds, nplan lint/audit, and zero uncovered or stale spec rules."
+                    }
+                )
+            }
+        )
+        log (
+            {
+                at 2026-07-29T14:36:52.645025428Z
+                author "brendan@bbqsrc.net"
+                kind @decision
+                text "Operator-approved scope: the product and executable are Ronin; Ninja compatibility is the behavioral target. SAMUFLAGS is not part of the compatibility surface and must be removed without a legacy alias. Preserve or deliberately version every existing semantic rule, add verification for changed behavior, run cargo fmt and the relevant Rust and Ninja suites for every implementation slice. The compatibility-contract node must define new rules and assign them to downstream implementation nodes before code work begins."
+            }
+        )
+    }
 )
