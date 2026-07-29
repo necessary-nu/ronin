@@ -1,0 +1,206 @@
+elements (
+    {
+        id [arch:ronin:core-data]
+        name "Byte-exact core data"
+        kind @capability
+        lifecycle @active
+        owns ([spec:samurai:req:compat.byte-inputs])
+        exposes (
+            "src/util.rs"
+            "src/env.rs"
+            "src/htab.rs"
+            "src/tree.rs"
+        )
+        depends_on ()
+        composed_of ()
+        decisions ([dec:ronin:byte-exact-core])
+        log (
+            {
+                at "2026-07-29T15:01:41Z"
+                kind @established
+                by "[dec:ronin:byte-exact-core]"
+            }
+        )
+    }
+
+    {
+        id [arch:ronin:graph-engine]
+        name "Graph storage and evaluation"
+        kind @subsystem
+        lifecycle @active
+        owns ([spec:samurai:req:compat.graph-semantics])
+        exposes (
+            "src/graph.rs"
+            "src/explanations.rs"
+            "src/missing_deps.rs"
+        )
+        depends_on ([arch:ronin:core-data])
+        composed_of ()
+        decisions (
+            [dec:ronin:typed-graph-arenas]
+            [dec:ronin:iterative-graph-evaluation]
+        )
+        log (
+            {
+                at "2026-07-29T15:01:41Z"
+                kind @established
+                by "[dec:ronin:typed-graph-arenas]"
+            }
+        )
+    }
+
+    {
+        id [arch:ronin:manifest-frontend]
+        name "Ninja manifest frontend"
+        kind @subsystem
+        lifecycle @active
+        owns ([spec:samurai:req:compat.manifest-semantics])
+        exposes (
+            "src/scan.rs"
+            "src/parse.rs"
+            "src/dyndep.rs"
+        )
+        depends_on (
+            [arch:ronin:core-data]
+            [arch:ronin:graph-engine]
+        )
+        composed_of ()
+        decisions ([dec:ronin:byte-span-parser])
+        log (
+            {
+                at "2026-07-29T15:01:41Z"
+                kind @established
+                by "[dec:ronin:byte-span-parser]"
+            }
+        )
+    }
+
+    {
+        id [arch:ronin:persistence]
+        name "Ninja-compatible persistent state"
+        kind @boundary
+        lifecycle @active
+        owns ([spec:samurai:req:compat.persistent-state])
+        exposes (
+            "src/deps.rs"
+            "src/log.rs"
+        )
+        depends_on (
+            [arch:ronin:core-data]
+            [arch:ronin:graph-engine]
+        )
+        composed_of ()
+        decisions ([dec:ronin:ninja-persistence-boundary])
+        log (
+            {
+                at "2026-07-29T15:01:41Z"
+                kind @established
+                by "[dec:ronin:ninja-persistence-boundary]"
+            }
+        )
+    }
+
+    {
+        id [arch:ronin:execution]
+        name "Build scheduling and process supervision"
+        kind @subsystem
+        lifecycle @active
+        owns (
+            [spec:samurai:req:compat.scheduling]
+            [spec:samurai:req:compat.process-integration]
+            [spec:samurai:req:compat.command-runtime]
+        )
+        exposes (
+            "src/build.rs"
+            "src/build/**"
+            "src/subprocess.rs"
+            "src/jobserver.rs"
+            "src/os.rs"
+            "src/msvc.rs"
+        )
+        depends_on (
+            [arch:ronin:core-data]
+            [arch:ronin:graph-engine]
+            [arch:ronin:persistence]
+        )
+        composed_of ()
+        decisions ([dec:ronin:completion-driven-execution])
+        log (
+            {
+                at "2026-07-29T15:01:41Z"
+                kind @established
+                by "[dec:ronin:completion-driven-execution]"
+            }
+        )
+    }
+
+    {
+        id [arch:ronin:cli]
+        name "Ronin CLI and Ninja tools"
+        kind @boundary
+        lifecycle @active
+        owns (
+            [spec:samurai:req:product.ronin-identity]
+            [spec:samurai:req:product.no-samuflags]
+            [spec:samurai:req:compat.version-reporting]
+            [spec:samurai:req:compat.ninja-owned-names]
+            [spec:samurai:req:compat.cli-and-tools]
+        )
+        exposes (
+            "src/main.rs"
+            "src/cli.rs"
+            "src/tool.rs"
+        )
+        depends_on (
+            [arch:ronin:graph-engine]
+            [arch:ronin:manifest-frontend]
+            [arch:ronin:persistence]
+            [arch:ronin:execution]
+        )
+        composed_of ()
+        decisions ([dec:ronin:product-boundary])
+        log (
+            {
+                at "2026-07-29T15:01:41Z"
+                kind @established
+                by "[dec:ronin:product-boundary]"
+            }
+        )
+    }
+
+    {
+        id [arch:ronin:verification]
+        name "Compatibility and performance verification"
+        kind @capability
+        lifecycle @active
+        owns (
+            [spec:samurai:req:compat.upstream-conformance]
+            [spec:samurai:req:performance.reproducible-baseline]
+            [spec:samurai:req:performance.no-unexplained-regression]
+            [spec:samurai:req:release.compatibility-gate]
+        )
+        exposes (
+            "tests/**"
+            "examples/**"
+            "benchmarks/**"
+            "docs/spec/ronin/**"
+        )
+        depends_on (
+            [arch:ronin:core-data]
+            [arch:ronin:graph-engine]
+            [arch:ronin:manifest-frontend]
+            [arch:ronin:persistence]
+            [arch:ronin:execution]
+            [arch:ronin:cli]
+        )
+        composed_of ()
+        decisions ([dec:ronin:ninja-compatibility-oracle])
+        log (
+            {
+                at "2026-07-29T15:01:41Z"
+                kind @established
+                by "[dec:ronin:ninja-compatibility-oracle]"
+            }
+        )
+    }
+)

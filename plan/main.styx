@@ -141,12 +141,34 @@ children (
                 title "Record core data, parser, scheduler, and I/O architecture decisions"
                 priority 0
                 deps (ronin-compatibility-contract)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:52.876176412Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Create AKM elements and decisions covering byte/path representation, typed arena identities, deterministic iteration and output, graph mutation and invalidation, parser ownership, completion-driven scheduling, process supervision, jobserver tokens, output delivery, and Ninja compatibility boundaries."
+                    }
+
+                    {
+                        at 2026-07-29T15:01:33.259574046Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T15:04:46.933024912Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Registered seven active Ronin boundaries and eight approved decisions. Dense typed Vec arenas and iterative ID-indexed evaluation are selected to address the measured 16.47x Ninja deep-graph regression. The byte frontend operates on exact bytes and spans; Ninja state formats remain interoperability boundaries; process concurrency uses one completion-driven supervisor without a general async runtime; the pinned full Ninja suite remains the release oracle."
+                    }
+
+                    {
+                        at 2026-07-29T15:04:54.558370385Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
