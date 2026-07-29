@@ -173,6 +173,14 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-07-29T14:59:47.381408923Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Recorded clean-revision v1 baseline at Ronin 6fd3bfab9d110f67fc89bb03b62ab56de7f847c6 versus Ninja b51a1e37c2fb89bbefa600bd155e1ce13983f09d and C samurai 1.9.0. Deep graph evaluation is the dominant regression: 287.159 ms median versus Ninja 17.432 ms (16.47x) and C 5.055 ms (56.8x). Scheduler barrier is at Ninja parity; command evaluation, wide no-op, canonicalization, and dependency-log load are faster than Ninja on this host but require conformance confirmation before optimization claims."
+                        after_done true
+                    }
                 )
             }
 
