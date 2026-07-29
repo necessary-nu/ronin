@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T17:12:11.972818496Z
+last_sync_at 2026-07-29T17:32:44.08181584Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -51,6 +51,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id compat.persistent-state, version 0}
     )}
+    {id ronin-event-scheduler, covered_rules (
+        compat.scheduling
+    ), covered_claims (
+        {impl_name target-impl, rule compat.scheduling}
+    ), rule_versions_seen (
+        {id compat.scheduling, version 0}
+    )}
     {id ronin-graph-evaluation, covered_rules (
         compat.graph-semantics
     ), covered_claims (
@@ -81,9 +88,9 @@ impl_evidence (
         {id product.no-samuflags, version 0}
         {id product.ronin-identity, version 0}
     )}
-    {id ronin-event-scheduler, covered_rules (
-        compat.scheduling
+    {id ronin-process-integration, covered_rules (
+        compat.process-integration
     ), covered_claims (
-        {impl_name target-impl, rule compat.scheduling}
+        {impl_name target-impl, rule compat.process-integration}
     )}
 )

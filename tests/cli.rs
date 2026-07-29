@@ -112,3 +112,40 @@ fn accepts_a_non_utf8_manifest_argument() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[cfg(unix)]
+// [spec:samurai:req:compat.process-integration/test]
+#[test]
+fn forwards_interrupts_and_removes_partial_outputs() {
+    use std::os::raw::c_int;
+    use std::os::unix::process::ExitStatusExt;
+    use std::time::Duration;
+
+    unsafe extern "C" {
+        fn kill(pid: c_int, signal: c_int) -> c_int;
+    }
+
+    let directory = test_directory("interrupt-forwarding");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule slow\n  command = touch $out; touch started; sleep 30\nbuild output: slow\ndefault output\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .spawn()
+        .unwrap();
+    for _ in 0..200 {
+        if directory.join("started").exists() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(directory.join("started").exists());
+    assert_eq!(unsafe { kill(child.id() as c_int, 2) }, 0);
+    let status = child.wait().unwrap();
+    assert_eq!(status.signal(), Some(2));
+    assert!(!directory.join("output").exists());
+    fs::remove_dir_all(directory).unwrap();
+}

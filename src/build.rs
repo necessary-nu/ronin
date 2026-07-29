@@ -5,12 +5,12 @@ use crate::graph::{
     recompute_edge_dirty_with, EdgeId, Graph, NodeId, FLAG_DIRTY, FLAG_DIRTY_OUT, FLAG_WORK,
 };
 use crate::os::{osmkdirs, RealDiskInterface, MTIME_MISSING};
+use crate::subprocess::{status_interrupted, ProcessOutput, ProcessSupervisor};
 use crate::util::{BString, ByteSlice};
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 // [spec:samurai:def:build.buildoptions]
@@ -25,6 +25,7 @@ pub struct BuildOptions {
     pub dryrun: bool,
     pub statusfmt: String,
     pub maxload: f64,
+    pub jobserver: crate::jobserver::JobserverConfig,
 }
 
 impl Default for BuildOptions {
@@ -39,6 +40,7 @@ impl Default for BuildOptions {
             dryrun: false,
             statusfmt: "[%s/%t] ".into(),
             maxload: 0.0,
+            jobserver: crate::jobserver::JobserverConfig::default(),
         }
     }
 }
@@ -378,25 +380,6 @@ struct PreparedEdge {
     depfile_path: Option<BString>,
     command_start_mtime: i64,
     use_console: bool,
-}
-
-struct ShellOutput {
-    status: std::process::ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
-}
-
-fn status_interrupted(status: &std::process::ExitStatus) -> bool {
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::ExitStatusExt;
-        matches!(status.signal(), Some(1 | 2 | 3 | 15))
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = status;
-        false
-    }
 }
 
 impl<'a> Builder<'a> {
@@ -771,44 +754,10 @@ impl<'a> Builder<'a> {
         })
     }
 
-    fn execute_edge(
-        command: &BString,
-        use_console: bool,
-        dryrun: bool,
-    ) -> Result<Option<ShellOutput>, String> {
-        if dryrun {
-            return Ok(None);
-        }
-        if use_console {
-            let status = Command::new("/bin/sh")
-                .arg("-c")
-                .arg(command.to_os_str().expect("byte strings are valid on Unix"))
-                .status()
-                .map_err(|error| error.to_string())?;
-            Ok(Some(ShellOutput {
-                status,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-            }))
-        } else {
-            let result = Command::new("/bin/sh")
-                .arg("-c")
-                .arg(command.to_os_str().expect("byte strings are valid on Unix"))
-                .stdin(Stdio::null())
-                .output()
-                .map_err(|error| error.to_string())?;
-            Ok(Some(ShellOutput {
-                status: result.status,
-                stdout: result.stdout,
-                stderr: result.stderr,
-            }))
-        }
-    }
-
     fn finish_edge(
         &mut self,
         prepared: PreparedEdge,
-        result: Result<Option<ShellOutput>, String>,
+        result: Result<Option<ProcessOutput>, String>,
     ) -> Result<(bool, Vec<NodeId>), String> {
         let PreparedEdge {
             edge,
@@ -833,7 +782,7 @@ impl<'a> Builder<'a> {
             }
         };
         let mut msvc_deps = Vec::new();
-        if let Some(ShellOutput {
+        if let Some(ProcessOutput {
             status,
             stdout,
             stderr,
@@ -1004,22 +953,12 @@ impl<'a> Builder<'a> {
         Ok((pruned, loaded_dyndeps))
     }
 
-    fn run_edge(&mut self, edge: EdgeId) -> Result<(bool, Vec<NodeId>), String> {
-        let is_phony = self
-            .graph
-            .edge(edge)
-            .rule
-            .is_some_and(|rule| self.graph.rule(rule).name == "phony");
-        if is_phony {
-            for output in self.graph.edge(edge).out.clone() {
-                self.graph.node_mut(output).dirty = false;
-            }
-            return Ok((false, Vec::new()));
+    fn finish_phony_edge(&mut self, edge: EdgeId) -> (bool, Vec<NodeId>) {
+        for index in 0..self.graph.edge(edge).out.len() {
+            let output = self.graph.edge(edge).out[index];
+            self.graph.node_mut(output).dirty = false;
         }
-        let prepared = self.prepare_edge(edge)?;
-        let result =
-            Self::execute_edge(&prepared.command, prepared.use_console, self.options.dryrun);
-        self.finish_edge(prepared, result)
+        (false, Vec::new())
     }
 
     fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> Result<(), String> {
@@ -1135,6 +1074,7 @@ impl<'a> Builder<'a> {
     }
 
     // [spec:samurai:req:compat.scheduling]
+    // [spec:samurai:req:compat.process-integration]
     pub fn build(&mut self) -> Result<(), String> {
         self.plan.prepare_queue(self.graph);
         let mut failures = 0;
@@ -1142,19 +1082,35 @@ impl<'a> Builder<'a> {
         let failure_limit = self.options.maxfail.max(1);
         let mut running = Vec::new();
         running.resize_with(self.graph.edge_count(), || None);
-        let mut running_count = 0;
+        let mut running_slots = Vec::new();
+        running_slots.resize_with(self.graph.edge_count(), crate::jobserver::Slot::default);
         let mut console_running = false;
-        let (completion_sender, completion_receiver) = std::sync::mpsc::channel();
+        let mut processes = ProcessSupervisor::default();
+        #[cfg(unix)]
+        let mut jobserver = if !self.options.dryrun && self.options.jobserver.has_mode() {
+            Some(crate::jobserver::create_client(&self.options.jobserver)?)
+        } else {
+            None
+        };
 
         std::thread::scope(|scope| {
             loop {
+                if let Some(signal) = crate::subprocess::interrupted_signal() {
+                    processes.interrupt(signal);
+                    failures = failure_limit;
+                    last_error = Some("interrupted by user".into());
+                }
+                let mut waiting_for_jobserver = false;
                 let maxjobs =
                     if self.options.maxload > 0.0 && legacy::queryload() > self.options.maxload {
                         1
                     } else {
                         self.options.maxjobs.max(1)
                     };
-                while !console_running && running_count < maxjobs && failures < failure_limit {
+                while !console_running
+                    && processes.running_len() < maxjobs
+                    && failures < failure_limit
+                {
                     let Some(edge) = self.plan.find_work(self.graph) else {
                         break;
                     };
@@ -1164,7 +1120,7 @@ impl<'a> Builder<'a> {
                         .rule
                         .is_some_and(|rule| self.graph.rule(rule).name == "phony");
                     if is_phony {
-                        let result = self.run_edge(edge);
+                        let result = Ok(self.finish_phony_edge(edge));
                         if let Err(error) = self.settle_edge(edge, result) {
                             failures += 1;
                             last_error = Some(error);
@@ -1176,31 +1132,37 @@ impl<'a> Builder<'a> {
                         .edge(edge)
                         .pool
                         .is_some_and(|pool| self.graph.pool(pool).name == "console");
-                    if use_console && running_count != 0 {
+                    if use_console && processes.running_len() != 0 {
                         self.plan.defer_work(self.graph, edge);
                         break;
+                    }
+                    let mut slot = crate::jobserver::Slot::default();
+                    #[cfg(unix)]
+                    if let Some(client) = jobserver.as_mut() {
+                        slot = client.try_acquire();
+                        if !slot.is_valid() {
+                            self.plan.defer_work(self.graph, edge);
+                            waiting_for_jobserver = true;
+                            break;
+                        }
                     }
                     match self.prepare_edge(edge) {
                         Ok(prepared) => {
                             let command = prepared.command.clone();
                             let dryrun = self.options.dryrun;
-                            let sender = completion_sender.clone();
                             running[edge.index()] = Some(prepared);
-                            running_count += 1;
+                            running_slots[edge.index()] = slot;
                             console_running = use_console;
-                            scope.spawn(move || {
-                                let result =
-                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                        Self::execute_edge(&command, use_console, dryrun)
-                                    }))
-                                    .unwrap_or_else(|_| Err("subcommand thread panicked".into()));
-                                let _ = sender.send((edge, result));
-                            });
+                            processes.spawn(scope, edge, command, use_console, dryrun);
                             if use_console {
                                 break;
                             }
                         }
                         Err(error) => {
+                            #[cfg(unix)]
+                            if let Some(client) = jobserver.as_mut() {
+                                client.release(slot);
+                            }
                             self.plan
                                 .edge_finished(self.graph, edge, EdgeResult::Failed)?;
                             failures += 1;
@@ -1209,20 +1171,31 @@ impl<'a> Builder<'a> {
                     }
                 }
 
-                if running_count == 0 {
+                if processes.running_len() == 0 {
                     break;
                 }
-                let (edge, result) = completion_receiver
-                    .recv()
-                    .expect("running command threads retain a completion sender");
+                let timeout = Some(std::time::Duration::from_millis(if waiting_for_jobserver {
+                    1
+                } else {
+                    10
+                }));
+                let completion = processes.wait(timeout)?;
+                let Some(completion) = completion else {
+                    continue;
+                };
+                let edge = completion.edge;
                 let prepared = running[edge.index()]
                     .take()
                     .expect("completed edges have running preparation state");
-                running_count -= 1;
+                let slot = running_slots[edge.index()].take();
+                #[cfg(unix)]
+                if let Some(client) = jobserver.as_mut() {
+                    client.release(slot);
+                }
                 if prepared.use_console {
                     console_running = false;
                 }
-                let result = self.finish_edge(prepared, result);
+                let result = self.finish_edge(prepared, completion.result);
                 if let Err(error) = self.settle_edge(edge, result) {
                     failures += 1;
                     last_error = Some(error);

@@ -338,17 +338,33 @@ fn parse_run_arguments(arguments: &[BString]) -> Result<RunAction, String> {
     Ok(RunAction::Execute(invocation))
 }
 
-fn normalize_runtime_options(options: &mut BuildOptions) {
+// [spec:samurai:req:compat.process-integration]
+fn normalize_runtime_options(
+    options: &mut BuildOptions,
+    makeflags: Option<&str>,
+) -> Result<(), String> {
     if options.maxjobs == 0 {
-        options.maxjobs = match crate::os::osnproc() {
-            i64::MIN..=1 => 2,
-            2 => 3,
-            count => (count + 2) as usize,
-        };
+        let jobserver = crate::jobserver::parse_makeflags_value(makeflags)?;
+        if cfg!(unix)
+            && matches!(
+                jobserver.mode,
+                crate::jobserver::JobserverMode::PosixFifo | crate::jobserver::JobserverMode::Pipe
+            )
+        {
+            options.maxjobs = usize::MAX;
+            options.jobserver = jobserver;
+        } else {
+            options.maxjobs = match crate::os::osnproc() {
+                i64::MIN..=1 => 2,
+                2 => 3,
+                count => (count + 2) as usize,
+            };
+        }
     }
     if let Ok(status) = std::env::var(NINJA_STATUS_ENV) {
         options.statusfmt = status;
     }
+    Ok(())
 }
 
 fn default_target_names(parser: &crate::parse::Parser, graph: &crate::graph::Graph) -> Vec<String> {
@@ -475,7 +491,8 @@ fn run_bytes(arguments: &[BString]) -> Result<String, String> {
     let RunAction::Execute(mut invocation) = parse_run_arguments(arguments)? else {
         return Ok(NINJA_COMPAT_VERSION.into());
     };
-    normalize_runtime_options(&mut invocation.build_options);
+    let makeflags = std::env::var("MAKEFLAGS").ok();
+    normalize_runtime_options(&mut invocation.build_options, makeflags.as_deref())?;
 
     let mut output = String::new();
     for _ in 0..100 {
@@ -615,6 +632,37 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT_RUN: AtomicUsize = AtomicUsize::new(0);
+
+    #[cfg(unix)]
+    #[test]
+    fn rust_cli_uses_supported_make_jobserver() {
+        let mut options = BuildOptions::default();
+        normalize_runtime_options(
+            &mut options,
+            Some("-j --jobserver-auth=fifo:/tmp/ronin-jobserver"),
+        )
+        .unwrap();
+        assert_eq!(options.maxjobs, usize::MAX);
+        assert_eq!(
+            options.jobserver,
+            crate::jobserver::JobserverConfig {
+                mode: crate::jobserver::JobserverMode::PosixFifo,
+                path: "/tmp/ronin-jobserver".into(),
+            }
+        );
+
+        let mut explicit = BuildOptions {
+            maxjobs: 2,
+            ..BuildOptions::default()
+        };
+        normalize_runtime_options(&mut explicit, Some("-j --jobserver-auth=fifo:/tmp/ignored"))
+            .unwrap();
+        assert_eq!(explicit.maxjobs, 2);
+        assert_eq!(
+            explicit.jobserver,
+            crate::jobserver::JobserverConfig::default()
+        );
+    }
 
     #[test]
     fn rust_cli_builds_requested_target_with_logs() {

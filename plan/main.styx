@@ -376,6 +376,13 @@ children (
                         kind @note
                         text "Connect the active builder to one process subsystem. Use RAII process and descriptor ownership, completion messages keyed by EdgeId, correct stdout/stderr capture, console passthrough, signal and process-group handling, pool accounting, and GNU Make jobserver token acquisition/release on supported platforms."
                     }
+
+                    {
+                        at 2026-07-29T17:12:47.667327613Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 

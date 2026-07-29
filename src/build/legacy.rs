@@ -1,4 +1,5 @@
 use super::*;
+use std::process::{Command, Stdio};
 
 pub fn format_progress_status(state: &BuildState, template: &str) -> String {
     let mut output = String::new();
