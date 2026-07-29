@@ -1,19 +1,21 @@
 //! Detection of generated depfile inputs without a manifest dependency path.
 
 use crate::env::edgevar;
+#[cfg(test)]
+use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId};
 use crate::util::ByteSlice;
 use std::collections::{BTreeSet, HashMap};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct MissingDependency {
-    pub consumer: String,
-    pub generated: String,
-    pub generator_rule: String,
+pub(crate) struct MissingDependency {
+    pub(crate) consumer: String,
+    pub(crate) generated: String,
+    pub(crate) generator_rule: String,
 }
 
 #[derive(Default)]
-pub struct MissingDependencyScanner {
+pub(crate) struct MissingDependencyScanner {
     dependency_log: Vec<Vec<NodeId>>,
     seen: Vec<bool>,
     nodes_missing_deps: Vec<bool>,
@@ -28,12 +30,12 @@ pub struct MissingDependencyScanner {
 
 // [spec:samurai:req:compat.graph-semantics]
 impl MissingDependencyScanner {
-    pub fn record_dependency(&mut self, from: NodeId, to: NodeId) {
+    pub(crate) fn record_dependency(&mut self, from: NodeId, to: NodeId) {
         self.dependency_log.resize_with(from.index() + 1, Vec::new);
         self.dependency_log[from.index()].push(to);
     }
 
-    pub fn process_node(&mut self, graph: &Graph, node: NodeId) {
+    pub(crate) fn process_node(&mut self, graph: &Graph, node: NodeId) {
         enum Work {
             Enter(NodeId),
             Process(NodeId, EdgeId),
@@ -173,37 +175,37 @@ impl MissingDependencyScanner {
         found
     }
 
-    pub fn had_missing_dependencies(&self) -> bool {
+    pub(crate) fn had_missing_dependencies(&self) -> bool {
         self.nodes_missing_deps_count != 0
     }
 
-    pub fn processed_nodes(&self) -> usize {
+    pub(crate) fn processed_nodes(&self) -> usize {
         self.seen.iter().filter(|seen| **seen).count()
     }
 
-    pub fn nodes_missing_dependencies(&self) -> usize {
+    pub(crate) fn nodes_missing_dependencies(&self) -> usize {
         self.nodes_missing_deps_count
     }
 
-    pub fn generated_nodes(&self) -> usize {
+    pub(crate) fn generated_nodes(&self) -> usize {
         self.generated_nodes_count
     }
 
-    pub fn generator_rules(&self) -> usize {
+    pub(crate) fn generator_rules(&self) -> usize {
         self.generator_rules.len()
     }
 
-    pub fn missing_dependency_paths(&self) -> usize {
+    pub(crate) fn missing_dependency_paths(&self) -> usize {
         self.missing_dep_path_count
     }
 
-    pub fn reports(&self) -> &[MissingDependency] {
+    pub(crate) fn reports(&self) -> &[MissingDependency] {
         &self.reports
     }
 }
 
 #[cfg(test)]
-pub fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
+pub(crate) fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, GraphError> {
     let mut roots = Vec::new();
     let mut has_outputs = false;
     for index in 0..graph.edge_count() {
@@ -222,10 +224,10 @@ pub fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
 }
 
 #[cfg(test)]
-pub fn process_all_nodes(
+pub(crate) fn process_all_nodes(
     graph: &Graph,
     scanner: &mut MissingDependencyScanner,
-) -> Result<(), String> {
+) -> Result<(), GraphError> {
     for node in root_nodes(graph)? {
         scanner.process_node(graph, node);
     }

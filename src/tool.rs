@@ -1,12 +1,15 @@
 //! Graph-inspection and cleanup tools translated from `tool.c`.
 
 use crate::env::edgevar;
+use crate::error::ToolError;
 use crate::graph::{nodeget, EdgeId, Graph, NodeId};
 use crate::util::{BString, ByteSlice};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
+
+type ToolResult<T> = Result<T, ToolError>;
 
 mod compdb;
 mod input;
@@ -17,13 +20,13 @@ mod urtle;
 
 pub(crate) use urtle::decode as urtle;
 
-pub use compdb::{compdb, compdb_for_targets};
-pub use input::{inputs, multi_inputs};
-pub use state::{deps, missing_deps};
+pub(crate) use compdb::{compdb, compdb_for_targets};
+pub(crate) use input::{inputs, multi_inputs};
+pub(crate) use state::{deps, missing_deps};
 
 // [spec:samurai:def:tool.tool]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Tool {
+pub(crate) enum Tool {
     Browse,
     Clean,
     Commands,
@@ -45,14 +48,14 @@ pub enum Tool {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ToolStage {
+pub(crate) enum ToolStage {
     Flags,
     Manifest,
     Logs,
 }
 
 impl Tool {
-    pub fn stage(self) -> ToolStage {
+    pub(crate) fn stage(self) -> ToolStage {
         match self {
             Self::List | Self::Restat | Self::Urtle => ToolStage::Flags,
             Self::Browse
@@ -139,7 +142,7 @@ const TOOLS: &[(Tool, &str, &str)] = &[
     ),
 ];
 
-pub fn tool_list() -> String {
+pub(crate) fn tool_list() -> String {
     let mut output = String::from("ronin subtools:\n");
     for (_, name, description) in TOOLS {
         let _ = writeln!(output, "{name:>11}  {description}");
@@ -158,7 +161,7 @@ fn edge_name(graph: &Graph, edge: EdgeId) -> String {
 // [spec:samurai:def:tool.cleanpath-fn]
 // [spec:samurai:sem:tool.cleanpath-fn]
 #[cfg(test)]
-pub fn cleanpath(path: Option<&BString>) -> io::Result<bool> {
+pub(crate) fn cleanpath(path: Option<&BString>) -> io::Result<bool> {
     cleanpath_mode(path, false)
 }
 
@@ -294,7 +297,7 @@ fn dyndep_outputs(graph: &Graph, edge: EdgeId) -> Vec<BString> {
 
 // [spec:samurai:def:tool.clean-fn]
 // [spec:samurai:sem:tool.clean-fn]
-pub fn clean(
+pub(crate) fn clean(
     graph: &Graph,
     targets: &[String],
     rules: &[String],
@@ -303,7 +306,7 @@ pub fn clean(
     clean_with_options(graph, targets, rules, include_generators, false)
 }
 
-pub fn clean_with_options(
+pub(crate) fn clean_with_options(
     graph: &Graph,
     targets: &[String],
     rules: &[String],
@@ -351,7 +354,11 @@ pub(crate) fn clean_with_report(
 }
 
 #[cfg(test)]
-pub fn clean_dead(graph: &Graph, logged_outputs: &[BString], dry_run: bool) -> io::Result<usize> {
+pub(crate) fn clean_dead(
+    graph: &Graph,
+    logged_outputs: &[BString],
+    dry_run: bool,
+) -> io::Result<usize> {
     clean_dead_with_report(graph, logged_outputs, dry_run).map(|removed| removed.len())
 }
 
@@ -396,7 +403,7 @@ fn collect_target_commands(
 
 // [spec:samurai:def:tool.commands-fn]
 // [spec:samurai:sem:tool.commands-fn]
-pub fn commands(graph: &Graph, targets: &[String]) -> Result<Vec<String>, String> {
+pub(crate) fn commands(graph: &Graph, targets: &[String]) -> ToolResult<Vec<String>> {
     let nodes = if targets.is_empty() {
         graph
             .nodes()
@@ -420,7 +427,7 @@ pub fn commands(graph: &Graph, targets: &[String]) -> Result<Vec<String>, String
     Ok(output)
 }
 
-pub fn commands_with_args(graph: &Graph, arguments: &[String]) -> Result<String, String> {
+pub(crate) fn commands_with_args(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
     let mut single = false;
     let mut targets = Vec::new();
     for argument in arguments {
@@ -433,7 +440,7 @@ pub fn commands_with_args(graph: &Graph, arguments: &[String]) -> Result<String,
                 )
             }
             option if option.starts_with('-') => {
-                return Err(format!("unknown commands option '{option}'"))
+                return Err(format!("unknown commands option '{option}'").into())
             }
             target => targets.push(target.to_owned()),
         }
@@ -463,7 +470,7 @@ pub fn commands_with_args(graph: &Graph, arguments: &[String]) -> Result<String,
 
 // [spec:samurai:def:tool.printquoted-fn]
 // [spec:samurai:sem:tool.printquoted-fn]
-pub fn printquoted(bytes: &[u8], join: bool) -> String {
+pub(crate) fn printquoted(bytes: &[u8], join: bool) -> String {
     let mut output = String::new();
     for byte in bytes {
         match byte {
@@ -547,7 +554,7 @@ fn graphnode_inner(
 
 // [spec:samurai:def:tool.graph-fn]
 // [spec:samurai:sem:tool.graph-fn]
-pub fn graph(graph: &Graph, targets: &[String]) -> Result<String, String> {
+pub(crate) fn graph(graph: &Graph, targets: &[String]) -> ToolResult<String> {
     let nodes = if targets.is_empty() {
         crate::graph::rootnodes(graph)?
     } else {
@@ -572,7 +579,7 @@ pub fn graph(graph: &Graph, targets: &[String]) -> Result<String, String> {
 
 // [spec:samurai:def:tool.query-fn]
 // [spec:samurai:sem:tool.query-fn]
-pub fn query(graph: &Graph, targets: &[String]) -> Result<String, String> {
+pub(crate) fn query(graph: &Graph, targets: &[String]) -> ToolResult<String> {
     if targets.is_empty() {
         return Err("query expects at least one target".into());
     }
@@ -632,7 +639,13 @@ pub fn query(graph: &Graph, targets: &[String]) -> Result<String, String> {
 
 // [spec:samurai:def:tool.targetsdepth-fn]
 // [spec:samurai:sem:tool.targetsdepth-fn]
-pub fn targetsdepth(graph: &Graph, node: NodeId, depth: usize, indent: usize, output: &mut String) {
+pub(crate) fn targetsdepth(
+    graph: &Graph,
+    node: NodeId,
+    depth: usize,
+    indent: usize,
+    output: &mut String,
+) {
     output.push_str(&"  ".repeat(indent));
     let node_borrow = graph.node(node);
     if let Some(edge) = node_borrow.gen {
@@ -659,13 +672,13 @@ pub fn targetsdepth(graph: &Graph, node: NodeId, depth: usize, indent: usize, ou
 
 // [spec:samurai:def:tool.targetsusage-fn]
 // [spec:samurai:sem:tool.targetsusage-fn]
-pub fn targetsusage() -> &'static str {
+pub(crate) fn targetsusage() -> &'static str {
     "targets [depth [maxdepth]] | rule [rulename] | all"
 }
 
 // [spec:samurai:def:tool.targets-fn]
 // [spec:samurai:sem:tool.targets-fn]
-pub fn targets_with_args(graph: &Graph, args: &[String]) -> Result<String, String> {
+pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<String> {
     if args.len() > 2 {
         return Err(targetsusage().into());
     }
@@ -733,11 +746,11 @@ pub fn targets_with_args(graph: &Graph, args: &[String]) -> Result<String, Strin
             }
             Ok(output)
         }
-        Some(mode) => Err(format!("unknown target tool mode '{mode}'")),
+        Some(mode) => Err(format!("unknown target tool mode '{mode}'").into()),
     }
 }
 
-pub fn rules(graph: &Graph, arguments: &[String]) -> Result<String, String> {
+pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
     let mut descriptions = false;
     for argument in arguments {
         match argument.as_str() {
@@ -748,7 +761,7 @@ pub fn rules(graph: &Graph, arguments: &[String]) -> Result<String, String> {
                         .into(),
                 )
             }
-            option => return Err(format!("unknown rules option '{option}'")),
+            option => return Err(format!("unknown rules option '{option}'").into()),
         }
     }
     let mut rules = graph
@@ -781,11 +794,9 @@ pub fn rules(graph: &Graph, arguments: &[String]) -> Result<String, String> {
 
 // [spec:samurai:def:tool.tool.run-fn]
 // [spec:samurai:sem:tool.tool.run-fn]
-pub fn run(tool: Tool, graph: &Graph, args: &[String]) -> Result<String, String> {
+pub(crate) fn run(tool: Tool, graph: &Graph, args: &[String]) -> ToolResult<String> {
     match tool {
-        Tool::Clean => clean(graph, args, &[], false)
-            .map(|removed| removed.to_string())
-            .map_err(|error| error.to_string()),
+        Tool::Clean => Ok(clean(graph, args, &[], false)?.to_string()),
         Tool::Commands => commands_with_args(graph, args),
         Tool::Compdb => Ok(compdb(graph, args, false)),
         Tool::CompdbTargets => compdb_for_targets(graph, args, false),
@@ -808,7 +819,7 @@ pub fn run(tool: Tool, graph: &Graph, args: &[String]) -> Result<String, String>
 
 // [spec:samurai:def:tool.toolget-fn]
 // [spec:samurai:sem:tool.toolget-fn]
-pub fn toolget(name: &str) -> Result<Tool, String> {
+pub(crate) fn toolget(name: &str) -> ToolResult<Tool> {
     if name == "list" {
         return Ok(Tool::List);
     }
@@ -831,10 +842,12 @@ pub fn toolget(name: &str) -> Result<Tool, String> {
         })
         .min_by_key(|(distance, _)| *distance)
         .map(|(_, candidate)| candidate);
-    Err(suggestion.map_or_else(
-        || format!("fatal: unknown tool '{name}'"),
-        |suggestion| format!("fatal: unknown tool '{name}', did you mean '{suggestion}'?"),
-    ))
+    Err(suggestion
+        .map_or_else(
+            || format!("fatal: unknown tool '{name}'"),
+            |suggestion| format!("fatal: unknown tool '{name}', did you mean '{suggestion}'?"),
+        )
+        .into())
 }
 
 #[cfg(test)]

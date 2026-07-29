@@ -1,5 +1,6 @@
 //! Build scheduling state translated from `build.c`.
 
+use crate::error::{BuildError, ProcessError};
 use crate::graph::{
     edgeadddeps, nodeget, nodestat_with, recompute_dirty_with_validations,
     recompute_edge_dirty_with, EdgeId, Graph, NodeId,
@@ -16,22 +17,24 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use self::command::{CommandSpec, PreparedEdge, ResponseFile};
 
+type BuildResult<T> = Result<T, BuildError>;
+
 // [spec:samurai:def:build.buildoptions]
 #[derive(Clone)]
-pub struct BuildOptions {
-    pub maxjobs: usize,
-    pub maxfail: usize,
-    pub verbose: bool,
-    pub explain: bool,
-    pub stats: bool,
-    pub keepdepfile: bool,
-    pub keeprsp: bool,
-    pub dryrun: bool,
-    pub quiet: bool,
-    pub statusfmt: String,
-    pub status_from_cli: bool,
-    pub maxload: f64,
-    pub jobserver: crate::jobserver::JobserverConfig,
+pub(crate) struct BuildOptions {
+    pub(crate) maxjobs: usize,
+    pub(crate) maxfail: usize,
+    pub(crate) verbose: bool,
+    pub(crate) explain: bool,
+    pub(crate) stats: bool,
+    pub(crate) keepdepfile: bool,
+    pub(crate) keeprsp: bool,
+    pub(crate) dryrun: bool,
+    pub(crate) quiet: bool,
+    pub(crate) statusfmt: String,
+    pub(crate) status_from_cli: bool,
+    pub(crate) maxload: f64,
+    pub(crate) jobserver: crate::jobserver::JobserverConfig,
 }
 
 impl Default for BuildOptions {
@@ -54,15 +57,15 @@ impl Default for BuildOptions {
     }
 }
 
-pub struct BuildState {
-    pub started: usize,
-    pub finished: usize,
-    pub total: usize,
-    pub start: Instant,
+pub(crate) struct BuildState {
+    pub(crate) started: usize,
+    pub(crate) finished: usize,
+    pub(crate) total: usize,
+    pub(crate) start: Instant,
 }
 
 impl BuildState {
-    pub fn new(_options: BuildOptions) -> Self {
+    pub(crate) fn new(_options: BuildOptions) -> Self {
         Self {
             started: 0,
             finished: 0,
@@ -73,7 +76,7 @@ impl BuildState {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum EdgeResult {
+pub(crate) enum EdgeResult {
     Succeeded,
     Failed,
 }
@@ -94,7 +97,7 @@ impl ReadyEdge {
 }
 
 #[derive(Default)]
-pub struct Plan {
+pub(crate) struct Plan {
     wanted: Vec<bool>,
     wanted_count: usize,
     expanded_weight: Vec<i64>,
@@ -128,26 +131,28 @@ impl Plan {
     // [spec:samurai:sem:build.queue-fn]
     // [spec:samurai:def:build.buildadd-fn]
     // [spec:samurai:sem:build.buildadd-fn]
-    pub fn add_target(&mut self, graph: &mut Graph, node: NodeId) -> Result<(), String> {
+    pub(crate) fn add_target(&mut self, graph: &mut Graph, node: NodeId) -> BuildResult<()> {
         self.synchronize_arenas(graph.edge_count());
         self.add_node(graph, node, 1)
     }
 
-    fn add_node(&mut self, graph: &mut Graph, node: NodeId, weight: i64) -> Result<(), String> {
+    fn add_node(&mut self, graph: &mut Graph, node: NodeId, weight: i64) -> BuildResult<()> {
         let mut work = vec![(node, weight, None)];
         while let Some((node, weight, needed_by)) = work.pop() {
             let Some(edge) = graph.node(node).gen else {
                 if graph.node(node).dirty {
                     let path = graph.node(node).path.to_str_lossy();
-                    return Err(needed_by.map_or_else(
-                        || format!("'{path}' missing and no known rule to make it"),
-                        |needed_by| {
-                            format!(
-                                "'{path}', needed by '{}', missing and no known rule to make it",
-                                graph.node(needed_by).path.to_str_lossy()
-                            )
-                        },
-                    ));
+                    return Err(needed_by
+                        .map_or_else(
+                            || format!("'{path}' missing and no known rule to make it"),
+                            |needed_by| {
+                                format!(
+                                    "'{path}', needed by '{}', missing and no known rule to make it",
+                                    graph.node(needed_by).path.to_str_lossy()
+                                )
+                            },
+                        )
+                        .into());
                 }
                 continue;
             };
@@ -201,7 +206,7 @@ impl Plan {
         Ok(())
     }
 
-    pub fn prepare_queue(&mut self, graph: &Graph) {
+    pub(crate) fn prepare_queue(&mut self, graph: &Graph) {
         self.synchronize_arenas(graph.edge_count());
         self.running.fill(false);
         self.completed.fill(false);
@@ -249,7 +254,7 @@ impl Plan {
         }
     }
 
-    pub fn refresh_dependencies(&mut self, graph: &mut Graph) -> Result<(), String> {
+    pub(crate) fn refresh_dependencies(&mut self, graph: &mut Graph) -> BuildResult<()> {
         self.synchronize_arenas(graph.edge_count());
         for index in 0..graph.edge_count() {
             if !self.wanted[index] {
@@ -265,7 +270,7 @@ impl Plan {
         Ok(())
     }
 
-    pub fn wanted_edges(&self) -> Vec<EdgeId> {
+    pub(crate) fn wanted_edges(&self) -> Vec<EdgeId> {
         self.wanted
             .iter()
             .enumerate()
@@ -273,7 +278,7 @@ impl Plan {
             .collect()
     }
 
-    pub fn find_work(&mut self, graph: &mut Graph) -> Option<EdgeId> {
+    pub(crate) fn find_work(&mut self, graph: &mut Graph) -> Option<EdgeId> {
         let mut blocked = Vec::new();
         let edge = loop {
             let Some(candidate) = self.ready.pop() else {
@@ -306,12 +311,12 @@ impl Plan {
         }
     }
 
-    pub fn edge_finished(
+    pub(crate) fn edge_finished(
         &mut self,
         graph: &mut Graph,
         edge: EdgeId,
         result: EdgeResult,
-    ) -> Result<(), String> {
+    ) -> BuildResult<()> {
         if !std::mem::replace(&mut self.running[edge.index()], false) {
             return Err("edge was not running".into());
         }
@@ -353,11 +358,11 @@ impl Plan {
         }
     }
 
-    pub fn more_to_do(&self) -> bool {
+    pub(crate) fn more_to_do(&self) -> bool {
         self.failures != 0 || self.completed_count < self.wanted_count
     }
 
-    pub fn command_edge_count(&self, graph: &Graph) -> usize {
+    pub(crate) fn command_edge_count(&self, graph: &Graph) -> usize {
         self.wanted
             .iter()
             .enumerate()
@@ -371,13 +376,13 @@ impl Plan {
             .count()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.wanted_count == 0
     }
 }
 
 // [spec:samurai:def:build.job]
-pub struct Builder<'a> {
+pub(crate) struct Builder<'a> {
     graph: &'a mut Graph,
     options: BuildOptions,
     plan: Plan,
@@ -392,9 +397,9 @@ pub struct Builder<'a> {
     explanations: Option<crate::explanations::Explanations>,
     explanations_recorded: Vec<bool>,
     explanations_emitted: Vec<bool>,
-    pub commands_ran: Vec<BString>,
-    pub command_output: Vec<u8>,
-    pub build_output: Vec<u8>,
+    pub(crate) commands_ran: Vec<BString>,
+    pub(crate) command_output: Vec<u8>,
+    pub(crate) build_output: Vec<u8>,
 }
 
 impl<'a> Builder<'a> {
@@ -432,12 +437,12 @@ impl<'a> Builder<'a> {
     }
 
     #[cfg(test)]
-    pub fn new(graph: &'a mut Graph, options: BuildOptions) -> Self {
+    pub(crate) fn new(graph: &'a mut Graph, options: BuildOptions) -> Self {
         Self::from_parts(graph, options, None, None, None, None)
     }
 
     #[cfg(test)]
-    pub fn with_output(
+    pub(crate) fn with_output(
         graph: &'a mut Graph,
         options: BuildOptions,
         output: &'a mut dyn Write,
@@ -446,7 +451,7 @@ impl<'a> Builder<'a> {
     }
 
     #[cfg(test)]
-    pub fn with_build_log(
+    pub(crate) fn with_build_log(
         graph: &'a mut Graph,
         options: BuildOptions,
         build_log: &'a mut crate::log::BuildLog,
@@ -455,7 +460,7 @@ impl<'a> Builder<'a> {
     }
 
     #[cfg(test)]
-    pub fn with_deps_log(
+    pub(crate) fn with_deps_log(
         graph: &'a mut Graph,
         options: BuildOptions,
         deps_log: &'a mut crate::deps::DepsLog,
@@ -463,7 +468,7 @@ impl<'a> Builder<'a> {
         Self::from_parts(graph, options, None, Some(deps_log), None, None)
     }
 
-    pub fn with_logs(
+    pub(crate) fn with_logs(
         graph: &'a mut Graph,
         options: BuildOptions,
         build_log: &'a mut crate::log::BuildLog,
@@ -472,7 +477,7 @@ impl<'a> Builder<'a> {
         Self::from_parts(graph, options, Some(build_log), Some(deps_log), None, None)
     }
 
-    pub fn with_logs_and_output(
+    pub(crate) fn with_logs_and_output(
         graph: &'a mut Graph,
         options: BuildOptions,
         build_log: &'a mut crate::log::BuildLog,
@@ -489,7 +494,7 @@ impl<'a> Builder<'a> {
         )
     }
 
-    pub fn with_logs_and_sinks(
+    pub(crate) fn with_logs_and_sinks(
         graph: &'a mut Graph,
         options: BuildOptions,
         build_log: &'a mut crate::log::BuildLog,
@@ -520,7 +525,7 @@ impl<'a> Builder<'a> {
         graph.edge_mut(edge).depfile_deps = deps.len();
     }
 
-    fn load_depfiles_for(&mut self, target: NodeId) -> Result<(), String> {
+    fn load_depfiles_for(&mut self, target: NodeId) -> BuildResult<()> {
         enum Work {
             Enter(NodeId),
             Load(EdgeId),
@@ -536,8 +541,7 @@ impl<'a> Builder<'a> {
                     let Some(edge) = self.graph.node(node).gen else {
                         if self.graph.node(node).mtime == crate::graph::MTIME_UNKNOWN {
                             let mut stat = |path: &Path| disk.stat(path);
-                            nodestat_with(self.graph, node, &mut stat)
-                                .map_err(|error| error.to_string())?;
+                            nodestat_with(self.graph, node, &mut stat)?;
                         }
                         self.graph.node_mut(node).dirty = self.graph.node(node).mtime == 0;
                         continue;
@@ -556,8 +560,7 @@ impl<'a> Builder<'a> {
                 }
                 Work::Load(edge) => {
                     let mut stat = |path: &Path| disk.stat(path);
-                    let base_dirty = recompute_edge_dirty_with(self.graph, edge, &mut stat)
-                        .map_err(|error| error.to_string())?;
+                    let base_dirty = recompute_edge_dirty_with(self.graph, edge, &mut stat)?;
                     let mut dependencies_changed = false;
                     let uses_deps_log = self.deps_log.is_some()
                         && crate::env::edgevar(self.graph, edge, "deps", false)
@@ -620,8 +623,7 @@ impl<'a> Builder<'a> {
                 }
                 Work::Refresh(edge) => {
                     let mut stat = |path: &Path| disk.stat(path);
-                    recompute_edge_dirty_with(self.graph, edge, &mut stat)
-                        .map_err(|error| error.to_string())?;
+                    recompute_edge_dirty_with(self.graph, edge, &mut stat)?;
                 }
             }
         }
@@ -633,7 +635,7 @@ impl<'a> Builder<'a> {
         node: NodeId,
         visited_edges: &mut Vec<bool>,
         loaded_files: &mut Vec<bool>,
-    ) -> Result<(), String> {
+    ) -> BuildResult<()> {
         visited_edges.resize(self.graph.edge_count(), false);
         let mut work = vec![node];
         while let Some(node) = work.pop() {
@@ -663,7 +665,7 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    fn prepare_build_log_for(&mut self, node: NodeId) -> Result<(), String> {
+    fn prepare_build_log_for(&mut self, node: NodeId) -> BuildResult<()> {
         let mut visited = vec![false; self.graph.edge_count()];
         let mut work = vec![node];
         while let Some(node) = work.pop() {
@@ -728,7 +730,7 @@ impl<'a> Builder<'a> {
         }
     }
 
-    pub fn add_target(&mut self, path: impl AsRef<[u8]>) -> Result<(), String> {
+    pub(crate) fn add_target(&mut self, path: impl AsRef<[u8]>) -> BuildResult<()> {
         let path = path.as_ref();
         let node = nodeget(self.graph, path)
             .ok_or_else(|| format!("unknown target: '{}'", String::from_utf8_lossy(path)))?;
@@ -742,14 +744,13 @@ impl<'a> Builder<'a> {
         }
         let disk = RealDiskInterface;
         let mut stat = |path: &Path| disk.stat(path);
-        let validations = recompute_dirty_with_validations(self.graph, node, &mut stat)
-            .map_err(|error| error.to_string())?;
+        let validations = recompute_dirty_with_validations(self.graph, node, &mut stat)?;
         self.plan.add_target(self.graph, node).map_err(|error| {
             if self.graph.node(node).gen.is_none() {
-                format!(
+                BuildError::from(format!(
                     "'{}' missing and no known rule to make it",
                     String::from_utf8_lossy(path)
-                )
+                ))
             } else {
                 error
             }
@@ -761,19 +762,19 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    pub fn already_up_to_date(&self) -> bool {
+    pub(crate) fn already_up_to_date(&self) -> bool {
         self.plan.is_empty()
     }
 
-    pub fn ran_edge(&self, edge: EdgeId) -> bool {
+    pub(crate) fn ran_edge(&self, edge: EdgeId) -> bool {
         self.executed_edges.contains(&edge)
     }
 
-    pub fn ran_edge_without_restat_pruning(&self, edge: EdgeId) -> bool {
+    pub(crate) fn ran_edge_without_restat_pruning(&self, edge: EdgeId) -> bool {
         self.ran_edge(edge) && !self.graph.edge(edge).restat_clean
     }
 
-    fn prepare_edge(&mut self, edge: EdgeId) -> Result<PreparedEdge, String> {
+    fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<PreparedEdge> {
         let command = self.take_command(edge)?;
         let old_mtimes = self
             .graph
@@ -785,9 +786,7 @@ impl<'a> Builder<'a> {
 
         for output in &self.graph.edge(edge).out {
             let path = self.graph.node(*output).path.clone();
-            RealDiskInterface
-                .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
-                .map_err(|error| error.to_string())?;
+            RealDiskInterface.make_dirs(path.to_path().expect("byte paths are valid on Unix"))?;
         }
 
         let response_file = command.rspfile.as_ref().map(|path| ResponseFile {
@@ -795,22 +794,19 @@ impl<'a> Builder<'a> {
             remove_on_drop: !self.options.keeprsp,
         });
         if let Some(response_file) = &response_file {
-            RealDiskInterface
-                .make_dirs(
-                    response_file
-                        .path
-                        .to_path()
-                        .expect("byte paths are valid on Unix"),
-                )
-                .map_err(|error| error.to_string())?;
+            RealDiskInterface.make_dirs(
+                response_file
+                    .path
+                    .to_path()
+                    .expect("byte paths are valid on Unix"),
+            )?;
             fs::write(
                 response_file
                     .path
                     .to_path()
                     .expect("byte paths are valid on Unix"),
                 command.rspfile_content.as_bytes(),
-            )
-            .map_err(|error| error.to_string())?;
+            )?;
         }
 
         let command_start_mtime = if self.options.dryrun {
@@ -818,7 +814,7 @@ impl<'a> Builder<'a> {
         } else {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_err(|error| error.to_string())?
+                .map_err(BuildError::source)?
                 .as_nanos()
                 .try_into()
                 .unwrap_or(i64::MAX)
@@ -847,8 +843,8 @@ impl<'a> Builder<'a> {
     fn finish_edge(
         &mut self,
         prepared: PreparedEdge,
-        result: Result<Option<ProcessOutput>, String>,
-    ) -> Result<(bool, Vec<NodeId>), String> {
+        result: Result<Option<ProcessOutput>, ProcessError>,
+    ) -> BuildResult<(bool, Vec<NodeId>)> {
         let PreparedEdge {
             edge,
             old_mtimes,
@@ -860,7 +856,7 @@ impl<'a> Builder<'a> {
             Ok(result) => result,
             Err(error) => {
                 self.command_finished(edge, &command, Some(1), &[])?;
-                return Err(error);
+                return Err(error.into());
             }
         };
         let mut msvc_deps = Vec::new();
@@ -889,7 +885,7 @@ impl<'a> Builder<'a> {
             }
             self.record_child_output(&stderr);
             visible_output.extend_from_slice(&stderr);
-            let dependency_result = (|| -> Result<(), String> {
+            let dependency_result = (|| -> BuildResult<()> {
                 if status.success() && !self.options.dryrun {
                     match command.deps_type.as_str() {
                         "" | "msvc" => Ok(()),
@@ -917,7 +913,7 @@ impl<'a> Builder<'a> {
                                 Ok(())
                             }
                         }
-                        deps_type => Err(format!("unsupported deps type '{deps_type}'")),
+                        deps_type => Err(format!("unsupported deps type '{deps_type}'").into()),
                     }
                 } else {
                     Ok(())
@@ -952,7 +948,7 @@ impl<'a> Builder<'a> {
                 if status_interrupted(&status) {
                     return Err("interrupted by user".into());
                 }
-                return Err(format!("subcommand failed: {}", command.command));
+                return Err(format!("subcommand failed: {}", command.command).into());
             }
         } else {
             self.command_finished(edge, &command, None, &[])?;
@@ -964,9 +960,7 @@ impl<'a> Builder<'a> {
         let edge_hash = self.graph.edge(edge).hash;
         for output in output_ids {
             let path = self.graph.node(output).path.clone();
-            let mtime = disk
-                .stat(path.to_path().expect("byte paths are valid on Unix"))
-                .map_err(|error| error.to_string())?;
+            let mtime = disk.stat(path.to_path().expect("byte paths are valid on Unix"))?;
             let output = self.graph.node_mut(output);
             output.mtime = mtime;
             output.dirty = false;
@@ -977,14 +971,12 @@ impl<'a> Builder<'a> {
             match command.deps_type.as_str() {
                 "gcc" => {
                     if let Some(deps_log) = self.deps_log.as_deref_mut() {
-                        crate::deps::depsrecord(deps_log, edge, self.graph)
-                            .map_err(|error| error.to_string())?;
+                        crate::deps::depsrecord(deps_log, edge, self.graph)?;
                     }
                 }
                 "msvc" => {
                     if let Some(deps_log) = self.deps_log.as_deref_mut() {
-                        crate::deps::depsrecordnodes(deps_log, self.graph, edge, &msvc_deps)
-                            .map_err(|error| error.to_string())?;
+                        crate::deps::depsrecordnodes(deps_log, self.graph, edge, &msvc_deps)?;
                     }
                 }
                 _ => unreachable!("dependency type was validated before status output"),
@@ -1033,8 +1025,7 @@ impl<'a> Builder<'a> {
             self.graph.node_mut(output).logmtime = record_mtime;
         }
         if let Some(build_log) = self.build_log.as_deref_mut() {
-            crate::log::logrecordedge(build_log, self.graph, edge, 0, 0, record_mtime)
-                .map_err(|error| error.to_string())?;
+            crate::log::logrecordedge(build_log, self.graph, edge, 0, 0, record_mtime)?;
         }
         self.graph.edge_mut(edge).restat_clean = all_pruned;
         Ok((pruned, loaded_dyndeps))
@@ -1048,7 +1039,7 @@ impl<'a> Builder<'a> {
         (false, Vec::new())
     }
 
-    fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> Result<(), String> {
+    fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> BuildResult<()> {
         let mut queue = Vec::new();
         for output in &self.graph.edge(edge).out {
             let output = self.graph.node(*output);
@@ -1064,8 +1055,7 @@ impl<'a> Builder<'a> {
             for index in 0..self.graph.edge(dependent).out.len() {
                 let output = self.graph.edge(dependent).out[index];
                 let mut stat = |path: &Path| disk.stat(path);
-                recompute_dirty_with_validations(self.graph, output, &mut stat)
-                    .map_err(|error| error.to_string())?;
+                recompute_dirty_with_validations(self.graph, output, &mut stat)?;
             }
             for index in 0..self.graph.edge(dependent).out.len() {
                 let output = self.graph.edge(dependent).out[index];
@@ -1077,7 +1067,7 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    fn recompute_planned_after_dyndep(&mut self, loaded_dyndeps: &[NodeId]) -> Result<(), String> {
+    fn recompute_planned_after_dyndep(&mut self, loaded_dyndeps: &[NodeId]) -> BuildResult<()> {
         let disk = RealDiskInterface;
         self.plan.expanded_weight.fill(i64::MIN);
         let mut nodes = self.targets.clone();
@@ -1128,10 +1118,9 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let mut stat = |path: &Path| disk.stat(path);
-            validations.extend(
-                recompute_dirty_with_validations(self.graph, node, &mut stat)
-                    .map_err(|error| error.to_string())?,
-            );
+            validations.extend(recompute_dirty_with_validations(
+                self.graph, node, &mut stat,
+            )?);
         }
         for target in self.targets.iter().copied() {
             self.plan.add_target(self.graph, target)?;
@@ -1149,8 +1138,8 @@ impl<'a> Builder<'a> {
     fn settle_edge(
         &mut self,
         edge: EdgeId,
-        result: Result<(bool, Vec<NodeId>), String>,
-    ) -> Result<(), String> {
+        result: BuildResult<(bool, Vec<NodeId>)>,
+    ) -> BuildResult<()> {
         match result {
             Ok((pruned, loaded_dyndeps)) => {
                 if pruned {
@@ -1188,7 +1177,7 @@ impl<'a> Builder<'a> {
     // [spec:samurai:sem:build.jobwork-fn]
     // [spec:samurai:def:build.queryload-fn]
     // [spec:samurai:sem:build.queryload-fn]
-    pub fn build(&mut self) -> Result<(), String> {
+    pub(crate) fn build(&mut self) -> BuildResult<()> {
         self.plan.prepare_queue(self.graph);
         self.progress.started = 0;
         self.progress.finished = 0;
@@ -1322,7 +1311,7 @@ impl<'a> Builder<'a> {
                     last_error = Some(error);
                 }
             }
-            Ok::<(), String>(())
+            Ok::<(), BuildError>(())
         })?;
 
         if let Some(error) = last_error {
@@ -1338,7 +1327,7 @@ impl<'a> Builder<'a> {
 mod command;
 mod status;
 #[cfg(test)]
-pub use status::format_progress_status;
+pub(crate) use status::format_progress_status;
 
 #[cfg(test)]
 #[path = "build/tests.rs"]

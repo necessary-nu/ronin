@@ -1,12 +1,15 @@
 //! Byte-oriented Ninja manifest lexer.
 
+use crate::error::ManifestError;
 use crate::util::{BString, EvalPart, EvalString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+type ScanResult<T> = Result<T, ManifestError>;
+
 // [spec:samurai:def:scan.token]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Token {
+pub(crate) enum Token {
     Build,
     Default,
     Include,
@@ -17,17 +20,17 @@ pub enum Token {
 }
 
 // [spec:samurai:def:scan.scanner]
-pub struct Scanner {
-    pub path: PathBuf,
+pub(crate) struct Scanner {
+    pub(crate) path: PathBuf,
     input: Vec<u8>,
     index: usize,
-    pub line: usize,
-    pub col: usize,
-    pub paths: Vec<EvalString>,
+    pub(crate) line: usize,
+    pub(crate) col: usize,
+    pub(crate) paths: Vec<EvalString>,
     variable: Option<String>,
     continuation_at_eof: bool,
-    pub manifest_version_major: i32,
-    pub manifest_version_minor: i32,
+    pub(crate) manifest_version_major: i32,
+    pub(crate) manifest_version_minor: i32,
 }
 
 impl Scanner {
@@ -42,9 +45,9 @@ impl Scanner {
 
 // [spec:samurai:def:scan.scaninit-fn]
 // [spec:samurai:sem:scan.scaninit-fn]
-pub fn scaninit(path: impl AsRef<Path>) -> Result<Scanner, String> {
+pub(crate) fn scaninit(path: impl AsRef<Path>) -> ScanResult<Scanner> {
     let path = path.as_ref();
-    let input = fs::read(path).map_err(|error| error.to_string())?;
+    let input = fs::read(path)?;
     Ok(scanfrombytes(path, input))
 }
 
@@ -66,17 +69,18 @@ pub(crate) fn scanfrombytes(path: impl AsRef<Path>, input: Vec<u8>) -> Scanner {
 
 // [spec:samurai:def:scan.scanclose-fn]
 // [spec:samurai:sem:scan.scanclose-fn]
-pub fn scanclose(_scanner: Scanner) {}
+pub(crate) fn scanclose(_scanner: Scanner) {}
 
 // [spec:samurai:def:scan.scanerror-fn]
 // [spec:samurai:sem:scan.scanerror-fn]
-pub fn scanerror(scanner: &Scanner, message: &str) -> String {
+pub(crate) fn scanerror(scanner: &Scanner, message: &str) -> ManifestError {
     format!(
         "{}:{}:{}: {message}",
         scanner.path.display(),
         scanner.line,
         scanner.col
     )
+    .into()
 }
 
 // [spec:samurai:def:scan.next-fn]
@@ -106,7 +110,7 @@ fn isvar(byte: u8) -> bool {
 
 // [spec:samurai:def:scan.newline-fn]
 // [spec:samurai:sem:scan.newline-fn]
-fn newline(scanner: &mut Scanner) -> Result<bool, String> {
+fn newline(scanner: &mut Scanner) -> ScanResult<bool> {
     match scanner.current() {
         Some(b'\r') => {
             next(scanner);
@@ -126,7 +130,7 @@ fn newline(scanner: &mut Scanner) -> Result<bool, String> {
 
 // [spec:samurai:def:scan.singlespace-fn]
 // [spec:samurai:sem:scan.singlespace-fn]
-fn singlespace(scanner: &mut Scanner) -> Result<bool, String> {
+fn singlespace(scanner: &mut Scanner) -> ScanResult<bool> {
     match scanner.current() {
         Some(b' ') => {
             next(scanner);
@@ -154,7 +158,7 @@ fn singlespace(scanner: &mut Scanner) -> Result<bool, String> {
 
 // [spec:samurai:def:scan.space-fn]
 // [spec:samurai:sem:scan.space-fn]
-fn space(scanner: &mut Scanner) -> Result<bool, String> {
+fn space(scanner: &mut Scanner) -> ScanResult<bool> {
     let mut found = false;
     while singlespace(scanner)? {
         found = true;
@@ -164,7 +168,7 @@ fn space(scanner: &mut Scanner) -> Result<bool, String> {
 
 // [spec:samurai:def:scan.comment-fn]
 // [spec:samurai:sem:scan.comment-fn]
-fn comment(scanner: &mut Scanner) -> Result<bool, String> {
+fn comment(scanner: &mut Scanner) -> ScanResult<bool> {
     if scanner.current() != Some(b'#') {
         return Ok(false);
     }
@@ -176,7 +180,7 @@ fn comment(scanner: &mut Scanner) -> Result<bool, String> {
 
 // [spec:samurai:def:scan.name-fn]
 // [spec:samurai:sem:scan.name-fn]
-fn name(scanner: &mut Scanner) -> Result<String, String> {
+fn name(scanner: &mut Scanner) -> ScanResult<String> {
     let start = scanner.index;
     while scanner.current().is_some_and(isvar) {
         next(scanner);
@@ -193,7 +197,7 @@ fn name(scanner: &mut Scanner) -> Result<String, String> {
 
 // [spec:samurai:def:scan.scankeyword-fn]
 // [spec:samurai:sem:scan.scankeyword-fn]
-pub fn scankeyword(scanner: &mut Scanner) -> Result<Option<Token>, String> {
+pub(crate) fn scankeyword(scanner: &mut Scanner) -> ScanResult<Option<Token>> {
     loop {
         match scanner.current() {
             None => return Ok(None),
@@ -231,7 +235,7 @@ pub fn scankeyword(scanner: &mut Scanner) -> Result<Option<Token>, String> {
 
 // [spec:samurai:def:scan.scanname-fn]
 // [spec:samurai:sem:scan.scanname-fn]
-pub fn scanname(scanner: &mut Scanner) -> Result<String, String> {
+pub(crate) fn scanname(scanner: &mut Scanner) -> ScanResult<String> {
     name(scanner)
 }
 
@@ -259,7 +263,7 @@ fn escape(
     scanner: &mut Scanner,
     parts: &mut Vec<EvalPart>,
     literal: &mut Vec<u8>,
-) -> Result<(), String> {
+) -> ScanResult<()> {
     match scanner.current() {
         Some(byte @ (b'$' | b' ' | b':')) => {
             literal.push(byte);
@@ -313,7 +317,7 @@ fn escape(
 
 // [spec:samurai:def:scan.scanstring-fn]
 // [spec:samurai:sem:scan.scanstring-fn]
-pub fn scanstring(scanner: &mut Scanner, path: bool) -> Result<Option<EvalString>, String> {
+pub(crate) fn scanstring(scanner: &mut Scanner, path: bool) -> ScanResult<Option<EvalString>> {
     let mut parts = Vec::new();
     let mut literal = Vec::new();
     loop {
@@ -343,7 +347,7 @@ pub fn scanstring(scanner: &mut Scanner, path: bool) -> Result<Option<EvalString
 
 // [spec:samurai:def:scan.scanpaths-fn]
 // [spec:samurai:sem:scan.scanpaths-fn]
-pub fn scanpaths(scanner: &mut Scanner) -> Result<(), String> {
+pub(crate) fn scanpaths(scanner: &mut Scanner) -> ScanResult<()> {
     while let Some(path) = scanstring(scanner, true)? {
         scanner.paths.push(path);
     }
@@ -352,7 +356,7 @@ pub fn scanpaths(scanner: &mut Scanner) -> Result<(), String> {
 
 // [spec:samurai:def:scan.scanchar-fn]
 // [spec:samurai:sem:scan.scanchar-fn]
-pub fn scanchar(scanner: &mut Scanner, expected: char) -> Result<(), String> {
+pub(crate) fn scanchar(scanner: &mut Scanner, expected: char) -> ScanResult<()> {
     let expected =
         u8::try_from(expected).map_err(|_| scanerror(scanner, "expected ASCII token"))?;
     if scanner.current() != Some(expected) {
@@ -368,7 +372,7 @@ pub fn scanchar(scanner: &mut Scanner, expected: char) -> Result<(), String> {
 
 // [spec:samurai:def:scan.scanpipe-fn]
 // [spec:samurai:sem:scan.scanpipe-fn]
-pub fn scanpipe(scanner: &mut Scanner, allowed: i32) -> Result<i32, String> {
+pub(crate) fn scanpipe(scanner: &mut Scanner, allowed: i32) -> ScanResult<i32> {
     if scanner.current() != Some(b'|') {
         return Ok(0);
     }
@@ -400,7 +404,7 @@ pub fn scanpipe(scanner: &mut Scanner, allowed: i32) -> Result<i32, String> {
 
 // [spec:samurai:def:scan.scanindent-fn]
 // [spec:samurai:sem:scan.scanindent-fn]
-pub fn scanindent(scanner: &mut Scanner) -> Result<bool, String> {
+pub(crate) fn scanindent(scanner: &mut Scanner) -> ScanResult<bool> {
     loop {
         let indent = space(scanner)?;
         if !comment(scanner)? {
@@ -411,7 +415,7 @@ pub fn scanindent(scanner: &mut Scanner) -> Result<bool, String> {
 
 // [spec:samurai:def:scan.scannewline-fn]
 // [spec:samurai:sem:scan.scannewline-fn]
-pub fn scannewline(scanner: &mut Scanner) -> Result<(), String> {
+pub(crate) fn scannewline(scanner: &mut Scanner) -> ScanResult<()> {
     if newline(scanner)? {
         scanner.continuation_at_eof = false;
         Ok(())

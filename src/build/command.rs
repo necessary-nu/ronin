@@ -1,7 +1,10 @@
 use super::{status, Builder};
+use crate::error::BuildError;
 use crate::graph::{edgehash, invalidate_edge_hash, EdgeId, Graph};
 use crate::util::{BString, ByteSlice};
 use std::fs;
+
+type BuildResult<T> = Result<T, BuildError>;
 
 pub(super) struct CommandSpec {
     pub(super) command: BString,
@@ -17,7 +20,7 @@ pub(super) struct CommandSpec {
 }
 
 impl CommandSpec {
-    fn evaluate(graph: &Graph, edge: EdgeId) -> Result<Self, String> {
+    fn evaluate(graph: &Graph, edge: EdgeId) -> BuildResult<Self> {
         let command = crate::env::edgevar(graph, edge, "command", true).unwrap_or_default();
         let description = crate::env::edgevar(graph, edge, "description", true).unwrap_or_default();
         let rspfile =
@@ -89,7 +92,7 @@ impl Drop for ResponseFile {
 }
 
 impl<'a> Builder<'a> {
-    pub(super) fn ensure_command(&mut self, edge: EdgeId) -> Result<(), String> {
+    pub(super) fn ensure_command(&mut self, edge: EdgeId) -> BuildResult<()> {
         self.command_cache
             .resize_with(self.graph.edge_count(), || None);
         if self.command_cache[edge.index()].is_none() {
@@ -105,14 +108,14 @@ impl<'a> Builder<'a> {
         invalidate_edge_hash(self.graph, edge);
     }
 
-    pub(super) fn take_command(&mut self, edge: EdgeId) -> Result<CommandSpec, String> {
+    pub(super) fn take_command(&mut self, edge: EdgeId) -> BuildResult<CommandSpec> {
         self.ensure_command(edge)?;
         Ok(self.command_cache[edge.index()]
             .take()
             .expect("command cache was populated"))
     }
 
-    pub(super) fn refresh_command_hash(&mut self, edge: EdgeId) -> Result<(), String> {
+    pub(super) fn refresh_command_hash(&mut self, edge: EdgeId) -> BuildResult<()> {
         self.ensure_command(edge)?;
         self.command_cache[edge.index()]
             .as_ref()
@@ -131,13 +134,13 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    fn emit(&mut self, bytes: &[u8]) -> Result<(), String> {
+    fn emit(&mut self, bytes: &[u8]) -> BuildResult<()> {
         if self.output_sink.is_none() {
             self.build_output.extend_from_slice(bytes);
         }
         if let Some(output) = self.output_sink.as_deref_mut() {
-            output.write_all(bytes).map_err(|error| error.to_string())?;
-            output.flush().map_err(|error| error.to_string())?;
+            output.write_all(bytes)?;
+            output.flush()?;
         }
         Ok(())
     }
@@ -148,16 +151,16 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn emit_diagnostic(&mut self, bytes: &[u8]) -> Result<(), String> {
+    fn emit_diagnostic(&mut self, bytes: &[u8]) -> BuildResult<()> {
         if let Some(output) = self.diagnostic_sink.as_deref_mut() {
-            output.write_all(bytes).map_err(|error| error.to_string())?;
-            output.flush().map_err(|error| error.to_string())
+            output.write_all(bytes)?;
+            Ok(output.flush()?)
         } else {
             self.emit(bytes)
         }
     }
 
-    fn emit_explanations(&mut self, edge: EdgeId) -> Result<(), String> {
+    fn emit_explanations(&mut self, edge: EdgeId) -> BuildResult<()> {
         if self.explanations.is_none() {
             return Ok(());
         }
@@ -180,7 +183,7 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    fn emit_status(&mut self, edge: EdgeId, command: &CommandSpec) -> Result<(), String> {
+    fn emit_status(&mut self, edge: EdgeId, command: &CommandSpec) -> BuildResult<()> {
         self.emit_explanations(edge)?;
         if self.options.quiet {
             return Ok(());
@@ -212,7 +215,7 @@ impl<'a> Builder<'a> {
         &mut self,
         edge: EdgeId,
         command: &CommandSpec,
-    ) -> Result<(), String> {
+    ) -> BuildResult<()> {
         self.progress.started += 1;
         if command.use_console {
             self.emit_status(edge, command)?;
@@ -226,7 +229,7 @@ impl<'a> Builder<'a> {
         command: &CommandSpec,
         failure_code: Option<i32>,
         output: &[u8],
-    ) -> Result<(), String> {
+    ) -> BuildResult<()> {
         self.progress.finished += 1;
         if !command.use_console {
             self.emit_status(edge, command)?;

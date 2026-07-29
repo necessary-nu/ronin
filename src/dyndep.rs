@@ -1,5 +1,6 @@
 //! Ninja version-1 dynamic dependency file parser.
 
+use crate::error::ManifestError;
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
 use crate::scan::{
     scanchar, scanfrombytes, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring,
@@ -10,14 +11,14 @@ use std::fmt;
 use std::fs;
 
 #[derive(Clone, Default)]
-pub struct Dyndeps {
-    pub restat: bool,
-    pub implicit_inputs: Vec<NodeId>,
-    pub implicit_outputs: Vec<NodeId>,
+pub(crate) struct Dyndeps {
+    pub(crate) restat: bool,
+    pub(crate) implicit_inputs: Vec<NodeId>,
+    pub(crate) implicit_outputs: Vec<NodeId>,
 }
 
 #[derive(Default)]
-pub struct DyndepFile {
+pub(crate) struct DyndepFile {
     slots: Vec<Option<Dyndeps>>,
     edges: Vec<EdgeId>,
 }
@@ -35,7 +36,7 @@ impl DyndepFile {
         Ok(())
     }
 
-    pub fn get(&self, edge: &EdgeId) -> Option<&Dyndeps> {
+    pub(crate) fn get(&self, edge: &EdgeId) -> Option<&Dyndeps> {
         self.slots.get(edge.index()).and_then(Option::as_ref)
     }
 
@@ -58,7 +59,7 @@ impl IntoIterator for DyndepFile {
     }
 }
 
-pub struct DyndepIntoIter {
+pub(crate) struct DyndepIntoIter {
     slots: Vec<Option<Dyndeps>>,
     edges: std::vec::IntoIter<EdgeId>,
 }
@@ -76,9 +77,9 @@ impl Iterator for DyndepIntoIter {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DyndepError {
-    pub line: usize,
-    pub message: String,
+pub(crate) struct DyndepError {
+    pub(crate) line: usize,
+    pub(crate) message: String,
 }
 
 impl fmt::Display for DyndepError {
@@ -96,7 +97,8 @@ fn error(line: usize, message: impl Into<String>) -> DyndepError {
     }
 }
 
-fn scanner_error(scanner: &Scanner, message: String) -> DyndepError {
+fn scanner_error(scanner: &Scanner, message: ManifestError) -> DyndepError {
+    let message = message.to_string();
     let prefix = format!(
         "{}:{}:{}: ",
         scanner.path.display(),
@@ -275,7 +277,7 @@ fn parse_build(
     })
 }
 
-pub fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFile, DyndepError> {
+pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFile, DyndepError> {
     let mut scanner = scanfrombytes("input", input);
     let mut have_version = false;
     let mut file = DyndepFile::default();
@@ -304,11 +306,11 @@ pub fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFile, Dyn
     }
 }
 
-pub fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), String> {
+pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), ManifestError> {
     let path = graph.node(dyndep).path.clone();
     let input = fs::read(path.to_path().expect("byte paths are valid on Unix"))
         .map_err(|error| format!("loading '{path}': {error}"))?;
-    let file = parse_dyndep(input, graph).map_err(|error| error.to_string())?;
+    let file = parse_dyndep(input, graph)?;
 
     for edge in graph
         .node(dyndep)
@@ -327,9 +329,7 @@ pub fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), String> {
                     String::from_utf8_lossy(output.path.as_bytes()).into_owned()
                 })
                 .unwrap_or_default();
-            return Err(format!(
-                "'{output}' not mentioned in its dyndep file '{path}'"
-            ));
+            return Err(format!("'{output}' not mentioned in its dyndep file '{path}'").into());
         }
     }
 
@@ -347,7 +347,8 @@ pub fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), String> {
                 .unwrap_or_default();
             return Err(format!(
                 "dyndep file '{path}' mentions output '{output}' whose build statement does not have a dyndep binding for the file"
-            ));
+            )
+            .into());
         }
     }
 
@@ -359,7 +360,8 @@ pub fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), String> {
                     return Err(format!(
                         "multiple rules generate {}",
                         String::from_utf8_lossy(output.path.as_bytes())
-                    ));
+                    )
+                    .into());
                 }
             }
         }
@@ -811,6 +813,7 @@ mod tests {
             load_fixture("build out: r in || $dd\n  dyndep = $dd\n", None);
         assert!(load_dyndep(&mut graph, dyndep)
             .unwrap_err()
+            .to_string()
             .contains("loading"));
         fs::remove_dir_all(directory).unwrap();
     }
@@ -823,6 +826,7 @@ mod tests {
         );
         assert!(load_dyndep(&mut graph, dyndep)
             .unwrap_err()
+            .to_string()
             .contains("'out' not mentioned"));
         fs::remove_dir_all(directory).unwrap();
     }
@@ -835,6 +839,7 @@ mod tests {
         );
         assert!(load_dyndep(&mut graph, dyndep)
             .unwrap_err()
+            .to_string()
             .contains("does not have a dyndep binding"));
         fs::remove_dir_all(directory).unwrap();
     }
@@ -846,8 +851,8 @@ mod tests {
             Some("ninja_dyndep_version = 1\nbuild out2 | shared: dyndep\n"),
         );
         assert_eq!(
-            load_dyndep(&mut graph, dyndep),
-            Err("multiple rules generate shared".into())
+            load_dyndep(&mut graph, dyndep).unwrap_err(),
+            "multiple rules generate shared"
         );
         fs::remove_dir_all(directory).unwrap();
     }

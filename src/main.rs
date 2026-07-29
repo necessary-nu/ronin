@@ -2,14 +2,14 @@ use std::io::Write;
 
 fn main() {
     // [spec:samurai:req:compat.process-integration]
-    if let Err(error) = ronin::subprocess::install_signal_handlers() {
+    if let Err(error) = ronin::install_signal_handlers() {
         eprintln!("ronin: failed to install signal handlers: {error}");
         std::process::exit(1);
     }
     let arguments = std::env::args_os().collect::<Vec<_>>();
     // [spec:samurai:req:product.ronin-identity]
     // [spec:samurai:req:product.no-samuflags]
-    match ronin::cli::run_os(&arguments) {
+    match ronin::run_os(&arguments) {
         Ok(result) => {
             if !result.stdout.is_empty() {
                 let _ = std::io::stdout().lock().write_all(&result.stdout);
@@ -23,8 +23,8 @@ fn main() {
         }
         Err(error) => {
             eprintln!("ronin: {error}");
-            if let Some(signal) = ronin::subprocess::interrupted_signal() {
-                ronin::subprocess::reraise_signal(signal);
+            if let Some(signal) = ronin::interrupted_signal() {
+                ronin::reraise_signal(signal);
             }
             std::process::exit(1);
         }

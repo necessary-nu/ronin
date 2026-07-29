@@ -5,22 +5,22 @@ use std::io::Write;
 
 // [spec:samurai:def:util.string]
 // [spec:samurai:req:compat.byte-inputs]
-pub use bstr::{BStr, BString};
-pub use bstr::{ByteSlice, ByteVec};
+pub(crate) use bstr::{BStr, BString};
+pub(crate) use bstr::{ByteSlice, ByteVec};
 
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct StringPiece<'a> {
+pub(crate) struct StringPiece<'a> {
     bytes: &'a [u8],
 }
 
 #[cfg(test)]
 impl<'a> StringPiece<'a> {
-    pub fn new(bytes: &'a [u8]) -> Self {
+    pub(crate) fn new(bytes: &'a [u8]) -> Self {
         Self { bytes }
     }
 
-    pub fn from_cstr(value: &'a str) -> Self {
+    pub(crate) fn from_cstr(value: &'a str) -> Self {
         Self {
             bytes: value
                 .as_bytes()
@@ -30,19 +30,19 @@ impl<'a> StringPiece<'a> {
         }
     }
 
-    pub fn len(self) -> usize {
+    pub(crate) fn len(self) -> usize {
         self.bytes.len()
     }
 
-    pub fn is_empty(self) -> bool {
+    pub(crate) fn is_empty(self) -> bool {
         self.bytes.is_empty()
     }
 
-    pub fn as_str(self) -> &'a str {
+    pub(crate) fn as_str(self) -> &'a str {
         std::str::from_utf8(self.bytes).unwrap()
     }
 
-    pub fn substr(self, start: usize, length: Option<usize>) -> Self {
+    pub(crate) fn substr(self, start: usize, length: Option<usize>) -> Self {
         let start = start.min(self.bytes.len());
         let end = length
             .map(|length| start.saturating_add(length))
@@ -69,32 +69,32 @@ impl<'a> StringPiece<'a> {
 // [spec:samurai:def:util.delevalstr-fn]
 // [spec:samurai:sem:util.delevalstr-fn]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum EvalPart {
+pub(crate) enum EvalPart {
     Literal(BString),
     Variable(String),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct EvalString {
-    pub parts: Vec<EvalPart>,
+pub(crate) struct EvalString {
+    pub(crate) parts: Vec<EvalPart>,
 }
 
 impl EvalString {
     #[cfg(test)]
-    pub fn literal(value: impl Into<BString>) -> Self {
+    pub(crate) fn literal(value: impl Into<BString>) -> Self {
         Self {
             parts: vec![EvalPart::Literal(value.into())],
         }
     }
 
     #[cfg(test)]
-    pub fn variable(name: impl Into<String>) -> Self {
+    pub(crate) fn variable(name: impl Into<String>) -> Self {
         Self {
             parts: vec![EvalPart::Variable(name.into())],
         }
     }
 
-    pub fn from_parts(parts: Vec<EvalPart>) -> Self {
+    pub(crate) fn from_parts(parts: Vec<EvalPart>) -> Self {
         Self { parts }
     }
 }
@@ -103,7 +103,7 @@ impl EvalString {
 // [spec:samurai:sem:util.xasprintf-fn]
 // [spec:samurai:def:util.writefile-fn]
 // [spec:samurai:sem:util.writefile-fn]
-pub fn xasprintf(args: fmt::Arguments<'_>) -> BString {
+pub(crate) fn xasprintf(args: fmt::Arguments<'_>) -> BString {
     let mut output = Vec::new();
     output
         .write_fmt(args)
@@ -113,7 +113,7 @@ pub fn xasprintf(args: fmt::Arguments<'_>) -> BString {
 
 // [spec:samurai:def:util.mkstr-fn]
 // [spec:samurai:sem:util.mkstr-fn]
-pub fn mkstr(n: usize) -> BString {
+pub(crate) fn mkstr(n: usize) -> BString {
     BString::from(vec![0; n])
 }
 
@@ -125,13 +125,13 @@ pub fn mkstr(n: usize) -> BString {
 // [spec:samurai:sem:util.warn-fn]
 // [spec:samurai:def:util.fatal-fn]
 // [spec:samurai:sem:util.fatal-fn]
-pub fn diagnostic(program: &str, message: impl fmt::Display) -> String {
+pub(crate) fn diagnostic(program: &str, message: impl fmt::Display) -> String {
     format!("{program}: {message}")
 }
 
 // [spec:samurai:def:util.canonpath-fn]
 // [spec:samurai:sem:util.canonpath-fn]
-pub fn canonpath(path: &mut BString) {
+pub(crate) fn canonpath(path: &mut BString) {
     if path.is_empty() {
         return;
     }
@@ -171,7 +171,7 @@ pub fn canonpath(path: &mut BString) {
 }
 
 #[cfg(test)]
-pub fn strip_ansi_escape_codes(input: &str) -> String {
+pub(crate) fn strip_ansi_escape_codes(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut output = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -197,7 +197,7 @@ pub fn strip_ansi_escape_codes(input: &str) -> String {
     String::from_utf8_lossy(&output).into_owned()
 }
 
-pub fn edit_distance(
+pub(crate) fn edit_distance(
     left: &str,
     right: &str,
     allow_replacements: bool,
@@ -234,7 +234,7 @@ pub fn edit_distance(
 }
 
 #[cfg(test)]
-pub fn encode_json_string(input: &str) -> String {
+pub(crate) fn encode_json_string(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     for character in input.chars() {
         match character {
@@ -279,7 +279,7 @@ fn ansi_color_sequences(input: &[u8]) -> Vec<(usize, usize)> {
 }
 
 #[cfg(test)]
-pub fn elide_middle(input: &str, width: usize) -> String {
+pub(crate) fn elide_middle(input: &str, width: usize) -> String {
     if input.len() <= width {
         return input.to_owned();
     }
@@ -342,22 +342,22 @@ pub fn elide_middle(input: &str, width: usize) -> String {
 }
 
 #[cfg(test)]
-pub fn split_string_piece(input: &str, separator: char) -> Vec<&str> {
+pub(crate) fn split_string_piece(input: &str, separator: char) -> Vec<&str> {
     input.split(separator).collect()
 }
 
 #[cfg(test)]
-pub fn join_string_piece(parts: &[&str], separator: char) -> String {
+pub(crate) fn join_string_piece(parts: &[&str], separator: char) -> String {
     parts.join(&separator.to_string())
 }
 
 #[cfg(test)]
-pub fn to_lower_ascii(character: char) -> char {
+pub(crate) fn to_lower_ascii(character: char) -> char {
     character.to_ascii_lowercase()
 }
 
 #[cfg(test)]
-pub fn equals_case_insensitive_ascii(left: &str, right: &str) -> bool {
+pub(crate) fn equals_case_insensitive_ascii(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
 

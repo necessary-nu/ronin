@@ -1,9 +1,12 @@
 //! GNU Make jobserver parsing and POSIX FIFO client support.
 
+use crate::error::ProcessError;
 use std::mem;
 
+type ProcessResult<T> = Result<T, ProcessError>;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub enum JobserverMode {
+pub(crate) enum JobserverMode {
     #[default]
     None,
     Pipe,
@@ -12,19 +15,19 @@ pub enum JobserverMode {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct JobserverConfig {
-    pub mode: JobserverMode,
-    pub path: String,
+pub(crate) struct JobserverConfig {
+    pub(crate) mode: JobserverMode,
+    pub(crate) path: String,
 }
 
 impl JobserverConfig {
-    pub fn has_mode(&self) -> bool {
+    pub(crate) fn has_mode(&self) -> bool {
         self.mode != JobserverMode::None
     }
 }
 
 #[derive(Debug, Default, Eq, PartialEq)]
-pub enum Slot {
+pub(crate) enum Slot {
     #[default]
     Invalid,
     Implicit,
@@ -32,37 +35,37 @@ pub enum Slot {
 }
 
 impl Slot {
-    pub fn implicit() -> Self {
+    pub(crate) fn implicit() -> Self {
         Self::Implicit
     }
 
-    pub fn explicit(value: u8) -> Self {
+    pub(crate) fn explicit(value: u8) -> Self {
         Self::Explicit(value)
     }
 
-    pub fn is_valid(&self) -> bool {
+    pub(crate) fn is_valid(&self) -> bool {
         !matches!(self, Self::Invalid)
     }
 
     #[cfg(test)]
-    pub fn is_implicit(&self) -> bool {
+    pub(crate) fn is_implicit(&self) -> bool {
         matches!(self, Self::Implicit)
     }
 
     #[cfg(test)]
-    pub fn is_explicit(&self) -> bool {
+    pub(crate) fn is_explicit(&self) -> bool {
         matches!(self, Self::Explicit(_))
     }
 
     #[cfg(test)]
-    pub fn explicit_value(&self) -> Option<u8> {
+    pub(crate) fn explicit_value(&self) -> Option<u8> {
         match self {
             Self::Explicit(value) => Some(*value),
             _ => None,
         }
     }
 
-    pub fn take(&mut self) -> Self {
+    pub(crate) fn take(&mut self) -> Self {
         mem::take(self)
     }
 }
@@ -79,7 +82,7 @@ fn parse_file_descriptor_pair(value: &str) -> Option<JobserverMode> {
 }
 
 /// Parse the MAKEFLAGS jobserver values accepted by Ninja.
-pub fn parse_makeflags_value(makeflags: Option<&str>) -> Result<JobserverConfig, String> {
+pub(crate) fn parse_makeflags_value(makeflags: Option<&str>) -> ProcessResult<JobserverConfig> {
     let Some(makeflags) = makeflags.filter(|value| !value.is_empty()) else {
         return Ok(JobserverConfig::default());
     };
@@ -110,7 +113,7 @@ pub fn parse_makeflags_value(makeflags: Option<&str>) -> Result<JobserverConfig,
             }
         } else if let Some(value) = argument.strip_prefix("--jobserver-fds=") {
             let Some(mode) = parse_file_descriptor_pair(value) else {
-                return Err(format!("Invalid file descriptor pair [{value}]"));
+                return Err(format!("Invalid file descriptor pair [{value}]").into());
             };
             config.path = if mode == JobserverMode::Pipe {
                 value.into()
@@ -125,7 +128,9 @@ pub fn parse_makeflags_value(makeflags: Option<&str>) -> Result<JobserverConfig,
 
 /// Parse MAKEFLAGS and reject transports that cannot work on this platform.
 #[cfg(test)]
-pub fn parse_native_makeflags_value(makeflags: Option<&str>) -> Result<JobserverConfig, String> {
+pub(crate) fn parse_native_makeflags_value(
+    makeflags: Option<&str>,
+) -> ProcessResult<JobserverConfig> {
     let config = parse_makeflags_value(makeflags)?;
     match config.mode {
         #[cfg(windows)]
@@ -140,7 +145,8 @@ pub fn parse_native_makeflags_value(makeflags: Option<&str>) -> Result<Jobserver
 
 #[cfg(unix)]
 mod platform {
-    use super::{JobserverConfig, JobserverMode, Slot};
+    use super::{JobserverConfig, JobserverMode, ProcessResult, Slot};
+    use crate::error::ProcessError;
     use std::ffi::CString;
     use std::fs;
     use std::os::raw::{c_char, c_int, c_void};
@@ -175,48 +181,49 @@ mod platform {
     const FD_CLOEXEC: c_int = 1;
 
     #[derive(Debug)]
-    pub struct PosixJobserverClient {
+    pub(crate) struct PosixJobserverClient {
         has_implicit_slot: bool,
         read_fd: OwnedFd,
         write_fd: OwnedFd,
     }
 
     impl PosixJobserverClient {
-        pub fn create(config: &JobserverConfig) -> Result<Self, String> {
+        pub(crate) fn create(config: &JobserverConfig) -> ProcessResult<Self> {
             let (read_fd, write_fd) = match config.mode {
                 JobserverMode::PosixFifo => {
                     if config.path.is_empty() {
                         return Err("Empty fifo path".into());
                     }
-                    let metadata = fs::metadata(&config.path)
-                        .map_err(|error| format!("Error opening fifo for reading: {error}"))?;
+                    let metadata = fs::metadata(&config.path).map_err(|source| {
+                        ProcessError::context("Error opening fifo for reading", source)
+                    })?;
                     let file_type = metadata.file_type();
                     if !file_type.is_fifo() && !file_type.is_char_device() {
-                        return Err(format!("Not a fifo path: {}", config.path));
+                        return Err(format!("Not a fifo path: {}", config.path).into());
                     }
                     let path =
                         CString::new(config.path.as_bytes()).map_err(|_| "Invalid fifo path")?;
                     let read_fd = unsafe { open(path.as_ptr(), O_RDONLY | O_NONBLOCK) };
                     if read_fd < 0 {
-                        return Err(format!(
-                            "Error opening fifo for reading: {}",
-                            std::io::Error::last_os_error()
+                        return Err(ProcessError::context(
+                            "Error opening fifo for reading",
+                            std::io::Error::last_os_error(),
                         ));
                     }
                     let read_fd = unsafe { OwnedFd::from_raw_fd(read_fd) };
                     let write_fd = unsafe { open(path.as_ptr(), O_WRONLY | O_NONBLOCK) };
                     if write_fd < 0 {
-                        return Err(format!(
-                            "Error opening fifo for writing: {}",
-                            std::io::Error::last_os_error()
+                        return Err(ProcessError::context(
+                            "Error opening fifo for writing",
+                            std::io::Error::last_os_error(),
                         ));
                     }
                     let write_fd = unsafe { OwnedFd::from_raw_fd(write_fd) };
                     for fd in [&read_fd, &write_fd] {
                         if unsafe { fcntl(fd.as_raw_fd(), F_SETFD, FD_CLOEXEC) } < 0 {
-                            return Err(format!(
-                                "Error setting jobserver descriptor close-on-exec: {}",
-                                std::io::Error::last_os_error()
+                            return Err(ProcessError::context(
+                                "Error setting jobserver descriptor close-on-exec",
+                                std::io::Error::last_os_error(),
                             ));
                         }
                     }
@@ -243,33 +250,33 @@ mod platform {
             })
         }
 
-        fn duplicate_nonblocking(fd: RawFd) -> Result<OwnedFd, String> {
+        fn duplicate_nonblocking(fd: RawFd) -> ProcessResult<OwnedFd> {
             let duplicate = unsafe { dup(fd) };
             if duplicate < 0 {
-                return Err(format!(
-                    "Error duplicating jobserver descriptor: {}",
-                    std::io::Error::last_os_error()
+                return Err(ProcessError::context(
+                    "Error duplicating jobserver descriptor",
+                    std::io::Error::last_os_error(),
                 ));
             }
             let duplicate = unsafe { OwnedFd::from_raw_fd(duplicate) };
             if unsafe { fcntl(duplicate.as_raw_fd(), F_SETFD, FD_CLOEXEC) } < 0 {
-                return Err(format!(
-                    "Error setting jobserver descriptor close-on-exec: {}",
-                    std::io::Error::last_os_error()
+                return Err(ProcessError::context(
+                    "Error setting jobserver descriptor close-on-exec",
+                    std::io::Error::last_os_error(),
                 ));
             }
             let flags = unsafe { fcntl(duplicate.as_raw_fd(), F_GETFL) };
             if flags < 0 || unsafe { fcntl(duplicate.as_raw_fd(), F_SETFL, flags | O_NONBLOCK) } < 0
             {
-                return Err(format!(
-                    "Error setting jobserver descriptor nonblocking: {}",
-                    std::io::Error::last_os_error()
+                return Err(ProcessError::context(
+                    "Error setting jobserver descriptor nonblocking",
+                    std::io::Error::last_os_error(),
                 ));
             }
             Ok(duplicate)
         }
 
-        pub fn try_acquire(&mut self) -> Slot {
+        pub(crate) fn try_acquire(&mut self) -> Slot {
             if self.has_implicit_slot {
                 self.has_implicit_slot = false;
                 return Slot::implicit();
@@ -289,7 +296,7 @@ mod platform {
             }
         }
 
-        pub fn release(&mut self, slot: Slot) {
+        pub(crate) fn release(&mut self, slot: Slot) {
             match slot {
                 Slot::Invalid => {}
                 Slot::Implicit => {
@@ -310,18 +317,18 @@ mod platform {
         }
 
         #[cfg(test)]
-        pub fn jobserver_fd(&self) -> RawFd {
+        pub(crate) fn jobserver_fd(&self) -> RawFd {
             self.read_fd.as_raw_fd()
         }
     }
 }
 
 #[cfg(unix)]
-pub use platform::PosixJobserverClient;
+pub(crate) use platform::PosixJobserverClient;
 
 /// Construct the native POSIX jobserver client.
 #[cfg(unix)]
-pub fn create_client(config: &JobserverConfig) -> Result<PosixJobserverClient, String> {
+pub(crate) fn create_client(config: &JobserverConfig) -> ProcessResult<PosixJobserverClient> {
     PosixJobserverClient::create(config)
 }
 

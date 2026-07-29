@@ -31,6 +31,13 @@ The original C samurai sources, Makefile, and manual page remain in the
 repository as the source-port corpus. Cargo builds and tests Ronin; the legacy
 C build artifacts are not part of the Ronin product interface.
 
+Ronin's supported interface is the executable. The Rust library exists so the
+binary and integration tests can share implementation; its deliberately small
+embedding surface consists of `run`, `run_os`, `RunResult`, `Error`,
+`ErrorKind`, the product/version constants, and the three process-signal
+helpers re-exported at the crate root. Other modules are private and are not a
+supported `ronin_core` API.
+
 ## Compatibility work
 
 Ronin's compatibility contract is in

@@ -1,11 +1,14 @@
 //! Shell subprocess execution and completion-set bookkeeping.
 
+use crate::error::ProcessError;
 use crate::graph::EdgeId;
 use crate::util::{BString, ByteSlice};
 use std::collections::HashMap;
 use std::io;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
+
+type ProcessResult<T> = Result<T, ProcessError>;
 
 #[cfg(unix)]
 mod signals {
@@ -27,7 +30,7 @@ mod signals {
         INTERRUPTED.store(signal, Ordering::Relaxed);
     }
 
-    pub fn install() -> std::io::Result<()> {
+    pub(super) fn install() -> std::io::Result<()> {
         INTERRUPTED.store(0, Ordering::Relaxed);
         for signal_number in SIGNALS {
             if unsafe { signal(signal_number, record_interrupt as usize) } == SIG_ERR {
@@ -37,14 +40,14 @@ mod signals {
         Ok(())
     }
 
-    pub fn interrupted() -> Option<i32> {
+    pub(super) fn interrupted() -> Option<i32> {
         match INTERRUPTED.load(Ordering::Relaxed) {
             0 => None,
             signal => Some(signal),
         }
     }
 
-    pub fn send(pid: u32, process_group: bool, signal_number: i32) {
+    pub(super) fn send(pid: u32, process_group: bool, signal_number: i32) {
         let pid = i32::try_from(pid).unwrap_or(i32::MAX);
         let target = if process_group { -pid } else { pid };
         unsafe {
@@ -52,7 +55,7 @@ mod signals {
         }
     }
 
-    pub fn reraise(signal_number: i32) -> ! {
+    pub(super) fn reraise(signal_number: i32) -> ! {
         unsafe {
             signal(signal_number, SIG_DFL);
             raise(signal_number);
@@ -61,6 +64,9 @@ mod signals {
     }
 }
 
+/// Installs Ronin's process-interruption handlers.
+///
+/// Call this once in an embedding executable before invoking [`crate::run_os`].
 pub fn install_signal_handlers() -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -72,6 +78,7 @@ pub fn install_signal_handlers() -> io::Result<()> {
     }
 }
 
+/// Returns the operating-system signal most recently observed by Ronin.
 pub fn interrupted_signal() -> Option<i32> {
     #[cfg(unix)]
     {
@@ -83,6 +90,9 @@ pub fn interrupted_signal() -> Option<i32> {
     }
 }
 
+/// Restores the default handler and re-raises an observed signal.
+///
+/// This function does not return.
 pub fn reraise_signal(signal: i32) -> ! {
     #[cfg(unix)]
     {
@@ -111,7 +121,7 @@ pub(crate) struct ProcessOutput {
 
 pub(crate) struct ProcessCompletion {
     pub(crate) edge: EdgeId,
-    pub(crate) result: Result<Option<ProcessOutput>, String>,
+    pub(crate) result: ProcessResult<Option<ProcessOutput>>,
 }
 
 enum ProcessEvent {
@@ -165,7 +175,7 @@ impl ProcessSupervisor {
                         process_group,
                     });
                 })
-                .map_err(|error| error.to_string())
+                .map_err(ProcessError::from)
             }))
             .unwrap_or_else(|_| Err("subcommand thread panicked".into()));
             let _ = sender.send(ProcessEvent::Finished(ProcessCompletion { edge, result }));
@@ -175,7 +185,7 @@ impl ProcessSupervisor {
     pub(crate) fn wait(
         &mut self,
         timeout: Option<std::time::Duration>,
-    ) -> Result<Option<ProcessCompletion>, String> {
+    ) -> ProcessResult<Option<ProcessCompletion>> {
         loop {
             let event = if let Some(timeout) = timeout {
                 match self.receiver.recv_timeout(timeout) {

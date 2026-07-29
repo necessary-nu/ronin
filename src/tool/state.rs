@@ -1,11 +1,12 @@
 use crate::deps::{depsentry, depsnodes, visit_dependencies, DepsLog};
+use crate::error::ToolError;
 use crate::graph::{nodeget, Graph, NodeId};
 use crate::missing_deps::MissingDependencyScanner;
 use crate::os::RealDiskInterface;
 use crate::util::ByteSlice;
 use std::fmt::Write;
 
-pub fn deps(graph: &Graph, log: &DepsLog, targets: &[String]) -> Result<String, String> {
+pub(crate) fn deps(graph: &Graph, log: &DepsLog, targets: &[String]) -> Result<String, ToolError> {
     let nodes = if targets.is_empty() {
         depsnodes(log).collect::<Vec<_>>()
     } else {
@@ -25,9 +26,7 @@ pub fn deps(graph: &Graph, log: &DepsLog, targets: &[String]) -> Result<String, 
             let _ = writeln!(output, "{path}: deps not found");
             continue;
         };
-        let mtime = disk
-            .stat(path.to_path().expect("byte paths are valid on Unix"))
-            .map_err(|error| error.to_string())?;
+        let mtime = disk.stat(path.to_path().expect("byte paths are valid on Unix"))?;
         let state = if mtime == 0 || mtime > entry.mtime {
             "STALE"
         } else {
@@ -47,7 +46,7 @@ pub fn deps(graph: &Graph, log: &DepsLog, targets: &[String]) -> Result<String, 
     Ok(output)
 }
 
-pub fn missing_deps(graph: &Graph, log: &DepsLog, targets: &[NodeId]) -> (String, i32) {
+pub(crate) fn missing_deps(graph: &Graph, log: &DepsLog, targets: &[NodeId]) -> (String, i32) {
     let mut scanner = MissingDependencyScanner::default();
     visit_dependencies(log, |node, dependency| {
         scanner.record_dependency(node, dependency);

@@ -4,10 +4,10 @@ use std::io;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-pub const MTIME_MISSING: i64 = -1;
+pub(crate) const MTIME_MISSING: i64 = -1;
 
 #[derive(Default)]
-pub struct RealDiskInterface;
+pub(crate) struct RealDiskInterface;
 
 impl RealDiskInterface {
     // [spec:samurai:def:os.osmtime-fn]
@@ -16,7 +16,7 @@ impl RealDiskInterface {
     // [spec:samurai:sem:os-posix.osmtime-fn]
     /// Return a nanosecond timestamp, zero for a missing path, and an error for
     /// failures other than a missing component.
-    pub fn stat(&self, path: &Path) -> io::Result<i64> {
+    pub(crate) fn stat(&self, path: &Path) -> io::Result<i64> {
         match std::fs::metadata(path) {
             Ok(metadata) => {
                 let duration = metadata
@@ -43,7 +43,7 @@ impl RealDiskInterface {
     // [spec:samurai:sem:os.osmkdirs-fn]
     // [spec:samurai:def:os-posix.osmkdirs-fn]
     // [spec:samurai:sem:os-posix.osmkdirs-fn]
-    pub fn make_dirs(&self, path: &Path) -> io::Result<()> {
+    pub(crate) fn make_dirs(&self, path: &Path) -> io::Result<()> {
         let directory = path.parent().unwrap_or_else(|| Path::new(""));
         if directory.as_os_str().is_empty() {
             Ok(())
@@ -57,7 +57,7 @@ impl RealDiskInterface {
 // [spec:samurai:sem:os.osnproc-fn]
 // [spec:samurai:def:os-posix.osnproc-fn]
 // [spec:samurai:sem:os-posix.osnproc-fn]
-pub fn osnproc() -> i64 {
+pub(crate) fn osnproc() -> i64 {
     std::thread::available_parallelism()
         .map(|count| count.get() as i64)
         .unwrap_or(1)

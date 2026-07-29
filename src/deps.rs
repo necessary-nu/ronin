@@ -1,6 +1,7 @@
 //! Dependency-log support translated from `deps.c`.
 
 use crate::env::edgevar;
+use crate::error::PersistenceError;
 use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId};
 use crate::util::ByteSlice;
 use std::collections::HashMap;
@@ -11,19 +12,19 @@ use std::path::{Path, PathBuf};
 
 // [spec:samurai:def:deps.nodearray]
 #[derive(Clone, Default)]
-pub struct NodeArray {
-    pub nodes: Vec<NodeId>,
+pub(crate) struct NodeArray {
+    pub(crate) nodes: Vec<NodeId>,
 }
 
 // [spec:samurai:def:deps.entry]
 #[derive(Clone)]
-pub struct Entry {
-    pub node: NodeId,
-    pub deps: NodeArray,
-    pub mtime: i64,
+pub(crate) struct Entry {
+    pub(crate) node: NodeId,
+    pub(crate) deps: NodeArray,
+    pub(crate) mtime: i64,
 }
 
-pub struct DepsLog {
+pub(crate) struct DepsLog {
     writer: BufWriter<File>,
     entries: EntryMap,
     nodes: Vec<NodeId>,
@@ -95,7 +96,7 @@ impl OrderedPaths {
     }
 }
 
-fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, String> {
+fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, PersistenceError> {
     let mut outputs = OrderedPaths::default();
     let mut inputs = OrderedPaths::default();
     let mut token = Vec::new();
@@ -194,7 +195,7 @@ fn merge_depfile_rule(
     line: &[u8],
     outputs: &mut OrderedPaths,
     inputs: &mut OrderedPaths,
-) -> Result<(), String> {
+) -> Result<(), PersistenceError> {
     let Some((rule_outputs, rule_inputs)) = parse_depfile_rule(line)? else {
         return Ok(());
     };
@@ -213,7 +214,7 @@ fn merge_depfile_rule(
     Ok(())
 }
 
-fn parse_depfile(text: &[u8]) -> Result<ParsedDepfile, String> {
+fn parse_depfile(text: &[u8]) -> Result<ParsedDepfile, PersistenceError> {
     let mut outputs = OrderedPaths::default();
     let mut inputs = OrderedPaths::default();
     let mut line = Vec::new();
@@ -372,7 +373,7 @@ fn depsinit_path(path: PathBuf) -> io::Result<DepsLog> {
 // [spec:samurai:def:deps.depsinit-fn]
 // [spec:samurai:sem:deps.depsinit-fn]
 #[cfg(test)]
-pub fn depsinit(builddir: Option<&Path>) -> io::Result<DepsLog> {
+pub(crate) fn depsinit(builddir: Option<&Path>) -> io::Result<DepsLog> {
     let path = builddir.map_or_else(
         || PathBuf::from(".ninja_deps"),
         |directory| directory.join(".ninja_deps"),
@@ -382,7 +383,7 @@ pub fn depsinit(builddir: Option<&Path>) -> io::Result<DepsLog> {
 
 // [spec:samurai:def:deps.depsclose-fn]
 // [spec:samurai:sem:deps.depsclose-fn]
-pub fn depsclose(mut log: DepsLog) -> io::Result<()> {
+pub(crate) fn depsclose(mut log: DepsLog) -> io::Result<()> {
     log.writer.flush()
 }
 
@@ -401,7 +402,7 @@ fn native_u32(bytes: &[u8]) -> u32 {
 /// The returned warning is non-fatal: just like Ninja, the valid prefix stays
 /// usable and the invalid suffix is discarded before future records append.
 // [spec:samurai:req:compat.persistent-state]
-pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Option<String>)> {
+pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Option<String>)> {
     const SIGNATURE: &[u8] = b"# ninjadeps\n";
     const HEADER_LEN: usize = SIGNATURE.len() + 4;
     const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
@@ -531,7 +532,7 @@ fn deps_entry_is_live(graph: &Graph, entry: &Entry) -> bool {
 
 /// Rewrite the log with only dependency entries that are still reachable from
 /// an edge using Ninja's deps attribute.
-pub fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<()> {
+pub(crate) fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<()> {
     let mut live_entries = log
         .entries
         .values()
@@ -577,7 +578,11 @@ pub fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<()> {
 
 // [spec:samurai:def:deps.depsparse-fn]
 // [spec:samurai:sem:deps.depsparse-fn]
-pub fn depsparse(graph: &mut Graph, path: &Path, allow_missing: bool) -> io::Result<NodeArray> {
+pub(crate) fn depsparse(
+    graph: &mut Graph,
+    path: &Path,
+    allow_missing: bool,
+) -> io::Result<NodeArray> {
     let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if allow_missing && error.kind() == io::ErrorKind::NotFound => {
@@ -586,8 +591,8 @@ pub fn depsparse(graph: &mut Graph, path: &Path, allow_missing: bool) -> io::Res
         Err(error) => return Err(error),
     };
     let mut nodes = Vec::new();
-    let parsed = parse_depfile(&text)
-        .map_err(|message| io::Error::new(io::ErrorKind::InvalidData, message))?;
+    let parsed =
+        parse_depfile(&text).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     for dependency in parsed.inputs {
         let mut path = crate::util::mkstr(dependency.len());
         path.copy_from_slice(&dependency);
@@ -604,7 +609,7 @@ fn canonical_dep_path(path: &[u8]) -> Vec<u8> {
     canonical.as_bytes().to_vec()
 }
 
-pub fn depsparse_for_edge(
+pub(crate) fn depsparse_for_edge(
     graph: &mut Graph,
     path: &Path,
     edge: EdgeId,
@@ -617,8 +622,8 @@ pub fn depsparse_for_edge(
     if text.is_empty() {
         return Ok(None);
     }
-    let parsed = parse_depfile(&text)
-        .map_err(|message| io::Error::new(io::ErrorKind::InvalidData, message))?;
+    let parsed =
+        parse_depfile(&text).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     if parsed.outputs.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -658,7 +663,7 @@ pub fn depsparse_for_edge(
 
 // [spec:samurai:def:deps.depsload-fn]
 // [spec:samurai:sem:deps.depsload-fn]
-pub fn depsload(graph: &mut Graph, edge: EdgeId, log: &DepsLog) {
+pub(crate) fn depsload(graph: &mut Graph, edge: EdgeId, log: &DepsLog) {
     let output = graph.edge(edge).out.first().copied();
     let Some(output) = output else { return };
     if let Some(entry) = log.entries.get(&output) {
@@ -666,18 +671,18 @@ pub fn depsload(graph: &mut Graph, edge: EdgeId, log: &DepsLog) {
     }
 }
 
-pub fn depsentry(log: &DepsLog, output: NodeId) -> Option<&Entry> {
+pub(crate) fn depsentry(log: &DepsLog, output: NodeId) -> Option<&Entry> {
     log.entries.get(&output)
 }
 
-pub fn depsnodes(log: &DepsLog) -> impl Iterator<Item = NodeId> + '_ {
+pub(crate) fn depsnodes(log: &DepsLog) -> impl Iterator<Item = NodeId> + '_ {
     log.nodes
         .iter()
         .copied()
         .filter(|node| log.entries.get(node).is_some())
 }
 
-pub fn visit_dependencies(log: &DepsLog, mut visit: impl FnMut(NodeId, NodeId)) {
+pub(crate) fn visit_dependencies(log: &DepsLog, mut visit: impl FnMut(NodeId, NodeId)) {
     for entry in log.entries.values() {
         for dependency in &entry.deps.nodes {
             visit(entry.node, *dependency);
@@ -687,7 +692,7 @@ pub fn visit_dependencies(log: &DepsLog, mut visit: impl FnMut(NodeId, NodeId)) 
 
 // [spec:samurai:def:deps.depsrecord-fn]
 // [spec:samurai:sem:deps.depsrecord-fn]
-pub fn depsrecord(log: &mut DepsLog, edge: EdgeId, graph: &mut Graph) -> io::Result<()> {
+pub(crate) fn depsrecord(log: &mut DepsLog, edge: EdgeId, graph: &mut Graph) -> io::Result<()> {
     let Some(depfile) = edgevar(graph, edge, "depfile", false) else {
         return Ok(());
     };
@@ -699,7 +704,7 @@ pub fn depsrecord(log: &mut DepsLog, edge: EdgeId, graph: &mut Graph) -> io::Res
     depsrecordnodes(log, graph, edge, &deps.nodes)
 }
 
-pub fn depsrecordnodes(
+pub(crate) fn depsrecordnodes(
     log: &mut DepsLog,
     graph: &mut Graph,
     edge: EdgeId,

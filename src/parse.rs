@@ -4,6 +4,7 @@ use crate::env::{
     edgevar, envaddrule, enveval, envrule, mkpool, mkrule, poolget, ruleaddvar, EnvState,
     EnvironmentId,
 };
+use crate::error::ManifestError;
 use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId};
 use crate::scan::{
     scanchar, scanclose, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe,
@@ -11,20 +12,22 @@ use crate::scan::{
 };
 use crate::util::{canonpath, BStr, BString, ByteSlice, EvalString};
 
+type ManifestResult<T> = Result<T, ManifestError>;
+
 // [spec:samurai:def:parse.parseoptions]
 #[derive(Clone, Copy, Default)]
-pub struct ParseOptions {
-    pub dupbuildwarn: bool,
+pub(crate) struct ParseOptions {
+    pub(crate) dupbuildwarn: bool,
 }
 
-pub struct Parser {
-    pub options: ParseOptions,
-    pub defaults: Vec<NodeId>,
+pub(crate) struct Parser {
+    pub(crate) options: ParseOptions,
+    pub(crate) defaults: Vec<NodeId>,
 }
 
 // [spec:samurai:def:parse.parseinit-fn]
 // [spec:samurai:sem:parse.parseinit-fn]
-pub fn parseinit() -> Parser {
+pub(crate) fn parseinit() -> Parser {
     Parser {
         options: ParseOptions::default(),
         defaults: Vec::new(),
@@ -33,13 +36,13 @@ pub fn parseinit() -> Parser {
 
 // [spec:samurai:def:parse.parselet-fn]
 // [spec:samurai:sem:parse.parselet-fn]
-fn parselet(scanner: &mut Scanner) -> Result<(String, EvalString), String> {
+fn parselet(scanner: &mut Scanner) -> ManifestResult<(String, EvalString)> {
     let name = scanname(scanner)?;
     let value = parse_assignment(scanner)?;
     Ok((name, value))
 }
 
-fn parse_assignment(scanner: &mut Scanner) -> Result<EvalString, String> {
+fn parse_assignment(scanner: &mut Scanner) -> ManifestResult<EvalString> {
     scanchar(scanner, '=')?;
     let value = scanstring(scanner, false)?.unwrap_or_default();
     scannewline(scanner)?;
@@ -52,7 +55,7 @@ fn parserule(
     scanner: &mut Scanner,
     graph: &mut Graph,
     environment: EnvironmentId,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     let name = scanname(scanner)?;
     let rule = mkrule(graph, name.clone());
     scannewline(scanner)?;
@@ -75,7 +78,7 @@ fn parserule(
                 | "rspfile_content"
                 | "msvc_deps_prefix"
         ) {
-            return Err(format!("unexpected rule variable '{name}'"));
+            return Err(format!("unexpected rule variable '{name}'").into());
         }
         command |= name == "command";
         rspfile |= name == "rspfile";
@@ -83,21 +86,21 @@ fn parserule(
         ruleaddvar(graph, rule, name, value);
     }
     if !command {
-        return Err(format!("rule '{name}' has no command"));
+        return Err(format!("rule '{name}' has no command").into());
     }
     if rspfile != rspfile_content {
-        return Err(format!(
-            "rule '{name}' has rspfile and no rspfile_content or vice versa"
-        ));
+        return Err(
+            format!("rule '{name}' has rspfile and no rspfile_content or vice versa").into(),
+        );
     }
-    envaddrule(graph, environment, rule)
+    Ok(envaddrule(graph, environment, rule)?)
 }
 
 fn evaluated_path(
     graph: &Graph,
     path: &EvalString,
     environment: EnvironmentId,
-) -> Result<BString, String> {
+) -> ManifestResult<BString> {
     let value = enveval(graph, environment, path);
     if value.is_empty() {
         return Err("empty path".into());
@@ -113,7 +116,7 @@ fn node_for(
     graph: &mut Graph,
     path: &EvalString,
     environment: EnvironmentId,
-) -> Result<NodeId, String> {
+) -> ManifestResult<NodeId> {
     let mut path = evaluated_path(graph, path, environment)?;
     canonpath(&mut path);
     Ok(mknode(graph, path))
@@ -127,7 +130,7 @@ fn parseedge(
     environment: EnvironmentId,
     state: &EnvState,
     options: &ParseOptions,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     scanpaths(scanner)?;
     let mut output_paths = take_paths(scanner);
     let explicit_output_count = output_paths.len();
@@ -180,7 +183,8 @@ fn parseedge(
                 return Err(format!(
                     "multiple rules generate '{}'",
                     String::from_utf8_lossy(graph.node(node).path.as_bytes())
-                ));
+                )
+                .into());
             }
             continue;
         }
@@ -243,7 +247,8 @@ fn parseedge(
             return Err(format!(
                 "dyndep '{}' is not an input",
                 String::from_utf8_lossy(dyndep_path.as_bytes())
-            ));
+            )
+            .into());
         }
         graph.node_mut(dyndep).dyndep_pending = true;
         graph.edge_mut(edge).dyndep = Some(dyndep);
@@ -287,7 +292,7 @@ fn parseinclude(
     environment: EnvironmentId,
     state: &mut EnvState,
     newscope: bool,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     let path = scanstring(scanner, true)?.ok_or_else(|| "expected include path".to_owned())?;
     scannewline(scanner)?;
     let path = evaluated_path(graph, &path, environment)?;
@@ -312,7 +317,7 @@ fn parsedefault(
     graph: &Graph,
     parser: &mut Parser,
     environment: EnvironmentId,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     scanpaths(scanner)?;
     let targets = take_paths(scanner);
     scannewline(scanner)?;
@@ -341,14 +346,14 @@ fn parsepool(
     graph: &mut Graph,
     state: &mut EnvState,
     environment: EnvironmentId,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     let name = scanname(scanner)?;
     let pool = mkpool(graph, state, name)?;
     scannewline(scanner)?;
     while scanindent(scanner)? {
         let (name, value) = parselet(scanner)?;
         if name != "depth" {
-            return Err(format!("unexpected pool variable '{name}'"));
+            return Err(format!("unexpected pool variable '{name}'").into());
         }
         let value = enveval(graph, environment, &value);
         let text = String::from_utf8_lossy(value.as_bytes());
@@ -364,7 +369,7 @@ fn parsepool(
 
 // [spec:samurai:def:parse.checkversion-fn]
 // [spec:samurai:sem:parse.checkversion-fn]
-fn checkversion(version: &BStr) -> Result<(i32, i32), String> {
+fn checkversion(version: &BStr) -> ManifestResult<(i32, i32)> {
     let bytes = version.as_bytes();
     let major_end = bytes
         .iter()
@@ -395,7 +400,8 @@ fn checkversion(version: &BStr) -> Result<(i32, i32), String> {
         Err(format!(
             "ninja_required_version {} is newer than 1.9",
             String::from_utf8_lossy(bytes)
-        ))
+        )
+        .into())
     } else {
         Ok((major, minor))
     }
@@ -404,13 +410,13 @@ fn checkversion(version: &BStr) -> Result<(i32, i32), String> {
 // [spec:samurai:def:parse.parse-fn]
 // [spec:samurai:sem:parse.parse-fn]
 // [spec:samurai:req:compat.manifest-semantics]
-pub fn parse(
+pub(crate) fn parse(
     name: impl AsRef<std::path::Path>,
     graph: &mut Graph,
     parser: &mut Parser,
     environment: EnvironmentId,
     state: &mut EnvState,
-) -> Result<(), String> {
+) -> ManifestResult<()> {
     let mut scanner = crate::scan::scaninit(name)?;
     while let Some(token) = scankeyword(&mut scanner)? {
         match token {
@@ -441,7 +447,7 @@ pub fn parse(
 
 // [spec:samurai:def:parse.defaultnodes-fn]
 // [spec:samurai:sem:parse.defaultnodes-fn]
-pub fn defaultnodes(parser: &Parser, graph: &Graph) -> Vec<NodeId> {
+pub(crate) fn defaultnodes(parser: &Parser, graph: &Graph) -> Vec<NodeId> {
     if !parser.defaults.is_empty() {
         parser.defaults.clone()
     } else {
@@ -464,7 +470,7 @@ mod ninja_manifest_tests {
 
     static NEXT_MANIFEST: AtomicUsize = AtomicUsize::new(0);
 
-    fn parse_source(source: &str) -> Result<(Graph, Parser, EnvState), String> {
+    fn parse_source(source: &str) -> ManifestResult<(Graph, Parser, EnvState)> {
         let path = std::env::temp_dir().join(format!(
             "ronin-manifest-parser-{}-{}.ninja",
             std::process::id(),
@@ -485,7 +491,7 @@ mod ninja_manifest_tests {
         result.map(|()| (graph, parser, state))
     }
 
-    fn parse_path(path: &std::path::Path) -> Result<(Graph, Parser, EnvState), String> {
+    fn parse_path(path: &std::path::Path) -> ManifestResult<(Graph, Parser, EnvState)> {
         let mut graph = crate::graph::graphinit();
         let mut parser = parseinit();
         let mut state = crate::env::envinit(&mut graph);
@@ -519,7 +525,7 @@ mod ninja_manifest_tests {
     fn parse_error(source: &str) -> String {
         match parse_source(source) {
             Ok(_) => panic!("manifest unexpectedly parsed"),
-            Err(error) => error,
+            Err(error) => error.to_string(),
         }
     }
 
@@ -842,7 +848,7 @@ mod ninja_manifest_tests {
             Ok(_) => panic!("duplicate output unexpectedly parsed"),
             Err(error) => error,
         };
-        assert!(error.contains("multiple rules generate 'out1'"));
+        assert!(error.to_string().contains("multiple rules generate 'out1'"));
         fs::remove_dir_all(directory).unwrap();
     }
 

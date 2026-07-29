@@ -88,7 +88,7 @@ impl<'a> SegmentedBytes<'a> {
 }
 
 /// Hash a logical byte sequence without first concatenating its segments.
-pub fn rapidhashv1_parts(parts: &[&[u8]]) -> u64 {
+pub(crate) fn rapidhashv1_parts(parts: &[&[u8]]) -> u64 {
     const SECRET: [u64; 3] = [
         0x2d35_8dcc_aa6c_78a5,
         0x8bb8_4b93_962e_acc9,
@@ -157,7 +157,7 @@ pub fn rapidhashv1_parts(parts: &[&[u8]]) -> u64 {
 // [spec:samurai:def:htab.rapidhashv1-fn]
 // [spec:samurai:sem:htab.rapidhashv1-fn]
 #[cfg(test)]
-pub fn rapidhashv1(bytes: &[u8]) -> u64 {
+pub(crate) fn rapidhashv1(bytes: &[u8]) -> u64 {
     if bytes.is_empty() {
         0x5a6e_f770_74eb_c84b
     } else {

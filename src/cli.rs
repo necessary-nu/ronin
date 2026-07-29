@@ -3,23 +3,33 @@
 use crate::build::BuildOptions;
 use crate::parse::ParseOptions;
 use crate::util::{BString, ByteSlice, ByteVec};
+use crate::{Error, ErrorKind};
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+type CliResult<T> = Result<T, Error>;
+
 // [spec:samurai:req:product.ronin-identity]
+/// The product name used in Ronin diagnostics and executable metadata.
 pub const PRODUCT_NAME: &str = "ronin";
 
 // [spec:samurai:req:compat.version-reporting]
+/// The Ninja language compatibility version reported by `--version`.
 pub const NINJA_COMPAT_VERSION: &str = "1.9.0";
 
 // [spec:samurai:req:compat.ninja-owned-names]
 const DEFAULT_MANIFEST: &str = "build.ninja";
 const NINJA_STATUS_ENV: &str = "NINJA_STATUS";
 
+/// Buffered output and process status produced by one Ronin invocation.
+#[derive(Debug, Eq, PartialEq)]
 pub struct RunResult {
+    /// Standard output not already streamed while running build commands.
     pub stdout: Vec<u8>,
+    /// Standard error not already streamed while running build commands.
     pub stderr: Vec<u8>,
+    /// The process exit code requested by the invocation.
     pub exit_code: i32,
 }
 
@@ -43,7 +53,7 @@ impl RunResult {
 
 // [spec:samurai:def:samu.usage-fn]
 // [spec:samurai:sem:samu.usage-fn]
-pub fn usage(program: &str) -> String {
+pub(crate) fn usage(program: &str) -> String {
     let default_jobs = match crate::os::osnproc() {
         i64::MIN..=1 => 2,
         2 => 3,
@@ -81,20 +91,20 @@ pub fn usage(program: &str) -> String {
 
 // [spec:samurai:def:samu.debugflag-fn]
 // [spec:samurai:sem:samu.debugflag-fn]
-pub(crate) fn debugflag(options: &mut BuildOptions, flag: &str) -> Result<(), String> {
+pub(crate) fn debugflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> {
     match flag {
         "stats" => options.stats = true,
         "explain" => options.explain = true,
         "keepdepfile" => options.keepdepfile = true,
         "keeprsp" => options.keeprsp = true,
-        _ => return Err(format!("unknown debug flag '{flag}'")),
+        _ => return Err(format!("unknown debug flag '{flag}'").into()),
     }
     Ok(())
 }
 
 // [spec:samurai:def:samu.loadflag-fn]
 // [spec:samurai:sem:samu.loadflag-fn]
-pub(crate) fn loadflag(options: &mut BuildOptions, flag: &str) -> Result<(), String> {
+pub(crate) fn loadflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> {
     let value: f64 = flag
         .parse()
         .map_err(|_| "invalid -l parameter".to_owned())?;
@@ -104,18 +114,18 @@ pub(crate) fn loadflag(options: &mut BuildOptions, flag: &str) -> Result<(), Str
 
 // [spec:samurai:def:samu.warnflag-fn]
 // [spec:samurai:sem:samu.warnflag-fn]
-pub(crate) fn warnflag(options: &mut ParseOptions, flag: &str) -> Result<(), String> {
+pub(crate) fn warnflag(options: &mut ParseOptions, flag: &str) -> CliResult<()> {
     match flag {
         "dupbuild=err" => options.dupbuildwarn = false,
         "dupbuild=warn" => options.dupbuildwarn = true,
-        _ => return Err(format!("unknown warning flag '{flag}'")),
+        _ => return Err(format!("unknown warning flag '{flag}'").into()),
     }
     Ok(())
 }
 
 // [spec:samurai:def:samu.jobsflag-fn]
 // [spec:samurai:sem:samu.jobsflag-fn]
-pub(crate) fn jobsflag(options: &mut BuildOptions, flag: &str) -> Result<(), String> {
+pub(crate) fn jobsflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> {
     let value: i64 = flag
         .parse()
         .map_err(|_| "invalid -j parameter".to_owned())?;
@@ -195,7 +205,7 @@ fn warning_flags() -> &'static str {
     "warning flags:\n  phonycycle={err,warn}  phony build statement references itself\n"
 }
 
-fn status_placeholder(name: &str) -> Result<&'static str, String> {
+fn status_placeholder(name: &str) -> CliResult<&'static str> {
     match name {
         "started" => Ok("%s"),
         "total" => Ok("%t"),
@@ -211,11 +221,11 @@ fn status_placeholder(name: &str) -> Result<&'static str, String> {
         "eta" => Ok("%W"),
         "eta_seconds" => Ok("%E"),
         "description" => Ok("\u{1f}"),
-        _ => Err(format!("unknown variable '{name}' in --status format")),
+        _ => Err(format!("unknown variable '{name}' in --status format").into()),
     }
 }
 
-fn expand_status_format(format: &str) -> Result<String, String> {
+fn expand_status_format(format: &str) -> CliResult<String> {
     let bytes = format.as_bytes();
     let mut output = String::new();
     let mut index = 0;
@@ -267,13 +277,11 @@ fn expand_status_format(format: &str) -> Result<String, String> {
 // [spec:samurai:sem:os.oschdir-fn]
 // [spec:samurai:def:os-posix.oschdir-fn]
 // [spec:samurai:sem:os-posix.oschdir-fn]
-fn set_current_directory(directory: &BString) -> Result<(), String> {
-    std::env::set_current_dir(
-        directory
-            .to_path()
-            .map_err(|_| "-C path is not representable on this platform")?,
-    )
-    .map_err(|error| error.to_string())
+fn set_current_directory(directory: &BString) -> CliResult<()> {
+    let path = directory
+        .to_path()
+        .map_err(|_| "-C path is not representable on this platform")?;
+    std::env::set_current_dir(path).map_err(|source| Error::source(ErrorKind::Cli, source))
 }
 
 fn option_value(
@@ -281,15 +289,15 @@ fn option_value(
     index: &mut usize,
     attached: &[u8],
     option: &str,
-) -> Result<BString, String> {
+) -> CliResult<BString> {
     if !attached.is_empty() {
         return Ok(BString::from(attached));
     }
     *index += 1;
-    arguments
+    Ok(arguments
         .get(*index)
         .cloned()
-        .ok_or_else(|| format!("missing {option} value"))
+        .ok_or_else(|| format!("missing {option} value"))?)
 }
 
 fn invalid_option(arguments: &[BString], message: impl std::fmt::Display) -> RunAction {
@@ -317,7 +325,7 @@ fn invalid_option(arguments: &[BString], message: impl std::fmt::Display) -> Run
 // [spec:samurai:sem:samu.main-fn+1]
 // [spec:samurai:req:product.no-samuflags]
 // [spec:samurai:req:compat.cli-and-tools]
-fn parse_run_arguments(arguments: &[BString]) -> Result<RunAction, String> {
+fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
     let mut invocation = RunInvocation {
         build_options: BuildOptions::default(),
         parse_options: ParseOptions::default(),
@@ -495,10 +503,7 @@ fn parse_run_arguments(arguments: &[BString]) -> Result<RunAction, String> {
 }
 
 // [spec:samurai:req:compat.process-integration]
-fn normalize_runtime_options(
-    options: &mut BuildOptions,
-    makeflags: Option<&str>,
-) -> Result<(), String> {
+fn normalize_runtime_options(options: &mut BuildOptions, makeflags: Option<&str>) -> CliResult<()> {
     if options.maxjobs == 0 {
         let jobserver = crate::jobserver::parse_makeflags_value(makeflags)?;
         if cfg!(unix)
@@ -550,7 +555,7 @@ fn run_clean_tool(
     dryrun: bool,
     verbose: bool,
     quiet: bool,
-) -> Result<String, String> {
+) -> CliResult<String> {
     let mut include_generators = false;
     let mut rule_mode = false;
     let mut names = Vec::new();
@@ -559,7 +564,7 @@ fn run_clean_tool(
             "-g" => include_generators = true,
             "-r" => rule_mode = true,
             option if option.starts_with('-') => {
-                return Err(format!("unknown clean option '{option}'"));
+                return Err(format!("unknown clean option '{option}'").into());
             }
             name => names.push(name.to_owned()),
         }
@@ -578,9 +583,11 @@ fn run_clean_tool(
     } else {
         (names.as_slice(), &[][..])
     };
-    crate::tool::clean_with_report(graph, targets, rules, include_generators, dryrun)
-        .map(|removed| format_clean_report(&removed, verbose, quiet))
-        .map_err(|error| error.to_string())
+    Ok(format_clean_report(
+        &crate::tool::clean_with_report(graph, targets, rules, include_generators, dryrun)?,
+        verbose,
+        quiet,
+    ))
 }
 
 fn format_clean_report(removed: &[BString], verbose: bool, quiet: bool) -> String {
@@ -602,14 +609,14 @@ fn format_clean_report(removed: &[BString], verbose: bool, quiet: bool) -> Strin
     output
 }
 
-fn run_compdb_tool(graph: &crate::graph::Graph, arguments: &[String]) -> Result<String, String> {
+fn run_compdb_tool(graph: &crate::graph::Graph, arguments: &[String]) -> CliResult<String> {
     let mut expand_rsp = false;
     let mut rules = Vec::new();
     for argument in arguments {
         match argument.as_str() {
             "-x" => expand_rsp = true,
             option if option.starts_with('-') => {
-                return Err(format!("unknown compdb option '{option}'"));
+                return Err(format!("unknown compdb option '{option}'").into());
             }
             rule => rules.push(rule.to_owned()),
         }
@@ -617,10 +624,7 @@ fn run_compdb_tool(graph: &crate::graph::Graph, arguments: &[String]) -> Result<
     Ok(crate::tool::compdb(graph, &rules, expand_rsp))
 }
 
-fn run_compdb_targets_tool(
-    graph: &crate::graph::Graph,
-    arguments: &[String],
-) -> Result<String, String> {
+fn run_compdb_targets_tool(graph: &crate::graph::Graph, arguments: &[String]) -> CliResult<String> {
     let mut expand_rsp = false;
     let mut targets = Vec::new();
     for argument in arguments {
@@ -630,12 +634,14 @@ fn run_compdb_targets_tool(
                 return Err("usage: ronin -t compdb-targets [-hx] target [targets]".into())
             }
             option if option.starts_with('-') => {
-                return Err(format!("unknown compdb-targets option '{option}'"));
+                return Err(format!("unknown compdb-targets option '{option}'").into());
             }
             target => targets.push(target.to_owned()),
         }
     }
-    crate::tool::compdb_for_targets(graph, &targets, expand_rsp)
+    Ok(crate::tool::compdb_for_targets(
+        graph, &targets, expand_rsp,
+    )?)
 }
 
 fn tool_result(output: String) -> RunResult {
@@ -724,7 +730,7 @@ fn run_flag_tool(
     tool: crate::tool::Tool,
     arguments: &[String],
     dryrun: bool,
-) -> Result<RunResult, String> {
+) -> CliResult<RunResult> {
     match tool {
         crate::tool::Tool::List => Ok(RunResult::stdout(crate::tool::tool_list())),
         crate::tool::Tool::Restat => {
@@ -753,7 +759,7 @@ fn run_flag_tool(
                         ))
                     }
                     option if option.starts_with('-') => {
-                        return Err(format!("unknown restat option '{option}'"))
+                        return Err(format!("unknown restat option '{option}'").into())
                     }
                     output => filters.push(output.to_owned()),
                 }
@@ -776,7 +782,7 @@ fn run_flag_tool(
                 crate::log::logrestat(&mut log, &filter_refs, |path| disk.stat(path))
                     .map_err(|error| format!("failed recompaction: {error}"))?;
             }
-            crate::log::logclose(log).map_err(|error| error.to_string())?;
+            crate::log::logclose(log)?;
             Ok(RunResult::stdout([]))
         }
         crate::tool::Tool::Urtle => Ok(RunResult::stdout(crate::tool::urtle())),
@@ -791,7 +797,7 @@ fn run_manifest_tool(
     state: &crate::env::EnvState,
     arguments: &[String],
     options: ToolRunOptions,
-) -> Result<RunResult, String> {
+) -> CliResult<RunResult> {
     if arguments
         .iter()
         .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
@@ -841,7 +847,7 @@ fn run_manifest_tool(
         | crate::tool::Tool::Inputs
         | crate::tool::Tool::MultiInputs
         | crate::tool::Tool::Targets
-        | crate::tool::Tool::Rules => crate::tool::run(tool, graph, arguments).map(tool_result),
+        | crate::tool::Tool::Rules => Ok(tool_result(crate::tool::run(tool, graph, arguments)?)),
         _ => Err("tool requires persistent runtime state".into()),
     }
 }
@@ -854,9 +860,9 @@ fn run_log_tool(
     deps_log: &mut crate::deps::DepsLog,
     arguments: &[String],
     options: ToolRunOptions,
-) -> Result<RunResult, String> {
+) -> CliResult<RunResult> {
     match tool {
-        crate::tool::Tool::Deps => crate::tool::deps(graph, deps_log, arguments).map(tool_result),
+        crate::tool::Tool::Deps => Ok(tool_result(crate::tool::deps(graph, deps_log, arguments)?)),
         crate::tool::Tool::MissingDeps => {
             let target_names;
             let arguments = if arguments.is_empty() {
@@ -875,27 +881,22 @@ fn run_log_tool(
             let (output, exit_code) = crate::tool::missing_deps(graph, deps_log, &targets);
             Ok(RunResult::exit(output, [], exit_code))
         }
-        crate::tool::Tool::Query => crate::tool::query(graph, arguments).map(tool_result),
+        crate::tool::Tool::Query => Ok(tool_result(crate::tool::query(graph, arguments)?)),
         crate::tool::Tool::CleanDead => {
             let logged = build_log.entries.keys().cloned().collect::<Vec<_>>();
-            crate::tool::clean_dead_with_report(graph, &logged, options.dry_run)
-                .map(|removed| {
-                    tool_result(format_clean_report(
-                        &removed,
-                        options.verbose,
-                        options.quiet,
-                    ))
-                })
-                .map_err(|error| error.to_string())
+            Ok(tool_result(format_clean_report(
+                &crate::tool::clean_dead_with_report(graph, &logged, options.dry_run)?,
+                options.verbose,
+                options.quiet,
+            )))
         }
         crate::tool::Tool::Recompact => {
             if !options.dry_run {
                 crate::log::logrecompact(build_log, |path| {
                     crate::graph::nodeget(graph, path.as_bytes())
                         .is_none_or(|node| graph.node(node).gen.is_none())
-                })
-                .map_err(|error| error.to_string())?;
-                crate::deps::depsrecompact(deps_log, graph).map_err(|error| error.to_string())?;
+                })?;
+                crate::deps::depsrecompact(deps_log, graph)?;
             }
             Ok(RunResult::stdout([]))
         }
@@ -903,7 +904,11 @@ fn run_log_tool(
     }
 }
 
-pub fn run(arguments: &[String]) -> Result<String, String> {
+/// Runs Ronin with UTF-8 arguments and returns its buffered standard output.
+///
+/// This convenience entry point is intended for simple embedding and tests.
+/// Use [`run_os`] when arguments or output must remain byte exact.
+pub fn run(arguments: &[String]) -> CliResult<String> {
     let arguments = arguments
         .iter()
         .cloned()
@@ -922,11 +927,17 @@ pub fn run(arguments: &[String]) -> Result<String, String> {
             stdout
         } else {
             stderr.into_owned()
-        })
+        }
+        .into())
     }
 }
 
-pub fn run_os(arguments: &[OsString]) -> Result<RunResult, String> {
+/// Runs Ronin with native operating-system arguments.
+///
+/// Build progress and child-process output are streamed to the process
+/// standard streams. The returned [`RunResult`] contains output generated by
+/// immediate CLI actions and the requested exit status.
+pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
     let arguments = arguments
         .iter()
         .cloned()
@@ -949,7 +960,7 @@ fn run_bytes(
     arguments: &[BString],
     mut build_output: Option<&mut dyn std::io::Write>,
     mut build_diagnostics: Option<&mut dyn std::io::Write>,
-) -> Result<RunResult, String> {
+) -> CliResult<RunResult> {
     let mut invocation = match parse_run_arguments(arguments)? {
         RunAction::Immediate(result) => return Ok(result),
         RunAction::Execute(invocation) => invocation,
@@ -1023,16 +1034,14 @@ fn run_bytes(
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
         if let Some(directory) = &builddir {
-            std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
+            std::fs::create_dir_all(directory)?;
         }
-        let mut build_log = crate::log::loginit(builddir.as_deref(), &mut graph)
-            .map_err(|error| error.to_string())?;
+        let mut build_log = crate::log::loginit(builddir.as_deref(), &mut graph)?;
         let deps_path = builddir.as_ref().map_or_else(
             || PathBuf::from(".ninja_deps"),
             |path| path.join(".ninja_deps"),
         );
-        let (mut deps_log, warning) =
-            crate::deps::depsloadlog(&deps_path, &mut graph).map_err(|error| error.to_string())?;
+        let (mut deps_log, warning) = crate::deps::depsloadlog(&deps_path, &mut graph)?;
         if let Some(warning) = warning {
             append_output(&mut output, &warning);
         }
@@ -1056,10 +1065,8 @@ fn run_bytes(
                 &tool_arguments,
                 ToolRunOptions::from(&invocation.build_options),
             );
-            let build_log_result =
-                crate::log::logclose(build_log).map_err(|error| error.to_string());
-            let deps_log_result =
-                crate::deps::depsclose(deps_log).map_err(|error| error.to_string());
+            let build_log_result = crate::log::logclose(build_log);
+            let deps_log_result = crate::deps::depsclose(deps_log);
             let result = result?;
             build_log_result?;
             deps_log_result?;
@@ -1097,7 +1104,7 @@ fn run_bytes(
                     &mut deps_log,
                 )
             };
-            let result: Result<bool, String> = (|| {
+            let result: CliResult<bool> = (|| {
                 builder.add_target(invocation.manifest.as_bytes())?;
                 if builder.already_up_to_date() {
                     return Ok(false);
@@ -1124,8 +1131,8 @@ fn run_bytes(
             }
         };
         if manifest_rebuilt {
-            crate::log::logclose(build_log).map_err(|error| error.to_string())?;
-            crate::deps::depsclose(deps_log).map_err(|error| error.to_string())?;
+            crate::log::logclose(build_log)?;
+            crate::deps::depsclose(deps_log)?;
             if invocation.build_options.dryrun {
                 return Ok(tool_result(output));
             }
@@ -1167,7 +1174,7 @@ fn run_bytes(
                 )
             };
             let mut already_up_to_date = false;
-            let result: Result<String, String> = (|| {
+            let result: CliResult<String> = (|| {
                 for target in &selected_targets {
                     builder
                         .add_target(target.as_bytes())
@@ -1182,8 +1189,8 @@ fn run_bytes(
             })();
             (result, already_up_to_date)
         };
-        let build_log_result = crate::log::logclose(build_log).map_err(|error| error.to_string());
-        let deps_log_result = crate::deps::depsclose(deps_log).map_err(|error| error.to_string());
+        let build_log_result = crate::log::logclose(build_log);
+        let deps_log_result = crate::deps::depsclose(deps_log);
         append_output(&mut output, &result?);
         build_log_result?;
         deps_log_result?;
@@ -1195,10 +1202,7 @@ fn run_bytes(
         }
         return Ok(tool_result(output));
     }
-    Err(format!(
-        "manifest '{}' dirty after 100 tries",
-        invocation.manifest
-    ))
+    Err(format!("manifest '{}' dirty after 100 tries", invocation.manifest).into())
 }
 
 #[cfg(test)]

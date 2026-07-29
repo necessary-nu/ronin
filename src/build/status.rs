@@ -1,7 +1,7 @@
 use super::BuildState;
 use std::fs;
 
-pub fn format_progress_status(state: &BuildState, template: &str) -> String {
+pub(crate) fn format_progress_status(state: &BuildState, template: &str) -> String {
     let mut output = String::new();
     let mut characters = template.chars();
     let elapsed = state.start.elapsed().as_secs_f64();

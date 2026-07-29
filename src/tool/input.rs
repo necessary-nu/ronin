@@ -1,15 +1,19 @@
+use crate::error::ToolError;
 use crate::graph::{nodeget, Graph, InputsCollector, NodeId};
 
-fn collect_targets(graph: &Graph, targets: &[String]) -> Result<Vec<NodeId>, String> {
+type ToolResult<T> = Result<T, ToolError>;
+
+fn collect_targets(graph: &Graph, targets: &[String]) -> ToolResult<Vec<NodeId>> {
     targets
         .iter()
         .map(|target| {
-            nodeget(graph, target.as_bytes()).ok_or_else(|| format!("unknown target '{target}'"))
+            nodeget(graph, target.as_bytes())
+                .ok_or_else(|| ToolError::from(format!("unknown target '{target}'")))
         })
         .collect()
 }
 
-pub fn inputs(graph: &Graph, arguments: &[String]) -> Result<String, String> {
+pub(crate) fn inputs(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
     let mut print0 = false;
     let mut shell_escape = true;
     let mut dependency_order = false;
@@ -21,7 +25,7 @@ pub fn inputs(graph: &Graph, arguments: &[String]) -> Result<String, String> {
             "-d" | "--dependency-order" => dependency_order = true,
             "-h" | "--help" => return Err("Usage '-t inputs [options] [targets]".into()),
             option if option.starts_with('-') => {
-                return Err(format!("unknown inputs option '{option}'"))
+                return Err(format!("unknown inputs option '{option}'").into())
             }
             target => targets.push(target.to_owned()),
         }
@@ -42,7 +46,7 @@ pub fn inputs(graph: &Graph, arguments: &[String]) -> Result<String, String> {
     Ok(output)
 }
 
-pub fn multi_inputs(graph: &Graph, arguments: &[String]) -> Result<String, String> {
+pub(crate) fn multi_inputs(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
     let mut print0 = false;
     let mut delimiter = "\t".to_owned();
     let mut targets = Vec::new();
@@ -62,7 +66,7 @@ pub fn multi_inputs(graph: &Graph, arguments: &[String]) -> Result<String, Strin
                 delimiter = option["--delimiter=".len()..].to_owned();
             }
             option if option.starts_with('-') => {
-                return Err(format!("unknown multi-inputs option '{option}'"))
+                return Err(format!("unknown multi-inputs option '{option}'").into())
             }
             target => targets.push(target.to_owned()),
         }

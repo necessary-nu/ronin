@@ -289,6 +289,7 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
     let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
     assert!(scan::scanstring(&mut scanner, false)
         .unwrap_err()
+        .to_string()
         .contains("invalid $ escape"));
     scan::scanclose(scanner);
 
@@ -296,6 +297,7 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
     let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
     assert!(scan::scankeyword(&mut scanner)
         .unwrap_err()
+        .to_string()
         .contains("tabs are not allowed"));
     scan::scanclose(scanner);
 
@@ -303,6 +305,7 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
     let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
     assert!(scan::scanstring(&mut scanner, false)
         .unwrap_err()
+        .to_string()
         .contains("ninja_required_version"));
     scanner.manifest_version_minor = 14;
     scan::scanclose(scanner);
@@ -647,6 +650,7 @@ fn ninja_manifest_parser_includes_and_errors() {
         &mut state,
     )
     .unwrap_err()
+    .to_string()
     .contains("multiple rules generate 'out1'"));
 
     fs::write(&root, "rule cat\n  rspfile = cat.rsp\n").unwrap();
@@ -661,6 +665,7 @@ fn ninja_manifest_parser_includes_and_errors() {
         &mut state,
     )
     .unwrap_err()
+    .to_string()
     .contains("has no command"));
     let _ = fs::remove_dir_all(directory);
 }

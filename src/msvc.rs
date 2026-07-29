@@ -1,14 +1,16 @@
 //! MSVC show-includes parsing compatible with Ninja's clparser source.
 
+#[cfg(test)]
+use crate::error::ToolError;
 use crate::util::{canonpath, xasprintf, ByteSlice};
 use std::collections::BTreeSet;
 
 #[derive(Default)]
-pub struct ClParser {
-    pub includes: BTreeSet<String>,
+pub(crate) struct ClParser {
+    pub(crate) includes: BTreeSet<String>,
 }
 
-pub fn filter_show_includes<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+pub(crate) fn filter_show_includes<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
     let prefix = if prefix.is_empty() {
         "Note: including file:"
     } else {
@@ -17,7 +19,7 @@ pub fn filter_show_includes<'a>(line: &'a str, prefix: &str) -> Option<&'a str> 
     line.strip_prefix(prefix).map(str::trim_start)
 }
 
-pub fn filter_input_filename(line: &str) -> bool {
+pub(crate) fn filter_input_filename(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
     !line.contains('(')
         && [".c", ".cc", ".cpp", ".cxx"]
@@ -79,7 +81,7 @@ fn relative_parts(base: &[String], target: &[String]) -> String {
 }
 
 #[cfg(test)]
-pub fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, String> {
+pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, ToolError> {
     if path.len() > 260 || relative_to.len() > 260 {
         return Err("path too long".into());
     }
@@ -101,11 +103,7 @@ pub fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, S
         return Ok(result);
     }
 
-    let (_, _, mut cwd) = path_parts(
-        &std::env::current_dir()
-            .map_err(|error| error.to_string())?
-            .to_string_lossy(),
-    );
+    let (_, _, mut cwd) = path_parts(&std::env::current_dir()?.to_string_lossy());
     if !relative_absolute {
         for part in relative_components {
             if part == ".." {
@@ -119,11 +117,7 @@ pub fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, S
     }
     let base = cwd;
 
-    let (_, _, mut target) = path_parts(
-        &std::env::current_dir()
-            .map_err(|error| error.to_string())?
-            .to_string_lossy(),
-    );
+    let (_, _, mut target) = path_parts(&std::env::current_dir()?.to_string_lossy());
     if !path_absolute {
         for part in path_components {
             if part == ".." {
@@ -139,12 +133,12 @@ pub fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, S
 }
 
 #[cfg(test)]
-pub fn escape_for_depfile(path: &str) -> String {
+pub(crate) fn escape_for_depfile(path: &str) -> String {
     path.replace(' ', "\\ ")
 }
 
 impl ClParser {
-    pub fn parse(&mut self, input: &str, prefix: &str) -> String {
+    pub(crate) fn parse(&mut self, input: &str, prefix: &str) -> String {
         let mut output = String::new();
         let mut saw_include = false;
         for line in input.lines() {

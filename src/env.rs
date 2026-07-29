@@ -1,5 +1,6 @@
 //! Manifest environments, rules, and pools stored in graph-owned arenas.
 
+use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId};
 use crate::util::{BString, EvalPart, EvalString};
 use std::collections::BTreeMap;
@@ -8,14 +9,14 @@ macro_rules! arena_id {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         #[repr(transparent)]
-        pub struct $name(usize);
+        pub(crate) struct $name(usize);
 
         impl $name {
             pub(crate) const fn from_index(index: usize) -> Self {
                 Self(index)
             }
 
-            pub const fn index(self) -> usize {
+            pub(crate) const fn index(self) -> usize {
                 self.0
             }
         }
@@ -40,27 +41,27 @@ arena_id!(PoolId);
 // [spec:samurai:def:tree.treeinsert-fn]
 // [spec:samurai:sem:tree.treeinsert-fn]
 // [spec:samurai:def:env.environment]
-pub struct Environment {
-    pub parent: Option<EnvironmentId>,
+pub(crate) struct Environment {
+    pub(crate) parent: Option<EnvironmentId>,
     pub(crate) bindings: BTreeMap<String, BString>,
     pub(crate) rules: BTreeMap<String, RuleId>,
 }
 
 // [spec:samurai:def:env.rule]
-pub struct Rule {
-    pub name: String,
+pub(crate) struct Rule {
+    pub(crate) name: String,
     pub(crate) bindings: BTreeMap<String, EvalString>,
 }
 
 // [spec:samurai:def:env.pool]
-pub struct Pool {
-    pub name: String,
-    pub numjobs: i32,
-    pub maxjobs: i32,
+pub(crate) struct Pool {
+    pub(crate) name: String,
+    pub(crate) numjobs: i32,
+    pub(crate) maxjobs: i32,
 }
 
-pub struct EnvState {
-    pub root: EnvironmentId,
+pub(crate) struct EnvState {
+    pub(crate) root: EnvironmentId,
     pools: BTreeMap<String, PoolId>,
 }
 
@@ -72,7 +73,7 @@ fn addvar<T>(tree: &mut BTreeMap<String, T>, name: String, value: T) {
 
 // [spec:samurai:def:env.mkenv-fn]
 // [spec:samurai:sem:env.mkenv-fn]
-pub fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> EnvironmentId {
+pub(crate) fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> EnvironmentId {
     graph.push_environment(Environment {
         parent,
         bindings: BTreeMap::new(),
@@ -84,7 +85,7 @@ pub fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> EnvironmentId 
 // [spec:samurai:sem:env.mkrule-fn]
 // [spec:samurai:def:env.delrule-fn]
 // [spec:samurai:sem:env.delrule-fn]
-pub fn mkrule(graph: &mut Graph, name: String) -> RuleId {
+pub(crate) fn mkrule(graph: &mut Graph, name: String) -> RuleId {
     graph.push_rule(Rule {
         name,
         bindings: BTreeMap::new(),
@@ -93,15 +94,15 @@ pub fn mkrule(graph: &mut Graph, name: String) -> RuleId {
 
 // [spec:samurai:def:env.envaddrule-fn]
 // [spec:samurai:sem:env.envaddrule-fn]
-pub fn envaddrule(
+pub(crate) fn envaddrule(
     graph: &mut Graph,
     environment: EnvironmentId,
     rule: RuleId,
-) -> Result<(), String> {
+) -> Result<(), GraphError> {
     let name = graph.rule(rule).name.clone();
     let rules = &mut graph.environment_mut(environment).rules;
     if rules.contains_key(&name) {
-        return Err(format!("rule '{name}' redefined"));
+        return Err(format!("rule '{name}' redefined").into());
     }
     rules.insert(name, rule);
     Ok(())
@@ -109,10 +110,10 @@ pub fn envaddrule(
 
 // [spec:samurai:def:env.addpool-fn]
 // [spec:samurai:sem:env.addpool-fn]
-fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), String> {
+fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), GraphError> {
     let name = graph.pool(pool).name.clone();
     if state.pools.contains_key(&name) {
-        return Err(format!("pool '{name}' redefined"));
+        return Err(format!("pool '{name}' redefined").into());
     }
     state.pools.insert(name, pool);
     Ok(())
@@ -120,7 +121,7 @@ fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), Stri
 
 // [spec:samurai:def:env.envinit-fn]
 // [spec:samurai:sem:env.envinit-fn]
-pub fn envinit(graph: &mut Graph) -> EnvState {
+pub(crate) fn envinit(graph: &mut Graph) -> EnvState {
     let root = mkenv(graph, None);
     let phony = mkrule(graph, "phony".into());
     envaddrule(graph, root, phony).expect("fresh root rule table");
@@ -139,7 +140,7 @@ pub fn envinit(graph: &mut Graph) -> EnvState {
 
 // [spec:samurai:def:env.envvar-fn]
 // [spec:samurai:sem:env.envvar-fn]
-pub fn envvar(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<BString> {
+pub(crate) fn envvar(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<BString> {
     let mut current = Some(environment);
     while let Some(scope) = current {
         let environment = graph.environment(scope);
@@ -153,7 +154,12 @@ pub fn envvar(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<B
 
 // [spec:samurai:def:env.envaddvar-fn]
 // [spec:samurai:sem:env.envaddvar-fn]
-pub fn envaddvar(graph: &mut Graph, environment: EnvironmentId, name: String, value: BString) {
+pub(crate) fn envaddvar(
+    graph: &mut Graph,
+    environment: EnvironmentId,
+    name: String,
+    value: BString,
+) {
     addvar(
         &mut graph.environment_mut(environment).bindings,
         name,
@@ -173,7 +179,7 @@ fn merge(parts: &[BString]) -> BString {
 
 // [spec:samurai:def:env.enveval-fn]
 // [spec:samurai:sem:env.enveval-fn]
-pub fn enveval(graph: &Graph, environment: EnvironmentId, string: &EvalString) -> BString {
+pub(crate) fn enveval(graph: &Graph, environment: EnvironmentId, string: &EvalString) -> BString {
     let mut parts = Vec::new();
     for part in &string.parts {
         match part {
@@ -190,7 +196,7 @@ pub fn enveval(graph: &Graph, environment: EnvironmentId, string: &EvalString) -
 
 // [spec:samurai:def:env.envrule-fn]
 // [spec:samurai:sem:env.envrule-fn]
-pub fn envrule(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<RuleId> {
+pub(crate) fn envrule(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<RuleId> {
     let mut current = Some(environment);
     while let Some(scope) = current {
         let environment = graph.environment(scope);
@@ -204,7 +210,7 @@ pub fn envrule(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<
 
 // [spec:samurai:def:env.pathlist-fn]
 // [spec:samurai:sem:env.pathlist-fn]
-pub fn pathlist(paths: &[BString], separator: u8) -> Option<BString> {
+pub(crate) fn pathlist(paths: &[BString], separator: u8) -> Option<BString> {
     if paths.is_empty() {
         return None;
     }
@@ -221,7 +227,7 @@ pub fn pathlist(paths: &[BString], separator: u8) -> Option<BString> {
 
 // [spec:samurai:def:env.ruleaddvar-fn]
 // [spec:samurai:sem:env.ruleaddvar-fn]
-pub fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: String, value: EvalString) {
+pub(crate) fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: String, value: EvalString) {
     addvar(&mut graph.rule_mut(rule).bindings, name, value);
 }
 
@@ -229,7 +235,11 @@ pub fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: String, value: EvalStri
 // [spec:samurai:sem:env.mkpool-fn]
 // [spec:samurai:def:env.delpool-fn]
 // [spec:samurai:sem:env.delpool-fn]
-pub fn mkpool(graph: &mut Graph, state: &mut EnvState, name: String) -> Result<PoolId, String> {
+pub(crate) fn mkpool(
+    graph: &mut Graph,
+    state: &mut EnvState,
+    name: String,
+) -> Result<PoolId, GraphError> {
     let pool = graph.push_pool(Pool {
         name,
         numjobs: 0,
@@ -241,17 +251,17 @@ pub fn mkpool(graph: &mut Graph, state: &mut EnvState, name: String) -> Result<P
 
 // [spec:samurai:def:env.poolget-fn]
 // [spec:samurai:sem:env.poolget-fn]
-pub fn poolget(state: &EnvState, name: &str) -> Result<PoolId, String> {
-    state
+pub(crate) fn poolget(state: &EnvState, name: &str) -> Result<PoolId, GraphError> {
+    Ok(state
         .pools
         .get(name)
         .copied()
-        .ok_or_else(|| format!("unknown pool '{name}'"))
+        .ok_or_else(|| format!("unknown pool '{name}'"))?)
 }
 
 // [spec:samurai:def:env.edgevar-fn]
 // [spec:samurai:sem:env.edgevar-fn]
-pub fn edgevar(graph: &Graph, edge: EdgeId, name: &str, escape: bool) -> Option<BString> {
+pub(crate) fn edgevar(graph: &Graph, edge: EdgeId, name: &str, escape: bool) -> Option<BString> {
     fn evaluate(
         graph: &Graph,
         edge: EdgeId,

@@ -1164,7 +1164,7 @@ fn ninja_build_depfile_rejects_undeclared_extra_output() {
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
     let error = builder.add_target(&target).unwrap_err();
-    assert!(error.contains("no such output was declared"));
+    assert!(error.to_string().contains("no such output was declared"));
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }
@@ -1197,7 +1197,7 @@ fn ninja_build_gcc_deps_without_depfile_errors_after_command() {
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
     builder.add_target(&target).unwrap();
     let error = builder.build().unwrap_err();
-    assert!(error.contains("dependency file is missing"));
+    assert!(error.to_string().contains("dependency file is missing"));
     assert_eq!(builder.commands_ran, ["true"]);
     assert!(
         String::from_utf8_lossy(&builder.build_output).contains("FAILED: [code=1]"),
@@ -2886,7 +2886,7 @@ fn ninja_build_generated_dyndep_rejects_existing_static_output() {
     builder.add_target(&out1).unwrap();
     builder.add_target(&out2).unwrap();
     let error = builder.build().unwrap_err();
-    assert!(error.contains("multiple rules generate"));
+    assert!(error.to_string().contains("multiple rules generate"));
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2924,7 +2924,7 @@ fn ninja_build_generated_dyndep_rejects_output_from_other_dyndep() {
     builder.add_target(&out1).unwrap();
     builder.add_target(&out2).unwrap();
     let error = builder.build().unwrap_err();
-    assert!(error.contains("multiple rules generate"));
+    assert!(error.to_string().contains("multiple rules generate"));
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2948,7 +2948,7 @@ fn ninja_build_generated_dyndep_rejects_validation_syntax() {
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
     builder.add_target(&target).unwrap();
     let error = builder.build().unwrap_err();
-    assert!(error.contains("expected newline, got '|@'"));
+    assert!(error.to_string().contains("expected newline, got '|@'"));
     assert_eq!(builder.commands_ran.len(), 1);
     drop(builder);
     fs::remove_dir_all(directory).unwrap();

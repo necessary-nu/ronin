@@ -1,6 +1,7 @@
 //! Dense graph arenas and dependency operations.
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
+use crate::error::GraphError;
 use crate::htab::rapidhashv1_parts;
 use crate::os::MTIME_MISSING;
 use crate::util::{BStr, BString, ByteSlice};
@@ -8,22 +9,22 @@ use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
-pub const MTIME_UNKNOWN: i64 = -1;
+pub(crate) const MTIME_UNKNOWN: i64 = -1;
 
-pub const FLAG_HASH: u32 = 1 << 1;
+pub(crate) const FLAG_HASH: u32 = 1 << 1;
 
 macro_rules! arena_id {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         #[repr(transparent)]
-        pub struct $name(usize);
+        pub(crate) struct $name(usize);
 
         impl $name {
             pub(crate) const fn from_index(index: usize) -> Self {
                 Self(index)
             }
 
-            pub const fn index(self) -> usize {
+            pub(crate) const fn index(self) -> usize {
                 self.0
             }
         }
@@ -34,41 +35,41 @@ arena_id!(NodeId);
 arena_id!(EdgeId);
 
 // [spec:samurai:def:graph.node]
-pub struct Node {
-    pub path: BString,
-    pub shellpath: BString,
-    pub mtime: i64,
-    pub logmtime: i64,
-    pub gen: Option<EdgeId>,
-    pub uses: Vec<EdgeId>,
-    pub validation_uses: Vec<EdgeId>,
-    pub hash: u64,
-    pub id: i32,
-    pub dirty: bool,
-    pub dyndep_pending: bool,
+pub(crate) struct Node {
+    pub(crate) path: BString,
+    pub(crate) shellpath: BString,
+    pub(crate) mtime: i64,
+    pub(crate) logmtime: i64,
+    pub(crate) gen: Option<EdgeId>,
+    pub(crate) uses: Vec<EdgeId>,
+    pub(crate) validation_uses: Vec<EdgeId>,
+    pub(crate) hash: u64,
+    pub(crate) id: i32,
+    pub(crate) dirty: bool,
+    pub(crate) dyndep_pending: bool,
 }
 
 // [spec:samurai:def:graph.edge]
-pub struct Edge {
-    pub critical_path_weight: i64,
-    pub rule: Option<RuleId>,
-    pub pool: Option<PoolId>,
-    pub env: EnvironmentId,
-    pub bindings: BTreeMap<String, BString>,
-    pub out: Vec<NodeId>,
-    pub input: Vec<NodeId>,
-    pub validation: Vec<NodeId>,
-    pub dyndep: Option<NodeId>,
-    pub outimpidx: usize,
-    pub inimpidx: usize,
-    pub inorderidx: usize,
-    pub hash: u64,
-    pub deps_loaded: bool,
-    pub deps_missing: bool,
-    pub depfile_deps: usize,
-    pub command_dirty: bool,
-    pub restat_clean: bool,
-    pub flags: u32,
+pub(crate) struct Edge {
+    pub(crate) critical_path_weight: i64,
+    pub(crate) rule: Option<RuleId>,
+    pub(crate) pool: Option<PoolId>,
+    pub(crate) env: EnvironmentId,
+    pub(crate) bindings: BTreeMap<String, BString>,
+    pub(crate) out: Vec<NodeId>,
+    pub(crate) input: Vec<NodeId>,
+    pub(crate) validation: Vec<NodeId>,
+    pub(crate) dyndep: Option<NodeId>,
+    pub(crate) outimpidx: usize,
+    pub(crate) inimpidx: usize,
+    pub(crate) inorderidx: usize,
+    pub(crate) hash: u64,
+    pub(crate) deps_loaded: bool,
+    pub(crate) deps_missing: bool,
+    pub(crate) depfile_deps: usize,
+    pub(crate) command_dirty: bool,
+    pub(crate) restat_clean: bool,
+    pub(crate) flags: u32,
 }
 
 // [spec:samurai:def:htab.hashtablekey]
@@ -87,7 +88,7 @@ pub struct Edge {
 // [spec:samurai:sem:htab.htabget-fn]
 // [spec:samurai:def:htab.delhtab-fn]
 // [spec:samurai:sem:htab.delhtab-fn]
-pub struct Graph {
+pub(crate) struct Graph {
     node_by_path: BTreeMap<Vec<u8>, NodeId>,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
@@ -97,39 +98,39 @@ pub struct Graph {
 }
 
 impl Graph {
-    pub fn nodes(&self) -> Vec<NodeId> {
+    pub(crate) fn nodes(&self) -> Vec<NodeId> {
         self.node_by_path.values().copied().collect()
     }
 
-    pub fn node(&self, id: NodeId) -> &Node {
+    pub(crate) fn node(&self, id: NodeId) -> &Node {
         &self.nodes[id.index()]
     }
 
-    pub fn node_mut(&mut self, id: NodeId) -> &mut Node {
+    pub(crate) fn node_mut(&mut self, id: NodeId) -> &mut Node {
         &mut self.nodes[id.index()]
     }
 
-    pub fn edge(&self, id: EdgeId) -> &Edge {
+    pub(crate) fn edge(&self, id: EdgeId) -> &Edge {
         &self.edges[id.index()]
     }
 
-    pub fn edge_mut(&mut self, id: EdgeId) -> &mut Edge {
+    pub(crate) fn edge_mut(&mut self, id: EdgeId) -> &mut Edge {
         &mut self.edges[id.index()]
     }
 
-    pub fn edge_ids(&self) -> Vec<EdgeId> {
+    pub(crate) fn edge_ids(&self) -> Vec<EdgeId> {
         (0..self.edges.len()).map(EdgeId::from_index).collect()
     }
 
-    pub fn edge_count(&self) -> usize {
+    pub(crate) fn edge_count(&self) -> usize {
         self.edges.len()
     }
 
-    pub fn environment(&self, id: EnvironmentId) -> &Environment {
+    pub(crate) fn environment(&self, id: EnvironmentId) -> &Environment {
         &self.environments[id.index()]
     }
 
-    pub fn environment_mut(&mut self, id: EnvironmentId) -> &mut Environment {
+    pub(crate) fn environment_mut(&mut self, id: EnvironmentId) -> &mut Environment {
         &mut self.environments[id.index()]
     }
 
@@ -139,11 +140,11 @@ impl Graph {
         id
     }
 
-    pub fn rule(&self, id: RuleId) -> &Rule {
+    pub(crate) fn rule(&self, id: RuleId) -> &Rule {
         &self.rules[id.index()]
     }
 
-    pub fn rule_mut(&mut self, id: RuleId) -> &mut Rule {
+    pub(crate) fn rule_mut(&mut self, id: RuleId) -> &mut Rule {
         &mut self.rules[id.index()]
     }
 
@@ -157,11 +158,11 @@ impl Graph {
         id
     }
 
-    pub fn pool(&self, id: PoolId) -> &Pool {
+    pub(crate) fn pool(&self, id: PoolId) -> &Pool {
         &self.pools[id.index()]
     }
 
-    pub fn pool_mut(&mut self, id: PoolId) -> &mut Pool {
+    pub(crate) fn pool_mut(&mut self, id: PoolId) -> &mut Pool {
         &mut self.pools[id.index()]
     }
 
@@ -174,7 +175,7 @@ impl Graph {
 
 // [spec:samurai:def:graph.graphinit-fn]
 // [spec:samurai:sem:graph.graphinit-fn]
-pub fn graphinit() -> Graph {
+pub(crate) fn graphinit() -> Graph {
     Graph {
         node_by_path: BTreeMap::new(),
         nodes: Vec::new(),
@@ -189,7 +190,7 @@ pub fn graphinit() -> Graph {
 // [spec:samurai:sem:graph.mknode-fn]
 // [spec:samurai:def:graph.delnode-fn]
 // [spec:samurai:sem:graph.delnode-fn]
-pub fn mknode(graph: &mut Graph, path: BString) -> NodeId {
+pub(crate) fn mknode(graph: &mut Graph, path: BString) -> NodeId {
     let key = path.as_bytes().to_vec();
     if let Some(node) = graph.node_by_path.get(&key) {
         return *node;
@@ -215,13 +216,13 @@ pub fn mknode(graph: &mut Graph, path: BString) -> NodeId {
 
 // [spec:samurai:def:graph.nodeget-fn]
 // [spec:samurai:sem:graph.nodeget-fn]
-pub fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
+pub(crate) fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
     graph.node_by_path.get(path).copied()
 }
 
 // [spec:samurai:def:graph.nodestat-fn]
 // [spec:samurai:sem:graph.nodestat-fn]
-pub fn nodestat_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<()>
+pub(crate) fn nodestat_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<()>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
@@ -432,7 +433,11 @@ impl DirtyEvaluator {
 /// Stat a dependency graph in one iterative pass and update each node's dirty bit.
 // [spec:samurai:req:compat.graph-semantics]
 #[cfg(test)]
-pub fn recompute_dirty_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<bool>
+pub(crate) fn recompute_dirty_with<F>(
+    graph: &mut Graph,
+    node: NodeId,
+    stat: &mut F,
+) -> io::Result<bool>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
@@ -443,7 +448,7 @@ where
     evaluator.evaluate(graph, node, stat)
 }
 
-pub fn recompute_dirty_with_validations<F>(
+pub(crate) fn recompute_dirty_with_validations<F>(
     graph: &mut Graph,
     node: NodeId,
     stat: &mut F,
@@ -498,7 +503,7 @@ where
 
 // [spec:samurai:def:graph.nodepath-fn]
 // [spec:samurai:sem:graph.nodepath-fn]
-pub fn nodepath(graph: &Graph, node: NodeId, escape: bool) -> BString {
+pub(crate) fn nodepath(graph: &Graph, node: NodeId, escape: bool) -> BString {
     let node = graph.node(node);
     if escape {
         node.shellpath.clone()
@@ -530,7 +535,7 @@ fn shell_escape_path(source: &[u8]) -> BString {
 
 // [spec:samurai:def:graph.nodeuse-fn]
 // [spec:samurai:sem:graph.nodeuse-fn]
-pub fn nodeuse(graph: &mut Graph, node: NodeId, edge: EdgeId) {
+pub(crate) fn nodeuse(graph: &mut Graph, node: NodeId, edge: EdgeId) {
     graph.node_mut(node).uses.push(edge);
 }
 
@@ -538,7 +543,7 @@ pub fn nodeuse(graph: &mut Graph, node: NodeId, edge: EdgeId) {
 // [spec:samurai:sem:graph.mkedge-fn]
 // [spec:samurai:def:graph.mkphony-fn]
 // [spec:samurai:sem:graph.mkphony-fn]
-pub fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
+pub(crate) fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
     let id = EdgeId::from_index(graph.edges.len());
     let environment = crate::env::mkenv(graph, Some(parent));
     graph.edges.push(Edge {
@@ -567,7 +572,12 @@ pub fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
 
 // [spec:samurai:def:graph.edgehash-fn]
 // [spec:samurai:sem:graph.edgehash-fn]
-pub fn edgehash(graph: &mut Graph, edge: EdgeId, command: &BStr, rspfile_content: Option<&BStr>) {
+pub(crate) fn edgehash(
+    graph: &mut Graph,
+    edge: EdgeId,
+    command: &BStr,
+    rspfile_content: Option<&BStr>,
+) {
     let edge = graph.edge_mut(edge);
     if edge.flags & FLAG_HASH != 0 {
         return;
@@ -581,7 +591,7 @@ pub fn edgehash(graph: &mut Graph, edge: EdgeId, command: &BStr, rspfile_content
     edge.hash = hash;
 }
 
-pub fn invalidate_edge_hash(graph: &mut Graph, edge: EdgeId) {
+pub(crate) fn invalidate_edge_hash(graph: &mut Graph, edge: EdgeId) {
     let edge = graph.edge_mut(edge);
     edge.flags &= !FLAG_HASH;
     edge.hash = 0;
@@ -589,7 +599,7 @@ pub fn invalidate_edge_hash(graph: &mut Graph, edge: EdgeId) {
 
 // [spec:samurai:def:graph.edgeadddeps-fn]
 // [spec:samurai:sem:graph.edgeadddeps-fn]
-pub fn edgeadddeps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
+pub(crate) fn edgeadddeps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
     for node in deps {
         nodeuse(graph, *node, edge);
     }
@@ -600,7 +610,7 @@ pub fn edgeadddeps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
 }
 
 /// Return generated outputs that are not consumed by another build edge.
-pub fn rootnodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
+pub(crate) fn rootnodes(graph: &Graph) -> Result<Vec<NodeId>, GraphError> {
     let roots = graph
         .nodes()
         .into_iter()
@@ -617,13 +627,13 @@ pub fn rootnodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
 }
 
 #[derive(Default)]
-pub struct InputsCollector {
+pub(crate) struct InputsCollector {
     inputs: Vec<NodeId>,
     visited_nodes: Vec<bool>,
 }
 
 impl InputsCollector {
-    pub fn visit_node(&mut self, graph: &Graph, node: NodeId) {
+    pub(crate) fn visit_node(&mut self, graph: &Graph, node: NodeId) {
         enum Work {
             Enter(NodeId),
             Record(NodeId),
@@ -663,7 +673,7 @@ impl InputsCollector {
         }
     }
 
-    pub fn input_strings(&self, graph: &Graph, shell_escape: bool) -> Vec<String> {
+    pub(crate) fn input_strings(&self, graph: &Graph, shell_escape: bool) -> Vec<String> {
         self.inputs
             .iter()
             .map(|node| {
@@ -674,21 +684,21 @@ impl InputsCollector {
     }
 
     #[cfg(test)]
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.inputs.clear();
         self.visited_nodes.fill(false);
     }
 }
 
 #[derive(Default)]
-pub struct CommandCollector {
-    pub edges: Vec<EdgeId>,
+pub(crate) struct CommandCollector {
+    pub(crate) edges: Vec<EdgeId>,
     visited_nodes: Vec<bool>,
     visited_edges: Vec<bool>,
 }
 
 impl CommandCollector {
-    pub fn collect_from(&mut self, graph: &Graph, node: NodeId) {
+    pub(crate) fn collect_from(&mut self, graph: &Graph, node: NodeId) {
         enum Work {
             Enter(NodeId),
             Record(EdgeId),

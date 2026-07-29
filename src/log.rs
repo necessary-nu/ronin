@@ -13,15 +13,15 @@ const MAX_LOG_LINE: usize = 256 << 10;
 const LOG_HEADER: &[u8] = b"# ninja log v7";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LogEntry {
-    pub start_time: i32,
-    pub end_time: i32,
-    pub mtime: i64,
-    pub output: BString,
-    pub command_hash: u64,
+pub(crate) struct LogEntry {
+    pub(crate) start_time: i32,
+    pub(crate) end_time: i32,
+    pub(crate) mtime: i64,
+    pub(crate) output: BString,
+    pub(crate) command_hash: u64,
 }
 
-pub struct BuildLog {
+pub(crate) struct BuildLog {
     writer: Option<BufWriter<File>>,
     path: PathBuf,
     pub(crate) entries: HashMap<BString, LogEntry>,
@@ -140,7 +140,7 @@ fn rewrite(log: &mut BuildLog) -> io::Result<()> {
 // [spec:samurai:def:log.loginit-fn]
 // [spec:samurai:sem:log.loginit-fn]
 // [spec:samurai:req:compat.persistent-state]
-pub fn loginit(builddir: Option<&Path>, graph: &mut Graph) -> io::Result<BuildLog> {
+pub(crate) fn loginit(builddir: Option<&Path>, graph: &mut Graph) -> io::Result<BuildLog> {
     let path = builddir.map_or_else(
         || std::path::PathBuf::from(".ninja_log"),
         |dir| dir.join(".ninja_log"),
@@ -196,7 +196,7 @@ fn record_entry(log: &mut BuildLog, entry: LogEntry) -> io::Result<()> {
 // [spec:samurai:def:log.logrecord-fn]
 // [spec:samurai:sem:log.logrecord-fn]
 #[cfg(test)]
-pub fn logrecord(log: &mut BuildLog, graph: &Graph, node: NodeId) -> io::Result<()> {
+pub(crate) fn logrecord(log: &mut BuildLog, graph: &Graph, node: NodeId) -> io::Result<()> {
     let node = graph.node(node);
     record_entry(
         log,
@@ -210,7 +210,7 @@ pub fn logrecord(log: &mut BuildLog, graph: &Graph, node: NodeId) -> io::Result<
     )
 }
 
-pub fn logrecordedge(
+pub(crate) fn logrecordedge(
     log: &mut BuildLog,
     graph: &Graph,
     edge: EdgeId,
@@ -238,7 +238,7 @@ pub fn logrecordedge(
     Ok(())
 }
 
-pub fn logrestat<F>(log: &mut BuildLog, filters: &[&str], mut stat: F) -> io::Result<()>
+pub(crate) fn logrestat<F>(log: &mut BuildLog, filters: &[&str], mut stat: F) -> io::Result<()>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
@@ -259,7 +259,7 @@ where
     rewrite(log)
 }
 
-pub fn logrecompact<F>(log: &mut BuildLog, mut is_dead: F) -> io::Result<()>
+pub(crate) fn logrecompact<F>(log: &mut BuildLog, mut is_dead: F) -> io::Result<()>
 where
     F: FnMut(&BStr) -> bool,
 {
@@ -269,13 +269,13 @@ where
 }
 
 #[cfg(test)]
-pub fn logentry(log: &BuildLog, output: impl AsRef<[u8]>) -> Option<&LogEntry> {
+pub(crate) fn logentry(log: &BuildLog, output: impl AsRef<[u8]>) -> Option<&LogEntry> {
     log.entries.get(output.as_ref())
 }
 
 // [spec:samurai:def:log.logclose-fn]
 // [spec:samurai:sem:log.logclose-fn]
-pub fn logclose(mut log: BuildLog) -> io::Result<()> {
+pub(crate) fn logclose(mut log: BuildLog) -> io::Result<()> {
     if let Some(mut writer) = log.writer.take() {
         writer.flush()
     } else {

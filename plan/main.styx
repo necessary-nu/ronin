@@ -520,12 +520,34 @@ children (
                 title "Introduce typed errors and narrow the supported Rust API"
                 priority 1
                 deps (ronin-performance-validation)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.961528398Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Replace Result<_, String> plumbing with structured CLI, manifest, graph, build, and log errors while preserving required Ninja-compatible display text and sources. Make modules and fields private or pub(crate) by default and explicitly document any supported ronin_core API."
+                    }
+
+                    {
+                        at 2026-07-29T19:15:05.207876542Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T19:34:29.634684581Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Replaced all Result<_, String> subsystem plumbing with typed CLI, manifest, graph, build, persistence, process, and tool errors while preserving Ninja-facing Display text and retaining I/O/dyndep causes through Error::source. Narrowed the supported library surface to documented crate-root invocation/error/signal items; all other implementation items are pub(crate) or private, enforced by deny(unreachable_pub) and deny(missing_docs). Added public API classification/source tests. Verified cargo fmt, 349 all-target tests, clippy -D warnings, rustdoc -D warnings, zero String-result signatures or error.to_string map flattening, and the pinned full Ninja gate: 425/425 upstream tests, 10 differential cases, and bidirectional persistence round trip."
+                    }
+
+                    {
+                        at 2026-07-29T19:34:40.476317517Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

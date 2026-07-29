@@ -1,4 +1,5 @@
 use crate::env::edgevar;
+use crate::error::ToolError;
 use crate::graph::{nodeget, CommandCollector, EdgeId, Graph};
 use crate::util::ByteSlice;
 use std::fmt::Write;
@@ -118,7 +119,7 @@ fn render(
 
 // [spec:samurai:def:tool.compdb-fn]
 // [spec:samurai:sem:tool.compdb-fn]
-pub fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> String {
+pub(crate) fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> String {
     let edges = graph.edge_ids().into_iter().filter(|edge| {
         rules.is_empty()
             || graph
@@ -129,11 +130,11 @@ pub fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> String {
     render(graph, edges, expand_rsp, false)
 }
 
-pub fn compdb_for_targets(
+pub(crate) fn compdb_for_targets(
     graph: &Graph,
     targets: &[String],
     expand_rsp: bool,
-) -> Result<String, String> {
+) -> Result<String, ToolError> {
     if targets.is_empty() {
         return Err("compdb-targets expects the name of at least one target".into());
     }
@@ -144,7 +145,8 @@ pub fn compdb_for_targets(
         if graph.node(node).gen.is_none() {
             return Err(format!(
                 "'{target}' is not a target (i.e. it is not an output of any `build` statement)"
-            ));
+            )
+            .into());
         }
         collector.collect_from(graph, node);
     }

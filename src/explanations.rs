@@ -3,19 +3,19 @@
 use std::collections::BTreeMap;
 
 #[derive(Default)]
-pub struct Explanations {
+pub(crate) struct Explanations {
     values: BTreeMap<usize, Vec<String>>,
 }
 
 impl Explanations {
-    pub fn record(&mut self, item: usize, explanation: impl Into<String>) {
+    pub(crate) fn record(&mut self, item: usize, explanation: impl Into<String>) {
         self.values
             .entry(item)
             .or_default()
             .push(explanation.into());
     }
 
-    pub fn lookup_and_append(&self, item: usize, output: &mut Vec<String>) {
+    pub(crate) fn lookup_and_append(&self, item: usize, output: &mut Vec<String>) {
         if let Some(explanations) = self.values.get(&item) {
             output.extend(explanations.iter().cloned());
         }
