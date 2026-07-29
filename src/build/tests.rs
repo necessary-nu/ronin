@@ -1,5 +1,7 @@
 use super::*;
-use crate::graph::{graphinit, nodeget, Graph};
+use crate::env::mkenv;
+use crate::graph::{graphinit, mkedge, mknode, nodeget, nodeuse, Graph};
+use crate::util::xasprintf;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -509,6 +511,45 @@ fn ninja_plan_priority_without_build_log() {
             .unwrap();
     }
     assert!(plan.find_work(&mut graph).is_none());
+}
+
+#[test]
+fn ronin_plan_handles_deep_graphs_without_recursion() {
+    const DEPTH: usize = 20_000;
+
+    let mut graph = graphinit();
+    let root = mkenv(&mut graph, None);
+    let mut input = mknode(&mut graph, xasprintf(format_args!("source")));
+    let mut target = input;
+    for index in 0..DEPTH {
+        let output = mknode(&mut graph, xasprintf(format_args!("node/{index}")));
+        let edge = mkedge(&mut graph, root);
+        {
+            let edge = graph.edge_mut(edge);
+            edge.input.push(input);
+            edge.inimpidx = 1;
+            edge.inorderidx = 1;
+            edge.out.push(output);
+            edge.outimpidx = 1;
+        }
+        nodeuse(&mut graph, input, edge);
+        graph.node_mut(output).gen = Some(edge);
+        graph.node_mut(output).dirty = true;
+        input = output;
+        target = output;
+    }
+
+    let mut plan = Plan::default();
+    plan.add_target(&mut graph, target).unwrap();
+    plan.prepare_queue(&graph);
+    let mut scheduled = 0;
+    while let Some(edge) = plan.find_work(&mut graph) {
+        plan.edge_finished(&mut graph, edge, EdgeResult::Succeeded)
+            .unwrap();
+        scheduled += 1;
+    }
+    assert_eq!(scheduled, DEPTH);
+    assert!(!plan.more_to_do());
 }
 
 #[test]
@@ -2491,9 +2532,7 @@ fn ninja_build_stale_depfile_does_not_introduce_cycle() {
     {
         let mut builder = Builder::new(&mut graph, BuildOptions::default());
         let target_node = nodeget(builder.graph, target.as_bytes()).unwrap();
-        builder
-            .load_depfiles_for(target_node, &mut BTreeSet::new())
-            .unwrap();
+        builder.load_depfiles_for(target_node).unwrap();
         let b = nodeget(
             builder.graph,
             directory.join("b").to_string_lossy().as_bytes(),

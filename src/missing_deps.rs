@@ -3,7 +3,7 @@
 use crate::env::edgevar;
 use crate::graph::{EdgeId, Graph, NodeId};
 use crate::util::ByteSlice;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeSet, HashMap};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MissingDependency {
@@ -14,37 +14,57 @@ pub struct MissingDependency {
 
 #[derive(Default)]
 pub struct MissingDependencyScanner {
-    dependency_log: BTreeMap<NodeId, Vec<NodeId>>,
-    seen: BTreeSet<NodeId>,
-    nodes_missing_deps: BTreeSet<NodeId>,
-    generated_nodes: BTreeSet<NodeId>,
+    dependency_log: Vec<Vec<NodeId>>,
+    seen: Vec<bool>,
+    nodes_missing_deps: Vec<bool>,
+    nodes_missing_deps_count: usize,
+    generated_nodes: Vec<bool>,
+    generated_nodes_count: usize,
     generator_rules: BTreeSet<String>,
     missing_dep_path_count: usize,
     reports: Vec<MissingDependency>,
-    adjacency: BTreeMap<(EdgeId, EdgeId), bool>,
+    adjacency: HashMap<(EdgeId, EdgeId), bool>,
 }
 
+// [spec:samurai:req:compat.graph-semantics]
 impl MissingDependencyScanner {
     pub fn record_dependency(&mut self, from: NodeId, to: NodeId) {
-        self.dependency_log.entry(from).or_default().push(to);
+        self.dependency_log.resize_with(from.index() + 1, Vec::new);
+        self.dependency_log[from.index()].push(to);
     }
 
     pub fn process_node(&mut self, graph: &Graph, node: NodeId) {
-        let Some(edge) = graph.node(node).gen else {
-            return;
-        };
-        if !self.seen.insert(node) {
-            return;
+        enum Work {
+            Enter(NodeId),
+            Process(NodeId, EdgeId),
         }
-        let inputs = graph.edge(edge).input.clone();
-        for input in &inputs {
-            self.process_node(graph, *input);
-        }
-        if edgevar(graph, edge, "deps", false).is_none() {
-            return;
-        }
-        if let Some(dependencies) = self.dependency_log.get(&node).cloned() {
-            self.process_node_dependencies(graph, node, edge, &dependencies);
+
+        let mut work = vec![Work::Enter(node)];
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Enter(node) => {
+                    let Some(edge) = graph.node(node).gen else {
+                        continue;
+                    };
+                    self.seen
+                        .resize(self.seen.len().max(node.index() + 1), false);
+                    if std::mem::replace(&mut self.seen[node.index()], true) {
+                        continue;
+                    }
+                    work.push(Work::Process(node, edge));
+                    for input in graph.edge(edge).input.iter().rev() {
+                        work.push(Work::Enter(*input));
+                    }
+                }
+                Work::Process(node, edge) => {
+                    if edgevar(graph, edge, "deps", false).is_none() {
+                        continue;
+                    }
+                    if let Some(dependencies) = self.dependency_log.get(node.index()).cloned() {
+                        self.process_node_dependencies(graph, node, edge, &dependencies);
+                    }
+                }
+            }
         }
     }
 
@@ -61,20 +81,21 @@ impl MissingDependencyScanner {
         {
             return;
         }
-        let mut generated_edges = BTreeSet::new();
+        let mut generated_edges = vec![false; graph.edge_count()];
         for dependency in dependencies {
             if let Some(edge) = graph.node(*dependency).gen {
-                generated_edges.insert(edge);
+                generated_edges[edge.index()] = true;
             }
         }
 
-        let mut missing_edges = BTreeSet::new();
-        for generator in generated_edges {
-            if !self.path_exists_between(graph, generator, consumer_edge, &mut BTreeSet::new()) {
-                missing_edges.insert(generator);
+        let mut missing_edges = vec![false; graph.edge_count()];
+        for (index, generated) in generated_edges.into_iter().enumerate() {
+            let generator = EdgeId::from_index(index);
+            if generated && !self.path_exists_between(graph, generator, consumer_edge) {
+                missing_edges[index] = true;
             }
         }
-        if missing_edges.is_empty() {
+        if !missing_edges.iter().any(|missing| *missing) {
             return;
         }
 
@@ -83,7 +104,7 @@ impl MissingDependencyScanner {
             let Some(generator) = graph.node(*dependency).gen else {
                 continue;
             };
-            if !missing_edges.contains(&generator) {
+            if !missing_edges[generator.index()] {
                 continue;
             }
             let rule_name = graph
@@ -92,7 +113,13 @@ impl MissingDependencyScanner {
                 .map(|rule| graph.rule(rule).name.clone())
                 .unwrap_or_default();
             missing_rules.insert(rule_name.clone());
-            self.generated_nodes.insert(*dependency);
+            self.generated_nodes.resize(
+                self.generated_nodes.len().max(dependency.index() + 1),
+                false,
+            );
+            if !std::mem::replace(&mut self.generated_nodes[dependency.index()], true) {
+                self.generated_nodes_count += 1;
+            }
             self.generator_rules.insert(rule_name.clone());
             self.reports.push(MissingDependency {
                 consumer: String::from_utf8_lossy(graph.node(node).path.as_bytes()).into_owned(),
@@ -102,44 +129,60 @@ impl MissingDependencyScanner {
             });
         }
         self.missing_dep_path_count += missing_rules.len();
-        self.nodes_missing_deps.insert(node);
+        self.nodes_missing_deps
+            .resize(self.nodes_missing_deps.len().max(node.index() + 1), false);
+        if !std::mem::replace(&mut self.nodes_missing_deps[node.index()], true) {
+            self.nodes_missing_deps_count += 1;
+        }
     }
 
-    fn path_exists_between(
-        &mut self,
-        graph: &Graph,
-        from: EdgeId,
-        to: EdgeId,
-        visiting: &mut BTreeSet<EdgeId>,
-    ) -> bool {
+    fn path_exists_between(&mut self, graph: &Graph, from: EdgeId, to: EdgeId) -> bool {
         let key = (from, to);
         if let Some(found) = self.adjacency.get(&key) {
             return *found;
         }
-        if !visiting.insert(key.1) {
-            return false;
+        let mut visited = vec![false; graph.edge_count()];
+        let mut work = vec![to];
+        let mut found = false;
+        while let Some(edge) = work.pop() {
+            if std::mem::replace(&mut visited[edge.index()], true) {
+                continue;
+            }
+            for input in &graph.edge(edge).input {
+                let Some(generator) = graph.node(*input).gen else {
+                    continue;
+                };
+                if generator == from
+                    || self
+                        .adjacency
+                        .get(&(from, generator))
+                        .is_some_and(|cached| *cached)
+                {
+                    found = true;
+                    break;
+                }
+                if !self.adjacency.contains_key(&(from, generator)) {
+                    work.push(generator);
+                }
+            }
+            if found {
+                break;
+            }
         }
-        let inputs = graph.edge(to).input.clone();
-        let found = inputs.iter().any(|input| {
-            graph.node(*input).gen.is_some_and(|edge| {
-                edge == from || self.path_exists_between(graph, from, edge, visiting)
-            })
-        });
-        visiting.remove(&key.1);
         self.adjacency.insert(key, found);
         found
     }
 
     pub fn had_missing_dependencies(&self) -> bool {
-        !self.nodes_missing_deps.is_empty()
+        self.nodes_missing_deps_count != 0
     }
 
     pub fn nodes_missing_dependencies(&self) -> usize {
-        self.nodes_missing_deps.len()
+        self.nodes_missing_deps_count
     }
 
     pub fn generated_nodes(&self) -> usize {
-        self.generated_nodes.len()
+        self.generated_nodes_count
     }
 
     pub fn generator_rules(&self) -> usize {
@@ -156,17 +199,17 @@ impl MissingDependencyScanner {
 }
 
 pub fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
-    let outputs = graph
-        .edge_ids()
-        .into_iter()
-        .flat_map(|edge| graph.edge(edge).out.clone())
-        .collect::<Vec<_>>();
-    let roots = outputs
-        .iter()
-        .filter(|node| graph.node(**node).uses.is_empty())
-        .copied()
-        .collect::<Vec<_>>();
-    if roots.is_empty() && !outputs.is_empty() {
+    let mut roots = Vec::new();
+    let mut has_outputs = false;
+    for index in 0..graph.edge_count() {
+        for output in &graph.edge(EdgeId::from_index(index)).out {
+            has_outputs = true;
+            if graph.node(*output).uses.is_empty() {
+                roots.push(*output);
+            }
+        }
+    }
+    if roots.is_empty() && has_outputs {
         Err("dependency cycle".into())
     } else {
         Ok(roots)

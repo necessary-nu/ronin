@@ -276,6 +276,13 @@ children (
                         kind @note
                         text "Use iterative worklists, dense ID-indexed state, generation markers, and an actual priority heap. Avoid repeated per-target DFS passes and adjacency clones; define invalidation for command completion, restat, depfile changes, and dyndep mutations. Preserve cycle diagnostics, dirty-state semantics, validations, pools, and stable scheduling ties."
                     }
+
+                    {
+                        at 2026-07-29T16:45:05.21485255Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 

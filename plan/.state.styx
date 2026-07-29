@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T14:59:47.367422374Z
+last_sync_at 2026-07-29T17:05:09.469774138Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -30,10 +30,33 @@ assertions (
 )
 
 impl_evidence (
+    {id ronin-byte-data-model, covered_rules (
+        compat.byte-inputs
+    ), covered_claims (
+        {impl_name target-impl, rule compat.byte-inputs}
+    ), rule_versions_seen (
+        {id compat.byte-inputs, version 0}
+    )}
+    {id ronin-byte-parser, covered_rules (
+        compat.manifest-semantics
+    ), covered_claims (
+        {impl_name target-impl, rule compat.manifest-semantics}
+    ), rule_versions_seen (
+        {id compat.manifest-semantics, version 0}
+    )}
+    {id ronin-dependency-io, covered_rules (
+        compat.persistent-state
+    ), covered_claims (
+        {impl_name target-impl, rule compat.persistent-state}
+    ), rule_versions_seen (
+        {id compat.persistent-state, version 0}
+    )}
     {id ronin-performance-baseline, covered_rules (
         performance.reproducible-baseline
     ), covered_claims (
         {impl_name target-impl, rule performance.reproducible-baseline}
+    ), rule_versions_seen (
+        {id performance.reproducible-baseline, version 0}
     )}
     {id ronin-product-identity, covered_rules (
         compat.ninja-owned-names
@@ -51,19 +74,9 @@ impl_evidence (
         {id product.no-samuflags, version 0}
         {id product.ronin-identity, version 0}
     )}
-    {id ronin-byte-data-model, covered_rules (
-        compat.byte-inputs
+    {id ronin-graph-evaluation, covered_rules (
+        compat.graph-semantics
     ), covered_claims (
-        {impl_name target-impl, rule compat.byte-inputs}
-    )}
-    {id ronin-byte-parser, covered_rules (
-        compat.manifest-semantics
-    ), covered_claims (
-        {impl_name target-impl, rule compat.manifest-semantics}
-    )}
-    {id ronin-dependency-io, covered_rules (
-        compat.persistent-state
-    ), covered_claims (
-        {impl_name target-impl, rule compat.persistent-state}
+        {impl_name target-impl, rule compat.graph-semantics}
     )}
 )

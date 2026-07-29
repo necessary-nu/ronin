@@ -4,7 +4,8 @@ use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::htab::rapidhashv1;
 use crate::os::{osmtime, MTIME_MISSING};
 use crate::util::{BStr, BString, ByteSlice};
-use std::collections::{BTreeMap, BTreeSet};
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BinaryHeap};
 use std::io;
 use std::path::Path;
 
@@ -239,123 +240,210 @@ where
     Ok(())
 }
 
-/// Stat a dependency graph depth-first and update each node's dirty bit.
+/// Recompute one edge after all of its inputs have already been evaluated.
+pub(crate) fn recompute_edge_dirty_with<F>(
+    graph: &mut Graph,
+    edge: EdgeId,
+    stat: &mut F,
+) -> io::Result<bool>
+where
+    F: FnMut(&Path) -> io::Result<i64>,
+{
+    if graph.edge(edge).restat_clean {
+        for index in 0..graph.edge(edge).out.len() {
+            let output = graph.edge(edge).out[index];
+            graph.node_mut(output).dirty = false;
+        }
+        return Ok(false);
+    }
+
+    for index in 0..graph.edge(edge).out.len() {
+        let output = graph.edge(edge).out[index];
+        if graph.node(output).mtime == MTIME_UNKNOWN {
+            nodestat_with(graph, output, stat)?;
+        }
+    }
+
+    let edge_data = graph.edge(edge);
+    let input_dirty = edge_data
+        .input
+        .iter()
+        .take(edge_data.inorderidx)
+        .any(|input| graph.node(*input).dirty);
+    let is_phony = edge_data
+        .rule
+        .is_some_and(|rule| graph.rule(rule).name == "phony");
+
+    let dirty = if is_phony {
+        let missing_without_inputs = edge_data.input.is_empty()
+            && edge_data.validation.is_empty()
+            && edge_data
+                .out
+                .iter()
+                .any(|output| graph.node(*output).mtime == 0);
+        let newest_input = edge_data
+            .input
+            .iter()
+            .take(edge_data.inorderidx)
+            .map(|input| graph.node(*input).mtime)
+            .max()
+            .unwrap_or(0);
+        let output_count = edge_data.out.len();
+        for index in 0..output_count {
+            let output = graph.edge(edge).out[index];
+            if graph.node(output).mtime == 0 {
+                graph.node_mut(output).mtime = newest_input;
+            }
+        }
+        input_dirty || missing_without_inputs
+    } else {
+        let oldest_output = edge_data
+            .out
+            .iter()
+            .map(|output| graph.node(*output).mtime)
+            .min()
+            .unwrap_or(0);
+        let oldest_recorded_output = edge_data
+            .out
+            .iter()
+            .map(|output| graph.node(*output).logmtime)
+            .filter(|mtime| *mtime != MTIME_MISSING)
+            .min();
+        oldest_output == 0
+            || edge_data.deps_missing
+            || edge_data.command_dirty
+            || input_dirty
+            || oldest_recorded_output.is_some_and(|output_mtime| {
+                edge_data
+                    .input
+                    .iter()
+                    .take(edge_data.inorderidx)
+                    .any(|input| graph.node(*input).mtime > output_mtime)
+            })
+            || edge_data
+                .input
+                .iter()
+                .take(edge_data.inorderidx)
+                .any(|input| graph.node(*input).mtime > oldest_output)
+    };
+
+    for index in 0..graph.edge(edge).out.len() {
+        let output = graph.edge(edge).out[index];
+        graph.node_mut(output).dirty = dirty;
+    }
+    Ok(dirty)
+}
+
+#[derive(Clone, Copy, Default, Eq, PartialEq)]
+enum VisitState {
+    #[default]
+    New,
+    Active,
+    Done,
+}
+
+struct DirtyEvaluator {
+    nodes: Vec<VisitState>,
+    edges: Vec<VisitState>,
+}
+
+impl DirtyEvaluator {
+    fn evaluate<F>(&mut self, graph: &mut Graph, target: NodeId, stat: &mut F) -> io::Result<bool>
+    where
+        F: FnMut(&Path) -> io::Result<i64>,
+    {
+        enum Work {
+            Enter(NodeId),
+            Finish(EdgeId),
+        }
+
+        let mut work = vec![Work::Enter(target)];
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Enter(node) => match self.nodes[node.index()] {
+                    VisitState::Done => continue,
+                    VisitState::Active => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "dependency cycle",
+                        ));
+                    }
+                    VisitState::New => {
+                        let Some(edge) = graph.node(node).gen else {
+                            if graph.node(node).mtime == MTIME_UNKNOWN {
+                                nodestat_with(graph, node, stat)?;
+                            }
+                            let dirty = graph.node(node).mtime == 0;
+                            graph.node_mut(node).dirty = dirty;
+                            self.nodes[node.index()] = VisitState::Done;
+                            continue;
+                        };
+
+                        match self.edges[edge.index()] {
+                            VisitState::Done => {
+                                self.nodes[node.index()] = VisitState::Done;
+                                continue;
+                            }
+                            VisitState::Active => {
+                                return Err(io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    "dependency cycle",
+                                ));
+                            }
+                            VisitState::New => {}
+                        }
+
+                        self.edges[edge.index()] = VisitState::Active;
+                        let output_count = graph.edge(edge).out.len();
+                        if graph.edge(edge).restat_clean {
+                            for index in 0..output_count {
+                                let output = graph.edge(edge).out[index];
+                                graph.node_mut(output).dirty = false;
+                                self.nodes[output.index()] = VisitState::Done;
+                            }
+                            self.edges[edge.index()] = VisitState::Done;
+                            continue;
+                        }
+
+                        for index in 0..output_count {
+                            let output = graph.edge(edge).out[index];
+                            if graph.node(output).mtime == MTIME_UNKNOWN {
+                                nodestat_with(graph, output, stat)?;
+                            }
+                            self.nodes[output.index()] = VisitState::Active;
+                        }
+                        work.push(Work::Finish(edge));
+                        for index in (0..graph.edge(edge).input.len()).rev() {
+                            work.push(Work::Enter(graph.edge(edge).input[index]));
+                        }
+                    }
+                },
+                Work::Finish(edge) => {
+                    recompute_edge_dirty_with(graph, edge, stat)?;
+                    let output_count = graph.edge(edge).out.len();
+                    for index in 0..output_count {
+                        let output = graph.edge(edge).out[index];
+                        self.nodes[output.index()] = VisitState::Done;
+                    }
+                    self.edges[edge.index()] = VisitState::Done;
+                }
+            }
+        }
+        Ok(graph.node(target).dirty)
+    }
+}
+
+/// Stat a dependency graph in one iterative pass and update each node's dirty bit.
+// [spec:samurai:req:compat.graph-semantics]
 pub fn recompute_dirty_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<bool>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    fn visit<F>(
-        graph: &mut Graph,
-        node: NodeId,
-        stat: &mut F,
-        visiting: &mut BTreeSet<NodeId>,
-    ) -> io::Result<bool>
-    where
-        F: FnMut(&Path) -> io::Result<i64>,
-    {
-        if !visiting.insert(node) {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "dependency cycle",
-            ));
-        }
-        let edge = graph.node(node).gen;
-        let dirty = if let Some(edge) = edge {
-            if graph.edge(edge).restat_clean {
-                for output in graph.edge(edge).out.clone() {
-                    graph.node_mut(output).dirty = false;
-                }
-                visiting.remove(&node);
-                return Ok(false);
-            }
-            let (
-                inputs,
-                outputs,
-                inorderidx,
-                is_phony,
-                has_validations,
-                deps_missing,
-                command_dirty,
-            ) = {
-                let edge = graph.edge(edge);
-                (
-                    edge.input.clone(),
-                    edge.out.clone(),
-                    edge.inorderidx,
-                    edge.rule
-                        .is_some_and(|rule| graph.rule(rule).name == "phony"),
-                    !edge.validation.is_empty(),
-                    edge.deps_missing,
-                    edge.command_dirty,
-                )
-            };
-            for output in &outputs {
-                if graph.node(*output).mtime == MTIME_UNKNOWN {
-                    nodestat_with(graph, *output, stat)?;
-                }
-            }
-            let mut input_dirty = false;
-            for (index, input) in inputs.iter().enumerate() {
-                let dirty = visit(graph, *input, stat, visiting)?;
-                if index < inorderidx {
-                    input_dirty |= dirty;
-                }
-            }
-            let dirty = if is_phony {
-                let missing_without_inputs = inputs.is_empty()
-                    && !has_validations
-                    && outputs.iter().any(|output| graph.node(*output).mtime == 0);
-                let newest_input = inputs
-                    .iter()
-                    .take(inorderidx)
-                    .map(|input| graph.node(*input).mtime)
-                    .max()
-                    .unwrap_or(0);
-                for output in &outputs {
-                    if graph.node(*output).mtime == 0 {
-                        graph.node_mut(*output).mtime = newest_input;
-                    }
-                }
-                input_dirty || missing_without_inputs
-            } else {
-                let oldest_output = outputs
-                    .iter()
-                    .map(|output| graph.node(*output).mtime)
-                    .min()
-                    .unwrap_or(0);
-                let recorded_output_older = inputs.iter().take(inorderidx).any(|input| {
-                    outputs.iter().any(|output| {
-                        let output = graph.node(*output);
-                        output.logmtime != MTIME_MISSING
-                            && graph.node(*input).mtime > output.logmtime
-                    })
-                });
-                oldest_output == 0
-                    || deps_missing
-                    || command_dirty
-                    || input_dirty
-                    || recorded_output_older
-                    || inputs
-                        .iter()
-                        .take(inorderidx)
-                        .any(|input| graph.node(*input).mtime > oldest_output)
-            };
-            for output in outputs {
-                graph.node_mut(output).dirty = dirty;
-            }
-            dirty
-        } else {
-            if graph.node(node).mtime == MTIME_UNKNOWN {
-                nodestat_with(graph, node, stat)?;
-            }
-            graph.node(node).mtime == 0
-        };
-        graph.node_mut(node).dirty = dirty;
-        visiting.remove(&node);
-        Ok(dirty)
-    }
-
-    visit(graph, node, stat, &mut BTreeSet::new())
+    let mut evaluator = DirtyEvaluator {
+        nodes: vec![VisitState::New; graph.nodes.len()],
+        edges: vec![VisitState::New; graph.edges.len()],
+    };
+    evaluator.evaluate(graph, node, stat)
 }
 
 pub fn recompute_dirty_with_validations<F>(
@@ -366,47 +454,48 @@ pub fn recompute_dirty_with_validations<F>(
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    fn collect<F>(
-        graph: &mut Graph,
-        node: NodeId,
-        stat: &mut F,
-        validations: &mut Vec<NodeId>,
-        seen_nodes: &mut BTreeSet<NodeId>,
-        seen_edges: &mut BTreeSet<EdgeId>,
-    ) -> io::Result<()>
-    where
-        F: FnMut(&Path) -> io::Result<i64>,
-    {
-        let Some(edge) = graph.node(node).gen else {
-            return Ok(());
-        };
-        if !seen_edges.insert(edge) {
-            return Ok(());
-        }
-        for input in graph.edge(edge).input.clone() {
-            collect(graph, input, stat, validations, seen_nodes, seen_edges)?;
-        }
-        for validation in graph.edge(edge).validation.clone() {
-            if !seen_nodes.insert(validation) {
-                continue;
-            }
-            recompute_dirty_with(graph, validation, stat)?;
-            collect(graph, validation, stat, validations, seen_nodes, seen_edges)?;
-            validations.push(validation);
-        }
-        Ok(())
+    enum Work {
+        Enter(NodeId),
+        EvaluateValidation(NodeId),
+        RecordValidation(NodeId),
     }
 
-    recompute_dirty_with(graph, node, stat)?;
+    let mut evaluator = DirtyEvaluator {
+        nodes: vec![VisitState::New; graph.nodes.len()],
+        edges: vec![VisitState::New; graph.edges.len()],
+    };
+    evaluator.evaluate(graph, node, stat)?;
     let mut validations = Vec::new();
-    collect(
-        graph,
-        node,
-        stat,
-        &mut validations,
-        &mut BTreeSet::new(),
-        &mut BTreeSet::new(),
-    )?;
+    let mut seen_nodes = vec![false; graph.nodes.len()];
+    let mut seen_edges = vec![false; graph.edges.len()];
+    let mut work = vec![Work::Enter(node)];
+    while let Some(item) = work.pop() {
+        match item {
+            Work::Enter(node) => {
+                let Some(edge) = graph.node(node).gen else {
+                    continue;
+                };
+                if std::mem::replace(&mut seen_edges[edge.index()], true) {
+                    continue;
+                }
+                for index in (0..graph.edge(edge).validation.len()).rev() {
+                    work.push(Work::EvaluateValidation(graph.edge(edge).validation[index]));
+                }
+                for index in (0..graph.edge(edge).input.len()).rev() {
+                    work.push(Work::Enter(graph.edge(edge).input[index]));
+                }
+            }
+            Work::EvaluateValidation(validation) => {
+                if std::mem::replace(&mut seen_nodes[validation.index()], true) {
+                    continue;
+                }
+                evaluator.evaluate(graph, validation, stat)?;
+                work.push(Work::RecordValidation(validation));
+                work.push(Work::Enter(validation));
+            }
+            Work::RecordValidation(validation) => validations.push(validation),
+        }
+    }
     Ok(validations)
 }
 
@@ -542,27 +631,46 @@ pub fn rootnodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
 #[derive(Default)]
 pub struct InputsCollector {
     inputs: Vec<NodeId>,
-    visited_nodes: BTreeSet<NodeId>,
+    visited_nodes: Vec<bool>,
 }
 
 impl InputsCollector {
     pub fn visit_node(&mut self, graph: &Graph, node: NodeId) {
-        let Some(edge) = graph.node(node).gen else {
-            return;
-        };
-        let inputs = graph.edge(edge).input.clone();
-        for input in inputs {
-            if !self.visited_nodes.insert(input) {
-                continue;
+        enum Work {
+            Enter(NodeId),
+            Record(NodeId),
+        }
+
+        self.visited_nodes.resize(graph.nodes.len(), false);
+        let mut work = Vec::new();
+        if let Some(edge) = graph.node(node).gen {
+            for input in graph.edge(edge).input.iter().rev() {
+                work.push(Work::Enter(*input));
             }
-            self.visit_node(graph, input);
-            let generated_by_phony = graph
-                .node(input)
-                .gen
-                .and_then(|edge| graph.edge(edge).rule)
-                .is_some_and(|rule| graph.rule(rule).name == "phony");
-            if !generated_by_phony {
-                self.inputs.push(input);
+        }
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Enter(input) => {
+                    if std::mem::replace(&mut self.visited_nodes[input.index()], true) {
+                        continue;
+                    }
+                    work.push(Work::Record(input));
+                    if let Some(edge) = graph.node(input).gen {
+                        for child in graph.edge(edge).input.iter().rev() {
+                            work.push(Work::Enter(*child));
+                        }
+                    }
+                }
+                Work::Record(input) => {
+                    let generated_by_phony = graph
+                        .node(input)
+                        .gen
+                        .and_then(|edge| graph.edge(edge).rule)
+                        .is_some_and(|rule| graph.rule(rule).name == "phony");
+                    if !generated_by_phony {
+                        self.inputs.push(input);
+                    }
+                }
             }
         }
     }
@@ -583,102 +691,141 @@ impl InputsCollector {
 
     pub fn reset(&mut self) {
         self.inputs.clear();
-        self.visited_nodes.clear();
+        self.visited_nodes.fill(false);
     }
 }
 
 #[derive(Default)]
 pub struct CommandCollector {
     pub edges: Vec<EdgeId>,
-    visited_nodes: BTreeSet<NodeId>,
-    visited_edges: BTreeSet<EdgeId>,
+    visited_nodes: Vec<bool>,
+    visited_edges: Vec<bool>,
 }
 
 impl CommandCollector {
     pub fn collect_from(&mut self, graph: &Graph, node: NodeId) {
-        if !self.visited_nodes.insert(node) {
-            return;
+        enum Work {
+            Enter(NodeId),
+            Record(EdgeId),
         }
-        let Some(edge) = graph.node(node).gen else {
-            return;
-        };
-        if !self.visited_edges.insert(edge) {
-            return;
-        }
-        for input in graph.edge(edge).input.clone() {
-            self.collect_from(graph, input);
-        }
-        let is_phony = graph
-            .edge(edge)
-            .rule
-            .is_some_and(|rule| graph.rule(rule).name == "phony");
-        if !is_phony {
-            self.edges.push(edge);
+
+        self.visited_nodes.resize(graph.nodes.len(), false);
+        self.visited_edges.resize(graph.edges.len(), false);
+        let mut work = vec![Work::Enter(node)];
+        while let Some(item) = work.pop() {
+            match item {
+                Work::Enter(node) => {
+                    if std::mem::replace(&mut self.visited_nodes[node.index()], true) {
+                        continue;
+                    }
+                    let Some(edge) = graph.node(node).gen else {
+                        continue;
+                    };
+                    if std::mem::replace(&mut self.visited_edges[edge.index()], true) {
+                        continue;
+                    }
+                    work.push(Work::Record(edge));
+                    for input in graph.edge(edge).input.iter().rev() {
+                        work.push(Work::Enter(*input));
+                    }
+                }
+                Work::Record(edge) => {
+                    let is_phony = graph
+                        .edge(edge)
+                        .rule
+                        .is_some_and(|rule| graph.rule(rule).name == "phony");
+                    if !is_phony {
+                        self.edges.push(edge);
+                    }
+                }
+            }
         }
     }
+}
+
+#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
+struct QueuedEdge {
+    weight: i64,
+    edge: Reverse<EdgeId>,
 }
 
 #[derive(Default)]
 pub struct EdgePriorityQueue {
-    edges: Vec<EdgeId>,
+    pending: Vec<EdgeId>,
+    heap: BinaryHeap<QueuedEdge>,
 }
 
 impl EdgePriorityQueue {
     pub fn push(&mut self, edge: EdgeId) {
-        self.edges.push(edge);
+        self.pending.push(edge);
     }
 
     pub fn pop(&mut self, graph: &Graph) -> Option<EdgeId> {
-        let index = self
-            .edges
-            .iter()
-            .enumerate()
-            .max_by(|(_, left), (_, right)| {
-                let left = graph.edge(**left);
-                let right = graph.edge(**right);
-                left.critical_path_weight
-                    .cmp(&right.critical_path_weight)
-                    .then_with(|| right.id.cmp(&left.id))
-            })
-            .map(|(index, _)| index)?;
-        Some(self.edges.swap_remove(index))
+        self.heap
+            .extend(self.pending.drain(..).map(|edge| QueuedEdge {
+                weight: graph.edge(edge).critical_path_weight,
+                edge: Reverse(edge),
+            }));
+        self.heap.pop().map(|queued| queued.edge.0)
     }
 }
 
 pub fn verify_dag(graph: &Graph, node: NodeId) -> Result<(), String> {
-    fn visit(
-        graph: &Graph,
+    struct Frame {
         node: NodeId,
-        visiting: &mut Vec<NodeId>,
-        finished: &mut BTreeSet<NodeId>,
-    ) -> Result<(), String> {
-        if let Some(index) = visiting.iter().position(|candidate| *candidate == node) {
-            let mut paths = visiting[index..]
-                .iter()
-                .map(|node| {
-                    let node = graph.node(*node);
-                    String::from_utf8_lossy(node.path.as_bytes()).into_owned()
-                })
-                .collect::<Vec<_>>();
-            let node = graph.node(node);
-            paths.push(String::from_utf8_lossy(node.path.as_bytes()).into_owned());
-            return Err(format!("dependency cycle: {}", paths.join(" -> ")));
-        }
-        if finished.contains(&node) {
-            return Ok(());
-        }
-        visiting.push(node);
-        if let Some(edge) = graph.node(node).gen {
-            for input in graph.edge(edge).input.iter().copied() {
-                visit(graph, input, visiting, finished)?;
-            }
-        }
-        visiting.pop();
-        finished.insert(node);
-        Ok(())
+        next_input: usize,
     }
 
-    visit(graph, node, &mut Vec::new(), &mut BTreeSet::new())
+    let mut state = vec![VisitState::New; graph.nodes.len()];
+    let mut positions = vec![None; graph.nodes.len()];
+    let mut path = vec![node];
+    let mut stack = vec![Frame {
+        node,
+        next_input: 0,
+    }];
+    state[node.index()] = VisitState::Active;
+    positions[node.index()] = Some(0);
+
+    while let Some(frame) = stack.last_mut() {
+        let input = graph
+            .node(frame.node)
+            .gen
+            .and_then(|edge| graph.edge(edge).input.get(frame.next_input))
+            .copied();
+        if let Some(input) = input {
+            frame.next_input += 1;
+            match state[input.index()] {
+                VisitState::Done => {}
+                VisitState::New => {
+                    positions[input.index()] = Some(path.len());
+                    state[input.index()] = VisitState::Active;
+                    path.push(input);
+                    stack.push(Frame {
+                        node: input,
+                        next_input: 0,
+                    });
+                }
+                VisitState::Active => {
+                    let start =
+                        positions[input.index()].expect("active graph nodes have a path position");
+                    let mut paths = path[start..]
+                        .iter()
+                        .map(|node| String::from_utf8_lossy(&graph.node(*node).path).into_owned())
+                        .collect::<Vec<_>>();
+                    paths.push(String::from_utf8_lossy(&graph.node(input).path).into_owned());
+                    return Err(format!("dependency cycle: {}", paths.join(" -> ")));
+                }
+            }
+            continue;
+        }
+
+        let finished = stack.pop().expect("the traversal stack is nonempty").node;
+        path.pop();
+        positions[finished.index()] = None;
+        state[finished.index()] = VisitState::Done;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -819,6 +966,30 @@ mod tests {
             ["out", "mid1", "in11", "in12", "mid2", "in21", "in22"]
         );
         assert!(graph.node(middle1).dirty);
+    }
+
+    #[test]
+    // [spec:samurai:req:compat.graph-semantics/test]
+    fn ronin_deep_graph_evaluation_uses_an_iterative_worklist() {
+        const DEPTH: usize = 20_000;
+
+        let mut graph = graphinit();
+        let root = mkenv(&mut graph, None);
+        let mut input = "source".to_owned();
+        let mut target = None;
+        for index in 0..DEPTH {
+            let output = format!("node/{index}");
+            target = Some(generated_node(&mut graph, root, &output, &[&input]));
+            input = output;
+        }
+
+        let mut stat_count = 0;
+        let mut stat = |_path: &Path| {
+            stat_count += 1;
+            Ok(0)
+        };
+        assert!(recompute_dirty_with(&mut graph, target.unwrap(), &mut stat).unwrap());
+        assert_eq!(stat_count, DEPTH + 1);
     }
 
     #[test]
@@ -1089,11 +1260,11 @@ mod tests {
         for edge in edges {
             queue.push(edge);
         }
-        assert_eq!(queue.edges.len(), 3);
+        assert_eq!(queue.pending.len() + queue.heap.len(), 3);
         for expected in edges.into_iter().rev() {
             assert_eq!(queue.pop(&graph).unwrap(), expected);
         }
-        assert!(queue.edges.is_empty());
+        assert!(queue.pending.is_empty() && queue.heap.is_empty());
 
         for edge in edges {
             graph.edge_mut(edge).critical_path_weight = 0;
