@@ -150,4 +150,9 @@ impl_evidence (
         {impl_name target-impl, rule runtime.msvc-byte-parsing}
         {impl_name target-impl, rule runtime.output-byte-boundaries}
     )}
+    {id ronin-persistence-transactions, covered_rules (
+        runtime.persistence-transactions
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.persistence-transactions}
+    )}
 )

@@ -84,6 +84,7 @@ elements (
         exposes (
             "src/deps.rs"
             "src/log.rs"
+            "src/persistence.rs"
         )
         depends_on (
             [arch:ronin:core-data]

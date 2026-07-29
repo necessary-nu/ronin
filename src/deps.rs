@@ -4,20 +4,19 @@ use crate::env::edgevar;
 use crate::error::PersistenceError;
 use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId};
 use crate::util::ByteSlice;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
-use std::mem;
 use std::path::{Path, PathBuf};
 
 // [spec:samurai:def:deps.nodearray]
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct NodeArray {
     pub(crate) nodes: Vec<NodeId>,
 }
 
 // [spec:samurai:def:deps.entry]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Entry {
     pub(crate) node: NodeId,
     pub(crate) deps: NodeArray,
@@ -51,7 +50,7 @@ impl DepsLog {
     }
 }
 
-#[derive(Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct EntryMap {
     slots: Vec<Option<Entry>>,
 }
@@ -275,22 +274,60 @@ fn parse_depfile(text: &[u8]) -> Result<ParsedDepfile, PersistenceError> {
     })
 }
 
-// [spec:samurai:def:deps.depswrite-fn]
-// [spec:samurai:sem:deps.depswrite-fn]
-fn depswrite(writer: &mut BufWriter<File>, bytes: &[u8]) -> io::Result<()> {
-    writer.write_all(bytes)
+struct IdPlan {
+    assigned: HashMap<NodeId, i32>,
+    new_nodes: Vec<NodeId>,
+    next_id: i32,
+    ignore_graph_ids: bool,
 }
 
+impl IdPlan {
+    fn append(log: &DepsLog) -> Self {
+        Self {
+            assigned: HashMap::new(),
+            new_nodes: Vec::new(),
+            next_id: log.next_id,
+            ignore_graph_ids: false,
+        }
+    }
+
+    fn compact() -> Self {
+        Self {
+            assigned: HashMap::new(),
+            new_nodes: Vec::new(),
+            next_id: 0,
+            ignore_graph_ids: true,
+        }
+    }
+
+    fn id(&self, graph: &Graph, node: NodeId) -> Option<i32> {
+        if !self.ignore_graph_ids && graph.node(node).id >= 0 {
+            Some(graph.node(node).id)
+        } else {
+            self.assigned.get(&node).copied()
+        }
+    }
+}
+
+// `std::io::Write::write_all` replaces the source's `depswrite` forwarding
+// wrapper while this staged encoder retains its record semantics.
+// [spec:samurai:def:deps.depswrite-fn]
+// [spec:samurai:sem:deps.depswrite-fn]
 // [spec:samurai:def:deps.recordid-fn]
 // [spec:samurai:sem:deps.recordid-fn]
-fn recordid(log: &mut DepsLog, graph: &mut Graph, node: NodeId) -> io::Result<bool> {
+fn stage_record_id(
+    writer: &mut dyn Write,
+    plan: &mut IdPlan,
+    graph: &Graph,
+    node: NodeId,
+) -> io::Result<bool> {
     const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
 
-    if graph.node(node).id != -1 {
+    if plan.id(graph, node).is_some() {
         return Ok(false);
     }
-    let id = log.next_id;
-    let path = graph.node(node).path.as_bytes().to_vec();
+    let id = plan.next_id;
+    let path = graph.node(node).path.as_bytes();
     let padding = (4 - path.len() % 4) % 4;
     let size = path.len() + padding + 4;
     if size > MAX_RECORD_SIZE {
@@ -299,39 +336,48 @@ fn recordid(log: &mut DepsLog, graph: &mut Graph, node: NodeId) -> io::Result<bo
             "dependency path record is too large",
         ));
     }
-    log.next_id += 1;
-    graph.node_mut(node).id = id;
+    let next_id = id.checked_add(1).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "dependency log contains too many path records",
+        )
+    })?;
     let encoded_size = u32::try_from(size).expect("bounded dependency path record");
     let encoded_id = u32::try_from(id).expect("dependency IDs are non-negative");
-    depswrite(&mut log.writer, &encoded_size.to_ne_bytes())?;
-    depswrite(&mut log.writer, &path)?;
-    depswrite(&mut log.writer, &[0; 3][..padding])?;
-    depswrite(&mut log.writer, &(!encoded_id).to_ne_bytes())?;
-    log.nodes.push(node);
+    writer.write_all(&encoded_size.to_ne_bytes())?;
+    writer.write_all(path)?;
+    writer.write_all(&[0; 3][..padding])?;
+    writer.write_all(&(!encoded_id).to_ne_bytes())?;
+    plan.assigned.insert(node, id);
+    plan.new_nodes.push(node);
+    plan.next_id = next_id;
     Ok(true)
 }
 
 // [spec:samurai:def:deps.recorddeps-fn]
 // [spec:samurai:sem:deps.recorddeps-fn]
-fn recorddeps(
-    log: &mut DepsLog,
+#[derive(Clone, Copy)]
+enum EntryPolicy<'a> {
+    SkipUnchanged(&'a EntryMap),
+    Always,
+}
+
+fn stage_deps_entry(
+    writer: &mut dyn Write,
+    policy: EntryPolicy<'_>,
+    plan: &IdPlan,
     graph: &Graph,
     output: NodeId,
     deps: &NodeArray,
     mtime: i64,
-) -> io::Result<()> {
+) -> io::Result<Option<Entry>> {
     const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
-    if let Some(existing) = log.entries.get(output) {
-        let unchanged = existing.mtime == mtime
-            && existing.deps.nodes.len() == deps.nodes.len()
-            && existing
-                .deps
-                .nodes
-                .iter()
-                .zip(&deps.nodes)
-                .all(|(left, right)| left == right);
-        if unchanged {
-            return Ok(());
+    if let EntryPolicy::SkipUnchanged(existing_entries) = policy {
+        if let Some(existing) = existing_entries.get(output) {
+            let unchanged = existing.mtime == mtime && existing.deps.nodes == deps.nodes;
+            if unchanged {
+                return Ok(None);
+            }
         }
     }
     let size = 12 + deps.nodes.len() * 4;
@@ -341,51 +387,83 @@ fn recorddeps(
             "dependency record is too large",
         ));
     }
+    let output_id = plan.id(graph, output).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "dependency output has no recorded path ID",
+        )
+    })?;
     let encoded_size = u32::try_from(size).expect("bounded dependency record");
-    depswrite(&mut log.writer, &(encoded_size | 0x8000_0000).to_ne_bytes())?;
-    let output_id =
-        u32::try_from(graph.node(output).id).expect("recorded output has a non-negative ID");
-    depswrite(&mut log.writer, &output_id.to_ne_bytes())?;
+    writer.write_all(&(encoded_size | 0x8000_0000).to_ne_bytes())?;
+    writer.write_all(
+        &u32::try_from(output_id)
+            .expect("recorded output has a non-negative ID")
+            .to_ne_bytes(),
+    )?;
     let mtime_bits = u64::from_ne_bytes(mtime.to_ne_bytes());
-    let low_mtime = u32::try_from(mtime_bits & u64::from(u32::MAX)).expect("masked to 32 bits");
-    let high_mtime = u32::try_from(mtime_bits >> 32).expect("shifted to 32 bits");
-    depswrite(&mut log.writer, &low_mtime.to_ne_bytes())?;
-    depswrite(&mut log.writer, &high_mtime.to_ne_bytes())?;
+    writer.write_all(
+        &u32::try_from(mtime_bits & u64::from(u32::MAX))
+            .expect("masked to 32 bits")
+            .to_ne_bytes(),
+    )?;
+    writer.write_all(
+        &u32::try_from(mtime_bits >> 32)
+            .expect("shifted to 32 bits")
+            .to_ne_bytes(),
+    )?;
     for dependency in &deps.nodes {
-        let dependency_id = u32::try_from(graph.node(*dependency).id)
-            .expect("recorded dependency has a non-negative ID");
-        depswrite(&mut log.writer, &dependency_id.to_ne_bytes())?;
+        let dependency_id = plan.id(graph, *dependency).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "dependency input has no recorded path ID",
+            )
+        })?;
+        writer.write_all(
+            &u32::try_from(dependency_id)
+                .expect("recorded dependency has a non-negative ID")
+                .to_ne_bytes(),
+        )?;
     }
-    log.entries.insert(
-        output,
-        Entry {
-            node: output,
-            deps: deps.clone(),
-            mtime,
-        },
-    );
-    Ok(())
+    Ok(Some(Entry {
+        node: output,
+        deps: deps.clone(),
+        mtime,
+    }))
 }
 
-fn depsinit_path(path: PathBuf) -> io::Result<DepsLog> {
-    let new = !path.exists();
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .read(true)
-        .open(&path)?;
-    let mut log = DepsLog {
+fn commit_id_plan(log: &mut DepsLog, graph: &mut Graph, plan: IdPlan) {
+    for node in plan.new_nodes {
+        graph.node_mut(node).id = plan.assigned[&node];
+        log.nodes.push(node);
+    }
+    log.next_id = plan.next_id;
+}
+
+fn deps_log_with_file(path: PathBuf, file: File) -> DepsLog {
+    DepsLog {
         writer: BufWriter::new(file),
         entries: EntryMap::default(),
         nodes: Vec::new(),
         next_id: 0,
         path,
-    };
-    if new {
-        depswrite(&mut log.writer, b"# ninjadeps\n")?;
-        depswrite(&mut log.writer, &4u32.to_ne_bytes())?;
     }
-    Ok(log)
+}
+
+fn reset_deps_path(path: PathBuf) -> io::Result<DepsLog> {
+    let file = crate::persistence::atomic_rewrite(&path, |writer| {
+        writer.write_all(b"# ninjadeps\n")?;
+        writer.write_all(&4u32.to_ne_bytes())
+    })?;
+    Ok(deps_log_with_file(path, file))
+}
+
+fn depsinit_path(path: PathBuf) -> io::Result<DepsLog> {
+    let file = match OpenOptions::new().append(true).read(true).open(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return reset_deps_path(path),
+        Err(error) => return Err(error),
+    };
+    Ok(deps_log_with_file(path, file))
 }
 
 fn node_from_path(graph: &mut Graph, path: &[u8]) -> NodeId {
@@ -424,16 +502,16 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
         .map(native_u32)
         .unwrap_or_default();
     if content.get(..SIGNATURE.len()) != Some(SIGNATURE) || version != 4 {
-        fs::remove_file(path)?;
         let warning = if version == 1 {
             "deps log version change; rebuilding"
         } else {
             "bad deps log signature or version; starting over"
         };
-        return Ok((depsinit_path(path.to_path_buf())?, Some(warning.into())));
+        return Ok((reset_deps_path(path.to_path_buf())?, Some(warning.into())));
     }
 
     let mut nodes: Vec<NodeId> = Vec::new();
+    let mut seen_nodes = HashSet::new();
     let mut entries = EntryMap::default();
     let mut offset = HEADER_LEN;
     let mut recovery = false;
@@ -499,8 +577,11 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
                     usize::try_from(!native_u32(&record[size - 4..])).unwrap_or(usize::MAX);
                 let node = node_from_path(graph, &record[..path_size]);
                 match i32::try_from(expected_id) {
-                    Ok(stored_id) if expected_id == nodes.len() && graph.node(node).id < 0 => {
-                        graph.node_mut(node).id = stored_id;
+                    Ok(_)
+                        if expected_id == nodes.len()
+                            && graph.node(node).id < 0
+                            && seen_nodes.insert(node) =>
+                    {
                         nodes.push(node);
                         true
                     }
@@ -516,19 +597,22 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
         offset += size;
     }
 
-    if recovery {
-        OpenOptions::new()
-            .write(true)
-            .open(path)?
-            .set_len(u64::try_from(offset).expect("file offsets fit in u64"))?;
-    }
-    let mut log = depsinit_path(path.to_path_buf())?;
-    log.next_id = i32::try_from(nodes.len()).map_err(|_| {
+    let next_id = i32::try_from(nodes.len()).map_err(|_| {
         io::Error::new(
             io::ErrorKind::InvalidData,
             "dependency log contains too many path records",
         )
     })?;
+    let file = if recovery {
+        crate::persistence::atomic_rewrite(path, |writer| writer.write_all(&content[..offset]))?
+    } else {
+        OpenOptions::new().append(true).read(true).open(path)?
+    };
+    let mut log = deps_log_with_file(path.to_path_buf(), file);
+    for (id, node) in nodes.iter().copied().enumerate() {
+        graph.node_mut(node).id = i32::try_from(id).expect("validated dependency IDs fit in i32");
+    }
+    log.next_id = next_id;
     log.nodes = nodes;
     log.entries = entries;
     let warning = recovery.then(|| "premature end of file; recovering".into());
@@ -544,7 +628,11 @@ fn deps_entry_is_live(graph: &Graph, entry: &Entry) -> bool {
 
 /// Rewrite the log with only dependency entries that are still reachable from
 /// an edge using Ninja's deps attribute.
-pub(crate) fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<()> {
+fn depsrecompact_inner(
+    log: &mut DepsLog,
+    graph: &mut Graph,
+    #[cfg(test)] fault: Option<crate::persistence::RewriteStage>,
+) -> io::Result<()> {
     let mut live_entries = log
         .entries
         .values()
@@ -553,39 +641,71 @@ pub(crate) fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<
         .collect::<Vec<_>>();
     live_entries.sort_by_key(|entry| graph.node(entry.node).id);
 
+    log.writer.flush()?;
+    let mut plan = IdPlan::compact();
+    let mut entries = EntryMap::default();
+    let write_contents = |writer: &mut dyn Write| {
+        writer.write_all(b"# ninjadeps\n")?;
+        writer.write_all(&4u32.to_ne_bytes())?;
+        for entry in &live_entries {
+            stage_record_id(writer, &mut plan, graph, entry.node)?;
+            for node in &entry.deps.nodes {
+                stage_record_id(writer, &mut plan, graph, *node)?;
+            }
+            if let Some(entry) = stage_deps_entry(
+                writer,
+                EntryPolicy::Always,
+                &plan,
+                graph,
+                entry.node,
+                &entry.deps,
+                entry.mtime,
+            )? {
+                entries.insert(entry.node, entry);
+            }
+        }
+        Ok(())
+    };
+    #[cfg(test)]
+    let replacement = if let Some(stage) = fault {
+        crate::persistence::atomic_rewrite_with_fault(&log.path, stage, write_contents)?
+    } else {
+        crate::persistence::atomic_rewrite(&log.path, write_contents)?
+    };
+    #[cfg(not(test))]
+    let replacement = crate::persistence::atomic_rewrite(&log.path, write_contents)?;
+
     for node in &log.nodes {
         graph.node_mut(*node).id = -1;
     }
-    let mut temp_name = log.path.as_os_str().to_os_string();
-    temp_name.push(".recompact");
-    let temp_path = PathBuf::from(temp_name);
-    if let Err(error) = fs::remove_file(&temp_path) {
-        if error.kind() != io::ErrorKind::NotFound {
-            return Err(error);
-        }
+    for node in &plan.new_nodes {
+        graph.node_mut(*node).id = plan.assigned[node];
     }
-    let mut compacted = depsinit_path(temp_path.clone())?;
-    for entry in &live_entries {
-        recordid(&mut compacted, graph, entry.node)?;
-        for node in &entry.deps.nodes {
-            recordid(&mut compacted, graph, *node)?;
-        }
-        recorddeps(&mut compacted, graph, entry.node, &entry.deps, entry.mtime)?;
-    }
-    compacted.writer.flush()?;
-    compacted.writer.get_ref().sync_all()?;
-    let entries = mem::take(&mut compacted.entries);
-    let nodes = mem::take(&mut compacted.nodes);
-    let next_id = compacted.next_id;
-    drop(compacted);
-    log.writer.flush()?;
-    fs::rename(&temp_path, &log.path)?;
-    let replacement = OpenOptions::new().append(true).read(true).open(&log.path)?;
     log.writer = BufWriter::new(replacement);
     log.entries = entries;
-    log.nodes = nodes;
-    log.next_id = next_id;
+    log.nodes = plan.new_nodes;
+    log.next_id = plan.next_id;
     Ok(())
+}
+
+pub(crate) fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<()> {
+    #[cfg(test)]
+    {
+        depsrecompact_inner(log, graph, None)
+    }
+    #[cfg(not(test))]
+    {
+        depsrecompact_inner(log, graph)
+    }
+}
+
+#[cfg(test)]
+fn depsrecompact_with_fault(
+    log: &mut DepsLog,
+    graph: &mut Graph,
+    stage: crate::persistence::RewriteStage,
+) -> io::Result<()> {
+    depsrecompact_inner(log, graph, Some(stage))
 }
 
 // [spec:samurai:def:deps.depsparse-fn]
@@ -716,6 +836,46 @@ pub(crate) fn depsrecord(log: &mut DepsLog, edge: EdgeId, graph: &mut Graph) -> 
     depsrecordnodes(log, graph, edge, &deps.nodes)
 }
 
+fn record_nodes(
+    log: &mut DepsLog,
+    graph: &mut Graph,
+    outputs: &[NodeId],
+    deps: &[NodeId],
+    mtimes: &[i64],
+) -> io::Result<()> {
+    debug_assert_eq!(outputs.len(), mtimes.len());
+    let deps = NodeArray {
+        nodes: deps.to_vec(),
+    };
+    let mut plan = IdPlan::append(log);
+    let mut encoded = Vec::new();
+    for dependency in &deps.nodes {
+        stage_record_id(&mut encoded, &mut plan, graph, *dependency)?;
+    }
+    let mut entries = Vec::new();
+    for (output, mtime) in outputs.iter().copied().zip(mtimes.iter().copied()) {
+        stage_record_id(&mut encoded, &mut plan, graph, output)?;
+        if let Some(entry) = stage_deps_entry(
+            &mut encoded,
+            EntryPolicy::SkipUnchanged(&log.entries),
+            &plan,
+            graph,
+            output,
+            &deps,
+            mtime,
+        )? {
+            entries.push(entry);
+        }
+    }
+    log.writer.write_all(&encoded)?;
+    log.writer.flush()?;
+    commit_id_plan(log, graph, plan);
+    for entry in entries {
+        log.entries.insert(entry.node, entry);
+    }
+    Ok(())
+}
+
 pub(crate) fn depsrecordnodes(
     log: &mut DepsLog,
     graph: &mut Graph,
@@ -723,18 +883,11 @@ pub(crate) fn depsrecordnodes(
     deps: &[NodeId],
 ) -> io::Result<()> {
     let outputs = graph.edge(edge).out.clone();
-    let deps = NodeArray {
-        nodes: deps.to_vec(),
-    };
-    for dependency in &deps.nodes {
-        recordid(log, graph, *dependency)?;
-    }
-    for output in outputs {
-        recordid(log, graph, output)?;
-        let mtime = graph.node(output).mtime;
-        recorddeps(log, graph, output, &deps, mtime)?;
-    }
-    log.writer.flush()
+    let mtimes = outputs
+        .iter()
+        .map(|output| graph.node(*output).mtime)
+        .collect::<Vec<_>>();
+    record_nodes(log, graph, &outputs, deps, &mtimes)
 }
 
 #[cfg(test)]
@@ -925,15 +1078,7 @@ mod ninja_depfile_tests {
     }
 
     fn record(log: &mut DepsLog, graph: &mut Graph, output: NodeId, paths: &[NodeId], mtime: i64) {
-        let deps = NodeArray {
-            nodes: paths.to_vec(),
-        };
-        recordid(log, graph, output).unwrap();
-        for dependency in paths {
-            recordid(log, graph, *dependency).unwrap();
-        }
-        recorddeps(log, graph, output, &deps, mtime).unwrap();
-        log.writer.flush().unwrap();
+        record_nodes(log, graph, &[output], paths, &[mtime]).unwrap();
     }
 
     fn paths(graph: &Graph, nodes: &[NodeId]) -> Vec<String> {
@@ -1082,6 +1227,57 @@ mod ninja_depfile_tests {
         drop(dead_log);
         drop(log);
         remove_test_log(directory);
+    }
+
+    // [spec:samurai:req:runtime.persistence-transactions/test]
+    #[test]
+    fn deps_log_rewrite_failures_preserve_ids_state_and_writer() {
+        for stage in crate::persistence::RewriteStage::ALL {
+            let (directory, path) = test_log_path("transaction-failure");
+            let mut source = crate::graph::Graph::default();
+            let output = make_node(&mut source, "out.o");
+            let input = make_node(&mut source, "input.h");
+            let mut source_log = depsinit_path(path.clone()).unwrap();
+            record(&mut source_log, &mut source, output, &[input], 1);
+            source_log.finish().unwrap();
+
+            let mut graph = crate::graph::Graph::default();
+            let (mut log, warning) = depsloadlog(&path, &mut graph).unwrap();
+            assert_eq!(warning, None);
+            let output = make_node(&mut graph, "out.o");
+            let input = make_node(&mut graph, "input.h");
+            make_deps_edge(&mut graph, output);
+            let original_file = fs::read(&path).unwrap();
+            let original_entries = log.entries.clone();
+            let original_nodes = log.nodes.clone();
+            let original_next_id = log.next_id;
+            let original_ids = original_nodes
+                .iter()
+                .map(|node| (*node, graph.node(*node).id))
+                .collect::<Vec<_>>();
+
+            let error = depsrecompact_with_fault(&mut log, &mut graph, stage).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("injected atomic rewrite failure"));
+            assert_eq!(fs::read(&path).unwrap(), original_file);
+            assert_eq!(log.entries, original_entries);
+            assert_eq!(log.nodes, original_nodes);
+            assert_eq!(log.next_id, original_next_id);
+            for (node, id) in original_ids {
+                assert_eq!(graph.node(node).id, id);
+            }
+
+            record(&mut log, &mut graph, output, &[input], 2);
+            log.finish().unwrap();
+            let mut reloaded_graph = crate::graph::Graph::default();
+            let (reloaded, warning) = depsloadlog(&path, &mut reloaded_graph).unwrap();
+            assert_eq!(warning, None);
+            let output = make_node(&mut reloaded_graph, "out.o");
+            assert_eq!(reloaded.entries.get(output).unwrap().mtime, 2);
+            drop(reloaded);
+            remove_test_log(directory);
+        }
     }
 
     #[test]

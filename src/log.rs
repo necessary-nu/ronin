@@ -5,7 +5,7 @@ use crate::graph::NodeId;
 use crate::graph::{nodeget, EdgeId, Graph};
 use crate::util::{BStr, BString, ByteSlice};
 use std::collections::{HashMap, HashSet};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -39,36 +39,42 @@ impl BuildLog {
         let read_file = OpenOptions::new().read(true).open(&path);
         let mut valid = false;
         let mut entries = HashMap::new();
-        if let Ok(read_file) = read_file {
-            let mut reader = BufReader::new(read_file);
-            let mut line = Vec::new();
-            valid = read_line(&mut reader, &mut line)?.is_some() && line == LOG_HEADER;
-            if valid {
-                while let Some(terminated) = read_line(&mut reader, &mut line)? {
-                    if terminated {
-                        let line = line.strip_suffix(b"\r").unwrap_or(&line);
-                        if let Some(entry) = parse_entry(line) {
-                            if let Some(node) = nodeget(graph, entry.output.as_bytes()) {
-                                let node = graph.node_mut(node);
-                                if node.gen.is_some() {
-                                    node.logmtime = entry.mtime;
-                                    node.hash = entry.command_hash;
-                                }
+        match read_file {
+            Ok(read_file) => {
+                let mut reader = BufReader::new(read_file);
+                let mut line = Vec::new();
+                valid = read_line(&mut reader, &mut line)?.is_some() && line == LOG_HEADER;
+                if valid {
+                    while let Some(terminated) = read_line(&mut reader, &mut line)? {
+                        if terminated {
+                            let line = line.strip_suffix(b"\r").unwrap_or(&line);
+                            if let Some(entry) = parse_entry(line) {
+                                entries.insert(entry.output.clone(), entry);
                             }
-                            entries.insert(entry.output.clone(), entry);
                         }
                     }
                 }
             }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
         }
         let writer_file = if valid {
             open_log(&path)?
         } else {
-            let mut file = File::create(&path)?;
-            file.write_all(LOG_HEADER)?;
-            file.write_all(b"\n")?;
-            file
+            crate::persistence::atomic_rewrite(&path, |writer| {
+                writer.write_all(LOG_HEADER)?;
+                writer.write_all(b"\n")
+            })?
         };
+        for entry in entries.values() {
+            if let Some(node) = nodeget(graph, entry.output.as_bytes()) {
+                let node = graph.node_mut(node);
+                if node.gen.is_some() {
+                    node.logmtime = entry.mtime;
+                    node.hash = entry.command_hash;
+                }
+            }
+        }
         Ok(Self {
             writer: Some(BufWriter::new(writer_file)),
             path,
@@ -159,7 +165,7 @@ fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<Option
     }
 }
 
-fn write_entry(writer: &mut BufWriter<File>, entry: &LogEntry) -> io::Result<()> {
+fn write_entry(writer: &mut dyn Write, entry: &LogEntry) -> io::Result<()> {
     write!(
         writer,
         "{}\t{}\t{}\t",
@@ -169,38 +175,70 @@ fn write_entry(writer: &mut BufWriter<File>, entry: &LogEntry) -> io::Result<()>
     writeln!(writer, "\t{:x}", entry.command_hash)
 }
 
-fn rewrite(log: &mut BuildLog) -> io::Result<()> {
-    if let Some(mut writer) = log.writer.take() {
-        writer.flush()?;
-    }
-    let mut temp_name = log.path.as_os_str().to_os_string();
-    temp_name.push(".recompact");
-    let temp_path = PathBuf::from(temp_name);
-    if let Err(error) = fs::remove_file(&temp_path) {
-        if error.kind() != io::ErrorKind::NotFound {
-            return Err(error);
+fn rewrite_inner(
+    log: &mut BuildLog,
+    entries: HashMap<BString, LogEntry>,
+    #[cfg(test)] fault: Option<crate::persistence::RewriteStage>,
+) -> io::Result<()> {
+    log.writer.as_mut().expect("open build log").flush()?;
+    let write_contents = |writer: &mut dyn Write| {
+        writer.write_all(LOG_HEADER)?;
+        writer.write_all(b"\n")?;
+        for entry in entries.values() {
+            write_entry(writer, entry)?;
         }
-    }
-    let mut writer = BufWriter::new(File::create(&temp_path)?);
-    writer.write_all(LOG_HEADER)?;
-    writer.write_all(b"\n")?;
-    for entry in log.entries.values() {
-        write_entry(&mut writer, entry)?;
-    }
-    writer.flush()?;
-    writer.get_ref().sync_all()?;
-    drop(writer);
-    fs::rename(&temp_path, &log.path)?;
-    log.writer = Some(BufWriter::new(open_log(&log.path)?));
+        Ok(())
+    };
+    #[cfg(test)]
+    let replacement = if let Some(stage) = fault {
+        crate::persistence::atomic_rewrite_with_fault(&log.path, stage, write_contents)?
+    } else {
+        crate::persistence::atomic_rewrite(&log.path, write_contents)?
+    };
+    #[cfg(not(test))]
+    let replacement = crate::persistence::atomic_rewrite(&log.path, write_contents)?;
+    log.writer = Some(BufWriter::new(replacement));
+    log.entries = entries;
     Ok(())
 }
 
-fn record_entry(log: &mut BuildLog, entry: LogEntry) -> io::Result<()> {
+fn rewrite(log: &mut BuildLog, entries: HashMap<BString, LogEntry>) -> io::Result<()> {
+    #[cfg(test)]
+    {
+        rewrite_inner(log, entries, None)
+    }
+    #[cfg(not(test))]
+    {
+        rewrite_inner(log, entries)
+    }
+}
+
+#[cfg(test)]
+fn rewrite_with_fault(
+    log: &mut BuildLog,
+    entries: HashMap<BString, LogEntry>,
+    stage: crate::persistence::RewriteStage,
+) -> io::Result<()> {
+    rewrite_inner(log, entries, Some(stage))
+}
+
+fn record_entries(log: &mut BuildLog, entries: Vec<LogEntry>) -> io::Result<()> {
+    let mut encoded = Vec::new();
+    for entry in &entries {
+        write_entry(&mut encoded, entry)?;
+    }
     let writer = log.writer.as_mut().expect("open build log");
-    write_entry(writer, &entry)?;
+    writer.write_all(&encoded)?;
     writer.flush()?;
-    log.entries.insert(entry.output.clone(), entry);
+    for entry in entries {
+        log.entries.insert(entry.output.clone(), entry);
+    }
     Ok(())
+}
+
+#[cfg(test)]
+fn record_entry(log: &mut BuildLog, entry: LogEntry) -> io::Result<()> {
+    record_entries(log, vec![entry])
 }
 
 // [spec:samurai:def:log.logrecord-fn]
@@ -232,20 +270,20 @@ pub(crate) fn logrecordedge(
         let edge = graph.edge(edge);
         (edge.out.clone(), edge.hash)
     };
-    for output in outputs {
-        let output = graph.node(output);
-        record_entry(
-            log,
+    let entries = outputs
+        .into_iter()
+        .map(|output| {
+            let output = graph.node(output);
             LogEntry {
                 start_time,
                 end_time,
                 mtime: record_mtime,
                 output: output.path.clone(),
                 command_hash,
-            },
-        )?;
-    }
-    Ok(())
+            }
+        })
+        .collect();
+    record_entries(log, entries)
 }
 
 pub(crate) fn logrestat<F>(log: &mut BuildLog, filters: &[BString], mut stat: F) -> io::Result<()>
@@ -256,7 +294,8 @@ where
         .iter()
         .map(|filter| filter.as_bytes())
         .collect::<HashSet<_>>();
-    for entry in log.entries.values_mut() {
+    let mut entries = log.entries.clone();
+    for entry in entries.values_mut() {
         if filters.is_empty() || filters.contains(entry.output.as_bytes()) {
             entry.mtime = stat(
                 entry
@@ -266,16 +305,20 @@ where
             )?;
         }
     }
-    rewrite(log)
+    rewrite(log, entries)
 }
 
 pub(crate) fn logrecompact<F>(log: &mut BuildLog, mut is_dead: F) -> io::Result<()>
 where
     F: FnMut(&BStr) -> bool,
 {
-    log.entries
-        .retain(|path, _| !is_dead(path.as_bytes().as_bstr()));
-    rewrite(log)
+    let entries = log
+        .entries
+        .iter()
+        .filter(|(path, _)| !is_dead(path.as_bytes().as_bstr()))
+        .map(|(path, entry)| (path.clone(), entry.clone()))
+        .collect();
+    rewrite(log, entries)
 }
 
 #[cfg(test)]
@@ -365,6 +408,45 @@ mod tests {
         logrestat(&mut log, &[], |_| Ok(4)).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 4);
         log.finish().unwrap();
+    }
+
+    // [spec:samurai:req:runtime.persistence-transactions/test]
+    #[test]
+    fn build_log_rewrite_failures_preserve_state_and_writer() {
+        for stage in crate::persistence::RewriteStage::ALL {
+            let temp = TempLog::new("transaction-failure");
+            fs::write(&temp.path, "# ninja log v7\n1\t2\t3\tout\tc0ffee\n").unwrap();
+            let original_file = fs::read(&temp.path).unwrap();
+            let mut graph = Graph::default();
+            let mut log = BuildLog::open(Some(&temp.directory), &mut graph).unwrap();
+            let original_entries = log.entries.clone();
+            let mut staged_entries = original_entries.clone();
+            staged_entries.get_mut(b"out".as_slice()).unwrap().mtime = 99;
+
+            let error = rewrite_with_fault(&mut log, staged_entries, stage).unwrap_err();
+            assert!(error
+                .to_string()
+                .contains("injected atomic rewrite failure"));
+            assert_eq!(log.entries, original_entries);
+            assert_eq!(fs::read(&temp.path).unwrap(), original_file);
+
+            record_entry(
+                &mut log,
+                LogEntry {
+                    start_time: 3,
+                    end_time: 4,
+                    mtime: 4,
+                    output: BString::from("probe"),
+                    command_hash: 0x1234,
+                },
+            )
+            .unwrap();
+            log.finish().unwrap();
+            assert!(fs::read(&temp.path)
+                .unwrap()
+                .windows(b"\tprobe\t1234\n".len())
+                .any(|window| window == b"\tprobe\t1234\n"));
+        }
     }
 
     #[test]

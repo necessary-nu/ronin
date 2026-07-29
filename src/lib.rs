@@ -21,6 +21,7 @@ mod missing_deps;
 mod msvc;
 mod os;
 mod parse;
+mod persistence;
 mod scan;
 mod subprocess;
 mod tool;

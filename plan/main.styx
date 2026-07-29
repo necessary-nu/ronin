@@ -843,12 +843,22 @@ children (
                 id ronin-persistence-transactions
                 title "Make Ninja log rewrites transactionally error-safe"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.persistence-transactions])
+                }
                 log (
                     {
                         at 2026-07-29T22:58:22.699290169Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Make BuildLog and DepsLog updates commit in memory only after complete write, sync, atomic replacement, and successful reopen. Use unique same-directory temporary files, preserve a usable writer after failure, distinguish NotFound from other open errors, avoid mutating graph dependency IDs before durable write success, test injected failures at every stage, and batch flushes where Ninja durability semantics permit."
+                    }
+
+                    {
+                        at 2026-07-29T23:41:32.857991776Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

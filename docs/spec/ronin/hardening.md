@@ -37,3 +37,16 @@ second work item.
 > Ronin MUST filter MSVC `/showIncludes` output as bytes, preserve non-UTF-8
 > include paths and visible compiler output, and perform only explicitly
 > ASCII-insensitive filename-extension and system-directory comparisons.
+
+## Transactional persistent state
+
+> [spec:samurai:req:runtime.persistence-transactions]
+> Ronin MUST stage build-log entries, dependency-log entries, and dependency
+> node IDs without mutating live state. A log rewrite MUST use a unique
+> temporary file in the destination directory, completely write and flush it,
+> synchronize its contents, acquire the replacement append handle, and
+> atomically replace the destination before committing staged memory or graph
+> state. Any failure before replacement MUST leave the original file, writer,
+> entries, and graph IDs usable and unchanged. Log opening MUST distinguish a
+> missing file from every other filesystem error, and records whose durability
+> boundary is shared MAY be emitted and flushed as one batch.
