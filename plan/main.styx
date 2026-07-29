@@ -166,6 +166,13 @@ children (
                         kind @note
                         text "Add reproducible baselines before structural optimization: upstream Ninja fake-manifest load and command evaluation, no-op CLI builds, canonicalization, depfile parsing, log loading, wide and deep graphs, and a scheduler-barrier workload. Compare Ronin with upstream Ninja and the original C samurai where applicable; record wall time, allocations or peak RSS, and stable benchmark inputs."
                     }
+
+                    {
+                        at 2026-07-29T14:54:08.071204277Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 
