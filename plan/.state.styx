@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T20:11:39.664965759Z
+last_sync_at 2026-07-29T20:16:01.65978898Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -123,8 +123,6 @@ impl_evidence (
         release.compatibility-gate
     ), covered_claims (
         {impl_name target-impl, rule release.compatibility-gate}
-    ), rule_versions_seen (
-        {id release.compatibility-gate, version 0}
     )}
     {id ronin-runtime-consolidation, covered_rules (
         compat.cli-and-tools

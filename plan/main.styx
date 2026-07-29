@@ -112,6 +112,7 @@ children (
                     )
                 }
                 deps (ronin-compatibility-contract)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:52.781901212Z
@@ -132,6 +133,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @decision
                         text "Removing SAMUFLAGS intentionally diverges from the C source. The target-side samu.main-fn and samu.parseenvargs-fn rules are bumped to v1 and fully covered/tested; the four v0 source annotations remain stale as historical evidence rather than falsely claiming the C implementation satisfies the Ronin behavior. The product.no-samuflags requirement owns the shipped behavior."
+                    }
+
+                    {
+                        at 2026-07-29T20:15:27.980179506Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
                     }
                 )
             }
@@ -181,6 +189,7 @@ children (
                     target-impl ([spec:samurai:req:performance.reproducible-baseline])
                 }
                 deps (ronin-product-identity)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:52.936496305Z
@@ -203,6 +212,13 @@ children (
                         text "Recorded clean-revision v1 baseline at Ronin 6fd3bfab9d110f67fc89bb03b62ab56de7f847c6 versus Ninja b51a1e37c2fb89bbefa600bd155e1ce13983f09d and C samurai 1.9.0. Deep graph evaluation is the dominant regression: 287.159 ms median versus Ninja 17.432 ms (16.47x) and C 5.055 ms (56.8x). Scheduler barrier is at Ninja parity; command evaluation, wide no-op, canonicalization, and dependency-log load are faster than Ninja on this host but require conformance confirmation before optimization claims."
                         after_done true
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.00720876Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -214,6 +230,7 @@ children (
                     target-impl ([spec:samurai:req:compat.byte-inputs])
                 }
                 deps (ronin-architecture-decisions ronin-performance-baseline)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.025087424Z
@@ -227,6 +244,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T20:15:28.033997321Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
                     }
                 )
             }
@@ -269,6 +293,7 @@ children (
                     target-impl ([spec:samurai:req:compat.graph-semantics])
                 }
                 deps (ronin-graph-arenas)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.215814701Z
@@ -283,6 +308,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.059990831Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -294,6 +326,7 @@ children (
                     target-impl ([spec:samurai:req:compat.manifest-semantics])
                 }
                 deps (ronin-graph-arenas)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.310164012Z
@@ -308,6 +341,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.086069752Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -319,6 +359,7 @@ children (
                     target-impl ([spec:samurai:req:compat.persistent-state])
                 }
                 deps (ronin-graph-arenas)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.379553396Z
@@ -333,6 +374,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.112483068Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -344,6 +392,7 @@ children (
                     target-impl ([spec:samurai:req:compat.scheduling])
                 }
                 deps (ronin-graph-evaluation)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.470304763Z
@@ -358,6 +407,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.139304499Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -369,6 +425,7 @@ children (
                     target-impl ([spec:samurai:req:compat.process-integration])
                 }
                 deps (ronin-event-scheduler)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.548472654Z
@@ -383,6 +440,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.168153826Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -394,6 +458,7 @@ children (
                     target-impl ([spec:samurai:req:compat.command-runtime])
                 }
                 deps (ronin-byte-parser ronin-dependency-io ronin-process-integration)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.613644257Z
@@ -408,6 +473,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.195077049Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -419,6 +491,7 @@ children (
                     target-impl ([spec:samurai:req:compat.cli-and-tools])
                 }
                 deps (ronin-command-runtime)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.772448341Z
@@ -440,6 +513,13 @@ children (
                         kind @note
                         text "Connected the pinned Ninja Linux tool table and staged tool execution, matched CLI help/output/exit channels (with documented Ronin identity and browse exception), removed legacy builder/subprocess/tree/hash-table/OS/priority-queue paths while preserving all 175 port symbols, narrowed the public crate surface, and removed unused graph storage. Verified 334 Rust unit tests, 7 binary integration tests, strict clippy, pinned Ninja CTest, exact differential fixtures, and the release performance harness; Ronin is ahead of Ninja on deep graph, canonicalization, deps-log, and scheduler workloads in the validation run."
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.222494346Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -451,6 +531,7 @@ children (
                     target-impl ([spec:samurai:req:compat.upstream-conformance])
                 }
                 deps (ronin-runtime-consolidation)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.836015244Z
@@ -472,6 +553,13 @@ children (
                         kind @note
                         text "Pinned Ninja b51a1e37c2fb89bbefa600bd155e1ce13983f09d is accounted for by a 425-test/33-suite inventory. scripts/check-ninja-conformance.sh passed 337 Rust unit tests, 8 integration checks, all 425 upstream tests, 10 exact CLI/tool differential cases, and bidirectional Ninja→Ronin→Ninja .ninja_log/.ninja_deps interoperability. The harness builds the release Ronin binary itself and contains no SAMUFLAGS cases."
                     }
+
+                    {
+                        at 2026-07-29T20:15:28.249314388Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
 
@@ -483,6 +571,7 @@ children (
                     target-impl ([spec:samurai:req:performance.no-unexplained-regression])
                 }
                 deps (ronin-ninja-conformance)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.899780329Z
@@ -511,6 +600,13 @@ children (
                         kind @note
                         text "Clean revision 1b4518c6b4a0fd0490d63005d00ca72becb3c73c passed the v2 gate with 2 warmups and 15 interleaved samples. Ronin was 0.572–0.724x pinned Ninja runtime on all six workloads and 0.76–1.31x Ninja peak RSS. The Ronin/Ninja ratio improved 8.3–96.4% on five workloads; canonicalization moved +3.9%, below the 20% materiality threshold and consistent with host noise. Raw results and analysis are recorded under benchmarks/performance-validation-2026-07-29.*. The v1 baseline had no allocation counts and this host has no allocation profiler, so the gate makes no allocation-count claim and uses peak RSS as its reproducible memory signal."
                         after_done true
+                    }
+
+                    {
+                        at 2026-07-29T20:15:28.279004636Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
                     }
                 )
             }
@@ -634,6 +730,7 @@ children (
                     target-impl ([spec:samurai:req:release.compatibility-gate])
                 }
                 deps (ronin-release-tuning)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:54.159349202Z
@@ -671,15 +768,38 @@ children (
                         text "The follow-up run showed the wrapper file itself still contained doubled regex and sed escapes even though an independently typed expression passed. Corrected every affected expression (zero-uncovered output, stale-rule extraction, requirement lookup, and package exclusion), then executed the exact expressions against current nplan and package output successfully."
                         after_done true
                     }
+
+                    {
+                        at 2026-07-29T20:15:22.591944342Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Final clean release gate passed end to end at Ronin commit 5cc6ee4aadcace1e66ef0eebe5d50541910883a1. Evidence: cargo fmt/check; strict all-target Clippy pedantic+nursery; rustdoc warnings denied; 338 library tests plus all CLI, inventory, performance, public-API, release-gate, and example tests; wave 4 complete for 175/175 symbols; all 425 tests across 33 pinned Ninja suites; 10 differential CLI/tool cases; Ninja→Ronin→Ninja log/deps round trip; zero uncovered rules; no stale req annotations (the four intentional stale C references are def/sem evidence for excluded SAMUFLAGS behavior); nplan lint clean and audit without transitions; performance thresholds passed; package contents exclude the legacy C/planning corpus; cargo packaged and verified 53 files at 716.3 KiB (134.8 KiB compressed). The recorded 15-sample medians are 0.416–0.872x pinned Ninja runtime and 0.724–1.325x Ninja peak RSS."
+                        after_done true
+                    }
+
+                    {
+                        at 2026-07-29T20:15:28.30461328Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
                 )
             }
         )
+        sealed true
         log (
             {
                 at 2026-07-29T14:36:52.645025428Z
                 author "brendan@bbqsrc.net"
                 kind @decision
                 text "Operator-approved scope: the product and executable are Ronin; Ninja compatibility is the behavioral target. SAMUFLAGS is not part of the compatibility surface and must be removed without a legacy alias. Preserve or deliberately version every existing semantic rule, add verification for changed behavior, run cargo fmt and the relevant Rust and Ninja suites for every implementation slice. The compatibility-contract node must define new rules and assign them to downstream implementation nodes before code work begins."
+            }
+
+            {
+                at 2026-07-29T20:15:28.33046175Z
+                author "brendan@bbqsrc.net"
+                kind @note
+                text "sealed — decomposition asserted complete (nplan seal)"
             }
         )
     }

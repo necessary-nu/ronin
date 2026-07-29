@@ -1,13 +1,13 @@
 # Ronin performance validation — 2026-07-29
 
-This clean-revision run validates the completed structural work against both
-the recorded Ronin v1 baseline and the pinned Ninja oracle. It was produced by
-`scripts/check-performance.sh` with two warmups and 15 interleaved samples per
-tool and workload.
+This clean-revision run validates the completed Ronin release candidate
+against both the recorded Ronin v1 baseline and the pinned Ninja oracle. It
+was produced by `scripts/check-performance.sh` with two warmups and 15
+interleaved samples per tool and workload.
 
 ## Provenance
 
-- Ronin revision: `1b4518c6b4a0fd0490d63005d00ca72becb3c73c`
+- Ronin revision: `5cc6ee4aadcace1e66ef0eebe5d50541910883a1`
 - Ronin dirty: false
 - Ninja revision: `b51a1e37c2fb89bbefa600bd155e1ce13983f09d`
 - Harness schema: `ronin-performance-baseline-v2`
@@ -29,18 +29,17 @@ Every current Ronin median is also below the current Ninja median.
 
 | Workload | Ronin / Ninja | Recorded ratio | Ratio change | Ronin / Ninja peak RSS |
 | --- | ---: | ---: | ---: | ---: |
-| Manifest command evaluation | 0.572× | 0.900× | −36.5% | 1.31× |
-| Deep graph evaluation | 0.588× | 16.473× | −96.4% | 0.86× |
-| Wide no-op build | 0.584× | 0.671× | −13.0% | 1.23× |
-| Path canonicalization | 0.645× | 0.620× | +3.9% | 0.93× |
-| Dependency-log load | 0.591× | 0.644× | −8.3% | 0.76× |
-| Scheduler barrier | 0.724× | 1.004× | −27.9% | 0.76× |
+| Manifest command evaluation | 0.425× | 0.900× | −52.8% | 1.32× |
+| Deep graph evaluation | 0.447× | 16.473× | −97.3% | 0.86× |
+| Wide no-op build | 0.470× | 0.671× | −29.9% | 1.22× |
+| Path canonicalization | 0.416× | 0.620× | −32.8% | 0.94× |
+| Dependency-log load | 0.535× | 0.644× | −16.9% | 0.72× |
+| Scheduler barrier | 0.872× | 1.004× | −13.2% | 0.75× |
 
 The gate permits at most 120% of the recorded Ronin/Ninja runtime ratio, 120%
 of current Ninja runtime, and 200% of current Ninja peak RSS. All checks pass.
-The 3.9% canonicalization ratio movement is below the material-regression
-threshold and is consistent with the wide min/max spread on this unpinned host.
-No workload has an unexplained material regression.
+Every normalized runtime ratio improved from the recorded baseline, and no
+workload has an unexplained material regression.
 
 The original baseline did not record allocation counts, and no allocation
 profiler is present in this environment. The v2 gate therefore uses peak RSS as
