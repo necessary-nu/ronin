@@ -667,13 +667,10 @@ impl InputsCollector {
         }
     }
 
-    pub(crate) fn input_strings(&self, graph: &Graph, shell_escape: bool) -> Vec<String> {
+    pub(crate) fn input_strings(&self, graph: &Graph, shell_escape: bool) -> Vec<BString> {
         self.inputs
             .iter()
-            .map(|node| {
-                let path = nodepath(graph, *node, shell_escape);
-                String::from_utf8_lossy(path.as_bytes()).into_owned()
-            })
+            .map(|node| nodepath(graph, *node, shell_escape))
             .collect()
     }
 

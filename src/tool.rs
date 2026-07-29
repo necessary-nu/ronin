@@ -7,7 +7,7 @@ use crate::util::{BString, ByteSlice};
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::fs;
-use std::io;
+use std::io::{self, Write as _};
 
 type ToolResult<T> = Result<T, ToolError>;
 
@@ -298,7 +298,7 @@ fn dyndep_outputs(graph: &Graph, edge: EdgeId) -> Vec<BString> {
 // [spec:samurai:sem:tool.clean-fn]
 pub(crate) fn clean(
     graph: &Graph,
-    targets: &[String],
+    targets: &[BString],
     rules: &[String],
     include_generators: bool,
 ) -> io::Result<usize> {
@@ -307,7 +307,7 @@ pub(crate) fn clean(
 
 pub(crate) fn clean_with_options(
     graph: &Graph,
-    targets: &[String],
+    targets: &[BString],
     rules: &[String],
     include_generators: bool,
     dry_run: bool,
@@ -318,7 +318,7 @@ pub(crate) fn clean_with_options(
 
 pub(crate) fn clean_with_report(
     graph: &Graph,
-    targets: &[String],
+    targets: &[BString],
     rules: &[String],
     include_generators: bool,
     dry_run: bool,
@@ -333,8 +333,9 @@ pub(crate) fn clean_with_report(
         }
     } else if !targets.is_empty() {
         for target in targets {
-            let node = nodeget(graph, target.as_bytes())
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, target.clone()))?;
+            let node = nodeget(graph, target.as_bytes()).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, target.to_str_lossy().into_owned())
+            })?;
             cleaner.clean_target(graph, node)?;
         }
     } else {
@@ -380,7 +381,7 @@ pub(crate) fn clean_dead_with_report(
 fn collect_target_commands(
     graph: &Graph,
     node: NodeId,
-    output: &mut Vec<String>,
+    output: &mut Vec<BString>,
     visited: &mut BTreeSet<EdgeId>,
 ) {
     let Some(edge) = graph.node(node).gen else {
@@ -394,14 +395,14 @@ fn collect_target_commands(
     }
     if let Some(command) = edgevar(graph, edge, "command", true) {
         if !command.is_empty() {
-            output.push(String::from_utf8_lossy(command.as_bytes()).into_owned());
+            output.push(command);
         }
     }
 }
 
 // [spec:samurai:def:tool.commands-fn]
 // [spec:samurai:sem:tool.commands-fn]
-pub(crate) fn commands(graph: &Graph, targets: &[String]) -> ToolResult<Vec<String>> {
+pub(crate) fn commands(graph: &Graph, targets: &[BString]) -> ToolResult<Vec<BString>> {
     let nodes = if targets.is_empty() {
         graph
             .node_ids()
@@ -412,7 +413,7 @@ pub(crate) fn commands(graph: &Graph, targets: &[String]) -> ToolResult<Vec<Stri
             .iter()
             .map(|target| {
                 nodeget(graph, target.as_bytes())
-                    .ok_or_else(|| format!("unknown target '{target}'"))
+                    .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -424,32 +425,47 @@ pub(crate) fn commands(graph: &Graph, targets: &[String]) -> ToolResult<Vec<Stri
     Ok(output)
 }
 
-pub(crate) fn commands_with_args(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
+fn join_byte_strings(values: impl IntoIterator<Item = BString>, separator: u8) -> BString {
+    let mut output = Vec::new();
+    for value in values {
+        if !output.is_empty() {
+            output.push(separator);
+        }
+        output.extend_from_slice(value.as_bytes());
+    }
+    BString::from(output)
+}
+
+pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolResult<BString> {
     let mut single = false;
     let mut targets = Vec::new();
     for argument in arguments {
-        match argument.as_str() {
-            "-s" => single = true,
-            "-h" | "--help" => {
+        match argument.as_bytes() {
+            b"-s" => single = true,
+            b"-h" | b"--help" => {
                 return Err(
                     "usage: ronin -t commands [options] [targets]\n\noptions:\n  -s     only print the final command to build [target], not the whole chain"
                         .into(),
                 )
             }
-            option if option.starts_with('-') => {
-                return Err(format!("unknown commands option '{option}'").into())
+            option if option.starts_with(b"-") => {
+                return Err(format!(
+                    "unknown commands option '{}'",
+                    argument.to_str_lossy()
+                )
+                .into())
             }
-            target => targets.push(target.to_owned()),
+            _ => targets.push(argument.clone()),
         }
     }
     if !single {
-        return commands(graph, &targets).map(|commands| commands.join("\n"));
+        return commands(graph, &targets).map(|commands| join_byte_strings(commands, b'\n'));
     }
     let mut output = Vec::new();
     let mut seen = BTreeSet::new();
     for target in targets {
         let node = nodeget(graph, target.as_bytes())
-            .ok_or_else(|| format!("unknown target '{target}'"))?;
+            .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))?;
         let Some(edge) = graph.node(node).gen else {
             continue;
         };
@@ -459,29 +475,30 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[String]) -> ToolRes
         if let Some(command) =
             edgevar(graph, edge, "command", true).filter(|value| !value.is_empty())
         {
-            output.push(String::from_utf8_lossy(command.as_bytes()).into_owned());
+            output.push(command);
         }
     }
-    Ok(output.join("\n"))
+    Ok(join_byte_strings(output, b'\n'))
 }
 
 // [spec:samurai:def:tool.printquoted-fn]
 // [spec:samurai:sem:tool.printquoted-fn]
-pub(crate) fn printquoted(bytes: &[u8], join: bool) -> String {
-    let mut output = String::new();
+// [spec:samurai:req:runtime.output-byte-boundaries]
+pub(crate) fn printquoted(bytes: &[u8], join: bool) -> BString {
+    let mut output = Vec::with_capacity(bytes.len());
     for byte in bytes {
         match byte {
             0 => break,
             b'"' | b'\\' => {
-                output.push('\\');
-                output.push(*byte as char);
+                output.push(b'\\');
+                output.push(*byte);
             }
-            b'\n' if join => output.push(' '),
+            b'\n' if join => output.push(b' '),
             b'\n' => {}
-            _ => output.push(*byte as char),
+            _ => output.push(*byte),
         }
     }
-    output
+    BString::from(output)
 }
 
 // [spec:samurai:def:tool.graphnode-fn]
@@ -489,16 +506,13 @@ pub(crate) fn printquoted(bytes: &[u8], join: bool) -> String {
 fn graphnode_inner(
     graph: &Graph,
     node: NodeId,
-    output: &mut String,
+    output: &mut Vec<u8>,
     visited: &mut BTreeSet<EdgeId>,
 ) {
     let path = &graph.node(node).path;
-    let _ = writeln!(
-        output,
-        "\"n{}\" [label=\"{}\"]",
-        node.index(),
-        printquoted(path.as_bytes(), false)
-    );
+    let _ = write!(output, "\"n{}\" [label=\"", node.index());
+    output.extend_from_slice(printquoted(path.as_bytes(), false).as_bytes());
+    output.extend_from_slice(b"\"]\n");
     let Some(edge) = graph.node(node).gen else {
         return;
     };
@@ -551,7 +565,7 @@ fn graphnode_inner(
 
 // [spec:samurai:def:tool.graph-fn]
 // [spec:samurai:sem:tool.graph-fn]
-pub(crate) fn graph(graph: &Graph, targets: &[String]) -> ToolResult<String> {
+pub(crate) fn graph(graph: &Graph, targets: &[BString]) -> ToolResult<BString> {
     let nodes = if targets.is_empty() {
         crate::graph::rootnodes(graph)?
     } else {
@@ -559,33 +573,33 @@ pub(crate) fn graph(graph: &Graph, targets: &[String]) -> ToolResult<String> {
             .iter()
             .map(|target| {
                 nodeget(graph, target.as_bytes())
-                    .ok_or_else(|| format!("unknown target '{target}'"))
+                    .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))
             })
             .collect::<Result<Vec<_>, _>>()?
     };
-    let mut output = "digraph ninja {\nrankdir=\"LR\"\n".to_owned();
-    output.push_str("node [fontsize=10, shape=box, height=0.25]\n");
-    output.push_str("edge [fontsize=10]\n");
+    let mut output = Vec::from(&b"digraph ninja {\nrankdir=\"LR\"\n"[..]);
+    output.extend_from_slice(b"node [fontsize=10, shape=box, height=0.25]\n");
+    output.extend_from_slice(b"edge [fontsize=10]\n");
     let mut visited = BTreeSet::new();
     for node in nodes {
         graphnode_inner(graph, node, &mut output, &mut visited);
     }
-    output.push('}');
-    Ok(output)
+    output.push(b'}');
+    Ok(BString::from(output))
 }
 
 // [spec:samurai:def:tool.query-fn]
 // [spec:samurai:sem:tool.query-fn]
-pub(crate) fn query(graph: &Graph, targets: &[String]) -> ToolResult<String> {
+pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
     if targets.is_empty() {
         return Err("query expects at least one target".into());
     }
     let mut output = String::new();
     for target in targets {
         let node = nodeget(graph, target.as_bytes())
-            .ok_or_else(|| format!("unknown target '{target}'"))?;
+            .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))?;
         let node_borrow = graph.node(node);
-        let _ = writeln!(output, "{target}:");
+        let _ = writeln!(output, "{}:", target.to_str_lossy());
         if let Some(edge) = node_borrow.gen {
             let _ = writeln!(output, "  input: {}", edge_name(graph, edge));
             for (index, input) in graph.edge(edge).input.iter().enumerate() {
@@ -790,19 +804,36 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
 
 // [spec:samurai:def:tool.tool.run-fn]
 // [spec:samurai:sem:tool.tool.run-fn]
-pub(crate) fn run(tool: Tool, graph: &Graph, args: &[String]) -> ToolResult<String> {
+pub(crate) fn run(tool: Tool, graph: &Graph, args: &[BString]) -> ToolResult<BString> {
+    let utf8_arguments = || {
+        args.iter()
+            .map(|argument| {
+                argument.to_str().map(str::to_owned).map_err(|_| {
+                    ToolError::from(format!(
+                        "{} arguments must be valid UTF-8",
+                        match tool {
+                            Tool::Compdb => "compdb rule",
+                            Tool::Targets => "targets mode",
+                            Tool::Rules => "rules option",
+                            _ => "tool",
+                        }
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+    };
     match tool {
-        Tool::Clean => Ok(clean(graph, args, &[], false)?.to_string()),
+        Tool::Clean => Ok(clean(graph, args, &[], false)?.to_string().into()),
         Tool::Commands => commands_with_args(graph, args),
-        Tool::Compdb => Ok(compdb(graph, args, false)),
+        Tool::Compdb => compdb(graph, &utf8_arguments()?, false),
         Tool::CompdbTargets => compdb_for_targets(graph, args, false),
         Tool::Graph => self::graph(graph, args),
-        Tool::Query => query(graph, args),
-        Tool::Targets => targets_with_args(graph, args),
-        Tool::Rules => rules(graph, args),
+        Tool::Query => query(graph, args).map(BString::from),
+        Tool::Targets => targets_with_args(graph, &utf8_arguments()?).map(BString::from),
+        Tool::Rules => rules(graph, &utf8_arguments()?).map(BString::from),
         Tool::Inputs => inputs(graph, args),
         Tool::MultiInputs => multi_inputs(graph, args),
-        Tool::List => Ok(tool_list()),
+        Tool::List => Ok(tool_list().into()),
         Tool::Browse => Err("browse tool not supported on this platform".into()),
         Tool::Deps
         | Tool::MissingDeps
@@ -937,7 +968,7 @@ mod tests {
         assert_eq!(
             clean_with_options(
                 &graph,
-                &[out1.to_string_lossy().into_owned()],
+                &[BString::from(out1.to_string_lossy().as_bytes())],
                 &[],
                 true,
                 true,
@@ -1014,7 +1045,13 @@ mod tests {
             fs::write(path, "").unwrap();
         }
         assert_eq!(
-            clean(&graph, &[output1.to_string_lossy().into_owned()], &[], true,).unwrap(),
+            clean(
+                &graph,
+                &[BString::from(output1.to_string_lossy().as_bytes())],
+                &[],
+                true,
+            )
+            .unwrap(),
             2
         );
         assert!(!output1.exists() && !depfile.exists());
@@ -1061,7 +1098,13 @@ mod tests {
             fs::write(path, "").unwrap();
         }
         assert_eq!(
-            clean(&graph, &[phony.to_string_lossy().into_owned()], &[], true,).unwrap(),
+            clean(
+                &graph,
+                &[BString::from(phony.to_string_lossy().as_bytes())],
+                &[],
+                true,
+            )
+            .unwrap(),
             2
         );
         assert!(phony.exists());
@@ -1119,14 +1162,19 @@ mod tests {
                 input.display()
             ),
         );
-        let regular = compdb(&graph, &[], false);
+        let regular = compdb(&graph, &[], false).unwrap();
+        let regular = regular.to_str().unwrap();
         assert!(regular.contains(&format!("@{}.rsp", output.display())));
         assert!(regular.contains("\"file\""));
-        let expanded = compdb(&graph, &[], true);
+        let expanded = compdb(&graph, &[], true).unwrap();
+        let expanded = expanded.to_str().unwrap();
         assert!(!expanded.contains(&format!("@{}.rsp", output.display())));
         assert!(expanded.contains("-DVALUE"));
         assert!(expanded.contains(&input.to_string_lossy().into_owned()));
-        assert_eq!(compdb(&graph, &["other".into()], false), "[]\n");
+        assert_eq!(
+            compdb(&graph, &["other".into()], false).unwrap().as_bytes(),
+            b"[\n]\n"
+        );
     }
 
     #[test]
@@ -1170,6 +1218,7 @@ mod tests {
             "rule cat\n  command = touch $out\nbuild out1 out2: cat in1 in2 || order\n",
         );
         let dot = graph(&build_graph, &["out1".into()]).unwrap();
+        let dot = dot.to_str().unwrap();
         assert!(dot.contains("shape=ellipse"));
         assert_eq!(dot.matches("arrowhead=none").count(), 3);
         assert_eq!(dot.matches("style=dotted").count(), 1);

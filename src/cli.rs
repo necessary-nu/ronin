@@ -229,14 +229,18 @@ fn status_placeholder(name: &str) -> CliResult<&'static str> {
     }
 }
 
+// [spec:samurai:req:runtime.output-byte-boundaries]
 fn expand_status_format(format: &str) -> CliResult<String> {
     let bytes = format.as_bytes();
     let mut output = String::new();
     let mut index = 0;
     while index < bytes.len() {
         if bytes[index] != b'$' {
-            output.push(char::from(bytes[index]));
-            index += 1;
+            let start = index;
+            while bytes.get(index).is_some_and(|byte| *byte != b'$') {
+                index += 1;
+            }
+            output.push_str(&format[start..index]);
             continue;
         }
         index += 1;
@@ -267,8 +271,12 @@ fn expand_status_format(format: &str) -> CliResult<String> {
             }
             (&format[start..end], end)
         } else {
-            output.push(char::from(next));
-            index += 1;
+            let escaped = format[index..]
+                .chars()
+                .next()
+                .expect("index points at the next UTF-8 scalar");
+            output.push(escaped);
+            index += escaped.len_utf8();
             continue;
         };
         output.push_str(status_placeholder(name)?);
@@ -536,13 +544,13 @@ fn normalize_runtime_options(
     Ok(())
 }
 
-fn default_target_names(parser: &crate::parse::Parser, graph: &crate::graph::Graph) -> Vec<String> {
+fn default_target_names(
+    parser: &crate::parse::Parser,
+    graph: &crate::graph::Graph,
+) -> Vec<BString> {
     crate::parse::defaultnodes(parser, graph)
         .into_iter()
-        .map(|node| {
-            let node = graph.node(node);
-            String::from_utf8_lossy(node.path.as_bytes()).into_owned()
-        })
+        .map(|node| graph.node(node).path.clone())
         .collect()
 }
 
@@ -559,7 +567,7 @@ fn default_target_paths(
 fn run_clean_tool(
     graph: &crate::graph::Graph,
     state: &crate::env::EnvState,
-    arguments: &[String],
+    arguments: &[BString],
     dryrun: bool,
     verbose: bool,
     quiet: bool,
@@ -568,26 +576,38 @@ fn run_clean_tool(
     let mut rule_mode = false;
     let mut names = Vec::new();
     for argument in arguments {
-        match argument.as_str() {
-            "-g" => include_generators = true,
-            "-r" => rule_mode = true,
-            option if option.starts_with('-') => {
-                return Err(format!("unknown clean option '{option}'").into());
+        match argument.as_bytes() {
+            b"-g" => include_generators = true,
+            b"-r" => rule_mode = true,
+            option if option.starts_with(b"-") => {
+                return Err(format!("unknown clean option '{}'", argument.to_str_lossy()).into());
             }
-            name => names.push(name.to_owned()),
+            _ => names.push(argument.clone()),
         }
     }
     if rule_mode && names.is_empty() {
         return Err("expected a rule to clean".into());
     }
+    let rule_names = if rule_mode {
+        names
+            .iter()
+            .map(|name| {
+                name.to_str()
+                    .map(str::to_owned)
+                    .map_err(|_| "clean rule names must be valid UTF-8".to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     if rule_mode {
-        for rule in &names {
+        for rule in &rule_names {
             crate::env::envrule(graph, state.root, rule)
                 .ok_or_else(|| format!("unknown rule '{rule}'"))?;
         }
     }
     let (targets, rules) = if rule_mode {
-        (&[][..], names.as_slice())
+        (&[][..], rule_names.as_slice())
     } else {
         (names.as_slice(), &[][..])
     };
@@ -617,34 +637,46 @@ fn format_clean_report(removed: &[BString], verbose: bool, quiet: bool) -> Strin
     output
 }
 
-fn run_compdb_tool(graph: &crate::graph::Graph, arguments: &[String]) -> CliResult<String> {
+fn run_compdb_tool(graph: &crate::graph::Graph, arguments: &[BString]) -> CliResult<BString> {
     let mut expand_rsp = false;
     let mut rules = Vec::new();
     for argument in arguments {
-        match argument.as_str() {
-            "-x" => expand_rsp = true,
-            option if option.starts_with('-') => {
-                return Err(format!("unknown compdb option '{option}'").into());
+        match argument.as_bytes() {
+            b"-x" => expand_rsp = true,
+            option if option.starts_with(b"-") => {
+                return Err(format!("unknown compdb option '{}'", argument.to_str_lossy()).into());
             }
-            rule => rules.push(rule.to_owned()),
+            _ => rules.push(
+                argument
+                    .to_str()
+                    .map(str::to_owned)
+                    .map_err(|_| "compdb rule names must be valid UTF-8")?,
+            ),
         }
     }
-    Ok(crate::tool::compdb(graph, &rules, expand_rsp))
+    Ok(crate::tool::compdb(graph, &rules, expand_rsp)?)
 }
 
-fn run_compdb_targets_tool(graph: &crate::graph::Graph, arguments: &[String]) -> CliResult<String> {
+fn run_compdb_targets_tool(
+    graph: &crate::graph::Graph,
+    arguments: &[BString],
+) -> CliResult<BString> {
     let mut expand_rsp = false;
     let mut targets = Vec::new();
     for argument in arguments {
-        match argument.as_str() {
-            "-x" => expand_rsp = true,
-            "-h" | "--help" => {
+        match argument.as_bytes() {
+            b"-x" => expand_rsp = true,
+            b"-h" | b"--help" => {
                 return Err("usage: ronin -t compdb-targets [-hx] target [targets]".into())
             }
-            option if option.starts_with('-') => {
-                return Err(format!("unknown compdb-targets option '{option}'").into());
+            option if option.starts_with(b"-") => {
+                return Err(format!(
+                    "unknown compdb-targets option '{}'",
+                    argument.to_str_lossy()
+                )
+                .into());
             }
-            target => targets.push(target.to_owned()),
+            _ => targets.push(argument.clone()),
         }
     }
     Ok(crate::tool::compdb_for_targets(
@@ -652,8 +684,8 @@ fn run_compdb_targets_tool(graph: &crate::graph::Graph, arguments: &[String]) ->
     )?)
 }
 
-fn tool_result(output: String) -> RunResult {
-    let mut output = output.into_bytes();
+fn tool_result(output: impl AsRef<[u8]>) -> RunResult {
+    let mut output = output.as_ref().to_vec();
     if !output.is_empty() && !matches!(output.last(), Some(b'\n' | b'\0')) {
         output.push(b'\n');
     }
@@ -736,7 +768,7 @@ impl From<&BuildOptions> for ToolRunOptions {
 
 fn run_flag_tool(
     tool: crate::tool::Tool,
-    arguments: &[String],
+    arguments: &[BString],
     dryrun: bool,
 ) -> CliResult<RunResult> {
     match tool {
@@ -746,8 +778,8 @@ fn run_flag_tool(
             let mut filters = Vec::new();
             let mut index = 0;
             while index < arguments.len() {
-                match arguments[index].as_str() {
-                    "--builddir" => {
+                match arguments[index].as_bytes() {
+                    b"--builddir" => {
                         index += 1;
                         builddir = Some(
                             arguments
@@ -756,24 +788,37 @@ fn run_flag_tool(
                                 .clone(),
                         );
                     }
-                    option if option.starts_with("--builddir=") => {
-                        builddir = Some(option["--builddir=".len()..].to_owned());
+                    option if option.starts_with(b"--builddir=") => {
+                        builddir = Some(BString::from(&option[b"--builddir=".len()..]));
                     }
-                    "-h" | "--help" => {
+                    b"-h" | b"--help" => {
                         return Ok(RunResult::exit(
                             "usage: ronin -t restat [--builddir=DIR] [outputs]\n",
                             [],
                             1,
                         ))
                     }
-                    option if option.starts_with('-') => {
-                        return Err(format!("unknown restat option '{option}'").into())
+                    option if option.starts_with(b"-") => {
+                        return Err(format!(
+                            "unknown restat option '{}'",
+                            arguments[index].to_str_lossy()
+                        )
+                        .into())
                     }
-                    output => filters.push(output.to_owned()),
+                    _ => filters.push(arguments[index].clone()),
                 }
                 index += 1;
             }
-            let directory = builddir.as_deref().map(Path::new);
+            let directory = builddir
+                .as_ref()
+                .map(|directory| {
+                    directory
+                        .to_path()
+                        .map(Path::to_path_buf)
+                        .map_err(|_| "build directory is not representable on this platform")
+                })
+                .transpose()?;
+            let directory = directory.as_deref();
             let path = directory.map_or_else(
                 || PathBuf::from(".ninja_log"),
                 |directory| directory.join(".ninja_log"),
@@ -785,9 +830,8 @@ fn run_flag_tool(
             let mut log = crate::log::BuildLog::open(directory, &mut graph)
                 .map_err(|error| format!("loading build log {}: {error}", path.display()))?;
             if !dryrun {
-                let filter_refs = filters.iter().map(String::as_str).collect::<Vec<_>>();
                 let disk = crate::os::RealDiskInterface;
-                crate::log::logrestat(&mut log, &filter_refs, |path| disk.stat(path))
+                crate::log::logrestat(&mut log, &filters, |path| disk.stat(path))
                     .map_err(|error| format!("failed recompaction: {error}"))?;
             }
             log.finish()?;
@@ -803,12 +847,12 @@ fn run_manifest_tool(
     graph: &crate::graph::Graph,
     parser: &crate::parse::Parser,
     state: &crate::env::EnvState,
-    arguments: &[String],
+    arguments: &[BString],
     options: ToolRunOptions,
 ) -> CliResult<RunResult> {
     if arguments
         .iter()
-        .any(|argument| matches!(argument.as_str(), "-h" | "--help"))
+        .any(|argument| matches!(argument.as_bytes(), b"-h" | b"--help"))
     {
         if let Some(help) = tool_help(tool) {
             return Ok(RunResult::exit(help, [], 1));
@@ -866,7 +910,7 @@ fn run_log_tool(
     parser: &crate::parse::Parser,
     build_log: &mut crate::log::BuildLog,
     deps_log: &mut crate::deps::DepsLog,
-    arguments: &[String],
+    arguments: &[BString],
     options: ToolRunOptions,
 ) -> CliResult<RunResult> {
     match tool {
@@ -883,7 +927,7 @@ fn run_log_tool(
                 .iter()
                 .map(|target| {
                     crate::graph::nodeget(graph, target.as_bytes())
-                        .ok_or_else(|| format!("unknown target '{target}'"))
+                        .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let (output, exit_code) = crate::tool::missing_deps(graph, deps_log, &targets);
@@ -997,17 +1041,11 @@ fn run_bytes(
         .selected_tool
         .filter(|tool| tool.stage() == crate::tool::ToolStage::Flags)
     {
-        let arguments = invocation
-            .tool_arguments
-            .iter()
-            .map(|argument| {
-                argument
-                    .to_str()
-                    .map(str::to_owned)
-                    .map_err(|_| "tool arguments must be valid UTF-8".to_owned())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        return run_flag_tool(tool, &arguments, invocation.build_options.dryrun);
+        return run_flag_tool(
+            tool,
+            &invocation.tool_arguments,
+            invocation.build_options.dryrun,
+        );
     }
 
     let mut output = String::new();
@@ -1038,22 +1076,12 @@ fn run_bytes(
             .selected_tool
             .filter(|tool| tool.stage() == crate::tool::ToolStage::Manifest)
         {
-            let tool_arguments = invocation
-                .tool_arguments
-                .iter()
-                .map(|argument| {
-                    argument
-                        .to_str()
-                        .map(str::to_owned)
-                        .map_err(|_| "tool arguments must be valid UTF-8".to_owned())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
             return run_manifest_tool(
                 tool,
                 &graph,
                 &parser,
                 &state,
-                &tool_arguments,
+                &invocation.tool_arguments,
                 ToolRunOptions::from(&invocation.build_options),
             );
         }
@@ -1074,23 +1102,13 @@ fn run_bytes(
             append_output(&mut output, &warning);
         }
         if let Some(tool) = invocation.selected_tool {
-            let tool_arguments = invocation
-                .tool_arguments
-                .iter()
-                .map(|argument| {
-                    argument
-                        .to_str()
-                        .map(str::to_owned)
-                        .map_err(|_| "tool arguments must be valid UTF-8".to_owned())
-                })
-                .collect::<Result<Vec<_>, _>>()?;
             let result = run_log_tool(
                 tool,
                 &mut graph,
                 &parser,
                 &mut build_log,
                 &mut deps_log,
-                &tool_arguments,
+                &invocation.tool_arguments,
                 ToolRunOptions::from(&invocation.build_options),
             );
             let build_log_result = build_log.finish();
@@ -1240,6 +1258,49 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT_RUN: AtomicUsize = AtomicUsize::new(0);
+
+    // [spec:samurai:req:runtime.output-byte-boundaries/test]
+    #[test]
+    fn status_expansion_preserves_unicode_slices_and_escapes() {
+        assert_eq!(
+            expand_status_format("λ [$finished/$total] résumé 😀").unwrap(),
+            "λ [%f/%t] résumé 😀"
+        );
+        assert_eq!(
+            expand_status_format("cost $$5; escaped $λ").unwrap(),
+            "cost $5; escaped λ"
+        );
+    }
+
+    // [spec:samurai:req:runtime.output-byte-boundaries/test]
+    #[cfg(unix)]
+    #[test]
+    fn tool_targets_and_graph_output_preserve_native_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+
+        let directory = std::env::temp_dir().join(format!(
+            "ronin-byte-tool-{}-{}",
+            std::process::id(),
+            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let manifest = directory.join("build.ninja");
+        fs::write(&manifest, b"build target-\xff: phony\n").unwrap();
+        let arguments = [
+            BString::from("ronin"),
+            BString::from("-f"),
+            BString::from(manifest.as_os_str().as_bytes()),
+            BString::from("-t"),
+            BString::from("graph"),
+            BString::from(b"target-\xff"),
+        ];
+        let result = run_bytes(&arguments, None, None).unwrap();
+        assert!(result
+            .stdout
+            .windows(b"target-\xff".len())
+            .any(|window| window == b"target-\xff"));
+        fs::remove_dir_all(directory).unwrap();
+    }
 
     #[cfg(unix)]
     #[test]

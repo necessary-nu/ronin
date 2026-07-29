@@ -3,10 +3,10 @@ use crate::error::ToolError;
 use crate::graph::{nodeget, Graph, NodeId};
 use crate::missing_deps::MissingDependencyScanner;
 use crate::os::RealDiskInterface;
-use crate::util::ByteSlice;
+use crate::util::{BString, ByteSlice};
 use std::fmt::Write;
 
-pub(crate) fn deps(graph: &Graph, log: &DepsLog, targets: &[String]) -> Result<String, ToolError> {
+pub(crate) fn deps(graph: &Graph, log: &DepsLog, targets: &[BString]) -> Result<String, ToolError> {
     let nodes = if targets.is_empty() {
         depsnodes(log).collect::<Vec<_>>()
     } else {
@@ -14,7 +14,7 @@ pub(crate) fn deps(graph: &Graph, log: &DepsLog, targets: &[String]) -> Result<S
             .iter()
             .map(|target| {
                 nodeget(graph, target.as_bytes())
-                    .ok_or_else(|| format!("unknown target '{target}'"))
+                    .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))
             })
             .collect::<Result<Vec<_>, _>>()?
     };

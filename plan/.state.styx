@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T23:20:06.701665834Z
+last_sync_at 2026-07-29T23:40:58.261961432Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -20,6 +20,8 @@ rule_versions (
     {id product.ronin-identity, version 0}
     {id release.compatibility-gate, version 0}
     {id runtime.jobserver-resource-safety, version 0}
+    {id runtime.msvc-byte-parsing, version 0}
+    {id runtime.output-byte-boundaries, version 0}
 )
 
 assertions (
@@ -75,6 +77,13 @@ impl_evidence (
         {impl_name target-impl, rule compat.graph-semantics}
     ), rule_versions_seen (
         {id compat.graph-semantics, version 0}
+    )}
+    {id ronin-jobserver-raii, covered_rules (
+        runtime.jobserver-resource-safety
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.jobserver-resource-safety}
+    ), rule_versions_seen (
+        {id runtime.jobserver-resource-safety, version 0}
     )}
     {id ronin-ninja-conformance, covered_rules (
         compat.upstream-conformance
@@ -134,9 +143,11 @@ impl_evidence (
     ), rule_versions_seen (
         {id compat.cli-and-tools, version 0}
     )}
-    {id ronin-jobserver-raii, covered_rules (
-        runtime.jobserver-resource-safety
+    {id ronin-output-encoding, covered_rules (
+        runtime.msvc-byte-parsing
+        runtime.output-byte-boundaries
     ), covered_claims (
-        {impl_name target-impl, rule runtime.jobserver-resource-safety}
+        {impl_name target-impl, rule runtime.msvc-byte-parsing}
+        {impl_name target-impl, rule runtime.output-byte-boundaries}
     )}
 )

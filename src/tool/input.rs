@@ -1,33 +1,35 @@
 use crate::error::ToolError;
 use crate::graph::{nodeget, Graph, InputsCollector, NodeId};
+use crate::util::{BString, ByteSlice};
 
 type ToolResult<T> = Result<T, ToolError>;
 
-fn collect_targets(graph: &Graph, targets: &[String]) -> ToolResult<Vec<NodeId>> {
+fn collect_targets(graph: &Graph, targets: &[BString]) -> ToolResult<Vec<NodeId>> {
     targets
         .iter()
         .map(|target| {
-            nodeget(graph, target.as_bytes())
-                .ok_or_else(|| ToolError::from(format!("unknown target '{target}'")))
+            nodeget(graph, target.as_bytes()).ok_or_else(|| {
+                ToolError::from(format!("unknown target '{}'", target.to_str_lossy()))
+            })
         })
         .collect()
 }
 
-pub(crate) fn inputs(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
+pub(crate) fn inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<BString> {
     let mut print0 = false;
     let mut shell_escape = true;
     let mut dependency_order = false;
     let mut targets = Vec::new();
     for argument in arguments {
-        match argument.as_str() {
-            "-0" | "--print0" => print0 = true,
-            "-E" | "--no-shell-escape" => shell_escape = false,
-            "-d" | "--dependency-order" => dependency_order = true,
-            "-h" | "--help" => return Err("Usage '-t inputs [options] [targets]".into()),
-            option if option.starts_with('-') => {
-                return Err(format!("unknown inputs option '{option}'").into())
+        match argument.as_bytes() {
+            b"-0" | b"--print0" => print0 = true,
+            b"-E" | b"--no-shell-escape" => shell_escape = false,
+            b"-d" | b"--dependency-order" => dependency_order = true,
+            b"-h" | b"--help" => return Err("Usage '-t inputs [options] [targets]".into()),
+            option if option.starts_with(b"-") => {
+                return Err(format!("unknown inputs option '{}'", argument.to_str_lossy()).into())
             }
-            target => targets.push(target.to_owned()),
+            _ => targets.push(argument.clone()),
         }
     }
     let mut collector = InputsCollector::default();
@@ -38,56 +40,59 @@ pub(crate) fn inputs(graph: &Graph, arguments: &[String]) -> ToolResult<String> 
     if !dependency_order {
         inputs.sort();
     }
-    let separator = if print0 { "\0" } else { "\n" };
-    let mut output = inputs.join(separator);
-    if !output.is_empty() {
-        output.push_str(separator);
+    let separator = if print0 { b'\0' } else { b'\n' };
+    let mut output = Vec::new();
+    for input in inputs {
+        output.extend_from_slice(input.as_bytes());
+        output.push(separator);
     }
-    Ok(output)
+    Ok(BString::from(output))
 }
 
-pub(crate) fn multi_inputs(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
+pub(crate) fn multi_inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<BString> {
     let mut print0 = false;
-    let mut delimiter = "\t".to_owned();
+    let mut delimiter = BString::from("\t");
     let mut targets = Vec::new();
     let mut index = 0;
     while index < arguments.len() {
-        match arguments[index].as_str() {
-            "-0" | "--print0" => print0 = true,
-            "-h" | "--help" => return Err("Usage '-t multi-inputs [options] [targets]".into()),
-            "-d" | "--delimiter" => {
+        match arguments[index].as_bytes() {
+            b"-0" | b"--print0" => print0 = true,
+            b"-h" | b"--help" => return Err("Usage '-t multi-inputs [options] [targets]".into()),
+            b"-d" | b"--delimiter" => {
                 index += 1;
-                delimiter.clone_from(
-                    arguments
-                        .get(index)
-                        .ok_or_else(|| "missing multi-inputs delimiter".to_owned())?,
-                );
+                delimiter = arguments
+                    .get(index)
+                    .ok_or_else(|| "missing multi-inputs delimiter".to_owned())?
+                    .clone();
             }
-            option if option.starts_with("--delimiter=") => {
-                delimiter.clear();
-                delimiter.push_str(&option["--delimiter=".len()..]);
+            option if option.starts_with(b"--delimiter=") => {
+                delimiter = BString::from(&option[b"--delimiter=".len()..]);
             }
-            option if option.starts_with('-') => {
-                return Err(format!("unknown multi-inputs option '{option}'").into())
+            option if option.starts_with(b"-") => {
+                return Err(format!(
+                    "unknown multi-inputs option '{}'",
+                    arguments[index].to_str_lossy()
+                )
+                .into())
             }
-            target => targets.push(target.to_owned()),
+            _ => targets.push(arguments[index].clone()),
         }
         index += 1;
     }
     let nodes = collect_targets(graph, &targets)?;
-    let terminator = if print0 { '\0' } else { '\n' };
-    let mut output = String::new();
+    let terminator = if print0 { b'\0' } else { b'\n' };
+    let mut output = Vec::new();
     for (target, node) in targets.iter().zip(nodes) {
         let mut collector = InputsCollector::default();
         collector.visit_node(graph, node);
         for input in collector.input_strings(graph, true) {
-            output.push_str(target);
-            output.push_str(&delimiter);
-            output.push_str(&input);
+            output.extend_from_slice(target.as_bytes());
+            output.extend_from_slice(delimiter.as_bytes());
+            output.extend_from_slice(input.as_bytes());
             output.push(terminator);
         }
     }
-    Ok(output)
+    Ok(BString::from(output))
 }
 
 #[cfg(test)]
@@ -108,12 +113,14 @@ mod tests {
             ),
         );
         assert_eq!(
-            inputs(&fixture.graph, &["all".into()]).unwrap(),
-            "implicit\nmiddle\norder\noutput\nsource\n"
+            inputs(&fixture.graph, &["all".into()]).unwrap().as_bytes(),
+            b"implicit\nmiddle\norder\noutput\nsource\n"
         );
         assert_eq!(
-            inputs(&fixture.graph, &["-d".into(), "-E".into(), "output".into()]).unwrap(),
-            "source\nmiddle\nimplicit\norder\n"
+            inputs(&fixture.graph, &["-d".into(), "-E".into(), "output".into()])
+                .unwrap()
+                .as_bytes(),
+            b"source\nmiddle\nimplicit\norder\n"
         );
         assert_eq!(
             multi_inputs(
@@ -121,7 +128,7 @@ mod tests {
                 &["--delimiter=:".into(), "middle".into(), "output".into()]
             )
             .unwrap(),
-            "middle:source\noutput:source\noutput:middle\noutput:implicit\noutput:order\n"
+            b"middle:source\noutput:source\noutput:middle\noutput:implicit\noutput:order\n"
         );
     }
 }

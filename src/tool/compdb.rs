@@ -1,25 +1,25 @@
 use crate::env::edgevar;
 use crate::error::ToolError;
 use crate::graph::{nodeget, CommandCollector, EdgeId, Graph};
-use crate::util::ByteSlice;
-use std::fmt::Write;
+use crate::util::{BString, ByteSlice};
 
-fn json_string(bytes: &[u8]) -> String {
-    let mut output = String::new();
+fn push_json_string(output: &mut Vec<u8>, bytes: &[u8]) {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
     for byte in bytes {
         match byte {
-            b'"' => output.push_str("\\\""),
-            b'\\' => output.push_str("\\\\"),
-            b'\n' => output.push_str("\\n"),
-            b'\r' => output.push_str("\\r"),
-            b'\t' => output.push_str("\\t"),
+            b'"' => output.extend_from_slice(b"\\\""),
+            b'\\' => output.extend_from_slice(b"\\\\"),
+            b'\n' => output.extend_from_slice(b"\\n"),
+            b'\r' => output.extend_from_slice(b"\\r"),
+            b'\t' => output.extend_from_slice(b"\\t"),
             0x00..=0x1f => {
-                let _ = write!(output, "\\u{byte:04x}");
+                output.extend_from_slice(b"\\u00");
+                output.push(HEX[usize::from(*byte >> 4)]);
+                output.push(HEX[usize::from(*byte & 0x0f)]);
             }
-            _ => output.push(char::from(*byte)),
+            _ => output.push(*byte),
         }
     }
-    output
 }
 
 fn expanded_command(graph: &Graph, edge: EdgeId, expand_rsp: bool) -> Vec<u8> {
@@ -78,12 +78,20 @@ fn render(
     edges: impl IntoIterator<Item = EdgeId>,
     expand_rsp: bool,
     skip_phony: bool,
-) -> String {
-    let directory = std::env::current_dir()
-        .unwrap_or_default()
-        .into_os_string()
-        .into_encoded_bytes();
-    let mut entries = Vec::new();
+) -> Result<BString, ToolError> {
+    render_with_current_directory(graph, edges, expand_rsp, skip_phony, std::env::current_dir)
+}
+
+fn render_with_current_directory(
+    graph: &Graph,
+    edges: impl IntoIterator<Item = EdgeId>,
+    expand_rsp: bool,
+    skip_phony: bool,
+    current_directory: impl FnOnce() -> std::io::Result<std::path::PathBuf>,
+) -> Result<BString, ToolError> {
+    let directory = current_directory()?.into_os_string().into_encoded_bytes();
+    let mut output = Vec::from(&b"[\n"[..]);
+    let mut first = true;
     for edge in edges {
         let edge_ref = graph.edge(edge);
         if edge_ref.input.is_empty()
@@ -97,29 +105,35 @@ fn render(
         }
         let command = expanded_command(graph, edge, expand_rsp);
         for input in &edge_ref.input {
-            entries.push(format!(
-                "  {{\n    \"directory\": \"{}\",\n    \"command\": \"{}\",\n    \"file\": \"{}\",\n    \"output\": \"{}\"\n  }}",
-                json_string(&directory),
-                json_string(&command),
-                json_string(graph.node(*input).path.as_bytes()),
-                edge_ref
-                    .out
-                    .first()
-                    .map(|output| json_string(graph.node(*output).path.as_bytes()))
-                    .unwrap_or_default(),
-            ));
+            if !first {
+                output.extend_from_slice(b",\n");
+            }
+            first = false;
+            output.extend_from_slice(b"  {\n    \"directory\": \"");
+            push_json_string(&mut output, &directory);
+            output.extend_from_slice(b"\",\n    \"command\": \"");
+            push_json_string(&mut output, &command);
+            output.extend_from_slice(b"\",\n    \"file\": \"");
+            push_json_string(&mut output, graph.node(*input).path.as_bytes());
+            output.extend_from_slice(b"\",\n    \"output\": \"");
+            if let Some(output_node) = edge_ref.out.first() {
+                push_json_string(&mut output, graph.node(*output_node).path.as_bytes());
+            }
+            output.extend_from_slice(b"\"\n  }");
         }
     }
-    if entries.is_empty() {
-        "[]\n".into()
-    } else {
-        format!("[\n{}\n]\n", entries.join(",\n"))
-    }
+    output.extend_from_slice(if first { b"]\n" } else { b"\n]\n" });
+    Ok(BString::from(output))
 }
 
 // [spec:samurai:def:tool.compdb-fn]
 // [spec:samurai:sem:tool.compdb-fn]
-pub(crate) fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> String {
+// [spec:samurai:req:runtime.output-byte-boundaries]
+pub(crate) fn compdb(
+    graph: &Graph,
+    rules: &[String],
+    expand_rsp: bool,
+) -> Result<BString, ToolError> {
     let edges = graph.edge_ids().filter(|edge| {
         rules.is_empty()
             || graph
@@ -132,25 +146,26 @@ pub(crate) fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> Strin
 
 pub(crate) fn compdb_for_targets(
     graph: &Graph,
-    targets: &[String],
+    targets: &[BString],
     expand_rsp: bool,
-) -> Result<String, ToolError> {
+) -> Result<BString, ToolError> {
     if targets.is_empty() {
         return Err("compdb-targets expects the name of at least one target".into());
     }
     let mut collector = CommandCollector::default();
     for target in targets {
         let node = nodeget(graph, target.as_bytes())
-            .ok_or_else(|| format!("unknown target '{target}'"))?;
+            .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))?;
         if graph.node(node).gen.is_none() {
             return Err(format!(
-                "'{target}' is not a target (i.e. it is not an output of any `build` statement)"
+                "'{}' is not a target (i.e. it is not an output of any `build` statement)",
+                target.to_str_lossy()
             )
             .into());
         }
         collector.collect_from(graph, node);
     }
-    Ok(render(graph, collector.edges, expand_rsp, true))
+    render(graph, collector.edges, expand_rsp, true)
 }
 
 #[cfg(test)]
@@ -171,17 +186,40 @@ mod tests {
                 "build all: phony object\n"
             ),
         );
-        let regular = compdb(&fixture.graph, &[], false);
-        assert!(regular.contains("\"command\": \"cc @object.rsp -o object\""));
-        assert!(regular.contains("\"file\": \"source\""));
-        assert!(regular.contains("\"output\": \"object\""));
+        let regular = compdb(&fixture.graph, &[], false).unwrap();
+        assert!(regular
+            .as_bytes()
+            .contains_str("\"command\": \"cc @object.rsp -o object\""));
+        assert!(regular.as_bytes().contains_str("\"file\": \"source\""));
+        assert!(regular.as_bytes().contains_str("\"output\": \"object\""));
 
         let expanded = compdb_for_targets(&fixture.graph, &["all".into()], true).unwrap();
-        assert!(expanded.contains("\"command\": \"cc -DVALUE source -o object\""));
-        assert!(!expanded.contains("@object.rsp"));
+        assert!(expanded
+            .as_bytes()
+            .contains_str("\"command\": \"cc -DVALUE source -o object\""));
+        assert!(!expanded.as_bytes().contains_str("@object.rsp"));
         assert_eq!(
             compdb_for_targets(&fixture.graph, &["source".into()], false).unwrap_err(),
             "'source' is not a target (i.e. it is not an output of any `build` statement)"
         );
+    }
+
+    // [spec:samurai:req:runtime.output-byte-boundaries/test]
+    #[test]
+    fn json_encoding_preserves_utf8_and_non_utf8_bytes() {
+        let mut encoded = Vec::new();
+        push_json_string(&mut encoded, b"r\xc3\xa9sum\xc3\xa9-\xff-\n-\"");
+        assert_eq!(encoded, b"r\xc3\xa9sum\xc3\xa9-\xff-\\n-\\\"");
+    }
+
+    #[test]
+    fn current_directory_errors_are_propagated() {
+        let fixture = Fixture::parse("compdb-cwd-error", "");
+        let error =
+            render_with_current_directory(&fixture.graph, std::iter::empty(), false, false, || {
+                Err(std::io::Error::other("cwd unavailable"))
+            })
+            .unwrap_err();
+        assert_eq!(error.to_string(), "cwd unavailable");
     }
 }

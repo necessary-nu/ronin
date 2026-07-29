@@ -13,7 +13,7 @@ pub(super) struct CommandSpec {
     pub(super) rspfile_content: BString,
     pub(super) deps_type: String,
     pub(super) depfile_path: Option<BString>,
-    pub(super) msvc_deps_prefix: String,
+    pub(super) msvc_deps_prefix: BString,
     pub(super) restat: bool,
     pub(super) generator: bool,
     pub(super) use_console: bool,
@@ -35,9 +35,8 @@ impl CommandSpec {
             .unwrap_or_default();
         let depfile_path =
             crate::env::edgevar(graph, edge, "depfile", false).filter(|path| !path.is_empty());
-        let msvc_deps_prefix = crate::env::edgevar(graph, edge, "msvc_deps_prefix", false)
-            .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
-            .unwrap_or_default();
+        let msvc_deps_prefix =
+            crate::env::edgevar(graph, edge, "msvc_deps_prefix", false).unwrap_or_default();
         let restat = crate::env::edgevar(graph, edge, "restat", false)
             .is_some_and(|value| !value.is_empty());
         let generator = crate::env::edgevar(graph, edge, "generator", false)

@@ -877,16 +877,15 @@ impl<'a> Builder<'a> {
         {
             if command.deps_type == "msvc" {
                 let mut parser = crate::msvc::ClParser::default();
-                let filtered =
-                    parser.parse(&String::from_utf8_lossy(&stdout), &command.msvc_deps_prefix);
+                let filtered = parser.parse(&stdout, command.msvc_deps_prefix.as_bytes());
                 self.record_child_output(filtered.as_bytes());
                 visible_output.extend_from_slice(filtered.as_bytes());
-                msvc_deps.extend(parser.includes.into_iter().map(|include| {
-                    crate::graph::mknode(
-                        self.graph,
-                        crate::util::xasprintf(format_args!("{include}")),
-                    )
-                }));
+                msvc_deps.extend(
+                    parser
+                        .includes
+                        .into_iter()
+                        .map(|include| crate::graph::mknode(self.graph, include)),
+                );
             } else {
                 self.record_child_output(&stdout);
                 visible_output.extend_from_slice(&stdout);

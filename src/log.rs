@@ -248,7 +248,7 @@ pub(crate) fn logrecordedge(
     Ok(())
 }
 
-pub(crate) fn logrestat<F>(log: &mut BuildLog, filters: &[&str], mut stat: F) -> io::Result<()>
+pub(crate) fn logrestat<F>(log: &mut BuildLog, filters: &[BString], mut stat: F) -> io::Result<()>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
@@ -360,7 +360,7 @@ mod tests {
         let mut graph = Graph::default();
         let mut log = BuildLog::open(Some(&temp.directory), &mut graph).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 3);
-        logrestat(&mut log, &["out2"], |_| Ok(4)).unwrap();
+        logrestat(&mut log, &[BString::from("out2")], |_| Ok(4)).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 3);
         logrestat(&mut log, &[], |_| Ok(4)).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 4);

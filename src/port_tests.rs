@@ -1,6 +1,6 @@
 //! Wave-3 behavior tests for the literal Rust port.
 
-use crate::util::ByteSlice;
+use crate::util::{BString, ByteSlice};
 use crate::{build, deps, env, graph, log, os, parse, scan, tool, util};
 use std::fs;
 
@@ -780,7 +780,13 @@ fn ninja_clean_target_multi_output_and_rule() {
     }
     let (graph, _, _) = parse_manifest(&manifest);
     assert_eq!(
-        tool::clean(&graph, &[out1.to_string_lossy().into_owned()], &[], true).unwrap(),
+        tool::clean(
+            &graph,
+            &[BString::from(out1.to_string_lossy().as_bytes())],
+            &[],
+            true,
+        )
+        .unwrap(),
         3
     );
     assert!(!in1.exists() && !out1.exists() && !aux1.exists());

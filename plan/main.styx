@@ -885,12 +885,22 @@ children (
                 id ronin-output-encoding
                 title "Make status and tool rendering byte and Unicode correct"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.output-byte-boundaries] [spec:samurai:req:runtime.msvc-byte-parsing])
+                }
                 log (
                     {
                         at 2026-07-29T22:58:22.83437045Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Fix byte-by-byte char conversion in status expansion, compdb JSON, and Graphviz quoting. Define explicit UTF-8 and non-UTF-8 display/serialization policies at output boundaries, preserve untouched UTF-8 slices, accept byte-exact tool target arguments where Ninja does, propagate current-directory failures, stream compdb output without a Vec<String> staging copy, and keep MSVC include parsing byte-oriented with ASCII-insensitive matching."
+                    }
+
+                    {
+                        at 2026-07-29T23:23:56.515023511Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

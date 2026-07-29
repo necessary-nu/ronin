@@ -2,41 +2,55 @@
 
 #[cfg(test)]
 use crate::error::ToolError;
-use crate::util::{canonpath, xasprintf, ByteSlice};
+use crate::util::{canonpath, BString};
 use std::collections::BTreeSet;
 
 #[derive(Default)]
 pub(crate) struct ClParser {
-    pub(crate) includes: BTreeSet<String>,
+    pub(crate) includes: BTreeSet<BString>,
 }
 
-pub(crate) fn filter_show_includes<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+pub(crate) fn filter_show_includes<'a>(line: &'a [u8], prefix: &[u8]) -> Option<&'a [u8]> {
     let prefix = if prefix.is_empty() {
-        "Note: including file:"
+        b"Note: including file:".as_slice()
     } else {
         prefix
     };
-    line.strip_prefix(prefix).map(str::trim_start)
+    let suffix = line.strip_prefix(prefix)?.trim_ascii_start();
+    (!suffix.is_empty()).then_some(suffix)
 }
 
-pub(crate) fn filter_input_filename(line: &str) -> bool {
-    let lower = line.to_ascii_lowercase();
-    !line.contains('(')
-        && [".c", ".cc", ".cpp", ".cxx"]
-            .iter()
-            .any(|extension| lower.ends_with(extension))
+fn ends_with_ascii_case_insensitive(bytes: &[u8], suffix: &[u8]) -> bool {
+    bytes
+        .get(bytes.len().saturating_sub(suffix.len())..)
+        .is_some_and(|tail| tail.eq_ignore_ascii_case(suffix))
 }
 
-fn normalize_include(path: &str) -> String {
-    let path = path.replace('\\', "/");
-    let mut path = xasprintf(format_args!("{path}"));
+pub(crate) fn filter_input_filename(line: &[u8]) -> bool {
+    [".c", ".cc", ".cpp", ".cxx", ".c++"]
+        .iter()
+        .any(|extension| ends_with_ascii_case_insensitive(line, extension.as_bytes()))
+}
+
+fn normalize_include(path: &[u8]) -> BString {
+    let mut path = BString::from(
+        path.iter()
+            .map(|byte| if *byte == b'\\' { b'/' } else { *byte })
+            .collect::<Vec<_>>(),
+    );
     canonpath(&mut path);
-    String::from_utf8_lossy(path.as_bytes()).into_owned()
+    path
 }
 
-fn system_include(path: &str) -> bool {
-    let path = path.to_ascii_lowercase();
-    path.contains("program files") || path.contains("microsoft visual studio")
+fn contains_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
+}
+
+fn system_include(path: &[u8]) -> bool {
+    contains_ascii_case_insensitive(path, b"program files")
+        || contains_ascii_case_insensitive(path, b"microsoft visual studio")
 }
 
 #[cfg(test)]
@@ -137,21 +151,35 @@ pub(crate) fn escape_for_depfile(path: &str) -> String {
 }
 
 impl ClParser {
-    pub(crate) fn parse(&mut self, input: &str, prefix: &str) -> String {
-        let mut output = String::new();
+    // [spec:samurai:req:runtime.msvc-byte-parsing]
+    pub(crate) fn parse(&mut self, input: &[u8], prefix: &[u8]) -> BString {
+        let mut output = Vec::new();
         let mut saw_include = false;
-        for line in input.lines() {
+        let mut start = 0;
+        while start < input.len() {
+            let end = input[start..]
+                .iter()
+                .position(|byte| matches!(byte, b'\r' | b'\n'))
+                .map_or(input.len(), |offset| start + offset);
+            let line = &input[start..end];
             if let Some(path) = filter_show_includes(line, prefix) {
                 saw_include = true;
                 if !system_include(path) {
                     self.includes.insert(normalize_include(path));
                 }
             } else if saw_include || !filter_input_filename(line) {
-                output.push_str(line);
-                output.push('\n');
+                output.extend_from_slice(line);
+                output.push(b'\n');
+            }
+            start = end;
+            if input.get(start) == Some(&b'\r') {
+                start += 1;
+            }
+            if input.get(start) == Some(&b'\n') {
+                start += 1;
             }
         }
-        output
+        BString::from(output)
     }
 }
 
@@ -162,74 +190,93 @@ mod tests {
     // Cases adapted from Ninja's src/clparser_test.cc.
     #[test]
     fn ninja_clparser_show_includes_and_filename_filter() {
-        assert_eq!(filter_show_includes("Sample compiler output", ""), None);
+        assert_eq!(filter_show_includes(b"Sample compiler output", b""), None);
         assert_eq!(
-            filter_show_includes("Note: including file:    c:\\initspaces.h", ""),
-            Some("c:\\initspaces.h")
+            filter_show_includes(b"Note: including file:    c:\\initspaces.h", b""),
+            Some(b"c:\\initspaces.h".as_slice())
         );
         assert_eq!(
             filter_show_includes(
-                "Non-default prefix: inc file:    c:\\initspaces.h",
-                "Non-default prefix: inc file:"
+                b"Non-default prefix: inc file:    c:\\initspaces.h",
+                b"Non-default prefix: inc file:"
             ),
-            Some("c:\\initspaces.h")
+            Some(b"c:\\initspaces.h".as_slice())
         );
-        assert!(filter_input_filename("foobar.cc"));
-        assert!(filter_input_filename("foo bar.cc"));
-        assert!(filter_input_filename("baz.c"));
-        assert!(filter_input_filename("FOOBAR.CC"));
+        assert!(filter_input_filename(b"foobar.cc"));
+        assert!(filter_input_filename(b"foo bar.cc"));
+        assert!(filter_input_filename(b"baz.c"));
+        assert!(filter_input_filename(b"FOOBAR.CC"));
+        assert!(filter_input_filename(b"foobar.c++"));
         assert!(!filter_input_filename(
-            "src\\cl_helper.cc(166) : fatal error C1075: end of file"
+            b"src\\cl_helper.cc(166) : fatal error C1075: end of file"
         ));
     }
 
+    // [spec:samurai:req:runtime.msvc-byte-parsing/test]
     #[test]
     fn ninja_clparser_parse_and_deduplicate_includes() {
         let mut parser = ClParser::default();
         assert_eq!(
             parser.parse(
-                "foo\r\nNote: inc file prefix:  foo.h\r\nbar\r\n",
-                "Note: inc file prefix:"
+                b"foo\r\nNote: inc file prefix:  foo.h\r\nbar\r\n",
+                b"Note: inc file prefix:"
             ),
-            "foo\nbar\n"
+            b"foo\nbar\n"
         );
         assert_eq!(parser.includes, BTreeSet::from(["foo.h".into()]));
 
         let mut parser = ClParser::default();
         assert_eq!(
-            parser.parse("foo.cc\r\ncl: warning\r\n", ""),
-            "cl: warning\n"
+            parser.parse(b"foo.cc\r\ncl: warning\r\n", b""),
+            b"cl: warning\n"
+        );
+        assert_eq!(
+            parser.parse(b"foo.cc\rcl: warning\r", b""),
+            b"cl: warning\n"
         );
         assert_eq!(
             parser.parse(
-                "foo.cc\r\nNote: including file: foo.h\r\nsomething something foo.cc\r\n",
-                ""
+                b"foo.cc\r\nNote: including file: foo.h\r\nsomething something foo.cc\r\n",
+                b""
             ),
-            "something something foo.cc\n"
+            b"something something foo.cc\n"
         );
 
         let mut parser = ClParser::default();
         assert_eq!(
             parser.parse(
-                "Note: including file: c:\\Program Files\\foo.h\r\n\
-                 Note: including file: d:\\Microsoft Visual Studio\\bar.h\r\n\
-                 Note: including file: path.h\r\n",
-                ""
+                b"Note: including file: c:\\PrOgRaM FiLeS\\foo.h\r\n\
+                  Note: including file: d:\\mIcRoSoFt ViSuAl StUdIo\\bar.h\r\n\
+                  Note: including file: path.h\r\n",
+                b""
             ),
-            ""
+            b""
         );
         assert_eq!(parser.includes, BTreeSet::from(["path.h".into()]));
 
         let mut parser = ClParser::default();
         parser.parse(
-            "Note: including file: sub/./foo.h\r\n\
-             Note: including file: bar.h\r\n\
-             Note: including file: sub/foo.h\r\n",
-            "",
+            b"Note: including file: sub/./foo.h\r\n\
+              Note: including file: bar.h\r\n\
+              Note: including file: sub/foo.h\r\n",
+            b"",
         );
         assert_eq!(
             parser.includes,
             BTreeSet::from(["bar.h".into(), "sub/foo.h".into()])
+        );
+
+        let mut parser = ClParser::default();
+        assert_eq!(
+            parser.parse(
+                b"source.cc\r\nNote: including file: inc-\xff.h\r\nwarning-\xfe\r\n",
+                b""
+            ),
+            b"warning-\xfe\n"
+        );
+        assert_eq!(
+            parser.includes,
+            BTreeSet::from([BString::from(b"inc-\xff.h")])
         );
     }
 
