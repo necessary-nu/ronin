@@ -1,7 +1,8 @@
-//! Ninja manifest scanner translated from `scan.c`.
+//! Byte-oriented Ninja manifest lexer.
 
 use crate::util::{BString, EvalPart, EvalString};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 // [spec:samurai:def:scan.token]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -17,35 +18,41 @@ pub enum Token {
 
 // [spec:samurai:def:scan.scanner]
 pub struct Scanner {
-    pub path: String,
-    chars: Vec<char>,
+    pub path: PathBuf,
+    input: Vec<u8>,
     index: usize,
     pub line: usize,
     pub col: usize,
     pub paths: Vec<EvalString>,
+    variable: Option<String>,
+    continuation_at_eof: bool,
     pub manifest_version_major: i32,
     pub manifest_version_minor: i32,
 }
 
 impl Scanner {
-    fn chr(&self) -> Option<char> {
-        self.chars.get(self.index).copied()
+    fn current(&self) -> Option<u8> {
+        self.input.get(self.index).copied()
+    }
+
+    pub(crate) fn take_variable(&mut self) -> Option<String> {
+        self.variable.take()
     }
 }
 
 // [spec:samurai:def:scan.scaninit-fn]
 // [spec:samurai:sem:scan.scaninit-fn]
-pub fn scaninit(path: &str) -> Result<Scanner, String> {
+pub fn scaninit(path: impl AsRef<Path>) -> Result<Scanner, String> {
+    let path = path.as_ref();
     Ok(Scanner {
-        path: path.into(),
-        chars: fs::read_to_string(path)
-            .map_err(|e| e.to_string())?
-            .chars()
-            .collect(),
+        path: path.to_owned(),
+        input: fs::read(path).map_err(|error| error.to_string())?,
         index: 0,
         line: 1,
         col: 1,
         paths: Vec::new(),
+        variable: None,
+        continuation_at_eof: false,
         manifest_version_major: 1,
         manifest_version_minor: 9,
     })
@@ -60,48 +67,50 @@ pub fn scanclose(_scanner: Scanner) {}
 pub fn scanerror(scanner: &Scanner, message: &str) -> String {
     format!(
         "{}:{}:{}: {message}",
-        scanner.path, scanner.line, scanner.col
+        scanner.path.display(),
+        scanner.line,
+        scanner.col
     )
 }
 
 // [spec:samurai:def:scan.next-fn]
 // [spec:samurai:sem:scan.next-fn]
-fn next(scanner: &mut Scanner) -> Option<char> {
-    if scanner.chr() == Some('\n') {
+fn next(scanner: &mut Scanner) -> Option<u8> {
+    if scanner.current() == Some(b'\n') {
         scanner.line += 1;
         scanner.col = 1;
     } else {
         scanner.col += 1;
     }
     scanner.index += 1;
-    scanner.chr()
+    scanner.current()
 }
 
 // [spec:samurai:def:scan.issimplevar-fn]
 // [spec:samurai:sem:scan.issimplevar-fn]
-fn issimplevar(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '_' | '-')
+fn issimplevar(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
 }
 
 // [spec:samurai:def:scan.isvar-fn]
 // [spec:samurai:sem:scan.isvar-fn]
-fn isvar(c: char) -> bool {
-    issimplevar(c) || c == '.'
+fn isvar(byte: u8) -> bool {
+    issimplevar(byte) || byte == b'.'
 }
 
 // [spec:samurai:def:scan.newline-fn]
 // [spec:samurai:sem:scan.newline-fn]
 fn newline(scanner: &mut Scanner) -> Result<bool, String> {
-    match scanner.chr() {
-        Some('\r') => {
+    match scanner.current() {
+        Some(b'\r') => {
             next(scanner);
-            if scanner.chr() != Some('\n') {
+            if scanner.current() != Some(b'\n') {
                 return Err(scanerror(scanner, "expected '\\n' after '\\r'"));
             }
             next(scanner);
             Ok(true)
         }
-        Some('\n') => {
+        Some(b'\n') => {
             next(scanner);
             Ok(true)
         }
@@ -112,19 +121,24 @@ fn newline(scanner: &mut Scanner) -> Result<bool, String> {
 // [spec:samurai:def:scan.singlespace-fn]
 // [spec:samurai:sem:scan.singlespace-fn]
 fn singlespace(scanner: &mut Scanner) -> Result<bool, String> {
-    match scanner.chr() {
-        Some(' ') => {
+    match scanner.current() {
+        Some(b' ') => {
             next(scanner);
             Ok(true)
         }
-        Some('\t') => Err(scanerror(scanner, "tabs are not allowed, use spaces")),
-        Some('$') => {
+        Some(b'\t') => Err(scanerror(scanner, "tabs are not allowed, use spaces")),
+        Some(b'$') => {
+            let index = scanner.index;
+            let line = scanner.line;
+            let col = scanner.col;
             next(scanner);
             if newline(scanner)? {
+                scanner.continuation_at_eof = scanner.current().is_none();
                 Ok(true)
             } else {
-                scanner.index -= 1;
-                scanner.col -= 1;
+                scanner.index = index;
+                scanner.line = line;
+                scanner.col = col;
                 Ok(false)
             }
         }
@@ -145,10 +159,10 @@ fn space(scanner: &mut Scanner) -> Result<bool, String> {
 // [spec:samurai:def:scan.comment-fn]
 // [spec:samurai:sem:scan.comment-fn]
 fn comment(scanner: &mut Scanner) -> Result<bool, String> {
-    if scanner.chr() != Some('#') {
+    if scanner.current() != Some(b'#') {
         return Ok(false);
     }
-    while scanner.chr().is_some() && !newline(scanner)? {
+    while scanner.current().is_some() && !newline(scanner)? {
         next(scanner);
     }
     Ok(true)
@@ -157,47 +171,53 @@ fn comment(scanner: &mut Scanner) -> Result<bool, String> {
 // [spec:samurai:def:scan.name-fn]
 // [spec:samurai:sem:scan.name-fn]
 fn name(scanner: &mut Scanner) -> Result<String, String> {
-    let mut name = String::new();
-    while scanner.chr().is_some_and(isvar) {
-        name.push(scanner.chr().unwrap());
+    let start = scanner.index;
+    while scanner.current().is_some_and(isvar) {
         next(scanner);
     }
-    if name.is_empty() {
-        Err(scanerror(scanner, "expected name"))
-    } else {
-        space(scanner)?;
-        Ok(name)
+    if scanner.index == start {
+        return Err(scanerror(scanner, "expected name"));
     }
+    let name = std::str::from_utf8(&scanner.input[start..scanner.index])
+        .expect("variable names are ASCII")
+        .to_owned();
+    space(scanner)?;
+    Ok(name)
 }
 
 // [spec:samurai:def:scan.scankeyword-fn]
 // [spec:samurai:sem:scan.scankeyword-fn]
 pub fn scankeyword(scanner: &mut Scanner) -> Result<Option<Token>, String> {
     loop {
-        match scanner.chr() {
+        match scanner.current() {
             None => return Ok(None),
-            Some(' ') => {
+            Some(b' ' | b'\t') => {
                 space(scanner)?;
                 if !comment(scanner)? && !newline(scanner)? {
                     return Err(scanerror(scanner, "unexpected indent"));
                 }
             }
-            Some('#') => {
+            Some(b'#') => {
                 comment(scanner)?;
             }
-            Some('\r' | '\n') => {
+            Some(b'\r' | b'\n') => {
                 newline(scanner)?;
             }
             _ => {
-                return Ok(Some(match name(scanner)?.as_str() {
+                let name = name(scanner)?;
+                let token = match name.as_str() {
                     "build" => Token::Build,
                     "default" => Token::Default,
                     "include" => Token::Include,
                     "pool" => Token::Pool,
                     "rule" => Token::Rule,
                     "subninja" => Token::Subninja,
-                    _ => Token::Variable,
-                }))
+                    _ => {
+                        scanner.variable = Some(name);
+                        Token::Variable
+                    }
+                };
+                return Ok(Some(token));
             }
         }
     }
@@ -211,13 +231,20 @@ pub fn scanname(scanner: &mut Scanner) -> Result<String, String> {
 
 // [spec:samurai:def:scan.addstringpart-fn]
 // [spec:samurai:sem:scan.addstringpart-fn]
-fn addstringpart(parts: &mut Vec<EvalPart>, text: String, variable: bool) {
-    let part = if variable {
-        EvalPart::Variable(text)
-    } else {
-        EvalPart::Literal(BString::from(text))
-    };
-    parts.push(part);
+fn addstringpart(parts: &mut Vec<EvalPart>, bytes: Vec<u8>, variable: bool) {
+    if variable {
+        parts.push(EvalPart::Variable(
+            String::from_utf8(bytes).expect("variable names are ASCII"),
+        ));
+    } else if !bytes.is_empty() {
+        parts.push(EvalPart::Literal(BString::from(bytes)));
+    }
+}
+
+fn flush_literal(parts: &mut Vec<EvalPart>, literal: &mut Vec<u8>) {
+    if !literal.is_empty() {
+        addstringpart(parts, std::mem::take(literal), false);
+    }
 }
 
 // [spec:samurai:def:scan.escape-fn]
@@ -225,34 +252,33 @@ fn addstringpart(parts: &mut Vec<EvalPart>, text: String, variable: bool) {
 fn escape(
     scanner: &mut Scanner,
     parts: &mut Vec<EvalPart>,
-    literal: &mut String,
+    literal: &mut Vec<u8>,
 ) -> Result<(), String> {
-    match scanner.chr() {
-        Some('$' | ' ' | ':') => {
-            literal.push(scanner.chr().unwrap());
+    match scanner.current() {
+        Some(byte @ (b'$' | b' ' | b':')) => {
+            literal.push(byte);
             next(scanner);
         }
-        Some('{') => {
-            if !literal.is_empty() {
-                addstringpart(parts, std::mem::take(literal), false);
-            }
+        Some(b'{') => {
+            flush_literal(parts, literal);
             next(scanner);
-            let mut variable = String::new();
-            while scanner.chr().is_some_and(isvar) {
-                variable.push(scanner.chr().unwrap());
+            let start = scanner.index;
+            while scanner.current().is_some_and(isvar) {
                 next(scanner);
             }
-            if scanner.chr() != Some('}') {
+            if scanner.current() != Some(b'}') {
                 return Err(scanerror(scanner, "invalid variable name"));
             }
+            let variable = scanner.input[start..scanner.index].to_vec();
             next(scanner);
             addstringpart(parts, variable, true);
         }
-        Some('\r' | '\n') => {
+        Some(b'\r' | b'\n') => {
             newline(scanner)?;
             space(scanner)?;
+            scanner.continuation_at_eof = scanner.current().is_none();
         }
-        Some('^') => {
+        Some(b'^') => {
             if scanner.manifest_version_major < 1
                 || scanner.manifest_version_major == 1 && scanner.manifest_version_minor < 14
             {
@@ -262,21 +288,18 @@ fn escape(
                 ));
             }
             next(scanner);
-            literal.push('\n');
+            literal.push(b'\n');
         }
         _ => {
-            if !literal.is_empty() {
-                addstringpart(parts, std::mem::take(literal), false);
-            }
-            let mut variable = String::new();
-            while scanner.chr().is_some_and(issimplevar) {
-                variable.push(scanner.chr().unwrap());
+            flush_literal(parts, literal);
+            let start = scanner.index;
+            while scanner.current().is_some_and(issimplevar) {
                 next(scanner);
             }
-            if variable.is_empty() {
+            if scanner.index == start {
                 return Err(scanerror(scanner, "invalid $ escape"));
             }
-            addstringpart(parts, variable, true);
+            addstringpart(parts, scanner.input[start..scanner.index].to_vec(), true);
         }
     }
     Ok(())
@@ -286,24 +309,26 @@ fn escape(
 // [spec:samurai:sem:scan.scanstring-fn]
 pub fn scanstring(scanner: &mut Scanner, path: bool) -> Result<Option<EvalString>, String> {
     let mut parts = Vec::new();
-    let mut literal = String::new();
+    let mut literal = Vec::new();
     loop {
-        match scanner.chr() {
-            Some('$') => {
+        match scanner.current() {
+            Some(b'$') => {
                 next(scanner);
                 escape(scanner, &mut parts, &mut literal)?;
             }
-            Some(':' | '|' | ' ') if path => break,
-            Some('\r' | '\n') | None => break,
-            Some(c) => {
-                literal.push(c);
+            Some(b':' | b'|' | b' ') if path => break,
+            Some(b'\t') if path => {
+                return Err(scanerror(scanner, "tabs are not allowed, use spaces"));
+            }
+            Some(b'\r' | b'\n') | None => break,
+            Some(byte) => {
+                scanner.continuation_at_eof = false;
+                literal.push(byte);
                 next(scanner);
             }
         }
     }
-    if !literal.is_empty() {
-        addstringpart(&mut parts, literal, false);
-    }
+    flush_literal(&mut parts, &mut literal);
     if path {
         space(scanner)?;
     }
@@ -322,8 +347,13 @@ pub fn scanpaths(scanner: &mut Scanner) -> Result<(), String> {
 // [spec:samurai:def:scan.scanchar-fn]
 // [spec:samurai:sem:scan.scanchar-fn]
 pub fn scanchar(scanner: &mut Scanner, expected: char) -> Result<(), String> {
-    if scanner.chr() != Some(expected) {
-        return Err(scanerror(scanner, &format!("expected '{expected}'")));
+    let expected =
+        u8::try_from(expected).map_err(|_| scanerror(scanner, "expected ASCII token"))?;
+    if scanner.current() != Some(expected) {
+        return Err(scanerror(
+            scanner,
+            &format!("expected '{}'", char::from(expected)),
+        ));
     }
     next(scanner);
     space(scanner)?;
@@ -333,23 +363,33 @@ pub fn scanchar(scanner: &mut Scanner, expected: char) -> Result<(), String> {
 // [spec:samurai:def:scan.scanpipe-fn]
 // [spec:samurai:sem:scan.scanpipe-fn]
 pub fn scanpipe(scanner: &mut Scanner, allowed: i32) -> Result<i32, String> {
-    if scanner.chr() != Some('|') {
+    if scanner.current() != Some(b'|') {
         return Ok(0);
     }
     next(scanner);
-    if scanner.chr() != Some('|') {
-        if allowed & 1 == 0 {
-            return Err(scanerror(scanner, "expected '||'"));
+    let kind = match scanner.current() {
+        Some(b'|') => {
+            next(scanner);
+            2
         }
-        space(scanner)?;
-        return Ok(1);
+        Some(b'@') => {
+            next(scanner);
+            4
+        }
+        _ => 1,
+    };
+    if allowed & kind == 0 {
+        return Err(scanerror(
+            scanner,
+            match kind {
+                1 => "unexpected '|'",
+                2 => "unexpected '||'",
+                _ => "unexpected '|@'",
+            },
+        ));
     }
-    if allowed & 2 == 0 {
-        return Err(scanerror(scanner, "unexpected '||'"));
-    }
-    next(scanner);
     space(scanner)?;
-    Ok(2)
+    Ok(kind)
 }
 
 // [spec:samurai:def:scan.scanindent-fn]
@@ -367,7 +407,14 @@ pub fn scanindent(scanner: &mut Scanner) -> Result<bool, String> {
 // [spec:samurai:sem:scan.scannewline-fn]
 pub fn scannewline(scanner: &mut Scanner) -> Result<(), String> {
     if newline(scanner)? {
+        scanner.continuation_at_eof = false;
         Ok(())
+    } else if scanner.current().is_none() {
+        if scanner.continuation_at_eof {
+            Err("unexpected EOF after continuation".into())
+        } else {
+            Err("unexpected EOF".into())
+        }
     } else {
         Err(scanerror(scanner, "expected newline"))
     }

@@ -236,6 +236,7 @@ children (
                 title "Replace reference-counted graph ownership with typed arenas"
                 priority 0
                 deps (ronin-byte-data-model)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:53.117292729Z
@@ -249,6 +250,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T16:13:24.752029646Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -285,6 +293,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Consolidate scan.rs and parse.rs into one byte-oriented lexer/parser using spans or borrowed slices. Avoid Vec<char>, Vec<String> logical-line rebuilding, and boxed fragments; preserve includes, subninja scopes, escapes, CRLF, diagnostics, duplicate-output policy, dynamic dependencies, and every Ninja parser/lexer conformance case."
+                    }
+
+                    {
+                        at 2026-07-29T16:13:38.134111709Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }
