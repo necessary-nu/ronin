@@ -5,7 +5,7 @@ use crate::error::GraphError;
 use crate::htab::rapidhashv1_parts;
 use crate::os::MTIME_MISSING;
 use crate::util::{BStr, BString, ByteSlice};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::Path;
 
@@ -96,7 +96,9 @@ pub(crate) struct Edge {
 // [spec:samurai:sem:graph.graphinit-fn]
 #[derive(Default)]
 pub(crate) struct Graph {
-    node_by_path: BTreeMap<Vec<u8>, NodeId>,
+    // RandomState protects manifest-controlled paths from collision attacks.
+    // Observable graph order comes from the arenas, never map iteration.
+    node_by_path: HashMap<Vec<u8>, NodeId>,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
     environments: Vec<Environment>,
@@ -185,10 +187,10 @@ impl Graph {
 // [spec:samurai:def:graph.delnode-fn]
 // [spec:samurai:sem:graph.delnode-fn]
 pub(crate) fn mknode(graph: &mut Graph, path: BString) -> NodeId {
-    let key = path.as_bytes().to_vec();
-    if let Some(node) = graph.node_by_path.get(&key) {
+    if let Some(node) = graph.node_by_path.get(path.as_bytes()) {
         return *node;
     }
+    let key = path.as_bytes().to_vec();
     let shellpath = shell_escape_path(path.as_bytes());
     let node = NodeId::from_index(graph.nodes.len());
     graph.nodes.push(Node {

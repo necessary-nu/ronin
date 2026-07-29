@@ -594,12 +594,34 @@ children (
                 title "Apply measured release-profile and remaining hot-path tuning"
                 priority 1
                 deps (ronin-idiom-polish)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:54.109653251Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Apply release profile changes, alternative hashers, buffer sizing, LTO, codegen-unit changes, PGO, or platform-specific fast paths only when the benchmark and profiler evidence justifies them. Keep deterministic and adversarial-input behavior explicit."
+                    }
+
+                    {
+                        at 2026-07-29T19:55:56.966751926Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T20:05:54.251786664Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Applied only tuning supported by controlled interleaved measurements and compiler instrumentation. A release-profile matrix tested ThinLTO, one codegen unit, their combination, and fat LTO against the unchanged polished binary; codegen-units=1 alone was neutral, while fat LTO improved graph-heavy medians and reduced loaded binary sections from 1,112,121 to 1,030,160 bytes, so only lto=\"fat\" was retained. LLVM profile instrumentation over all six workloads identified scanning, canonicalization, mknode, and variable evaluation as the highest-count paths. Replacing Graph's ordered node-path index with the standard randomized HashMap and avoiding hit-path key allocation improved the graph-heavy workloads by roughly 2–11% in a 21-sample interleaved comparison. Observable order remains arena-defined, and RandomState preserves collision-attack resistance for manifest-controlled paths. Broader environment/edge HashMap experiments were neutral overall and regressed some workloads, so they were removed. PGO, platform-specific flags, buffer changes, and codegen-units=1 were not retained without portable evidence. On the exact final tree, the 15-sample release gate passed at 0.42–0.86x pinned Ninja runtime and 0.73–1.31x Ninja peak RSS. Strict Clippy/rustdoc, all-target Rust tests, all 425 pinned Ninja tests, 10 differential cases, persistence round trips, and wave-4 coverage for all 175 symbols pass."
+                    }
+
+                    {
+                        at 2026-07-29T20:05:57.148949965Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
