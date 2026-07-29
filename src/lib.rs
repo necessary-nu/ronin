@@ -1,7 +1,7 @@
-//! Rust implementation of the samurai build tool, preserving the original
-//! C module boundaries where they remain useful.
+//! Ronin, a Ninja-compatible build tool implemented in Rust.
 
 pub mod build;
+pub mod cli;
 pub mod deps;
 pub mod dyndep;
 pub mod env;
@@ -14,7 +14,6 @@ pub mod missing_deps;
 pub mod msvc;
 pub mod os;
 pub mod parse;
-pub mod samu;
 pub mod scan;
 pub mod subprocess;
 pub mod tool;

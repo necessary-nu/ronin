@@ -5,6 +5,6 @@ specs ({
     include (docs/spec/**/*.md),
     impls (
         {name source-impl, languages (@c), include (**/*.c **/*.h), mode @impl-only}
-        {name target-impl, languages (@rust), include (src/** crates/**), exclude (target/**), mode @both}
+        {name target-impl, languages (@rust), include (src/** crates/** tests/**), exclude (target/**), mode @both}
     )
 })

@@ -119,6 +119,20 @@ children (
                         kind @note
                         text "Rename the Cargo package, executable, supported library surface, CLI module, diagnostics, documentation, and Ronin-owned test/temp prefixes. Remove SAMUFLAGS lookup, parsing, diagnostics, and tests. Do not introduce a SAMUFLAGS compatibility alias; RONINFLAGS is not required by this scope. Keep Ninja-owned compatibility names unchanged."
                     }
+
+                    {
+                        at 2026-07-29T14:44:54.596071969Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T14:51:09.159828468Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Removing SAMUFLAGS intentionally diverges from the C source. The target-side samu.main-fn and samu.parseenvargs-fn rules are bumped to v1 and fully covered/tested; the four v0 source annotations remain stale as historical evidence rather than falsely claiming the C implementation satisfies the Ronin behavior. The product.no-samuflags requirement owns the shipped behavior."
+                    }
                 )
             }
 

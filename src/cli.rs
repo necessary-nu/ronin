@@ -1,8 +1,18 @@
-//! Command-line option handling translated from `samu.c`.
+//! Ronin command-line parsing and runtime orchestration.
 
 use crate::build::BuildOptions;
 use crate::parse::ParseOptions;
 use std::path::{Path, PathBuf};
+
+// [spec:samurai:req:product.ronin-identity]
+pub const PRODUCT_NAME: &str = "ronin";
+
+// [spec:samurai:req:compat.version-reporting]
+pub const NINJA_COMPAT_VERSION: &str = "1.9.0";
+
+// [spec:samurai:req:compat.ninja-owned-names]
+const DEFAULT_MANIFEST: &str = "build.ninja";
+const NINJA_STATUS_ENV: &str = "NINJA_STATUS";
 
 // [spec:samurai:def:samu.usage-fn]
 // [spec:samurai:sem:samu.usage-fn]
@@ -73,32 +83,6 @@ pub fn jobsflag(options: &mut BuildOptions, flag: &str) -> Result<(), String> {
     Ok(())
 }
 
-// [spec:samurai:def:samu.parseenvargs-fn]
-// [spec:samurai:sem:samu.parseenvargs-fn]
-pub fn parseenvargs(options: &mut BuildOptions, flags: Option<&str>) -> Result<(), String> {
-    let Some(flags) = flags else { return Ok(()) };
-    let mut arguments = flags.split(' ').filter(|argument| !argument.is_empty());
-    while let Some(argument) = arguments.next() {
-        match argument {
-            "-j" => jobsflag(
-                options,
-                arguments
-                    .next()
-                    .ok_or_else(|| "missing -j value".to_owned())?,
-            )?,
-            "-l" => loadflag(
-                options,
-                arguments
-                    .next()
-                    .ok_or_else(|| "missing -l value".to_owned())?,
-            )?,
-            "-v" => options.verbose = true,
-            _ => return Err("invalid option in SAMUFLAGS".into()),
-        }
-    }
-    Ok(())
-}
-
 // [spec:samurai:def:samu.progname-fn]
 // [spec:samurai:sem:samu.progname-fn]
 pub fn progname(argument: Option<&str>, default: &str) -> String {
@@ -108,16 +92,12 @@ pub fn progname(argument: Option<&str>, default: &str) -> String {
         .to_owned()
 }
 
-// [spec:samurai:def:samu.main-fn]
-// [spec:samurai:sem:samu.main-fn]
-pub fn main(
-    arguments: &[String],
-    env_flags: Option<&str>,
-) -> Result<(BuildOptions, ParseOptions, String), String> {
+// [spec:samurai:def:samu.main-fn+1]
+// [spec:samurai:sem:samu.main-fn+1]
+pub fn main(arguments: &[String]) -> Result<(BuildOptions, ParseOptions, String), String> {
     let mut build = BuildOptions::default();
     let mut parse = ParseOptions::default();
-    parseenvargs(&mut build, env_flags)?;
-    let mut manifest = "build.ninja".to_owned();
+    let mut manifest = DEFAULT_MANIFEST.to_owned();
     let mut index = 1;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -178,7 +158,10 @@ pub fn main(
             option => {
                 return Err(format!(
                     "{}: {option}",
-                    usage(&progname(arguments.first().map(String::as_str), "samu"))
+                    usage(&progname(
+                        arguments.first().map(String::as_str),
+                        PRODUCT_NAME
+                    ))
                 ))
             }
         }
@@ -222,16 +205,18 @@ enum RunAction {
     Execute(RunInvocation),
 }
 
-fn parse_run_arguments(arguments: &[String], env_flags: Option<&str>) -> Result<RunAction, String> {
+// [spec:samurai:def:samu.parseenvargs-fn+1]
+// [spec:samurai:sem:samu.parseenvargs-fn+1]
+// [spec:samurai:req:product.no-samuflags]
+fn parse_run_arguments(arguments: &[String]) -> Result<RunAction, String> {
     let mut invocation = RunInvocation {
         build_options: BuildOptions::default(),
         parse_options: ParseOptions::default(),
-        manifest: "build.ninja".to_owned(),
+        manifest: DEFAULT_MANIFEST.to_owned(),
         targets: Vec::new(),
         selected_tool: None,
         tool_arguments: Vec::new(),
     };
-    parseenvargs(&mut invocation.build_options, env_flags)?;
     let mut index = 1;
     while index < arguments.len() {
         match arguments[index].as_str() {
@@ -312,7 +297,10 @@ fn parse_run_arguments(arguments: &[String], env_flags: Option<&str>) -> Result<
             option if option.starts_with('-') => {
                 return Err(format!(
                     "{}: {option}",
-                    usage(&progname(arguments.first().map(String::as_str), "samu"))
+                    usage(&progname(
+                        arguments.first().map(String::as_str),
+                        PRODUCT_NAME
+                    ))
                 ));
             }
             target => invocation.targets.push(target.to_owned()),
@@ -330,7 +318,7 @@ fn normalize_runtime_options(options: &mut BuildOptions) {
             count => (count + 2) as usize,
         };
     }
-    if let Ok(status) = std::env::var("NINJA_STATUS") {
+    if let Ok(status) = std::env::var(NINJA_STATUS_ENV) {
         options.statusfmt = status;
     }
 }
@@ -423,9 +411,9 @@ fn run_selected_tool(
     }
 }
 
-pub fn run(arguments: &[String], env_flags: Option<&str>) -> Result<String, String> {
-    let RunAction::Execute(mut invocation) = parse_run_arguments(arguments, env_flags)? else {
-        return Ok("1.9.0".into());
+pub fn run(arguments: &[String]) -> Result<String, String> {
+    let RunAction::Execute(mut invocation) = parse_run_arguments(arguments)? else {
+        return Ok(NINJA_COMPAT_VERSION.into());
     };
     normalize_runtime_options(&mut invocation.build_options);
 
@@ -558,7 +546,7 @@ mod tests {
     #[test]
     fn rust_cli_builds_requested_target_with_logs() {
         let directory = std::env::temp_dir().join(format!(
-            "samurai-rust-cli-{}-{}",
+            "ronin-rust-cli-{}-{}",
             std::process::id(),
             NEXT_RUN.fetch_add(1, Ordering::Relaxed)
         ));
@@ -579,12 +567,12 @@ mod tests {
         )
         .unwrap();
         let arguments = vec![
-            "samu".into(),
+            "ronin".into(),
             "-f".into(),
             manifest.to_string_lossy().into_owned(),
             output.to_string_lossy().into_owned(),
         ];
-        let status = run(&arguments, None).unwrap();
+        let status = run(&arguments).unwrap();
         assert!(status.contains("cp "));
         assert_eq!(fs::read_to_string(&output).unwrap(), "cli");
         assert!(directory.join(".ninja_log").exists());
@@ -595,7 +583,7 @@ mod tests {
     #[test]
     fn rust_cli_rebuilds_and_reloads_manifest_before_targets() {
         let directory = std::env::temp_dir().join(format!(
-            "samurai-rust-cli-manifest-{}-{}",
+            "ronin-rust-cli-manifest-{}-{}",
             std::process::id(),
             NEXT_RUN.fetch_add(1, Ordering::Relaxed)
         ));
@@ -618,11 +606,11 @@ mod tests {
         fs::write(&template, render_manifest("new")).unwrap();
 
         let arguments = vec![
-            "samu".into(),
+            "ronin".into(),
             "-f".into(),
             manifest.to_string_lossy().into_owned(),
         ];
-        let status = run(&arguments, None).unwrap();
+        let status = run(&arguments).unwrap();
         assert!(status.contains("cp "));
         assert!(status.contains("printf new"));
         assert_eq!(fs::read_to_string(&output).unwrap(), "new");
@@ -636,7 +624,7 @@ mod tests {
     #[test]
     fn rust_cli_continues_when_manifest_restat_prunes_rebuild() {
         let directory = std::env::temp_dir().join(format!(
-            "samurai-rust-cli-manifest-restat-{}-{}",
+            "ronin-rust-cli-manifest-restat-{}-{}",
             std::process::id(),
             NEXT_RUN.fetch_add(1, Ordering::Relaxed)
         ));
@@ -659,11 +647,11 @@ mod tests {
         .unwrap();
 
         let arguments = vec![
-            "samu".into(),
+            "ronin".into(),
             "-f".into(),
             manifest.to_string_lossy().into_owned(),
         ];
-        let status = run(&arguments, None).unwrap();
+        let status = run(&arguments).unwrap();
         assert!(status.lines().any(|line| line == "true"));
         assert!(status.contains("printf built"));
         assert_eq!(fs::read_to_string(&output).unwrap(), "built");
@@ -673,7 +661,7 @@ mod tests {
     #[test]
     fn rust_cli_clean_rule_and_generator_options() {
         let directory = std::env::temp_dir().join(format!(
-            "samurai-rust-cli-clean-{}-{}",
+            "ronin-rust-cli-clean-{}-{}",
             std::process::id(),
             NEXT_RUN.fetch_add(1, Ordering::Relaxed)
         ));
@@ -693,7 +681,7 @@ mod tests {
         fs::write(&ordinary, "").unwrap();
         fs::write(&generated, "").unwrap();
         let base = vec![
-            "samu".into(),
+            "ronin".into(),
             "-f".into(),
             manifest.to_string_lossy().into_owned(),
             "-t".into(),
@@ -701,16 +689,16 @@ mod tests {
         ];
         let mut rule_arguments = base.clone();
         rule_arguments.extend(["-r".into(), "emit".into()]);
-        assert_eq!(run(&rule_arguments, None).unwrap(), "1");
+        assert_eq!(run(&rule_arguments).unwrap(), "1");
         assert!(!ordinary.exists() && generated.exists());
 
         fs::write(&ordinary, "").unwrap();
-        assert_eq!(run(&base, None).unwrap(), "1");
+        assert_eq!(run(&base).unwrap(), "1");
         assert!(!ordinary.exists() && generated.exists());
 
         let mut generator_arguments = base;
         generator_arguments.push("-g".into());
-        assert_eq!(run(&generator_arguments, None).unwrap(), "1");
+        assert_eq!(run(&generator_arguments).unwrap(), "1");
         assert!(!generated.exists());
         fs::remove_dir_all(directory).unwrap();
     }
@@ -718,7 +706,7 @@ mod tests {
     #[test]
     fn rust_cli_compdb_expands_response_files_without_rule_filter() {
         let directory = std::env::temp_dir().join(format!(
-            "samurai-rust-cli-compdb-{}-{}",
+            "ronin-rust-cli-compdb-{}-{}",
             std::process::id(),
             NEXT_RUN.fetch_add(1, Ordering::Relaxed)
         ));
@@ -736,14 +724,14 @@ mod tests {
         )
         .unwrap();
         let arguments = vec![
-            "samu".into(),
+            "ronin".into(),
             "-f".into(),
             manifest.to_string_lossy().into_owned(),
             "-t".into(),
             "compdb".into(),
             "-x".into(),
         ];
-        let database = run(&arguments, None).unwrap();
+        let database = run(&arguments).unwrap();
         assert!(database.contains("-DCLI"));
         assert!(!database.contains(&format!("@{}.rsp", output.display())));
         fs::remove_dir_all(directory).unwrap();

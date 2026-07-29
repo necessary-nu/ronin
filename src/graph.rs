@@ -615,7 +615,7 @@ mod tests {
 
     fn parse_graph(source: &str) -> Graph {
         let path = std::env::temp_dir().join(format!(
-            "samurai-graph-test-{}-{}.ninja",
+            "ronin-graph-test-{}-{}.ninja",
             std::process::id(),
             NEXT_GRAPH.fetch_add(1, Ordering::Relaxed)
         ));

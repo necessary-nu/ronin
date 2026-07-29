@@ -36,36 +36,34 @@
 > fatal. On other platforms it leaves scheduling unchanged and emits a warning
 > that the option is unsupported.
 
-> [spec:samurai:def:samu.main-fn]
+> [spec:samurai:def:samu.main-fn+1]
 > int main(int argc, char *argv[])
 
-> [spec:samurai:sem:samu.main-fn]
-> Derives the program name, applies `SAMUFLAGS`, and parses command-line
-> options for directory, manifest, limits, debug and warning switches,
-> verbosity, dry-run mode, version output, and a selected tool. Invalid or
-> incomplete options print usage and exit. It chooses a default job count from
-> the processor count (2 for at most one processor, 3 for two, otherwise CPUs
-> plus 2), obtains `NINJA_STATUS` or the default status format, and line-buffers
-> standard output. For each manifest attempt it reinitializes graph,
-> environment, and parser state, then parses the manifest. A selected tool runs
-> immediately with the remaining positional arguments. Otherwise it opens the
-> build and dependency logs, rebuilds a generated manifest when it is dirty,
-> retrying parsing up to 100 times after a real (non-dry-run) manifest rebuild
-> that dirties its output or prunes dependencies. It resets build state after
-> that special build. Finally it adds each requested target (failing for an
-> unknown target), or all declared default targets, performs the build, closes
-> both logs, and returns success.
+> [spec:samurai:sem:samu.main-fn+1]
+> Derives the Ronin program name and parses command-line options for directory,
+> manifest, limits, debug and warning switches, verbosity, dry-run mode,
+> version output, and a selected Ninja tool. It deliberately does not read
+> `SAMUFLAGS`. Invalid or incomplete options print usage and exit. It chooses a
+> default job count from the processor count (2 for at most one processor, 3
+> for two, otherwise CPUs plus 2), obtains `NINJA_STATUS` or the default status
+> format, and line-buffers standard output. For each manifest attempt it
+> reinitializes graph, environment, and parser state, then parses the manifest.
+> A selected tool runs immediately with the remaining positional arguments.
+> Otherwise it opens the build and dependency logs, rebuilds a generated
+> manifest when it is dirty, retrying parsing up to 100 times after a real
+> (non-dry-run) manifest rebuild that dirties its output or prunes
+> dependencies. It resets build state after that special build. Finally it adds
+> each requested target (failing for an unknown target), or all declared
+> default targets, performs the build, closes both logs, and returns success.
 
-> [spec:samurai:def:samu.parseenvargs-fn]
-> static void parseenvargs(char *env)
+> [spec:samurai:def:samu.parseenvargs-fn+1]
+> Ronin has no environment-option parsing helper; its CLI parser accepts only
+> the process argument vector.
 
-> [spec:samurai:sem:samu.parseenvargs-fn]
-> Does nothing for a null environment value. Otherwise duplicates it, splits
-> it only on ASCII space (without quote or escape processing), and builds a
-> temporary argument vector with an empty program slot. More than 62 supplied
-> tokens is fatal. It accepts only `-j` (using the job parser), `-v` (enable
-> verbosity), and `-l` (using the load parser); any other option is fatal.
-> Frees the duplicate after successful option processing.
+> [spec:samurai:sem:samu.parseenvargs-fn+1]
+> Ronin does not read or interpret `SAMUFLAGS` and exposes no replacement
+> environment-option parser. All supported CLI options come from the process
+> argument vector.
 
 > [spec:samurai:def:samu.progname-fn]
 > static const char * progname(const char *arg, const char *def)

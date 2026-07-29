@@ -658,7 +658,7 @@ mod ninja_manifest_tests {
 
     fn parse_source(source: &str) -> Result<(Graph, Parser, EnvState), String> {
         let path = std::env::temp_dir().join(format!(
-            "samurai-manifest-parser-{}-{}.ninja",
+            "ronin-manifest-parser-{}-{}.ninja",
             std::process::id(),
             NEXT_MANIFEST.fetch_add(1, Ordering::Relaxed)
         ));
@@ -693,7 +693,7 @@ mod ninja_manifest_tests {
 
     fn temporary_directory(label: &str) -> std::path::PathBuf {
         let path = std::env::temp_dir().join(format!(
-            "samurai-manifest-{label}-{}-{}",
+            "ronin-manifest-{label}-{}-{}",
             std::process::id(),
             NEXT_MANIFEST.fetch_add(1, Ordering::Relaxed)
         ));
@@ -1031,7 +1031,7 @@ mod ninja_manifest_tests {
     #[test]
     fn ninja_manifest_parser_duplicate_output_warning_mode() {
         let path = std::env::temp_dir().join(format!(
-            "samurai-manifest-duplicate-warning-{}-{}.ninja",
+            "ronin-manifest-duplicate-warning-{}-{}.ninja",
             std::process::id(),
             NEXT_MANIFEST.fetch_add(1, Ordering::Relaxed)
         ));

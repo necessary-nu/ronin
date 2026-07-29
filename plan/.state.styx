@@ -1,7 +1,42 @@
 schema_version 7
 
+last_sync_at 2026-07-29T14:51:56.524290262Z
+
+rule_versions (
+    {id compat.byte-inputs, version 0}
+    {id compat.cli-and-tools, version 0}
+    {id compat.command-runtime, version 0}
+    {id compat.graph-semantics, version 0}
+    {id compat.manifest-semantics, version 0}
+    {id compat.ninja-owned-names, version 0}
+    {id compat.persistent-state, version 0}
+    {id compat.process-integration, version 0}
+    {id compat.scheduling, version 0}
+    {id compat.upstream-conformance, version 0}
+    {id compat.version-reporting, version 0}
+    {id performance.no-unexplained-regression, version 0}
+    {id performance.reproducible-baseline, version 0}
+    {id product.no-samuflags, version 0}
+    {id product.ronin-identity, version 0}
+    {id release.compatibility-gate, version 0}
+)
+
 assertions (
     {id ninja-upstream-tests, kind @complete, author "brendan@bbqsrc.net", at 2026-07-27T12:40:39.73628072Z}
     {id port-scan-nested-modules, kind @complete, author "brendan@bbqsrc.net", at 2026-07-27T14:29:30.178372466Z}
     {id ronin-compatibility-contract, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T14:43:16.619792904Z}
+)
+
+impl_evidence (
+    {id ronin-product-identity, covered_rules (
+        compat.ninja-owned-names
+        compat.version-reporting
+        product.no-samuflags
+        product.ronin-identity
+    ), covered_claims (
+        {impl_name target-impl, rule compat.ninja-owned-names}
+        {impl_name target-impl, rule compat.version-reporting}
+        {impl_name target-impl, rule product.no-samuflags}
+        {impl_name target-impl, rule product.ronin-identity}
+    )}
 )

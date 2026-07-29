@@ -202,7 +202,7 @@ mod tests {
             for _ in 0..1024 {
                 let sequence = NEXT_DISK_TEST.fetch_add(1, Ordering::Relaxed);
                 let path = std::env::temp_dir().join(format!(
-                    "samurai-ninja-disk-{}-{name}-{sequence}",
+                    "ronin-ninja-disk-{}-{name}-{sequence}",
                     std::process::id()
                 ));
                 match fs::create_dir(&path) {

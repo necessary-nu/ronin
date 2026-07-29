@@ -234,7 +234,7 @@ mod tests {
             for _ in 0..1024 {
                 let sequence = NEXT_LOG_TEST.fetch_add(1, Ordering::Relaxed);
                 let directory = std::env::temp_dir().join(format!(
-                    "samurai-ninja-build-log-{}-{name}-{sequence}",
+                    "ronin-ninja-build-log-{}-{name}-{sequence}",
                     std::process::id()
                 ));
                 match fs::create_dir(&directory) {

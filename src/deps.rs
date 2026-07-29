@@ -798,7 +798,7 @@ mod ninja_depfile_tests {
         for _ in 0..1024 {
             let sequence = NEXT_TEST_LOG.fetch_add(1, Ordering::Relaxed);
             let directory = std::env::temp_dir().join(format!(
-                "samurai-ninja-deps-{}-{name}-{sequence}",
+                "ronin-ninja-deps-{}-{name}-{sequence}",
                 std::process::id()
             ));
             match fs::create_dir(&directory) {

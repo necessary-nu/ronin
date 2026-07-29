@@ -1,13 +1,15 @@
 fn main() {
     let arguments = std::env::args().collect::<Vec<_>>();
-    match samurai::samu::run(&arguments, std::env::var("SAMUFLAGS").ok().as_deref()) {
+    // [spec:samurai:req:product.ronin-identity]
+    // [spec:samurai:req:product.no-samuflags]
+    match ronin::cli::run(&arguments) {
         Ok(output) => {
             if !output.is_empty() {
                 println!("{output}");
             }
         }
         Err(error) => {
-            eprintln!("samu: {error}");
+            eprintln!("ronin: {error}");
             std::process::exit(1);
         }
     }

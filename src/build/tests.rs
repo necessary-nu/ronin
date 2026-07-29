@@ -7,7 +7,7 @@ static NEXT_PLAN: AtomicUsize = AtomicUsize::new(0);
 
 fn plan_graph(source: &str) -> Graph {
     let path = std::env::temp_dir().join(format!(
-        "samurai-plan-test-{}-{}.ninja",
+        "ronin-plan-test-{}-{}.ninja",
         std::process::id(),
         NEXT_PLAN.fetch_add(1, Ordering::Relaxed)
     ));
@@ -45,7 +45,7 @@ fn output_path(edge: &EdgeRef) -> String {
 
 fn build_fixture(label: &str, manifest: &str) -> (Graph, std::path::PathBuf) {
     let directory = std::env::temp_dir().join(format!(
-        "samurai-build-{label}-{}-{}",
+        "ronin-build-{label}-{}-{}",
         std::process::id(),
         NEXT_PLAN.fetch_add(1, Ordering::Relaxed)
     ));

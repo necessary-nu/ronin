@@ -1,6 +1,6 @@
 //! Wave-3 behavior tests for the literal Rust port.
 
-use crate::{build, deps, env, graph, htab, log, os, parse, samu, scan, tool, tree, util};
+use crate::{build, cli, deps, env, graph, htab, log, os, parse, scan, tool, tree, util};
 use std::fs;
 
 // [spec:samurai:sem:util.bufadd-fn/test]
@@ -184,7 +184,7 @@ fn environment_graph_and_log_behaviour() {
 // [spec:samurai:sem:parse.parserule-fn/test]
 #[test]
 fn scanner_and_parser_behaviour() {
-    let path = std::env::temp_dir().join(format!("samurai-wave3-{}.ninja", std::process::id()));
+    let path = std::env::temp_dir().join(format!("ronin-wave3-{}.ninja", std::process::id()));
     fs::write(
         &path,
         "rule touch\n  command = touch $out\nbuild result: touch input\ndefault result\n",
@@ -216,8 +216,7 @@ fn scanner_and_parser_behaviour() {
 // [spec:samurai:sem:scan.scanclose-fn/test]
 #[test]
 fn ninja_lexer_read_ident_and_keywords() {
-    let path =
-        std::env::temp_dir().join(format!("samurai-ninja-lexer-{}.ninja", std::process::id()));
+    let path = std::env::temp_dir().join(format!("ronin-ninja-lexer-{}.ninja", std::process::id()));
     fs::write(&path, "rule cat\nbuild output: cat input\n").unwrap();
     let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
     assert_eq!(
@@ -255,7 +254,7 @@ fn serialized_eval(value: &util::EvalString) -> String {
 #[test]
 fn ninja_lexer_variable_values_and_escapes() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-lexer-values-{}.ninja",
+        "ronin-ninja-lexer-values-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -284,7 +283,7 @@ fn ninja_lexer_variable_values_and_escapes() {
 #[test]
 fn ninja_lexer_errors_tabs_and_versioned_newlines() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-lexer-errors-{}.ninja",
+        "ronin-ninja-lexer-errors-{}.ninja",
         std::process::id()
     ));
     fs::write(&path, "foo$\nbad $").unwrap();
@@ -320,7 +319,7 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
 #[test]
 fn ninja_lexer_dotted_and_braced_variables() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-lexer-curlies-{}.ninja",
+        "ronin-ninja-lexer-curlies-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -345,10 +344,8 @@ fn ninja_lexer_dotted_and_braced_variables() {
 // [spec:samurai:sem:graph.nodeget-fn/test]
 #[test]
 fn ninja_manifest_parser_rules() {
-    let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-manifest-{}.ninja",
-        std::process::id()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("ronin-ninja-manifest-{}.ninja", std::process::id()));
     fs::write(
         &path,
         "rule cat\n  command = cat $in > $out\n\nrule date\n  command = date > $out\n\nbuild result: cat in_1.cc in-2.O\n",
@@ -375,7 +372,7 @@ fn ninja_manifest_parser_rules() {
 #[test]
 fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-manifest-variables-{}.ninja",
+        "ronin-ninja-manifest-variables-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -443,7 +440,7 @@ fn parse_manifest(path: &std::path::Path) -> (graph::Graph, parse::Parser, env::
 #[test]
 fn ninja_manifest_parser_rule_attributes_and_special_variables() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-manifest-attributes-{}.ninja",
+        "ronin-ninja-manifest-attributes-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -484,7 +481,7 @@ fn ninja_manifest_parser_rule_attributes_and_special_variables() {
 #[test]
 fn ninja_manifest_parser_variable_scope_and_continuations() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-manifest-scope-{}.ninja",
+        "ronin-ninja-manifest-scope-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -551,7 +548,7 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
 #[test]
 fn ninja_manifest_parser_paths_and_defaults() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-manifest-paths-{}.ninja",
+        "ronin-ninja-manifest-paths-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -584,7 +581,7 @@ fn ninja_manifest_parser_paths_and_defaults() {
 #[test]
 fn ninja_manifest_parser_dollar_escaped_paths() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-manifest-dollars-{}.ninja",
+        "ronin-ninja-manifest-dollars-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -619,7 +616,7 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
 #[test]
 fn ninja_manifest_parser_includes_and_errors() {
     let directory = std::env::temp_dir().join(format!(
-        "samurai-ninja-manifest-include-{}",
+        "ronin-ninja-manifest-include-{}",
         std::process::id()
     ));
     fs::create_dir_all(&directory).unwrap();
@@ -674,7 +671,7 @@ fn ninja_manifest_parser_includes_and_errors() {
 // [spec:samurai:sem:deps.depsparse-fn/test]
 #[test]
 fn ninja_depfile_parser_basic_and_continuation() {
-    let path = std::env::temp_dir().join(format!("samurai-ninja-depfile-{}.d", std::process::id()));
+    let path = std::env::temp_dir().join(format!("ronin-ninja-depfile-{}.d", std::process::id()));
     fs::write(
         &path,
         "build/ninja.o: ninja.cc ninja.h \\\n  eval_env.h manifest_parser.h\n",
@@ -690,10 +687,8 @@ fn ninja_depfile_parser_basic_and_continuation() {
 // Cases adapted from Ninja's src/depfile_parser_test.cc.
 #[test]
 fn ninja_depfile_parser_accepts_crlf_continuations() {
-    let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-depfile-crlf-{}.d",
-        std::process::id()
-    ));
+    let path =
+        std::env::temp_dir().join(format!("ronin-ninja-depfile-crlf-{}.d", std::process::id()));
     fs::write(&path, "foo.o: \\\r\n  bar.h baz.h\r\n").unwrap();
     let mut graph = graph::graphinit();
     let deps = deps::depsparse(&mut graph, &path, false).unwrap();
@@ -706,8 +701,7 @@ fn ninja_depfile_parser_accepts_crlf_continuations() {
 // Adapted from Ninja's CleanTest.CleanAll.
 #[test]
 fn ninja_clean_all_removes_generated_outputs() {
-    let directory =
-        std::env::temp_dir().join(format!("samurai-ninja-clean-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("ronin-ninja-clean-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let paths = ["in1", "out1", "in2", "out2"].map(|name| directory.join(name));
     let manifest = directory.join("build.ninja");
@@ -752,7 +746,7 @@ fn ninja_clean_all_removes_generated_outputs() {
 #[test]
 fn ninja_clean_target_multi_output_and_rule() {
     let directory =
-        std::env::temp_dir().join(format!("samurai-ninja-clean-target-{}", std::process::id()));
+        std::env::temp_dir().join(format!("ronin-ninja-clean-target-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let in1 = directory.join("in1");
     let out1 = directory.join("out1");
@@ -799,7 +793,7 @@ fn ninja_clean_target_multi_output_and_rule() {
 #[test]
 fn ninja_clean_auxiliary_files_generators_and_phony_edges() {
     let directory =
-        std::env::temp_dir().join(format!("samurai-ninja-clean-aux-{}", std::process::id()));
+        std::env::temp_dir().join(format!("ronin-ninja-clean-aux-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let output = directory.join("output");
     let depfile = directory.join("output.d");
@@ -844,7 +838,7 @@ fn ninja_clean_auxiliary_files_generators_and_phony_edges() {
 #[test]
 fn ninja_build_plan_orders_generated_dependencies() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-build-plan-{}.ninja",
+        "ronin-ninja-build-plan-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -873,7 +867,7 @@ fn ninja_build_plan_orders_generated_dependencies() {
 #[test]
 fn ninja_build_plan_deduplicates_shared_generators() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-build-shared-{}.ninja",
+        "ronin-ninja-build-shared-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -920,7 +914,7 @@ fn ninja_build_plan_deduplicates_shared_generators() {
 #[test]
 fn ninja_build_plan_honors_generator_dirty_semantics() {
     let path = std::env::temp_dir().join(format!(
-        "samurai-ninja-build-generator-{}.ninja",
+        "ronin-ninja-build-generator-{}.ninja",
         std::process::id()
     ));
     fs::write(
@@ -959,10 +953,8 @@ fn ninja_build_plan_honors_generator_dirty_semantics() {
 // Adapted from Ninja's BuildLogTest.WriteRead.
 #[test]
 fn ninja_build_log_write_and_read() {
-    let directory = std::env::temp_dir().join(format!(
-        "samurai-ninja-log-roundtrip-{}",
-        std::process::id()
-    ));
+    let directory =
+        std::env::temp_dir().join(format!("ronin-ninja-log-roundtrip-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let manifest = directory.join("build.ninja");
     fs::write(
@@ -1006,7 +998,7 @@ fn ninja_build_log_write_and_read() {
 #[test]
 fn ninja_build_log_loads_duplicate_and_spaced_records() {
     let directory =
-        std::env::temp_dir().join(format!("samurai-ninja-log-load-{}", std::process::id()));
+        std::env::temp_dir().join(format!("ronin-ninja-log-load-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let manifest = directory.join("build.ninja");
     fs::write(
@@ -1050,7 +1042,7 @@ fn ninja_build_log_loads_duplicate_and_spaced_records() {
 #[test]
 fn ninja_build_log_resets_obsolete_headers() {
     let directory =
-        std::env::temp_dir().join(format!("samurai-ninja-log-old-{}", std::process::id()));
+        std::env::temp_dir().join(format!("ronin-ninja-log-old-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join(".ninja_log"),
@@ -1094,8 +1086,8 @@ fn ninja_build_log_resets_obsolete_headers() {
 // [spec:samurai:sem:samu.getbuilddir-fn/test]
 // [spec:samurai:sem:samu.jobsflag-fn/test]
 // [spec:samurai:sem:samu.loadflag-fn/test]
-// [spec:samurai:sem:samu.main-fn/test]
-// [spec:samurai:sem:samu.parseenvargs-fn/test]
+// [spec:samurai:sem:samu.main-fn+1/test]
+// [spec:samurai:sem:samu.parseenvargs-fn+1/test]
 // [spec:samurai:sem:samu.progname-fn/test]
 // [spec:samurai:sem:samu.usage-fn/test]
 // [spec:samurai:sem:samu.warnflag-fn/test]
@@ -1117,14 +1109,14 @@ fn ninja_build_log_resets_obsolete_headers() {
 // [spec:samurai:sem:tool.toolget-fn/test]
 #[test]
 fn scheduler_cli_dependency_and_tool_behaviour() {
-    let directory = std::env::temp_dir().join(format!("samurai-wave3-deps-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("ronin-wave3-deps-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     deps::depsclose(deps::depsinit(Some(&directory)).unwrap()).unwrap();
     let mut options = build::BuildOptions::default();
     options.dryrun = true;
     assert!(build::build(&mut build::BuildState::new(options)).is_empty());
-    let args = vec!["samu".into(), "-n".into()];
-    assert!(samu::main(&args, Some("-j 1 -v")).is_ok());
+    let args = vec!["ronin".into(), "-n".into()];
+    assert!(cli::main(&args).is_ok());
     assert!(matches!(tool::toolget("graph"), Ok(tool::Tool::Graph)));
     let _ = fs::remove_dir_all(directory);
 }
@@ -1134,7 +1126,7 @@ fn scheduler_cli_dependency_and_tool_behaviour() {
 // [spec:samurai:sem:tool.cleanpath-fn/test]
 #[test]
 fn ninja_build_log_signature_and_clean_path() {
-    let directory = std::env::temp_dir().join(format!("samurai-ninja-log-{}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!("ronin-ninja-log-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     let graph = graph::graphinit();
     log::logclose(log::loginit(Some(&directory), &graph).unwrap()).unwrap();

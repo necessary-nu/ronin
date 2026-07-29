@@ -382,7 +382,7 @@ mod tests {
         fn temp_path(name: &str) -> std::path::PathBuf {
             let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
             std::env::temp_dir().join(format!(
-                "samurai-jobserver-{}-{}-{sequence}",
+                "ronin-jobserver-{}-{}-{sequence}",
                 std::process::id(),
                 name
             ))

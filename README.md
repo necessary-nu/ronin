@@ -1,70 +1,35 @@
-# samurai
+# Ronin
 
-[![builds.sr.ht status](https://builds.sr.ht/~mcf/samurai.svg)](https://builds.sr.ht/~mcf/samurai)
-[![GitHub build status](https://github.com/michaelforney/samurai/workflows/build/badge.svg)](https://github.com/michaelforney/samurai/actions)
+Ronin is a fast Ninja-compatible build tool implemented in Rust.
 
-samurai is a ninja-compatible build tool written in C99 with a focus on
-simplicity, speed, and portability.
+The current compatibility baseline is the Ninja build language through version
+1.9. Ronin preserves Ninja-owned interfaces such as `build.ninja`,
+`NINJA_STATUS`, `.ninja_log`, `.ninja_deps`, depfiles, dyndeps, pools, and
+Ninja tool-mode names. `SAMUFLAGS` is intentionally unsupported; pass options
+on the command line.
 
-## Status
+## Build and test
 
-samurai implements the ninja build language through version 1.9.0 except
-for MSVC dependency handling (`deps = msvc`). It uses the same format
-for `.ninja_log` and `.ninja_deps` as ninja, currently version 5 and 4
-respectively.
+```sh
+cargo build --release
+cargo test --all-targets
+```
 
-It is feature-complete and supports most of the same options as ninja.
+The executable is `target/release/ronin`:
 
-## Requirements
+```sh
+ronin --version
+ronin -C build
+ronin -t targets
+```
 
-samurai requires various POSIX.1-2008 interfaces.
+The original C samurai sources, Makefile, and manual page remain in the
+repository as the source-port corpus. Cargo builds and tests Ronin; the legacy
+C build artifacts are not part of the Ronin product interface.
 
-Scheduling jobs based on load average requires the non-standard
-`getloadavg` function. This feature can be enabled by defining
-`HAVE_GETLOADAVG` in your `CFLAGS`, along with any other necessary
-definitions for your platform.
+## Compatibility work
 
-Spawning subprocesses is done using `posix_spawn`. If this interface
-isn't available on your operating system, define `NO_POSIX_SPAWN`
-in your `CFLAGS` to use `fork` and `exec` instead.
-
-samurai uses `clock_gettime`, which requires `-l rt` when linking
-on some operating systems to ensure that this interface is made
-available. While it is a POSIX requirement to support this flag
-(even if it's a no-op), some operating systems don't. If you get
-an error about a missing `rt` library, you can build without it
-by clearing `LDLIBS`.
-
-## Building
-
-samurai can be built with `make`. `CFLAGS` and `LDLIBS` can be set
-in the environment, or straight on the command-line.
-
-## Differences from ninja
-
-samurai tries to match ninja behavior as much as possible, but there
-are several cases where it is slightly different:
-
-- samurai uses the [variable lookup order] documented in the ninja manual,
-  while ninja has a quirk ([ninja-build/ninja#1516]) that if the build
-  edge has no variable bindings, the variable is looked up in file scope
-  *before* the rule-level variables.
-- samurai schedules jobs using a stack, so the last scheduled job is
-  the first to execute, while ninja schedules jobs based on the pointer
-  value of the edge structure (they are stored in a `std::set<Edge*>`),
-  so the first to execute depends on the address returned by `malloc`.
-  This may result in build failures due to insufficiently specified
-  dependencies in the project's build system.
-- samurai does not post-process the job output in any way, so if it
-  includes escape sequences they will be preserved, while ninja strips
-  escape sequences if standard output is not a terminal. Some build
-  systems, like meson, force color output from gcc by default using
-  `-fdiagnostics-color=always`, so if you plan to save the output to a
-  log, you should pass `-Db_colorout=auto` to meson.
-- samurai follows the [POSIX Utility Syntax Guidelines], in particular
-  guideline 9, so it requires that any command-line options precede
-  the operands. It does not do GNU-style argument permutation.
-
-[ninja-build/ninja#1516]: https://github.com/ninja-build/ninja/issues/1516
-[variable lookup order]: https://ninja-build.org/manual.html#ref_scope
-[POSIX Utility Syntax Guidelines]: https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap12.html#tag_12_02
+Ronin's compatibility contract is in
+[`docs/spec/ronin/compatibility.md`](docs/spec/ronin/compatibility.md). The
+upstream Ninja test suite is the behavioral oracle for ongoing idiomatization
+and performance work.

@@ -738,7 +738,7 @@ mod tests {
 
     fn load_fixture(manifest: &str, dyndep: Option<&str>) -> (Graph, NodeRef, std::path::PathBuf) {
         let directory = std::env::temp_dir().join(format!(
-            "samurai-dyndep-load-{}-{}",
+            "ronin-dyndep-load-{}-{}",
             std::process::id(),
             NEXT_LOAD_TEST.fetch_add(1, Ordering::Relaxed)
         ));

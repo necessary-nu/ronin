@@ -1,7 +1,9 @@
 [package]
-name = "samurai"
+name = "ronin"
 version = "0.1.0"
 edition = "2021"
+description = "A fast Ninja-compatible build tool implemented in Rust"
+license-file = "LICENSE"
 
 [lib]
 path = "src/lib.rs"
