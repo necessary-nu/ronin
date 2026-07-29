@@ -67,15 +67,15 @@ fn formatstatus(state: &BuildState) -> String {
     format_progress_status(state, &state.options.statusfmt)
 }
 
-fn printstatus(state: &BuildState, command: &SamuraiString) -> String {
+fn printstatus(state: &BuildState, command: &BString) -> String {
     format!(
         "{}{}",
         formatstatus(state),
-        String::from_utf8_lossy(&command.s[..command.n])
+        String::from_utf8_lossy(command.as_bytes())
     )
 }
 
-fn jobstart(state: &mut BuildState, edge: EdgeRef, command: SamuraiString) -> Job {
+fn jobstart(state: &mut BuildState, edge: EdgeRef, command: BString) -> Job {
     state.started += 1;
     Job {
         command,
@@ -163,7 +163,7 @@ fn shouldprune(edge: &EdgeRef, node: &NodeRef, old_mtime: i64) -> bool {
 }
 
 fn edgedone(state: &mut BuildState, edge: &EdgeRef) {
-    let restat = crate::env::edgevar(edge, "restat", false).is_some_and(|value| value.n != 0);
+    let restat = crate::env::edgevar(edge, "restat", false).is_some_and(|value| !value.is_empty());
     for output in &edge.borrow().out {
         let old = output.borrow().mtime;
         let _ = crate::graph::nodestat(output);
@@ -172,15 +172,17 @@ fn edgedone(state: &mut BuildState, edge: &EdgeRef) {
         nodedone(state, output, restat && shouldprune(edge, output, old));
     }
     if let Some(rspfile) = crate::env::edgevar(edge, "rspfile", false) {
-        if rspfile.n != 0 && !state.options.keeprsp {
-            let path = String::from_utf8_lossy(&rspfile.s[..rspfile.n]);
-            let _ = fs::remove_file(path.as_ref());
+        if !rspfile.is_empty() && !state.options.keeprsp {
+            let _ = fs::remove_file(rspfile.to_path().expect("byte paths are valid on Unix"));
         }
     }
-    let command = crate::env::edgevar(edge, "command", true)
-        .unwrap_or_else(|| SamuraiString { n: 0, s: vec![0] });
+    let command = crate::env::edgevar(edge, "command", true).unwrap_or_default();
     let rspfile_content = crate::env::edgevar(edge, "rspfile_content", false);
-    edgehash(edge, &command, rspfile_content.as_ref());
+    edgehash(
+        edge,
+        command.as_bstr(),
+        rspfile_content.as_ref().map(|content| content.as_bstr()),
+    );
     let hash = edge.borrow().hash;
     for output in &edge.borrow().out {
         output.borrow_mut().hash = hash;
@@ -221,17 +223,19 @@ pub fn build(state: &mut BuildState) -> Vec<String> {
             std::thread::yield_now();
         }
         let edge = state.work.remove(0);
-        let command = crate::env::edgevar(&edge, "command", true)
-            .unwrap_or_else(|| SamuraiString { n: 0, s: vec![0] });
+        let command = crate::env::edgevar(&edge, "command", true).unwrap_or_default();
         status.push(printstatus(state, &command));
         let mut job = jobstart(state, edge, command);
         if state.options.dryrun {
             jobwork(&mut job, &[]);
         } else {
-            let command = String::from_utf8_lossy(&job.command.s[..job.command.n]);
             match Command::new("/bin/sh")
                 .arg("-c")
-                .arg(command.as_ref())
+                .arg(
+                    job.command
+                        .to_os_str()
+                        .expect("byte strings are valid on Unix"),
+                )
                 .stdin(Stdio::null())
                 .output()
             {

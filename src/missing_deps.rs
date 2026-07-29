@@ -2,6 +2,7 @@
 
 use crate::env::edgevar;
 use crate::graph::{EdgeRef, Graph, NodeRef};
+use crate::util::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
@@ -26,7 +27,7 @@ pub struct MissingDependencyScanner {
 
 fn node_key(node: &NodeRef) -> Vec<u8> {
     let node = node.borrow();
-    node.path.s[..node.path.n].to_vec()
+    node.path.as_bytes().to_vec()
 }
 
 fn edge_identity(edge: &EdgeRef) -> usize {
@@ -268,15 +269,7 @@ mod tests {
 
     fn deps_rule(name: &str) -> Rc<Rule> {
         let rule = mkrule(name.into());
-        ruleaddvar(
-            &rule,
-            "deps".into(),
-            EvalString {
-                var: None,
-                string: Some(xasprintf(format_args!("gcc"))),
-                next: None,
-            },
-        );
+        ruleaddvar(&rule, "deps".into(), EvalString::literal("gcc"));
         rule
     }
 

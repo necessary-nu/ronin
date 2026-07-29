@@ -3,7 +3,7 @@
 use crate::env::{Environment, Pool, Rule};
 use crate::htab::rapidhashv1;
 use crate::os::{osmtime, MTIME_MISSING};
-use crate::util::SamuraiString;
+use crate::util::{BStr, BString, ByteSlice};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
@@ -25,8 +25,8 @@ pub type EdgeRef = Rc<RefCell<Edge>>;
 
 // [spec:samurai:def:graph.node]
 pub struct Node {
-    pub path: SamuraiString,
-    pub shellpath: Option<SamuraiString>,
+    pub path: BString,
+    pub shellpath: Option<BString>,
     pub mtime: i64,
     pub logmtime: i64,
     pub gen: Option<Weak<RefCell<Edge>>>,
@@ -45,7 +45,7 @@ pub struct Edge {
     pub rule: Option<Rc<Rule>>,
     pub pool: Option<Rc<RefCell<Pool>>>,
     pub env: Rc<Environment>,
-    pub bindings: BTreeMap<String, SamuraiString>,
+    pub bindings: BTreeMap<String, BString>,
     pub out: Vec<NodeRef>,
     pub input: Vec<NodeRef>,
     pub validation: Vec<NodeRef>,
@@ -90,8 +90,8 @@ pub fn graphinit() -> Graph {
 
 // [spec:samurai:def:graph.mknode-fn]
 // [spec:samurai:sem:graph.mknode-fn]
-pub fn mknode(graph: &mut Graph, path: SamuraiString) -> NodeRef {
-    let key = path.s[..path.n].to_vec();
+pub fn mknode(graph: &mut Graph, path: BString) -> NodeRef {
+    let key = path.as_bytes().to_vec();
     if let Some(node) = graph.nodes.get(&key) {
         return node.clone();
     }
@@ -121,12 +121,10 @@ pub fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeRef> {
 // [spec:samurai:def:graph.nodestat-fn]
 // [spec:samurai:sem:graph.nodestat-fn]
 pub fn nodestat(node: &NodeRef) -> std::io::Result<()> {
-    let bytes = {
+    let mtime = {
         let node = node.borrow();
-        node.path.s[..node.path.n].to_vec()
+        osmtime(node.path.to_path().expect("byte paths are valid on Unix"))?
     };
-    let path = String::from_utf8_lossy(&bytes).into_owned();
-    let mtime = osmtime(Path::new(&path))?;
     node.borrow_mut().mtime = mtime;
     Ok(())
 }
@@ -135,12 +133,11 @@ pub fn nodestat_with<F>(node: &NodeRef, stat: &mut F) -> io::Result<()>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    let bytes = {
+    let mtime = {
         let node = node.borrow();
-        node.path.s[..node.path.n].to_vec()
+        stat(node.path.to_path().expect("byte paths are valid on Unix"))?
     };
-    let path = String::from_utf8_lossy(&bytes).into_owned();
-    node.borrow_mut().mtime = stat(Path::new(&path))?;
+    node.borrow_mut().mtime = mtime;
     Ok(())
 }
 
@@ -307,7 +304,7 @@ where
 
 // [spec:samurai:def:graph.nodepath-fn]
 // [spec:samurai:sem:graph.nodepath-fn]
-pub fn nodepath(node: &NodeRef, escape: bool) -> SamuraiString {
+pub fn nodepath(node: &NodeRef, escape: bool) -> BString {
     let mut node = node.borrow_mut();
     if !escape {
         return node.path.clone();
@@ -315,7 +312,7 @@ pub fn nodepath(node: &NodeRef, escape: bool) -> SamuraiString {
     if let Some(path) = &node.shellpath {
         return path.clone();
     }
-    let source = &node.path.s[..node.path.n];
+    let source = node.path.as_bytes();
     let quote = source
         .iter()
         .any(|byte| !byte.is_ascii_alphanumeric() && !b"_+-./".contains(byte));
@@ -332,9 +329,7 @@ pub fn nodepath(node: &NodeRef, escape: bool) -> SamuraiString {
     } else {
         bytes.extend_from_slice(source);
     }
-    let n = bytes.len();
-    bytes.push(0);
-    let escaped = SamuraiString { n, s: bytes };
+    let escaped = BString::from(bytes);
     node.shellpath = Some(escaped.clone());
     escaped
 }
@@ -379,19 +374,19 @@ pub fn mkedge(graph: &mut Graph, parent: Rc<Environment>) -> EdgeRef {
 
 // [spec:samurai:def:graph.edgehash-fn]
 // [spec:samurai:sem:graph.edgehash-fn]
-pub fn edgehash(edge: &EdgeRef, command: &SamuraiString, rspfile_content: Option<&SamuraiString>) {
+pub fn edgehash(edge: &EdgeRef, command: &BStr, rspfile_content: Option<&BStr>) {
     let mut edge = edge.borrow_mut();
     if edge.flags & FLAG_HASH != 0 {
         return;
     }
     edge.flags |= FLAG_HASH;
-    let hash = if let Some(rsp) = rspfile_content.filter(|rsp| rsp.n != 0) {
-        let mut bytes = command.s[..command.n].to_vec();
+    let hash = if let Some(rsp) = rspfile_content.filter(|rsp| !rsp.is_empty()) {
+        let mut bytes = command.as_bytes().to_vec();
         bytes.extend_from_slice(b";rspfile=");
-        bytes.extend_from_slice(&rsp.s[..rsp.n]);
+        bytes.extend_from_slice(rsp.as_bytes());
         rapidhashv1(&bytes)
     } else {
-        rapidhashv1(&command.s[..command.n])
+        rapidhashv1(command.as_bytes())
     };
     edge.hash = hash;
 }
@@ -483,7 +478,7 @@ impl InputsCollector {
             .iter()
             .map(|node| {
                 let path = nodepath(node, shell_escape);
-                String::from_utf8_lossy(&path.s[..path.n]).into_owned()
+                String::from_utf8_lossy(path.as_bytes()).into_owned()
             })
             .collect()
     }
@@ -578,11 +573,11 @@ pub fn verify_dag(node: &NodeRef) -> Result<(), String> {
                 .iter()
                 .map(|node| {
                     let node = node.borrow();
-                    String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned()
+                    String::from_utf8_lossy(node.path.as_bytes()).into_owned()
                 })
                 .collect::<Vec<_>>();
             let node = node.borrow();
-            paths.push(String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned());
+            paths.push(String::from_utf8_lossy(node.path.as_bytes()).into_owned());
             return Err(format!("dependency cycle: {}", paths.join(" -> ")));
         }
         if finished.contains(&identity) {
@@ -645,7 +640,7 @@ mod tests {
         let first = mknode(&mut graph, xasprintf(format_args!("a b")));
         let second = mknode(&mut graph, xasprintf(format_args!("a b")));
         assert!(Rc::ptr_eq(&first, &second));
-        assert_eq!(&nodepath(&first, true).s[..5], b"'a b'");
+        assert_eq!(nodepath(&first, true).as_bytes(), b"'a b'");
     }
 
     #[test]
@@ -657,7 +652,7 @@ mod tests {
         );
         let path = nodepath(&node, true);
         assert_eq!(
-            std::str::from_utf8(&path.s[..path.n]).unwrap(),
+            std::str::from_utf8(path.as_bytes()).unwrap(),
             "'foo bar\"/'\\''$@d!st!c'\\''/path'\\'''"
         );
     }
@@ -763,22 +758,22 @@ mod tests {
             value: &str,
             next: Option<Box<crate::util::EvalString>>,
         ) -> crate::util::EvalString {
-            crate::util::EvalString {
-                var: None,
-                string: Some(xasprintf(format_args!("{value}"))),
-                next,
+            let mut result = crate::util::EvalString::literal(value);
+            if let Some(next) = next {
+                result.parts.extend(next.parts);
             }
+            result
         }
 
         fn variable(
             name: &str,
             next: Option<Box<crate::util::EvalString>>,
         ) -> crate::util::EvalString {
-            crate::util::EvalString {
-                var: Some(name.as_bytes().to_vec()),
-                string: None,
-                next,
+            let mut result = crate::util::EvalString::variable(name);
+            if let Some(next) = next {
+                result.parts.extend(next.parts);
             }
+            result
         }
 
         let state = crate::env::envinit();
@@ -807,7 +802,7 @@ mod tests {
             edge.outimpidx = 1;
         }
         let command = crate::env::edgevar(&edge, "command", false).unwrap();
-        assert_eq!(&command.s[..command.n], b"cat in1 in2 > out");
+        assert_eq!(command.as_bytes(), b"cat in1 in2 > out");
         assert!(!input1.borrow().dirty);
         assert!(!input2.borrow().dirty);
         assert!(!output.borrow().dirty);
@@ -822,7 +817,7 @@ mod tests {
         assert_eq!(roots.len(), 4);
         assert!(roots.iter().all(|node| {
             let node = node.borrow();
-            node.path.s[..node.path.n].starts_with(b"out")
+            node.path.as_bytes().starts_with(b"out")
         }));
     }
 
@@ -872,7 +867,7 @@ mod tests {
             .iter()
             .map(|edge| {
                 let command = crate::env::edgevar(edge, "command", false).unwrap();
-                String::from_utf8_lossy(&command.s[..command.n]).into_owned()
+                String::from_utf8_lossy(command.as_bytes()).into_owned()
             })
             .collect()
     }
@@ -943,7 +938,7 @@ mod tests {
             .unwrap();
         let command = crate::env::edgevar(&edge, "command", true).unwrap();
         assert_eq!(
-            &command.s[..command.n],
+            command.as_bytes(),
             b"cat 'no'\\''space' 'with space$' 'no\"space2' > 'a b'"
         );
     }
@@ -962,7 +957,7 @@ mod tests {
             .upgrade()
             .unwrap();
         let command = crate::env::edgevar(&edge, "command", false).unwrap();
-        assert_eq!(&command.s[..command.n], b"depfile is x");
+        assert_eq!(command.as_bytes(), b"depfile is x");
     }
 
     #[test]
@@ -980,8 +975,8 @@ mod tests {
             .unwrap();
         let depfile = crate::env::edgevar(&edge, "depfile", false).unwrap();
         let command = crate::env::edgevar(&edge, "command", false).unwrap();
-        assert_eq!(&depfile.s[..depfile.n], b"y");
-        assert_eq!(&command.s[..command.n], b"depfile is y");
+        assert_eq!(depfile.as_bytes(), b"y");
+        assert_eq!(command.as_bytes(), b"depfile is y");
     }
 
     #[test]
@@ -1133,9 +1128,6 @@ mod tests {
             recompute_dirty_with_validations(&nodeget(&graph, b"out").unwrap(), &mut stat).unwrap();
         assert!(!nodeget(&graph, b"out").unwrap().borrow().dirty);
         assert_eq!(validations.len(), 1);
-        assert_eq!(
-            &validations[0].borrow().path.s[..validations[0].borrow().path.n],
-            b"valid"
-        );
+        assert_eq!(validations[0].borrow().path.as_bytes(), b"valid");
     }
 }

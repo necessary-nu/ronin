@@ -1,6 +1,6 @@
 //! Rust implementation of the POSIX-facing operating-system adapter.
 
-use crate::util::SamuraiString;
+use crate::util::BString;
 use std::ffi::OsString;
 use std::io;
 use std::path::Path;
@@ -104,14 +104,11 @@ impl RealDiskInterface {
 // [spec:samurai:sem:os.osgetcwd-fn]
 // [spec:samurai:def:os-posix.osgetcwd-fn]
 // [spec:samurai:sem:os-posix.osgetcwd-fn]
-pub fn osgetcwd() -> io::Result<SamuraiString> {
+pub fn osgetcwd() -> io::Result<BString> {
     let bytes = std::env::current_dir()?
         .into_os_string()
         .into_encoded_bytes();
-    let n = bytes.len();
-    let mut s = bytes;
-    s.push(0);
-    Ok(SamuraiString { n, s })
+    Ok(bytes.into())
 }
 
 // [spec:samurai:def:os.oschdir-fn]

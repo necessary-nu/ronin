@@ -5,19 +5,17 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
+// [spec:samurai:def:util.string]
+// [spec:samurai:req:compat.byte-inputs]
+pub use bstr::{BStr, BString};
+pub use bstr::{ByteSlice, ByteVec};
+
 // [spec:samurai:def:util.buffer]
 #[derive(Default)]
 pub struct Buffer {
     pub data: Vec<u8>,
     pub len: usize,
     pub cap: usize,
-}
-
-// [spec:samurai:def:util.string]
-#[derive(Clone, Debug, Default)]
-pub struct SamuraiString {
-    pub n: usize,
-    pub s: Vec<u8>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -63,11 +61,33 @@ impl<'a> StringPiece<'a> {
 }
 
 // [spec:samurai:def:util.evalstring]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EvalPart {
+    Literal(BString),
+    Variable(String),
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct EvalString {
-    pub var: Option<Vec<u8>>,
-    pub string: Option<SamuraiString>,
-    pub next: Option<Box<EvalString>>,
+    pub parts: Vec<EvalPart>,
+}
+
+impl EvalString {
+    pub fn literal(value: impl Into<BString>) -> Self {
+        Self {
+            parts: vec![EvalPart::Literal(value.into())],
+        }
+    }
+
+    pub fn variable(name: impl Into<String>) -> Self {
+        Self {
+            parts: vec![EvalPart::Variable(name.into())],
+        }
+    }
+
+    pub fn from_parts(parts: Vec<EvalPart>) -> Self {
+        Self { parts }
+    }
 }
 
 // [spec:samurai:def:util.vwarn-fn]
@@ -121,11 +141,12 @@ pub fn xmemdup(s: &[u8], n: usize) -> Vec<u8> {
 
 // [spec:samurai:def:util.xasprintf-fn]
 // [spec:samurai:sem:util.xasprintf-fn]
-pub fn xasprintf(args: fmt::Arguments<'_>) -> SamuraiString {
-    let rendered = args.to_string().into_bytes();
-    let mut result = mkstr(rendered.len());
-    result.s[..rendered.len()].copy_from_slice(&rendered);
-    result
+pub fn xasprintf(args: fmt::Arguments<'_>) -> BString {
+    let mut output = Vec::new();
+    output
+        .write_fmt(args)
+        .expect("formatting into memory cannot fail");
+    BString::from(output)
 }
 
 // [spec:samurai:def:util.bufadd-fn]
@@ -141,67 +162,53 @@ pub fn bufadd(buf: &mut Buffer, byte: u8) {
 
 // [spec:samurai:def:util.mkstr-fn]
 // [spec:samurai:sem:util.mkstr-fn]
-pub fn mkstr(n: usize) -> SamuraiString {
-    SamuraiString {
-        n,
-        s: vec![0; n + 1],
-    }
+pub fn mkstr(n: usize) -> BString {
+    BString::from(vec![0; n])
 }
 
 // [spec:samurai:def:util.delevalstr-fn]
 // [spec:samurai:sem:util.delevalstr-fn]
-pub fn delevalstr(mut list: Option<Box<EvalString>>) {
-    while let Some(mut current) = list {
-        list = current.next.take();
-    }
-}
+pub fn delevalstr(_value: Option<EvalString>) {}
 
 // [spec:samurai:def:util.canonpath-fn]
 // [spec:samurai:sem:util.canonpath-fn]
-pub fn canonpath(path: &mut SamuraiString) {
-    if path.n == 0 {
-        path.s = vec![0];
+pub fn canonpath(path: &mut BString) {
+    if path.is_empty() {
         return;
     }
-    let input = &path.s[..path.n];
+    let input = path.as_bytes();
     let absolute = input[0] == b'/';
-    let mut components: Vec<Vec<u8>> = Vec::new();
+    let mut output = Vec::with_capacity(input.len());
+    let mut components = Vec::new();
+    if absolute {
+        output.push(b'/');
+    }
+
     for component in input.split(|byte| *byte == b'/') {
         if component.is_empty() || component == b"." {
             continue;
         }
         if component == b".." {
-            if components
-                .last()
-                .is_some_and(|previous| previous.as_slice() != b"..")
-            {
-                components.pop();
-            } else {
-                components.push(component.to_vec());
+            if let Some(start) = components.pop() {
+                output.truncate(start);
+                continue;
             }
-        } else {
-            components.push(component.to_vec());
+        }
+
+        let truncate_to = output.len();
+        if !output.is_empty() && output.last() != Some(&b'/') {
+            output.push(b'/');
+        }
+        output.extend_from_slice(component);
+        if component != b".." {
+            components.push(truncate_to);
         }
     }
 
-    let mut result = Vec::new();
-    if absolute {
-        result.push(b'/');
+    if output.is_empty() {
+        output.push(b'.');
     }
-    for (index, component) in components.iter().enumerate() {
-        if index != 0 || absolute {
-            if result.last() != Some(&b'/') {
-                result.push(b'/');
-            }
-        }
-        result.extend_from_slice(component);
-    }
-    if result.is_empty() {
-        result.push(b'.');
-    }
-    path.n = result.len();
-    result.push(0);
-    path.s = result;
+    *path = BString::from(output);
 }
 
 pub fn strip_ansi_escape_codes(input: &str) -> String {
@@ -389,10 +396,10 @@ pub fn equals_case_insensitive_ascii(left: &str, right: &str) -> bool {
 
 // [spec:samurai:def:util.writefile-fn]
 // [spec:samurai:sem:util.writefile-fn]
-pub fn writefile(name: &Path, content: Option<&SamuraiString>) -> io::Result<()> {
+pub fn writefile(name: &Path, content: Option<&BStr>) -> io::Result<()> {
     let mut file = File::create(name)?;
     if let Some(content) = content {
-        file.write_all(&content.s[..content.n])?;
+        file.write_all(content)?;
         file.flush()?;
     }
     Ok(())
@@ -406,21 +413,44 @@ mod tests {
     fn canonicalizes_relative_paths() {
         let mut path = xasprintf(format_args!("a//b/../c/."));
         canonpath(&mut path);
-        assert_eq!(&path.s[..path.n], b"a/c");
+        assert_eq!(path.as_bytes(), b"a/c");
     }
 
     #[test]
     fn ninja_canonicalize_path_empty_and_many_components() {
         let mut empty = mkstr(0);
         canonpath(&mut empty);
-        assert_eq!(empty.n, 0);
-        assert_eq!(empty.s, vec![0]);
+        assert!(empty.is_empty());
 
         let source = std::iter::repeat_n("a", 220).collect::<Vec<_>>().join("/");
         let mut path = xasprintf(format_args!("{source}"));
         canonpath(&mut path);
-        assert_eq!(path.n, source.len());
-        assert_eq!(&path.s[..path.n], source.as_bytes());
+        assert_eq!(path.len(), source.len());
+        assert_eq!(path.as_bytes(), source.as_bytes());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    // [spec:samurai:req:compat.byte-inputs/test]
+    fn byte_strings_round_trip_non_utf8_unix_paths() {
+        let mut name = format!("ronin-bstr-{}-", std::process::id()).into_bytes();
+        name.push(0xff);
+        let name = BString::from(name);
+        let distinct = BString::from(b"ronin-bstr-\xfe");
+        assert_ne!(name, distinct);
+
+        let path = std::env::temp_dir().join(
+            name.to_os_str()
+                .expect("all byte strings are valid Unix OS strings"),
+        );
+        std::fs::write(&path, b"exact bytes").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"exact bytes");
+
+        let round_trip = BString::from(
+            Vec::from_path_buf(path.clone()).expect("all Unix paths have a byte representation"),
+        );
+        assert!(round_trip.ends_with(name.as_bytes()));
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

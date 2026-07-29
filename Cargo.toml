@@ -7,3 +7,6 @@ license-file = "LICENSE"
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+bstr = { version = "1", default-features = false, features = ["std"] }

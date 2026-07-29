@@ -2,6 +2,7 @@
 
 use crate::env::edgevar;
 use crate::graph::{edgeadddeps, EdgeRef, Graph, NodeRef};
+use crate::util::ByteSlice;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -204,7 +205,7 @@ fn parse_depfile(text: &str) -> Result<ParsedDepfile, String> {
 
 fn key(node: &NodeRef) -> Vec<u8> {
     let node = node.borrow();
-    node.path.s[..node.path.n].to_vec()
+    node.path.as_bytes().to_vec()
 }
 
 // [spec:samurai:def:deps.depswrite-fn]
@@ -326,7 +327,7 @@ pub fn depsclose(mut log: DepsLog) -> io::Result<()> {
 
 fn node_from_path(graph: &mut Graph, path: &[u8]) -> NodeRef {
     let mut value = crate::util::mkstr(path.len());
-    value.s[..path.len()].copy_from_slice(path);
+    value.copy_from_slice(path);
     crate::graph::mknode(graph, value)
 }
 
@@ -535,7 +536,7 @@ pub fn depsparse(graph: &mut Graph, path: &Path, allow_missing: bool) -> io::Res
         .map_err(|message| io::Error::new(io::ErrorKind::InvalidData, message))?;
     for dependency in parsed.inputs {
         let mut path = crate::util::mkstr(dependency.len());
-        path.s[..dependency.len()].copy_from_slice(&dependency);
+        path.copy_from_slice(&dependency);
         crate::util::canonpath(&mut path);
         nodes.push(crate::graph::mknode(graph, path));
     }
@@ -544,9 +545,9 @@ pub fn depsparse(graph: &mut Graph, path: &Path, allow_missing: bool) -> io::Res
 
 fn canonical_dep_path(path: &[u8]) -> Vec<u8> {
     let mut canonical = crate::util::mkstr(path.len());
-    canonical.s[..path.len()].copy_from_slice(path);
+    canonical.copy_from_slice(path);
     crate::util::canonpath(&mut canonical);
-    canonical.s[..canonical.n].to_vec()
+    canonical.as_bytes().to_vec()
 }
 
 pub fn depsparse_for_edge(
@@ -618,8 +619,11 @@ pub fn depsrecord(log: &mut DepsLog, edge: &EdgeRef, graph: &mut Graph) -> io::R
     let Some(depfile) = edgevar(edge, "depfile", false) else {
         return Ok(());
     };
-    let path = String::from_utf8_lossy(&depfile.s[..depfile.n]).into_owned();
-    let deps = depsparse(graph, Path::new(&path), true)?;
+    let deps = depsparse(
+        graph,
+        depfile.to_path().expect("byte paths are valid on Unix"),
+        true,
+    )?;
     depsrecordnodes(log, edge, &deps.nodes)
 }
 
@@ -843,11 +847,7 @@ mod ninja_depfile_tests {
         crate::env::ruleaddvar(
             &rule,
             "deps".into(),
-            crate::util::EvalString {
-                var: None,
-                string: Some(crate::util::xasprintf(format_args!("gcc"))),
-                next: None,
-            },
+            crate::util::EvalString::literal("gcc"),
         );
         let edge = crate::graph::mkedge(graph, state.root);
         edge.borrow_mut().rule = Some(rule);

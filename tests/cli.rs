@@ -75,3 +75,40 @@ fn default_manifest_and_state_files_keep_ninja_names() {
     assert!(directory.join(".ninja_deps").exists());
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[cfg(unix)]
+// [spec:samurai:req:compat.byte-inputs/test]
+#[test]
+fn accepts_a_non_utf8_manifest_argument() {
+    use std::os::unix::ffi::OsStringExt;
+
+    let directory = test_directory("byte-argument");
+    fs::create_dir_all(&directory).unwrap();
+    let mut manifest_name = b"build-".to_vec();
+    manifest_name.push(0xff);
+    manifest_name.extend_from_slice(b".ninja");
+    let manifest = directory.join(std::ffi::OsString::from_vec(manifest_name));
+    fs::write(
+        &manifest,
+        "rule emit\n  command = printf exact > $out\nbuild output: emit\ndefault output\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .arg("-f")
+        .arg(&manifest)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("output")).unwrap(),
+        "exact"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

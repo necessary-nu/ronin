@@ -1,6 +1,6 @@
 //! Literal environment, rule, and pool model from `env.c`.
 
-use crate::util::{EvalString, SamuraiString};
+use crate::util::{BString, EvalPart, EvalString};
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -8,7 +8,7 @@ use std::rc::Rc;
 // [spec:samurai:def:env.environment]
 pub struct Environment {
     pub parent: Option<Rc<Environment>>,
-    bindings: RefCell<BTreeMap<String, SamuraiString>>,
+    bindings: RefCell<BTreeMap<String, BString>>,
     rules: RefCell<BTreeMap<String, Rc<Rule>>>,
 }
 
@@ -105,7 +105,7 @@ pub fn envinit() -> EnvState {
 
 // [spec:samurai:def:env.envvar-fn]
 // [spec:samurai:sem:env.envvar-fn]
-pub fn envvar(env: &Rc<Environment>, name: &str) -> Option<SamuraiString> {
+pub fn envvar(env: &Rc<Environment>, name: &str) -> Option<BString> {
     let mut current = Some(env.clone());
     while let Some(scope) = current {
         if let Some(value) = scope.bindings.borrow().get(name) {
@@ -118,39 +118,33 @@ pub fn envvar(env: &Rc<Environment>, name: &str) -> Option<SamuraiString> {
 
 // [spec:samurai:def:env.envaddvar-fn]
 // [spec:samurai:sem:env.envaddvar-fn]
-pub fn envaddvar(env: &Rc<Environment>, name: String, value: SamuraiString) {
+pub fn envaddvar(env: &Rc<Environment>, name: String, value: BString) {
     addvar(&mut env.bindings.borrow_mut(), name, value);
 }
 
 // [spec:samurai:def:env.merge-fn]
 // [spec:samurai:sem:env.merge-fn]
-fn merge(parts: &[SamuraiString]) -> SamuraiString {
-    let n = parts.iter().map(|part| part.n).sum();
-    let mut output = Vec::with_capacity(n + 1);
+fn merge(parts: &[BString]) -> BString {
+    let mut output = Vec::with_capacity(parts.iter().map(|part| part.len()).sum());
     for part in parts {
-        output.extend_from_slice(&part.s[..part.n]);
+        output.extend_from_slice(part);
     }
-    output.push(0);
-    SamuraiString { n, s: output }
+    output.into()
 }
 
 // [spec:samurai:def:env.enveval-fn]
 // [spec:samurai:sem:env.enveval-fn]
-pub fn enveval(env: &Rc<Environment>, string: &mut EvalString) -> SamuraiString {
+pub fn enveval(env: &Rc<Environment>, string: &EvalString) -> BString {
     let mut parts = Vec::new();
-    let mut current = Some(string);
-    while let Some(fragment) = current {
-        if let Some(name) = &fragment.var {
-            if let Ok(name) = std::str::from_utf8(name) {
-                fragment.string = envvar(env, name);
-            } else {
-                fragment.string = None;
+    for part in &string.parts {
+        match part {
+            EvalPart::Literal(value) => parts.push(value.clone()),
+            EvalPart::Variable(name) => {
+                if let Some(value) = envvar(env, name) {
+                    parts.push(value);
+                }
             }
         }
-        if let Some(value) = &fragment.string {
-            parts.push(value.clone());
-        }
-        current = fragment.next.as_deref_mut();
     }
     merge(&parts)
 }
@@ -170,20 +164,19 @@ pub fn envrule(env: &Rc<Environment>, name: &str) -> Option<Rc<Rule>> {
 
 // [spec:samurai:def:env.pathlist-fn]
 // [spec:samurai:sem:env.pathlist-fn]
-pub fn pathlist(paths: &[SamuraiString], separator: u8) -> Option<SamuraiString> {
+pub fn pathlist(paths: &[BString], separator: u8) -> Option<BString> {
     if paths.is_empty() {
         return None;
     }
-    let n = paths.iter().map(|path| path.n).sum::<usize>() + paths.len() - 1;
-    let mut output = Vec::with_capacity(n + 1);
+    let mut output =
+        Vec::with_capacity(paths.iter().map(|path| path.len()).sum::<usize>() + paths.len() - 1);
     for (index, path) in paths.iter().enumerate() {
         if index != 0 {
             output.push(separator);
         }
-        output.extend_from_slice(&path.s[..path.n]);
+        output.extend_from_slice(path);
     }
-    output.push(0);
-    Some(SamuraiString { n, s: output })
+    Some(output.into())
 }
 
 // [spec:samurai:def:env.ruleaddvar-fn]
@@ -225,26 +218,23 @@ pub fn poolget(state: &EnvState, name: &str) -> Result<Rc<RefCell<Pool>>, String
 
 // [spec:samurai:def:env.edgevar-fn]
 // [spec:samurai:sem:env.edgevar-fn]
-pub fn edgevar(edge: &crate::graph::EdgeRef, name: &str, escape: bool) -> Option<SamuraiString> {
+pub fn edgevar(edge: &crate::graph::EdgeRef, name: &str, escape: bool) -> Option<BString> {
     fn evaluate(
         edge: &crate::graph::EdgeRef,
         value: &EvalString,
         escape: bool,
         stack: &mut Vec<String>,
-    ) -> SamuraiString {
-        let mut parts = Vec::new();
-        let mut current = Some(value);
-        while let Some(fragment) = current {
-            if let Some(name) = &fragment.var {
-                if let Ok(name) = std::str::from_utf8(name) {
+    ) -> BString {
+        let mut parts = Vec::with_capacity(value.parts.len());
+        for part in &value.parts {
+            match part {
+                EvalPart::Variable(name) => {
                     if let Some(value) = edgevar_inner(edge, name, escape, stack) {
                         parts.push(value);
                     }
                 }
-            } else if let Some(value) = &fragment.string {
-                parts.push(value.clone());
+                EvalPart::Literal(value) => parts.push(value.clone()),
             }
-            current = fragment.next.as_deref();
         }
         merge(&parts)
     }
@@ -254,7 +244,7 @@ pub fn edgevar(edge: &crate::graph::EdgeRef, name: &str, escape: bool) -> Option
         name: &str,
         escape: bool,
         stack: &mut Vec<String>,
-    ) -> Option<SamuraiString> {
+    ) -> Option<BString> {
         let (env, rule, direct, paths, separator) = {
             let edge = edge.borrow();
             let computed = match name {
@@ -310,9 +300,9 @@ mod tests {
     fn resolves_nearest_variable_binding() {
         let state = envinit();
         let mut root_value = mkstr(4);
-        root_value.s[..4].copy_from_slice(b"root");
+        root_value.copy_from_slice(b"root");
         envaddvar(&state.root, "value".into(), root_value);
         let child = mkenv(Some(state.root.clone()));
-        assert_eq!(&envvar(&child, "value").unwrap().s[..4], b"root");
+        assert_eq!(envvar(&child, "value").unwrap(), b"root");
     }
 }

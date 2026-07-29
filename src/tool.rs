@@ -2,11 +2,10 @@
 
 use crate::env::edgevar;
 use crate::graph::{nodeget, EdgeRef, Graph, NodeRef, FLAG_WORK};
-use crate::util::SamuraiString;
+use crate::util::{BString, ByteSlice};
 use std::fmt::Write as _;
 use std::fs;
 use std::io;
-use std::path::Path;
 
 // [spec:samurai:def:tool.tool]
 pub enum Tool {
@@ -26,27 +25,22 @@ fn edge_name(edge: &EdgeRef) -> String {
         .unwrap_or_else(|| "phony".into())
 }
 
-fn path_bytes(path: &SamuraiString) -> Vec<u8> {
-    path.s[..path.n].to_vec()
-}
-
 // [spec:samurai:def:tool.cleanpath-fn]
 // [spec:samurai:sem:tool.cleanpath-fn]
-pub fn cleanpath(path: Option<&SamuraiString>) -> io::Result<bool> {
+pub fn cleanpath(path: Option<&BString>) -> io::Result<bool> {
     cleanpath_mode(path, false)
 }
 
-fn cleanpath_mode(path: Option<&SamuraiString>, dry_run: bool) -> io::Result<bool> {
+fn cleanpath_mode(path: Option<&BString>, dry_run: bool) -> io::Result<bool> {
     let Some(path) = path else { return Ok(false) };
-    let path = String::from_utf8_lossy(&path_bytes(path)).into_owned();
     if dry_run {
-        return match fs::symlink_metadata(Path::new(&path)) {
+        return match fs::symlink_metadata(path.to_path().expect("byte paths are valid on Unix")) {
             Ok(_) => Ok(true),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         };
     }
-    match fs::remove_file(Path::new(&path)) {
+    match fs::remove_file(path.to_path().expect("byte paths are valid on Unix")) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
@@ -59,12 +53,12 @@ pub fn cleanedge(edge: &EdgeRef) -> io::Result<usize> {
     cleanedge_mode(edge, false)
 }
 
-fn dyndep_outputs(edge: &EdgeRef) -> Vec<SamuraiString> {
+fn dyndep_outputs(edge: &EdgeRef) -> Vec<BString> {
     let Some(path) = edgevar(edge, "dyndep", false) else {
         return Vec::new();
     };
-    let path = String::from_utf8_lossy(&path.s[..path.n]).into_owned();
-    let Ok(contents) = fs::read_to_string(path) else {
+    let Ok(contents) = fs::read_to_string(path.to_path().expect("byte paths are valid on Unix"))
+    else {
         return Vec::new();
     };
     let explicit_outputs = edge
@@ -73,7 +67,7 @@ fn dyndep_outputs(edge: &EdgeRef) -> Vec<SamuraiString> {
         .iter()
         .map(|output| {
             let output = output.borrow();
-            String::from_utf8_lossy(&output.path.s[..output.path.n]).into_owned()
+            String::from_utf8_lossy(output.path.as_bytes()).into_owned()
         })
         .collect::<Vec<_>>();
     let mut outputs = Vec::new();
@@ -216,8 +210,8 @@ pub fn targetcommands(node: &NodeRef, output: &mut Vec<String>) {
         targetcommands(&input, output);
     }
     if let Some(command) = edgevar(&edge, "command", true) {
-        if command.n != 0 {
-            output.push(String::from_utf8_lossy(&command.s[..command.n]).into_owned());
+        if !command.is_empty() {
+            output.push(String::from_utf8_lossy(command.as_bytes()).into_owned());
         }
     }
 }
@@ -282,15 +276,13 @@ pub fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> String {
             continue;
         }
         let command = edgevar(edge, "command", true)
-            .map(|value| String::from_utf8_lossy(&value.s[..value.n]).into_owned())
+            .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
             .unwrap_or_default();
         let command = if expand_rsp {
             let rspfile = edgevar(edge, "rspfile", true)
-                .map(|value| String::from_utf8_lossy(&value.s[..value.n]).into_owned());
+                .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned());
             let content = edgevar(edge, "rspfile_content", true)
-                .map(|value| {
-                    String::from_utf8_lossy(&value.s[..value.n]).replace(['\r', '\n'], " ")
-                })
+                .map(|value| String::from_utf8_lossy(value.as_bytes()).replace(['\r', '\n'], " "))
                 .unwrap_or_default();
             rspfile.map_or(command.clone(), |rspfile| {
                 command.replace(&format!("@{rspfile}"), &content)
@@ -303,14 +295,8 @@ pub fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> String {
             "{{\"directory\":\"{}\",\"command\":\"{}\",\"file\":\"{}\",\"output\":\"{}\"}}",
             printquoted(&directory, false),
             command,
-            printquoted(
-                &edge_ref.input[0].borrow().path.s[..edge_ref.input[0].borrow().path.n],
-                false
-            ),
-            printquoted(
-                &edge_ref.out[0].borrow().path.s[..edge_ref.out[0].borrow().path.n],
-                false
-            ),
+            printquoted(edge_ref.input[0].borrow().path.as_bytes(), false),
+            printquoted(edge_ref.out[0].borrow().path.as_bytes(), false),
         ));
     }
     format!("[{}]", entries.join(","))
@@ -324,7 +310,7 @@ pub fn graphnode(node: &NodeRef, output: &mut String) {
         output,
         "\"{:p}\" [label=\"{}\"]",
         Rc::as_ptr(node),
-        printquoted(&path.s[..path.n], false)
+        printquoted(path.as_bytes(), false)
     );
     let edge = node.borrow().gen.as_ref().and_then(|edge| edge.upgrade());
     let Some(edge) = edge else { return };
@@ -420,7 +406,7 @@ pub fn query(graph: &Graph, targets: &[String]) -> Result<String, String> {
                 let _ = writeln!(
                     output,
                     "    {}",
-                    String::from_utf8_lossy(&input.path.s[..input.path.n])
+                    String::from_utf8_lossy(input.path.as_bytes())
                 );
             }
         }
@@ -429,7 +415,7 @@ pub fn query(graph: &Graph, targets: &[String]) -> Result<String, String> {
             if let Some(edge) = edge.upgrade() {
                 for output_node in &edge.borrow().out {
                     let path = &output_node.borrow().path;
-                    let _ = writeln!(output, "    {}", String::from_utf8_lossy(&path.s[..path.n]));
+                    let _ = writeln!(output, "    {}", String::from_utf8_lossy(path.as_bytes()));
                 }
             }
         }
@@ -446,7 +432,7 @@ pub fn targetsdepth(node: &NodeRef, depth: usize, indent: usize, output: &mut St
         let _ = writeln!(
             output,
             "{}: {}",
-            String::from_utf8_lossy(&node_borrow.path.s[..node_borrow.path.n]),
+            String::from_utf8_lossy(node_borrow.path.as_bytes()),
             edge_name(&edge)
         );
         if depth != 1 {
@@ -459,7 +445,7 @@ pub fn targetsdepth(node: &NodeRef, depth: usize, indent: usize, output: &mut St
         let _ = writeln!(
             output,
             "{}",
-            String::from_utf8_lossy(&node_borrow.path.s[..node_borrow.path.n])
+            String::from_utf8_lossy(node_borrow.path.as_bytes())
         );
     }
 }
@@ -515,7 +501,7 @@ pub fn targets_with_args(graph: &Graph, args: &[String]) -> Result<String, Strin
                     .flat_map(|edge| edge.borrow().out.clone())
                     .map(|node| {
                         let node = node.borrow();
-                        String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned()
+                        String::from_utf8_lossy(node.path.as_bytes()).into_owned()
                     })
                     .collect::<std::collections::BTreeSet<_>>();
                 for path in outputs {
@@ -529,7 +515,7 @@ pub fn targets_with_args(graph: &Graph, args: &[String]) -> Result<String, Strin
                             let _ = writeln!(
                                 output,
                                 "{}",
-                                String::from_utf8_lossy(&input.path.s[..input.path.n])
+                                String::from_utf8_lossy(input.path.as_bytes())
                             );
                         }
                     }
@@ -545,7 +531,7 @@ pub fn targets_with_args(graph: &Graph, args: &[String]) -> Result<String, Strin
                     let _ = writeln!(
                         output,
                         "{}: {}",
-                        String::from_utf8_lossy(&node.path.s[..node.path.n]),
+                        String::from_utf8_lossy(node.path.as_bytes()),
                         edge_name(edge)
                     );
                 }
@@ -591,6 +577,7 @@ use std::rc::Rc;
 mod tests {
     use super::*;
     use crate::{env, graph, parse};
+    use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT_CLEAN_TEST: AtomicUsize = AtomicUsize::new(0);

@@ -2,6 +2,8 @@
 
 use crate::build::BuildOptions;
 use crate::parse::ParseOptions;
+use crate::util::{BString, ByteSlice, ByteVec};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 // [spec:samurai:req:product.ronin-identity]
@@ -181,7 +183,12 @@ fn append_output(output: &mut String, addition: &str) {
 }
 
 fn builder_output(builder: &crate::build::Builder<'_>) -> String {
-    let mut output = builder.commands_ran.join("\n");
+    let mut output = builder
+        .commands_ran
+        .iter()
+        .map(|command| command.to_str_lossy())
+        .collect::<Vec<_>>()
+        .join("\n");
     if !builder.command_output.is_empty() {
         append_output(
             &mut output,
@@ -194,10 +201,10 @@ fn builder_output(builder: &crate::build::Builder<'_>) -> String {
 struct RunInvocation {
     build_options: BuildOptions,
     parse_options: ParseOptions,
-    manifest: String,
-    targets: Vec<String>,
+    manifest: BString,
+    targets: Vec<BString>,
     selected_tool: Option<crate::tool::Tool>,
-    tool_arguments: Vec<String>,
+    tool_arguments: Vec<BString>,
 }
 
 enum RunAction {
@@ -208,102 +215,123 @@ enum RunAction {
 // [spec:samurai:def:samu.parseenvargs-fn+1]
 // [spec:samurai:sem:samu.parseenvargs-fn+1]
 // [spec:samurai:req:product.no-samuflags]
-fn parse_run_arguments(arguments: &[String]) -> Result<RunAction, String> {
+fn parse_run_arguments(arguments: &[BString]) -> Result<RunAction, String> {
     let mut invocation = RunInvocation {
         build_options: BuildOptions::default(),
         parse_options: ParseOptions::default(),
-        manifest: DEFAULT_MANIFEST.to_owned(),
+        manifest: DEFAULT_MANIFEST.into(),
         targets: Vec::new(),
         selected_tool: None,
         tool_arguments: Vec::new(),
     };
     let mut index = 1;
     while index < arguments.len() {
-        match arguments[index].as_str() {
-            "--version" => return Ok(RunAction::Version),
-            "--verbose" | "-v" => invocation.build_options.verbose = true,
-            "-C" => {
+        match arguments[index].as_bytes() {
+            b"--version" => return Ok(RunAction::Version),
+            b"--verbose" | b"-v" => invocation.build_options.verbose = true,
+            b"-C" => {
                 index += 1;
                 let directory = arguments
                     .get(index)
                     .ok_or_else(|| "missing -C value".to_owned())?;
-                std::env::set_current_dir(directory).map_err(|error| error.to_string())?;
+                std::env::set_current_dir(
+                    directory
+                        .to_path()
+                        .map_err(|_| "-C path is not representable on this platform")?,
+                )
+                .map_err(|error| error.to_string())?;
             }
-            "-f" => {
+            b"-f" => {
                 index += 1;
                 invocation.manifest = arguments
                     .get(index)
                     .ok_or_else(|| "missing -f value".to_owned())?
                     .clone();
             }
-            "-j" => {
+            b"-j" => {
                 index += 1;
                 jobsflag(
                     &mut invocation.build_options,
                     arguments
                         .get(index)
-                        .ok_or_else(|| "missing -j value".to_owned())?,
+                        .ok_or_else(|| "missing -j value".to_owned())?
+                        .to_str()
+                        .map_err(|_| "invalid -j parameter")?,
                 )?;
             }
-            "-k" => {
+            b"-k" => {
                 index += 1;
                 let value = arguments
                     .get(index)
                     .ok_or_else(|| "missing -k value".to_owned())?
+                    .to_str()
+                    .map_err(|_| "invalid -k parameter")?
                     .parse::<usize>()
                     .map_err(|_| "invalid -k parameter".to_owned())?;
                 invocation.build_options.maxfail = if value == 0 { usize::MAX } else { value };
             }
-            "-l" => {
+            b"-l" => {
                 index += 1;
                 loadflag(
                     &mut invocation.build_options,
                     arguments
                         .get(index)
-                        .ok_or_else(|| "missing -l value".to_owned())?,
+                        .ok_or_else(|| "missing -l value".to_owned())?
+                        .to_str()
+                        .map_err(|_| "invalid -l parameter")?,
                 )?;
             }
-            "-n" => invocation.build_options.dryrun = true,
-            "-d" => {
+            b"-n" => invocation.build_options.dryrun = true,
+            b"-d" => {
                 index += 1;
                 debugflag(
                     &mut invocation.build_options,
                     arguments
                         .get(index)
-                        .ok_or_else(|| "missing -d value".to_owned())?,
+                        .ok_or_else(|| "missing -d value".to_owned())?
+                        .to_str()
+                        .map_err(|_| "invalid -d parameter")?,
                 )?;
             }
-            "-w" => {
+            b"-w" => {
                 index += 1;
                 warnflag(
                     &mut invocation.parse_options,
                     arguments
                         .get(index)
-                        .ok_or_else(|| "missing -w value".to_owned())?,
+                        .ok_or_else(|| "missing -w value".to_owned())?
+                        .to_str()
+                        .map_err(|_| "invalid -w parameter")?,
                 )?;
             }
-            "-t" => {
+            b"-t" => {
                 index += 1;
                 invocation.selected_tool = Some(crate::tool::toolget(
                     arguments
                         .get(index)
-                        .ok_or_else(|| "missing -t value".to_owned())?,
+                        .ok_or_else(|| "missing -t value".to_owned())?
+                        .to_str()
+                        .map_err(|_| "invalid -t parameter")?,
                 )?);
                 invocation
                     .tool_arguments
                     .extend_from_slice(&arguments[index + 1..]);
                 break;
             }
-            option if option.starts_with('-') => {
+            option if option.starts_with(b"-") => {
+                let option = option.to_str_lossy();
                 return Err(format!(
                     "{}: {option}",
                     usage(&progname(
-                        arguments.first().map(String::as_str),
+                        arguments
+                            .first()
+                            .map(|argument| argument.to_str_lossy())
+                            .as_deref(),
                         PRODUCT_NAME
                     ))
                 ));
             }
-            target => invocation.targets.push(target.to_owned()),
+            target => invocation.targets.push(BString::from(target)),
         }
         index += 1;
     }
@@ -328,8 +356,18 @@ fn default_target_names(parser: &crate::parse::Parser, graph: &crate::graph::Gra
         .into_iter()
         .map(|node| {
             let node = node.borrow();
-            String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned()
+            String::from_utf8_lossy(node.path.as_bytes()).into_owned()
         })
+        .collect()
+}
+
+fn default_target_paths(
+    parser: &crate::parse::Parser,
+    graph: &crate::graph::Graph,
+) -> Vec<BString> {
+    crate::parse::defaultnodes(parser, graph)
+        .into_iter()
+        .map(|node| node.borrow().path.clone())
         .collect()
 }
 
@@ -412,6 +450,28 @@ fn run_selected_tool(
 }
 
 pub fn run(arguments: &[String]) -> Result<String, String> {
+    let arguments = arguments
+        .iter()
+        .cloned()
+        .map(BString::from)
+        .collect::<Vec<_>>();
+    run_bytes(&arguments)
+}
+
+pub fn run_os(arguments: &[OsString]) -> Result<String, String> {
+    let arguments = arguments
+        .iter()
+        .cloned()
+        .map(|argument| {
+            Vec::from_os_string(argument)
+                .map(BString::from)
+                .map_err(|_| "argument is not representable as bytes on this platform".to_owned())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    run_bytes(&arguments)
+}
+
+fn run_bytes(arguments: &[BString]) -> Result<String, String> {
     let RunAction::Execute(mut invocation) = parse_run_arguments(arguments)? else {
         return Ok(NINJA_COMPAT_VERSION.into());
     };
@@ -421,10 +481,13 @@ pub fn run(arguments: &[String]) -> Result<String, String> {
     for _ in 0..100 {
         let mut graph = crate::graph::graphinit();
         let mut parser = crate::parse::parseinit();
-        parser.options = invocation.parse_options.clone();
+        parser.options = invocation.parse_options;
         let mut state = crate::env::envinit();
         crate::parse::parse(
-            &invocation.manifest,
+            invocation
+                .manifest
+                .to_path()
+                .map_err(|_| "manifest path is not representable on this platform")?,
             &mut graph,
             &mut parser,
             state.root.clone(),
@@ -432,19 +495,29 @@ pub fn run(arguments: &[String]) -> Result<String, String> {
         )?;
 
         if let Some(tool) = invocation.selected_tool.take() {
+            let tool_arguments = invocation
+                .tool_arguments
+                .iter()
+                .map(|argument| {
+                    argument
+                        .to_str()
+                        .map(str::to_owned)
+                        .map_err(|_| "tool arguments must be valid UTF-8".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
             return run_selected_tool(
                 tool,
                 &graph,
                 &parser,
                 &state,
-                &invocation.tool_arguments,
+                &tool_arguments,
                 invocation.build_options.dryrun,
             );
         }
 
         let builddir = crate::env::envvar(&state.root, "builddir")
-            .filter(|value| value.n != 0)
-            .map(|value| PathBuf::from(String::from_utf8_lossy(&value.s[..value.n]).into_owned()));
+            .filter(|value| !value.is_empty())
+            .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
         if let Some(directory) = &builddir {
             std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
         }
@@ -470,7 +543,7 @@ pub fn run(arguments: &[String]) -> Result<String, String> {
                 &mut deps_log,
             );
             let result: Result<bool, String> = (|| {
-                builder.add_target(&invocation.manifest)?;
+                builder.add_target(invocation.manifest.as_bytes())?;
                 if builder.already_up_to_date() {
                     return Ok(false);
                 }
@@ -502,7 +575,7 @@ pub fn run(arguments: &[String]) -> Result<String, String> {
         }
 
         let selected_targets = if invocation.targets.is_empty() {
-            default_target_names(&parser, &graph)
+            default_target_paths(&parser, &graph)
         } else {
             invocation.targets.clone()
         };
@@ -515,7 +588,7 @@ pub fn run(arguments: &[String]) -> Result<String, String> {
             );
             let result: Result<String, String> = (|| {
                 for target in &selected_targets {
-                    builder.add_target(target)?;
+                    builder.add_target(target.as_bytes())?;
                 }
                 builder.build()?;
                 Ok(builder_output(&builder))

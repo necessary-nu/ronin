@@ -40,7 +40,7 @@ fn mark_dirty(graph: &Graph, paths: &[&str]) {
 fn output_path(edge: &EdgeRef) -> String {
     let output = edge.borrow().out[0].clone();
     let output = output.borrow();
-    String::from_utf8_lossy(&output.path.s[..output.path.n]).into_owned()
+    String::from_utf8_lossy(output.path.as_bytes()).into_owned()
 }
 
 fn build_fixture(label: &str, manifest: &str) -> (Graph, std::path::PathBuf) {
@@ -133,7 +133,7 @@ fn assert_multi_output_deps_log(label: &str, depfile: &str) {
                 .deps
                 .nodes
                 .iter()
-                .map(Builder::path)
+                .map(|node| node.borrow().path.clone())
                 .collect::<Vec<_>>(),
             expected
         );
@@ -150,7 +150,12 @@ fn assert_phony_use_case(case: usize) {
         let mut builder = Builder::new(&mut graph, BuildOptions::default());
         for index in 1..=6 {
             builder
-                .add_target(&directory.join(format!("test{index}")).to_string_lossy())
+                .add_target(
+                    directory
+                        .join(format!("test{index}"))
+                        .to_string_lossy()
+                        .as_bytes(),
+                )
                 .unwrap();
         }
         builder.build().unwrap();
@@ -531,8 +536,8 @@ fn ninja_build_two_step() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 2);
-        assert!(builder.commands_ran[0].contains("/mid"));
-        assert!(builder.commands_ran[1].contains("/out"));
+        assert!(builder.commands_ran[0].contains_str("/mid"));
+        assert!(builder.commands_ran[1].contains_str("/out"));
     }
     assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "hello");
     fs::remove_dir_all(directory).unwrap();
@@ -890,7 +895,7 @@ fn ninja_build_loads_existing_depfile() {
     assert_eq!(edge.borrow().input.len(), 3);
     let command = crate::env::edgevar(&edge, "command", false).unwrap();
     assert_eq!(
-        String::from_utf8_lossy(&command.s[..command.n]),
+        String::from_utf8_lossy(command.as_bytes()),
         format!("cp {} {}", directory.join("in").display(), target)
     );
     fs::remove_dir_all(directory).unwrap();
@@ -1069,7 +1074,7 @@ fn ninja_build_rebuilds_dirty_order_only_generator() {
         assert!(!builder.already_up_to_date());
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
-        assert!(builder.commands_ran[0].contains("order.in"));
+        assert!(builder.commands_ran[0].contains_str("order.in"));
     }
     assert!(directory.join("order").exists());
     fs::remove_dir_all(directory).unwrap();
@@ -1088,8 +1093,8 @@ fn ninja_build_encounter_ready_twice() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 2);
-        assert!(builder.commands_ran[0].contains("/c"));
-        assert!(builder.commands_ran[1].contains("/a"));
+        assert!(builder.commands_ran[0].contains_str("/c"));
+        assert!(builder.commands_ran[1].contains_str("/a"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -1295,8 +1300,8 @@ fn ninja_build_ready_dyndep_implicit_connection() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 2);
-        assert!(builder.commands_ran[0].contains("out2"));
-        assert!(builder.commands_ran[1].contains("out1"));
+        assert!(builder.commands_ran[0].contains_str("out2"));
+        assert!(builder.commands_ran[1].contains_str("out1"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -1418,8 +1423,8 @@ fn ninja_build_validation_depends_on_output() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 2);
-        assert!(builder.commands_ran[0].contains("/in "));
-        assert!(builder.commands_ran[1].contains("/out "));
+        assert!(builder.commands_ran[0].contains_str("/in "));
+        assert!(builder.commands_ran[1].contains_str("/out "));
     }
     assert_eq!(
         fs::read_to_string(directory.join("validate")).unwrap(),
@@ -1745,7 +1750,7 @@ fn ninja_build_log_rebuild_with_no_inputs() {
         builder.add_target(&out2).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
-        assert!(builder.commands_ran[0].contains("out2"));
+        assert!(builder.commands_ran[0].contains_str("out2"));
     }
     crate::log::logclose(log).unwrap();
     fs::remove_dir_all(directory).unwrap();
@@ -2221,8 +2226,8 @@ fn ninja_build_deps_log_msvc_records_all_outputs() {
         let entry = crate::deps::depsentry(&deps_log, &output).unwrap();
         assert_eq!(entry.deps.nodes.len(), 1);
         assert_eq!(
-            Builder::path(&entry.deps.nodes[0]),
-            directory.join("in").to_string_lossy()
+            entry.deps.nodes[0].borrow().path,
+            directory.join("in").to_string_lossy().as_ref()
         );
     }
     crate::deps::depsclose(deps_log).unwrap();
@@ -2275,7 +2280,7 @@ fn ninja_build_deps_log_escaped_output_preserves_command_inputs() {
         .unwrap();
     assert_eq!(edge.borrow().input.len(), 3);
     let command = crate::env::edgevar(&edge, "command", false).unwrap();
-    let command = String::from_utf8_lossy(&command.s[..command.n]);
+    let command = String::from_utf8_lossy(command.as_bytes());
     assert!(command.contains("foo.c"));
     assert!(!command.contains("blah.h"));
     assert!(!command.contains("bar.h"));
@@ -2384,7 +2389,7 @@ fn ninja_build_deps_log_validation_through_discovered_input() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
-        assert!(builder.commands_ran[0].contains("/in "));
+        assert!(builder.commands_ran[0].contains_str("/in "));
     }
     crate::deps::depsclose(deps_log).unwrap();
 
@@ -2400,7 +2405,7 @@ fn ninja_build_deps_log_validation_through_discovered_input() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
-        assert!(builder.commands_ran[0].contains("/in3 "));
+        assert!(builder.commands_ran[0].contains_str("/in3 "));
     }
     crate::deps::depsclose(deps_log).unwrap();
     fs::remove_dir_all(directory).unwrap();
@@ -2575,9 +2580,9 @@ fn ninja_build_generated_dyndep_with_unrelated_dependent() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
-        assert!(builder.commands_ran[0].contains("/dd-in"));
-        assert!(builder.commands_ran[1].contains("/unrelated"));
-        assert!(builder.commands_ran[2].contains("/out"));
+        assert!(builder.commands_ran[0].contains_str("/dd-in"));
+        assert!(builder.commands_ran[1].contains_str("/unrelated"));
+        assert!(builder.commands_ran[2].contains_str("/out"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2606,8 +2611,8 @@ fn ninja_build_generated_dyndep_discovers_new_output() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 2);
-        assert!(builder.commands_ran[0].contains("/dd-in"));
-        assert!(builder.commands_ran[1].contains("/out.imp"));
+        assert!(builder.commands_ran[0].contains_str("/dd-in"));
+        assert!(builder.commands_ran[1].contains_str("/out.imp"));
     }
     assert!(directory.join("out.imp").exists());
     fs::remove_dir_all(directory).unwrap();
@@ -2727,10 +2732,10 @@ fn ninja_build_generated_dyndep_discovers_transitive_validation() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 4);
-        assert!(builder.commands_ran[0].contains("/dd-in"));
-        assert!(builder.commands_ran[1].contains("/in"));
-        assert!(builder.commands_ran[2].contains("/out"));
-        assert!(builder.commands_ran[3].contains("/validation"));
+        assert!(builder.commands_ran[0].contains_str("/dd-in"));
+        assert!(builder.commands_ran[1].contains_str("/in"));
+        assert!(builder.commands_ran[2].contains_str("/out"));
+        assert!(builder.commands_ran[3].contains_str("/validation"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2759,9 +2764,9 @@ fn ninja_build_generated_dyndep_discovers_implicit_connection() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
-        assert!(builder.commands_ran[0].contains("/dd-in"));
-        assert!(builder.commands_ran[1].contains("/tmp.imp"));
-        assert!(builder.commands_ran[2].contains("/out.imp"));
+        assert!(builder.commands_ran[0].contains_str("/dd-in"));
+        assert!(builder.commands_ran[1].contains_str("/tmp.imp"));
+        assert!(builder.commands_ran[2].contains_str("/out.imp"));
     }
     assert!(directory.join("tmp.imp").exists());
     assert!(directory.join("out.imp").exists());
@@ -2837,9 +2842,9 @@ fn ninja_build_generated_dyndep_now_wants_clean_edge() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
-        assert!(builder.commands_ran[0].contains("/dd-in"));
-        assert!(builder.commands_ran[1].contains("/tmp.imp"));
-        assert!(builder.commands_ran[2].contains("/out.imp"));
+        assert!(builder.commands_ran[0].contains_str("/dd-in"));
+        assert!(builder.commands_ran[1].contains_str("/tmp.imp"));
+        assert!(builder.commands_ran[2].contains_str("/out.imp"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2867,9 +2872,9 @@ fn ninja_build_generated_dyndep_now_wants_edge_and_dependent() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
-        assert!(builder.commands_ran[0].contains("/dd-in"));
-        assert!(builder.commands_ran[1].contains("/tmp.imp"));
-        assert!(builder.commands_ran[2].contains("/out.imp"));
+        assert!(builder.commands_ran[0].contains_str("/dd-in"));
+        assert!(builder.commands_ran[1].contains_str("/tmp.imp"));
+        assert!(builder.commands_ran[2].contains_str("/out.imp"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2901,12 +2906,12 @@ fn ninja_build_generated_dyndep_does_not_reschedule_completed_edge() {
             builder
                 .commands_ran
                 .iter()
-                .filter(|command| command.starts_with("touch "))
+                .filter(|command| command.starts_with(b"touch "))
                 .count(),
             1
         );
-        assert!(builder.commands_ran[2].contains("/out1"));
-        assert!(builder.commands_ran[2].contains("/out2"));
+        assert!(builder.commands_ran[2].contains_str("/out1"));
+        assert!(builder.commands_ran[2].contains_str("/out2"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2945,9 +2950,9 @@ fn ninja_build_two_level_dyndep_direct() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
-        assert!(builder.commands_ran[0].contains("/dd1-in"));
-        assert!(builder.commands_ran[1].contains("/out1.imp"));
-        assert!(builder.commands_ran[2].contains("/out2.imp"));
+        assert!(builder.commands_ran[0].contains_str("/dd1-in"));
+        assert!(builder.commands_ran[1].contains_str("/out1.imp"));
+        assert!(builder.commands_ran[2].contains_str("/out2.imp"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2987,9 +2992,9 @@ fn ninja_build_two_level_dyndep_indirect() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
-        assert!(builder.commands_ran[0].contains("/dd1-in"));
-        assert!(builder.commands_ran[1].contains("/out1.imp"));
-        assert!(builder.commands_ran[2].contains("/out2.imp"));
+        assert!(builder.commands_ran[0].contains_str("/dd1-in"));
+        assert!(builder.commands_ran[1].contains_str("/out1.imp"));
+        assert!(builder.commands_ran[2].contains_str("/out2.imp"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -3026,10 +3031,10 @@ fn ninja_build_two_level_dyndep_discovered_ready() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 4);
-        assert!(builder.commands_ran[0].contains("/dd1-in"));
-        assert!(builder.commands_ran[1].contains("/in"));
-        assert!(builder.commands_ran[2].contains("/tmp"));
-        assert!(builder.commands_ran[3].contains("/out"));
+        assert!(builder.commands_ran[0].contains_str("/dd1-in"));
+        assert!(builder.commands_ran[1].contains_str("/in"));
+        assert!(builder.commands_ran[2].contains_str("/tmp"));
+        assert!(builder.commands_ran[3].contains_str("/out"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -3065,11 +3070,11 @@ fn ninja_build_two_level_dyndep_discovered_dirty() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 5);
-        assert!(builder.commands_ran[0].contains("/dd1-in"));
-        assert!(builder.commands_ran[1].contains("/dd0-in"));
-        assert!(builder.commands_ran[2].contains("/in"));
-        assert!(builder.commands_ran[3].contains("/tmp"));
-        assert!(builder.commands_ran[4].contains("/out"));
+        assert!(builder.commands_ran[0].contains_str("/dd1-in"));
+        assert!(builder.commands_ran[1].contains_str("/dd0-in"));
+        assert!(builder.commands_ran[2].contains_str("/in"));
+        assert!(builder.commands_ran[3].contains_str("/tmp"));
+        assert!(builder.commands_ran[4].contains_str("/out"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -3107,10 +3112,10 @@ fn ninja_build_multiple_dyndeps_from_one_edge() {
         builder.add_target(&out3).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 4);
-        assert!(builder.commands_ran[0].contains("dd3-in"));
-        assert!(builder.commands_ran[1].contains("/out1"));
-        assert!(builder.commands_ran[2].contains("/out2"));
-        assert!(builder.commands_ran[3].contains("/out3"));
+        assert!(builder.commands_ran[0].contains_str("dd3-in"));
+        assert!(builder.commands_ran[1].contains_str("/out1"));
+        assert!(builder.commands_ran[2].contains_str("/out2"));
+        assert!(builder.commands_ran[3].contains_str("/out3"));
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -3129,9 +3134,9 @@ fn ninja_build_dyndep_discovers_new_generated_input() {
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
-        assert!(builder.commands_ran[0].contains("/dd"));
-        assert!(builder.commands_ran[1].contains("/implicit"));
-        assert!(builder.commands_ran[2].contains("/out"));
+        assert!(builder.commands_ran[0].contains_str("/dd"));
+        assert!(builder.commands_ran[1].contains_str("/implicit"));
+        assert!(builder.commands_ran[2].contains_str("/out"));
     }
     assert!(directory.join("implicit").exists());
     assert!(directory.join("out").exists());

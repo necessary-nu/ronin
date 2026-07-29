@@ -1,5 +1,6 @@
 //! Wave-3 behavior tests for the literal Rust port.
 
+use crate::util::ByteSlice;
 use crate::{build, cli, deps, env, graph, htab, log, os, parse, scan, tool, tree, util};
 use std::fs;
 
@@ -53,7 +54,7 @@ fn data_structure_and_platform_behaviour() {
     assert_eq!(buffer.data[0], b'x');
     let mut path = util::xasprintf(format_args!("a//b/../c"));
     util::canonpath(&mut path);
-    assert_eq!(&path.s[..path.n], b"a/c");
+    assert_eq!(path.as_bytes(), b"a/c");
     let mut table = htab::mkhtab(2);
     *table.htabput(htab::htabkey(b"key")) = Some(7);
     assert_eq!(table.htabget(&htab::htabkey(b"key")), Some(&7));
@@ -103,7 +104,7 @@ fn ninja_canonicalize_path_samples() {
     ] {
         let mut path = util::xasprintf(format_args!("{input}"));
         util::canonpath(&mut path);
-        assert_eq!(std::str::from_utf8(&path.s[..path.n]).unwrap(), expected);
+        assert_eq!(std::str::from_utf8(path.as_bytes()).unwrap(), expected);
     }
 }
 
@@ -145,7 +146,7 @@ fn environment_graph_and_log_behaviour() {
     let state = env::envinit();
     let mut graph = graph::graphinit();
     let node = graph::mknode(&mut graph, util::xasprintf(format_args!("out file")));
-    assert_eq!(&graph::nodepath(&node, true).s[..10], b"'out file'");
+    assert_eq!(graph::nodepath(&node, true).as_bytes(), b"'out file'");
     let edge = graph::mkedge(&mut graph, state.root.clone());
     graph::edgeadddeps(&edge, std::slice::from_ref(&node));
     assert_eq!(edge.borrow().input.len(), 1);
@@ -235,17 +236,18 @@ fn ninja_lexer_read_ident_and_keywords() {
 
 fn serialized_eval(value: &util::EvalString) -> String {
     let mut output = String::new();
-    let mut current = Some(value);
-    while let Some(part) = current {
+    for part in &value.parts {
         output.push('[');
-        if let Some(name) = &part.var {
-            output.push('$');
-            output.push_str(std::str::from_utf8(name).unwrap());
-        } else if let Some(value) = &part.string {
-            output.push_str(std::str::from_utf8(&value.s[..value.n]).unwrap());
+        match part {
+            util::EvalPart::Variable(name) => {
+                output.push('$');
+                output.push_str(name);
+            }
+            util::EvalPart::Literal(value) => {
+                output.push_str(std::str::from_utf8(value).unwrap());
+            }
         }
         output.push(']');
-        current = part.next.as_deref();
     }
     output
 }
@@ -404,10 +406,7 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
     assert_eq!(edge.borrow().inimpidx, 1);
     assert_eq!(edge.borrow().inorderidx, 2);
     let command = env::edgevar(&edge, "command", false).unwrap();
-    assert_eq!(
-        &command.s[..command.n],
-        b"ld one-letter-test -s -o out input"
-    );
+    assert_eq!(command.as_bytes(), b"ld one-letter-test -s -o out input");
     assert_eq!(
         graph::nodeget(&graph, b"input")
             .unwrap()
@@ -466,11 +465,13 @@ fn ninja_manifest_parser_rule_attributes_and_special_variables() {
     let out = graph::nodeget(&graph, b"out").unwrap();
     let edge = out.borrow().gen.as_ref().unwrap().upgrade().unwrap();
     let command = env::edgevar(&edge, "command", false).unwrap();
-    assert_eq!(&command.s[..command.n], b"cat out.rsp > out");
+    assert_eq!(command.as_bytes(), b"cat out.rsp > out");
     let inputs = env::edgevar(&edge, "in_newline", false).unwrap();
-    assert_eq!(&inputs.s[..inputs.n], b"in\nin2");
+    assert_eq!(inputs.as_bytes(), b"in\nin2");
     assert_eq!(
-        &env::edgevar(&edge, "rspfile_content", false).unwrap().s[..6],
+        env::edgevar(&edge, "rspfile_content", false)
+            .unwrap()
+            .as_bytes(),
         b"in in2"
     );
     let _ = fs::remove_file(path);
@@ -504,13 +505,16 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
     )
     .unwrap();
     let (graph, _, state) = parse_manifest(&path);
-    assert_eq!(&env::envvar(&state.root, "nested2").unwrap().s[..3], b"1/2");
     assert_eq!(
-        &env::envvar(&state.root, "foo").unwrap().s[..7],
+        env::envvar(&state.root, "nested2").unwrap().as_bytes(),
+        b"1/2"
+    );
+    assert_eq!(
+        env::envvar(&state.root, "foo").unwrap().as_bytes(),
         b"bar\\baz"
     );
     assert_eq!(
-        &env::envvar(&state.root, "foo2").unwrap().s[..8],
+        env::envvar(&state.root, "foo2").unwrap().as_bytes(),
         b"bar\\ baz"
     );
     let first = graph::nodeget(&graph, b"a")
@@ -531,12 +535,12 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
         .unwrap();
     let command = env::edgevar(&first, "command", false).unwrap();
     assert_eq!(
-        &command.s[..command.n],
+        command.as_bytes(),
         b"ld one-letter-test -pthread -under -o a b c suffix"
     );
     let command = env::edgevar(&second, "command", false).unwrap();
     assert_eq!(
-        &command.s[..command.n],
+        command.as_bytes(),
         b"ld one-letter-test 1/2/3 -under -o supernested x suffix"
     );
     let _ = fs::remove_file(path);
@@ -600,14 +604,17 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
     )
     .unwrap();
     let (graph, _, state) = parse_manifest(&path);
-    assert_eq!(&env::envvar(&state.root, "x").unwrap().s[..7], b"$dollar");
+    assert_eq!(
+        env::envvar(&state.root, "x").unwrap().as_bytes(),
+        b"$dollar"
+    );
     assert!(graph::nodeget(&graph, b"foo bar").is_some());
     assert!(graph::nodeget(&graph, b"$one").is_some());
     assert!(graph::nodeget(&graph, b"two$ three").is_some());
     let output = graph::nodeget(&graph, b"$dollar").unwrap();
     let edge = output.borrow().gen.as_ref().unwrap().upgrade().unwrap();
     let command = env::edgevar(&edge, "command", true).unwrap();
-    assert_eq!(&command.s[..command.n], b"'$dollar'bar$baz$blah");
+    assert_eq!(command.as_bytes(), b"'$dollar'bar$baz$blah");
     let _ = fs::remove_file(path);
 }
 

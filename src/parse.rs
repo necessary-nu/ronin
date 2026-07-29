@@ -5,7 +5,7 @@ use crate::env::{
     Environment,
 };
 use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeRef};
-use crate::util::{canonpath, mkstr, EvalString, SamuraiString};
+use crate::util::{canonpath, BString, ByteSlice, EvalPart, EvalString};
 use std::rc::Rc;
 
 // [spec:samurai:def:parse.parseoptions]
@@ -28,12 +28,6 @@ pub fn parseinit() -> Parser {
     }
 }
 
-fn literal(value: &str) -> SamuraiString {
-    let mut string = mkstr(value.len());
-    string.s[..value.len()].copy_from_slice(value.as_bytes());
-    string
-}
-
 // [spec:samurai:def:parse.parselet-fn]
 // [spec:samurai:sem:parse.parselet-fn]
 fn parselet(line: &str) -> Result<(String, String), String> {
@@ -47,17 +41,12 @@ fn parselet(line: &str) -> Result<(String, String), String> {
     Ok((name.to_owned(), value.trim().to_owned()))
 }
 
-fn push_literal(parts: &mut Vec<EvalString>, text: &mut String) {
+fn push_literal(parts: &mut Vec<EvalPart>, text: &mut String) {
     if text.is_empty() {
         return;
     }
-    let value = literal(text);
-    parts.push(EvalString {
-        var: None,
-        string: Some(value),
-        next: None,
-    });
-    text.clear();
+    let value = BString::from(std::mem::take(text));
+    parts.push(EvalPart::Literal(value));
 }
 
 fn parsevalue(value: &str) -> Result<EvalString, String> {
@@ -89,11 +78,7 @@ fn parsevalue(value: &str) -> Result<EvalString, String> {
                     }
                     name.push(character);
                 }
-                parts.push(EvalString {
-                    var: Some(name.into_bytes()),
-                    string: None,
-                    next: None,
-                });
+                parts.push(EvalPart::Variable(name));
             }
             character if is_simple_variable_character(character) => {
                 push_literal(&mut parts, &mut literal_part);
@@ -105,26 +90,13 @@ fn parsevalue(value: &str) -> Result<EvalString, String> {
                     characters.next();
                     name.push(character);
                 }
-                parts.push(EvalString {
-                    var: Some(name.into_bytes()),
-                    string: None,
-                    next: None,
-                });
+                parts.push(EvalPart::Variable(name));
             }
             _ => return Err("invalid $ escape".into()),
         }
     }
     push_literal(&mut parts, &mut literal_part);
-    let mut value = None;
-    for mut part in parts.into_iter().rev() {
-        part.next = value.map(Box::new);
-        value = Some(part);
-    }
-    Ok(value.unwrap_or(EvalString {
-        var: None,
-        string: Some(literal("")),
-        next: None,
-    }))
+    Ok(EvalString::from_parts(parts))
 }
 
 fn is_simple_variable_character(character: char) -> bool {
@@ -194,10 +166,10 @@ fn parserule(lines: &[String], index: &mut usize, env: &Rc<Environment>) -> Resu
     envaddrule(env, rule)
 }
 
-fn evaluated_path(path: &str, env: &Rc<Environment>) -> Result<SamuraiString, String> {
-    let mut value = parsevalue(path)?;
-    let value = enveval(env, &mut value);
-    if value.n == 0 {
+fn evaluated_path(path: &str, env: &Rc<Environment>) -> Result<BString, String> {
+    let value = parsevalue(path)?;
+    let value = enveval(env, &value);
+    if value.is_empty() {
         return Err("empty path".into());
     }
     Ok(value)
@@ -368,17 +340,17 @@ fn parseedge(
             continue;
         }
         let (name, value) = parselet(line)?;
-        let mut value = parsevalue(&value)?;
-        let value = enveval(&edge_env, &mut value);
+        let value = parsevalue(&value)?;
+        let value = enveval(&edge_env, &value);
         edge.borrow_mut().bindings.insert(name, value);
     }
 
-    if let Some(pool_name) = edgevar(&edge, "pool", true).filter(|pool| pool.n != 0) {
-        let pool_name = String::from_utf8_lossy(&pool_name.s[..pool_name.n]);
+    if let Some(pool_name) = edgevar(&edge, "pool", true).filter(|pool| !pool.is_empty()) {
+        let pool_name = String::from_utf8_lossy(pool_name.as_bytes());
         edge.borrow_mut().pool = Some(poolget(state, &pool_name)?);
     }
 
-    if let Some(mut dyndep_path) = edgevar(&edge, "dyndep", false).filter(|path| path.n != 0) {
+    if let Some(mut dyndep_path) = edgevar(&edge, "dyndep", false).filter(|path| !path.is_empty()) {
         canonpath(&mut dyndep_path);
         let dyndep = mknode(graph, dyndep_path.clone());
         if !edge
@@ -389,7 +361,7 @@ fn parseedge(
         {
             return Err(format!(
                 "dyndep '{}' is not an input",
-                String::from_utf8_lossy(&dyndep_path.s[..dyndep_path.n])
+                String::from_utf8_lossy(dyndep_path.as_bytes())
             ));
         }
         dyndep.borrow_mut().dyndep_pending = true;
@@ -436,13 +408,18 @@ fn parseinclude(
     newscope: bool,
 ) -> Result<(), String> {
     let path = evaluated_path(path, &env)?;
-    let path = String::from_utf8_lossy(&path.s[..path.n]).into_owned();
     let env = if newscope {
         crate::env::mkenv(Some(env))
     } else {
         env
     };
-    parse(&path, graph, parser, env, state)
+    parse(
+        path.to_path().expect("byte paths are valid on Unix"),
+        graph,
+        parser,
+        env,
+        state,
+    )
 }
 
 // [spec:samurai:def:parse.parsedefault-fn]
@@ -460,10 +437,10 @@ fn parsedefault(
     for target in targets {
         let target = evaluated_path(&target, env)?;
         parser.defaults.push(
-            crate::graph::nodeget(graph, &target.s[..target.n]).ok_or_else(|| {
+            crate::graph::nodeget(graph, target.as_bytes()).ok_or_else(|| {
                 format!(
                     "unknown target '{}'",
-                    String::from_utf8_lossy(&target.s[..target.n])
+                    String::from_utf8_lossy(target.as_bytes())
                 )
             })?,
         );
@@ -500,9 +477,9 @@ fn parsepool(
         if name != "depth" {
             return Err(format!("unexpected pool variable '{name}'"));
         }
-        let mut value = parsevalue(&value)?;
-        let value = enveval(env, &mut value);
-        let text = String::from_utf8_lossy(&value.s[..value.n]);
+        let value = parsevalue(&value)?;
+        let value = enveval(env, &value);
+        let text = String::from_utf8_lossy(value.as_bytes());
         pool.borrow_mut().maxjobs = text
             .parse()
             .map_err(|_| format!("invalid pool depth '{text}'"))?;
@@ -573,7 +550,7 @@ fn manifestlines(source: &str) -> Result<Vec<String>, String> {
 // [spec:samurai:def:parse.parse-fn]
 // [spec:samurai:sem:parse.parse-fn]
 pub fn parse(
-    name: &str,
+    name: impl AsRef<std::path::Path>,
     graph: &mut Graph,
     parser: &mut Parser,
     env: Rc<Environment>,
@@ -617,10 +594,10 @@ pub fn parse(
         } else if let Some(path) = content.strip_prefix("subninja ") {
             parseinclude(path.trim(), graph, parser, env.clone(), state, true)?;
         } else if let Ok((name, value)) = parselet(content) {
-            let mut value = parsevalue(&value)?;
-            let value = enveval(&env, &mut value);
+            let value = parsevalue(&value)?;
+            let value = enveval(&env, &value);
             if name == "ninja_required_version" {
-                checkversion(&String::from_utf8_lossy(&value.s[..value.n]))?;
+                checkversion(&String::from_utf8_lossy(value.as_bytes()))?;
             }
             crate::env::envaddvar(&env, name, value);
         } else {
@@ -723,7 +700,7 @@ mod ninja_manifest_tests {
         let (graph, _, _) = parse_source(source).unwrap();
         let edge = output_edge(&graph, b"result");
         let dyndep = edge.borrow().dyndep.clone().unwrap();
-        assert_eq!(&dyndep.borrow().path.s[..dyndep.borrow().path.n], expected);
+        assert_eq!(dyndep.borrow().path.as_bytes(), expected);
         assert!(dyndep.borrow().dyndep_pending);
     }
 
@@ -735,11 +712,7 @@ mod ninja_manifest_tests {
         let edge = output_edge(&graph, b"foo");
         assert_eq!(edge.borrow().input.len(), 1);
         assert_eq!(edge.borrow().validation.len(), 1);
-        assert_eq!(
-            &edge.borrow().validation[0].borrow().path.s
-                [..edge.borrow().validation[0].borrow().path.n],
-            b"baz"
-        );
+        assert_eq!(edge.borrow().validation[0].borrow().path.as_bytes(), b"baz");
         assert_eq!(
             crate::graph::nodeget(&graph, b"baz")
                 .unwrap()
@@ -924,9 +897,9 @@ mod ninja_manifest_tests {
         let inner_command = edgevar(&inner, "command", false).unwrap();
         let outer_command = edgevar(&outer, "command", false).unwrap();
         let outer2_command = edgevar(&outer2, "command", false).unwrap();
-        assert_eq!(&inner_command.s[..inner_command.n], b"varref inner");
-        assert_eq!(&outer_command.s[..outer_command.n], b"varref outer");
-        assert_eq!(&outer2_command.s[..outer2_command.n], b"varref outer");
+        assert_eq!(inner_command.as_bytes(), b"varref inner");
+        assert_eq!(outer_command.as_bytes(), b"varref outer");
+        assert_eq!(outer2_command.as_bytes(), b"varref outer");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -988,7 +961,7 @@ mod ninja_manifest_tests {
         .unwrap();
         let (_, _, state) = parse_path(&root).unwrap();
         let value = crate::env::envvar(&state.root, "var").unwrap();
-        assert_eq!(&value.s[..value.n], b"inner");
+        assert_eq!(value.as_bytes(), b"inner");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1080,10 +1053,7 @@ mod ninja_manifest_tests {
         .unwrap();
         let defaults = defaultnodes(&parser, &graph);
         assert_eq!(defaults.len(), 1);
-        assert_eq!(
-            &defaults[0].borrow().path.s[..defaults[0].borrow().path.n],
-            b"foo bar"
-        );
+        assert_eq!(defaults[0].borrow().path.as_bytes(), b"foo bar");
     }
 
     #[test]
@@ -1093,9 +1063,6 @@ mod ninja_manifest_tests {
         )
         .unwrap();
         let node = crate::graph::nodeget(&graph, b"foo %2F bar?baz&x=1").unwrap();
-        assert_eq!(
-            &node.borrow().path.s[..node.borrow().path.n],
-            b"foo %2F bar?baz&x=1"
-        );
+        assert_eq!(node.borrow().path.as_bytes(), b"foo %2F bar?baz&x=1");
     }
 }

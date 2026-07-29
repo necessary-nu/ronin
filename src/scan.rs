@@ -1,6 +1,6 @@
 //! Ninja manifest scanner translated from `scan.c`.
 
-use crate::util::{EvalString, SamuraiString};
+use crate::util::{BString, EvalPart, EvalString};
 use std::fs;
 
 // [spec:samurai:def:scan.token]
@@ -211,27 +211,20 @@ pub fn scanname(scanner: &mut Scanner) -> Result<String, String> {
 
 // [spec:samurai:def:scan.addstringpart-fn]
 // [spec:samurai:sem:scan.addstringpart-fn]
-fn addstringpart(parts: &mut Vec<EvalString>, text: String, variable: bool) {
-    let (var, string) = if variable {
-        (Some(text.into_bytes()), None)
+fn addstringpart(parts: &mut Vec<EvalPart>, text: String, variable: bool) {
+    let part = if variable {
+        EvalPart::Variable(text)
     } else {
-        let mut s = text.into_bytes();
-        let n = s.len();
-        s.push(0);
-        (None, Some(SamuraiString { n, s }))
+        EvalPart::Literal(BString::from(text))
     };
-    parts.push(EvalString {
-        var,
-        string,
-        next: None,
-    });
+    parts.push(part);
 }
 
 // [spec:samurai:def:scan.escape-fn]
 // [spec:samurai:sem:scan.escape-fn]
 fn escape(
     scanner: &mut Scanner,
-    parts: &mut Vec<EvalString>,
+    parts: &mut Vec<EvalPart>,
     literal: &mut String,
 ) -> Result<(), String> {
     match scanner.chr() {
@@ -314,12 +307,7 @@ pub fn scanstring(scanner: &mut Scanner, path: bool) -> Result<Option<EvalString
     if path {
         space(scanner)?;
     }
-    let mut list = None;
-    for mut part in parts.into_iter().rev() {
-        part.next = list.map(Box::new);
-        list = Some(part);
-    }
-    Ok(list)
+    Ok((!parts.is_empty()).then(|| EvalString::from_parts(parts)))
 }
 
 // [spec:samurai:def:scan.scanpaths-fn]

@@ -221,6 +221,13 @@ children (
                         kind @note
                         text "Replace SamuraiString and boxed EvalString fragments with byte-exact owned and borrowed types plus a vector of evaluation parts. Preserve arbitrary Unix path bytes, convert through OsStr/Path only at OS boundaries, avoid lossy path conversion, canonicalize without per-component allocations, and define explicit shell-escaped display behavior."
                     }
+
+                    {
+                        at 2026-07-29T15:05:35.535532192Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 

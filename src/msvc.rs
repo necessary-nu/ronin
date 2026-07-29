@@ -1,6 +1,6 @@
 //! MSVC show-includes parsing compatible with Ninja's clparser source.
 
-use crate::util::{canonpath, xasprintf};
+use crate::util::{canonpath, xasprintf, ByteSlice};
 use std::collections::BTreeSet;
 
 #[derive(Default)]
@@ -29,7 +29,7 @@ fn normalize_include(path: &str) -> String {
     let path = path.replace('\\', "/");
     let mut path = xasprintf(format_args!("{path}"));
     canonpath(&mut path);
-    String::from_utf8_lossy(&path.s[..path.n]).into_owned()
+    String::from_utf8_lossy(path.as_bytes()).into_owned()
 }
 
 fn system_include(path: &str) -> bool {

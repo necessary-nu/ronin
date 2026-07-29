@@ -5,7 +5,7 @@ use crate::graph::{
     FLAG_DIRTY, FLAG_DIRTY_OUT, FLAG_WORK,
 };
 use crate::os::{osmkdirs, RealDiskInterface, MTIME_MISSING};
-use crate::util::SamuraiString;
+use crate::util::{BString, ByteSlice};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
@@ -45,7 +45,7 @@ impl Default for BuildOptions {
 
 // [spec:samurai:def:build.job]
 pub struct Job {
-    pub command: SamuraiString,
+    pub command: BString,
     pub edge: EdgeRef,
     pub output: Vec<u8>,
     pub failed: bool,
@@ -330,17 +330,17 @@ pub struct Builder<'a> {
     deps_log: Option<&'a mut crate::deps::DepsLog>,
     targets: Vec<NodeRef>,
     executed_edges: BTreeSet<usize>,
-    pub commands_ran: Vec<String>,
+    pub commands_ran: Vec<BString>,
     pub command_output: Vec<u8>,
 }
 
 struct PreparedEdge {
     edge: EdgeRef,
     old_mtimes: Vec<i64>,
-    rspfile: Option<String>,
-    command: String,
+    rspfile: Option<BString>,
+    command: BString,
     deps_type: String,
-    depfile_path: Option<String>,
+    depfile_path: Option<BString>,
     command_start_mtime: i64,
     use_console: bool,
 }
@@ -477,13 +477,14 @@ impl<'a> Builder<'a> {
             false
         };
         let uses_deps_log = self.deps_log.is_some()
-            && crate::env::edgevar(&edge, "deps", false).is_some_and(|value| value.n != 0);
+            && crate::env::edgevar(&edge, "deps", false).is_some_and(|value| !value.is_empty());
         if uses_deps_log {
             let output = edge.borrow().out.first().cloned();
             let entry_is_current = if let Some(output) = output.as_ref() {
                 let disk = RealDiskInterface;
+                let output_path = output.borrow().path.clone();
                 let output_mtime = disk
-                    .stat(Path::new(&Self::path(output)))
+                    .stat(output_path.to_path().expect("byte paths are valid on Unix"))
                     .map_err(|error| error.to_string())?;
                 output.borrow_mut().mtime = output_mtime;
                 self.deps_log
@@ -502,17 +503,27 @@ impl<'a> Builder<'a> {
             edge.deps_loaded = true;
             edge.deps_missing = !entry_is_current;
         } else if let Some(depfile) =
-            crate::env::edgevar(&edge, "depfile", false).filter(|path| path.n != 0)
+            crate::env::edgevar(&edge, "depfile", false).filter(|path| !path.is_empty())
         {
-            let path = String::from_utf8_lossy(&depfile.s[..depfile.n]).into_owned();
             if base_dirty {
                 let mut edge = edge.borrow_mut();
                 edge.deps_loaded = true;
-                edge.deps_missing = !Path::new(&path).exists();
-            } else if Path::new(&path).exists() {
+                edge.deps_missing = !depfile
+                    .to_path()
+                    .expect("byte paths are valid on Unix")
+                    .exists();
+            } else if depfile
+                .to_path()
+                .expect("byte paths are valid on Unix")
+                .exists()
+            {
                 edge.borrow_mut().deps_loaded = true;
-                match crate::deps::depsparse_for_edge(self.graph, Path::new(&path), &edge)
-                    .map_err(|error| format!("{path}: {error}"))?
+                match crate::deps::depsparse_for_edge(
+                    self.graph,
+                    depfile.to_path().expect("byte paths are valid on Unix"),
+                    &edge,
+                )
+                .map_err(|error| format!("{depfile}: {error}"))?
                 {
                     Some(deps) => {
                         Self::replace_depfile_deps(&edge, &deps.nodes);
@@ -547,8 +558,13 @@ impl<'a> Builder<'a> {
         let dyndep = edge.borrow().dyndep.clone();
         if let Some(dyndep) = dyndep.filter(|dyndep| dyndep.borrow().dyndep_pending) {
             let identity = Rc::as_ptr(&dyndep) as usize;
-            let path = Self::path(&dyndep);
-            if Path::new(&path).exists() && loaded_files.insert(identity) {
+            let path = dyndep.borrow().path.clone();
+            if path
+                .to_path()
+                .expect("byte paths are valid on Unix")
+                .exists()
+                && loaded_files.insert(identity)
+            {
                 crate::dyndep::load_dyndep(self.graph, &dyndep)?;
             }
         }
@@ -569,16 +585,19 @@ impl<'a> Builder<'a> {
         if !visited.insert(edge_identity(&edge)) {
             return Ok(());
         }
-        let command = crate::env::edgevar(&edge, "command", true)
-            .unwrap_or_else(|| SamuraiString { n: 0, s: vec![0] });
+        let command = crate::env::edgevar(&edge, "command", true).unwrap_or_default();
         let rspfile_content = crate::env::edgevar(&edge, "rspfile_content", false);
-        edgehash(&edge, &command, rspfile_content.as_ref());
+        edgehash(
+            &edge,
+            command.as_bstr(),
+            rspfile_content.as_ref().map(|content| content.as_bstr()),
+        );
         let (hash, outputs) = {
             let edge = edge.borrow();
             (edge.hash, edge.out.clone())
         };
         let generator =
-            crate::env::edgevar(&edge, "generator", false).is_some_and(|value| value.n != 0);
+            crate::env::edgevar(&edge, "generator", false).is_some_and(|value| !value.is_empty());
         edge.borrow_mut().command_dirty = !generator
             && outputs.iter().any(|output| {
                 let output = output.borrow();
@@ -590,9 +609,10 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    pub fn add_target(&mut self, path: &str) -> Result<(), String> {
-        let node = nodeget(self.graph, path.as_bytes())
-            .ok_or_else(|| format!("unknown target: '{path}'"))?;
+    pub fn add_target(&mut self, path: impl AsRef<[u8]>) -> Result<(), String> {
+        let path = path.as_ref();
+        let node = nodeget(self.graph, path)
+            .ok_or_else(|| format!("unknown target: '{}'", String::from_utf8_lossy(path)))?;
         if !self.targets.iter().any(|target| Rc::ptr_eq(target, &node)) {
             self.targets.push(node.clone());
         }
@@ -607,7 +627,10 @@ impl<'a> Builder<'a> {
             .map_err(|error| error.to_string())?;
         self.plan.add_target(&node).map_err(|error| {
             if node.borrow().gen.is_none() {
-                format!("'{path}' missing and no known rule to make it")
+                format!(
+                    "'{}' missing and no known rule to make it",
+                    String::from_utf8_lossy(path)
+                )
             } else {
                 error
             }
@@ -626,11 +649,6 @@ impl<'a> Builder<'a> {
         self.executed_edges.contains(&edge_identity(edge))
     }
 
-    fn path(node: &NodeRef) -> String {
-        let node = node.borrow();
-        String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned()
-    }
-
     fn prepare_edge(&mut self, edge: &EdgeRef) -> Result<PreparedEdge, String> {
         let old_mtimes = edge
             .borrow()
@@ -640,29 +658,35 @@ impl<'a> Builder<'a> {
             .collect::<Vec<_>>();
 
         for output in &edge.borrow().out {
-            osmkdirs(Path::new(&Self::path(output)), true).map_err(|error| error.to_string())?;
+            let path = output.borrow().path.clone();
+            osmkdirs(path.to_path().expect("byte paths are valid on Unix"), true)
+                .map_err(|error| error.to_string())?;
         }
 
-        let rspfile = crate::env::edgevar(edge, "rspfile", false)
-            .filter(|path| path.n != 0)
-            .map(|path| String::from_utf8_lossy(&path.s[..path.n]).into_owned());
+        let rspfile = crate::env::edgevar(edge, "rspfile", false).filter(|path| !path.is_empty());
         if let Some(path) = &rspfile {
             let contents = crate::env::edgevar(edge, "rspfile_content", false)
-                .map(|contents| contents.s[..contents.n].to_vec())
+                .map(|contents| contents.as_bytes().to_vec())
                 .unwrap_or_default();
-            osmkdirs(Path::new(path), true).map_err(|error| error.to_string())?;
-            fs::write(path, contents).map_err(|error| error.to_string())?;
+            osmkdirs(path.to_path().expect("byte paths are valid on Unix"), true)
+                .map_err(|error| error.to_string())?;
+            fs::write(
+                path.to_path().expect("byte paths are valid on Unix"),
+                contents,
+            )
+            .map_err(|error| error.to_string())?;
         }
 
-        let command = crate::env::edgevar(edge, "command", true)
-            .map(|command| String::from_utf8_lossy(&command.s[..command.n]).into_owned())
-            .unwrap_or_default();
+        let command = crate::env::edgevar(edge, "command", true).unwrap_or_default();
         let deps_type = crate::env::edgevar(edge, "deps", false)
-            .map(|value| String::from_utf8_lossy(&value.s[..value.n]).into_owned())
+            .map(|value| {
+                String::from_utf8(Vec::from(value))
+                    .map_err(|_| "deps binding is not valid UTF-8".to_owned())
+            })
+            .transpose()?
             .unwrap_or_default();
-        let depfile_path = crate::env::edgevar(edge, "depfile", false)
-            .filter(|path| path.n != 0)
-            .map(|path| String::from_utf8_lossy(&path.s[..path.n]).into_owned());
+        let depfile_path =
+            crate::env::edgevar(edge, "depfile", false).filter(|path| !path.is_empty());
         let command_start_mtime = if self.options.dryrun {
             0
         } else {
@@ -693,7 +717,7 @@ impl<'a> Builder<'a> {
     }
 
     fn execute_edge(
-        command: &str,
+        command: &BString,
         use_console: bool,
         dryrun: bool,
     ) -> Result<Option<ShellOutput>, String> {
@@ -703,7 +727,7 @@ impl<'a> Builder<'a> {
         if use_console {
             let status = Command::new("/bin/sh")
                 .arg("-c")
-                .arg(command)
+                .arg(command.to_os_str().expect("byte strings are valid on Unix"))
                 .status()
                 .map_err(|error| error.to_string())?;
             Ok(Some(ShellOutput {
@@ -714,7 +738,7 @@ impl<'a> Builder<'a> {
         } else {
             let result = Command::new("/bin/sh")
                 .arg("-c")
-                .arg(command)
+                .arg(command.to_os_str().expect("byte strings are valid on Unix"))
                 .stdin(Stdio::null())
                 .output()
                 .map_err(|error| error.to_string())?;
@@ -746,7 +770,8 @@ impl<'a> Builder<'a> {
             Err(error) => {
                 if let Some(path) = &rspfile {
                     if !self.options.keeprsp {
-                        let _ = fs::remove_file(path);
+                        let _ =
+                            fs::remove_file(path.to_path().expect("byte paths are valid on Unix"));
                     }
                 }
                 return Err(error);
@@ -761,7 +786,7 @@ impl<'a> Builder<'a> {
         {
             if deps_type == "msvc" {
                 let prefix = crate::env::edgevar(&edge, "msvc_deps_prefix", false)
-                    .map(|value| String::from_utf8_lossy(&value.s[..value.n]).into_owned())
+                    .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
                     .unwrap_or_default();
                 let mut parser = crate::msvc::ClParser::default();
                 let filtered = parser.parse(&String::from_utf8_lossy(&stdout), &prefix);
@@ -780,15 +805,22 @@ impl<'a> Builder<'a> {
                 if status_interrupted(&status) {
                     let disk = RealDiskInterface;
                     for (output, old_mtime) in edge.borrow().out.iter().zip(&old_mtimes) {
-                        let path = Self::path(output);
-                        if disk.stat(Path::new(&path)).ok() != Some(*old_mtime) {
-                            let _ = fs::remove_file(path);
+                        let path = output.borrow().path.clone();
+                        if disk
+                            .stat(path.to_path().expect("byte paths are valid on Unix"))
+                            .ok()
+                            != Some(*old_mtime)
+                        {
+                            let _ = fs::remove_file(
+                                path.to_path().expect("byte paths are valid on Unix"),
+                            );
                         }
                     }
                 }
                 if let Some(path) = &rspfile {
                     if !self.options.keeprsp {
-                        let _ = fs::remove_file(path);
+                        let _ =
+                            fs::remove_file(path.to_path().expect("byte paths are valid on Unix"));
                     }
                 }
                 if status_interrupted(&status) {
@@ -802,9 +834,17 @@ impl<'a> Builder<'a> {
             let path = depfile_path
                 .as_ref()
                 .ok_or_else(|| "subcommand succeeded but dependency file is missing".to_string())?;
-            if Path::new(&path).exists() {
-                let deps = crate::deps::depsparse(self.graph, Path::new(&path), false)
-                    .map_err(|error| format!("{path}: {error}"))?;
+            if path
+                .to_path()
+                .expect("byte paths are valid on Unix")
+                .exists()
+            {
+                let deps = crate::deps::depsparse(
+                    self.graph,
+                    path.to_path().expect("byte paths are valid on Unix"),
+                    false,
+                )
+                .map_err(|error| format!("{path}: {error}"))?;
                 Self::replace_depfile_deps(&edge, &deps.nodes);
                 let mut edge = edge.borrow_mut();
                 edge.deps_loaded = true;
@@ -815,10 +855,10 @@ impl<'a> Builder<'a> {
         let disk = RealDiskInterface;
         let mut new_mtimes = Vec::new();
         for output in &edge.borrow().out {
-            let path = Self::path(output);
+            let path = output.borrow().path.clone();
             let mut output = output.borrow_mut();
             output.mtime = disk
-                .stat(Path::new(&path))
+                .stat(path.to_path().expect("byte paths are valid on Unix"))
                 .map_err(|error| error.to_string())?;
             output.dirty = false;
             output.hash = edge.borrow().hash;
@@ -827,7 +867,11 @@ impl<'a> Builder<'a> {
         if !deps_type.is_empty() && !self.options.dryrun {
             match deps_type.as_str() {
                 "gcc" => {
-                    if !Path::new(depfile_path.as_deref().unwrap_or_default()).exists() {
+                    if !depfile_path.as_ref().is_some_and(|path| {
+                        path.to_path()
+                            .expect("byte paths are valid on Unix")
+                            .exists()
+                    }) {
                         return Err("subcommand succeeded but dependency file is missing".into());
                     }
                     if let Some(deps_log) = self.deps_log.as_deref_mut() {
@@ -847,7 +891,7 @@ impl<'a> Builder<'a> {
         if deps_type == "gcc" {
             if let Some(path) = &depfile_path {
                 if !self.options.keepdepfile {
-                    let _ = fs::remove_file(path);
+                    let _ = fs::remove_file(path.to_path().expect("byte paths are valid on Unix"));
                 }
             }
         }
@@ -868,12 +912,13 @@ impl<'a> Builder<'a> {
         edge.borrow_mut().command_dirty = false;
         if let Some(path) = rspfile {
             if !self.options.keeprsp {
-                let _ = fs::remove_file(path);
+                let _ = fs::remove_file(path.to_path().expect("byte paths are valid on Unix"));
             }
         }
-        let restat = crate::env::edgevar(&edge, "restat", false).is_some_and(|value| value.n != 0);
+        let restat =
+            crate::env::edgevar(&edge, "restat", false).is_some_and(|value| !value.is_empty());
         let generator =
-            crate::env::edgevar(&edge, "generator", false).is_some_and(|value| value.n != 0);
+            crate::env::edgevar(&edge, "generator", false).is_some_and(|value| !value.is_empty());
         let unchanged_outputs = old_mtimes
             .iter()
             .zip(&new_mtimes)
@@ -1224,8 +1269,8 @@ pub fn buildadd(state: &mut BuildState, node: &NodeRef) -> Result<(), String> {
         }
     }
     let generator =
-        crate::env::edgevar(&edge, "generator", false).is_some_and(|value| value.n != 0);
-    let restat = crate::env::edgevar(&edge, "restat", false).is_some_and(|value| value.n != 0);
+        crate::env::edgevar(&edge, "generator", false).is_some_and(|value| !value.is_empty());
+    let restat = crate::env::edgevar(&edge, "restat", false).is_some_and(|value| !value.is_empty());
     let dirty_output = edge
         .borrow()
         .out
@@ -1269,7 +1314,7 @@ pub fn buildadd(state: &mut BuildState, node: &NodeRef) -> Result<(), String> {
 
 fn node_path_string(node: &NodeRef) -> String {
     let node = node.borrow();
-    String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned()
+    String::from_utf8_lossy(node.path.as_bytes()).into_owned()
 }
 
 // [spec:samurai:def:build.formatstatus-fn]

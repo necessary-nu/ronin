@@ -1,6 +1,7 @@
 //! Version-7 Ninja build log reader and writer.
 
 use crate::graph::{nodeget, EdgeRef, Graph, NodeRef};
+use crate::util::ByteSlice;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
@@ -147,7 +148,7 @@ pub fn logrecord(log: &mut BuildLog, node: &NodeRef) -> io::Result<()> {
             start_time: 0,
             end_time: 0,
             mtime: node.logmtime,
-            output: String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned(),
+            output: String::from_utf8_lossy(node.path.as_bytes()).into_owned(),
             command_hash: node.hash,
         },
     )
@@ -172,7 +173,7 @@ pub fn logrecordedge(
                 start_time,
                 end_time,
                 mtime: record_mtime,
-                output: String::from_utf8_lossy(&output.path.s[..output.path.n]).into_owned(),
+                output: String::from_utf8_lossy(output.path.as_bytes()).into_owned(),
                 command_hash,
             },
         )?;

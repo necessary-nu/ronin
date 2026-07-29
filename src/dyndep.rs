@@ -1,7 +1,7 @@
 //! Ninja version-1 dynamic dependency file parser.
 
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeRef, Graph, NodeRef};
-use crate::util::{canonpath, xasprintf};
+use crate::util::{canonpath, xasprintf, ByteSlice};
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fs;
@@ -304,11 +304,9 @@ pub fn parse_dyndep(input: &str, graph: &mut Graph) -> Result<DyndepFile, Dyndep
 }
 
 pub fn load_dyndep(graph: &mut Graph, dyndep: &NodeRef) -> Result<(), String> {
-    let path = {
-        let dyndep = dyndep.borrow();
-        String::from_utf8_lossy(&dyndep.path.s[..dyndep.path.n]).into_owned()
-    };
-    let input = fs::read_to_string(&path).map_err(|error| format!("loading '{path}': {error}"))?;
+    let path = dyndep.borrow().path.clone();
+    let input = fs::read_to_string(path.to_path().expect("byte paths are valid on Unix"))
+        .map_err(|error| format!("loading '{path}': {error}"))?;
     let file = parse_dyndep(&input, graph).map_err(|error| error.to_string())?;
     let expected_edges = graph
         .edges
@@ -330,7 +328,7 @@ pub fn load_dyndep(graph: &mut Graph, dyndep: &NodeRef) -> Result<(), String> {
                 .first()
                 .map(|output| {
                     let output = output.borrow();
-                    String::from_utf8_lossy(&output.path.s[..output.path.n]).into_owned()
+                    String::from_utf8_lossy(output.path.as_bytes()).into_owned()
                 })
                 .unwrap_or_default();
             return Err(format!(
@@ -357,7 +355,7 @@ pub fn load_dyndep(graph: &mut Graph, dyndep: &NodeRef) -> Result<(), String> {
                 .first()
                 .map(|output| {
                     let output = output.borrow();
-                    String::from_utf8_lossy(&output.path.s[..output.path.n]).into_owned()
+                    String::from_utf8_lossy(output.path.as_bytes()).into_owned()
                 })
                 .unwrap_or_default();
             return Err(format!(
@@ -379,7 +377,7 @@ pub fn load_dyndep(graph: &mut Graph, dyndep: &NodeRef) -> Result<(), String> {
                     let output = output.borrow();
                     return Err(format!(
                         "multiple rules generate {}",
-                        String::from_utf8_lossy(&output.path.s[..output.path.n])
+                        String::from_utf8_lossy(output.path.as_bytes())
                     ));
                 }
             }
@@ -439,7 +437,7 @@ mod tests {
             .iter()
             .map(|node| {
                 let node = node.borrow();
-                String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned()
+                String::from_utf8_lossy(node.path.as_bytes()).into_owned()
             })
             .collect()
     }
@@ -776,7 +774,7 @@ mod tests {
             .iter()
             .map(|node| {
                 let node = node.borrow();
-                String::from_utf8_lossy(&node.path.s[..node.path.n]).into_owned()
+                String::from_utf8_lossy(node.path.as_bytes()).into_owned()
             })
             .collect()
     }
@@ -904,7 +902,7 @@ mod tests {
         assert_eq!(node_paths(&edge1.borrow().input)[0..2], ["in1", "in1imp"]);
         assert_eq!(node_paths(&edge2.borrow().input)[0..2], ["in2", "in2imp"]);
         let restat = crate::env::edgevar(&edge2, "restat", false).unwrap();
-        assert_eq!(&restat.s[..restat.n], b"1");
+        assert_eq!(restat.as_bytes(), b"1");
         assert!(Rc::ptr_eq(
             &nodeget(&graph, b"out1imp")
                 .unwrap()

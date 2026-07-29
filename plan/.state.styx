@@ -50,4 +50,9 @@ impl_evidence (
         {id product.no-samuflags, version 0}
         {id product.ronin-identity, version 0}
     )}
+    {id ronin-byte-data-model, covered_rules (
+        compat.byte-inputs
+    ), covered_claims (
+        {impl_name target-impl, rule compat.byte-inputs}
+    )}
 )
