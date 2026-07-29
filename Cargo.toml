@@ -24,6 +24,7 @@ path = "src/lib.rs"
 
 [dependencies]
 bstr = { version = "1", default-features = false, features = ["std"] }
+jobserver = "0.1.35"
 
 [profile.release]
 lto = "fat"

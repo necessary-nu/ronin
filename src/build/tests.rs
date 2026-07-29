@@ -3,8 +3,6 @@ use crate::env::mkenv;
 use crate::graph::{mkedge, mknode, nodeget, nodeuse, Graph};
 use crate::util::xasprintf;
 use std::fs;
-#[cfg(unix)]
-use std::io::Write;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static NEXT_PLAN: AtomicUsize = AtomicUsize::new(0);
@@ -1407,42 +1405,24 @@ fn ninja_build_runs_independent_edges_in_parallel() {
 #[cfg(unix)]
 #[test]
 fn ronin_build_acquires_and_releases_jobserver_tokens() {
-    use std::ffi::CString;
-    use std::os::raw::{c_char, c_int};
-
-    unsafe extern "C" {
-        fn mkfifo(path: *const c_char, mode: u32) -> c_int;
-    }
-
     let (mut graph, directory) = build_fixture(
         "jobserver-tokens",
         "rule sync\n  command = touch $out.started; i=0; while [ ! -e $other.started ] && [ $$i -lt 100 ]; do sleep 0.01; i=$$((i + 1)); done; test -e $other.started; touch $out\nbuild $dir/out1: sync\n  other = $dir/out2\nbuild $dir/out2: sync\n  other = $dir/out1\n",
     );
-    let fifo = directory.join("jobserver");
-    let fifo_name = CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: `fifo_name` is a live NUL-terminated path and the mode is valid.
-    assert_eq!(unsafe { mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
-    let token_fifo = fifo.clone();
-    let token_writer = std::thread::spawn(move || {
-        let mut fifo = fs::OpenOptions::new().write(true).open(token_fifo).unwrap();
-        fifo.write_all(b"+").unwrap();
-    });
 
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
     let options = BuildOptions {
         maxjobs: usize::MAX,
-        jobserver: crate::jobserver::JobserverConfig {
-            mode: crate::jobserver::JobserverMode::PosixFifo,
-            path: fifo.to_string_lossy().into_owned(),
-        },
+        // GNU Make contributes one implicit slot; one transport token permits
+        // the second command to run concurrently.
+        jobserver: Some(jobserver::Client::new(1).unwrap()),
         ..BuildOptions::default()
     };
     let mut builder = Builder::new(&mut graph, options);
     builder.add_target(&out1).unwrap();
     builder.add_target(&out2).unwrap();
     builder.build().unwrap();
-    token_writer.join().unwrap();
     assert_eq!(builder.commands_ran.len(), 2);
     drop(builder);
     assert!(directory.join("out1").exists());

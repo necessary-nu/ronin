@@ -135,24 +135,40 @@ pub(crate) struct ProcessCompletion {
     pub(crate) result: ProcessResult<Option<ProcessOutput>>,
 }
 
-enum ProcessEvent {
+enum ProcessEvent<External> {
     Started {
         edge: EdgeId,
         pid: u32,
         process_group: bool,
     },
     Finished(ProcessCompletion),
+    External(External),
 }
 
-pub(crate) struct ProcessSupervisor {
-    sender: Sender<ProcessEvent>,
-    receiver: Receiver<ProcessEvent>,
+pub(crate) enum SupervisorWake<External> {
+    Process(ProcessCompletion),
+    External(External),
+}
+
+pub(crate) struct ExternalEventSender<External> {
+    sender: Sender<ProcessEvent<External>>,
+}
+
+impl<External> ExternalEventSender<External> {
+    pub(crate) fn send(&self, event: External) {
+        let _ = self.sender.send(ProcessEvent::External(event));
+    }
+}
+
+pub(crate) struct ProcessSupervisor<External = ()> {
+    sender: Sender<ProcessEvent<External>>,
+    receiver: Receiver<ProcessEvent<External>>,
     running: usize,
     children: HashMap<EdgeId, (u32, bool)>,
     interrupted: Option<i32>,
 }
 
-impl Default for ProcessSupervisor {
+impl<External> Default for ProcessSupervisor<External> {
     fn default() -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
@@ -166,7 +182,7 @@ impl Default for ProcessSupervisor {
 }
 
 // [spec:samurai:req:compat.process-integration]
-impl ProcessSupervisor {
+impl<External: Send + 'static> ProcessSupervisor<External> {
     pub(crate) fn spawn<'scope, 'environment: 'scope>(
         &mut self,
         scope: &'scope std::thread::Scope<'scope, 'environment>,
@@ -196,7 +212,7 @@ impl ProcessSupervisor {
     pub(crate) fn wait(
         &mut self,
         timeout: Option<std::time::Duration>,
-    ) -> ProcessResult<Option<ProcessCompletion>> {
+    ) -> ProcessResult<Option<SupervisorWake<External>>> {
         loop {
             let event = if let Some(timeout) = timeout {
                 match self.receiver.recv_timeout(timeout) {
@@ -227,10 +243,19 @@ impl ProcessSupervisor {
                 Some(ProcessEvent::Finished(completion)) => {
                     self.children.remove(&completion.edge);
                     self.running -= 1;
-                    return Ok(Some(completion));
+                    return Ok(Some(SupervisorWake::Process(completion)));
+                }
+                Some(ProcessEvent::External(event)) => {
+                    return Ok(Some(SupervisorWake::External(event)));
                 }
                 None => return Ok(None),
             }
+        }
+    }
+
+    pub(crate) fn external_sender(&self) -> ExternalEventSender<External> {
+        ExternalEventSender {
+            sender: self.sender.clone(),
         }
     }
 
@@ -348,6 +373,10 @@ mod tests {
             let completion = supervisor
                 .wait(None)
                 .unwrap()
+                .map(|wake| match wake {
+                    SupervisorWake::Process(completion) => completion,
+                    SupervisorWake::External(()) => unreachable!("no external event sender"),
+                })
                 .expect("the subprocess produces a completion");
             assert_eq!(completion.edge, edge);
             let output = completion.result.unwrap().unwrap();
@@ -373,6 +402,10 @@ mod tests {
             let completion = supervisor
                 .wait(None)
                 .unwrap()
+                .map(|wake| match wake {
+                    SupervisorWake::Process(completion) => completion,
+                    SupervisorWake::External(()) => unreachable!("no external event sender"),
+                })
                 .expect("the subprocess produces a completion");
             let output = completion.result.unwrap().unwrap();
             assert!(output.status.success());

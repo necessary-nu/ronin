@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T20:16:01.65978898Z
+last_sync_at 2026-07-29T23:20:06.701665834Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -19,6 +19,7 @@ rule_versions (
     {id product.no-samuflags, version 0}
     {id product.ronin-identity, version 0}
     {id release.compatibility-gate, version 0}
+    {id runtime.jobserver-resource-safety, version 0}
 )
 
 assertions (
@@ -123,6 +124,8 @@ impl_evidence (
         release.compatibility-gate
     ), covered_claims (
         {impl_name target-impl, rule release.compatibility-gate}
+    ), rule_versions_seen (
+        {id release.compatibility-gate, version 0}
     )}
     {id ronin-runtime-consolidation, covered_rules (
         compat.cli-and-tools
@@ -130,5 +133,10 @@ impl_evidence (
         {impl_name target-impl, rule compat.cli-and-tools}
     ), rule_versions_seen (
         {id compat.cli-and-tools, version 0}
+    )}
+    {id ronin-jobserver-raii, covered_rules (
+        runtime.jobserver-resource-safety
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.jobserver-resource-safety}
     )}
 )

@@ -803,4 +803,200 @@ children (
             }
         )
     }
+
+    {
+        id ronin-rust-hardening
+        title "Harden Ronin's Rust architecture after blind review"
+        children (
+            {
+                id ronin-jobserver-raii
+                title "Make GNU Make jobserver transport RAII-safe"
+                priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.jobserver-resource-safety])
+                }
+                log (
+                    {
+                        at 2026-07-29T22:58:22.653538743Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Replace Ronin's open/read/write/dup/fcntl bindings and sentinel Slot bookkeeping with a purpose-built jobserver transport or an equally narrow safe abstraction. Do not set O_NONBLOCK on a duplicated shared open-file description. Preserve implicit-token semantics, distinguish WouldBlock/EINTR/EOF/descriptor failures, make explicit tokens unwind-safe, define the release-error policy, eliminate the 1 ms polling loop, and add failure-path tests including inherited-descriptor flag isolation."
+                    }
+
+                    {
+                        at 2026-07-29T23:06:19.74667249Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T23:20:16.129428287Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Adopt jobserver 0.1.35 as the narrow GNU Make transport boundary. Ronin retains the protocol's implicit slot as a local RAII guard and routes the crate's blocking helper acquisitions into the completion supervisor as typed external events. The crate's Acquired guard returns the exact byte once on Drop; release I/O failures are deliberately non-reportable because Drop must remain infallible and must never retry a possibly completed write. Acquisition and helper-start failures remain observable process errors. Do not add Tokio in this slice: runtime selection remains the measured ronin-runtime-scalability decision, and AsyncFd alone cannot safely make a shared pre-4.4 Make pipe nonblocking."
+                    }
+                )
+            }
+
+            {
+                id ronin-persistence-transactions
+                title "Make Ninja log rewrites transactionally error-safe"
+                priority 0
+                log (
+                    {
+                        at 2026-07-29T22:58:22.699290169Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Make BuildLog and DepsLog updates commit in memory only after complete write, sync, atomic replacement, and successful reopen. Use unique same-directory temporary files, preserve a usable writer after failure, distinguish NotFound from other open errors, avoid mutating graph dependency IDs before durable write success, test injected failures at every stage, and batch flushes where Ninja durability semantics permit."
+                    }
+                )
+            }
+
+            {
+                id ronin-semantic-errors
+                title "Replace stringly subsystem errors with semantic variants"
+                priority 0
+                log (
+                    {
+                        at 2026-07-29T22:58:22.74463505Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Introduce concrete error variants carrying paths, source spans, edge or node identity, process exit status, and retained source errors. Derive the stable public ErrorKind classifier from semantic variants; remove Display-string parsing and broad String/io conversions that misclassify failures; keep invariant-only expects explicit; move string equality helpers into tests; and handle final output write failures including BrokenPipe deliberately."
+                    }
+                )
+            }
+
+            {
+                id ronin-span-frontend
+                title "Complete the borrowed byte-span manifest frontend"
+                priority 0
+                log (
+                    {
+                        at 2026-07-29T22:58:22.789651447Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Bring the implementation into conformance with the approved byte-span-parser decision: retain source buffers with source identity, return tokens carrying byte spans, borrow lexemes and evaluation parts where lifetimes permit, intern only graph-owned values, replace Scanner scratch side channels and mem::take handoffs with returned values, and replace scanpipe integer masks with typed separators and allowed sets. Measure allocations, command-evaluation runtime, and peak RSS."
+                    }
+                )
+            }
+
+            {
+                id ronin-output-encoding
+                title "Make status and tool rendering byte and Unicode correct"
+                priority 0
+                log (
+                    {
+                        at 2026-07-29T22:58:22.83437045Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Fix byte-by-byte char conversion in status expansion, compdb JSON, and Graphviz quoting. Define explicit UTF-8 and non-UTF-8 display/serialization policies at output boundaries, preserve untouched UTF-8 slices, accept byte-exact tool target arguments where Ninja does, propagate current-directory failures, stream compdb output without a Vec<String> staging copy, and keep MSVC include parsing byte-oriented with ASCII-insensitive matching."
+                    }
+                )
+            }
+
+            {
+                id ronin-iterative-tools
+                title "Make tool traversals iterative and dense-ID indexed"
+                priority 1
+                log (
+                    {
+                        at 2026-07-29T22:58:22.884233176Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Replace recursive cleaner, command, Graphviz, and targets-depth walks with explicit work items while preserving Ninja output order. Replace BTreeSet membership for dense EdgeId traversal with reusable bit or generation-stamped tables, reuse missing-dependency scratch storage rather than allocating edge-sized vectors per query, and add deep-manifest regression tests for every affected tool mode."
+                    }
+
+                    {
+                        at 2026-07-29T22:59:53.998114671Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Place this work in P1 because it addresses tool-mode stack resilience and allocation efficiency after the P0 resource-safety, transactional-state, encoding-correctness, parser, and execution-boundary work. It has no dependency on those implementations, but it must not outrank the known jobserver and persistence failure paths."
+                    }
+                )
+            }
+
+            {
+                id ronin-typed-runtime-state
+                title "Encapsulate graph sentinels and separate runtime state"
+                priority 0
+                log (
+                    {
+                        at 2026-07-29T22:58:22.932756095Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Keep dense arenas and compact layouts, but hide timestamp, dependency-ID, command-hash, and partition sentinels behind zero-cost semantic types and private accessors. Replace string and boolean modes with enums where they encode mutually exclusive states. Move pool occupancy, critical-path weights, and other per-build mutable state out of manifest graph entities into scheduler-owned dense side tables, with reuse and failure-path invariants tested."
+                    }
+                )
+            }
+
+            {
+                id ronin-runtime-scalability
+                title "Select and implement the process-supervision runtime"
+                priority 0
+                deps (ronin-jobserver-raii ronin-typed-runtime-state)
+                log (
+                    {
+                        at 2026-07-29T22:58:22.979666604Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Benchmark the current one-thread-per-child supervisor at high -j against two explicit alternatives: a current-thread Tokio runtime using process/I/O readiness, and a smaller polling/reaper design. Include startup time, binary size, idle wakeups, throughput, peak RSS, signal behavior, console ownership, output ordering, cancellation, child reaping, and jobserver integration. Tokio is not preselected: AsyncFd requires a nonblocking descriptor and therefore cannot safely wrap a duplicated GNU Make jobserver pipe by itself. If the winning design changes the approved completion-driven-execution decision, supersede that decision before implementation. Also address cached load sampling and excessive output flushing under the selected design."
+                    }
+                )
+            }
+
+            {
+                id ronin-signal-boundary
+                title "Replace handwritten global signal handling with a guarded boundary"
+                priority 0
+                deps (ronin-runtime-scalability)
+                log (
+                    {
+                        at 2026-07-29T22:58:23.027664767Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Use the runtime decision to choose a focused signal abstraction with typed signal values and explicit ownership. Roll back partial installation, define restoration or executable-lifetime behavior, distinguish benign ESRCH from delivery failures, preserve process-group forwarding and shell-compatible re-raise semantics, avoid hard-coded signal numbers, and consolidate test-only signal FFI behind the same boundary."
+                    }
+                )
+            }
+
+            {
+                id ronin-process-boundary
+                title "Isolate cwd, environment, and stdio at the executable boundary"
+                priority 0
+                deps (ronin-runtime-scalability ronin-signal-boundary ronin-semantic-errors)
+                log (
+                    {
+                        at 2026-07-29T22:58:23.074613047Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Make argument parsing free of process-global mutation. Model sequential -C semantics against an explicit base directory; pass environment values and output/diagnostic sinks through a Runner or invocation context; keep cwd mutation, signal installation, stdio selection, and process exit in the executable; ensure later parse failures cannot leak changed cwd into an embedding caller; and preserve the deliberately narrow public API contract."
+                    }
+                )
+            }
+
+            {
+                id ronin-dyndep-transaction
+                title "Validate dyndep state before graph mutation"
+                priority 0
+                deps (ronin-persistence-transactions ronin-semantic-errors ronin-span-frontend)
+                log (
+                    {
+                        at 2026-07-29T22:58:23.123603461Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Parse dyndep files into a source-aware staged representation without interning or mutating graph state. Validate ownership, duplicate outputs, missing entries, restat values, and all dynamic paths before a single commit phase. Reuse the real byte parser for cleaner output discovery, preserve Ninja escapes and non-UTF-8 paths, propagate intentional diagnostics instead of silently returning an empty result, and test rollback after late validation failures."
+                    }
+                )
+            }
+        )
+        log (
+            {
+                at 2026-07-29T22:58:22.604396347Z
+                author "brendan@bbqsrc.net"
+                kind @note
+                text "Follow-up programme for the eleven findings from the full blind Rust review. Preserve Ninja compatibility, the byte-exact and dense-arena decisions, and the pinned conformance oracle. Existing compatibility rules remain owned by the shipped nodes; each leaf starts as target-impl scaffolding and must gain or revise internal specification rules before implementation when it introduces a normative safety, error, or performance guarantee."
+            }
+        )
+    }
 )

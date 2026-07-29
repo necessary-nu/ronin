@@ -1,9 +1,16 @@
-//! GNU Make jobserver parsing and POSIX FIFO client support.
+//! GNU Make jobserver discovery and resource-safe slot ownership.
 
 use crate::error::ProcessError;
-use std::mem;
+use std::cell::Cell;
+use std::io;
+use std::rc::Rc;
 
 type ProcessResult<T> = Result<T, ProcessError>;
+
+/// Result delivered when the jobserver helper finishes one acquisition.
+pub(crate) type Acquisition = io::Result<jobserver::Acquired>;
+/// Cloneable handle to the inherited jobserver transport.
+pub(crate) type Transport = jobserver::Client;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) enum JobserverMode {
@@ -24,49 +31,13 @@ impl JobserverConfig {
     pub(crate) fn has_mode(&self) -> bool {
         self.mode != JobserverMode::None
     }
-}
 
-#[derive(Debug, Default, Eq, PartialEq)]
-pub(crate) enum Slot {
-    #[default]
-    Invalid,
-    Implicit,
-    Explicit(u8),
-}
-
-impl Slot {
-    pub(crate) const fn implicit() -> Self {
-        Self::Implicit
-    }
-
-    pub(crate) const fn explicit(value: u8) -> Self {
-        Self::Explicit(value)
-    }
-
-    pub(crate) const fn is_valid(&self) -> bool {
-        !matches!(self, Self::Invalid)
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn is_implicit(&self) -> bool {
-        matches!(self, Self::Implicit)
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn is_explicit(&self) -> bool {
-        matches!(self, Self::Explicit(_))
-    }
-
-    #[cfg(test)]
-    pub(crate) const fn explicit_value(&self) -> Option<u8> {
-        match self {
-            Self::Explicit(value) => Some(*value),
-            _ => None,
+    pub(crate) const fn is_native(&self) -> bool {
+        match self.mode {
+            JobserverMode::None => false,
+            JobserverMode::Pipe | JobserverMode::PosixFifo => cfg!(unix),
+            JobserverMode::Win32Semaphore => cfg!(windows),
         }
-    }
-
-    pub(crate) fn take(&mut self) -> Self {
-        mem::take(self)
     }
 }
 
@@ -86,309 +57,185 @@ pub(crate) fn parse_makeflags_value(makeflags: Option<&str>) -> ProcessResult<Jo
     let Some(makeflags) = makeflags.filter(|value| !value.is_empty()) else {
         return Ok(JobserverConfig::default());
     };
-    let arguments = makeflags.split_ascii_whitespace().collect::<Vec<_>>();
+    let arguments = makeflags.split_ascii_whitespace();
     if arguments
-        .first()
+        .clone()
+        .next()
         .is_some_and(|argument| !argument.starts_with('-') && argument.contains('n'))
     {
         return Ok(JobserverConfig::default());
     }
 
-    let mut config = JobserverConfig::default();
+    let mut authorization = None;
+    let mut legacy_descriptors = None;
     for argument in arguments {
         if let Some(value) = argument.strip_prefix("--jobserver-auth=") {
-            if let Some(mode) = parse_file_descriptor_pair(value) {
-                config.path = if mode == JobserverMode::Pipe {
-                    value.into()
+            authorization = Some(value);
+        } else if let Some(value) = argument.strip_prefix("--jobserver-fds=") {
+            legacy_descriptors = Some(value);
+        }
+    }
+
+    if let Some(value) = authorization {
+        if let Some(mode) = parse_file_descriptor_pair(value) {
+            return Ok(JobserverConfig {
+                path: if mode == JobserverMode::Pipe {
+                    value.to_owned()
                 } else {
                     String::new()
-                };
-                config.mode = mode;
-            } else if let Some(path) = value.strip_prefix("fifo:") {
-                config.mode = JobserverMode::PosixFifo;
-                config.path = path.into();
-            } else {
-                config.mode = JobserverMode::Win32Semaphore;
-                config.path = value.into();
-            }
-        } else if let Some(value) = argument.strip_prefix("--jobserver-fds=") {
-            let Some(mode) = parse_file_descriptor_pair(value) else {
-                return Err(format!("Invalid file descriptor pair [{value}]").into());
-            };
-            config.path = if mode == JobserverMode::Pipe {
-                value.into()
-            } else {
-                String::new()
-            };
-            config.mode = mode;
+                },
+                mode,
+            });
         }
+        if let Some(path) = value.strip_prefix("fifo:") {
+            return Ok(JobserverConfig {
+                mode: JobserverMode::PosixFifo,
+                path: path.into(),
+            });
+        }
+        return Ok(JobserverConfig {
+            mode: JobserverMode::Win32Semaphore,
+            path: value.into(),
+        });
     }
-    Ok(config)
+
+    let Some(value) = legacy_descriptors else {
+        return Ok(JobserverConfig::default());
+    };
+    let Some(mode) = parse_file_descriptor_pair(value) else {
+        return Err(format!("Invalid file descriptor pair [{value}]").into());
+    };
+    Ok(JobserverConfig {
+        path: if mode == JobserverMode::Pipe {
+            value.to_owned()
+        } else {
+            String::new()
+        },
+        mode,
+    })
 }
 
-/// Parse MAKEFLAGS and reject transports that cannot work on this platform.
-#[cfg(test)]
-pub(crate) fn parse_native_makeflags_value(
-    makeflags: Option<&str>,
-) -> ProcessResult<JobserverConfig> {
-    let config = parse_makeflags_value(makeflags)?;
-    match config.mode {
-        #[cfg(windows)]
-        JobserverMode::Pipe => Err("Pipe-based protocol is not supported!".into()),
-        #[cfg(unix)]
-        JobserverMode::Win32Semaphore => Err("Semaphore mode is not supported on Posix!".into()),
-        #[cfg(windows)]
-        JobserverMode::PosixFifo => Err("FIFO mode is not supported on Windows!".into()),
-        _ => Ok(config),
-    }
+/// Connect to a native jobserver inherited through the process environment.
+pub(crate) fn inherited_client() -> ProcessResult<jobserver::Client> {
+    // SAFETY: runtime option normalization calls this before manifest parsing,
+    // before Ronin opens build files or starts any threads. The maintained
+    // jobserver transport validates and duplicates inherited descriptors and
+    // documents repeated calls as safe.
+    let inherited = unsafe { jobserver::Client::from_env_ext(true) };
+    inherited.client.map_err(|source| {
+        ProcessError::context("Error opening inherited GNU Make jobserver", source)
+    })
 }
 
-#[cfg(unix)]
-mod platform {
-    use super::{JobserverConfig, JobserverMode, ProcessResult, Slot};
-    use crate::error::ProcessError;
-    use std::ffi::CString;
-    use std::fs;
-    use std::os::raw::{c_char, c_int, c_void};
-    use std::os::unix::fs::FileTypeExt;
-    use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+#[derive(Debug)]
+struct ImplicitSlot {
+    available: Rc<Cell<bool>>,
+}
 
-    const O_RDONLY: c_int = 0;
-    const O_WRONLY: c_int = 1;
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    const O_NONBLOCK: c_int = 0o4000;
-    #[cfg(any(
-        target_os = "freebsd",
-        target_os = "openbsd",
-        target_os = "netbsd",
-        target_os = "dragonfly",
-        target_os = "macos",
-        target_os = "ios"
-    ))]
-    const O_NONBLOCK: c_int = 0x4;
-
-    unsafe extern "C" {
-        fn open(path: *const c_char, flags: c_int, ...) -> c_int;
-        fn read(fd: c_int, buffer: *mut c_void, count: usize) -> isize;
-        fn write(fd: c_int, buffer: *const c_void, count: usize) -> isize;
-        fn dup(fd: c_int) -> c_int;
-        fn fcntl(fd: c_int, command: c_int, ...) -> c_int;
-    }
-
-    const F_SETFD: c_int = 2;
-    const F_GETFL: c_int = 3;
-    const F_SETFL: c_int = 4;
-    const FD_CLOEXEC: c_int = 1;
-
-    #[derive(Debug)]
-    pub(crate) struct PosixJobserverClient {
-        has_implicit_slot: bool,
-        read_fd: OwnedFd,
-        write_fd: OwnedFd,
-    }
-
-    impl PosixJobserverClient {
-        pub(crate) fn create(config: &JobserverConfig) -> ProcessResult<Self> {
-            let (read_fd, write_fd) = match config.mode {
-                JobserverMode::PosixFifo => {
-                    if config.path.is_empty() {
-                        return Err("Empty fifo path".into());
-                    }
-                    let metadata = fs::metadata(&config.path).map_err(|source| {
-                        ProcessError::context("Error opening fifo for reading", source)
-                    })?;
-                    let file_type = metadata.file_type();
-                    if !file_type.is_fifo() && !file_type.is_char_device() {
-                        return Err(format!("Not a fifo path: {}", config.path).into());
-                    }
-                    let path =
-                        CString::new(config.path.as_bytes()).map_err(|_| "Invalid fifo path")?;
-                    // SAFETY: `path` is NUL-terminated and remains alive for
-                    // the call; the returned descriptor is checked below.
-                    let read_fd = unsafe { open(path.as_ptr(), O_RDONLY | O_NONBLOCK) };
-                    if read_fd < 0 {
-                        return Err(ProcessError::context(
-                            "Error opening fifo for reading",
-                            std::io::Error::last_os_error(),
-                        ));
-                    }
-                    // SAFETY: `open` returned a fresh non-negative descriptor,
-                    // transferring sole ownership to `OwnedFd`.
-                    let read_fd = unsafe { OwnedFd::from_raw_fd(read_fd) };
-                    // SAFETY: the same valid `CString` is alive for this call,
-                    // and the returned descriptor is checked below.
-                    let write_fd = unsafe { open(path.as_ptr(), O_WRONLY | O_NONBLOCK) };
-                    if write_fd < 0 {
-                        return Err(ProcessError::context(
-                            "Error opening fifo for writing",
-                            std::io::Error::last_os_error(),
-                        ));
-                    }
-                    // SAFETY: `open` returned a fresh non-negative descriptor,
-                    // transferring sole ownership to `OwnedFd`.
-                    let write_fd = unsafe { OwnedFd::from_raw_fd(write_fd) };
-                    for fd in [&read_fd, &write_fd] {
-                        // SAFETY: `fd` owns a live descriptor and `F_SETFD`
-                        // accepts the `FD_CLOEXEC` integer flag.
-                        if unsafe { fcntl(fd.as_raw_fd(), F_SETFD, FD_CLOEXEC) } < 0 {
-                            return Err(ProcessError::context(
-                                "Error setting jobserver descriptor close-on-exec",
-                                std::io::Error::last_os_error(),
-                            ));
-                        }
-                    }
-                    (read_fd, write_fd)
-                }
-                JobserverMode::Pipe => {
-                    let (read_fd, write_fd) = config
-                        .path
-                        .split_once(',')
-                        .and_then(|(read, write)| {
-                            Some((read.parse::<RawFd>().ok()?, write.parse::<RawFd>().ok()?))
-                        })
-                        .ok_or("Invalid pipe file descriptors")?;
-                    let read_fd = Self::duplicate_nonblocking(read_fd)?;
-                    let write_fd = Self::duplicate_nonblocking(write_fd)?;
-                    (read_fd, write_fd)
-                }
-                _ => return Err("Unsupported jobserver mode".into()),
-            };
-            Ok(Self {
-                has_implicit_slot: true,
-                read_fd,
-                write_fd,
-            })
-        }
-
-        fn duplicate_nonblocking(fd: RawFd) -> ProcessResult<OwnedFd> {
-            // SAFETY: `fd` comes from GNU Make's authenticated jobserver
-            // descriptor pair; the return value is checked below.
-            let duplicate = unsafe { dup(fd) };
-            if duplicate < 0 {
-                return Err(ProcessError::context(
-                    "Error duplicating jobserver descriptor",
-                    std::io::Error::last_os_error(),
-                ));
-            }
-            // SAFETY: `dup` returned a fresh non-negative descriptor,
-            // transferring sole ownership to `OwnedFd`.
-            let duplicate = unsafe { OwnedFd::from_raw_fd(duplicate) };
-            // SAFETY: `duplicate` owns a live descriptor and the command and
-            // flag values are valid for `fcntl`.
-            if unsafe { fcntl(duplicate.as_raw_fd(), F_SETFD, FD_CLOEXEC) } < 0 {
-                return Err(ProcessError::context(
-                    "Error setting jobserver descriptor close-on-exec",
-                    std::io::Error::last_os_error(),
-                ));
-            }
-            // SAFETY: `duplicate` owns a live descriptor and `F_GETFL` takes
-            // no variadic argument.
-            let flags = unsafe { fcntl(duplicate.as_raw_fd(), F_GETFL) };
-            // SAFETY: after a successful `F_GETFL`, OR-ing `O_NONBLOCK`
-            // produces a valid flag set for `F_SETFL`.
-            if flags < 0 || unsafe { fcntl(duplicate.as_raw_fd(), F_SETFL, flags | O_NONBLOCK) } < 0
-            {
-                return Err(ProcessError::context(
-                    "Error setting jobserver descriptor nonblocking",
-                    std::io::Error::last_os_error(),
-                ));
-            }
-            Ok(duplicate)
-        }
-
-        pub(crate) fn try_acquire(&mut self) -> Slot {
-            if self.has_implicit_slot {
-                self.has_implicit_slot = false;
-                return Slot::implicit();
-            }
-            let mut value = 0u8;
-            // SAFETY: the owned descriptor is live and `value` provides one
-            // writable byte for exactly the requested count.
-            let result = unsafe {
-                read(
-                    self.read_fd.as_raw_fd(),
-                    std::ptr::from_mut(&mut value).cast::<c_void>(),
-                    1,
-                )
-            };
-            if result == 1 {
-                Slot::explicit(value)
-            } else {
-                Slot::Invalid
-            }
-        }
-
-        #[allow(
-            clippy::needless_pass_by_value,
-            reason = "consuming a slot prevents callers from releasing the same token twice"
-        )]
-        pub(crate) fn release(&mut self, slot: Slot) {
-            match slot {
-                Slot::Invalid => {}
-                Slot::Implicit => {
-                    assert!(
-                        !self.has_implicit_slot,
-                        "implicit jobserver slot cannot be released twice"
-                    );
-                    self.has_implicit_slot = true;
-                }
-                Slot::Explicit(value) => {
-                    // SAFETY: the owned descriptor is live and `value`
-                    // provides one readable byte for the requested count.
-                    unsafe {
-                        write(
-                            self.write_fd.as_raw_fd(),
-                            std::ptr::from_ref(&value).cast::<c_void>(),
-                            1,
-                        );
-                    }
-                }
-            }
-        }
-
-        #[cfg(test)]
-        pub(crate) fn jobserver_fd(&self) -> RawFd {
-            self.read_fd.as_raw_fd()
-        }
+impl Drop for ImplicitSlot {
+    fn drop(&mut self) {
+        let was_available = self.available.replace(true);
+        debug_assert!(
+            !was_available,
+            "implicit jobserver slot cannot be released twice"
+        );
     }
 }
 
-#[cfg(unix)]
-pub(crate) use platform::PosixJobserverClient;
+/// An owned GNU Make job slot.
+///
+/// Both variants release their capacity from `Drop`, so scheduler errors and
+/// unwinding cannot strand a token.
+#[derive(Debug)]
+enum SlotOwnership {
+    Implicit(ImplicitSlot),
+    Explicit(jobserver::Acquired),
+}
 
-/// Construct the native POSIX jobserver client.
-#[cfg(unix)]
-pub(crate) fn create_client(config: &JobserverConfig) -> ProcessResult<PosixJobserverClient> {
-    PosixJobserverClient::create(config)
+#[derive(Debug)]
+pub(crate) struct Slot {
+    ownership: SlotOwnership,
+}
+
+impl Slot {
+    const fn implicit(available: Rc<Cell<bool>>) -> Self {
+        Self {
+            ownership: SlotOwnership::Implicit(ImplicitSlot { available }),
+        }
+    }
+
+    const fn explicit(token: jobserver::Acquired) -> Self {
+        Self {
+            ownership: SlotOwnership::Explicit(token),
+        }
+    }
+
+    pub(crate) fn release(self) {
+        match self.ownership {
+            SlotOwnership::Implicit(slot) => drop(slot),
+            SlotOwnership::Explicit(token) => drop(token),
+        }
+    }
+
+    #[cfg(test)]
+    const fn is_implicit(&self) -> bool {
+        matches!(self.ownership, SlotOwnership::Implicit(_))
+    }
+}
+
+/// Owns the implicit slot and the blocking acquisition helper.
+#[derive(Debug)]
+pub(crate) struct JobserverClient {
+    implicit_available: Rc<Cell<bool>>,
+    helper: jobserver::HelperThread,
+    request_pending: bool,
+}
+
+// [spec:samurai:req:runtime.jobserver-resource-safety]
+impl JobserverClient {
+    pub(crate) fn new(
+        client: jobserver::Client,
+        notify: impl FnMut(Acquisition) + Send + 'static,
+    ) -> ProcessResult<Self> {
+        let helper = client.into_helper_thread(notify).map_err(|source| {
+            ProcessError::context("Error starting GNU Make jobserver helper", source)
+        })?;
+        Ok(Self {
+            implicit_available: Rc::new(Cell::new(true)),
+            helper,
+            request_pending: false,
+        })
+    }
+
+    pub(crate) fn try_acquire_implicit(&self) -> Option<Slot> {
+        self.implicit_available
+            .replace(false)
+            .then(|| Slot::implicit(self.implicit_available.clone()))
+    }
+
+    pub(crate) fn request_token(&mut self) {
+        if !self.request_pending {
+            self.request_pending = true;
+            self.helper.request_token();
+        }
+    }
+
+    pub(crate) fn receive_token(&mut self, result: Acquisition) -> ProcessResult<Slot> {
+        debug_assert!(self.request_pending, "jobserver token was not requested");
+        self.request_pending = false;
+        result.map(Slot::explicit).map_err(|source| {
+            ProcessError::context("Error acquiring GNU Make jobserver token", source)
+        })
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn ninja_jobserver_slot_semantics() {
-        let mut invalid = Slot::default();
-        assert!(!invalid.is_valid());
-
-        let mut implicit = Slot::implicit();
-        assert!(implicit.is_valid());
-        assert!(implicit.is_implicit());
-        assert!(!implicit.is_explicit());
-
-        let mut explicit = Slot::explicit(10);
-        assert!(explicit.is_valid());
-        assert!(explicit.is_explicit());
-        assert_eq!(explicit.explicit_value(), Some(10));
-
-        invalid = explicit.take();
-        assert!(!explicit.is_valid());
-        assert_eq!(invalid.explicit_value(), Some(10));
-
-        explicit = implicit.take();
-        assert!(!implicit.is_valid());
-        assert!(explicit.is_implicit());
-    }
+    use std::io::{Read, Write};
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     #[test]
     fn ninja_jobserver_parses_makeflags() {
@@ -448,150 +295,150 @@ mod tests {
             }
         );
         assert_eq!(
+            parse_makeflags_value(Some("--jobserver-auth=10,42 --jobserver-fds=12,44")).unwrap(),
+            JobserverConfig {
+                mode: JobserverMode::Pipe,
+                path: "10,42".into(),
+            }
+        );
+        assert_eq!(
+            parse_makeflags_value(Some("--jobserver-fds=10, --jobserver-auth=fifo:/tmp/fifo"))
+                .unwrap(),
+            JobserverConfig {
+                mode: JobserverMode::PosixFifo,
+                path: "/tmp/fifo".into(),
+            }
+        );
+        assert_eq!(
             parse_makeflags_value(Some("--jobserver-fds=10,")).unwrap_err(),
             "Invalid file descriptor pair [10,]"
         );
     }
 
     #[test]
-    fn ninja_jobserver_rejects_unsupported_native_transports() {
-        #[cfg(windows)]
+    fn ninja_jobserver_recognizes_native_transports() {
+        let pipe = JobserverConfig {
+            mode: JobserverMode::Pipe,
+            path: "3,4".into(),
+        };
+        let fifo = JobserverConfig {
+            mode: JobserverMode::PosixFifo,
+            path: "fifo".into(),
+        };
+        let semaphore = JobserverConfig {
+            mode: JobserverMode::Win32Semaphore,
+            path: "semaphore".into(),
+        };
+        assert_eq!(pipe.is_native(), cfg!(unix));
+        assert_eq!(fifo.is_native(), cfg!(unix));
+        assert_eq!(semaphore.is_native(), cfg!(windows));
+        assert!(!JobserverConfig::default().is_native());
+    }
+
+    #[test]
+    // [spec:samurai:req:runtime.jobserver-resource-safety/test]
+    fn ronin_jobserver_slots_release_on_drop() {
+        let transport = jobserver::Client::new(1).unwrap();
+        let probe = transport.clone();
+        let explicit = Slot::explicit(transport.acquire().unwrap());
+        assert_eq!(probe.available().unwrap(), 0);
+        explicit.release();
+        assert_eq!(probe.available().unwrap(), 1);
+        drop(probe.acquire().unwrap());
+
+        let (sender, receiver) = mpsc::channel();
+        let client = JobserverClient::new(transport, move |result| {
+            let _ = sender.send(result);
+        })
+        .unwrap();
+        let implicit = client.try_acquire_implicit().unwrap();
+        assert!(implicit.is_implicit());
+        assert!(client.try_acquire_implicit().is_none());
+        drop(implicit);
+        assert!(client.try_acquire_implicit().is_some());
+        drop(receiver);
+    }
+
+    #[test]
+    // [spec:samurai:req:runtime.jobserver-resource-safety/test]
+    fn ronin_jobserver_acquisition_is_event_driven_and_fallible() {
+        let transport = jobserver::Client::new(0).unwrap();
+        let producer = transport.clone();
+        let (sender, receiver) = mpsc::channel();
+        let mut client = JobserverClient::new(transport, move |result| {
+            let _ = sender.send(result);
+        })
+        .unwrap();
+
+        client.request_token();
         assert_eq!(
-            parse_native_makeflags_value(Some("--jobserver-auth=3,4")).unwrap_err(),
-            "Pipe-based protocol is not supported!"
+            receiver
+                .recv_timeout(Duration::from_millis(20))
+                .unwrap_err(),
+            mpsc::RecvTimeoutError::Timeout
         );
-        #[cfg(unix)]
+        producer.release_raw().unwrap();
+        let token = client
+            .receive_token(receiver.recv_timeout(Duration::from_secs(1)).unwrap())
+            .unwrap();
+        drop(token);
+
+        client.request_pending = true;
+        let error = client
+            .receive_token(Err(io::Error::from(io::ErrorKind::UnexpectedEof)))
+            .unwrap_err();
         assert_eq!(
-            parse_native_makeflags_value(Some("--jobserver-auth=3,4"))
-                .unwrap()
-                .mode,
-            JobserverMode::Pipe
-        );
-        #[cfg(unix)]
-        assert_eq!(
-            parse_native_makeflags_value(Some("--jobserver-auth=semaphore_name")).unwrap_err(),
-            "Semaphore mode is not supported on Posix!"
-        );
-        #[cfg(unix)]
-        assert_eq!(
-            parse_native_makeflags_value(Some("--jobserver-auth=fifo:foo"))
-                .unwrap()
-                .mode,
-            JobserverMode::PosixFifo
+            error.to_string(),
+            "Error acquiring GNU Make jobserver token: unexpected end of file"
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn ninja_jobserver_rejects_no_client_mode() {
-        assert_eq!(
-            create_client(&JobserverConfig::default()).unwrap_err(),
-            "Unsupported jobserver mode"
-        );
-    }
+    // [spec:samurai:req:runtime.jobserver-resource-safety/test]
+    fn ronin_jobserver_preserves_inherited_descriptor_flags() {
+        const CHILD_MARKER: &str = "RONIN_JOBSERVER_FLAG_TEST_CHILD";
+        const READY_PATH: &str = "RONIN_JOBSERVER_FLAG_TEST_READY";
 
-    #[cfg(unix)]
-    mod posix {
-        use super::*;
-        use std::ffi::CString;
-        use std::fs;
-        use std::io::Write;
-        use std::os::raw::{c_char, c_int};
-        use std::os::unix::io::AsRawFd;
-        use std::os::unix::net::UnixStream;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        static NEXT_TEMP_DIR: AtomicUsize = AtomicUsize::new(0);
-
-        unsafe extern "C" {
-            fn mkfifo(path: *const c_char, mode: u32) -> c_int;
-        }
-
-        fn temp_path(name: &str) -> std::path::PathBuf {
-            let sequence = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
-            std::env::temp_dir().join(format!(
-                "ronin-jobserver-{}-{}-{sequence}",
-                std::process::id(),
-                name
-            ))
-        }
-
-        fn create_fifo(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-            let directory = temp_path(name);
-            fs::create_dir(&directory).unwrap();
-            let fifo = directory.join("fifo");
-            let path = CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
-            // SAFETY: `path` is a live NUL-terminated path and the mode is
-            // valid for creating the test FIFO.
-            assert_eq!(unsafe { mkfifo(path.as_ptr(), 0o666) }, 0);
-            (directory, fifo)
-        }
-
-        #[test]
-        fn ninja_jobserver_posix_fifo_client() {
-            let (directory, fifo) = create_fifo("client");
-            let config = JobserverConfig {
-                mode: JobserverMode::PosixFifo,
-                path: fifo.to_string_lossy().into_owned(),
-            };
-            let mut client = PosixJobserverClient::create(&config).unwrap();
-            assert!(client.jobserver_fd() >= 0);
-            assert!(client.try_acquire().is_implicit());
-            assert!(!client.try_acquire().is_valid());
-
-            for value in b"01234" {
-                client.release(Slot::explicit(*value));
-            }
-            for value in b"01234" {
-                assert_eq!(client.try_acquire().explicit_value(), Some(*value));
-            }
-            assert!(!client.try_acquire().is_valid());
-
-            client.release(Slot::implicit());
-            assert!(client.try_acquire().is_implicit());
+        if std::env::var_os(CHILD_MARKER).is_some() {
+            let client = inherited_client().unwrap();
+            std::fs::write(std::env::var_os(READY_PATH).unwrap(), []).unwrap();
+            let mut token = [0];
+            std::io::stdin().read_exact(&mut token).unwrap();
+            assert_eq!(token, [b'+']);
             drop(client);
-            fs::remove_file(&fifo).unwrap();
-            fs::remove_dir(&directory).unwrap();
+            return;
         }
 
-        #[test]
-        fn ninja_jobserver_inherited_pipe_client() {
-            let (reader, mut writer) = UnixStream::pair().unwrap();
-            writer.write_all(b"+").unwrap();
-            let config = JobserverConfig {
-                mode: JobserverMode::Pipe,
-                path: format!("{},{}", reader.as_raw_fd(), writer.as_raw_fd()),
-            };
-            let mut client = PosixJobserverClient::create(&config).unwrap();
-            assert!(client.try_acquire().is_implicit());
-            let explicit = client.try_acquire();
-            assert_eq!(explicit.explicit_value(), Some(b'+'));
-            assert!(!client.try_acquire().is_valid());
-            client.release(explicit);
-            assert_eq!(client.try_acquire().explicit_value(), Some(b'+'));
-        }
+        let (reader, mut writer) = std::io::pipe().unwrap();
+        let child_writer = writer.try_clone().unwrap();
+        let ready =
+            std::env::temp_dir().join(format!("ronin-jobserver-ready-{}", std::process::id()));
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "jobserver::tests::ronin_jobserver_preserves_inherited_descriptor_flags",
+                "--quiet",
+            ])
+            .env(CHILD_MARKER, "1")
+            .env(READY_PATH, &ready)
+            .env_remove("CARGO_MAKEFLAGS")
+            .env("MAKEFLAGS", "-j --jobserver-auth=0,2")
+            .env_remove("MFLAGS")
+            .stdin(Stdio::from(reader))
+            .stdout(Stdio::null())
+            .stderr(Stdio::from(child_writer))
+            .spawn()
+            .unwrap();
 
-        #[test]
-        fn ninja_jobserver_rejects_non_fifo_paths() {
-            let directory = temp_path("bad-path");
-            fs::create_dir(&directory).unwrap();
-            let file = directory.join("not-a-fifo");
-            fs::write(&file, "").unwrap();
-            let mut config = JobserverConfig {
-                mode: JobserverMode::PosixFifo,
-                path: file.to_string_lossy().into_owned(),
-            };
-            assert_eq!(
-                PosixJobserverClient::create(&config).unwrap_err(),
-                format!("Not a fifo path: {}", config.path)
-            );
-            config.path.clear();
-            assert_eq!(
-                PosixJobserverClient::create(&config).unwrap_err(),
-                "Empty fifo path"
-            );
-            fs::remove_file(file).unwrap();
-            fs::remove_dir(directory).unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !ready.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
         }
+        assert!(ready.exists(), "child did not reach the blocking read");
+        std::thread::sleep(Duration::from_millis(30));
+        writer.write_all(b"+").unwrap();
+        assert!(child.wait().unwrap().success());
+        std::fs::remove_file(ready).unwrap();
     }
 }

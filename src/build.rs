@@ -6,7 +6,7 @@ use crate::graph::{
     recompute_edge_dirty_with, EdgeId, Graph, NodeId,
 };
 use crate::os::{RealDiskInterface, MTIME_MISSING};
-use crate::subprocess::{status_interrupted, ProcessOutput, ProcessSupervisor};
+use crate::subprocess::{status_interrupted, ProcessOutput, ProcessSupervisor, SupervisorWake};
 use crate::util::{BString, ByteSlice};
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
@@ -38,7 +38,7 @@ pub(crate) struct BuildOptions {
     pub(crate) statusfmt: String,
     pub(crate) status_from_cli: bool,
     pub(crate) maxload: f64,
-    pub(crate) jobserver: crate::jobserver::JobserverConfig,
+    pub(crate) jobserver: Option<crate::jobserver::Transport>,
 }
 
 impl Default for BuildOptions {
@@ -56,7 +56,7 @@ impl Default for BuildOptions {
             statusfmt: "[%f/%t] ".into(),
             status_from_cli: false,
             maxload: 0.0,
-            jobserver: crate::jobserver::JobserverConfig::default(),
+            jobserver: None,
         }
     }
 }
@@ -1201,15 +1201,24 @@ impl<'a> Builder<'a> {
         let mut running = Vec::new();
         running.resize_with(self.graph.edge_count(), || None);
         let mut running_slots = Vec::new();
-        running_slots.resize_with(self.graph.edge_count(), crate::jobserver::Slot::default);
+        running_slots.resize_with(self.graph.edge_count(), || None);
         let mut console_running = false;
-        let mut processes = ProcessSupervisor::default();
-        #[cfg(unix)]
-        let mut jobserver = if !self.options.dryrun && self.options.jobserver.has_mode() {
-            Some(crate::jobserver::create_client(&self.options.jobserver)?)
-        } else {
+        let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::default();
+        let mut jobserver = if self.options.dryrun {
             None
+        } else {
+            self.options
+                .jobserver
+                .clone()
+                .map(|transport| {
+                    let sender = processes.external_sender();
+                    crate::jobserver::JobserverClient::new(transport, move |result| {
+                        sender.send(result);
+                    })
+                })
+                .transpose()?
         };
+        let mut available_slot = None;
 
         std::thread::scope(|scope| {
             loop {
@@ -1218,7 +1227,6 @@ impl<'a> Builder<'a> {
                     failures = failure_limit;
                     last_error = Some("interrupted by user".into());
                 }
-                let mut waiting_for_jobserver = false;
                 let maxjobs =
                     if self.options.maxload > 0.0 && status::queryload() > self.options.maxload {
                         1
@@ -1254,16 +1262,20 @@ impl<'a> Builder<'a> {
                         self.plan.defer_work(self.graph, edge);
                         break;
                     }
-                    let mut slot = crate::jobserver::Slot::default();
-                    #[cfg(unix)]
-                    if let Some(client) = jobserver.as_mut() {
-                        slot = client.try_acquire();
-                        if !slot.is_valid() {
+                    let slot = if let Some(client) = jobserver.as_mut() {
+                        if let Some(slot) = available_slot
+                            .take()
+                            .or_else(|| client.try_acquire_implicit())
+                        {
+                            Some(slot)
+                        } else {
                             self.plan.defer_work(self.graph, edge);
-                            waiting_for_jobserver = true;
+                            client.request_token();
                             break;
                         }
-                    }
+                    } else {
+                        None
+                    };
                     let prepared = self.prepare_edge(edge).and_then(|prepared| {
                         self.command_started(edge, &prepared.command)?;
                         Ok(prepared)
@@ -1281,9 +1293,8 @@ impl<'a> Builder<'a> {
                             }
                         }
                         Err(error) => {
-                            #[cfg(unix)]
-                            if let Some(client) = jobserver.as_mut() {
-                                client.release(slot);
+                            if let Some(slot) = slot {
+                                slot.release();
                             }
                             self.plan
                                 .edge_finished(self.graph, edge, EdgeResult::Failed)?;
@@ -1296,23 +1307,26 @@ impl<'a> Builder<'a> {
                 if processes.running_len() == 0 {
                     break;
                 }
-                let timeout = Some(std::time::Duration::from_millis(if waiting_for_jobserver {
-                    1
-                } else {
-                    10
-                }));
-                let completion = processes.wait(timeout)?;
-                let Some(completion) = completion else {
+                let timeout = Some(std::time::Duration::from_millis(10));
+                let Some(wake) = processes.wait(timeout)? else {
                     continue;
+                };
+                let completion = match wake {
+                    SupervisorWake::Process(completion) => completion,
+                    SupervisorWake::External(result) => {
+                        let client = jobserver
+                            .as_mut()
+                            .expect("jobserver events require an active client");
+                        available_slot = Some(client.receive_token(result)?);
+                        continue;
+                    }
                 };
                 let edge = completion.edge;
                 let prepared = running[edge.index()]
                     .take()
                     .expect("completed edges have running preparation state");
-                let slot = running_slots[edge.index()].take();
-                #[cfg(unix)]
-                if let Some(client) = jobserver.as_mut() {
-                    client.release(slot);
+                if let Some(slot) = running_slots[edge.index()].take() {
+                    slot.release();
                 }
                 if prepared.command.use_console {
                     console_running = false;

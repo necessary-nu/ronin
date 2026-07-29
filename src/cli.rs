@@ -512,17 +512,16 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
 }
 
 // [spec:samurai:req:compat.process-integration]
-fn normalize_runtime_options(options: &mut BuildOptions, makeflags: Option<&str>) -> CliResult<()> {
+fn normalize_runtime_options(
+    options: &mut BuildOptions,
+    makeflags: Option<&str>,
+    connect_jobserver: impl FnOnce() -> Result<crate::jobserver::Transport, crate::error::ProcessError>,
+) -> CliResult<()> {
     if options.maxjobs == 0 {
-        let jobserver = crate::jobserver::parse_makeflags_value(makeflags)?;
-        if cfg!(unix)
-            && matches!(
-                jobserver.mode,
-                crate::jobserver::JobserverMode::PosixFifo | crate::jobserver::JobserverMode::Pipe
-            )
-        {
+        let config = crate::jobserver::parse_makeflags_value(makeflags)?;
+        if config.has_mode() && config.is_native() {
             options.maxjobs = usize::MAX;
-            options.jobserver = jobserver;
+            options.jobserver = Some(connect_jobserver()?);
         } else {
             options.maxjobs = match crate::os::osnproc() {
                 i64::MIN..=1 => 2,
@@ -989,7 +988,11 @@ fn run_bytes(
         RunAction::Execute(invocation) => invocation,
     };
     let makeflags = std::env::var("MAKEFLAGS").ok();
-    normalize_runtime_options(&mut invocation.build_options, makeflags.as_deref())?;
+    normalize_runtime_options(
+        &mut invocation.build_options,
+        makeflags.as_deref(),
+        crate::jobserver::inherited_client,
+    )?;
     if let Some(tool) = invocation
         .selected_tool
         .filter(|tool| tool.stage() == crate::tool::ToolStage::Flags)
@@ -1245,28 +1248,24 @@ mod tests {
         normalize_runtime_options(
             &mut options,
             Some("-j --jobserver-auth=fifo:/tmp/ronin-jobserver"),
+            || jobserver::Client::new(0).map_err(crate::error::ProcessError::from),
         )
         .unwrap();
         assert_eq!(options.maxjobs, usize::MAX);
-        assert_eq!(
-            options.jobserver,
-            crate::jobserver::JobserverConfig {
-                mode: crate::jobserver::JobserverMode::PosixFifo,
-                path: "/tmp/ronin-jobserver".into(),
-            }
-        );
+        assert!(options.jobserver.is_some());
 
         let mut explicit = BuildOptions {
             maxjobs: 2,
             ..BuildOptions::default()
         };
-        normalize_runtime_options(&mut explicit, Some("-j --jobserver-auth=fifo:/tmp/ignored"))
-            .unwrap();
+        normalize_runtime_options(
+            &mut explicit,
+            Some("-j --jobserver-auth=fifo:/tmp/ignored"),
+            || panic!("explicit -j must not connect to an inherited jobserver"),
+        )
+        .unwrap();
         assert_eq!(explicit.maxjobs, 2);
-        assert_eq!(
-            explicit.jobserver,
-            crate::jobserver::JobserverConfig::default()
-        );
+        assert!(explicit.jobserver.is_none());
     }
 
     #[test]
