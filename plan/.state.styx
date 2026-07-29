@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T20:06:04.727678699Z
+last_sync_at 2026-07-29T20:11:39.664965759Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -30,7 +30,6 @@ assertions (
     {id ronin-error-api, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T19:34:40.476317517Z}
     {id ronin-idiom-polish, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T19:55:05.610043373Z}
     {id ronin-release-tuning, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T20:05:57.148949965Z}
-    {id ronin-release-gate, kind @doing, author "brendan@bbqsrc.net", at 2026-07-29T20:06:33.555468525Z}
 )
 
 impl_evidence (
@@ -119,6 +118,13 @@ impl_evidence (
         {id compat.version-reporting, version 0}
         {id product.no-samuflags, version 0}
         {id product.ronin-identity, version 0}
+    )}
+    {id ronin-release-gate, covered_rules (
+        release.compatibility-gate
+    ), covered_claims (
+        {impl_name target-impl, rule release.compatibility-gate}
+    ), rule_versions_seen (
+        {id release.compatibility-gate, version 0}
     )}
     {id ronin-runtime-consolidation, covered_rules (
         compat.cli-and-tools

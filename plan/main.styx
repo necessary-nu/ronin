@@ -655,6 +655,14 @@ children (
                         kind @note
                         text "Implemented an executable repository release gate covering format, check, strict Clippy, rustdoc, all-target tests, wave-4 port coverage, pinned Ninja conformance/differential/persistence checks, performance thresholds, spec coverage and stale-requirement checks, nplan lint/audit, package-content policy, and cargo package verification. Added a target-side contract test for release.compatibility-gate. Restricted the Ronin crate package to Rust product and verification assets, excluding the legacy C corpus and planning internals; cargo package verifies 53 files at 716.3 KiB (134.8 KiB compressed)."
                     }
+
+                    {
+                        at 2026-07-29T20:11:39.680945722Z
+                        author "brendan@bbqsrc.net"
+                        kind @errata
+                        text "The first clean gate run passed format/check/strict Clippy/rustdoc/tests, wave-4 coverage, all 425 Ninja tests, 10 differential cases, persistence round trips, and performance, then falsely rejected nplan's successful `No uncovered rules.` wording. Updated the wrapper to accept both supported zero-uncovered renderings before rerunning the clean candidate."
+                        after_done true
+                    }
                 )
             }
         )

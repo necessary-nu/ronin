@@ -30,7 +30,8 @@ scripts/check-performance.sh \
 
 uncovered=$(nplan spec uncovered --prefix samurai --color never)
 printf '%s\n' "$uncovered"
-if ! printf '%s\n' "$uncovered" | rg -q '^0 uncovered rule\\(s\\):'; then
+if ! printf '%s\n' "$uncovered" |
+    rg -q '^(No uncovered rules\\.|0 uncovered rule\\(s\\):)'; then
     echo "release gate: uncovered specification rules remain" >&2
     exit 1
 fi
