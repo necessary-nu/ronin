@@ -557,12 +557,34 @@ children (
                 title "Resolve idiom, safety, formatting, and lint debt"
                 priority 1
                 deps (ronin-error-api)
+                sealed true
                 log (
                     {
                         at 2026-07-29T14:36:54.006565973Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Resolve remaining pedantic and nursery Clippy findings by design, remove C lifecycle shims, isolate and document unavoidable unsafe code, use standard naming and iterator/borrowing conventions, update Rust-focused documentation, and keep cargo fmt clean throughout."
+                    }
+
+                    {
+                        at 2026-07-29T19:35:25.305238703Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T19:55:02.989462078Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Resolved the remaining strict Clippy pedantic/nursery findings by design and kept cargo fmt clean. Replaced C lifecycle shims with Rust constructors, Drop/ownership, and consuming finish methods; changed graph ID enumeration from allocated Vecs to exact-size iterators; replaced avoidable formatting allocations; added checked integer conversions at CLI and Ninja log boundaries; documented and denied undocumented unsafe blocks around the POSIX signal/process and GNU Make jobserver boundaries; and documented the Rust quality policy. Verified cargo fmt, strict all-target Clippy, rustdoc warnings, the complete all-target Rust suite, all 425 tests from pinned Ninja b51a1e37c2fb89bbefa600bd155e1ce13983f09d, 10 differential cases, Ninja persistence round trips, and wave-4 coverage for all 175 ported symbols. The v2 performance gate passed all six workloads: Ronin median runtime was 0.47–0.85x pinned Ninja and peak RSS 0.73–1.32x Ninja."
+                    }
+
+                    {
+                        at 2026-07-29T19:55:05.610043373Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

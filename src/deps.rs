@@ -32,13 +32,32 @@ pub(crate) struct DepsLog {
     path: PathBuf,
 }
 
+impl DepsLog {
+    // [spec:samurai:def:deps.depsinit-fn]
+    // [spec:samurai:sem:deps.depsinit-fn]
+    #[cfg(test)]
+    pub(crate) fn open(builddir: Option<&Path>) -> io::Result<Self> {
+        let path = builddir.map_or_else(
+            || PathBuf::from(".ninja_deps"),
+            |directory| directory.join(".ninja_deps"),
+        );
+        depsinit_path(path)
+    }
+
+    // [spec:samurai:def:deps.depsclose-fn]
+    // [spec:samurai:sem:deps.depsclose-fn]
+    pub(crate) fn finish(mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
+
 #[derive(Default)]
 struct EntryMap {
     slots: Vec<Option<Entry>>,
 }
 
 impl EntryMap {
-    fn get(&self, node: &NodeId) -> Option<&Entry> {
+    fn get(&self, node: NodeId) -> Option<&Entry> {
         self.slots.get(node.index()).and_then(Option::as_ref)
     }
 
@@ -50,7 +69,7 @@ impl EntryMap {
     }
 
     #[cfg(test)]
-    fn contains_key(&self, node: &NodeId) -> bool {
+    fn contains_key(&self, node: NodeId) -> bool {
         self.get(node).is_some()
     }
 
@@ -265,10 +284,11 @@ fn depswrite(writer: &mut BufWriter<File>, bytes: &[u8]) -> io::Result<()> {
 // [spec:samurai:def:deps.recordid-fn]
 // [spec:samurai:sem:deps.recordid-fn]
 fn recordid(log: &mut DepsLog, graph: &mut Graph, node: NodeId) -> io::Result<bool> {
+    const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
+
     if graph.node(node).id != -1 {
         return Ok(false);
     }
-    const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
     let id = log.next_id;
     let path = graph.node(node).path.as_bytes().to_vec();
     let padding = (4 - path.len() % 4) % 4;
@@ -281,10 +301,12 @@ fn recordid(log: &mut DepsLog, graph: &mut Graph, node: NodeId) -> io::Result<bo
     }
     log.next_id += 1;
     graph.node_mut(node).id = id;
-    depswrite(&mut log.writer, &(size as u32).to_ne_bytes())?;
+    let encoded_size = u32::try_from(size).expect("bounded dependency path record");
+    let encoded_id = u32::try_from(id).expect("dependency IDs are non-negative");
+    depswrite(&mut log.writer, &encoded_size.to_ne_bytes())?;
     depswrite(&mut log.writer, &path)?;
     depswrite(&mut log.writer, &[0; 3][..padding])?;
-    depswrite(&mut log.writer, &(!(id as u32)).to_ne_bytes())?;
+    depswrite(&mut log.writer, &(!encoded_id).to_ne_bytes())?;
     log.nodes.push(node);
     Ok(true)
 }
@@ -299,7 +321,7 @@ fn recorddeps(
     mtime: i64,
 ) -> io::Result<()> {
     const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
-    if let Some(existing) = log.entries.get(&output) {
+    if let Some(existing) = log.entries.get(output) {
         let unchanged = existing.mtime == mtime
             && existing.deps.nodes.len() == deps.nodes.len()
             && existing
@@ -319,24 +341,20 @@ fn recorddeps(
             "dependency record is too large",
         ));
     }
-    depswrite(
-        &mut log.writer,
-        &((size as u32) | 0x8000_0000).to_ne_bytes(),
-    )?;
-    depswrite(
-        &mut log.writer,
-        &(graph.node(output).id as u32).to_ne_bytes(),
-    )?;
-    depswrite(&mut log.writer, &(mtime as u64 as u32).to_ne_bytes())?;
-    depswrite(
-        &mut log.writer,
-        &((mtime as u64 >> 32) as u32).to_ne_bytes(),
-    )?;
+    let encoded_size = u32::try_from(size).expect("bounded dependency record");
+    depswrite(&mut log.writer, &(encoded_size | 0x8000_0000).to_ne_bytes())?;
+    let output_id =
+        u32::try_from(graph.node(output).id).expect("recorded output has a non-negative ID");
+    depswrite(&mut log.writer, &output_id.to_ne_bytes())?;
+    let mtime_bits = u64::from_ne_bytes(mtime.to_ne_bytes());
+    let low_mtime = u32::try_from(mtime_bits & u64::from(u32::MAX)).expect("masked to 32 bits");
+    let high_mtime = u32::try_from(mtime_bits >> 32).expect("shifted to 32 bits");
+    depswrite(&mut log.writer, &low_mtime.to_ne_bytes())?;
+    depswrite(&mut log.writer, &high_mtime.to_ne_bytes())?;
     for dependency in &deps.nodes {
-        depswrite(
-            &mut log.writer,
-            &(graph.node(*dependency).id as u32).to_ne_bytes(),
-        )?;
+        let dependency_id = u32::try_from(graph.node(*dependency).id)
+            .expect("recorded dependency has a non-negative ID");
+        depswrite(&mut log.writer, &dependency_id.to_ne_bytes())?;
     }
     log.entries.insert(
         output,
@@ -370,23 +388,6 @@ fn depsinit_path(path: PathBuf) -> io::Result<DepsLog> {
     Ok(log)
 }
 
-// [spec:samurai:def:deps.depsinit-fn]
-// [spec:samurai:sem:deps.depsinit-fn]
-#[cfg(test)]
-pub(crate) fn depsinit(builddir: Option<&Path>) -> io::Result<DepsLog> {
-    let path = builddir.map_or_else(
-        || PathBuf::from(".ninja_deps"),
-        |directory| directory.join(".ninja_deps"),
-    );
-    depsinit_path(path)
-}
-
-// [spec:samurai:def:deps.depsclose-fn]
-// [spec:samurai:sem:deps.depsclose-fn]
-pub(crate) fn depsclose(mut log: DepsLog) -> io::Result<()> {
-    log.writer.flush()
-}
-
 fn node_from_path(graph: &mut Graph, path: &[u8]) -> NodeId {
     let mut value = crate::util::mkstr(path.len());
     value.copy_from_slice(path);
@@ -397,11 +398,15 @@ fn native_u32(bytes: &[u8]) -> u32 {
     u32::from_ne_bytes(bytes.try_into().expect("u32 source is four bytes"))
 }
 
-/// Load Ninja's .ninja_deps stream and recover its last partial record.
+/// Load Ninja's `.ninja_deps` stream and recover its last partial record.
 ///
 /// The returned warning is non-fatal: just like Ninja, the valid prefix stays
 /// usable and the invalid suffix is discarded before future records append.
 // [spec:samurai:req:compat.persistent-state]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the byte-exact Ninja deps-log decoder is one record-validation state machine"
+)]
 pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Option<String>)> {
     const SIGNATURE: &[u8] = b"# ninjadeps\n";
     const HEADER_LEN: usize = SIGNATURE.len() + 4;
@@ -442,7 +447,7 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
         let encoded_size = native_u32(&content[offset..offset + 4]);
         offset += 4;
         let is_deps = encoded_size & 0x8000_0000 != 0;
-        let size = (encoded_size & 0x7fff_ffff) as usize;
+        let size = usize::try_from(encoded_size & 0x7fff_ffff).unwrap_or(usize::MAX);
         if size > MAX_RECORD_SIZE || content.len() - offset < size {
             offset = record_offset;
             recovery = true;
@@ -454,15 +459,15 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
             if size < 12 || !size.is_multiple_of(4) {
                 false
             } else {
-                let output_id = native_u32(&record[..4]) as usize;
+                let output_id = usize::try_from(native_u32(&record[..4])).unwrap_or(usize::MAX);
                 let dependency_ids = record[12..]
                     .chunks_exact(4)
-                    .map(|bytes| native_u32(bytes) as usize);
+                    .map(|bytes| usize::try_from(native_u32(bytes)).unwrap_or(usize::MAX));
                 if output_id >= nodes.len() || dependency_ids.clone().any(|id| id >= nodes.len()) {
                     false
                 } else {
-                    let low = native_u32(&record[4..8]) as u64;
-                    let high = native_u32(&record[8..12]) as u64;
+                    let low = u64::from(native_u32(&record[4..8]));
+                    let high = u64::from(native_u32(&record[8..12]));
                     let output = nodes[output_id];
                     let deps = NodeArray {
                         nodes: dependency_ids.map(|id| nodes[id]).collect(),
@@ -472,7 +477,7 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
                         Entry {
                             node: output,
                             deps,
-                            mtime: ((high << 32) | low) as i64,
+                            mtime: i64::from_ne_bytes(((high << 32) | low).to_ne_bytes()),
                         },
                     );
                     true
@@ -490,14 +495,16 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
             if path_size == 0 {
                 false
             } else {
-                let expected_id = !native_u32(&record[size - 4..]) as usize;
+                let expected_id =
+                    usize::try_from(!native_u32(&record[size - 4..])).unwrap_or(usize::MAX);
                 let node = node_from_path(graph, &record[..path_size]);
-                if expected_id != nodes.len() || graph.node(node).id >= 0 {
-                    false
-                } else {
-                    graph.node_mut(node).id = expected_id as i32;
-                    nodes.push(node);
-                    true
+                match i32::try_from(expected_id) {
+                    Ok(stored_id) if expected_id == nodes.len() && graph.node(node).id < 0 => {
+                        graph.node_mut(node).id = stored_id;
+                        nodes.push(node);
+                        true
+                    }
+                    _ => false,
                 }
             }
         };
@@ -513,10 +520,15 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
         OpenOptions::new()
             .write(true)
             .open(path)?
-            .set_len(offset as u64)?;
+            .set_len(u64::try_from(offset).expect("file offsets fit in u64"))?;
     }
     let mut log = depsinit_path(path.to_path_buf())?;
-    log.next_id = nodes.len() as i32;
+    log.next_id = i32::try_from(nodes.len()).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "dependency log contains too many path records",
+        )
+    })?;
     log.nodes = nodes;
     log.entries = entries;
     let warning = recovery.then(|| "premature end of file; recovering".into());
@@ -666,20 +678,20 @@ pub(crate) fn depsparse_for_edge(
 pub(crate) fn depsload(graph: &mut Graph, edge: EdgeId, log: &DepsLog) {
     let output = graph.edge(edge).out.first().copied();
     let Some(output) = output else { return };
-    if let Some(entry) = log.entries.get(&output) {
+    if let Some(entry) = log.entries.get(output) {
         edgeadddeps(graph, edge, &entry.deps.nodes);
     }
 }
 
 pub(crate) fn depsentry(log: &DepsLog, output: NodeId) -> Option<&Entry> {
-    log.entries.get(&output)
+    log.entries.get(output)
 }
 
 pub(crate) fn depsnodes(log: &DepsLog) -> impl Iterator<Item = NodeId> + '_ {
     log.nodes
         .iter()
         .copied()
-        .filter(|node| log.entries.get(node).is_some())
+        .filter(|node| log.entries.get(*node).is_some())
 }
 
 pub(crate) fn visit_dependencies(log: &DepsLog, mut visit: impl FnMut(NodeId, NodeId)) {
@@ -897,7 +909,7 @@ mod ninja_depfile_tests {
             ));
             match fs::create_dir(&directory) {
                 Ok(()) => return (directory.clone(), directory.join(".ninja_deps")),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                 Err(error) => panic!("could not create test log directory: {error}"),
             }
         }
@@ -932,7 +944,7 @@ mod ninja_depfile_tests {
     }
 
     fn make_deps_edge(graph: &mut Graph, output: NodeId) {
-        let state = crate::env::envinit(graph);
+        let state = crate::env::EnvState::new(graph);
         let rule = crate::env::mkrule(graph, "cc".into());
         crate::env::ruleaddvar(
             graph,
@@ -950,7 +962,7 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_deps_log_write_read() {
         let (directory, path) = test_log_path("write-read");
-        let mut source = crate::graph::graphinit();
+        let mut source = crate::graph::Graph::default();
         let output = make_node(&mut source, "out.o");
         let output2 = make_node(&mut source, "out2.o");
         let foo = make_node(&mut source, "foo.h");
@@ -959,14 +971,14 @@ mod ninja_depfile_tests {
         let mut log = depsinit_path(path.clone()).unwrap();
         record(&mut log, &mut source, output, &[foo, bar], 1);
         record(&mut log, &mut source, output2, &[foo, bar2], 2);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
 
-        let mut loaded_graph = crate::graph::graphinit();
+        let mut loaded_graph = crate::graph::Graph::default();
         let (loaded, warning) = depsloadlog(&path, &mut loaded_graph).unwrap();
         assert_eq!(warning, None);
         assert_eq!(loaded.nodes.len(), 5);
         let output2 = make_node(&mut loaded_graph, "out2.o");
-        let entry = loaded.entries.get(&output2).unwrap();
+        let entry = loaded.entries.get(output2).unwrap();
         assert_eq!(entry.mtime, 2);
         assert_eq!(paths(&loaded_graph, &entry.deps.nodes), ["foo.h", "bar2.h"]);
         drop(loaded);
@@ -976,21 +988,21 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_deps_log_lots_of_dependencies() {
         let (directory, path) = test_log_path("many");
-        let mut source = crate::graph::graphinit();
+        let mut source = crate::graph::Graph::default();
         let output = make_node(&mut source, "out.o");
         let dependencies = (0..100_000)
             .map(|index| make_node(&mut source, &format!("file{index}.h")))
             .collect::<Vec<_>>();
         let mut log = depsinit_path(path.clone()).unwrap();
         record(&mut log, &mut source, output, &dependencies, 1);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
 
-        let mut loaded_graph = crate::graph::graphinit();
+        let mut loaded_graph = crate::graph::Graph::default();
         let (loaded, warning) = depsloadlog(&path, &mut loaded_graph).unwrap();
         assert_eq!(warning, None);
         let output = make_node(&mut loaded_graph, "out.o");
         assert_eq!(
-            loaded.entries.get(&output).unwrap().deps.nodes.len(),
+            loaded.entries.get(output).unwrap().deps.nodes.len(),
             100_000
         );
         drop(loaded);
@@ -1000,23 +1012,23 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_deps_log_avoids_duplicate_entries() {
         let (directory, path) = test_log_path("duplicate");
-        let mut graph = crate::graph::graphinit();
+        let mut graph = crate::graph::Graph::default();
         let output = make_node(&mut graph, "out.o");
         let foo = make_node(&mut graph, "foo.h");
         let bar = make_node(&mut graph, "bar.h");
         let mut log = depsinit_path(path.clone()).unwrap();
         record(&mut log, &mut graph, output, &[foo, bar], 1);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
         let original_size = fs::metadata(&path).unwrap().len();
 
-        let mut reloaded_graph = crate::graph::graphinit();
+        let mut reloaded_graph = crate::graph::Graph::default();
         let (mut log, warning) = depsloadlog(&path, &mut reloaded_graph).unwrap();
         assert_eq!(warning, None);
         let output = make_node(&mut reloaded_graph, "out.o");
         let foo = make_node(&mut reloaded_graph, "foo.h");
         let bar = make_node(&mut reloaded_graph, "bar.h");
         record(&mut log, &mut reloaded_graph, output, &[foo, bar], 1);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
         assert_eq!(fs::metadata(&path).unwrap().len(), original_size);
         remove_test_log(directory);
     }
@@ -1024,7 +1036,7 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_deps_log_recompacts_live_entries() {
         let (directory, path) = test_log_path("recompact");
-        let mut source = crate::graph::graphinit();
+        let mut source = crate::graph::Graph::default();
         let output = make_node(&mut source, "out.o");
         let other_output = make_node(&mut source, "other_out.o");
         let foo = make_node(&mut source, "foo.h");
@@ -1033,9 +1045,9 @@ mod ninja_depfile_tests {
         let mut log = depsinit_path(path.clone()).unwrap();
         record(&mut log, &mut source, output, &[foo, bar], 1);
         record(&mut log, &mut source, other_output, &[foo, baz], 1);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
 
-        let mut graph = crate::graph::graphinit();
+        let mut graph = crate::graph::Graph::default();
         let (mut log, warning) = depsloadlog(&path, &mut graph).unwrap();
         assert_eq!(warning, None);
         let output = make_node(&mut graph, "out.o");
@@ -1047,22 +1059,20 @@ mod ninja_depfile_tests {
         let grown_size = fs::metadata(&path).unwrap().len();
         depsrecompact(&mut log, &mut graph).unwrap();
         assert_eq!(
-            paths(&graph, &log.entries.get(&output).unwrap().deps.nodes),
+            paths(&graph, &log.entries.get(output).unwrap().deps.nodes),
             ["foo.h"]
         );
         assert_eq!(
-            paths(&graph, &log.entries.get(&other_output).unwrap().deps.nodes),
+            paths(&graph, &log.entries.get(other_output).unwrap().deps.nodes),
             ["foo.h", "baz.h"]
         );
         assert!(fs::metadata(&path).unwrap().len() < grown_size);
         for entry in log.entries.values() {
-            assert_eq!(
-                graph.node(log.nodes[graph.node(entry.node).id as usize]).id,
-                graph.node(entry.node).id
-            );
+            let id = usize::try_from(graph.node(entry.node).id).unwrap();
+            assert_eq!(graph.node(log.nodes[id]).id, graph.node(entry.node).id);
         }
 
-        let mut dead_graph = crate::graph::graphinit();
+        let mut dead_graph = crate::graph::Graph::default();
         let (mut dead_log, warning) = depsloadlog(&path, &mut dead_graph).unwrap();
         assert_eq!(warning, None);
         let foo = make_node(&mut dead_graph, "foo.h");
@@ -1085,7 +1095,7 @@ mod ninja_depfile_tests {
             b"# ninjadeps\n\x01\x02\x03\x04".to_vec(),
         ] {
             fs::write(&path, content).unwrap();
-            let mut graph = crate::graph::graphinit();
+            let mut graph = crate::graph::Graph::default();
             let (log, warning) = depsloadlog(&path, &mut graph).unwrap();
             assert_eq!(
                 warning.as_deref(),
@@ -1099,7 +1109,7 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_deps_log_recovers_truncated_records() {
         let (directory, path) = test_log_path("truncated");
-        let mut source = crate::graph::graphinit();
+        let mut source = crate::graph::Graph::default();
         let output = make_node(&mut source, "out.o");
         let output2 = make_node(&mut source, "out2.o");
         let foo = make_node(&mut source, "foo.h");
@@ -1108,7 +1118,7 @@ mod ninja_depfile_tests {
         let mut log = depsinit_path(path.clone()).unwrap();
         record(&mut log, &mut source, output, &[foo, bar], 1);
         record(&mut log, &mut source, output2, &[foo, bar2], 2);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
         let original_size = fs::metadata(&path).unwrap().len();
         OpenOptions::new()
             .write(true)
@@ -1117,7 +1127,7 @@ mod ninja_depfile_tests {
             .set_len(original_size - 2)
             .unwrap();
 
-        let mut graph = crate::graph::graphinit();
+        let mut graph = crate::graph::Graph::default();
         let (log, warning) = depsloadlog(&path, &mut graph).unwrap();
         assert_eq!(
             warning.as_deref(),
@@ -1125,10 +1135,10 @@ mod ninja_depfile_tests {
         );
         let out = nodeget(&graph, b"out.o").unwrap();
         let out2 = nodeget(&graph, b"out2.o").unwrap();
-        assert!(log.entries.contains_key(&out));
-        assert!(!log.entries.contains_key(&out2));
+        assert!(log.entries.contains_key(out));
+        assert!(!log.entries.contains_key(out2));
         drop(log);
-        let mut reloaded_graph = crate::graph::graphinit();
+        let mut reloaded_graph = crate::graph::Graph::default();
         let (_log, warning) = depsloadlog(&path, &mut reloaded_graph).unwrap();
         assert_eq!(warning, None);
         remove_test_log(directory);
@@ -1137,7 +1147,7 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_deps_log_appends_after_truncation_recovery() {
         let (directory, path) = test_log_path("truncated-append");
-        let mut source = crate::graph::graphinit();
+        let mut source = crate::graph::Graph::default();
         let output = make_node(&mut source, "out.o");
         let output2 = make_node(&mut source, "out2.o");
         let foo = make_node(&mut source, "foo.h");
@@ -1146,7 +1156,7 @@ mod ninja_depfile_tests {
         let mut log = depsinit_path(path.clone()).unwrap();
         record(&mut log, &mut source, output, &[foo, bar], 1);
         record(&mut log, &mut source, output2, &[foo, bar2], 2);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
 
         let original_size = fs::metadata(&path).unwrap().len();
         OpenOptions::new()
@@ -1156,7 +1166,7 @@ mod ninja_depfile_tests {
             .set_len(original_size - 2)
             .unwrap();
 
-        let mut recovered_graph = crate::graph::graphinit();
+        let mut recovered_graph = crate::graph::Graph::default();
         let (mut recovered, warning) = depsloadlog(&path, &mut recovered_graph).unwrap();
         assert_eq!(
             warning.as_deref(),
@@ -1172,13 +1182,13 @@ mod ninja_depfile_tests {
             &[foo, bar2],
             3,
         );
-        depsclose(recovered).unwrap();
+        recovered.finish().unwrap();
 
-        let mut final_graph = crate::graph::graphinit();
+        let mut final_graph = crate::graph::Graph::default();
         let (final_log, warning) = depsloadlog(&path, &mut final_graph).unwrap();
         assert_eq!(warning, None);
         let output2 = make_node(&mut final_graph, "out2.o");
-        let entry = final_log.entries.get(&output2).unwrap();
+        let entry = final_log.entries.get(output2).unwrap();
         assert_eq!(entry.mtime, 3);
         assert_eq!(paths(&final_graph, &entry.deps.nodes), ["foo.h", "bar2.h"]);
         drop(final_log);
@@ -1188,7 +1198,7 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_deps_log_finds_reverse_dependencies() {
         let (directory, path) = test_log_path("reverse");
-        let mut graph = crate::graph::graphinit();
+        let mut graph = crate::graph::Graph::default();
         let output = make_node(&mut graph, "out.o");
         let output2 = make_node(&mut graph, "out2.o");
         let foo = make_node(&mut graph, "foo.h");
@@ -1209,20 +1219,20 @@ mod ninja_depfile_tests {
             .find(|entry| entry.deps.nodes.contains(&bar))
             .unwrap();
         assert_eq!(reverse.node, output);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
         remove_test_log(directory);
     }
 
     #[test]
     fn ninja_deps_log_recovers_malformed_records() {
         let (directory, path) = test_log_path("malformed");
-        let mut graph = crate::graph::graphinit();
+        let mut graph = crate::graph::Graph::default();
         let output = make_node(&mut graph, "out.o");
         let foo = make_node(&mut graph, "foo.hh");
         let bar = make_node(&mut graph, "bar.hpp");
         let mut log = depsinit_path(path.clone()).unwrap();
         record(&mut log, &mut graph, output, &[foo, bar], 1);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
         let original = fs::read(&path).unwrap();
         assert_eq!(&original[..12], b"# ninjadeps\n");
 
@@ -1230,15 +1240,15 @@ mod ninja_depfile_tests {
         let mut bad = original.clone();
         bad[first_record..first_record + 4].copy_from_slice(&0x7fff_aa55u32.to_ne_bytes());
         fs::write(&path, bad).unwrap();
-        let mut loaded_graph = crate::graph::graphinit();
+        let mut loaded_graph = crate::graph::Graph::default();
         let (_log, warning) = depsloadlog(&path, &mut loaded_graph).unwrap();
         assert_eq!(
             warning.as_deref(),
             Some("premature end of file; recovering")
         );
 
-        fs::write(&path, &original[..first_record + 4 + 1]).unwrap();
-        let mut loaded_graph = crate::graph::graphinit();
+        fs::write(&path, &original[..=first_record + 4]).unwrap();
+        let mut loaded_graph = crate::graph::Graph::default();
         let (_log, warning) = depsloadlog(&path, &mut loaded_graph).unwrap();
         assert_eq!(
             warning.as_deref(),
@@ -1250,13 +1260,13 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_deps_log_removes_duplicate_path_record_during_recovery() {
         let (directory, path) = test_log_path("duplicate-path");
-        let mut graph = crate::graph::graphinit();
+        let mut graph = crate::graph::Graph::default();
         let output = make_node(&mut graph, "out.o");
         let foo = make_node(&mut graph, "foo.h");
         let bar = make_node(&mut graph, "bar.h");
         let mut log = depsinit_path(path.clone()).unwrap();
         record(&mut log, &mut graph, output, &[foo, bar], 1);
-        depsclose(log).unwrap();
+        log.finish().unwrap();
 
         let mut duplicate = Vec::new();
         duplicate.extend_from_slice(&12u32.to_ne_bytes());
@@ -1266,20 +1276,20 @@ mod ninja_depfile_tests {
         content.extend_from_slice(&duplicate);
         fs::write(&path, content).unwrap();
 
-        let mut first_graph = crate::graph::graphinit();
+        let mut first_graph = crate::graph::Graph::default();
         let (first, warning) = depsloadlog(&path, &mut first_graph).unwrap();
         assert_eq!(
             warning.as_deref(),
             Some("premature end of file; recovering")
         );
         let out = nodeget(&first_graph, b"out.o").unwrap();
-        assert!(first.entries.contains_key(&out));
+        assert!(first.entries.contains_key(out));
         drop(first);
-        let mut second_graph = crate::graph::graphinit();
+        let mut second_graph = crate::graph::Graph::default();
         let (second, warning) = depsloadlog(&path, &mut second_graph).unwrap();
         assert_eq!(warning, None);
         let out = nodeget(&second_graph, b"out.o").unwrap();
-        assert!(second.entries.contains_key(&out));
+        assert!(second.entries.contains_key(out));
         drop(second);
         remove_test_log(directory);
     }

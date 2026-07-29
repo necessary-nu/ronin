@@ -175,7 +175,7 @@ impl MissingDependencyScanner {
         found
     }
 
-    pub(crate) fn had_missing_dependencies(&self) -> bool {
+    pub(crate) const fn had_missing_dependencies(&self) -> bool {
         self.nodes_missing_deps_count != 0
     }
 
@@ -183,11 +183,11 @@ impl MissingDependencyScanner {
         self.seen.iter().filter(|seen| **seen).count()
     }
 
-    pub(crate) fn nodes_missing_dependencies(&self) -> usize {
+    pub(crate) const fn nodes_missing_dependencies(&self) -> usize {
         self.nodes_missing_deps_count
     }
 
-    pub(crate) fn generated_nodes(&self) -> usize {
+    pub(crate) const fn generated_nodes(&self) -> usize {
         self.generated_nodes_count
     }
 
@@ -195,7 +195,7 @@ impl MissingDependencyScanner {
         self.generator_rules.len()
     }
 
-    pub(crate) fn missing_dependency_paths(&self) -> usize {
+    pub(crate) const fn missing_dependency_paths(&self) -> usize {
         self.missing_dep_path_count
     }
 
@@ -237,8 +237,8 @@ pub(crate) fn process_all_nodes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env::{envinit, mkrule, ruleaddvar, EnvironmentId, RuleId};
-    use crate::graph::{graphinit, mkedge, mknode, nodeuse};
+    use crate::env::{mkrule, ruleaddvar, EnvState, EnvironmentId, RuleId};
+    use crate::graph::{mkedge, mknode, nodeuse};
     use crate::util::{xasprintf, EvalString};
 
     struct Fixture {
@@ -250,8 +250,8 @@ mod tests {
 
     impl Fixture {
         fn new() -> Self {
-            let mut graph = graphinit();
-            let state = envinit(&mut graph);
+            let mut graph = Graph::default();
+            let state = EnvState::new(&mut graph);
             let generator_rule = deps_rule(&mut graph, "generator_rule");
             let compile_rule = deps_rule(&mut graph, "compile_rule");
             Self {

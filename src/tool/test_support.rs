@@ -19,9 +19,9 @@ impl Fixture {
         fs::create_dir(&directory).unwrap();
         let path = directory.join("build.ninja");
         fs::write(&path, manifest).unwrap();
-        let mut graph = graph::graphinit();
-        let mut parser = parse::parseinit();
-        let mut state = env::envinit(&mut graph);
+        let mut graph = graph::Graph::default();
+        let mut parser = parse::Parser::default();
+        let mut state = env::EnvState::new(&mut graph);
         parse::parse(&path, &mut graph, &mut parser, state.root, &mut state).unwrap();
         Self { directory, graph }
     }

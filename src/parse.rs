@@ -7,8 +7,8 @@ use crate::env::{
 use crate::error::ManifestError;
 use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId};
 use crate::scan::{
-    scanchar, scanclose, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe,
-    scanstring, Scanner, Token,
+    scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
+    Scanner, Token,
 };
 use crate::util::{canonpath, BStr, BString, ByteSlice, EvalString};
 
@@ -20,18 +20,12 @@ pub(crate) struct ParseOptions {
     pub(crate) dupbuildwarn: bool,
 }
 
+// [spec:samurai:def:parse.parseinit-fn]
+// [spec:samurai:sem:parse.parseinit-fn]
+#[derive(Default)]
 pub(crate) struct Parser {
     pub(crate) options: ParseOptions,
     pub(crate) defaults: Vec<NodeId>,
-}
-
-// [spec:samurai:def:parse.parseinit-fn]
-// [spec:samurai:sem:parse.parseinit-fn]
-pub(crate) fn parseinit() -> Parser {
-    Parser {
-        options: ParseOptions::default(),
-        defaults: Vec::new(),
-    }
 }
 
 // [spec:samurai:def:parse.parselet-fn]
@@ -124,12 +118,16 @@ fn node_for(
 
 // [spec:samurai:def:parse.parseedge-fn]
 // [spec:samurai:sem:parse.parseedge-fn]
+#[allow(
+    clippy::too_many_lines,
+    reason = "a complete Ninja build production shares scanner state and duplicate-output handling"
+)]
 fn parseedge(
     scanner: &mut Scanner,
     graph: &mut Graph,
     environment: EnvironmentId,
     state: &EnvState,
-    options: &ParseOptions,
+    options: ParseOptions,
 ) -> ManifestResult<()> {
     scanpaths(scanner)?;
     let mut output_paths = take_paths(scanner);
@@ -417,11 +415,11 @@ pub(crate) fn parse(
     environment: EnvironmentId,
     state: &mut EnvState,
 ) -> ManifestResult<()> {
-    let mut scanner = crate::scan::scaninit(name)?;
+    let mut scanner = crate::scan::Scanner::from_path(name)?;
     while let Some(token) = scankeyword(&mut scanner)? {
         match token {
             Token::Rule => parserule(&mut scanner, graph, environment)?,
-            Token::Build => parseedge(&mut scanner, graph, environment, state, &parser.options)?,
+            Token::Build => parseedge(&mut scanner, graph, environment, state, parser.options)?,
             Token::Include => parseinclude(&mut scanner, graph, parser, environment, state, false)?,
             Token::Subninja => parseinclude(&mut scanner, graph, parser, environment, state, true)?,
             Token::Default => parsedefault(&mut scanner, graph, parser, environment)?,
@@ -441,24 +439,22 @@ pub(crate) fn parse(
             }
         }
     }
-    scanclose(scanner);
     Ok(())
 }
 
 // [spec:samurai:def:parse.defaultnodes-fn]
 // [spec:samurai:sem:parse.defaultnodes-fn]
 pub(crate) fn defaultnodes(parser: &Parser, graph: &Graph) -> Vec<NodeId> {
-    if !parser.defaults.is_empty() {
-        parser.defaults.clone()
-    } else {
+    if parser.defaults.is_empty() {
         graph
-            .nodes()
-            .into_iter()
+            .node_ids()
             .filter(|node| {
                 let node = graph.node(*node);
                 node.gen.is_some() && node.uses.is_empty()
             })
             .collect()
+    } else {
+        parser.defaults.clone()
     }
 }
 
@@ -477,9 +473,9 @@ mod ninja_manifest_tests {
             NEXT_MANIFEST.fetch_add(1, Ordering::Relaxed)
         ));
         fs::write(&path, source).unwrap();
-        let mut graph = crate::graph::graphinit();
-        let mut parser = parseinit();
-        let mut state = crate::env::envinit(&mut graph);
+        let mut graph = crate::graph::Graph::default();
+        let mut parser = Parser::default();
+        let mut state = crate::env::EnvState::new(&mut graph);
         let result = parse(
             path.to_str().unwrap(),
             &mut graph,
@@ -492,9 +488,9 @@ mod ninja_manifest_tests {
     }
 
     fn parse_path(path: &std::path::Path) -> ManifestResult<(Graph, Parser, EnvState)> {
-        let mut graph = crate::graph::graphinit();
-        let mut parser = parseinit();
-        let mut state = crate::env::envinit(&mut graph);
+        let mut graph = crate::graph::Graph::default();
+        let mut parser = Parser::default();
+        let mut state = crate::env::EnvState::new(&mut graph);
         parse(
             path.to_str().unwrap(),
             &mut graph,
@@ -747,10 +743,10 @@ mod ninja_manifest_tests {
         let outer2 = output_edge(&graph, b"some_dir/outer2");
         let inner_command = edgevar(&graph, inner, "command", false).unwrap();
         let outer_command = edgevar(&graph, outer, "command", false).unwrap();
-        let outer2_command = edgevar(&graph, outer2, "command", false).unwrap();
+        let second_outer_command = edgevar(&graph, outer2, "command", false).unwrap();
         assert_eq!(inner_command.as_bytes(), b"varref inner");
         assert_eq!(outer_command.as_bytes(), b"varref outer");
-        assert_eq!(outer2_command.as_bytes(), b"varref outer");
+        assert_eq!(second_outer_command.as_bytes(), b"varref outer");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -844,9 +840,8 @@ mod ninja_manifest_tests {
         )
         .unwrap();
         fs::write(&root, format!("subninja {}\n", child.display())).unwrap();
-        let error = match parse_path(&root) {
-            Ok(_) => panic!("duplicate output unexpectedly parsed"),
-            Err(error) => error,
+        let Err(error) = parse_path(&root) else {
+            panic!("duplicate output unexpectedly parsed");
         };
         assert!(error.to_string().contains("multiple rules generate 'out1'"));
         fs::remove_dir_all(directory).unwrap();
@@ -864,10 +859,10 @@ mod ninja_manifest_tests {
             "rule cat\n  command = cat\nbuild out: cat in1\nbuild out: cat in2\n",
         )
         .unwrap();
-        let mut graph = crate::graph::graphinit();
-        let mut parser = parseinit();
+        let mut graph = crate::graph::Graph::default();
+        let mut parser = Parser::default();
         parser.options.dupbuildwarn = true;
-        let mut state = crate::env::envinit(&mut graph);
+        let mut state = crate::env::EnvState::new(&mut graph);
         parse(
             path.to_str().unwrap(),
             &mut graph,

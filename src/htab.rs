@@ -26,7 +26,10 @@ fn getle64(bytes: &[u8]) -> u64 {
 // [spec:samurai:sem:htab.mum-fn]
 fn mum(a: u64, b: u64) -> (u64, u64) {
     let product = u128::from(a) * u128::from(b);
-    (product as u64, (product >> 64) as u64)
+    (
+        u64::try_from(product & u128::from(u64::MAX)).expect("masked to 64 bits"),
+        u64::try_from(product >> 64).expect("shifted to 64 bits"),
+    )
 }
 
 // [spec:samurai:def:htab.mix-fn]

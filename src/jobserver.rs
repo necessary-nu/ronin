@@ -35,30 +35,30 @@ pub(crate) enum Slot {
 }
 
 impl Slot {
-    pub(crate) fn implicit() -> Self {
+    pub(crate) const fn implicit() -> Self {
         Self::Implicit
     }
 
-    pub(crate) fn explicit(value: u8) -> Self {
+    pub(crate) const fn explicit(value: u8) -> Self {
         Self::Explicit(value)
     }
 
-    pub(crate) fn is_valid(&self) -> bool {
+    pub(crate) const fn is_valid(&self) -> bool {
         !matches!(self, Self::Invalid)
     }
 
     #[cfg(test)]
-    pub(crate) fn is_implicit(&self) -> bool {
+    pub(crate) const fn is_implicit(&self) -> bool {
         matches!(self, Self::Implicit)
     }
 
     #[cfg(test)]
-    pub(crate) fn is_explicit(&self) -> bool {
+    pub(crate) const fn is_explicit(&self) -> bool {
         matches!(self, Self::Explicit(_))
     }
 
     #[cfg(test)]
-    pub(crate) fn explicit_value(&self) -> Option<u8> {
+    pub(crate) const fn explicit_value(&self) -> Option<u8> {
         match self {
             Self::Explicit(value) => Some(*value),
             _ => None,
@@ -203,6 +203,8 @@ mod platform {
                     }
                     let path =
                         CString::new(config.path.as_bytes()).map_err(|_| "Invalid fifo path")?;
+                    // SAFETY: `path` is NUL-terminated and remains alive for
+                    // the call; the returned descriptor is checked below.
                     let read_fd = unsafe { open(path.as_ptr(), O_RDONLY | O_NONBLOCK) };
                     if read_fd < 0 {
                         return Err(ProcessError::context(
@@ -210,7 +212,11 @@ mod platform {
                             std::io::Error::last_os_error(),
                         ));
                     }
+                    // SAFETY: `open` returned a fresh non-negative descriptor,
+                    // transferring sole ownership to `OwnedFd`.
                     let read_fd = unsafe { OwnedFd::from_raw_fd(read_fd) };
+                    // SAFETY: the same valid `CString` is alive for this call,
+                    // and the returned descriptor is checked below.
                     let write_fd = unsafe { open(path.as_ptr(), O_WRONLY | O_NONBLOCK) };
                     if write_fd < 0 {
                         return Err(ProcessError::context(
@@ -218,8 +224,12 @@ mod platform {
                             std::io::Error::last_os_error(),
                         ));
                     }
+                    // SAFETY: `open` returned a fresh non-negative descriptor,
+                    // transferring sole ownership to `OwnedFd`.
                     let write_fd = unsafe { OwnedFd::from_raw_fd(write_fd) };
                     for fd in [&read_fd, &write_fd] {
+                        // SAFETY: `fd` owns a live descriptor and `F_SETFD`
+                        // accepts the `FD_CLOEXEC` integer flag.
                         if unsafe { fcntl(fd.as_raw_fd(), F_SETFD, FD_CLOEXEC) } < 0 {
                             return Err(ProcessError::context(
                                 "Error setting jobserver descriptor close-on-exec",
@@ -251,6 +261,8 @@ mod platform {
         }
 
         fn duplicate_nonblocking(fd: RawFd) -> ProcessResult<OwnedFd> {
+            // SAFETY: `fd` comes from GNU Make's authenticated jobserver
+            // descriptor pair; the return value is checked below.
             let duplicate = unsafe { dup(fd) };
             if duplicate < 0 {
                 return Err(ProcessError::context(
@@ -258,14 +270,22 @@ mod platform {
                     std::io::Error::last_os_error(),
                 ));
             }
+            // SAFETY: `dup` returned a fresh non-negative descriptor,
+            // transferring sole ownership to `OwnedFd`.
             let duplicate = unsafe { OwnedFd::from_raw_fd(duplicate) };
+            // SAFETY: `duplicate` owns a live descriptor and the command and
+            // flag values are valid for `fcntl`.
             if unsafe { fcntl(duplicate.as_raw_fd(), F_SETFD, FD_CLOEXEC) } < 0 {
                 return Err(ProcessError::context(
                     "Error setting jobserver descriptor close-on-exec",
                     std::io::Error::last_os_error(),
                 ));
             }
+            // SAFETY: `duplicate` owns a live descriptor and `F_GETFL` takes
+            // no variadic argument.
             let flags = unsafe { fcntl(duplicate.as_raw_fd(), F_GETFL) };
+            // SAFETY: after a successful `F_GETFL`, OR-ing `O_NONBLOCK`
+            // produces a valid flag set for `F_SETFL`.
             if flags < 0 || unsafe { fcntl(duplicate.as_raw_fd(), F_SETFL, flags | O_NONBLOCK) } < 0
             {
                 return Err(ProcessError::context(
@@ -282,10 +302,12 @@ mod platform {
                 return Slot::implicit();
             }
             let mut value = 0u8;
+            // SAFETY: the owned descriptor is live and `value` provides one
+            // writable byte for exactly the requested count.
             let result = unsafe {
                 read(
                     self.read_fd.as_raw_fd(),
-                    &mut value as *mut u8 as *mut c_void,
+                    std::ptr::from_mut(&mut value).cast::<c_void>(),
                     1,
                 )
             };
@@ -296,6 +318,10 @@ mod platform {
             }
         }
 
+        #[allow(
+            clippy::needless_pass_by_value,
+            reason = "consuming a slot prevents callers from releasing the same token twice"
+        )]
         pub(crate) fn release(&mut self, slot: Slot) {
             match slot {
                 Slot::Invalid => {}
@@ -306,13 +332,17 @@ mod platform {
                     );
                     self.has_implicit_slot = true;
                 }
-                Slot::Explicit(value) => unsafe {
-                    write(
-                        self.write_fd.as_raw_fd(),
-                        &value as *const u8 as *const c_void,
-                        1,
-                    );
-                },
+                Slot::Explicit(value) => {
+                    // SAFETY: the owned descriptor is live and `value`
+                    // provides one readable byte for the requested count.
+                    unsafe {
+                        write(
+                            self.write_fd.as_raw_fd(),
+                            std::ptr::from_ref(&value).cast::<c_void>(),
+                            1,
+                        );
+                    }
+                }
             }
         }
 
@@ -491,6 +521,8 @@ mod tests {
             fs::create_dir(&directory).unwrap();
             let fifo = directory.join("fifo");
             let path = CString::new(fifo.as_os_str().as_encoded_bytes()).unwrap();
+            // SAFETY: `path` is a live NUL-terminated path and the mode is
+            // valid for creating the test FIFO.
             assert_eq!(unsafe { mkfifo(path.as_ptr(), 0o666) }, 0);
             (directory, fifo)
         }

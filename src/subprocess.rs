@@ -33,6 +33,8 @@ mod signals {
     pub(super) fn install() -> std::io::Result<()> {
         INTERRUPTED.store(0, Ordering::Relaxed);
         for signal_number in SIGNALS {
+            // SAFETY: `record_interrupt` has the C signal-handler ABI, and
+            // every number in `SIGNALS` is a POSIX signal accepted by signal.
             if unsafe { signal(signal_number, record_interrupt as usize) } == SIG_ERR {
                 return Err(std::io::Error::last_os_error());
             }
@@ -50,12 +52,16 @@ mod signals {
     pub(super) fn send(pid: u32, process_group: bool, signal_number: i32) {
         let pid = i32::try_from(pid).unwrap_or(i32::MAX);
         let target = if process_group { -pid } else { pid };
+        // SAFETY: `target` is either a child PID or its process-group ID and
+        // `signal_number` is the signal previously received by Ronin.
         unsafe {
             kill(target, signal_number);
         }
     }
 
     pub(super) fn reraise(signal_number: i32) -> ! {
+        // SAFETY: resetting the received POSIX signal to its default handler
+        // before raising it is the standard way to preserve shell semantics.
         unsafe {
             signal(signal_number, SIG_DFL);
             raise(signal_number);
@@ -67,6 +73,10 @@ mod signals {
 /// Installs Ronin's process-interruption handlers.
 ///
 /// Call this once in an embedding executable before invoking [`crate::run_os`].
+///
+/// # Errors
+///
+/// Returns the operating-system error from installing a signal handler.
 pub fn install_signal_handlers() -> io::Result<()> {
     #[cfg(unix)]
     {
@@ -79,6 +89,7 @@ pub fn install_signal_handlers() -> io::Result<()> {
 }
 
 /// Returns the operating-system signal most recently observed by Ronin.
+#[must_use]
 pub fn interrupted_signal() -> Option<i32> {
     #[cfg(unix)]
     {
@@ -223,7 +234,7 @@ impl ProcessSupervisor {
         }
     }
 
-    pub(crate) fn running_len(&self) -> usize {
+    pub(crate) const fn running_len(&self) -> usize {
         self.running
     }
 
@@ -237,7 +248,7 @@ impl ProcessSupervisor {
     }
 }
 
-pub(crate) fn status_interrupted(status: &std::process::ExitStatus) -> bool {
+pub(crate) fn status_interrupted(status: std::process::ExitStatus) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
@@ -340,7 +351,7 @@ mod tests {
                 .expect("the subprocess produces a completion");
             assert_eq!(completion.edge, edge);
             let output = completion.result.unwrap().unwrap();
-            assert!(status_interrupted(&output.status));
+            assert!(status_interrupted(output.status));
             assert!(output.stdout.is_empty());
             assert!(output.stderr.is_empty());
         });

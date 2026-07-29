@@ -67,7 +67,8 @@ impl Error {
     }
 
     /// Returns the subsystem that originated this failure.
-    pub fn kind(&self) -> ErrorKind {
+    #[must_use]
+    pub const fn kind(&self) -> ErrorKind {
         self.kind
     }
 }

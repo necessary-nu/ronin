@@ -34,42 +34,40 @@ pub(crate) struct Scanner {
 }
 
 impl Scanner {
+    // [spec:samurai:def:scan.scaninit-fn]
+    // [spec:samurai:sem:scan.scaninit-fn]
+    // [spec:samurai:def:scan.scanclose-fn]
+    // [spec:samurai:sem:scan.scanclose-fn]
+    pub(crate) fn from_path(path: impl AsRef<Path>) -> ScanResult<Self> {
+        let path = path.as_ref();
+        let input = fs::read(path)?;
+        Ok(Self::from_bytes(path, input))
+    }
+
+    pub(crate) fn from_bytes(path: impl AsRef<Path>, input: Vec<u8>) -> Self {
+        let path = path.as_ref();
+        Self {
+            path: path.to_owned(),
+            input,
+            index: 0,
+            line: 1,
+            col: 1,
+            paths: Vec::new(),
+            variable: None,
+            continuation_at_eof: false,
+            manifest_version_major: 1,
+            manifest_version_minor: 9,
+        }
+    }
+
     pub(crate) fn current(&self) -> Option<u8> {
         self.input.get(self.index).copied()
     }
 
-    pub(crate) fn take_variable(&mut self) -> Option<String> {
+    pub(crate) const fn take_variable(&mut self) -> Option<String> {
         self.variable.take()
     }
 }
-
-// [spec:samurai:def:scan.scaninit-fn]
-// [spec:samurai:sem:scan.scaninit-fn]
-pub(crate) fn scaninit(path: impl AsRef<Path>) -> ScanResult<Scanner> {
-    let path = path.as_ref();
-    let input = fs::read(path)?;
-    Ok(scanfrombytes(path, input))
-}
-
-pub(crate) fn scanfrombytes(path: impl AsRef<Path>, input: Vec<u8>) -> Scanner {
-    let path = path.as_ref();
-    Scanner {
-        path: path.to_owned(),
-        input,
-        index: 0,
-        line: 1,
-        col: 1,
-        paths: Vec::new(),
-        variable: None,
-        continuation_at_eof: false,
-        manifest_version_major: 1,
-        manifest_version_minor: 9,
-    }
-}
-
-// [spec:samurai:def:scan.scanclose-fn]
-// [spec:samurai:sem:scan.scanclose-fn]
-pub(crate) fn scanclose(_scanner: Scanner) {}
 
 // [spec:samurai:def:scan.scanerror-fn]
 // [spec:samurai:sem:scan.scanerror-fn]
@@ -98,13 +96,13 @@ fn next(scanner: &mut Scanner) -> Option<u8> {
 
 // [spec:samurai:def:scan.issimplevar-fn]
 // [spec:samurai:sem:scan.issimplevar-fn]
-fn issimplevar(byte: u8) -> bool {
+const fn issimplevar(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
 }
 
 // [spec:samurai:def:scan.isvar-fn]
 // [spec:samurai:sem:scan.isvar-fn]
-fn isvar(byte: u8) -> bool {
+const fn isvar(byte: u8) -> bool {
     issimplevar(byte) || byte == b'.'
 }
 

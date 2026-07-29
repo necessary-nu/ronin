@@ -38,6 +38,12 @@ embedding surface consists of `run`, `run_os`, `RunResult`, `Error`,
 helpers re-exported at the crate root. Other modules are private and are not a
 supported `ronin_core` API.
 
+Rust changes are checked with Clippy's `pedantic` and `nursery` groups in
+addition to `cargo fmt`. Unsafe code is confined to the POSIX signal and GNU
+Make jobserver boundaries and must document its safety invariants. Resource
+ownership otherwise follows RAII; build and dependency logs expose consuming
+`finish` operations where callers need to observe final flush errors.
+
 ## Compatibility work
 
 Ronin's compatibility contract is in

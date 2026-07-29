@@ -55,7 +55,7 @@ pub(crate) enum ToolStage {
 }
 
 impl Tool {
-    pub(crate) fn stage(self) -> ToolStage {
+    pub(crate) const fn stage(self) -> ToolStage {
         match self {
             Self::List | Self::Restat | Self::Urtle => ToolStage::Flags,
             Self::Browse
@@ -154,8 +154,7 @@ fn edge_name(graph: &Graph, edge: EdgeId) -> String {
     graph
         .edge(edge)
         .rule
-        .map(|rule| graph.rule(rule).name.clone())
-        .unwrap_or_else(|| "phony".into())
+        .map_or_else(|| "phony".into(), |rule| graph.rule(rule).name.clone())
 }
 
 // [spec:samurai:def:tool.cleanpath-fn]
@@ -328,7 +327,6 @@ pub(crate) fn clean_with_report(
     if !rules.is_empty() {
         for edge in graph
             .edge_ids()
-            .into_iter()
             .filter(|edge| rules.iter().any(|rule| rule == &edge_name(graph, *edge)))
         {
             cleaner.clean_edge(graph, edge)?;
@@ -406,8 +404,7 @@ fn collect_target_commands(
 pub(crate) fn commands(graph: &Graph, targets: &[String]) -> ToolResult<Vec<String>> {
     let nodes = if targets.is_empty() {
         graph
-            .nodes()
-            .into_iter()
+            .node_ids()
             .filter(|node| graph.node(*node).uses.is_empty())
             .collect()
     } else {
@@ -588,7 +585,7 @@ pub(crate) fn query(graph: &Graph, targets: &[String]) -> ToolResult<String> {
         let node = nodeget(graph, target.as_bytes())
             .ok_or_else(|| format!("unknown target '{target}'"))?;
         let node_borrow = graph.node(node);
-        let _ = writeln!(output, "{}:", target);
+        let _ = writeln!(output, "{target}:");
         if let Some(edge) = node_borrow.gen {
             let _ = writeln!(output, "  input: {}", edge_name(graph, edge));
             for (index, input) in graph.edge(edge).input.iter().enumerate() {
@@ -672,7 +669,7 @@ pub(crate) fn targetsdepth(
 
 // [spec:samurai:def:tool.targetsusage-fn]
 // [spec:samurai:sem:tool.targetsusage-fn]
-pub(crate) fn targetsusage() -> &'static str {
+pub(crate) const fn targetsusage() -> &'static str {
     "targets [depth [maxdepth]] | rule [rulename] | all"
 }
 
@@ -704,7 +701,6 @@ pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<St
             if let Some(rule) = args.get(1) {
                 let outputs = graph
                     .edge_ids()
-                    .into_iter()
                     .filter(|edge| edge_name(graph, *edge) == *rule)
                     .flat_map(|edge| graph.edge(edge).out.clone())
                     .map(|node| {
@@ -871,7 +867,7 @@ mod tests {
                 ));
                 match fs::create_dir(&path) {
                     Ok(()) => return Self(path),
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(error) => panic!("could not create clean test directory: {error}"),
                 }
             }
@@ -892,9 +888,9 @@ mod tests {
     fn parse_manifest(directory: &TempDirectory, manifest: &str) -> Graph {
         let path = directory.join("build.ninja");
         fs::write(&path, manifest).unwrap();
-        let mut graph = graph::graphinit();
-        let mut parser = parse::parseinit();
-        let mut state = env::envinit(&mut graph);
+        let mut graph = graph::Graph::default();
+        let mut parser = parse::Parser::default();
+        let mut state = env::EnvState::new(&mut graph);
         parse::parse(
             path.to_str().unwrap(),
             &mut graph,

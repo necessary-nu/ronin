@@ -14,7 +14,7 @@ fn json_string(bytes: &[u8]) -> String {
             b'\r' => output.push_str("\\r"),
             b'\t' => output.push_str("\\t"),
             0x00..=0x1f => {
-                let _ = write!(output, "\\u{:04x}", byte);
+                let _ = write!(output, "\\u{byte:04x}");
             }
             _ => output.push(char::from(*byte)),
         }
@@ -120,7 +120,7 @@ fn render(
 // [spec:samurai:def:tool.compdb-fn]
 // [spec:samurai:sem:tool.compdb-fn]
 pub(crate) fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> String {
-    let edges = graph.edge_ids().into_iter().filter(|edge| {
+    let edges = graph.edge_ids().filter(|edge| {
         rules.is_empty()
             || graph
                 .edge(*edge)

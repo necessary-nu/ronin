@@ -1,6 +1,10 @@
 //! Ronin, a Ninja-compatible build tool implemented in Rust.
 
 #![deny(missing_docs, unreachable_pub)]
+#![allow(
+    clippy::redundant_pub_crate,
+    reason = "explicit crate visibility documents the supported API boundary and is enforced by unreachable_pub"
+)]
 
 mod build;
 mod cli;

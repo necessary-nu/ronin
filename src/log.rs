@@ -27,6 +27,64 @@ pub(crate) struct BuildLog {
     pub(crate) entries: HashMap<BString, LogEntry>,
 }
 
+impl BuildLog {
+    // [spec:samurai:def:log.loginit-fn]
+    // [spec:samurai:sem:log.loginit-fn]
+    // [spec:samurai:req:compat.persistent-state]
+    pub(crate) fn open(builddir: Option<&Path>, graph: &mut Graph) -> io::Result<Self> {
+        let path = builddir.map_or_else(
+            || PathBuf::from(".ninja_log"),
+            |directory| directory.join(".ninja_log"),
+        );
+        let read_file = OpenOptions::new().read(true).open(&path);
+        let mut valid = false;
+        let mut entries = HashMap::new();
+        if let Ok(read_file) = read_file {
+            let mut reader = BufReader::new(read_file);
+            let mut line = Vec::new();
+            valid = read_line(&mut reader, &mut line)?.is_some() && line == LOG_HEADER;
+            if valid {
+                while let Some(terminated) = read_line(&mut reader, &mut line)? {
+                    if terminated {
+                        let line = line.strip_suffix(b"\r").unwrap_or(&line);
+                        if let Some(entry) = parse_entry(line) {
+                            if let Some(node) = nodeget(graph, entry.output.as_bytes()) {
+                                let node = graph.node_mut(node);
+                                if node.gen.is_some() {
+                                    node.logmtime = entry.mtime;
+                                    node.hash = entry.command_hash;
+                                }
+                            }
+                            entries.insert(entry.output.clone(), entry);
+                        }
+                    }
+                }
+            }
+        }
+        let writer_file = if valid {
+            open_log(&path)?
+        } else {
+            let mut file = File::create(&path)?;
+            file.write_all(LOG_HEADER)?;
+            file.write_all(b"\n")?;
+            file
+        };
+        Ok(Self {
+            writer: Some(BufWriter::new(writer_file)),
+            path,
+            entries,
+        })
+    }
+
+    // [spec:samurai:def:log.logclose-fn]
+    // [spec:samurai:sem:log.logclose-fn]
+    pub(crate) fn finish(mut self) -> io::Result<()> {
+        self.writer
+            .take()
+            .map_or(Ok(()), |mut writer| writer.flush())
+    }
+}
+
 // [spec:samurai:def:log.nextfield-fn]
 // [spec:samurai:sem:log.nextfield-fn]
 fn nextfield<'a>(line: &mut &'a [u8]) -> Option<&'a [u8]> {
@@ -137,54 +195,6 @@ fn rewrite(log: &mut BuildLog) -> io::Result<()> {
     Ok(())
 }
 
-// [spec:samurai:def:log.loginit-fn]
-// [spec:samurai:sem:log.loginit-fn]
-// [spec:samurai:req:compat.persistent-state]
-pub(crate) fn loginit(builddir: Option<&Path>, graph: &mut Graph) -> io::Result<BuildLog> {
-    let path = builddir.map_or_else(
-        || std::path::PathBuf::from(".ninja_log"),
-        |dir| dir.join(".ninja_log"),
-    );
-    let read_file = OpenOptions::new().read(true).open(&path);
-    let mut valid = false;
-    let mut entries = HashMap::new();
-    if let Ok(read_file) = read_file {
-        let mut reader = BufReader::new(read_file);
-        let mut line = Vec::new();
-        valid = read_line(&mut reader, &mut line)?.is_some() && line == LOG_HEADER;
-        if valid {
-            while let Some(terminated) = read_line(&mut reader, &mut line)? {
-                if terminated {
-                    let line = line.strip_suffix(b"\r").unwrap_or(&line);
-                    if let Some(entry) = parse_entry(line) {
-                        if let Some(node) = nodeget(graph, entry.output.as_bytes()) {
-                            let node = graph.node_mut(node);
-                            if node.gen.is_some() {
-                                node.logmtime = entry.mtime;
-                                node.hash = entry.command_hash;
-                            }
-                        }
-                        entries.insert(entry.output.clone(), entry);
-                    }
-                }
-            }
-        }
-    }
-    let writer_file = if valid {
-        open_log(&path)?
-    } else {
-        let mut file = File::create(&path)?;
-        file.write_all(LOG_HEADER)?;
-        file.write_all(b"\n")?;
-        file
-    };
-    Ok(BuildLog {
-        writer: Some(BufWriter::new(writer_file)),
-        path,
-        entries,
-    })
-}
-
 fn record_entry(log: &mut BuildLog, entry: LogEntry) -> io::Result<()> {
     let writer = log.writer.as_mut().expect("open build log");
     write_entry(writer, &entry)?;
@@ -273,21 +283,12 @@ pub(crate) fn logentry(log: &BuildLog, output: impl AsRef<[u8]>) -> Option<&LogE
     log.entries.get(output.as_ref())
 }
 
-// [spec:samurai:def:log.logclose-fn]
-// [spec:samurai:sem:log.logclose-fn]
-pub(crate) fn logclose(mut log: BuildLog) -> io::Result<()> {
-    if let Some(mut writer) = log.writer.take() {
-        writer.flush()
-    } else {
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{graphinit, mkedge, mknode};
+    use crate::graph::{mkedge, mknode};
     use crate::util::xasprintf;
+    use std::fmt::Write as _;
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -311,7 +312,7 @@ mod tests {
                         let path = directory.join(".ninja_log");
                         return Self { directory, path };
                     }
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(error) => panic!("could not create build-log test directory: {error}"),
                 }
             }
@@ -342,10 +343,13 @@ mod tests {
             "15\t18\t18\tout\t1234\n",
             "20\t25\t25\tmid\t5678\n",
         );
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         for size in (1..=complete.len()).rev() {
             fs::write(&temp.path, &complete.as_bytes()[..size]).unwrap();
-            logclose(loginit(Some(&temp.directory), &mut graph).unwrap()).unwrap();
+            BuildLog::open(Some(&temp.directory), &mut graph)
+                .unwrap()
+                .finish()
+                .unwrap();
         }
     }
 
@@ -353,14 +357,14 @@ mod tests {
     fn ninja_build_log_restat_filters_and_updates_mtime() {
         let temp = TempLog::new("restat");
         fs::write(&temp.path, "# ninja log v7\n1\t2\t3\tout\tc0ffee\n").unwrap();
-        let mut graph = graphinit();
-        let mut log = loginit(Some(&temp.directory), &mut graph).unwrap();
+        let mut graph = Graph::default();
+        let mut log = BuildLog::open(Some(&temp.directory), &mut graph).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 3);
         logrestat(&mut log, &["out2"], |_| Ok(4)).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 3);
         logrestat(&mut log, &[], |_| Ok(4)).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 4);
-        logclose(log).unwrap();
+        log.finish().unwrap();
     }
 
     #[test]
@@ -374,21 +378,21 @@ mod tests {
         contents.push_str("456\t789\t789\tout2\tbeef\n");
         fs::write(&temp.path, contents).unwrap();
 
-        let mut graph = graphinit();
-        let log = loginit(Some(&temp.directory), &mut graph).unwrap();
+        let mut graph = Graph::default();
+        let log = BuildLog::open(Some(&temp.directory), &mut graph).unwrap();
         assert!(logentry(&log, "out").is_none());
         let entry = logentry(&log, "out2").unwrap();
         assert_eq!(entry.start_time, 456);
         assert_eq!(entry.end_time, 789);
         assert_eq!(entry.mtime, 789);
         assert_eq!(entry.command_hash, 0xbeef);
-        logclose(log).unwrap();
+        log.finish().unwrap();
     }
 
     #[test]
     fn ninja_build_log_records_every_multi_target_output() {
         let temp = TempLog::new("multi-target");
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let root = crate::env::mkenv(&mut graph, None);
         let edge = mkedge(&mut graph, root);
         let output = mknode(&mut graph, xasprintf(format_args!("out")));
@@ -402,7 +406,7 @@ mod tests {
             edge.hash = 0x1234;
         }
 
-        let mut log = loginit(Some(&temp.directory), &mut graph).unwrap();
+        let mut log = BuildLog::open(Some(&temp.directory), &mut graph).unwrap();
         logrecordedge(&mut log, &graph, edge, 21, 22, 23).unwrap();
         let output = logentry(&log, "out").unwrap();
         let depfile = logentry(&log, "out.d").unwrap();
@@ -412,13 +416,13 @@ mod tests {
         assert_eq!(depfile.end_time, 22);
         assert_eq!(output.mtime, 23);
         assert_eq!(depfile.mtime, 23);
-        logclose(log).unwrap();
+        log.finish().unwrap();
     }
 
     #[test]
     fn ninja_build_log_preserves_non_utf8_outputs() {
         let temp = TempLog::new("non-utf8");
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let root = crate::env::mkenv(&mut graph, None);
         let edge = mkedge(&mut graph, root);
         let output = mknode(&mut graph, BString::from(b"out-\xff".as_slice()));
@@ -426,20 +430,20 @@ mod tests {
         graph.node_mut(output).logmtime = 17;
         graph.node_mut(output).hash = 0x1234;
         graph.edge_mut(edge).out.push(output);
-        let mut log = loginit(Some(&temp.directory), &mut graph).unwrap();
+        let mut log = BuildLog::open(Some(&temp.directory), &mut graph).unwrap();
         logrecord(&mut log, &graph, output).unwrap();
-        logclose(log).unwrap();
+        log.finish().unwrap();
 
-        let mut reloaded_graph = graphinit();
+        let mut reloaded_graph = Graph::default();
         let root = crate::env::mkenv(&mut reloaded_graph, None);
         let edge = mkedge(&mut reloaded_graph, root);
         let output = mknode(&mut reloaded_graph, BString::from(b"out-\xff".as_slice()));
         reloaded_graph.node_mut(output).gen = Some(edge);
         reloaded_graph.edge_mut(edge).out.push(output);
-        let reloaded = loginit(Some(&temp.directory), &mut reloaded_graph).unwrap();
+        let reloaded = BuildLog::open(Some(&temp.directory), &mut reloaded_graph).unwrap();
         assert_eq!(logentry(&reloaded, b"out-\xff").unwrap().mtime, 17);
         assert_eq!(reloaded_graph.node(output).hash, 0x1234);
-        logclose(reloaded).unwrap();
+        reloaded.finish().unwrap();
     }
 
     #[test]
@@ -447,25 +451,25 @@ mod tests {
         let temp = TempLog::new("recompact");
         let mut contents = String::from("# ninja log v7\n");
         for end_time in 18..218 {
-            contents.push_str(&format!("15\t{end_time}\t{end_time}\tout\t1234\n"));
+            let _ = writeln!(contents, "15\t{end_time}\t{end_time}\tout\t1234");
         }
         contents.push_str("21\t22\t22\tout2\t5678\n");
         fs::write(&temp.path, contents).unwrap();
 
-        let mut graph = graphinit();
-        let mut log = loginit(Some(&temp.directory), &mut graph).unwrap();
+        let mut graph = Graph::default();
+        let mut log = BuildLog::open(Some(&temp.directory), &mut graph).unwrap();
         assert_eq!(log.entries.len(), 2);
         assert_eq!(logentry(&log, "out").unwrap().end_time, 217);
         logrecompact(&mut log, |path| path == "out2").unwrap();
         assert_eq!(log.entries.len(), 1);
         assert!(logentry(&log, "out").is_some());
         assert!(logentry(&log, "out2").is_none());
-        logclose(log).unwrap();
+        log.finish().unwrap();
 
-        let reloaded = loginit(Some(&temp.directory), &mut graph).unwrap();
+        let reloaded = BuildLog::open(Some(&temp.directory), &mut graph).unwrap();
         assert_eq!(reloaded.entries.len(), 1);
         assert!(logentry(&reloaded, "out").is_some());
         assert!(logentry(&reloaded, "out2").is_none());
-        logclose(reloaded).unwrap();
+        reloaded.finish().unwrap();
     }
 }

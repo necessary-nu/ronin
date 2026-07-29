@@ -16,6 +16,10 @@ impl RealDiskInterface {
     // [spec:samurai:sem:os-posix.osmtime-fn]
     /// Return a nanosecond timestamp, zero for a missing path, and an error for
     /// failures other than a missing component.
+    #[allow(
+        clippy::unused_self,
+        reason = "the stateless receiver keeps the disk adapter replaceable at call sites"
+    )]
     pub(crate) fn stat(&self, path: &Path) -> io::Result<i64> {
         match std::fs::metadata(path) {
             Ok(metadata) => {
@@ -43,6 +47,10 @@ impl RealDiskInterface {
     // [spec:samurai:sem:os.osmkdirs-fn]
     // [spec:samurai:def:os-posix.osmkdirs-fn]
     // [spec:samurai:sem:os-posix.osmkdirs-fn]
+    #[allow(
+        clippy::unused_self,
+        reason = "the stateless receiver keeps the disk adapter replaceable at call sites"
+    )]
     pub(crate) fn make_dirs(&self, path: &Path) -> io::Result<()> {
         let directory = path.parent().unwrap_or_else(|| Path::new(""));
         if directory.as_os_str().is_empty() {
@@ -59,7 +67,7 @@ impl RealDiskInterface {
 // [spec:samurai:sem:os-posix.osnproc-fn]
 pub(crate) fn osnproc() -> i64 {
     std::thread::available_parallelism()
-        .map(|count| count.get() as i64)
+        .map(|count| i64::try_from(count.get()).unwrap_or(i64::MAX))
         .unwrap_or(1)
 }
 
@@ -84,7 +92,7 @@ mod tests {
                 ));
                 match fs::create_dir(&path) {
                     Ok(()) => return Self(path),
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(error) => panic!("could not create test directory: {error}"),
                 }
             }

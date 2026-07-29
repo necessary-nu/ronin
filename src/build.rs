@@ -21,6 +21,10 @@ type BuildResult<T> = Result<T, BuildError>;
 
 // [spec:samurai:def:build.buildoptions]
 #[derive(Clone)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent Ninja CLI switches are clearer as named options than a synthetic state machine"
+)]
 pub(crate) struct BuildOptions {
     pub(crate) maxjobs: usize,
     pub(crate) maxfail: usize,
@@ -358,7 +362,7 @@ impl Plan {
         }
     }
 
-    pub(crate) fn more_to_do(&self) -> bool {
+    pub(crate) const fn more_to_do(&self) -> bool {
         self.failures != 0 || self.completed_count < self.wanted_count
     }
 
@@ -376,7 +380,7 @@ impl Plan {
             .count()
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub(crate) const fn is_empty(&self) -> bool {
         self.wanted_count == 0
     }
 }
@@ -762,7 +766,7 @@ impl<'a> Builder<'a> {
         Ok(())
     }
 
-    pub(crate) fn already_up_to_date(&self) -> bool {
+    pub(crate) const fn already_up_to_date(&self) -> bool {
         self.plan.is_empty()
     }
 
@@ -840,6 +844,10 @@ impl<'a> Builder<'a> {
     // [spec:samurai:sem:build.edgedone-fn]
     // [spec:samurai:def:build.jobdone-fn]
     // [spec:samurai:sem:build.jobdone-fn]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "edge completion is one ordered transaction whose cleanup and log updates must stay together"
+    )]
     fn finish_edge(
         &mut self,
         prepared: PreparedEdge,
@@ -893,13 +901,11 @@ impl<'a> Builder<'a> {
                             let path = command.depfile_path.as_ref().ok_or_else(|| {
                                 "subcommand succeeded but dependency file is missing".to_string()
                             })?;
-                            if !path
+                            if path
                                 .to_path()
                                 .expect("byte paths are valid on Unix")
                                 .exists()
                             {
-                                Err("subcommand succeeded but dependency file is missing".into())
-                            } else {
                                 let deps = crate::deps::depsparse(
                                     self.graph,
                                     path.to_path().expect("byte paths are valid on Unix"),
@@ -911,6 +917,8 @@ impl<'a> Builder<'a> {
                                 edge.deps_loaded = true;
                                 edge.deps_missing = false;
                                 Ok(())
+                            } else {
+                                Err("subcommand succeeded but dependency file is missing".into())
                             }
                         }
                         deps_type => Err(format!("unsupported deps type '{deps_type}'").into()),
@@ -926,11 +934,11 @@ impl<'a> Builder<'a> {
             self.command_finished(
                 edge,
                 &command,
-                (!status.success()).then(|| Self::exit_code(&status)),
+                (!status.success()).then(|| Self::exit_code(status)),
                 &visible_output,
             )?;
             if !status.success() {
-                if status_interrupted(&status) {
+                if status_interrupted(status) {
                     let disk = RealDiskInterface;
                     for (output, old_mtime) in self.graph.edge(edge).out.iter().zip(&old_mtimes) {
                         let path = self.graph.node(*output).path.clone();
@@ -945,7 +953,7 @@ impl<'a> Builder<'a> {
                         }
                     }
                 }
-                if status_interrupted(&status) {
+                if status_interrupted(status) {
                     return Err("interrupted by user".into());
                 }
                 return Err(format!("subcommand failed: {}", command.command).into());
@@ -1177,6 +1185,10 @@ impl<'a> Builder<'a> {
     // [spec:samurai:sem:build.jobwork-fn]
     // [spec:samurai:def:build.queryload-fn]
     // [spec:samurai:sem:build.queryload-fn]
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the completion-driven scheduler loop is clearer as one explicit state machine"
+    )]
     pub(crate) fn build(&mut self) -> BuildResult<()> {
         self.plan.prepare_queue(self.graph);
         self.progress.started = 0;

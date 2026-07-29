@@ -1,6 +1,6 @@
 use super::*;
 use crate::env::mkenv;
-use crate::graph::{graphinit, mkedge, mknode, nodeget, nodeuse, Graph};
+use crate::graph::{mkedge, mknode, nodeget, nodeuse, Graph};
 use crate::util::xasprintf;
 use std::fs;
 #[cfg(unix)]
@@ -20,9 +20,9 @@ fn plan_graph(source: &str) -> Graph {
         format!("rule cat\n  command = cat $in > $out\n{source}"),
     )
     .unwrap();
-    let mut graph = graphinit();
-    let mut parser = crate::parse::parseinit();
-    let mut state = crate::env::envinit(&mut graph);
+    let mut graph = Graph::default();
+    let mut parser = crate::parse::Parser::default();
+    let mut state = crate::env::EnvState::new(&mut graph);
     crate::parse::parse(
         path.to_str().unwrap(),
         &mut graph,
@@ -65,9 +65,9 @@ fn build_fixture(label: &str, manifest: &str) -> (Graph, std::path::PathBuf) {
         manifest.replace("$dir", &directory.to_string_lossy()),
     )
     .unwrap();
-    let mut graph = graphinit();
-    let mut parser = crate::parse::parseinit();
-    let mut state = crate::env::envinit(&mut graph);
+    let mut graph = Graph::default();
+    let mut parser = crate::parse::Parser::default();
+    let mut state = crate::env::EnvState::new(&mut graph);
     crate::parse::parse(
         path.to_str().unwrap(),
         &mut graph,
@@ -81,9 +81,9 @@ fn build_fixture(label: &str, manifest: &str) -> (Graph, std::path::PathBuf) {
 
 fn parse_fixture(directory: &Path) -> Graph {
     let path = directory.join("build.ninja");
-    let mut graph = graphinit();
-    let mut parser = crate::parse::parseinit();
-    let mut state = crate::env::envinit(&mut graph);
+    let mut graph = Graph::default();
+    let mut parser = crate::parse::Parser::default();
+    let mut state = crate::env::EnvState::new(&mut graph);
     crate::parse::parse(
         path.to_str().unwrap(),
         &mut graph,
@@ -96,7 +96,7 @@ fn parse_fixture(directory: &Path) -> Graph {
 }
 
 fn reset_graph_state(graph: &mut Graph) {
-    for node in graph.nodes() {
+    for node in graph.node_ids() {
         let node = graph.node_mut(node);
         node.mtime = crate::graph::MTIME_UNKNOWN;
         node.dirty = false;
@@ -126,7 +126,7 @@ fn assert_multi_output_deps_log(label: &str, depfile: &str) {
         directory.join("in1").to_string_lossy().into_owned(),
         directory.join("in2").to_string_lossy().into_owned(),
     ];
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
@@ -147,7 +147,7 @@ fn assert_multi_output_deps_log(label: &str, depfile: &str) {
             expected
         );
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -521,7 +521,7 @@ fn ninja_plan_priority_without_build_log() {
 fn ronin_plan_handles_deep_graphs_without_recursion() {
     const DEPTH: usize = 20_000;
 
-    let mut graph = graphinit();
+    let mut graph = Graph::default();
     let root = mkenv(&mut graph, None);
     let mut input = mknode(&mut graph, xasprintf(format_args!("source")));
     let mut target = input;
@@ -1308,7 +1308,7 @@ fn ninja_build_phony_with_no_inputs_respects_order_only() {
         builder.add_target(&out1).unwrap();
         assert!(builder.already_up_to_date());
     }
-    for node in graph.nodes() {
+    for node in graph.node_ids() {
         let node = graph.node_mut(node);
         node.mtime = crate::graph::MTIME_UNKNOWN;
         node.dirty = false;
@@ -1420,6 +1420,7 @@ fn ronin_build_acquires_and_releases_jobserver_tokens() {
     );
     let fifo = directory.join("jobserver");
     let fifo_name = CString::new(fifo.to_string_lossy().as_bytes()).unwrap();
+    // SAFETY: `fifo_name` is a live NUL-terminated path and the mode is valid.
     assert_eq!(unsafe { mkfifo(fifo_name.as_ptr(), 0o600) }, 0);
     let token_fifo = fifo.clone();
     let token_writer = std::thread::spawn(move || {
@@ -1739,7 +1740,7 @@ fn ninja_build_log_rebuilds_output_not_in_log() {
     fs::write(directory.join("in"), "hello").unwrap();
     fs::write(directory.join("out"), "hello").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1748,7 +1749,7 @@ fn ninja_build_log_rebuilds_output_not_in_log() {
     }
     assert!(crate::log::logentry(&log, &target).is_some());
 
-    for node in graph.nodes() {
+    for node in graph.node_ids() {
         let node = graph.node_mut(node);
         node.mtime = crate::graph::MTIME_UNKNOWN;
         node.dirty = false;
@@ -1758,7 +1759,7 @@ fn ninja_build_log_rebuilds_output_not_in_log() {
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1772,7 +1773,7 @@ fn ninja_build_log_generator_rebuilds_for_newer_implicit_input() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1780,7 +1781,7 @@ fn ninja_build_log_generator_rebuilds_for_newer_implicit_input() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1793,43 +1794,43 @@ fn ninja_build_log_generator_implicit_inputs_are_clean_after_each_rebuild() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in2"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in1"), "changed").unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1840,14 +1841,14 @@ fn ninja_build_log_does_not_record_failure() {
         "rule fail\n  command = false\nbuild $dir/out: fail\n",
     );
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         assert!(builder.build().is_err());
     }
     assert!(crate::log::logentry(&log, &target).is_none());
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1858,13 +1859,13 @@ fn ninja_build_log_rspfile_content_change_rebuilds() {
             "rule rsp\n  command = cat $rspfile > $out\n  rspfile = $dir/args.rsp\n  rspfile_content = first\nbuild $dir/out: rsp\n",
         );
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "first");
 
     fs::write(
@@ -1877,7 +1878,7 @@ fn ninja_build_log_rspfile_content_change_rebuilds() {
         )
         .unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1885,7 +1886,7 @@ fn ninja_build_log_rspfile_content_change_rebuilds() {
         assert_eq!(builder.commands_ran.len(), 1);
     }
     assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "second");
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1896,13 +1897,13 @@ fn ninja_build_log_generator_command_change_is_ignored() {
         "rule generate\n  command = touch $out\n  generator = 1\nbuild $dir/out: generate\n",
     );
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
 
     fs::write(
             directory.join("build.ninja"),
@@ -1913,12 +1914,12 @@ fn ninja_build_log_generator_command_change_is_ignored() {
         )
         .unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
     builder.add_target(&target).unwrap();
     assert!(builder.already_up_to_date());
     drop(builder);
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1932,7 +1933,7 @@ fn ninja_build_log_restat_prunes_downstream_edge() {
     fs::write(directory.join("mid"), "").unwrap();
     fs::write(directory.join("out"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1949,7 +1950,7 @@ fn ninja_build_log_restat_prunes_downstream_edge() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran, ["true"]);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1965,7 +1966,7 @@ fn ninja_build_log_restat_does_not_hide_missing_sibling_output() {
     fs::write(directory.join("out2"), "").unwrap();
     fs::write(directory.join("final"), "").unwrap();
     let target = directory.join("final").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1982,7 +1983,7 @@ fn ninja_build_log_restat_does_not_hide_missing_sibling_output() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1995,7 +1996,7 @@ fn ninja_build_log_rebuild_with_no_inputs() {
     fs::write(directory.join("in"), "").unwrap();
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&out1).unwrap();
@@ -2015,7 +2016,7 @@ fn ninja_build_log_rebuild_with_no_inputs() {
         assert_eq!(builder.commands_ran.len(), 1);
         assert!(builder.commands_ran[0].contains_str("out2"));
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2027,7 +2028,7 @@ fn ninja_build_log_rebuilds_after_failed_output_update() {
         );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -2053,7 +2054,7 @@ fn ninja_build_log_rebuilds_after_failed_output_update() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2063,7 +2064,7 @@ fn ninja_build_log_detects_input_changed_during_command() {
     let (mut graph, directory) = build_fixture("log-input-mtime-race", manifest);
     fs::write(directory.join("in"), "source").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -2072,10 +2073,10 @@ fn ninja_build_log_detects_input_changed_during_command() {
     }
     let first_recorded_mtime = crate::log::logentry(&log, &target).unwrap().mtime;
     assert!(RealDiskInterface.stat(&directory.join("in")).unwrap() > first_recorded_mtime);
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -2083,16 +2084,16 @@ fn ninja_build_log_detects_input_changed_during_command() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2102,26 +2103,26 @@ fn ninja_build_log_restat_missing_output_prunes_dependent() {
     let (mut graph, directory) = build_fixture("log-restat-missing-output", manifest);
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 2);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "changed").unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran, ["true"]);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2142,25 +2143,25 @@ fn ninja_build_log_restat_missing_discovered_input_prunes_dependent() {
     )
     .unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 2);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
 
     fs::remove_file(directory.join("discovered")).unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran, ["true"]);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2170,24 +2171,24 @@ fn ninja_build_log_generated_plain_depfile_mtime() {
     let (mut graph, directory) = build_fixture("log-plain-depfile", manifest);
     fs::write(directory.join("header"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     assert!(directory.join("out.d").exists());
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2209,7 +2210,7 @@ fn ninja_build_log_dyndep_discovers_restat() {
     )
     .unwrap();
     let target = directory.join("out2").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -2226,7 +2227,7 @@ fn ninja_build_log_dyndep_discovers_restat() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran, ["true"]);
     }
-    crate::log::logclose(log).unwrap();
+    log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2239,7 +2240,7 @@ fn ninja_build_deps_log_straightforward() {
     let target = directory.join("out").to_string_lossy().into_owned();
     let deps_path = directory.join(".ninja_deps");
     {
-        let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+        let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
         builder.add_target(&target).unwrap();
@@ -2247,7 +2248,7 @@ fn ninja_build_deps_log_straightforward() {
         assert_eq!(builder.commands_ran.len(), 1);
         assert!(!directory.join("out.d").exists());
         drop(builder);
-        crate::deps::depsclose(deps_log).unwrap();
+        deps_log.finish().unwrap();
     }
 
     std::thread::sleep(std::time::Duration::from_millis(20));
@@ -2263,7 +2264,7 @@ fn ninja_build_deps_log_straightforward() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2274,14 +2275,14 @@ fn ninja_build_deps_log_obsolete_entry_forces_rebuild() {
     fs::write(directory.join("in"), "first").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let deps_path = directory.join(".ninja_deps");
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "second").unwrap();
@@ -2297,7 +2298,7 @@ fn ninja_build_deps_log_obsolete_entry_forces_rebuild() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2308,8 +2309,8 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
     fs::write(directory.join("header"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let deps_path = directory.join(".ninja_deps");
-    let mut build_log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut build_log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder = Builder::with_logs(
             &mut graph,
@@ -2325,11 +2326,11 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
         RealDiskInterface.stat(&directory.join("header")).unwrap()
             > crate::log::logentry(&build_log, &target).unwrap().mtime
     );
-    crate::log::logclose(build_log).unwrap();
-    crate::deps::depsclose(deps_log).unwrap();
+    build_log.finish().unwrap();
+    deps_log.finish().unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut build_log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut build_log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     let (mut deps_log, warning) = crate::deps::depsloadlog(&deps_path, &mut graph).unwrap();
     assert!(warning.is_none());
     {
@@ -2344,11 +2345,11 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::log::logclose(build_log).unwrap();
-    crate::deps::depsclose(deps_log).unwrap();
+    build_log.finish().unwrap();
+    deps_log.finish().unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut build_log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut build_log = crate::log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     let (mut deps_log, warning) = crate::deps::depsloadlog(&deps_path, &mut graph).unwrap();
     assert!(warning.is_none());
     {
@@ -2361,8 +2362,8 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());
     }
-    crate::log::logclose(build_log).unwrap();
-    crate::deps::depsclose(deps_log).unwrap();
+    build_log.finish().unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2399,7 +2400,7 @@ fn ninja_build_deps_log_records_all_outputs() {
     fs::write(directory.join("header"), "").unwrap();
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
@@ -2425,7 +2426,7 @@ fn ninja_build_deps_log_records_all_outputs() {
             .len(),
         1
     );
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2475,7 +2476,7 @@ fn ninja_build_deps_log_msvc_records_all_outputs() {
     fs::write(directory.join("in"), "").unwrap();
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
@@ -2493,7 +2494,7 @@ fn ninja_build_deps_log_msvc_records_all_outputs() {
             directory.join("in").to_string_lossy().as_ref()
         );
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2514,14 +2515,14 @@ fn ninja_build_deps_log_escaped_output_preserves_command_inputs() {
     )
     .unwrap();
     let deps_path = directory.join(".ninja_deps");
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
 
     fs::write(directory.join("blah.h"), "").unwrap();
     fs::write(directory.join("bar.h"), "").unwrap();
@@ -2541,7 +2542,7 @@ fn ninja_build_deps_log_escaped_output_preserves_command_inputs() {
     assert!(command.contains("foo.c"));
     assert!(!command.contains("blah.h"));
     assert!(!command.contains("bar.h"));
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2555,7 +2556,7 @@ fn ninja_build_deps_log_restat_prunes_discovered_dependency() {
     fs::write(directory.join("in"), "source").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let deps_path = directory.join(".ninja_deps");
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
@@ -2563,7 +2564,7 @@ fn ninja_build_deps_log_restat_prunes_discovered_dependency() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("header.in"), "changed").unwrap();
@@ -2577,7 +2578,7 @@ fn ninja_build_deps_log_restat_prunes_discovered_dependency() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran, ["true"]);
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2588,21 +2589,21 @@ fn ninja_build_deps_log_missing_entry_survives_restat_cleanup() {
     fs::write(directory.join("header.in"), "").unwrap();
     fs::write(directory.join("header.h"), "header").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("header.in"), "changed").unwrap();
     let blank_log_directory = directory.join("blank-log");
     fs::create_dir_all(&blank_log_directory).unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut deps_log = crate::deps::depsinit(Some(&blank_log_directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&blank_log_directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
@@ -2611,7 +2612,7 @@ fn ninja_build_deps_log_missing_entry_survives_restat_cleanup() {
         assert_eq!(builder.commands_ran.len(), 2);
         assert_eq!(builder.commands_ran[0], "true");
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2624,7 +2625,7 @@ fn ninja_build_deps_log_validation_through_discovered_input() {
     fs::write(directory.join("in3"), "out2").unwrap();
     let target = directory.join("out2").to_string_lossy().into_owned();
     let deps_path = directory.join(".ninja_deps");
-    let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
+    let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
         let mut builder =
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
@@ -2632,7 +2633,7 @@ fn ninja_build_deps_log_validation_through_discovered_input() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "changed").unwrap();
@@ -2648,7 +2649,7 @@ fn ninja_build_deps_log_validation_through_discovered_input() {
         assert_eq!(builder.commands_ran.len(), 3);
         assert!(builder.commands_ran[0].contains_str("/in "));
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in2"), "changed again").unwrap();
@@ -2664,7 +2665,7 @@ fn ninja_build_deps_log_validation_through_discovered_input() {
         assert_eq!(builder.commands_ran.len(), 1);
         assert!(builder.commands_ran[0].contains_str("/in3 "));
     }
-    crate::deps::depsclose(deps_log).unwrap();
+    deps_log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
 

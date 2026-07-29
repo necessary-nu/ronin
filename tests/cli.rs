@@ -295,7 +295,10 @@ fn forwards_interrupts_and_removes_partial_outputs() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(directory.join("started").exists());
-    assert_eq!(unsafe { kill(child.id() as c_int, 2) }, 0);
+    let child_id = c_int::try_from(child.id()).expect("test child PID fits in c_int");
+    // SAFETY: `child_id` identifies the live child spawned above, and SIGINT
+    // is a valid POSIX signal number.
+    assert_eq!(unsafe { kill(child_id, 2) }, 0);
     let status = child.wait().unwrap();
     assert_eq!(status.signal(), Some(2));
     assert!(!directory.join("output").exists());

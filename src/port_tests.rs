@@ -137,8 +137,8 @@ fn ninja_canonicalize_path_samples() {
 // [spec:samurai:sem:log.nextfield-fn/test]
 #[test]
 fn environment_graph_and_log_behaviour() {
-    let mut graph = graph::graphinit();
-    let state = env::envinit(&mut graph);
+    let mut graph = graph::Graph::default();
+    let state = env::EnvState::new(&mut graph);
     let node = graph::mknode(&mut graph, util::xasprintf(format_args!("out file")));
     assert_eq!(
         graph::nodepath(&graph, node, true).as_bytes(),
@@ -188,15 +188,15 @@ fn scanner_and_parser_behaviour() {
         "rule touch\n  command = touch $out\nbuild result: touch input\ndefault result\n",
     )
     .unwrap();
-    let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
+    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
     assert_eq!(
         scan::scankeyword(&mut scanner).unwrap(),
         Some(scan::Token::Rule)
     );
-    scan::scanclose(scanner);
-    let mut graph = graph::graphinit();
-    let mut parser = parse::parseinit();
-    let mut state = env::envinit(&mut graph);
+    drop(scanner);
+    let mut graph = graph::Graph::default();
+    let mut parser = parse::Parser::default();
+    let mut state = env::EnvState::new(&mut graph);
     parse::parse(
         path.to_str().unwrap(),
         &mut graph,
@@ -216,7 +216,7 @@ fn scanner_and_parser_behaviour() {
 fn ninja_lexer_read_ident_and_keywords() {
     let path = std::env::temp_dir().join(format!("ronin-ninja-lexer-{}.ninja", std::process::id()));
     fs::write(&path, "rule cat\nbuild output: cat input\n").unwrap();
-    let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
+    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
     assert_eq!(
         scan::scankeyword(&mut scanner).unwrap(),
         Some(scan::Token::Rule)
@@ -227,7 +227,7 @@ fn ninja_lexer_read_ident_and_keywords() {
         scan::scankeyword(&mut scanner).unwrap(),
         Some(scan::Token::Build)
     );
-    scan::scanclose(scanner);
+    drop(scanner);
     let _ = fs::remove_file(path);
 }
 
@@ -261,7 +261,7 @@ fn ninja_lexer_variable_values_and_escapes() {
         "plain text $var $VaR $x\n$ $$ab c$: $\ncde\nfoo baR baz_123 foo-bar\n",
     )
     .unwrap();
-    let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
+    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
     let value = scan::scanstring(&mut scanner, false).unwrap().unwrap();
     assert_eq!(
         serialized_eval(&value),
@@ -274,7 +274,7 @@ fn ninja_lexer_variable_values_and_escapes() {
     for expected in ["foo", "baR", "baz_123", "foo-bar"] {
         assert_eq!(scan::scanname(&mut scanner).unwrap(), expected);
     }
-    scan::scanclose(scanner);
+    drop(scanner);
     let _ = fs::remove_file(path);
 }
 
@@ -286,34 +286,34 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
         std::process::id()
     ));
     fs::write(&path, "foo$\nbad $").unwrap();
-    let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
+    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
     assert!(scan::scanstring(&mut scanner, false)
         .unwrap_err()
         .to_string()
         .contains("invalid $ escape"));
-    scan::scanclose(scanner);
+    drop(scanner);
 
     fs::write(&path, "   \tfoobar\n").unwrap();
-    let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
+    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
     assert!(scan::scankeyword(&mut scanner)
         .unwrap_err()
         .to_string()
         .contains("tabs are not allowed"));
-    scan::scanclose(scanner);
+    drop(scanner);
 
     fs::write(&path, "foo$\nbar$^newline foo\n").unwrap();
-    let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
+    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
     assert!(scan::scanstring(&mut scanner, false)
         .unwrap_err()
         .to_string()
         .contains("ninja_required_version"));
     scanner.manifest_version_minor = 14;
-    scan::scanclose(scanner);
-    let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
+    drop(scanner);
+    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
     scanner.manifest_version_minor = 14;
     let value = scan::scanstring(&mut scanner, false).unwrap().unwrap();
     assert_eq!(serialized_eval(&value), "[foobar\nnewline foo]");
-    scan::scanclose(scanner);
+    drop(scanner);
     let _ = fs::remove_file(path);
 }
 
@@ -329,13 +329,13 @@ fn ninja_lexer_dotted_and_braced_variables() {
         concat!("foo.dots $bar.dots $", "{bar.dots}\n# trailing comment"),
     )
     .unwrap();
-    let mut scanner = scan::scaninit(path.to_str().unwrap()).unwrap();
+    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
     assert_eq!(scan::scanname(&mut scanner).unwrap(), "foo.dots");
     let value = scan::scanstring(&mut scanner, false).unwrap().unwrap();
     assert_eq!(serialized_eval(&value), "[$bar][.dots ][$bar.dots]");
     scan::scannewline(&mut scanner).unwrap();
     assert_eq!(scan::scankeyword(&mut scanner).unwrap(), None);
-    scan::scanclose(scanner);
+    drop(scanner);
     let _ = fs::remove_file(path);
 }
 
@@ -353,9 +353,9 @@ fn ninja_manifest_parser_rules() {
         "rule cat\n  command = cat $in > $out\n\nrule date\n  command = date > $out\n\nbuild result: cat in_1.cc in-2.O\n",
     )
     .unwrap();
-    let mut graph = graph::graphinit();
-    let mut parser = parse::parseinit();
-    let mut state = env::envinit(&mut graph);
+    let mut graph = graph::Graph::default();
+    let mut parser = parse::Parser::default();
+    let mut state = env::EnvState::new(&mut graph);
     parse::parse(
         path.to_str().unwrap(),
         &mut graph,
@@ -389,9 +389,9 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
         ),
     )
     .unwrap();
-    let mut graph = graph::graphinit();
-    let mut parser = parse::parseinit();
-    let mut state = env::envinit(&mut graph);
+    let mut graph = graph::Graph::default();
+    let mut parser = parse::Parser::default();
+    let mut state = env::EnvState::new(&mut graph);
     parse::parse(
         path.to_str().unwrap(),
         &mut graph,
@@ -418,9 +418,9 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
 }
 
 fn parse_manifest(path: &std::path::Path) -> (graph::Graph, parse::Parser, env::EnvState) {
-    let mut graph = graph::graphinit();
-    let mut parser = parse::parseinit();
-    let mut state = env::envinit(&mut graph);
+    let mut graph = graph::Graph::default();
+    let mut parser = parse::Parser::default();
+    let mut state = env::EnvState::new(&mut graph);
     parse::parse(
         path.to_str().unwrap(),
         &mut graph,
@@ -639,9 +639,9 @@ fn ninja_manifest_parser_includes_and_errors() {
         "rule cat\n  command = cat $in > $out\nbuild out1 out2: cat in1\nbuild out1: cat in2\n",
     )
     .unwrap();
-    let mut graph = graph::graphinit();
-    let mut parser = parse::parseinit();
-    let mut state = env::envinit(&mut graph);
+    let mut graph = graph::Graph::default();
+    let mut parser = parse::Parser::default();
+    let mut state = env::EnvState::new(&mut graph);
     assert!(parse::parse(
         root.to_str().unwrap(),
         &mut graph,
@@ -654,9 +654,9 @@ fn ninja_manifest_parser_includes_and_errors() {
     .contains("multiple rules generate 'out1'"));
 
     fs::write(&root, "rule cat\n  rspfile = cat.rsp\n").unwrap();
-    let mut graph = graph::graphinit();
-    let mut parser = parse::parseinit();
-    let mut state = env::envinit(&mut graph);
+    let mut graph = graph::Graph::default();
+    let mut parser = parse::Parser::default();
+    let mut state = env::EnvState::new(&mut graph);
     assert!(parse::parse(
         root.to_str().unwrap(),
         &mut graph,
@@ -679,7 +679,7 @@ fn ninja_depfile_parser_basic_and_continuation() {
         "build/ninja.o: ninja.cc ninja.h \\\n  eval_env.h manifest_parser.h\n",
     )
     .unwrap();
-    let mut graph = graph::graphinit();
+    let mut graph = graph::Graph::default();
     let deps = deps::depsparse(&mut graph, &path, false).unwrap();
     assert_eq!(deps.nodes.len(), 4);
     assert!(graph::nodeget(&graph, b"ninja.cc").is_some());
@@ -692,7 +692,7 @@ fn ninja_depfile_parser_accepts_crlf_continuations() {
     let path =
         std::env::temp_dir().join(format!("ronin-ninja-depfile-crlf-{}.d", std::process::id()));
     fs::write(&path, "foo.o: \\\r\n  bar.h baz.h\r\n").unwrap();
-    let mut graph = graph::graphinit();
+    let mut graph = graph::Graph::default();
     let deps = deps::depsparse(&mut graph, &path, false).unwrap();
     assert_eq!(deps.nodes.len(), 2);
     assert!(graph::nodeget(&graph, b"bar.h").is_some());
@@ -727,9 +727,9 @@ fn ninja_clean_all_removes_generated_outputs() {
     for path in &paths {
         fs::write(path, "").unwrap();
     }
-    let mut graph = graph::graphinit();
-    let mut parser = parse::parseinit();
-    let mut state = env::envinit(&mut graph);
+    let mut graph = graph::Graph::default();
+    let mut parser = parse::Parser::default();
+    let mut state = env::EnvState::new(&mut graph);
     parse::parse(
         manifest.to_str().unwrap(),
         &mut graph,
@@ -848,9 +848,9 @@ fn ninja_build_log_write_and_read() {
         "rule cat\n  command = cat $in > $out\nbuild out: cat in\n",
     )
     .unwrap();
-    let mut graph = graph::graphinit();
-    let mut parser = parse::parseinit();
-    let mut state = env::envinit(&mut graph);
+    let mut graph = graph::Graph::default();
+    let mut parser = parse::Parser::default();
+    let mut state = env::EnvState::new(&mut graph);
     parse::parse(
         manifest.to_str().unwrap(),
         &mut graph,
@@ -862,12 +862,15 @@ fn ninja_build_log_write_and_read() {
     let output = graph::nodeget(&graph, b"out").unwrap();
     graph.node_mut(output).logmtime = 25;
     graph.node_mut(output).hash = 0xface;
-    let mut build_log = log::loginit(Some(&directory), &mut graph).unwrap();
+    let mut build_log = log::BuildLog::open(Some(&directory), &mut graph).unwrap();
     log::logrecord(&mut build_log, &graph, output).unwrap();
-    log::logclose(build_log).unwrap();
+    build_log.finish().unwrap();
     graph.node_mut(output).logmtime = 0;
     graph.node_mut(output).hash = 0;
-    log::logclose(log::loginit(Some(&directory), &mut graph).unwrap()).unwrap();
+    log::BuildLog::open(Some(&directory), &mut graph)
+        .unwrap()
+        .finish()
+        .unwrap();
     assert_eq!(graph.node(output).logmtime, 25);
     assert_eq!(graph.node(output).hash, 0xface);
     let _ = fs::remove_dir_all(directory);
@@ -905,7 +908,10 @@ fn ninja_build_log_loads_duplicate_and_spaced_records() {
         ),
     )
     .unwrap();
-    log::logclose(log::loginit(Some(&directory), &mut graph).unwrap()).unwrap();
+    log::BuildLog::open(Some(&directory), &mut graph)
+        .unwrap()
+        .finish()
+        .unwrap();
     let out = graph::nodeget(&graph, b"out").unwrap();
     assert_eq!(graph.node(out).logmtime, 3);
     assert_eq!(graph.node(out).hash, 2);
@@ -929,8 +935,11 @@ fn ninja_build_log_resets_obsolete_headers() {
         "# ninja log v3\n123 456 0 out command\n",
     )
     .unwrap();
-    let mut graph = graph::graphinit();
-    log::logclose(log::loginit(Some(&directory), &mut graph).unwrap()).unwrap();
+    let mut graph = graph::Graph::default();
+    log::BuildLog::open(Some(&directory), &mut graph)
+        .unwrap()
+        .finish()
+        .unwrap();
     assert_eq!(
         fs::read_to_string(directory.join(".ninja_log")).unwrap(),
         "# ninja log v7\n"
@@ -991,12 +1000,15 @@ fn ninja_build_log_resets_obsolete_headers() {
 fn scheduler_cli_dependency_and_tool_behaviour() {
     let directory = std::env::temp_dir().join(format!("ronin-wave3-deps-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
-    deps::depsclose(deps::depsinit(Some(&directory)).unwrap()).unwrap();
+    deps::DepsLog::open(Some(&directory))
+        .unwrap()
+        .finish()
+        .unwrap();
     let options = build::BuildOptions {
         dryrun: true,
         ..Default::default()
     };
-    let mut graph = graph::graphinit();
+    let mut graph = graph::Graph::default();
     let mut builder = build::Builder::new(&mut graph, options);
     assert!(builder.build().is_ok());
     assert!(builder.build_output.is_empty());
@@ -1011,8 +1023,11 @@ fn scheduler_cli_dependency_and_tool_behaviour() {
 fn ninja_build_log_signature_and_clean_path() {
     let directory = std::env::temp_dir().join(format!("ronin-ninja-log-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
-    let mut graph = graph::graphinit();
-    log::logclose(log::loginit(Some(&directory), &mut graph).unwrap()).unwrap();
+    let mut graph = graph::Graph::default();
+    log::BuildLog::open(Some(&directory), &mut graph)
+        .unwrap()
+        .finish()
+        .unwrap();
     assert_eq!(
         fs::read_to_string(directory.join(".ninja_log")).unwrap(),
         "# ninja log v7\n"

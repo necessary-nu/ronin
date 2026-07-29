@@ -91,7 +91,7 @@ impl Drop for ResponseFile {
     }
 }
 
-impl<'a> Builder<'a> {
+impl Builder<'_> {
     pub(super) fn ensure_command(&mut self, edge: EdgeId) -> BuildResult<()> {
         self.command_cache
             .resize_with(self.graph.edge_count(), || None);
@@ -248,7 +248,7 @@ impl<'a> Builder<'a> {
         self.emit(output)
     }
 
-    pub(super) fn exit_code(status: &std::process::ExitStatus) -> i32 {
+    pub(super) fn exit_code(status: std::process::ExitStatus) -> i32 {
         if let Some(code) = status.code() {
             return code;
         }

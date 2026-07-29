@@ -65,6 +65,27 @@ pub(crate) struct EnvState {
     pools: BTreeMap<String, PoolId>,
 }
 
+impl EnvState {
+    // [spec:samurai:def:env.envinit-fn]
+    // [spec:samurai:sem:env.envinit-fn]
+    pub(crate) fn new(graph: &mut Graph) -> Self {
+        let root = mkenv(graph, None);
+        let phony = mkrule(graph, "phony".into());
+        envaddrule(graph, root, phony).expect("fresh root rule table");
+        let console = graph.push_pool(Pool {
+            name: "console".into(),
+            numjobs: 0,
+            maxjobs: 1,
+        });
+        let mut state = Self {
+            root,
+            pools: BTreeMap::new(),
+        };
+        addpool(graph, &mut state, console).expect("fresh pool table");
+        state
+    }
+}
+
 // [spec:samurai:def:env.addvar-fn]
 // [spec:samurai:sem:env.addvar-fn]
 fn addvar<T>(tree: &mut BTreeMap<String, T>, name: String, value: T) {
@@ -117,25 +138,6 @@ fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), Grap
     }
     state.pools.insert(name, pool);
     Ok(())
-}
-
-// [spec:samurai:def:env.envinit-fn]
-// [spec:samurai:sem:env.envinit-fn]
-pub(crate) fn envinit(graph: &mut Graph) -> EnvState {
-    let root = mkenv(graph, None);
-    let phony = mkrule(graph, "phony".into());
-    envaddrule(graph, root, phony).expect("fresh root rule table");
-    let console = graph.push_pool(Pool {
-        name: "console".into(),
-        numjobs: 0,
-        maxjobs: 1,
-    });
-    let mut state = EnvState {
-        root,
-        pools: BTreeMap::new(),
-    };
-    addpool(graph, &mut state, console).expect("fresh pool table");
-    state
 }
 
 // [spec:samurai:def:env.envvar-fn]
@@ -330,13 +332,12 @@ pub(crate) fn edgevar(graph: &Graph, edge: EdgeId, name: &str, escape: bool) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::graphinit;
     use crate::util::mkstr;
 
     #[test]
     fn resolves_nearest_variable_binding() {
-        let mut graph = graphinit();
-        let state = envinit(&mut graph);
+        let mut graph = Graph::default();
+        let state = EnvState::new(&mut graph);
         let mut root_value = mkstr(4);
         root_value.copy_from_slice(b"root");
         envaddvar(&mut graph, state.root, "value".into(), root_value);

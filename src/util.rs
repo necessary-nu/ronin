@@ -45,8 +45,7 @@ impl<'a> StringPiece<'a> {
     pub(crate) fn substr(self, start: usize, length: Option<usize>) -> Self {
         let start = start.min(self.bytes.len());
         let end = length
-            .map(|length| start.saturating_add(length))
-            .unwrap_or(self.bytes.len())
+            .map_or(self.bytes.len(), |length| start.saturating_add(length))
             .min(self.bytes.len());
         Self::new(&self.bytes[start..end])
     }
@@ -94,7 +93,7 @@ impl EvalString {
         }
     }
 
-    pub(crate) fn from_parts(parts: Vec<EvalPart>) -> Self {
+    pub(crate) const fn from_parts(parts: Vec<EvalPart>) -> Self {
         Self { parts }
     }
 }
@@ -352,12 +351,12 @@ pub(crate) fn join_string_piece(parts: &[&str], separator: char) -> String {
 }
 
 #[cfg(test)]
-pub(crate) fn to_lower_ascii(character: char) -> char {
+pub(crate) const fn to_lower_ascii(character: char) -> char {
     character.to_ascii_lowercase()
 }
 
 #[cfg(test)]
-pub(crate) fn equals_case_insensitive_ascii(left: &str, right: &str) -> bool {
+pub(crate) const fn equals_case_insensitive_ascii(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
 

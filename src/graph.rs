@@ -50,6 +50,10 @@ pub(crate) struct Node {
 }
 
 // [spec:samurai:def:graph.edge]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "these independent cached graph facts avoid repeated evaluation on hot paths"
+)]
 pub(crate) struct Edge {
     pub(crate) critical_path_weight: i64,
     pub(crate) rule: Option<RuleId>,
@@ -88,6 +92,9 @@ pub(crate) struct Edge {
 // [spec:samurai:sem:htab.htabget-fn]
 // [spec:samurai:def:htab.delhtab-fn]
 // [spec:samurai:sem:htab.delhtab-fn]
+// [spec:samurai:def:graph.graphinit-fn]
+// [spec:samurai:sem:graph.graphinit-fn]
+#[derive(Default)]
 pub(crate) struct Graph {
     node_by_path: BTreeMap<Vec<u8>, NodeId>,
     nodes: Vec<Node>,
@@ -98,8 +105,8 @@ pub(crate) struct Graph {
 }
 
 impl Graph {
-    pub(crate) fn nodes(&self) -> Vec<NodeId> {
-        self.node_by_path.values().copied().collect()
+    pub(crate) fn node_ids(&self) -> impl ExactSizeIterator<Item = NodeId> {
+        (0..self.nodes.len()).map(NodeId::from_index)
     }
 
     pub(crate) fn node(&self, id: NodeId) -> &Node {
@@ -118,11 +125,11 @@ impl Graph {
         &mut self.edges[id.index()]
     }
 
-    pub(crate) fn edge_ids(&self) -> Vec<EdgeId> {
-        (0..self.edges.len()).map(EdgeId::from_index).collect()
+    pub(crate) fn edge_ids(&self) -> impl ExactSizeIterator<Item = EdgeId> {
+        (0..self.edges.len()).map(EdgeId::from_index)
     }
 
-    pub(crate) fn edge_count(&self) -> usize {
+    pub(crate) const fn edge_count(&self) -> usize {
         self.edges.len()
     }
 
@@ -170,19 +177,6 @@ impl Graph {
         let id = PoolId::from_index(self.pools.len());
         self.pools.push(pool);
         id
-    }
-}
-
-// [spec:samurai:def:graph.graphinit-fn]
-// [spec:samurai:sem:graph.graphinit-fn]
-pub(crate) fn graphinit() -> Graph {
-    Graph {
-        node_by_path: BTreeMap::new(),
-        nodes: Vec::new(),
-        edges: Vec::new(),
-        environments: Vec::new(),
-        rules: Vec::new(),
-        pools: Vec::new(),
     }
 }
 
@@ -358,7 +352,7 @@ impl DirtyEvaluator {
         while let Some(item) = work.pop() {
             match item {
                 Work::Enter(node) => match self.nodes[node.index()] {
-                    VisitState::Done => continue,
+                    VisitState::Done => {}
                     VisitState::Active => {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -583,11 +577,10 @@ pub(crate) fn edgehash(
         return;
     }
     edge.flags |= FLAG_HASH;
-    let hash = if let Some(rsp) = rspfile_content.filter(|rsp| !rsp.is_empty()) {
-        rapidhashv1_parts(&[command.as_bytes(), b";rspfile=", rsp.as_bytes()])
-    } else {
-        rapidhashv1_parts(&[command.as_bytes()])
-    };
+    let hash = rspfile_content.filter(|rsp| !rsp.is_empty()).map_or_else(
+        || rapidhashv1_parts(&[command.as_bytes()]),
+        |rsp| rapidhashv1_parts(&[command.as_bytes(), b";rspfile=", rsp.as_bytes()]),
+    );
     edge.hash = hash;
 }
 
@@ -612,8 +605,7 @@ pub(crate) fn edgeadddeps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
 /// Return generated outputs that are not consumed by another build edge.
 pub(crate) fn rootnodes(graph: &Graph) -> Result<Vec<NodeId>, GraphError> {
     let roots = graph
-        .nodes()
-        .into_iter()
+        .node_ids()
         .filter(|node| {
             let node = graph.node(*node);
             node.gen.is_some() && node.uses.is_empty()
@@ -760,9 +752,9 @@ mod tests {
             format!("rule cat\n  command = cat $in > $out\n{source}"),
         )
         .unwrap();
-        let mut graph = graphinit();
-        let mut parser = crate::parse::parseinit();
-        let mut state = crate::env::envinit(&mut graph);
+        let mut graph = Graph::default();
+        let mut parser = crate::parse::Parser::default();
+        let mut state = crate::env::EnvState::new(&mut graph);
         crate::parse::parse(
             path.to_str().unwrap(),
             &mut graph,
@@ -777,7 +769,7 @@ mod tests {
 
     #[test]
     fn interns_nodes_and_quotes_shell_paths() {
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let first = mknode(&mut graph, xasprintf(format_args!("a b")));
         let second = mknode(&mut graph, xasprintf(format_args!("a b")));
         assert_eq!(first, second);
@@ -786,7 +778,7 @@ mod tests {
 
     #[test]
     fn ninja_shell_path_escaping_torture_case() {
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let node = mknode(
             &mut graph,
             xasprintf(format_args!("foo bar\"/'$@d!st!c'/path'")),
@@ -841,7 +833,7 @@ mod tests {
 
     #[test]
     fn ninja_stat_scan_simple() {
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let root = mkenv(&mut graph, None);
         let output = generated_node(&mut graph, root, "out", &["in"]);
         let mut stats = Vec::new();
@@ -851,7 +843,7 @@ mod tests {
 
     #[test]
     fn ninja_stat_scan_two_step() {
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let root = mkenv(&mut graph, None);
         let output = generated_node(&mut graph, root, "out", &["mid"]);
         let middle = generated_node(&mut graph, root, "mid", &["in"]);
@@ -864,7 +856,7 @@ mod tests {
 
     #[test]
     fn ninja_stat_scan_tree() {
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let root = mkenv(&mut graph, None);
         let output = generated_node(&mut graph, root, "out", &["mid1", "mid2"]);
         let middle1 = generated_node(&mut graph, root, "mid1", &["in11", "in12"]);
@@ -883,7 +875,7 @@ mod tests {
     fn ronin_deep_graph_evaluation_uses_an_iterative_worklist() {
         const DEPTH: usize = 20_000;
 
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let root = mkenv(&mut graph, None);
         let mut input = "source".to_owned();
         let mut target = None;
@@ -904,7 +896,7 @@ mod tests {
 
     #[test]
     fn ninja_stat_scan_middle_missing() {
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let root = mkenv(&mut graph, None);
         let output = generated_node(&mut graph, root, "out", &["mid"]);
         let middle = generated_node(&mut graph, root, "mid", &["in"]);
@@ -946,8 +938,8 @@ mod tests {
             result
         }
 
-        let mut graph = graphinit();
-        let state = crate::env::envinit(&mut graph);
+        let mut graph = Graph::default();
+        let state = crate::env::EnvState::new(&mut graph);
         let rule = crate::env::mkrule(&mut graph, "cat".into());
         let command = text(
             "cat ",
@@ -1215,7 +1207,7 @@ mod tests {
     fn ninja_graph_phony_dependency_propagates_mtime() {
         let mut graph = parse_graph("build in_ph: phony in1\nbuild out1: cat in_ph\n");
         assert!(!recompute_with_mtimes(&mut graph, b"out1", &[("in1", 1), ("out1", 2)]).unwrap());
-        for node in graph.nodes() {
+        for node in graph.node_ids() {
             let node = graph.node_mut(node);
             node.mtime = MTIME_UNKNOWN;
             node.dirty = false;

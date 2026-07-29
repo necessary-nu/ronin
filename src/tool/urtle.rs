@@ -28,6 +28,10 @@ pub(crate) fn decode() -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     #[test]
+    #[allow(
+        clippy::naive_bytecount,
+        reason = "the tiny fixed mascot fixture does not justify another runtime dependency"
+    )]
     fn decodes_the_hidden_ninja_mascot() {
         let mascot = super::decode();
         assert!(mascot.starts_with(b"              ,;;;!!;;\n"));

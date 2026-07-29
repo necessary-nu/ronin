@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -216,13 +217,14 @@ fn command_evaluation(directory: &Path) -> io::Result<Workload> {
     let mut manifest =
         String::from("rule cc\n  command = cc -DINDEX=$index -Iinclude $in -o $out\n");
     for index in 0..COMMAND_EDGES {
-        manifest.push_str(&format!(
+        let _ = write!(
+            manifest,
             "build out/{index}.o: cc src/{index}.c\n  index = {index}\n"
-        ));
+        );
     }
     manifest.push_str("build all: phony");
     for index in 0..COMMAND_EDGES {
-        manifest.push_str(&format!(" out/{index}.o"));
+        let _ = write!(manifest, " out/{index}.o");
     }
     manifest.push_str("\ndefault all\n");
     write_manifest(directory, &manifest)?;
@@ -237,9 +239,9 @@ fn command_evaluation(directory: &Path) -> io::Result<Workload> {
 fn deep_graph(directory: &Path) -> io::Result<Workload> {
     let mut manifest = String::from("build node/0: phony\n");
     for index in 1..DEEP_EDGES {
-        manifest.push_str(&format!("build node/{index}: phony node/{}\n", index - 1));
+        let _ = writeln!(manifest, "build node/{index}: phony node/{}", index - 1);
     }
-    manifest.push_str(&format!("default node/{}\n", DEEP_EDGES - 1));
+    let _ = writeln!(manifest, "default node/{}", DEEP_EDGES - 1);
     write_manifest(directory, &manifest)?;
     Ok(Workload {
         name: "deep-graph-evaluation",
@@ -252,11 +254,11 @@ fn deep_graph(directory: &Path) -> io::Result<Workload> {
 fn wide_noop(directory: &Path) -> io::Result<Workload> {
     let mut manifest = String::new();
     for index in 0..WIDE_EDGES {
-        manifest.push_str(&format!("build leaf/{index}: phony\n"));
+        let _ = writeln!(manifest, "build leaf/{index}: phony");
     }
     manifest.push_str("build all: phony");
     for index in 0..WIDE_EDGES {
-        manifest.push_str(&format!(" leaf/{index}"));
+        let _ = write!(manifest, " leaf/{index}");
     }
     manifest.push_str("\ndefault all\n");
     write_manifest(directory, &manifest)?;
@@ -271,9 +273,10 @@ fn wide_noop(directory: &Path) -> io::Result<Workload> {
 fn path_canonicalization(directory: &Path) -> io::Result<Workload> {
     let mut manifest = String::new();
     for index in 0..CANONICAL_PATHS {
-        manifest.push_str(&format!(
-            "build scratch/{index}/../canonical-{index}: phony\n"
-        ));
+        let _ = writeln!(
+            manifest,
+            "build scratch/{index}/../canonical-{index}: phony"
+        );
     }
     write_manifest(directory, &manifest)?;
     Ok(Workload {
@@ -297,11 +300,11 @@ fn dependency_log(directory: &Path, tool: &Tool) -> Result<Workload, String> {
     for index in 0..DEPENDENCY_EDGES {
         fs::write(directory.join(format!("src/{index}.c")), b"int baseline;\n")
             .map_err(|error| error.to_string())?;
-        manifest.push_str(&format!("build out/{index}.o: compile src/{index}.c\n"));
+        let _ = writeln!(manifest, "build out/{index}.o: compile src/{index}.c");
     }
     manifest.push_str("build all: phony");
     for index in 0..DEPENDENCY_EDGES {
-        manifest.push_str(&format!(" out/{index}.o"));
+        let _ = write!(manifest, " out/{index}.o");
     }
     manifest.push_str("\ndefault all\n");
     write_manifest(directory, &manifest).map_err(|error| error.to_string())?;
@@ -322,11 +325,11 @@ fn scheduler(directory: &Path) -> io::Result<Workload> {
     fs::create_dir_all(directory.join("jobs"))?;
     let mut manifest = String::from("rule step\n  command = touch $out\n");
     for index in 0..SCHEDULER_EDGES {
-        manifest.push_str(&format!("build jobs/{index}: step\n"));
+        let _ = writeln!(manifest, "build jobs/{index}: step");
     }
     manifest.push_str("build all: phony");
     for index in 0..SCHEDULER_EDGES {
-        manifest.push_str(&format!(" jobs/{index}"));
+        let _ = write!(manifest, " jobs/{index}");
     }
     manifest.push_str("\ndefault all\n");
     write_manifest(directory, &manifest)?;
@@ -482,6 +485,10 @@ fn recorded_baseline() -> Result<BTreeMap<&'static str, Baseline>, String> {
 }
 
 // [spec:samurai:req:performance.no-unexplained-regression]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "RSS regression thresholds are deliberately approximate ratios"
+)]
 fn validate(records: &[Record]) -> Result<(), String> {
     let baseline = recorded_baseline()?;
     let current = records
@@ -564,6 +571,10 @@ fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
     ))
 }
 
+#[allow(
+    clippy::too_many_lines,
+    reason = "benchmark setup, interleaved sampling, validation, and reporting form one reproducible run"
+)]
 fn run() -> Result<(), String> {
     let config = parse_arguments()?;
     let ninja_revision = validate_ninja_pin(&config)?;
@@ -635,8 +646,9 @@ fn run() -> Result<(), String> {
             let minimum_rss = peak_rss.iter().min().copied();
             let maximum_rss = peak_rss.iter().max().copied();
             let middle_rss = median_u64(&mut peak_rss);
-            report.push_str(&format!(
-                "{},{},{},{:.3},{:.3},{:.3},{},{},{}\n",
+            let _ = writeln!(
+                report,
+                "{},{},{},{:.3},{:.3},{:.3},{},{},{}",
                 tool.name,
                 tool.version.replace(',', "_"),
                 workload.name,
@@ -646,7 +658,7 @@ fn run() -> Result<(), String> {
                 middle_rss.map_or_else(String::new, |rss| rss.to_string()),
                 minimum_rss.map_or_else(String::new, |rss| rss.to_string()),
                 maximum_rss.map_or_else(String::new, |rss| rss.to_string())
-            ));
+            );
             records.push(Record {
                 tool: tool.name,
                 workload: workload.name,

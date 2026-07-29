@@ -57,13 +57,15 @@ pub(crate) fn multi_inputs(graph: &Graph, arguments: &[String]) -> ToolResult<St
             "-h" | "--help" => return Err("Usage '-t multi-inputs [options] [targets]".into()),
             "-d" | "--delimiter" => {
                 index += 1;
-                delimiter = arguments
-                    .get(index)
-                    .ok_or_else(|| "missing multi-inputs delimiter".to_owned())?
-                    .clone();
+                delimiter.clone_from(
+                    arguments
+                        .get(index)
+                        .ok_or_else(|| "missing multi-inputs delimiter".to_owned())?,
+                );
             }
             option if option.starts_with("--delimiter=") => {
-                delimiter = option["--delimiter=".len()..].to_owned();
+                delimiter.clear();
+                delimiter.push_str(&option["--delimiter=".len()..]);
             }
             option if option.starts_with('-') => {
                 return Err(format!("unknown multi-inputs option '{option}'").into())

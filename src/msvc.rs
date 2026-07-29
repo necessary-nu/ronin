@@ -51,12 +51,11 @@ fn path_parts(path: &str) -> (Option<String>, bool, Vec<String>) {
     let mut parts = Vec::new();
     for part in path.split('/') {
         match part {
-            "" | "." => {}
             ".." if parts.last().is_some_and(|last: &String| last != "..") => {
                 parts.pop();
             }
             ".." if !absolute => parts.push(part.to_owned()),
-            ".." => {}
+            "" | "." | ".." => {}
             _ => parts.push(part.to_owned()),
         }
     }
@@ -104,7 +103,9 @@ pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<St
     }
 
     let (_, _, mut cwd) = path_parts(&std::env::current_dir()?.to_string_lossy());
-    if !relative_absolute {
+    if relative_absolute {
+        cwd = relative_components;
+    } else {
         for part in relative_components {
             if part == ".." {
                 cwd.pop();
@@ -112,13 +113,13 @@ pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<St
                 cwd.push(part);
             }
         }
-    } else {
-        cwd = relative_components;
     }
     let base = cwd;
 
     let (_, _, mut target) = path_parts(&std::env::current_dir()?.to_string_lossy());
-    if !path_absolute {
+    if path_absolute {
+        target = path_components;
+    } else {
         for part in path_components {
             if part == ".." {
                 target.pop();
@@ -126,8 +127,6 @@ pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<St
                 target.push(part);
             }
         }
-    } else {
-        target = path_components;
     }
     Ok(relative_parts(&base, &target))
 }

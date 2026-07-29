@@ -3,8 +3,7 @@
 use crate::error::ManifestError;
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
 use crate::scan::{
-    scanchar, scanfrombytes, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring,
-    Scanner, Token,
+    scanchar, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring, Scanner, Token,
 };
 use crate::util::{canonpath, xasprintf, BString, ByteSlice, ByteVec, EvalPart, EvalString};
 use std::fmt;
@@ -36,14 +35,14 @@ impl DyndepFile {
         Ok(())
     }
 
-    pub(crate) fn get(&self, edge: &EdgeId) -> Option<&Dyndeps> {
+    pub(crate) fn get(&self, edge: EdgeId) -> Option<&Dyndeps> {
         self.slots.get(edge.index()).and_then(Option::as_ref)
     }
 
     fn iter(&self) -> impl Iterator<Item = (EdgeId, &Dyndeps)> {
         self.edges
             .iter()
-            .map(|edge| (*edge, self.get(edge).expect("indexed dyndep entry")))
+            .map(|edge| (*edge, self.get(*edge).expect("indexed dyndep entry")))
     }
 }
 
@@ -97,7 +96,7 @@ fn error(line: usize, message: impl Into<String>) -> DyndepError {
     }
 }
 
-fn scanner_error(scanner: &Scanner, message: ManifestError) -> DyndepError {
+fn scanner_error(scanner: &Scanner, message: &ManifestError) -> DyndepError {
     let message = message.to_string();
     let prefix = format!(
         "{}:{}:{}: ",
@@ -113,7 +112,7 @@ fn scanner_error(scanner: &Scanner, message: ManifestError) -> DyndepError {
 
 macro_rules! scan {
     ($scanner:expr, $operation:expr) => {
-        $operation.map_err(|message| scanner_error($scanner, message))?
+        $operation.map_err(|message| scanner_error($scanner, &message))?
     };
 }
 
@@ -153,8 +152,7 @@ fn parse_version(scanner: &mut Scanner) -> Result<(), DyndepError> {
     let major = components.next().and_then(|part| part.parse::<u32>().ok());
     let minor = components
         .next()
-        .map(|part| part.parse::<u32>().ok())
-        .unwrap_or(Some(0));
+        .map_or(Some(0), |part| part.parse::<u32>().ok());
     if major != Some(1) || minor != Some(0) {
         return Err(error(
             line,
@@ -206,7 +204,7 @@ fn parse_build(
             format!("no build statement exists for '{}'", output.to_str_lossy()),
         ));
     };
-    if file.get(&edge).is_some() {
+    if file.get(edge).is_some() {
         return Err(error(
             line,
             format!("multiple statements for '{}'", output.to_str_lossy()),
@@ -278,7 +276,7 @@ fn parse_build(
 }
 
 pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFile, DyndepError> {
-    let mut scanner = scanfrombytes("input", input);
+    let mut scanner = Scanner::from_bytes("input", input);
     let mut have_version = false;
     let mut file = DyndepFile::default();
     loop {
@@ -294,9 +292,13 @@ pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFi
                 parse_version(&mut scanner)?;
                 have_version = true;
             }
-            Some(_) if have_version => return Err(error(scanner.line, "unexpected identifier")),
             Some(_) => {
-                return Err(error(scanner.line, "expected 'ninja_dyndep_version = ...'"));
+                let message = if have_version {
+                    "unexpected identifier"
+                } else {
+                    "expected 'ninja_dyndep_version = ...'"
+                };
+                return Err(error(scanner.line, message));
             }
             None if have_version => return Ok(file),
             None => {
@@ -319,7 +321,7 @@ pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), Manif
         .copied()
         .filter(|edge| graph.edge(*edge).dyndep == Some(dyndep))
     {
-        if file.get(&edge).is_none() {
+        if file.get(edge).is_none() {
             let output = graph
                 .edge(edge)
                 .out
@@ -385,13 +387,13 @@ pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), Manif
 mod tests {
     use super::*;
     use crate::env::mkenv;
-    use crate::graph::{graphinit, mkedge, mknode};
+    use crate::graph::{mkedge, mknode};
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT_LOAD_TEST: AtomicUsize = AtomicUsize::new(0);
 
     fn fixture() -> Graph {
-        let mut graph = graphinit();
+        let mut graph = Graph::default();
         let root = mkenv(&mut graph, None);
         let edge = mkedge(&mut graph, root);
         for path in ["out", "otherout"] {
@@ -431,7 +433,7 @@ mod tests {
     fn entry_for<'a>(graph: &Graph, file: &'a DyndepFile, output: &str) -> &'a Dyndeps {
         let node = nodeget(graph, output.as_bytes()).unwrap();
         let edge = graph.node(node).gen.unwrap();
-        file.get(&edge).unwrap()
+        file.get(edge).unwrap()
     }
 
     macro_rules! valid_version_case {
@@ -481,9 +483,8 @@ mod tests {
         ($name:ident, $input:expr, $message:expr) => {
             #[test]
             fn $name() {
-                let error = match parse($input) {
-                    Err(error) => error,
-                    Ok(_) => panic!("invalid dyndep input unexpectedly parsed"),
+                let Err(error) = parse($input) else {
+                    panic!("invalid dyndep input unexpectedly parsed");
                 };
                 assert!(
                     error.message.contains($message),
@@ -711,7 +712,7 @@ mod tests {
     fn ninja_dyndep_parser_other_output_of_same_edge() {
         let (graph, file) = parse("ninja_dyndep_version = 1\nbuild otherout: dyndep\n").unwrap();
         let edge = graph.node(nodeget(&graph, b"out").unwrap()).gen.unwrap();
-        assert!(file.get(&edge).is_some());
+        assert!(file.get(edge).is_some());
     }
 
     #[test]
@@ -749,9 +750,9 @@ mod tests {
         if let Some(dyndep) = dyndep {
             fs::write(&dyndep_path, dyndep).unwrap();
         }
-        let mut graph = graphinit();
-        let mut parser = crate::parse::parseinit();
-        let mut state = crate::env::envinit(&mut graph);
+        let mut graph = Graph::default();
+        let mut parser = crate::parse::Parser::default();
+        let mut state = crate::env::EnvState::new(&mut graph);
         crate::parse::parse(
             manifest_path.to_str().unwrap(),
             &mut graph,
