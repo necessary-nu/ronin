@@ -30,5 +30,23 @@ The harness refuses a Ninja source checkout other than commit
 Ninja revisions, tool versions, release profile, platform, Rust compiler,
 workload sizes, repetition count, and noise-control method. Runs are
 sequential, discard command output, warm each workload, and report median,
-minimum, and maximum wall time. CPU frequency and affinity are not controlled,
+minimum, and maximum wall time. On Linux they also sample each coordinator
+process's peak RSS from `/proc`. CPU frequency and affinity are not controlled,
 so compare large changes and rerun noisy cases before drawing conclusions.
+
+The original Ronin medians are stored as machine-readable input in
+[`baseline-v1.csv`](baseline-v1.csv). Run the release gate with:
+
+```sh
+scripts/check-performance.sh \
+  --ninja /tmp/ninja-build/ninja \
+  --ninja-source /tmp/ninja \
+  --warmups 1 --repetitions 7
+```
+
+The gate interleaves Ronin and Ninja samples to reduce temporal bias. It rejects
+a Ronin/Ninja runtime ratio above 120% of the recorded v1 ratio or a Ronin
+median above 120% of the current pinned Ninja median. On Linux it also rejects
+peak RSS above 200% of Ninja. Normalizing the historical comparison against
+Ninja makes it portable across differently loaded hosts while preventing a
+large regression from being hidden by an old, slower absolute baseline.

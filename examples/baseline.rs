@@ -1,11 +1,17 @@
+use std::collections::BTreeMap;
 use std::env;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const PINNED_NINJA_REVISION: &str = "b51a1e37c2fb89bbefa600bd155e1ce13983f09d";
+const RECORDED_BASELINE: &str = include_str!("../benchmarks/baseline-v1.csv");
+const MAX_RECORDED_RUNTIME_RATIO: f64 = 1.20;
+const MAX_NINJA_RUNTIME_RATIO: f64 = 1.20;
+const MAX_NINJA_RSS_RATIO: f64 = 2.00;
 
 // [spec:samurai:req:performance.reproducible-baseline]
 const WORKLOAD_VERSION: u32 = 1;
@@ -36,6 +42,23 @@ struct Workload {
     reset: Reset,
 }
 
+struct Measurement {
+    elapsed: Duration,
+    peak_rss_kib: Option<u64>,
+}
+
+struct Record {
+    tool: &'static str,
+    workload: &'static str,
+    median_ms: f64,
+    median_peak_rss_kib: Option<u64>,
+}
+
+struct Baseline {
+    ronin_ms: f64,
+    ninja_ms: f64,
+}
+
 struct Config {
     ronin: PathBuf,
     ninja: PathBuf,
@@ -44,6 +67,7 @@ struct Config {
     repetitions: usize,
     warmups: usize,
     output: Option<PathBuf>,
+    validate: bool,
 }
 
 impl Default for Config {
@@ -58,6 +82,7 @@ impl Default for Config {
             repetitions: 5,
             warmups: 1,
             output: None,
+            validate: false,
         }
     }
 }
@@ -117,11 +142,13 @@ fn parse_arguments() -> Result<Config, String> {
             "--output" => {
                 config.output = Some(PathBuf::from(value(&mut arguments, "--output")?));
             }
+            "--validate" => config.validate = true,
             "--help" | "-h" => {
                 println!(
                     "usage: cargo run --release --example baseline -- \
                      [--ronin PATH] [--ninja PATH] [--samurai PATH|--without-samurai] \
-                     [--ninja-source PATH] [--warmups N] [--repetitions N] [--output PATH]"
+                     [--ninja-source PATH] [--warmups N] [--repetitions N] [--output PATH] \
+                     [--validate]"
                 );
                 std::process::exit(0);
             }
@@ -356,19 +383,47 @@ fn run_checked(tool: &Tool, directory: &Path, arguments: &[String]) -> Result<()
     }
 }
 
-fn time_once(tool: &Tool, workload: &Workload) -> Result<Duration, String> {
+#[cfg(target_os = "linux")]
+fn peak_rss_kib(process_id: u32) -> Option<u64> {
+    let status = fs::read_to_string(format!("/proc/{process_id}/status")).ok()?;
+    status.lines().find_map(|line| {
+        line.strip_prefix("VmHWM:")
+            .and_then(|value| value.split_whitespace().next())
+            .and_then(|value| value.parse().ok())
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn peak_rss_kib(_process_id: u32) -> Option<u64> {
+    None
+}
+
+fn time_once(tool: &Tool, workload: &Workload) -> Result<Measurement, String> {
     prepare(workload)?;
     let started = Instant::now();
-    let status = Command::new(&tool.path)
+    let mut child = Command::new(&tool.path)
         .args(&workload.arguments)
         .current_dir(&workload.directory)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
+        .spawn()
         .map_err(|error| format!("failed to run {}: {error}", tool.path.display()))?;
-    let elapsed = started.elapsed();
+    let mut peak_rss = None;
+    let status = loop {
+        if let Some(rss) = peak_rss_kib(child.id()) {
+            peak_rss = Some(peak_rss.map_or(rss, |peak: u64| peak.max(rss)));
+        }
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            break status;
+        }
+        thread::sleep(Duration::from_micros(100));
+    };
+    let measurement = Measurement {
+        elapsed: started.elapsed(),
+        peak_rss_kib: peak_rss,
+    };
     if status.success() {
-        Ok(elapsed)
+        Ok(measurement)
     } else {
         Err(format!(
             "{} failed on {} with {status}",
@@ -377,9 +432,107 @@ fn time_once(tool: &Tool, workload: &Workload) -> Result<Duration, String> {
     }
 }
 
-fn median(samples: &mut [Duration]) -> Duration {
+fn median_duration(samples: &mut [Duration]) -> Duration {
     samples.sort_unstable();
     samples[samples.len() / 2]
+}
+
+fn median_u64(samples: &mut [u64]) -> Option<u64> {
+    if samples.is_empty() {
+        return None;
+    }
+    samples.sort_unstable();
+    Some(samples[samples.len() / 2])
+}
+
+fn recorded_baseline() -> Result<BTreeMap<&'static str, Baseline>, String> {
+    let mut baseline = BTreeMap::new();
+    for (line_number, line) in RECORDED_BASELINE.lines().enumerate() {
+        if line_number == 0 {
+            if line != "workload,ronin_median_ms,ninja_median_ms" {
+                return Err("recorded baseline has an invalid header".into());
+            }
+            continue;
+        }
+        let mut fields = line.split(',');
+        let workload = fields
+            .next()
+            .ok_or_else(|| format!("recorded baseline line {} is invalid", line_number + 1))?;
+        let ronin_ms = fields
+            .next()
+            .ok_or_else(|| format!("recorded baseline for {workload} lacks Ronin time"))?
+            .parse::<f64>()
+            .map_err(|_| format!("recorded Ronin baseline for {workload} is invalid"))?;
+        let ninja_ms = fields
+            .next()
+            .ok_or_else(|| format!("recorded baseline for {workload} lacks Ninja time"))?
+            .parse::<f64>()
+            .map_err(|_| format!("recorded Ninja baseline for {workload} is invalid"))?;
+        if fields.next().is_some() {
+            return Err(format!("recorded baseline for {workload} has extra fields"));
+        }
+        if baseline
+            .insert(workload, Baseline { ronin_ms, ninja_ms })
+            .is_some()
+        {
+            return Err(format!("recorded baseline repeats {workload}"));
+        }
+    }
+    Ok(baseline)
+}
+
+// [spec:samurai:req:performance.no-unexplained-regression]
+fn validate(records: &[Record]) -> Result<(), String> {
+    let baseline = recorded_baseline()?;
+    let current = records
+        .iter()
+        .filter(|record| record.tool == "ronin")
+        .map(|record| (record.workload, record))
+        .collect::<BTreeMap<_, _>>();
+    let ninja = records
+        .iter()
+        .filter(|record| record.tool == "ninja")
+        .map(|record| (record.workload, record))
+        .collect::<BTreeMap<_, _>>();
+    if current.len() != baseline.len() || current.keys().ne(baseline.keys()) {
+        return Err("current Ronin workloads do not match the recorded baseline".into());
+    }
+    if ninja.keys().ne(baseline.keys()) {
+        return Err("current Ninja workloads do not match the recorded baseline".into());
+    }
+
+    for (workload, baseline) in baseline {
+        let current = current[workload];
+        let ninja = ninja[workload];
+        let current_ratio = current.median_ms / ninja.median_ms;
+        let recorded_ratio = baseline.ronin_ms / baseline.ninja_ms;
+        if current_ratio > recorded_ratio * MAX_RECORDED_RUNTIME_RATIO {
+            return Err(format!(
+                "{workload} Ronin/Ninja ratio regressed to {current_ratio:.2}x \
+                 from the recorded {recorded_ratio:.2}x"
+            ));
+        }
+        if current.median_ms > ninja.median_ms * MAX_NINJA_RUNTIME_RATIO {
+            return Err(format!(
+                "{workload} took {:.3} ms versus Ninja's {:.3} ms",
+                current.median_ms, ninja.median_ms
+            ));
+        }
+        match (current.median_peak_rss_kib, ninja.median_peak_rss_kib) {
+            (Some(current_rss), Some(ninja_rss))
+                if current_rss as f64 > ninja_rss as f64 * MAX_NINJA_RSS_RATIO =>
+            {
+                return Err(format!(
+                    "{workload} used {current_rss} KiB peak RSS versus Ninja's {ninja_rss} KiB"
+                ));
+            }
+            (None, _) | (_, None) if cfg!(target_os = "linux") => {
+                return Err(format!("{workload} lacks a Linux peak-RSS sample"));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
@@ -389,7 +542,7 @@ fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
     let platform = command_output(Path::new("uname"), &["-a"])?;
     let rustc = command_output(Path::new("rustc"), &["--version"])?;
     Ok(format!(
-        "# schema=ronin-performance-baseline-v1\n\
+        "# schema=ronin-performance-baseline-v2\n\
          # workload_version={WORKLOAD_VERSION}\n\
          # ronin_revision={ronin_revision}\n\
          # ronin_dirty={dirty}\n\
@@ -399,9 +552,15 @@ fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
          # rustc={rustc}\n\
          # warmups={}\n\
          # repetitions={}\n\
-         # noise_control=sequential tool execution; stdout/stderr discarded; {} warmup(s); median wall time; no CPU pinning\n\
+         # noise_control=interleaved tool samples; stdout/stderr discarded; {} warmup(s); median wall time; Linux peak RSS sampled from /proc every 100 us; no CPU pinning\n\
+         # validation_thresholds=Ronin/Ninja runtime ratio <= {:.0}% of recorded v1 ratio and Ronin runtime <= {:.0}% of pinned Ninja; peak RSS <= {:.0}% of pinned Ninja\n\
          # sizes=command:{COMMAND_EDGES},deep:{DEEP_EDGES},wide:{WIDE_EDGES},canonical:{CANONICAL_PATHS},deps:{DEPENDENCY_EDGES},scheduler:{SCHEDULER_EDGES}\n",
-        config.warmups, config.repetitions, config.warmups
+        config.warmups,
+        config.repetitions,
+        config.warmups,
+        MAX_RECORDED_RUNTIME_RATIO * 100.0,
+        MAX_NINJA_RUNTIME_RATIO * 100.0,
+        MAX_NINJA_RSS_RATIO * 100.0
     ))
 }
 
@@ -418,36 +577,98 @@ fn run() -> Result<(), String> {
 
     let temporary = TemporaryDirectory::new().map_err(|error| error.to_string())?;
     let mut report = metadata(&config, &ninja_revision)?;
-    report.push_str("tool,tool_version,workload,median_ms,min_ms,max_ms\n");
+    report.push_str(
+        "tool,tool_version,workload,median_ms,min_ms,max_ms,\
+         median_peak_rss_kib,min_peak_rss_kib,max_peak_rss_kib\n",
+    );
+    let mut records = Vec::new();
+    let catalogs = tools
+        .iter()
+        .map(|tool| workload_catalog(&temporary.0, tool))
+        .collect::<Result<Vec<_>, _>>()?;
+    let workload_count = catalogs.first().map_or(0, Vec::len);
+    if catalogs
+        .iter()
+        .any(|catalog| catalog.len() != workload_count)
+    {
+        return Err("tool workload catalogs differ in length".into());
+    }
 
-    for tool in &tools {
-        let workloads = workload_catalog(&temporary.0, tool)?;
-        for workload in &workloads {
+    for workload_index in 0..workload_count {
+        let workload_name = catalogs[0][workload_index].name;
+        if catalogs
+            .iter()
+            .any(|catalog| catalog[workload_index].name != workload_name)
+        {
+            return Err("tool workload catalogs differ in order".into());
+        }
+        for (tool, catalog) in tools.iter().zip(&catalogs) {
             for _ in 0..config.warmups {
-                time_once(tool, workload)?;
+                time_once(tool, &catalog[workload_index])?;
             }
-            let mut samples = Vec::with_capacity(config.repetitions);
-            for _ in 0..config.repetitions {
-                samples.push(time_once(tool, workload)?);
+        }
+        let mut samples = (0..tools.len())
+            .map(|_| Vec::with_capacity(config.repetitions))
+            .collect::<Vec<_>>();
+        for repetition in 0..config.repetitions {
+            for offset in 0..tools.len() {
+                let tool_index = (repetition + offset) % tools.len();
+                samples[tool_index].push(time_once(
+                    &tools[tool_index],
+                    &catalogs[tool_index][workload_index],
+                )?);
             }
-            let minimum = *samples.iter().min().unwrap();
-            let maximum = *samples.iter().max().unwrap();
-            let middle = median(&mut samples);
+        }
+        for ((tool, catalog), samples) in tools.iter().zip(&catalogs).zip(samples) {
+            let workload = &catalog[workload_index];
+            let minimum = samples.iter().map(|sample| sample.elapsed).min().unwrap();
+            let maximum = samples.iter().map(|sample| sample.elapsed).max().unwrap();
+            let mut durations = samples
+                .iter()
+                .map(|sample| sample.elapsed)
+                .collect::<Vec<_>>();
+            let middle = median_duration(&mut durations);
+            let mut peak_rss = samples
+                .iter()
+                .filter_map(|sample| sample.peak_rss_kib)
+                .collect::<Vec<_>>();
+            let minimum_rss = peak_rss.iter().min().copied();
+            let maximum_rss = peak_rss.iter().max().copied();
+            let middle_rss = median_u64(&mut peak_rss);
             report.push_str(&format!(
-                "{},{},{},{:.3},{:.3},{:.3}\n",
+                "{},{},{},{:.3},{:.3},{:.3},{},{},{}\n",
                 tool.name,
                 tool.version.replace(',', "_"),
                 workload.name,
                 middle.as_secs_f64() * 1_000.0,
                 minimum.as_secs_f64() * 1_000.0,
-                maximum.as_secs_f64() * 1_000.0
+                maximum.as_secs_f64() * 1_000.0,
+                middle_rss.map_or_else(String::new, |rss| rss.to_string()),
+                minimum_rss.map_or_else(String::new, |rss| rss.to_string()),
+                maximum_rss.map_or_else(String::new, |rss| rss.to_string())
             ));
+            records.push(Record {
+                tool: tool.name,
+                workload: workload.name,
+                median_ms: middle.as_secs_f64() * 1_000.0,
+                median_peak_rss_kib: middle_rss,
+            });
         }
     }
 
-    if let Some(path) = config.output {
-        fs::write(&path, &report)
+    if let Some(path) = config.output.as_ref() {
+        fs::write(path, &report)
             .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    }
+    if config.validate {
+        validate(&records)?;
+        eprintln!(
+            "validation: normalized runtime ≤ {:.0}% of recorded ratio and ≤ {:.0}% of Ninja; \
+             peak RSS ≤ {:.0}% of Ninja",
+            MAX_RECORDED_RUNTIME_RATIO * 100.0,
+            MAX_NINJA_RUNTIME_RATIO * 100.0,
+            MAX_NINJA_RSS_RATIO * 100.0
+        );
     }
     print!("{report}");
     Ok(())
@@ -457,5 +678,94 @@ fn main() {
     if let Err(error) = run() {
         eprintln!("baseline: {error}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn passing_records() -> Vec<Record> {
+        recorded_baseline()
+            .unwrap()
+            .into_iter()
+            .flat_map(|(workload, baseline)| {
+                let ninja_ms = baseline.ninja_ms;
+                let current_ratio = (baseline.ronin_ms / baseline.ninja_ms / 2.0).min(0.9);
+                [
+                    Record {
+                        tool: "ronin",
+                        workload,
+                        median_ms: ninja_ms * current_ratio,
+                        median_peak_rss_kib: Some(1_000),
+                    },
+                    Record {
+                        tool: "ninja",
+                        workload,
+                        median_ms: ninja_ms,
+                        median_peak_rss_kib: Some(1_000),
+                    },
+                ]
+            })
+            .collect()
+    }
+
+    // [spec:samurai:req:performance.no-unexplained-regression/test]
+    #[test]
+    fn validation_rejects_runtime_and_memory_regressions() {
+        let records = passing_records();
+        assert!(validate(&records).is_ok());
+
+        let mut recorded_regression = passing_records();
+        let workload = recorded_regression
+            .iter()
+            .find(|record| record.tool == "ronin")
+            .unwrap()
+            .workload;
+        let baseline = &recorded_baseline().unwrap()[workload];
+        let ninja = recorded_regression
+            .iter()
+            .find(|candidate| candidate.tool == "ninja" && candidate.workload == workload)
+            .unwrap()
+            .median_ms;
+        recorded_regression
+            .iter_mut()
+            .find(|record| record.tool == "ronin" && record.workload == workload)
+            .unwrap()
+            .median_ms =
+            baseline.ronin_ms / baseline.ninja_ms * MAX_RECORDED_RUNTIME_RATIO * 1.01 * ninja;
+        assert!(validate(&recorded_regression)
+            .unwrap_err()
+            .contains("ratio regressed"));
+
+        let mut ninja_regression = passing_records();
+        let workload = ninja_regression
+            .iter()
+            .find(|record| record.tool == "ronin")
+            .unwrap()
+            .workload;
+        let ninja_ms = ninja_regression
+            .iter()
+            .find(|candidate| candidate.tool == "ninja" && candidate.workload == workload)
+            .unwrap()
+            .median_ms;
+        ninja_regression
+            .iter_mut()
+            .find(|record| record.tool == "ronin" && record.workload == workload)
+            .unwrap()
+            .median_ms = ninja_ms * 1.21;
+        assert!(validate(&ninja_regression)
+            .unwrap_err()
+            .contains("versus Ninja"));
+
+        let mut memory_regression = passing_records();
+        memory_regression
+            .iter_mut()
+            .find(|record| record.tool == "ronin")
+            .unwrap()
+            .median_peak_rss_kib = Some(2_001);
+        assert!(validate(&memory_regression)
+            .unwrap_err()
+            .contains("peak RSS"));
     }
 }

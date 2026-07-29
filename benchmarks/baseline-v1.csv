@@ -1,0 +1,7 @@
+workload,ronin_median_ms,ninja_median_ms
+manifest-command-evaluation,36.954,41.073
+deep-graph-evaluation,287.159,17.432
+wide-noop-build,19.252,28.703
+path-canonicalization,10.413,16.787
+dependency-log-load,4.704,7.299
+scheduler-barrier,48.075,47.900

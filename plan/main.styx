@@ -490,6 +490,20 @@ children (
                         kind @note
                         text "Re-run every recorded baseline after the structural work. Reject unexplained regressions, profile remaining time and allocation hot spots, and create follow-up WBS nodes for measured work rather than speculative micro-optimization. Preserve conformance while tuning."
                     }
+
+                    {
+                        at 2026-07-29T19:03:11.648406159Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T19:11:21.624536942Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Added an executable v2 performance gate over all six recorded workloads. Samples are interleaved across Ronin and pinned Ninja, Linux peak RSS is sampled from /proc, and validation rejects a normalized Ronin/Ninja runtime ratio above 120% of the v1 ratio, runtime above 120% of current Ninja, or peak RSS above 200% of Ninja. A noisy 15-repetition run passed with Ronin at 0.53–0.67x Ninja runtime across all workloads."
+                    }
                 )
             }
 
