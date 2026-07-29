@@ -663,6 +663,14 @@ children (
                         text "The first clean gate run passed format/check/strict Clippy/rustdoc/tests, wave-4 coverage, all 425 Ninja tests, 10 differential cases, persistence round trips, and performance, then falsely rejected nplan's successful `No uncovered rules.` wording. Updated the wrapper to accept both supported zero-uncovered renderings before rerunning the clean candidate."
                         after_done true
                     }
+
+                    {
+                        at 2026-07-29T20:12:46.171512724Z
+                        author "brendan@bbqsrc.net"
+                        kind @errata
+                        text "The follow-up run showed the wrapper file itself still contained doubled regex and sed escapes even though an independently typed expression passed. Corrected every affected expression (zero-uncovered output, stale-rule extraction, requirement lookup, and package exclusion), then executed the exact expressions against current nplan and package output successfully."
+                        after_done true
+                    }
                 )
             }
         )
