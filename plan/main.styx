@@ -401,6 +401,13 @@ children (
                         kind @note
                         text "Evaluate and cache prepared commands only after depfile/dyndep inputs are final, with explicit invalidation when effective inputs or bindings change. Hash incrementally without concatenation, write response files once, stream status and command output through injectable sinks, and preserve Ninja-visible output ordering, verbose, explain, and failure behavior."
                     }
+
+                    {
+                        at 2026-07-29T17:33:52.983671376Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 

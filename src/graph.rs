@@ -1,7 +1,7 @@
 //! Dense graph arenas and dependency operations.
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
-use crate::htab::rapidhashv1;
+use crate::htab::rapidhashv1_parts;
 use crate::os::{osmtime, MTIME_MISSING};
 use crate::util::{BStr, BString, ByteSlice};
 use std::cmp::Reverse;
@@ -578,14 +578,17 @@ pub fn edgehash(graph: &mut Graph, edge: EdgeId, command: &BStr, rspfile_content
     }
     edge.flags |= FLAG_HASH;
     let hash = if let Some(rsp) = rspfile_content.filter(|rsp| !rsp.is_empty()) {
-        let mut bytes = command.as_bytes().to_vec();
-        bytes.extend_from_slice(b";rspfile=");
-        bytes.extend_from_slice(rsp.as_bytes());
-        rapidhashv1(&bytes)
+        rapidhashv1_parts(&[command.as_bytes(), b";rspfile=", rsp.as_bytes()])
     } else {
-        rapidhashv1(command.as_bytes())
+        rapidhashv1_parts(&[command.as_bytes()])
     };
     edge.hash = hash;
+}
+
+pub fn invalidate_edge_hash(graph: &mut Graph, edge: EdgeId) {
+    let edge = graph.edge_mut(edge);
+    edge.flags &= !FLAG_HASH;
+    edge.hash = 0;
 }
 
 // [spec:samurai:def:graph.mkphony-fn]

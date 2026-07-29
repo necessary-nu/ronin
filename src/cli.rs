@@ -182,22 +182,6 @@ fn append_output(output: &mut String, addition: &str) {
     output.push_str(addition);
 }
 
-fn builder_output(builder: &crate::build::Builder<'_>) -> String {
-    let mut output = builder
-        .commands_ran
-        .iter()
-        .map(|command| command.to_str_lossy())
-        .collect::<Vec<_>>()
-        .join("\n");
-    if !builder.command_output.is_empty() {
-        append_output(
-            &mut output,
-            &String::from_utf8_lossy(&builder.command_output),
-        );
-    }
-    output
-}
-
 struct RunInvocation {
     build_options: BuildOptions,
     parse_options: ParseOptions,
@@ -471,7 +455,7 @@ pub fn run(arguments: &[String]) -> Result<String, String> {
         .cloned()
         .map(BString::from)
         .collect::<Vec<_>>();
-    run_bytes(&arguments)
+    run_bytes(&arguments, None, None)
 }
 
 pub fn run_os(arguments: &[OsString]) -> Result<String, String> {
@@ -484,10 +468,18 @@ pub fn run_os(arguments: &[OsString]) -> Result<String, String> {
                 .map_err(|_| "argument is not representable as bytes on this platform".to_owned())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    run_bytes(&arguments)
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    let stderr = std::io::stderr();
+    let mut diagnostics = stderr.lock();
+    run_bytes(&arguments, Some(&mut output), Some(&mut diagnostics))
 }
 
-fn run_bytes(arguments: &[BString]) -> Result<String, String> {
+fn run_bytes(
+    arguments: &[BString],
+    mut build_output: Option<&mut dyn std::io::Write>,
+    mut build_diagnostics: Option<&mut dyn std::io::Write>,
+) -> Result<String, String> {
     let RunAction::Execute(mut invocation) = parse_run_arguments(arguments)? else {
         return Ok(NINJA_COMPAT_VERSION.into());
     };
@@ -553,20 +545,45 @@ fn run_bytes(arguments: &[BString]) -> Result<String, String> {
         let manifest_edge = crate::graph::nodeget(&graph, invocation.manifest.as_bytes())
             .and_then(|node| graph.node(node).gen);
         let manifest_result = if let Some(edge) = manifest_edge {
-            let mut builder = crate::build::Builder::with_logs(
-                &mut graph,
-                invocation.build_options.clone(),
-                &mut build_log,
-                &mut deps_log,
-            );
+            let streaming = build_output.is_some();
+            let mut builder = if let Some(output) = build_output.as_deref_mut() {
+                if let Some(diagnostics) = build_diagnostics.as_deref_mut() {
+                    crate::build::Builder::with_logs_and_sinks(
+                        &mut graph,
+                        invocation.build_options.clone(),
+                        &mut build_log,
+                        &mut deps_log,
+                        output,
+                        diagnostics,
+                    )
+                } else {
+                    crate::build::Builder::with_logs_and_output(
+                        &mut graph,
+                        invocation.build_options.clone(),
+                        &mut build_log,
+                        &mut deps_log,
+                        output,
+                    )
+                }
+            } else {
+                crate::build::Builder::with_logs(
+                    &mut graph,
+                    invocation.build_options.clone(),
+                    &mut build_log,
+                    &mut deps_log,
+                )
+            };
             let result: Result<bool, String> = (|| {
                 builder.add_target(invocation.manifest.as_bytes())?;
                 if builder.already_up_to_date() {
                     return Ok(false);
                 }
-                builder.build()?;
+                let result = builder.build();
                 let rebuilt = builder.ran_edge_without_restat_pruning(edge);
-                append_output(&mut output, &builder_output(&builder));
+                if !streaming {
+                    append_output(&mut output, &String::from_utf8_lossy(&builder.build_output));
+                }
+                result?;
                 Ok(rebuilt)
             })();
             drop(builder);
@@ -597,18 +614,43 @@ fn run_bytes(arguments: &[BString]) -> Result<String, String> {
             invocation.targets.clone()
         };
         let result = {
-            let mut builder = crate::build::Builder::with_logs(
-                &mut graph,
-                invocation.build_options.clone(),
-                &mut build_log,
-                &mut deps_log,
-            );
+            let streaming = build_output.is_some();
+            let mut builder = if let Some(output) = build_output.as_deref_mut() {
+                if let Some(diagnostics) = build_diagnostics.as_deref_mut() {
+                    crate::build::Builder::with_logs_and_sinks(
+                        &mut graph,
+                        invocation.build_options.clone(),
+                        &mut build_log,
+                        &mut deps_log,
+                        output,
+                        diagnostics,
+                    )
+                } else {
+                    crate::build::Builder::with_logs_and_output(
+                        &mut graph,
+                        invocation.build_options.clone(),
+                        &mut build_log,
+                        &mut deps_log,
+                        output,
+                    )
+                }
+            } else {
+                crate::build::Builder::with_logs(
+                    &mut graph,
+                    invocation.build_options.clone(),
+                    &mut build_log,
+                    &mut deps_log,
+                )
+            };
             let result: Result<String, String> = (|| {
                 for target in &selected_targets {
                     builder.add_target(target.as_bytes())?;
                 }
-                builder.build()?;
-                Ok(builder_output(&builder))
+                let result = builder.build();
+                let build_output = (!streaming)
+                    .then(|| String::from_utf8_lossy(&builder.build_output).into_owned());
+                result?;
+                Ok(build_output.unwrap_or_default())
             })();
             result
         };
@@ -773,7 +815,7 @@ mod tests {
             manifest.to_string_lossy().into_owned(),
         ];
         let status = run(&arguments).unwrap();
-        assert!(status.lines().any(|line| line == "true"));
+        assert!(status.lines().any(|line| line.ends_with("true")));
         assert!(status.contains("printf built"));
         assert_eq!(fs::read_to_string(&output).unwrap(), "built");
         fs::remove_dir_all(directory).unwrap();

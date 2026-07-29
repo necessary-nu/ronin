@@ -232,6 +232,8 @@ fn ninja_status_format_elapsed_and_placeholders() {
 fn ninja_build_status_format_eta() {
     let state = BuildState::new(BuildOptions::default());
     assert_eq!(format_progress_status(&state, "[%%/E%E]"), "[%/E?]");
+    assert_eq!(format_progress_status(&state, "[W%W/P%P]"), "[W?/P  0%]");
+    assert_eq!(format_progress_status(&state, "[o%o/c%c]"), "[o0.0/c0.0]");
 }
 
 #[test]
@@ -763,6 +765,135 @@ fn ninja_build_failure_is_reported() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+// [spec:samurai:req:compat.command-runtime/test]
+fn ronin_build_streams_description_status_and_buffered_output_in_order() {
+    let (mut graph, directory) = build_fixture(
+        "streamed-output",
+        "rule emit\n  command = printf child; touch $out\n  description = describe output\nbuild $dir/out: emit\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut output = Vec::new();
+    {
+        let mut builder = Builder::with_output(&mut graph, BuildOptions::default(), &mut output);
+        builder.add_target(&target).unwrap();
+        builder.build().unwrap();
+        assert!(builder.build_output.is_empty());
+        assert!(builder.command_output.is_empty());
+    }
+    assert_eq!(
+        String::from_utf8(output).unwrap(),
+        "[1/1] describe output\nchild"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn ronin_command_cache_recomputes_after_explicit_binding_invalidation() {
+    let (mut graph, directory) = build_fixture(
+        "command-cache-invalidation",
+        "rule emit\n  command = printf $value > $out\nbuild $dir/out: emit\n  value = first\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut builder = Builder::new(&mut graph, BuildOptions::default());
+    builder.add_target(&target).unwrap();
+    let output = nodeget(builder.graph, target.as_bytes()).unwrap();
+    let edge = builder.graph.node(output).gen.unwrap();
+    builder.refresh_command_hash(edge).unwrap();
+    let first_hash = builder.graph.edge(edge).hash;
+    assert!(builder.command_cache[edge.index()]
+        .as_ref()
+        .unwrap()
+        .command
+        .contains_str("first"));
+
+    builder
+        .graph
+        .edge_mut(edge)
+        .bindings
+        .insert("value".into(), BString::from("second"));
+    builder.invalidate_command(edge);
+    builder.refresh_command_hash(edge).unwrap();
+    assert_ne!(builder.graph.edge(edge).hash, first_hash);
+    assert!(builder.command_cache[edge.index()]
+        .as_ref()
+        .unwrap()
+        .command
+        .contains_str("second"));
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn ronin_build_verbose_status_uses_the_expanded_command() {
+    let (mut graph, directory) = build_fixture(
+        "verbose-status",
+        "rule emit\n  command = touch $out\n  description = hidden description\nbuild $dir/out: emit\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut output = Vec::new();
+    {
+        let options = BuildOptions {
+            verbose: true,
+            ..BuildOptions::default()
+        };
+        let mut builder = Builder::with_output(&mut graph, options, &mut output);
+        builder.add_target(&target).unwrap();
+        builder.build().unwrap();
+    }
+    let output = String::from_utf8(output).unwrap();
+    assert!(output.starts_with("[1/1] touch "));
+    assert!(!output.contains("hidden description"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn ronin_build_explain_reports_the_dirty_reason_before_status() {
+    let (mut graph, directory) = build_fixture(
+        "explain-status",
+        "rule emit\n  command = touch $out\n  description = create output\nbuild $dir/out: emit\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut output = Vec::new();
+    {
+        let options = BuildOptions {
+            explain: true,
+            ..BuildOptions::default()
+        };
+        let mut builder = Builder::with_output(&mut graph, options, &mut output);
+        builder.add_target(&target).unwrap();
+        builder.build().unwrap();
+    }
+    let output = String::from_utf8(output).unwrap();
+    let explanation = output.find("ronin explain: output ").unwrap();
+    let status = output.find("[1/1] create output").unwrap();
+    assert!(explanation < status);
+    assert!(output.contains("doesn't exist"), "{output:?}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn ronin_build_prints_failure_context_before_child_output() {
+    let (mut graph, directory) = build_fixture(
+        "failure-output-order",
+        "rule fail\n  command = printf child; false\n  description = failing action\nbuild $dir/out: fail\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut output = Vec::new();
+    {
+        let mut builder = Builder::with_output(&mut graph, BuildOptions::default(), &mut output);
+        builder.add_target(&target).unwrap();
+        assert!(builder.build().is_err());
+    }
+    let output = String::from_utf8(output).unwrap();
+    let status = output.find("[1/1] failing action\n").unwrap();
+    let failure = output.find("FAILED: [code=1]").unwrap();
+    let command = output.find("printf child; false\n").unwrap();
+    let child = output.rfind("child").unwrap();
+    assert!(status < failure && failure < command && command < child);
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn ninja_build_interrupted_command_cleans_only_changed_outputs() {
@@ -1051,6 +1182,7 @@ fn ninja_build_failed_depfile_parse_after_command() {
     fs::write(directory.join("out.d"), "AAA BBB\n").unwrap();
     assert!(builder.build().is_err());
     assert_eq!(builder.commands_ran.len(), 1);
+    assert!(String::from_utf8_lossy(&builder.build_output).contains("FAILED: [code=1]"));
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }
@@ -1067,6 +1199,11 @@ fn ninja_build_gcc_deps_without_depfile_errors_after_command() {
     let error = builder.build().unwrap_err();
     assert!(error.contains("dependency file is missing"));
     assert_eq!(builder.commands_ran, ["true"]);
+    assert!(
+        String::from_utf8_lossy(&builder.build_output).contains("FAILED: [code=1]"),
+        "{:?}",
+        String::from_utf8_lossy(&builder.build_output)
+    );
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }

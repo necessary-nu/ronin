@@ -1,16 +1,13 @@
 use super::*;
+use crate::graph::edgehash;
 use std::process::{Command, Stdio};
 
 pub fn format_progress_status(state: &BuildState, template: &str) -> String {
     let mut output = String::new();
     let mut characters = template.chars();
-    let elapsed = if state.finished == 0 {
-        0.0
-    } else {
-        state.start.elapsed().as_secs_f64()
-    };
+    let elapsed = state.start.elapsed().as_secs_f64();
     let format_duration = |seconds: f64| {
-        let seconds = seconds.max(0.0).round() as u64;
+        let seconds = seconds.max(0.0) as u64;
         let hours = seconds / 3600;
         let minutes = seconds % 3600 / 60;
         let seconds = seconds % 60;
@@ -44,17 +41,37 @@ pub fn format_progress_status(state: &BuildState, template: &str) -> String {
                     100 * state.finished / state.total
                 }
             )),
+            'o' | 'c' => output.push_str(&format!(
+                "{:.1}",
+                if state.finished == 0 {
+                    0.0
+                } else {
+                    state.finished as f64 / elapsed.max(f64::EPSILON)
+                }
+            )),
             'e' => output.push_str(&format!("{elapsed:.3}")),
-            'E' => {
+            'E' | 'W' => {
                 if state.finished == 0 {
                     output.push('?');
                 } else {
                     let remaining = state.total.saturating_sub(state.finished);
                     let estimate = elapsed * remaining as f64 / state.finished as f64;
-                    output.push_str(&format_duration(estimate));
+                    if code == 'E' {
+                        output.push_str(&format!("{estimate:.3}"));
+                    } else {
+                        output.push_str(&format_duration(estimate));
+                    }
                 }
             }
             'w' => output.push_str(&format_duration(elapsed)),
+            'P' => output.push_str(&format!(
+                "{:3}%",
+                if state.total == 0 {
+                    0
+                } else {
+                    100 * state.finished / state.total
+                }
+            )),
             _ => {
                 output.push('%');
                 output.push(code);

@@ -113,6 +113,55 @@ fn accepts_a_non_utf8_manifest_argument() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[test]
+fn streams_failure_context_and_buffered_output_before_the_final_diagnostic() {
+    let directory = test_directory("failure-output");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule fail\n  command = printf child; false\n  description = failing action\nbuild output: fail\ndefault output\n",
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let status = stdout.find("[1/1] failing action\n").unwrap();
+    let failure = stdout.find("FAILED: [code=1] output \n").unwrap();
+    let command = stdout.find("printf child; false\n").unwrap();
+    let child = stdout.rfind("child").unwrap();
+    assert!(status < failure && failure < command && command < child);
+    assert!(String::from_utf8_lossy(&result.stderr).contains("ronin: subcommand failed"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn writes_explanations_to_stderr_and_status_to_stdout() {
+    let directory = test_directory("explain-streams");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule emit\n  command = touch $out\nbuild output: emit\ndefault output\n",
+    )
+    .unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .args(["-d", "explain"])
+        .output()
+        .unwrap();
+    assert!(result.status.success());
+    assert_eq!(
+        String::from_utf8(result.stdout).unwrap(),
+        "[1/1] touch output\n"
+    );
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert!(stderr.starts_with("ronin explain: output output"));
+    assert!(!stderr.contains("[1/1]"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(unix)]
 // [spec:samurai:req:compat.process-integration/test]
 #[test]

@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T17:32:44.08181584Z
+last_sync_at 2026-07-29T18:00:51.421670483Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -72,6 +72,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id performance.reproducible-baseline, version 0}
     )}
+    {id ronin-process-integration, covered_rules (
+        compat.process-integration
+    ), covered_claims (
+        {impl_name target-impl, rule compat.process-integration}
+    ), rule_versions_seen (
+        {id compat.process-integration, version 0}
+    )}
     {id ronin-product-identity, covered_rules (
         compat.ninja-owned-names
         compat.version-reporting
@@ -88,9 +95,9 @@ impl_evidence (
         {id product.no-samuflags, version 0}
         {id product.ronin-identity, version 0}
     )}
-    {id ronin-process-integration, covered_rules (
-        compat.process-integration
+    {id ronin-command-runtime, covered_rules (
+        compat.command-runtime
     ), covered_claims (
-        {impl_name target-impl, rule compat.process-integration}
+        {impl_name target-impl, rule compat.command-runtime}
     )}
 )
