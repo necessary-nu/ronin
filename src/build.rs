@@ -1134,93 +1134,103 @@ impl<'a> Builder<'a> {
         }
     }
 
+    // [spec:samurai:req:compat.scheduling]
     pub fn build(&mut self) -> Result<(), String> {
         self.plan.prepare_queue(self.graph);
         let mut failures = 0;
         let mut last_error = None;
         let failure_limit = self.options.maxfail.max(1);
-        loop {
-            if failures >= failure_limit {
-                break;
-            }
-            let maxjobs =
-                if self.options.maxload > 0.0 && legacy::queryload() > self.options.maxload {
-                    1
-                } else {
-                    self.options.maxjobs.max(1)
-                };
-            let mut batch = Vec::new();
-            while batch.len() < maxjobs && failures < failure_limit {
-                let Some(edge) = self.plan.find_work(self.graph) else {
-                    break;
-                };
-                let is_phony = self
-                    .graph
-                    .edge(edge)
-                    .rule
-                    .is_some_and(|rule| self.graph.rule(rule).name == "phony");
-                if is_phony {
-                    let result = self.run_edge(edge);
-                    if let Err(error) = self.settle_edge(edge, result) {
-                        failures += 1;
-                        last_error = Some(error);
+        let mut running = Vec::new();
+        running.resize_with(self.graph.edge_count(), || None);
+        let mut running_count = 0;
+        let mut console_running = false;
+        let (completion_sender, completion_receiver) = std::sync::mpsc::channel();
+
+        std::thread::scope(|scope| {
+            loop {
+                let maxjobs =
+                    if self.options.maxload > 0.0 && legacy::queryload() > self.options.maxload {
+                        1
+                    } else {
+                        self.options.maxjobs.max(1)
+                    };
+                while !console_running && running_count < maxjobs && failures < failure_limit {
+                    let Some(edge) = self.plan.find_work(self.graph) else {
+                        break;
+                    };
+                    let is_phony = self
+                        .graph
+                        .edge(edge)
+                        .rule
+                        .is_some_and(|rule| self.graph.rule(rule).name == "phony");
+                    if is_phony {
+                        let result = self.run_edge(edge);
+                        if let Err(error) = self.settle_edge(edge, result) {
+                            failures += 1;
+                            last_error = Some(error);
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                let use_console = self
-                    .graph
-                    .edge(edge)
-                    .pool
-                    .is_some_and(|pool| self.graph.pool(pool).name == "console");
-                if use_console && !batch.is_empty() {
-                    self.plan.defer_work(self.graph, edge);
-                    break;
-                }
-                match self.prepare_edge(edge) {
-                    Ok(prepared) => {
-                        batch.push((edge, prepared));
-                        if use_console {
-                            break;
+                    let use_console = self
+                        .graph
+                        .edge(edge)
+                        .pool
+                        .is_some_and(|pool| self.graph.pool(pool).name == "console");
+                    if use_console && running_count != 0 {
+                        self.plan.defer_work(self.graph, edge);
+                        break;
+                    }
+                    match self.prepare_edge(edge) {
+                        Ok(prepared) => {
+                            let command = prepared.command.clone();
+                            let dryrun = self.options.dryrun;
+                            let sender = completion_sender.clone();
+                            running[edge.index()] = Some(prepared);
+                            running_count += 1;
+                            console_running = use_console;
+                            scope.spawn(move || {
+                                let result =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        Self::execute_edge(&command, use_console, dryrun)
+                                    }))
+                                    .unwrap_or_else(|_| Err("subcommand thread panicked".into()));
+                                let _ = sender.send((edge, result));
+                            });
+                            if use_console {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            self.plan
+                                .edge_finished(self.graph, edge, EdgeResult::Failed)?;
+                            failures += 1;
+                            last_error = Some(error);
                         }
                     }
-                    Err(error) => {
-                        self.plan
-                            .edge_finished(self.graph, edge, EdgeResult::Failed)?;
-                        failures += 1;
-                        last_error = Some(error);
-                    }
                 }
-            }
-            if batch.is_empty() {
-                break;
-            }
-            let dryrun = self.options.dryrun;
-            let results = std::thread::scope(|scope| {
-                let handles = batch
-                    .iter()
-                    .map(|(_, prepared)| {
-                        let command = prepared.command.clone();
-                        let use_console = prepared.use_console;
-                        scope.spawn(move || Self::execute_edge(&command, use_console, dryrun))
-                    })
-                    .collect::<Vec<_>>();
-                handles
-                    .into_iter()
-                    .map(|handle| {
-                        handle
-                            .join()
-                            .unwrap_or_else(|_| Err("subcommand thread panicked".into()))
-                    })
-                    .collect::<Vec<_>>()
-            });
-            for ((edge, prepared), result) in batch.into_iter().zip(results) {
+
+                if running_count == 0 {
+                    break;
+                }
+                let (edge, result) = completion_receiver
+                    .recv()
+                    .expect("running command threads retain a completion sender");
+                let prepared = running[edge.index()]
+                    .take()
+                    .expect("completed edges have running preparation state");
+                running_count -= 1;
+                if prepared.use_console {
+                    console_running = false;
+                }
                 let result = self.finish_edge(prepared, result);
                 if let Err(error) = self.settle_edge(edge, result) {
                     failures += 1;
                     last_error = Some(error);
                 }
             }
-        }
+            Ok::<(), String>(())
+        })?;
+
         if let Some(error) = last_error {
             Err(error)
         } else if self.plan.more_to_do() {

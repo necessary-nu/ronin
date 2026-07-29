@@ -1266,6 +1266,30 @@ fn ninja_build_runs_independent_edges_in_parallel() {
 }
 
 #[test]
+// [spec:samurai:req:compat.scheduling/test]
+fn ronin_scheduler_releases_dependents_on_each_completion() {
+    let (mut graph, directory) = build_fixture(
+        "completion-driven",
+        "rule fast\n  command = sleep 0.03; touch $out\nrule slow\n  command = sleep 0.30; touch $out\nrule after\n  command = test ! -e $dir/slow && touch $out\nbuild $dir/fast: fast\nbuild $dir/slow: slow\nbuild $dir/after: after $dir/fast\n",
+    );
+    let after = directory.join("after").to_string_lossy().into_owned();
+    let slow = directory.join("slow").to_string_lossy().into_owned();
+    let options = BuildOptions {
+        maxjobs: 2,
+        ..BuildOptions::default()
+    };
+    let mut builder = Builder::new(&mut graph, options);
+    builder.add_target(&after).unwrap();
+    builder.add_target(&slow).unwrap();
+    builder.build().unwrap();
+    assert_eq!(builder.commands_ran.len(), 3);
+    drop(builder);
+    assert!(directory.join("after").exists());
+    assert!(directory.join("slow").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn ninja_build_pool_depth_serializes_parallel_commands() {
     let (mut graph, directory) = build_fixture(
             "parallel-pool-depth",

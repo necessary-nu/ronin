@@ -351,6 +351,13 @@ children (
                         kind @note
                         text "Replace batch-wide joins with an event loop that handles one completion at a time, releases dependents, and immediately fills newly available capacity. Preserve critical-path ordering, failure limits, restat and dyndep replanning, console exclusivity, pools, dry-run semantics, and load limiting."
                     }
+
+                    {
+                        at 2026-07-29T17:08:18.878932266Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 
