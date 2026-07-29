@@ -37,6 +37,7 @@ fn system_include(path: &str) -> bool {
     path.contains("program files") || path.contains("microsoft visual studio")
 }
 
+#[cfg(test)]
 fn path_parts(path: &str) -> (Option<String>, bool, Vec<String>) {
     let path = path.replace('\\', "/");
     let (drive, path) = if path.as_bytes().get(1) == Some(&b':') {
@@ -60,6 +61,7 @@ fn path_parts(path: &str) -> (Option<String>, bool, Vec<String>) {
     (drive, absolute, parts)
 }
 
+#[cfg(test)]
 fn relative_parts(base: &[String], target: &[String]) -> String {
     let common = base
         .iter()
@@ -76,6 +78,7 @@ fn relative_parts(base: &[String], target: &[String]) -> String {
     }
 }
 
+#[cfg(test)]
 pub fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, String> {
     if path.len() > 260 || relative_to.len() > 260 {
         return Err("path too long".into());
@@ -135,6 +138,7 @@ pub fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, S
     Ok(relative_parts(&base, &target))
 }
 
+#[cfg(test)]
 pub fn escape_for_depfile(path: &str) -> String {
     path.replace(' ', "\\ ")
 }

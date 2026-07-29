@@ -11,7 +11,6 @@ use std::fs;
 
 #[derive(Clone, Default)]
 pub struct Dyndeps {
-    pub used: bool,
     pub restat: bool,
     pub implicit_inputs: Vec<NodeId>,
     pub implicit_outputs: Vec<NodeId>,
@@ -253,7 +252,6 @@ fn parse_build(
     scan!(scanner, scannewline(scanner));
 
     let mut dyndeps = Dyndeps {
-        used: false,
         restat: false,
         implicit_inputs,
         implicit_outputs,

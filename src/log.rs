@@ -1,6 +1,8 @@
 //! Version-7 Ninja build log reader and writer.
 
-use crate::graph::{nodeget, EdgeId, Graph, NodeId};
+#[cfg(test)]
+use crate::graph::NodeId;
+use crate::graph::{nodeget, EdgeId, Graph};
 use crate::util::{BStr, BString, ByteSlice};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
@@ -22,7 +24,7 @@ pub struct LogEntry {
 pub struct BuildLog {
     writer: Option<BufWriter<File>>,
     path: PathBuf,
-    entries: HashMap<BString, LogEntry>,
+    pub(crate) entries: HashMap<BString, LogEntry>,
 }
 
 // [spec:samurai:def:log.nextfield-fn]
@@ -193,6 +195,7 @@ fn record_entry(log: &mut BuildLog, entry: LogEntry) -> io::Result<()> {
 
 // [spec:samurai:def:log.logrecord-fn]
 // [spec:samurai:sem:log.logrecord-fn]
+#[cfg(test)]
 pub fn logrecord(log: &mut BuildLog, graph: &Graph, node: NodeId) -> io::Result<()> {
     let node = graph.node(node);
     record_entry(
@@ -265,6 +268,7 @@ where
     rewrite(log)
 }
 
+#[cfg(test)]
 pub fn logentry(log: &BuildLog, output: impl AsRef<[u8]>) -> Option<&LogEntry> {
     log.entries.get(output.as_ref())
 }

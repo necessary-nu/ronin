@@ -177,6 +177,10 @@ impl MissingDependencyScanner {
         self.nodes_missing_deps_count != 0
     }
 
+    pub fn processed_nodes(&self) -> usize {
+        self.seen.iter().filter(|seen| **seen).count()
+    }
+
     pub fn nodes_missing_dependencies(&self) -> usize {
         self.nodes_missing_deps_count
     }
@@ -198,6 +202,7 @@ impl MissingDependencyScanner {
     }
 }
 
+#[cfg(test)]
 pub fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
     let mut roots = Vec::new();
     let mut has_outputs = false;
@@ -216,6 +221,7 @@ pub fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
     }
 }
 
+#[cfg(test)]
 pub fn process_all_nodes(
     graph: &Graph,
     scanner: &mut MissingDependencyScanner,

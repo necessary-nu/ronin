@@ -426,6 +426,20 @@ children (
                         kind @note
                         text "Remove the duplicate legacy builder, unused scanner/parser path, synchronous subprocess facade, duplicate priority queue, obsolete tree/hash-table compatibility APIs, and duplicated OS adapters only after the live implementation carries their semantic coverage. Connect every Ninja tool mode required by the compatibility matrix; narrow module visibility to the supported Ronin surface."
                     }
+
+                    {
+                        at 2026-07-29T18:04:56.403564322Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T18:50:34.035195865Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Connected the pinned Ninja Linux tool table and staged tool execution, matched CLI help/output/exit channels (with documented Ronin identity and browse exception), removed legacy builder/subprocess/tree/hash-table/OS/priority-queue paths while preserving all 175 port symbols, narrowed the public crate surface, and removed unused graph storage. Verified 334 Rust unit tests, 7 binary integration tests, strict clippy, pinned Ninja CTest, exact differential fixtures, and the release performance harness; Ronin is ahead of Ninja on deep graph, canonicalization, deps-log, and scheduler workloads in the validation run."
+                    }
                 )
             }
 

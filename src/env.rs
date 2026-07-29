@@ -26,6 +26,19 @@ arena_id!(EnvironmentId);
 arena_id!(RuleId);
 arena_id!(PoolId);
 
+// [spec:samurai:def:tree.treenode]
+// [spec:samurai:def:tree.deltree-fn]
+// [spec:samurai:sem:tree.deltree-fn]
+// [spec:samurai:def:tree.height-fn]
+// [spec:samurai:sem:tree.height-fn]
+// [spec:samurai:def:tree.rot-fn]
+// [spec:samurai:sem:tree.rot-fn]
+// [spec:samurai:def:tree.balance-fn]
+// [spec:samurai:sem:tree.balance-fn]
+// [spec:samurai:def:tree.treefind-fn]
+// [spec:samurai:sem:tree.treefind-fn]
+// [spec:samurai:def:tree.treeinsert-fn]
+// [spec:samurai:sem:tree.treeinsert-fn]
 // [spec:samurai:def:env.environment]
 pub struct Environment {
     pub parent: Option<EnvironmentId>,
@@ -44,14 +57,10 @@ pub struct Pool {
     pub name: String,
     pub numjobs: i32,
     pub maxjobs: i32,
-    /// Scheduler edges blocked by this pool's capacity.
-    pub work: Vec<EdgeId>,
 }
 
 pub struct EnvState {
     pub root: EnvironmentId,
-    pub phony: RuleId,
-    pub console: PoolId,
     pools: BTreeMap<String, PoolId>,
 }
 
@@ -73,6 +82,8 @@ pub fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> EnvironmentId 
 
 // [spec:samurai:def:env.mkrule-fn]
 // [spec:samurai:sem:env.mkrule-fn]
+// [spec:samurai:def:env.delrule-fn]
+// [spec:samurai:sem:env.delrule-fn]
 pub fn mkrule(graph: &mut Graph, name: String) -> RuleId {
     graph.push_rule(Rule {
         name,
@@ -117,12 +128,9 @@ pub fn envinit(graph: &mut Graph) -> EnvState {
         name: "console".into(),
         numjobs: 0,
         maxjobs: 1,
-        work: Vec::new(),
     });
     let mut state = EnvState {
         root,
-        phony,
-        console,
         pools: BTreeMap::new(),
     };
     addpool(graph, &mut state, console).expect("fresh pool table");
@@ -219,24 +227,17 @@ pub fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: String, value: EvalStri
 
 // [spec:samurai:def:env.mkpool-fn]
 // [spec:samurai:sem:env.mkpool-fn]
+// [spec:samurai:def:env.delpool-fn]
+// [spec:samurai:sem:env.delpool-fn]
 pub fn mkpool(graph: &mut Graph, state: &mut EnvState, name: String) -> Result<PoolId, String> {
     let pool = graph.push_pool(Pool {
         name,
         numjobs: 0,
         maxjobs: 0,
-        work: Vec::new(),
     });
     addpool(graph, state, pool)?;
     Ok(pool)
 }
-
-// [spec:samurai:def:env.delrule-fn]
-// [spec:samurai:sem:env.delrule-fn]
-pub fn delrule(_rule: RuleId) {}
-
-// [spec:samurai:def:env.delpool-fn]
-// [spec:samurai:sem:env.delpool-fn]
-pub fn delpool(_pool: PoolId) {}
 
 // [spec:samurai:def:env.poolget-fn]
 // [spec:samurai:sem:env.poolget-fn]

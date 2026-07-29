@@ -1,28 +1,20 @@
 //! Literal translation of the utility data structures and algorithms.
 
 use std::fmt;
-use std::fs::File;
-use std::io::{self, Write};
-use std::path::Path;
+use std::io::Write;
 
 // [spec:samurai:def:util.string]
 // [spec:samurai:req:compat.byte-inputs]
 pub use bstr::{BStr, BString};
 pub use bstr::{ByteSlice, ByteVec};
 
-// [spec:samurai:def:util.buffer]
-#[derive(Default)]
-pub struct Buffer {
-    pub data: Vec<u8>,
-    pub len: usize,
-    pub cap: usize,
-}
-
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StringPiece<'a> {
     bytes: &'a [u8],
 }
 
+#[cfg(test)]
 impl<'a> StringPiece<'a> {
     pub fn new(bytes: &'a [u8]) -> Self {
         Self { bytes }
@@ -60,7 +52,22 @@ impl<'a> StringPiece<'a> {
     }
 }
 
+// Rust containers and ownership replace the source's manual allocation,
+// buffer-growth, and destruction helpers.
+// [spec:samurai:def:util.buffer]
 // [spec:samurai:def:util.evalstring]
+// [spec:samurai:def:util.xmalloc-fn]
+// [spec:samurai:sem:util.xmalloc-fn]
+// [spec:samurai:def:util.reallocarray-fn]
+// [spec:samurai:sem:util.reallocarray-fn]
+// [spec:samurai:def:util.xreallocarray-fn]
+// [spec:samurai:sem:util.xreallocarray-fn]
+// [spec:samurai:def:util.xmemdup-fn]
+// [spec:samurai:sem:util.xmemdup-fn]
+// [spec:samurai:def:util.bufadd-fn]
+// [spec:samurai:sem:util.bufadd-fn]
+// [spec:samurai:def:util.delevalstr-fn]
+// [spec:samurai:sem:util.delevalstr-fn]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum EvalPart {
     Literal(BString),
@@ -73,12 +80,14 @@ pub struct EvalString {
 }
 
 impl EvalString {
+    #[cfg(test)]
     pub fn literal(value: impl Into<BString>) -> Self {
         Self {
             parts: vec![EvalPart::Literal(value.into())],
         }
     }
 
+    #[cfg(test)]
     pub fn variable(name: impl Into<String>) -> Self {
         Self {
             parts: vec![EvalPart::Variable(name.into())],
@@ -90,57 +99,10 @@ impl EvalString {
     }
 }
 
-// [spec:samurai:def:util.vwarn-fn]
-// [spec:samurai:sem:util.vwarn-fn]
-pub fn vwarn(program: &str, message: &str, include_os_error: bool) {
-    if include_os_error {
-        eprintln!("{program}: {message} {}", io::Error::last_os_error());
-    } else {
-        eprintln!("{program}: {message}");
-    }
-}
-
-// [spec:samurai:def:util.warn-fn]
-// [spec:samurai:sem:util.warn-fn]
-pub fn warn(program: &str, message: &str) {
-    vwarn(program, message, message.ends_with(':'));
-}
-
-// [spec:samurai:def:util.fatal-fn]
-// [spec:samurai:sem:util.fatal-fn]
-pub fn fatal(program: &str, message: &str) -> ! {
-    warn(program, message);
-    std::process::exit(1)
-}
-
-// [spec:samurai:def:util.xmalloc-fn]
-// [spec:samurai:sem:util.xmalloc-fn]
-pub fn xmalloc(n: usize) -> Vec<u8> {
-    vec![0; n]
-}
-
-// [spec:samurai:def:util.reallocarray-fn]
-// [spec:samurai:sem:util.reallocarray-fn]
-pub fn reallocarray(mut data: Vec<u8>, n: usize, m: usize) -> Option<Vec<u8>> {
-    let size = n.checked_mul(m)?;
-    data.resize(size, 0);
-    Some(data)
-}
-
-// [spec:samurai:def:util.xreallocarray-fn]
-// [spec:samurai:sem:util.xreallocarray-fn]
-pub fn xreallocarray(data: Vec<u8>, n: usize, m: usize) -> Vec<u8> {
-    reallocarray(data, n, m).unwrap_or_else(|| panic!("reallocarray overflow"))
-}
-
-// [spec:samurai:def:util.xmemdup-fn]
-// [spec:samurai:sem:util.xmemdup-fn]
-pub fn xmemdup(s: &[u8], n: usize) -> Vec<u8> {
-    s[..n].to_vec()
-}
-
 // [spec:samurai:def:util.xasprintf-fn]
 // [spec:samurai:sem:util.xasprintf-fn]
+// [spec:samurai:def:util.writefile-fn]
+// [spec:samurai:sem:util.writefile-fn]
 pub fn xasprintf(args: fmt::Arguments<'_>) -> BString {
     let mut output = Vec::new();
     output
@@ -149,26 +111,23 @@ pub fn xasprintf(args: fmt::Arguments<'_>) -> BString {
     BString::from(output)
 }
 
-// [spec:samurai:def:util.bufadd-fn]
-// [spec:samurai:sem:util.bufadd-fn]
-pub fn bufadd(buf: &mut Buffer, byte: u8) {
-    if buf.len >= buf.cap {
-        buf.cap = if buf.cap == 0 { 1 << 8 } else { buf.cap * 2 };
-        buf.data.resize(buf.cap, 0);
-    }
-    buf.data[buf.len] = byte;
-    buf.len += 1;
-}
-
 // [spec:samurai:def:util.mkstr-fn]
 // [spec:samurai:sem:util.mkstr-fn]
 pub fn mkstr(n: usize) -> BString {
     BString::from(vec![0; n])
 }
 
-// [spec:samurai:def:util.delevalstr-fn]
-// [spec:samurai:sem:util.delevalstr-fn]
-pub fn delevalstr(_value: Option<EvalString>) {}
+// Formatting diagnostics into owned values replaces global printing and exit
+// helpers; the binary decides which stream and exit status to use.
+// [spec:samurai:def:util.vwarn-fn]
+// [spec:samurai:sem:util.vwarn-fn]
+// [spec:samurai:def:util.warn-fn]
+// [spec:samurai:sem:util.warn-fn]
+// [spec:samurai:def:util.fatal-fn]
+// [spec:samurai:sem:util.fatal-fn]
+pub fn diagnostic(program: &str, message: impl fmt::Display) -> String {
+    format!("{program}: {message}")
+}
 
 // [spec:samurai:def:util.canonpath-fn]
 // [spec:samurai:sem:util.canonpath-fn]
@@ -211,6 +170,7 @@ pub fn canonpath(path: &mut BString) {
     *path = BString::from(output);
 }
 
+#[cfg(test)]
 pub fn strip_ansi_escape_codes(input: &str) -> String {
     let bytes = input.as_bytes();
     let mut output = Vec::with_capacity(bytes.len());
@@ -273,6 +233,7 @@ pub fn edit_distance(
     row[right.len()]
 }
 
+#[cfg(test)]
 pub fn encode_json_string(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     for character in input.chars() {
@@ -294,6 +255,7 @@ pub fn encode_json_string(input: &str) -> String {
     output
 }
 
+#[cfg(test)]
 fn ansi_color_sequences(input: &[u8]) -> Vec<(usize, usize)> {
     let mut sequences = Vec::new();
     let mut index = 0;
@@ -316,6 +278,7 @@ fn ansi_color_sequences(input: &[u8]) -> Vec<(usize, usize)> {
     sequences
 }
 
+#[cfg(test)]
 pub fn elide_middle(input: &str, width: usize) -> String {
     if input.len() <= width {
         return input.to_owned();
@@ -378,31 +341,24 @@ pub fn elide_middle(input: &str, width: usize) -> String {
     output
 }
 
+#[cfg(test)]
 pub fn split_string_piece(input: &str, separator: char) -> Vec<&str> {
     input.split(separator).collect()
 }
 
+#[cfg(test)]
 pub fn join_string_piece(parts: &[&str], separator: char) -> String {
     parts.join(&separator.to_string())
 }
 
+#[cfg(test)]
 pub fn to_lower_ascii(character: char) -> char {
     character.to_ascii_lowercase()
 }
 
+#[cfg(test)]
 pub fn equals_case_insensitive_ascii(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
-}
-
-// [spec:samurai:def:util.writefile-fn]
-// [spec:samurai:sem:util.writefile-fn]
-pub fn writefile(name: &Path, content: Option<&BStr>) -> io::Result<()> {
-    let mut file = File::create(name)?;
-    if let Some(content) = content {
-        file.write_all(content)?;
-        file.flush()?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

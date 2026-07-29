@@ -16,6 +16,7 @@ fn test_directory(label: &str) -> PathBuf {
 // [spec:samurai:req:product.ronin-identity/test]
 // [spec:samurai:req:product.no-samuflags/test]
 // [spec:samurai:req:compat.version-reporting/test]
+// [spec:samurai:req:compat.cli-and-tools/test]
 // [spec:samurai:sem:samu.main-fn+1/test]
 // [spec:samurai:sem:samu.parseenvargs-fn+1/test]
 #[test]
@@ -73,6 +74,108 @@ fn default_manifest_and_state_files_keep_ninja_names() {
     );
     assert!(directory.join(".ninja_log").exists());
     assert!(directory.join(".ninja_deps").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:samurai:req:compat.cli-and-tools/test]
+#[test]
+fn ninja_compatible_options_tools_streams_and_statuses_are_connected() {
+    let directory = test_directory("cli-tools");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        concat!(
+            "rule cc\n",
+            "  command = printf compiled > $out\n",
+            "  description = compile $out\n",
+            "build object: cc source\n",
+            "build all: phony object\n",
+            "default all\n"
+        ),
+    )
+    .unwrap();
+    fs::write(directory.join("source"), "input").unwrap();
+    let binary = env!("CARGO_BIN_EXE_ronin");
+    let invoke = |arguments: &[&str]| {
+        Command::new(binary)
+            .current_dir(&directory)
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+
+    let tools = invoke(&["-t", "list"]);
+    assert!(tools.status.success());
+    assert!(tools.stderr.is_empty());
+    let tools = String::from_utf8(tools.stdout).unwrap();
+    assert!(tools.starts_with("ronin subtools:\n"));
+    for tool in [
+        "browse",
+        "clean",
+        "commands",
+        "inputs",
+        "multi-inputs",
+        "deps",
+        "missingdeps",
+        "graph",
+        "query",
+        "targets",
+        "compdb",
+        "compdb-targets",
+        "recompact",
+        "restat",
+        "rules",
+        "cleandead",
+    ] {
+        assert!(
+            tools
+                .lines()
+                .any(|line| line.split_whitespace().next() == Some(tool)),
+            "missing tool {tool}"
+        );
+    }
+
+    let help = invoke(&["-t", "commands", "-h"]);
+    assert_eq!(help.status.code(), Some(1));
+    assert!(help.stderr.is_empty());
+    assert!(String::from_utf8_lossy(&help.stdout)
+        .starts_with("usage: ronin -t commands [options] [targets]\n"));
+
+    let unknown = invoke(&["-t", "nope"]);
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(unknown.stdout.is_empty());
+    assert_eq!(
+        unknown.stderr,
+        b"ronin: fatal: unknown tool 'nope', did you mean 'deps'?\n"
+    );
+
+    let dry_run = invoke(&["-n", "-j2", "--status", "[$finished/$total] $description"]);
+    assert!(dry_run.status.success());
+    assert!(dry_run.stderr.is_empty());
+    assert_eq!(dry_run.stdout, b"[1/1] compile object\n");
+
+    let inputs = invoke(&["-t", "inputs", "all"]);
+    assert!(inputs.status.success());
+    assert_eq!(inputs.stdout, b"object\nsource\n");
+    assert!(inputs.stderr.is_empty());
+
+    let compdb = invoke(&["-t", "compdb-targets", "all"]);
+    assert!(compdb.status.success());
+    let compdb = String::from_utf8(compdb.stdout).unwrap();
+    assert!(compdb.contains("\"output\": \"object\""));
+    assert!(compdb.contains("\"file\": \"source\""));
+
+    fs::write(directory.join("object"), "compiled").unwrap();
+    let clean = invoke(&["-t", "clean"]);
+    assert!(clean.status.success());
+    assert_eq!(clean.stdout, b"Cleaning... 1 files.\n");
+    assert!(clean.stderr.is_empty());
+    assert!(!directory.join("object").exists());
+
+    let quiet = invoke(&["-n", "--quiet"]);
+    assert!(quiet.status.success());
+    assert!(quiet.stdout.is_empty());
+    assert!(quiet.stderr.is_empty());
     fs::remove_dir_all(directory).unwrap();
 }
 

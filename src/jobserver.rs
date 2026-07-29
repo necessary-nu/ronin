@@ -44,14 +44,17 @@ impl Slot {
         !matches!(self, Self::Invalid)
     }
 
+    #[cfg(test)]
     pub fn is_implicit(&self) -> bool {
         matches!(self, Self::Implicit)
     }
 
+    #[cfg(test)]
     pub fn is_explicit(&self) -> bool {
         matches!(self, Self::Explicit(_))
     }
 
+    #[cfg(test)]
     pub fn explicit_value(&self) -> Option<u8> {
         match self {
             Self::Explicit(value) => Some(*value),
@@ -121,6 +124,7 @@ pub fn parse_makeflags_value(makeflags: Option<&str>) -> Result<JobserverConfig,
 }
 
 /// Parse MAKEFLAGS and reject transports that cannot work on this platform.
+#[cfg(test)]
 pub fn parse_native_makeflags_value(makeflags: Option<&str>) -> Result<JobserverConfig, String> {
     let config = parse_makeflags_value(makeflags)?;
     match config.mode {
@@ -305,6 +309,7 @@ mod platform {
             }
         }
 
+        #[cfg(test)]
         pub fn jobserver_fd(&self) -> RawFd {
             self.read_fd.as_raw_fd()
         }

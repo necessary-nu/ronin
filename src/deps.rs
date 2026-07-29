@@ -371,6 +371,7 @@ fn depsinit_path(path: PathBuf) -> io::Result<DepsLog> {
 
 // [spec:samurai:def:deps.depsinit-fn]
 // [spec:samurai:sem:deps.depsinit-fn]
+#[cfg(test)]
 pub fn depsinit(builddir: Option<&Path>) -> io::Result<DepsLog> {
     let path = builddir.map_or_else(
         || PathBuf::from(".ninja_deps"),
@@ -667,6 +668,21 @@ pub fn depsload(graph: &mut Graph, edge: EdgeId, log: &DepsLog) {
 
 pub fn depsentry(log: &DepsLog, output: NodeId) -> Option<&Entry> {
     log.entries.get(&output)
+}
+
+pub fn depsnodes(log: &DepsLog) -> impl Iterator<Item = NodeId> + '_ {
+    log.nodes
+        .iter()
+        .copied()
+        .filter(|node| log.entries.get(node).is_some())
+}
+
+pub fn visit_dependencies(log: &DepsLog, mut visit: impl FnMut(NodeId, NodeId)) {
+    for entry in log.entries.values() {
+        for dependency in &entry.deps.nodes {
+            visit(entry.node, *dependency);
+        }
+    }
 }
 
 // [spec:samurai:def:deps.depsrecord-fn]

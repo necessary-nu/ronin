@@ -2,22 +2,15 @@
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::htab::rapidhashv1_parts;
-use crate::os::{osmtime, MTIME_MISSING};
+use crate::os::MTIME_MISSING;
 use crate::util::{BStr, BString, ByteSlice};
-use std::cmp::Reverse;
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
 pub const MTIME_UNKNOWN: i64 = -1;
 
-pub const FLAG_WORK: u32 = 1 << 0;
 pub const FLAG_HASH: u32 = 1 << 1;
-pub const FLAG_DIRTY_IN: u32 = 1 << 3;
-pub const FLAG_DIRTY_OUT: u32 = 1 << 4;
-pub const FLAG_DIRTY: u32 = FLAG_DIRTY_IN | FLAG_DIRTY_OUT;
-pub const FLAG_CYCLE: u32 = 1 << 5;
-pub const FLAG_DEPS: u32 = 1 << 6;
 
 macro_rules! arena_id {
     ($name:ident) => {
@@ -57,7 +50,6 @@ pub struct Node {
 
 // [spec:samurai:def:graph.edge]
 pub struct Edge {
-    pub id: EdgeId,
     pub critical_path_weight: i64,
     pub rule: Option<RuleId>,
     pub pool: Option<PoolId>,
@@ -71,8 +63,6 @@ pub struct Edge {
     pub inimpidx: usize,
     pub inorderidx: usize,
     pub hash: u64,
-    pub nblock: usize,
-    pub nprune: usize,
     pub deps_loaded: bool,
     pub deps_missing: bool,
     pub depfile_deps: usize,
@@ -81,6 +71,22 @@ pub struct Edge {
     pub flags: u32,
 }
 
+// [spec:samurai:def:htab.hashtablekey]
+// [spec:samurai:def:htab.hashtable]
+// [spec:samurai:def:htab.htabkey-fn]
+// [spec:samurai:sem:htab.htabkey-fn]
+// [spec:samurai:def:htab.mkhtab-fn]
+// [spec:samurai:sem:htab.mkhtab-fn]
+// [spec:samurai:def:htab.keyequal-fn]
+// [spec:samurai:sem:htab.keyequal-fn]
+// [spec:samurai:def:htab.keyindex-fn]
+// [spec:samurai:sem:htab.keyindex-fn]
+// [spec:samurai:def:htab.htabput-fn]
+// [spec:samurai:sem:htab.htabput-fn]
+// [spec:samurai:def:htab.htabget-fn]
+// [spec:samurai:sem:htab.htabget-fn]
+// [spec:samurai:def:htab.delhtab-fn]
+// [spec:samurai:sem:htab.delhtab-fn]
 pub struct Graph {
     node_by_path: BTreeMap<Vec<u8>, NodeId>,
     nodes: Vec<Node>,
@@ -141,6 +147,10 @@ impl Graph {
         &mut self.rules[id.index()]
     }
 
+    pub(crate) fn rule_ids(&self) -> impl Iterator<Item = RuleId> + '_ {
+        (0..self.rules.len()).map(RuleId::from_index)
+    }
+
     pub(crate) fn push_rule(&mut self, rule: Rule) -> RuleId {
         let id = RuleId::from_index(self.rules.len());
         self.rules.push(rule);
@@ -162,10 +172,6 @@ impl Graph {
     }
 }
 
-// [spec:samurai:def:graph.delnode-fn]
-// [spec:samurai:sem:graph.delnode-fn]
-pub fn delnode(_node: NodeId) {}
-
 // [spec:samurai:def:graph.graphinit-fn]
 // [spec:samurai:sem:graph.graphinit-fn]
 pub fn graphinit() -> Graph {
@@ -181,6 +187,8 @@ pub fn graphinit() -> Graph {
 
 // [spec:samurai:def:graph.mknode-fn]
 // [spec:samurai:sem:graph.mknode-fn]
+// [spec:samurai:def:graph.delnode-fn]
+// [spec:samurai:sem:graph.delnode-fn]
 pub fn mknode(graph: &mut Graph, path: BString) -> NodeId {
     let key = path.as_bytes().to_vec();
     if let Some(node) = graph.node_by_path.get(&key) {
@@ -213,18 +221,6 @@ pub fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
 
 // [spec:samurai:def:graph.nodestat-fn]
 // [spec:samurai:sem:graph.nodestat-fn]
-pub fn nodestat(graph: &mut Graph, node: NodeId) -> std::io::Result<()> {
-    let mtime = osmtime(
-        graph
-            .node(node)
-            .path
-            .to_path()
-            .expect("byte paths are valid on Unix"),
-    )?;
-    graph.node_mut(node).mtime = mtime;
-    Ok(())
-}
-
 pub fn nodestat_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<()>
 where
     F: FnMut(&Path) -> io::Result<i64>,
@@ -435,6 +431,7 @@ impl DirtyEvaluator {
 
 /// Stat a dependency graph in one iterative pass and update each node's dirty bit.
 // [spec:samurai:req:compat.graph-semantics]
+#[cfg(test)]
 pub fn recompute_dirty_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<bool>
 where
     F: FnMut(&Path) -> io::Result<i64>,
@@ -539,11 +536,12 @@ pub fn nodeuse(graph: &mut Graph, node: NodeId, edge: EdgeId) {
 
 // [spec:samurai:def:graph.mkedge-fn]
 // [spec:samurai:sem:graph.mkedge-fn]
+// [spec:samurai:def:graph.mkphony-fn]
+// [spec:samurai:sem:graph.mkphony-fn]
 pub fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
     let id = EdgeId::from_index(graph.edges.len());
     let environment = crate::env::mkenv(graph, Some(parent));
     graph.edges.push(Edge {
-        id,
         critical_path_weight: -1,
         rule: None,
         pool: None,
@@ -557,8 +555,6 @@ pub fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
         inimpidx: 0,
         inorderidx: 0,
         hash: 0,
-        nblock: 0,
-        nprune: 0,
         deps_loaded: false,
         deps_missing: false,
         depfile_deps: 0,
@@ -589,17 +585,6 @@ pub fn invalidate_edge_hash(graph: &mut Graph, edge: EdgeId) {
     let edge = graph.edge_mut(edge);
     edge.flags &= !FLAG_HASH;
     edge.hash = 0;
-}
-
-// [spec:samurai:def:graph.mkphony-fn]
-// [spec:samurai:sem:graph.mkphony-fn]
-pub fn mkphony(graph: &mut Graph, root: EnvironmentId, phony: RuleId, node: NodeId) -> EdgeId {
-    let edge = mkedge(graph, root);
-    let edge_mut = graph.edge_mut(edge);
-    edge_mut.rule = Some(phony);
-    edge_mut.outimpidx = 1;
-    edge_mut.out.push(node);
-    edge
 }
 
 // [spec:samurai:def:graph.edgeadddeps-fn]
@@ -678,10 +663,6 @@ impl InputsCollector {
         }
     }
 
-    pub fn inputs(&self) -> &[NodeId] {
-        &self.inputs
-    }
-
     pub fn input_strings(&self, graph: &Graph, shell_escape: bool) -> Vec<String> {
         self.inputs
             .iter()
@@ -692,6 +673,7 @@ impl InputsCollector {
             .collect()
     }
 
+    #[cfg(test)]
     pub fn reset(&mut self) {
         self.inputs.clear();
         self.visited_nodes.fill(false);
@@ -744,91 +726,6 @@ impl CommandCollector {
             }
         }
     }
-}
-
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-struct QueuedEdge {
-    weight: i64,
-    edge: Reverse<EdgeId>,
-}
-
-#[derive(Default)]
-pub struct EdgePriorityQueue {
-    pending: Vec<EdgeId>,
-    heap: BinaryHeap<QueuedEdge>,
-}
-
-impl EdgePriorityQueue {
-    pub fn push(&mut self, edge: EdgeId) {
-        self.pending.push(edge);
-    }
-
-    pub fn pop(&mut self, graph: &Graph) -> Option<EdgeId> {
-        self.heap
-            .extend(self.pending.drain(..).map(|edge| QueuedEdge {
-                weight: graph.edge(edge).critical_path_weight,
-                edge: Reverse(edge),
-            }));
-        self.heap.pop().map(|queued| queued.edge.0)
-    }
-}
-
-pub fn verify_dag(graph: &Graph, node: NodeId) -> Result<(), String> {
-    struct Frame {
-        node: NodeId,
-        next_input: usize,
-    }
-
-    let mut state = vec![VisitState::New; graph.nodes.len()];
-    let mut positions = vec![None; graph.nodes.len()];
-    let mut path = vec![node];
-    let mut stack = vec![Frame {
-        node,
-        next_input: 0,
-    }];
-    state[node.index()] = VisitState::Active;
-    positions[node.index()] = Some(0);
-
-    while let Some(frame) = stack.last_mut() {
-        let input = graph
-            .node(frame.node)
-            .gen
-            .and_then(|edge| graph.edge(edge).input.get(frame.next_input))
-            .copied();
-        if let Some(input) = input {
-            frame.next_input += 1;
-            match state[input.index()] {
-                VisitState::Done => {}
-                VisitState::New => {
-                    positions[input.index()] = Some(path.len());
-                    state[input.index()] = VisitState::Active;
-                    path.push(input);
-                    stack.push(Frame {
-                        node: input,
-                        next_input: 0,
-                    });
-                }
-                VisitState::Active => {
-                    let start =
-                        positions[input.index()].expect("active graph nodes have a path position");
-                    let mut paths = path[start..]
-                        .iter()
-                        .map(|node| String::from_utf8_lossy(&graph.node(*node).path).into_owned())
-                        .collect::<Vec<_>>();
-                    paths.push(String::from_utf8_lossy(&graph.node(input).path).into_owned());
-                    return Err(format!("dependency cycle: {}", paths.join(" -> ")));
-                }
-            }
-            continue;
-        }
-
-        let finished = stack.pop().expect("the traversal stack is nonempty").node;
-        path.pop();
-        positions[finished.index()] = None;
-        state[finished.index()] = VisitState::Done;
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1224,60 +1121,6 @@ mod tests {
         let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
         assert_eq!(depfile.as_bytes(), b"y");
         assert_eq!(command.as_bytes(), b"depfile is y");
-    }
-
-    #[test]
-    fn ninja_graph_dependency_cycle() {
-        let graph = parse_graph(
-            "build out: cat mid\nbuild mid: cat in\nbuild in: cat pre\nbuild pre: cat out\n",
-        );
-        assert_eq!(
-            verify_dag(&graph, nodeget(&graph, b"out").unwrap()),
-            Err("dependency cycle: out -> mid -> in -> pre -> out".into())
-        );
-    }
-
-    #[test]
-    fn ninja_graph_cycle_in_multi_output_edge() {
-        let graph = parse_graph("build a b: cat a\n");
-        assert_eq!(
-            verify_dag(&graph, nodeget(&graph, b"b").unwrap()),
-            Err("dependency cycle: a -> a".into())
-        );
-    }
-
-    #[test]
-    fn ninja_graph_edge_queue_priority() {
-        let mut graph =
-            parse_graph("build out1: cat in1\nbuild out2: cat in2\nbuild out3: cat in3\n");
-        let edges = ["out1", "out2", "out3"].map(|output| {
-            graph
-                .node(nodeget(&graph, output.as_bytes()).unwrap())
-                .gen
-                .unwrap()
-        });
-        for (index, edge) in edges.iter().copied().enumerate() {
-            graph.edge_mut(edge).critical_path_weight = index as i64 * 10;
-        }
-        let mut queue = EdgePriorityQueue::default();
-        for edge in edges {
-            queue.push(edge);
-        }
-        assert_eq!(queue.pending.len() + queue.heap.len(), 3);
-        for expected in edges.into_iter().rev() {
-            assert_eq!(queue.pop(&graph).unwrap(), expected);
-        }
-        assert!(queue.pending.is_empty() && queue.heap.is_empty());
-
-        for edge in edges {
-            graph.edge_mut(edge).critical_path_weight = 0;
-        }
-        queue.push(edges[1]);
-        queue.push(edges[2]);
-        queue.push(edges[0]);
-        for expected in edges {
-            assert_eq!(queue.pop(&graph).unwrap(), expected);
-        }
     }
 
     #[test]

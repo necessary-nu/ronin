@@ -1,19 +1,5 @@
 //! Literal translation of `htab.c`'s open-addressed hash table.
 
-// [spec:samurai:def:htab.hashtablekey]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HashTableKey {
-    pub hash: u64,
-    pub bytes: Vec<u8>,
-}
-
-// [spec:samurai:def:htab.hashtable]
-pub struct HashTable<V> {
-    pub len: usize,
-    pub cap: usize,
-    slots: Vec<Option<(HashTableKey, Option<V>)>>,
-}
-
 // [spec:samurai:def:htab.getle32-fn]
 // [spec:samurai:sem:htab.getle32-fn]
 fn getle32(bytes: &[u8]) -> u32 {
@@ -170,98 +156,12 @@ pub fn rapidhashv1_parts(parts: &[&[u8]]) -> u64 {
 
 // [spec:samurai:def:htab.rapidhashv1-fn]
 // [spec:samurai:sem:htab.rapidhashv1-fn]
+#[cfg(test)]
 pub fn rapidhashv1(bytes: &[u8]) -> u64 {
     if bytes.is_empty() {
         0x5a6e_f770_74eb_c84b
     } else {
         rapidhashv1_parts(&[bytes])
-    }
-}
-
-// [spec:samurai:def:htab.htabkey-fn]
-// [spec:samurai:sem:htab.htabkey-fn]
-pub fn htabkey(bytes: &[u8]) -> HashTableKey {
-    HashTableKey {
-        hash: rapidhashv1(bytes),
-        bytes: bytes.to_vec(),
-    }
-}
-
-// [spec:samurai:def:htab.mkhtab-fn]
-// [spec:samurai:sem:htab.mkhtab-fn]
-pub fn mkhtab<V>(cap: usize) -> HashTable<V> {
-    assert!(cap != 0 && cap.is_power_of_two());
-    HashTable {
-        len: 0,
-        cap,
-        slots: std::iter::repeat_with(|| None).take(cap).collect(),
-    }
-}
-
-impl<V> HashTable<V> {
-    // [spec:samurai:def:htab.keyequal-fn]
-    // [spec:samurai:sem:htab.keyequal-fn]
-    fn keyequal(left: &HashTableKey, right: &HashTableKey) -> bool {
-        left.hash == right.hash && left.bytes == right.bytes
-    }
-
-    // [spec:samurai:def:htab.keyindex-fn]
-    // [spec:samurai:sem:htab.keyindex-fn]
-    fn keyindex(&self, key: &HashTableKey) -> usize {
-        let mask = self.cap - 1;
-        let mut index = key.hash as usize & mask;
-        while let Some((stored, _)) = &self.slots[index] {
-            if Self::keyequal(stored, key) {
-                break;
-            }
-            index = (index + 1) & mask;
-        }
-        index
-    }
-
-    fn grow(&mut self) {
-        let old = std::mem::replace(
-            &mut self.slots,
-            std::iter::repeat_with(|| None).take(self.cap * 2).collect(),
-        );
-        self.cap *= 2;
-        for (key, value) in old.into_iter().flatten() {
-            let index = self.keyindex(&key);
-            self.slots[index] = Some((key, value));
-        }
-    }
-
-    // [spec:samurai:def:htab.htabput-fn]
-    // [spec:samurai:sem:htab.htabput-fn]
-    pub fn htabput(&mut self, key: HashTableKey) -> &mut Option<V> {
-        if self.cap / 2 < self.len {
-            self.grow();
-        }
-        let index = self.keyindex(&key);
-        if self.slots[index].is_none() {
-            self.slots[index] = Some((key, None));
-            self.len += 1;
-        }
-        &mut self.slots[index].as_mut().expect("inserted slot").1
-    }
-
-    // [spec:samurai:def:htab.htabget-fn]
-    // [spec:samurai:sem:htab.htabget-fn]
-    pub fn htabget(&self, key: &HashTableKey) -> Option<&V> {
-        let index = self.keyindex(key);
-        self.slots[index]
-            .as_ref()
-            .and_then(|(_, value)| value.as_ref())
-    }
-
-    // [spec:samurai:def:htab.delhtab-fn]
-    // [spec:samurai:sem:htab.delhtab-fn]
-    pub fn delhtab(self, mut delete: impl FnMut(V)) {
-        for (_, value) in self.slots.into_iter().flatten() {
-            if let Some(value) = value {
-                delete(value);
-            }
-        }
     }
 }
 
@@ -287,15 +187,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn keeps_values_through_growth() {
-        let mut table = mkhtab(2);
-        for value in 0..4u8 {
-            let key = htabkey(&[value]);
-            *table.htabput(key) = Some(value);
-        }
-        assert_eq!(table.htabget(&htabkey(&[3])), Some(&3));
     }
 }

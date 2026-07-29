@@ -8,6 +8,10 @@ The current compatibility baseline is the Ninja build language through version
 Ninja tool-mode names. `SAMUFLAGS` is intentionally unsupported; pass options
 on the command line.
 
+The current Unix package recognizes `-t browse` but does not bundle Ninja's
+Python browser helper; invoking it exits with an explicit unsupported-tool
+diagnostic. The remaining Linux subtools are connected.
+
 ## Build and test
 
 ```sh

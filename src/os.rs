@@ -1,25 +1,19 @@
 //! Rust implementation of the POSIX-facing operating-system adapter.
 
-use crate::util::BString;
-use std::ffi::OsString;
 use std::io;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
 use std::time::UNIX_EPOCH;
 
 pub const MTIME_MISSING: i64 = -1;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FileReadStatus {
-    Okay,
-    NotFound,
-    OtherError,
-}
 
 #[derive(Default)]
 pub struct RealDiskInterface;
 
 impl RealDiskInterface {
+    // [spec:samurai:def:os.osmtime-fn]
+    // [spec:samurai:sem:os.osmtime-fn]
+    // [spec:samurai:def:os-posix.osmtime-fn]
+    // [spec:samurai:sem:os-posix.osmtime-fn]
     /// Return a nanosecond timestamp, zero for a missing path, and an error for
     /// failures other than a missing component.
     pub fn stat(&self, path: &Path) -> io::Result<i64> {
@@ -44,19 +38,11 @@ impl RealDiskInterface {
         }
     }
 
-    pub fn write_file(&self, path: &Path, contents: &[u8]) -> io::Result<()> {
-        std::fs::write(path, contents)
-    }
-
-    pub fn make_dir(&self, path: &Path) -> io::Result<()> {
-        match std::fs::create_dir(path) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-            Err(error) => Err(error),
-        }
-    }
-
     /// Create every parent directory needed for a file path.
+    // [spec:samurai:def:os.osmkdirs-fn]
+    // [spec:samurai:sem:os.osmkdirs-fn]
+    // [spec:samurai:def:os-posix.osmkdirs-fn]
+    // [spec:samurai:sem:os-posix.osmkdirs-fn]
     pub fn make_dirs(&self, path: &Path) -> io::Result<()> {
         let directory = path.parent().unwrap_or_else(|| Path::new(""));
         if directory.as_os_str().is_empty() {
@@ -64,93 +50,6 @@ impl RealDiskInterface {
         } else {
             std::fs::create_dir_all(directory)
         }
-    }
-
-    pub fn read_file(&self, path: &Path) -> (FileReadStatus, Vec<u8>, Option<String>) {
-        match std::fs::read(path) {
-            Ok(contents) => (FileReadStatus::Okay, contents, None),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => (
-                FileReadStatus::NotFound,
-                Vec::new(),
-                Some(error.to_string()),
-            ),
-            Err(error) => (
-                FileReadStatus::OtherError,
-                Vec::new(),
-                Some(error.to_string()),
-            ),
-        }
-    }
-
-    /// Remove a file or an empty directory with Ninja's rm -f return values.
-    pub fn remove_file(&self, path: &Path) -> i32 {
-        let result = match std::fs::symlink_metadata(path) {
-            Ok(metadata) if metadata.file_type().is_dir() => std::fs::remove_dir(path),
-            Ok(_) => std::fs::remove_file(path),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return 1,
-            Err(_) => return -1,
-        };
-        match result {
-            Ok(()) => 0,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => 1,
-            Err(_) => -1,
-        }
-    }
-
-    pub fn allow_stat_cache(&mut self, _allow: bool) {}
-}
-
-// [spec:samurai:def:os.osgetcwd-fn]
-// [spec:samurai:sem:os.osgetcwd-fn]
-// [spec:samurai:def:os-posix.osgetcwd-fn]
-// [spec:samurai:sem:os-posix.osgetcwd-fn]
-pub fn osgetcwd() -> io::Result<BString> {
-    let bytes = std::env::current_dir()?
-        .into_os_string()
-        .into_encoded_bytes();
-    Ok(bytes.into())
-}
-
-// [spec:samurai:def:os.oschdir-fn]
-// [spec:samurai:sem:os.oschdir-fn]
-// [spec:samurai:def:os-posix.oschdir-fn]
-// [spec:samurai:sem:os-posix.oschdir-fn]
-pub fn oschdir(dir: &Path) -> io::Result<()> {
-    std::env::set_current_dir(dir)
-}
-
-// [spec:samurai:def:os.osmkdirs-fn]
-// [spec:samurai:sem:os.osmkdirs-fn]
-// [spec:samurai:def:os-posix.osmkdirs-fn]
-// [spec:samurai:sem:os-posix.osmkdirs-fn]
-pub fn osmkdirs(path: &Path, parent: bool) -> io::Result<()> {
-    let directory = if parent {
-        path.parent().unwrap_or_else(|| Path::new(""))
-    } else {
-        path
-    };
-    if directory.as_os_str().is_empty() {
-        Ok(())
-    } else {
-        std::fs::create_dir_all(directory)
-    }
-}
-
-// [spec:samurai:def:os.osmtime-fn]
-// [spec:samurai:sem:os.osmtime-fn]
-// [spec:samurai:def:os-posix.osmtime-fn]
-// [spec:samurai:sem:os-posix.osmtime-fn]
-pub fn osmtime(path: &Path) -> io::Result<i64> {
-    match std::fs::metadata(path) {
-        Ok(metadata) => {
-            let duration = metadata
-                .modified()?
-                .duration_since(UNIX_EPOCH)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-            Ok(duration.as_nanos().try_into().unwrap_or(i64::MAX))
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(MTIME_MISSING),
-        Err(error) => Err(error),
     }
 }
 
@@ -162,25 +61,6 @@ pub fn osnproc() -> i64 {
     std::thread::available_parallelism()
         .map(|count| count.get() as i64)
         .unwrap_or(1)
-}
-
-// [spec:samurai:def:os.osspawn-fn]
-// [spec:samurai:sem:os.osspawn-fn]
-// [spec:samurai:def:os-posix.osspawn-fn]
-// [spec:samurai:sem:os-posix.osspawn-fn]
-pub fn osspawn(argv: &[OsString], capture_output: bool) -> io::Result<Child> {
-    let (program, arguments) = argv
-        .split_first()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty command"))?;
-    let mut command = Command::new(program);
-    command.args(arguments);
-    if capture_output {
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-    }
-    command.spawn()
 }
 
 #[cfg(test)]
@@ -241,15 +121,6 @@ mod tests {
     }
 
     #[test]
-    fn ninja_disk_stat_missing_file_with_cache() {
-        let directory = TempDirectory::new("stat-cache-missing");
-        let mut disk = RealDiskInterface;
-        disk.allow_stat_cache(true);
-        fs::write(directory.join("notadir"), "").unwrap();
-        assert_eq!(disk.stat(&directory.join("notadir/nosuchfile")).unwrap(), 0);
-    }
-
-    #[test]
     fn ninja_disk_stat_bad_path() {
         let directory = TempDirectory::new("stat-bad");
         let disk = RealDiskInterface;
@@ -281,8 +152,8 @@ mod tests {
     fn ninja_disk_stat_existing_directory() {
         let directory = TempDirectory::new("stat-directory");
         let disk = RealDiskInterface;
-        disk.make_dir(&directory.join("subdir")).unwrap();
-        disk.make_dir(&directory.join("subdir/subsubdir")).unwrap();
+        fs::create_dir(directory.join("subdir")).unwrap();
+        fs::create_dir(directory.join("subdir/subsubdir")).unwrap();
         for path in [".", "subdir", "subdir/subsubdir"] {
             assert!(disk.stat(&directory.join(path)).unwrap() > 1);
         }
@@ -301,52 +172,12 @@ mod tests {
     }
 
     #[test]
-    fn ninja_disk_read_file() {
-        let directory = TempDirectory::new("read");
-        let disk = RealDiskInterface;
-        let (status, contents, error) = disk.read_file(&directory.join("foobar"));
-        assert_eq!(status, FileReadStatus::NotFound);
-        assert!(contents.is_empty());
-        assert!(error.is_some());
-
-        let file = directory.join("testfile");
-        let expected = b"test content\nok";
-        disk.write_file(&file, expected).unwrap();
-        let (status, contents, error) = disk.read_file(&file);
-        assert_eq!(status, FileReadStatus::Okay);
-        assert_eq!(contents, expected);
-        assert_eq!(error, None);
-    }
-
-    #[test]
     fn ninja_disk_make_directories() {
         let directory = TempDirectory::new("mkdirs");
         let disk = RealDiskInterface;
         let file = directory.join("path/with/double//slash/a_file");
         disk.make_dirs(&file).unwrap();
-        disk.write_file(&file, b"").unwrap();
+        fs::write(&file, b"").unwrap();
         assert!(file.is_file());
-    }
-
-    #[test]
-    fn ninja_disk_remove_file() {
-        let directory = TempDirectory::new("remove-file");
-        let disk = RealDiskInterface;
-        let file = directory.join("file-to-remove");
-        fs::write(&file, "").unwrap();
-        assert_eq!(disk.remove_file(&file), 0);
-        assert_eq!(disk.remove_file(&file), 1);
-        assert_eq!(disk.remove_file(&directory.join("does not exist")), 1);
-    }
-
-    #[test]
-    fn ninja_disk_remove_directory() {
-        let directory = TempDirectory::new("remove-directory");
-        let disk = RealDiskInterface;
-        let target = directory.join("directory-to-remove");
-        disk.make_dir(&target).unwrap();
-        assert_eq!(disk.remove_file(&target), 0);
-        assert_eq!(disk.remove_file(&target), 1);
-        assert_eq!(disk.remove_file(&directory.join("does not exist")), 1);
     }
 }

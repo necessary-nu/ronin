@@ -8,14 +8,143 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io;
 
+mod compdb;
+mod input;
+mod state;
+#[cfg(test)]
+mod test_support;
+mod urtle;
+
+pub(crate) use urtle::decode as urtle;
+
+pub use compdb::{compdb, compdb_for_targets};
+pub use input::{inputs, multi_inputs};
+pub use state::{deps, missing_deps};
+
 // [spec:samurai:def:tool.tool]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Tool {
+    Browse,
     Clean,
     Commands,
+    Inputs,
+    MultiInputs,
+    Deps,
+    MissingDeps,
     Compdb,
+    CompdbTargets,
     Graph,
     Query,
     Targets,
+    Recompact,
+    Restat,
+    Rules,
+    CleanDead,
+    Urtle,
+    List,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolStage {
+    Flags,
+    Manifest,
+    Logs,
+}
+
+impl Tool {
+    pub fn stage(self) -> ToolStage {
+        match self {
+            Self::List | Self::Restat | Self::Urtle => ToolStage::Flags,
+            Self::Browse
+            | Self::Clean
+            | Self::Commands
+            | Self::Inputs
+            | Self::MultiInputs
+            | Self::Compdb
+            | Self::CompdbTargets
+            | Self::Graph
+            | Self::Targets
+            | Self::Rules => ToolStage::Manifest,
+            Self::Deps | Self::MissingDeps | Self::Query | Self::Recompact | Self::CleanDead => {
+                ToolStage::Logs
+            }
+        }
+    }
+}
+
+const TOOLS: &[(Tool, &str, &str)] = &[
+    (
+        Tool::Browse,
+        "browse",
+        "browse dependency graph in a web browser",
+    ),
+    (Tool::Clean, "clean", "clean built files"),
+    (
+        Tool::Commands,
+        "commands",
+        "list all commands required to rebuild given targets",
+    ),
+    (
+        Tool::Inputs,
+        "inputs",
+        "list all inputs required to rebuild given targets",
+    ),
+    (
+        Tool::MultiInputs,
+        "multi-inputs",
+        "print one or more sets of inputs required to build targets",
+    ),
+    (
+        Tool::Deps,
+        "deps",
+        "show dependencies stored in the deps log",
+    ),
+    (
+        Tool::MissingDeps,
+        "missingdeps",
+        "check deps log dependencies on generated files",
+    ),
+    (Tool::Graph, "graph", "output graphviz dot file for targets"),
+    (Tool::Query, "query", "show inputs/outputs for a path"),
+    (
+        Tool::Targets,
+        "targets",
+        "list targets by their rule or depth in the DAG",
+    ),
+    (
+        Tool::Compdb,
+        "compdb",
+        "dump JSON compilation database to stdout",
+    ),
+    (
+        Tool::CompdbTargets,
+        "compdb-targets",
+        "dump JSON compilation database for a given list of targets to stdout",
+    ),
+    (
+        Tool::Recompact,
+        "recompact",
+        "recompacts ninja-internal data structures",
+    ),
+    (
+        Tool::Restat,
+        "restat",
+        "restats all outputs in the build log",
+    ),
+    (Tool::Rules, "rules", "list all rules"),
+    (
+        Tool::CleanDead,
+        "cleandead",
+        "clean built files that are no longer produced by the manifest",
+    ),
+];
+
+pub fn tool_list() -> String {
+    let mut output = String::from("ronin subtools:\n");
+    for (_, name, description) in TOOLS {
+        let _ = writeln!(output, "{name:>11}  {description}");
+    }
+    output
 }
 
 fn edge_name(graph: &Graph, edge: EdgeId) -> String {
@@ -28,6 +157,7 @@ fn edge_name(graph: &Graph, edge: EdgeId) -> String {
 
 // [spec:samurai:def:tool.cleanpath-fn]
 // [spec:samurai:sem:tool.cleanpath-fn]
+#[cfg(test)]
 pub fn cleanpath(path: Option<&BString>) -> io::Result<bool> {
     cleanpath_mode(path, false)
 }
@@ -48,10 +178,77 @@ fn cleanpath_mode(path: Option<&BString>, dry_run: bool) -> io::Result<bool> {
     }
 }
 
-// [spec:samurai:def:tool.cleanedge-fn]
-// [spec:samurai:sem:tool.cleanedge-fn]
-pub fn cleanedge(graph: &Graph, edge: EdgeId) -> io::Result<usize> {
-    cleanedge_mode(graph, edge, false)
+#[derive(Default)]
+struct Cleaner {
+    dry_run: bool,
+    seen_paths: BTreeSet<BString>,
+    visited_edges: BTreeSet<EdgeId>,
+    removed: Vec<BString>,
+}
+
+impl Cleaner {
+    fn new(dry_run: bool) -> Self {
+        Self {
+            dry_run,
+            ..Self::default()
+        }
+    }
+
+    fn remove(&mut self, path: Option<&BString>) -> io::Result<()> {
+        let Some(path) = path else { return Ok(()) };
+        if self.seen_paths.insert(path.clone()) && cleanpath_mode(Some(path), self.dry_run)? {
+            self.removed.push(path.clone());
+        }
+        Ok(())
+    }
+
+    // [spec:samurai:def:tool.cleanedge-fn]
+    // [spec:samurai:sem:tool.cleanedge-fn]
+    fn clean_edge(&mut self, graph: &Graph, edge: EdgeId) -> io::Result<()> {
+        if !self.visited_edges.insert(edge) {
+            return Ok(());
+        }
+        for output in graph.edge(edge).out.clone() {
+            self.remove(Some(&graph.node(output).path))?;
+        }
+        for output in dyndep_outputs(graph, edge) {
+            self.remove(Some(&output))?;
+        }
+        for variable in ["rspfile", "depfile"] {
+            self.remove(edgevar(graph, edge, variable, false).as_ref())?;
+        }
+        Ok(())
+    }
+
+    // [spec:samurai:def:tool.cleantarget-fn]
+    // [spec:samurai:sem:tool.cleantarget-fn]
+    fn clean_target(&mut self, graph: &Graph, node: NodeId) -> io::Result<()> {
+        let Some(edge) = graph.node(node).gen else {
+            return Ok(());
+        };
+        if !self.visited_edges.insert(edge) {
+            return Ok(());
+        }
+        if edge_name(graph, edge) == "phony" {
+            for input in graph.edge(edge).input.clone() {
+                self.clean_target(graph, input)?;
+            }
+            return Ok(());
+        }
+        for output in graph.edge(edge).out.clone() {
+            self.remove(Some(&graph.node(output).path))?;
+        }
+        for output in dyndep_outputs(graph, edge) {
+            self.remove(Some(&output))?;
+        }
+        for variable in ["rspfile", "depfile"] {
+            self.remove(edgevar(graph, edge, variable, false).as_ref())?;
+        }
+        for input in graph.edge(edge).input.clone() {
+            self.clean_target(graph, input)?;
+        }
+        Ok(())
+    }
 }
 
 fn dyndep_outputs(graph: &Graph, edge: EdgeId) -> Vec<BString> {
@@ -95,54 +292,6 @@ fn dyndep_outputs(graph: &Graph, edge: EdgeId) -> Vec<BString> {
     outputs
 }
 
-fn cleanedge_mode(graph: &Graph, edge: EdgeId, dry_run: bool) -> io::Result<usize> {
-    let outputs = graph.edge(edge).out.clone();
-    let mut removed = 0;
-    for output in outputs {
-        if cleanpath_mode(Some(&graph.node(output).path), dry_run)? {
-            removed += 1;
-        }
-    }
-    for output in dyndep_outputs(graph, edge) {
-        if cleanpath_mode(Some(&output), dry_run)? {
-            removed += 1;
-        }
-    }
-    for variable in ["rspfile", "depfile"] {
-        if cleanpath_mode(edgevar(graph, edge, variable, false).as_ref(), dry_run)? {
-            removed += 1;
-        }
-    }
-    Ok(removed)
-}
-
-// [spec:samurai:def:tool.cleantarget-fn]
-// [spec:samurai:sem:tool.cleantarget-fn]
-pub fn cleantarget(graph: &Graph, node: NodeId) -> io::Result<usize> {
-    cleantarget_mode(graph, node, false)
-}
-
-fn cleantarget_mode(graph: &Graph, node: NodeId, dry_run: bool) -> io::Result<usize> {
-    let Some(edge) = graph.node(node).gen else {
-        return Ok(0);
-    };
-    if edge_name(graph, edge) == "phony" {
-        return graph
-            .edge(edge)
-            .input
-            .clone()
-            .iter()
-            .try_fold(0, |count, input| {
-                Ok(count + cleantarget_mode(graph, *input, dry_run)?)
-            });
-    }
-    let mut removed = cleanedge_mode(graph, edge, dry_run)?;
-    for input in graph.edge(edge).input.clone() {
-        removed += cleantarget_mode(graph, input, dry_run)?;
-    }
-    Ok(removed)
-}
-
 // [spec:samurai:def:tool.clean-fn]
 // [spec:samurai:sem:tool.clean-fn]
 pub fn clean(
@@ -161,41 +310,64 @@ pub fn clean_with_options(
     include_generators: bool,
     dry_run: bool,
 ) -> io::Result<usize> {
+    clean_with_report(graph, targets, rules, include_generators, dry_run)
+        .map(|removed| removed.len())
+}
+
+pub(crate) fn clean_with_report(
+    graph: &Graph,
+    targets: &[String],
+    rules: &[String],
+    include_generators: bool,
+    dry_run: bool,
+) -> io::Result<Vec<BString>> {
+    let mut cleaner = Cleaner::new(dry_run);
     if !rules.is_empty() {
-        return graph
+        for edge in graph
             .edge_ids()
             .into_iter()
             .filter(|edge| rules.iter().any(|rule| rule == &edge_name(graph, *edge)))
-            .try_fold(0, |count, edge| {
-                Ok(count + cleanedge_mode(graph, edge, dry_run)?)
-            });
-    }
-    if !targets.is_empty() {
-        return targets.iter().try_fold(0, |count, target| {
+        {
+            cleaner.clean_edge(graph, edge)?;
+        }
+    } else if !targets.is_empty() {
+        for target in targets {
             let node = nodeget(graph, target.as_bytes())
                 .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, target.clone()))?;
-            Ok(count + cleantarget_mode(graph, node, dry_run)?)
-        });
+            cleaner.clean_target(graph, node)?;
+        }
+    } else {
+        for edge in graph.edge_ids() {
+            if edge_name(graph, edge) == "phony" {
+                continue;
+            }
+            if !include_generators && edgevar(graph, edge, "generator", false).is_some() {
+                continue;
+            }
+            cleaner.clean_edge(graph, edge)?;
+        }
     }
-    graph.edge_ids().into_iter().try_fold(0, |count, edge| {
-        if edge_name(graph, edge) == "phony" {
-            return Ok(count);
-        }
-        if !include_generators && edgevar(graph, edge, "generator", false).is_some() {
-            return Ok(count);
-        }
-        Ok(count + cleanedge_mode(graph, edge, dry_run)?)
-    })
+    Ok(cleaner.removed)
 }
 
-pub fn clean_dead(graph: &Graph, logged_outputs: &[String], dry_run: bool) -> io::Result<usize> {
-    logged_outputs.iter().try_fold(0, |count, output| {
+#[cfg(test)]
+pub fn clean_dead(graph: &Graph, logged_outputs: &[BString], dry_run: bool) -> io::Result<usize> {
+    clean_dead_with_report(graph, logged_outputs, dry_run).map(|removed| removed.len())
+}
+
+pub(crate) fn clean_dead_with_report(
+    graph: &Graph,
+    logged_outputs: &[BString],
+    dry_run: bool,
+) -> io::Result<Vec<BString>> {
+    let mut cleaner = Cleaner::new(dry_run);
+    for output in logged_outputs {
         if nodeget(graph, output.as_bytes()).is_some() {
-            return Ok(count);
+            continue;
         }
-        let path = crate::util::xasprintf(format_args!("{output}"));
-        Ok(count + usize::from(cleanpath_mode(Some(&path), dry_run)?))
-    })
+        cleaner.remove(Some(output))?;
+    }
+    Ok(cleaner.removed)
 }
 
 // [spec:samurai:def:tool.targetcommands-fn]
@@ -220,10 +392,6 @@ fn collect_target_commands(
             output.push(String::from_utf8_lossy(command.as_bytes()).into_owned());
         }
     }
-}
-
-pub fn targetcommands(graph: &Graph, node: NodeId, output: &mut Vec<String>) {
-    collect_target_commands(graph, node, output, &mut BTreeSet::new());
 }
 
 // [spec:samurai:def:tool.commands-fn]
@@ -252,6 +420,47 @@ pub fn commands(graph: &Graph, targets: &[String]) -> Result<Vec<String>, String
     Ok(output)
 }
 
+pub fn commands_with_args(graph: &Graph, arguments: &[String]) -> Result<String, String> {
+    let mut single = false;
+    let mut targets = Vec::new();
+    for argument in arguments {
+        match argument.as_str() {
+            "-s" => single = true,
+            "-h" | "--help" => {
+                return Err(
+                    "usage: ronin -t commands [options] [targets]\n\noptions:\n  -s     only print the final command to build [target], not the whole chain"
+                        .into(),
+                )
+            }
+            option if option.starts_with('-') => {
+                return Err(format!("unknown commands option '{option}'"))
+            }
+            target => targets.push(target.to_owned()),
+        }
+    }
+    if !single {
+        return commands(graph, &targets).map(|commands| commands.join("\n"));
+    }
+    let mut output = Vec::new();
+    let mut seen = BTreeSet::new();
+    for target in targets {
+        let node = nodeget(graph, target.as_bytes())
+            .ok_or_else(|| format!("unknown target '{target}'"))?;
+        let Some(edge) = graph.node(node).gen else {
+            continue;
+        };
+        if !seen.insert(edge) {
+            continue;
+        }
+        if let Some(command) =
+            edgevar(graph, edge, "command", true).filter(|value| !value.is_empty())
+        {
+            output.push(String::from_utf8_lossy(command.as_bytes()).into_owned());
+        }
+    }
+    Ok(output.join("\n"))
+}
+
 // [spec:samurai:def:tool.printquoted-fn]
 // [spec:samurai:sem:tool.printquoted-fn]
 pub fn printquoted(bytes: &[u8], join: bool) -> String {
@@ -269,48 +478,6 @@ pub fn printquoted(bytes: &[u8], join: bool) -> String {
         }
     }
     output
-}
-
-// [spec:samurai:def:tool.compdb-fn]
-// [spec:samurai:sem:tool.compdb-fn]
-pub fn compdb(graph: &Graph, rules: &[String], expand_rsp: bool) -> String {
-    let directory = std::env::current_dir()
-        .unwrap_or_default()
-        .into_os_string()
-        .into_encoded_bytes();
-    let mut entries = Vec::new();
-    for edge in graph.edge_ids() {
-        let edge_ref = graph.edge(edge);
-        if edge_ref.input.is_empty()
-            || (!rules.is_empty() && !rules.iter().any(|rule| rule == &edge_name(graph, edge)))
-        {
-            continue;
-        }
-        let command = edgevar(graph, edge, "command", true)
-            .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
-            .unwrap_or_default();
-        let command = if expand_rsp {
-            let rspfile = edgevar(graph, edge, "rspfile", true)
-                .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned());
-            let content = edgevar(graph, edge, "rspfile_content", true)
-                .map(|value| String::from_utf8_lossy(value.as_bytes()).replace(['\r', '\n'], " "))
-                .unwrap_or_default();
-            rspfile.map_or(command.clone(), |rspfile| {
-                command.replace(&format!("@{rspfile}"), &content)
-            })
-        } else {
-            command
-        };
-        let command = printquoted(command.as_bytes(), false);
-        entries.push(format!(
-            "{{\"directory\":\"{}\",\"command\":\"{}\",\"file\":\"{}\",\"output\":\"{}\"}}",
-            printquoted(&directory, false),
-            command,
-            printquoted(graph.node(edge_ref.input[0]).path.as_bytes(), false),
-            printquoted(graph.node(edge_ref.out[0]).path.as_bytes(), false),
-        ));
-    }
-    format!("[{}]", entries.join(","))
 }
 
 // [spec:samurai:def:tool.graphnode-fn]
@@ -341,7 +508,7 @@ fn graphnode_inner(
     if edge_borrow.input.len() == 1 && edge_borrow.out.len() == 1 {
         let _ = writeln!(
             output,
-            "\"n{}\" -> \"n{}\" [label=\"{}\"]",
+            "\"n{}\" -> \"n{}\" [label=\" {}\"]",
             edge_borrow.input[0].index(),
             edge_borrow.out[0].index(),
             edge_name(graph, edge)
@@ -378,10 +545,6 @@ fn graphnode_inner(
     }
 }
 
-pub fn graphnode(graph: &Graph, node: NodeId, output: &mut String) {
-    graphnode_inner(graph, node, output, &mut BTreeSet::new());
-}
-
 // [spec:samurai:def:tool.graph-fn]
 // [spec:samurai:sem:tool.graph-fn]
 pub fn graph(graph: &Graph, targets: &[String]) -> Result<String, String> {
@@ -397,6 +560,8 @@ pub fn graph(graph: &Graph, targets: &[String]) -> Result<String, String> {
             .collect::<Result<Vec<_>, _>>()?
     };
     let mut output = "digraph ninja {\nrankdir=\"LR\"\n".to_owned();
+    output.push_str("node [fontsize=10, shape=box, height=0.25]\n");
+    output.push_str("edge [fontsize=10]\n");
     let mut visited = BTreeSet::new();
     for node in nodes {
         graphnode_inner(graph, node, &mut output, &mut visited);
@@ -419,13 +584,30 @@ pub fn query(graph: &Graph, targets: &[String]) -> Result<String, String> {
         let _ = writeln!(output, "{}:", target);
         if let Some(edge) = node_borrow.gen {
             let _ = writeln!(output, "  input: {}", edge_name(graph, edge));
-            for input in &graph.edge(edge).input {
+            for (index, input) in graph.edge(edge).input.iter().enumerate() {
                 let input = graph.node(*input);
+                let label = if index >= graph.edge(edge).inorderidx {
+                    "|| "
+                } else if index >= graph.edge(edge).inimpidx {
+                    "| "
+                } else {
+                    ""
+                };
                 let _ = writeln!(
                     output,
-                    "    {}",
+                    "    {label}{}",
                     String::from_utf8_lossy(input.path.as_bytes())
                 );
+            }
+            if !graph.edge(edge).validation.is_empty() {
+                output.push_str("  validations:\n");
+                for validation in &graph.edge(edge).validation {
+                    let _ = writeln!(
+                        output,
+                        "    {}",
+                        String::from_utf8_lossy(graph.node(*validation).path.as_bytes())
+                    );
+                }
             }
         }
         output.push_str("  outputs:\n");
@@ -433,6 +615,15 @@ pub fn query(graph: &Graph, targets: &[String]) -> Result<String, String> {
             for output_node in &graph.edge(*edge).out {
                 let path = &graph.node(*output_node).path;
                 let _ = writeln!(output, "    {}", String::from_utf8_lossy(path.as_bytes()));
+            }
+        }
+        if !node_borrow.validation_uses.is_empty() {
+            output.push_str("  validation for:\n");
+            for edge in &node_borrow.validation_uses {
+                for output_node in &graph.edge(*edge).out {
+                    let path = &graph.node(*output_node).path;
+                    let _ = writeln!(output, "    {}", String::from_utf8_lossy(path.as_bytes()));
+                }
             }
         }
     }
@@ -474,18 +665,6 @@ pub fn targetsusage() -> &'static str {
 
 // [spec:samurai:def:tool.targets-fn]
 // [spec:samurai:sem:tool.targets-fn]
-pub fn targets(graph: &Graph, depth: usize) -> String {
-    let mut output = String::new();
-    for node in graph
-        .nodes()
-        .into_iter()
-        .filter(|node| graph.node(*node).uses.is_empty())
-    {
-        targetsdepth(graph, node, depth, 0, &mut output);
-    }
-    output
-}
-
 pub fn targets_with_args(graph: &Graph, args: &[String]) -> Result<String, String> {
     if args.len() > 2 {
         return Err(targetsusage().into());
@@ -558,6 +737,48 @@ pub fn targets_with_args(graph: &Graph, args: &[String]) -> Result<String, Strin
     }
 }
 
+pub fn rules(graph: &Graph, arguments: &[String]) -> Result<String, String> {
+    let mut descriptions = false;
+    for argument in arguments {
+        match argument.as_str() {
+            "-d" => descriptions = true,
+            "-h" | "--help" => {
+                return Err(
+                    "usage: ronin -t rules [options]\n\noptions:\n  -d     also print the description of the rule\n  -h     print this message"
+                        .into(),
+                )
+            }
+            option => return Err(format!("unknown rules option '{option}'")),
+        }
+    }
+    let mut rules = graph
+        .rule_ids()
+        .map(|rule| (graph.rule(rule).name.clone(), rule))
+        .collect::<Vec<_>>();
+    rules.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut output = String::new();
+    for (name, rule) in rules {
+        output.push_str(&name);
+        if descriptions {
+            if let Some(description) = graph.rule(rule).bindings.get("description") {
+                output.push_str(": ");
+                for part in &description.parts {
+                    match part {
+                        crate::util::EvalPart::Literal(value) => {
+                            output.push_str(&String::from_utf8_lossy(value.as_bytes()));
+                        }
+                        crate::util::EvalPart::Variable(name) => {
+                            let _ = write!(output, "${{{name}}}");
+                        }
+                    }
+                }
+            }
+        }
+        output.push('\n');
+    }
+    Ok(output)
+}
+
 // [spec:samurai:def:tool.tool.run-fn]
 // [spec:samurai:sem:tool.tool.run-fn]
 pub fn run(tool: Tool, graph: &Graph, args: &[String]) -> Result<String, String> {
@@ -565,26 +786,55 @@ pub fn run(tool: Tool, graph: &Graph, args: &[String]) -> Result<String, String>
         Tool::Clean => clean(graph, args, &[], false)
             .map(|removed| removed.to_string())
             .map_err(|error| error.to_string()),
-        Tool::Commands => commands(graph, args).map(|lines| lines.join("\n")),
+        Tool::Commands => commands_with_args(graph, args),
         Tool::Compdb => Ok(compdb(graph, args, false)),
+        Tool::CompdbTargets => compdb_for_targets(graph, args, false),
         Tool::Graph => self::graph(graph, args),
         Tool::Query => query(graph, args),
         Tool::Targets => targets_with_args(graph, args),
+        Tool::Rules => rules(graph, args),
+        Tool::Inputs => inputs(graph, args),
+        Tool::MultiInputs => multi_inputs(graph, args),
+        Tool::List => Ok(tool_list()),
+        Tool::Browse => Err("browse tool not supported on this platform".into()),
+        Tool::Deps
+        | Tool::MissingDeps
+        | Tool::Recompact
+        | Tool::Restat
+        | Tool::CleanDead
+        | Tool::Urtle => Err("tool requires runtime state".into()),
     }
 }
 
 // [spec:samurai:def:tool.toolget-fn]
 // [spec:samurai:sem:tool.toolget-fn]
 pub fn toolget(name: &str) -> Result<Tool, String> {
-    match name {
-        "clean" => Ok(Tool::Clean),
-        "commands" => Ok(Tool::Commands),
-        "compdb" => Ok(Tool::Compdb),
-        "graph" => Ok(Tool::Graph),
-        "query" => Ok(Tool::Query),
-        "targets" => Ok(Tool::Targets),
-        _ => Err(format!("unknown tool '{name}'")),
+    if name == "list" {
+        return Ok(Tool::List);
     }
+    if name == "urtle" {
+        return Ok(Tool::Urtle);
+    }
+    if let Some(tool) = TOOLS
+        .iter()
+        .find_map(|(tool, candidate, _)| (*candidate == name).then_some(*tool))
+    {
+        return Ok(tool);
+    }
+    let suggestion = TOOLS
+        .iter()
+        .map(|(_, candidate, _)| *candidate)
+        .chain(std::iter::once("urtle"))
+        .filter_map(|candidate| {
+            let distance = crate::util::edit_distance(candidate, name, true, Some(3));
+            (distance <= 3).then_some((distance, candidate))
+        })
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, candidate)| candidate);
+    Err(suggestion.map_or_else(
+        || format!("fatal: unknown tool '{name}'"),
+        |suggestion| format!("fatal: unknown tool '{name}', did you mean '{suggestion}'?"),
+    ))
 }
 
 #[cfg(test)]
@@ -827,8 +1077,8 @@ mod tests {
             ),
         );
         let logged = [
-            output1.to_string_lossy().into_owned(),
-            output2.to_string_lossy().into_owned(),
+            BString::from(output1.to_string_lossy().as_bytes()),
+            BString::from(output2.to_string_lossy().as_bytes()),
         ];
         assert_eq!(clean_dead(&graph, &logged, false).unwrap(), 1);
         assert!(!output1.exists() && output2.exists());
@@ -867,7 +1117,7 @@ mod tests {
         assert!(!expanded.contains(&format!("@{}.rsp", output.display())));
         assert!(expanded.contains("-DVALUE"));
         assert!(expanded.contains(&input.to_string_lossy().into_owned()));
-        assert_eq!(compdb(&graph, &["other".into()], false), "[]");
+        assert_eq!(compdb(&graph, &["other".into()], false), "[]\n");
     }
 
     #[test]

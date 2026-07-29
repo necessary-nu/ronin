@@ -1,3 +1,5 @@
+use std::io::Write;
+
 fn main() {
     // [spec:samurai:req:compat.process-integration]
     if let Err(error) = ronin::subprocess::install_signal_handlers() {
@@ -8,9 +10,15 @@ fn main() {
     // [spec:samurai:req:product.ronin-identity]
     // [spec:samurai:req:product.no-samuflags]
     match ronin::cli::run_os(&arguments) {
-        Ok(output) => {
-            if !output.is_empty() {
-                println!("{output}");
+        Ok(result) => {
+            if !result.stdout.is_empty() {
+                let _ = std::io::stdout().lock().write_all(&result.stdout);
+            }
+            if !result.stderr.is_empty() {
+                let _ = std::io::stderr().lock().write_all(&result.stderr);
+            }
+            if result.exit_code != 0 {
+                std::process::exit(result.exit_code);
             }
         }
         Err(error) => {

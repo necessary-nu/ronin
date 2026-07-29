@@ -1,4 +1,4 @@
-use super::{legacy, Builder};
+use super::{status, Builder};
 use crate::graph::{edgehash, invalidate_edge_hash, EdgeId, Graph};
 use crate::util::{BString, ByteSlice};
 use std::fs;
@@ -182,14 +182,28 @@ impl<'a> Builder<'a> {
 
     fn emit_status(&mut self, edge: EdgeId, command: &CommandSpec) -> Result<(), String> {
         self.emit_explanations(edge)?;
+        if self.options.quiet {
+            return Ok(());
+        }
         let description = if self.options.verbose || command.description.is_empty() {
             command.command.as_bytes()
         } else {
             command.description.as_bytes()
         };
         let mut line =
-            legacy::format_progress_status(&self.progress, &self.options.statusfmt).into_bytes();
-        line.extend_from_slice(description);
+            status::format_progress_status(&self.progress, &self.options.statusfmt).into_bytes();
+        if self.options.status_from_cli {
+            let mut rendered = Vec::with_capacity(line.len() + description.len());
+            for (index, part) in line.split(|byte| *byte == 0x1f).enumerate() {
+                if index != 0 {
+                    rendered.extend_from_slice(description);
+                }
+                rendered.extend_from_slice(part);
+            }
+            line = rendered;
+        } else {
+            line.extend_from_slice(description);
+        }
         line.push(b'\n');
         self.emit(&line)
     }

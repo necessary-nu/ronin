@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T18:00:51.421670483Z
+last_sync_at 2026-07-29T18:51:11.514899156Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -43,6 +43,13 @@ impl_evidence (
         {impl_name target-impl, rule compat.manifest-semantics}
     ), rule_versions_seen (
         {id compat.manifest-semantics, version 0}
+    )}
+    {id ronin-command-runtime, covered_rules (
+        compat.command-runtime
+    ), covered_claims (
+        {impl_name target-impl, rule compat.command-runtime}
+    ), rule_versions_seen (
+        {id compat.command-runtime, version 0}
     )}
     {id ronin-dependency-io, covered_rules (
         compat.persistent-state
@@ -95,9 +102,9 @@ impl_evidence (
         {id product.no-samuflags, version 0}
         {id product.ronin-identity, version 0}
     )}
-    {id ronin-command-runtime, covered_rules (
-        compat.command-runtime
+    {id ronin-runtime-consolidation, covered_rules (
+        compat.cli-and-tools
     ), covered_claims (
-        {impl_name target-impl, rule compat.command-runtime}
+        {impl_name target-impl, rule compat.cli-and-tools}
     )}
 )

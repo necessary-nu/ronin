@@ -2,9 +2,9 @@
 
 use crate::graph::{
     edgeadddeps, nodeget, nodestat_with, recompute_dirty_with_validations,
-    recompute_edge_dirty_with, EdgeId, Graph, NodeId, FLAG_DIRTY, FLAG_DIRTY_OUT, FLAG_WORK,
+    recompute_edge_dirty_with, EdgeId, Graph, NodeId,
 };
-use crate::os::{osmkdirs, RealDiskInterface, MTIME_MISSING};
+use crate::os::{RealDiskInterface, MTIME_MISSING};
 use crate::subprocess::{status_interrupted, ProcessOutput, ProcessSupervisor};
 use crate::util::{BString, ByteSlice};
 use std::cmp::Reverse;
@@ -23,10 +23,13 @@ pub struct BuildOptions {
     pub maxfail: usize,
     pub verbose: bool,
     pub explain: bool,
+    pub stats: bool,
     pub keepdepfile: bool,
     pub keeprsp: bool,
     pub dryrun: bool,
+    pub quiet: bool,
     pub statusfmt: String,
+    pub status_from_cli: bool,
     pub maxload: f64,
     pub jobserver: crate::jobserver::JobserverConfig,
 }
@@ -38,27 +41,20 @@ impl Default for BuildOptions {
             maxfail: 1,
             verbose: false,
             explain: false,
+            stats: false,
             keepdepfile: false,
             keeprsp: false,
             dryrun: false,
+            quiet: false,
             statusfmt: "[%f/%t] ".into(),
+            status_from_cli: false,
             maxload: 0.0,
             jobserver: crate::jobserver::JobserverConfig::default(),
         }
     }
 }
 
-// [spec:samurai:def:build.job]
-pub struct Job {
-    pub command: BString,
-    pub edge: EdgeId,
-    pub output: Vec<u8>,
-    pub failed: bool,
-}
-
 pub struct BuildState {
-    pub options: BuildOptions,
-    pub work: Vec<EdgeId>,
     pub started: usize,
     pub finished: usize,
     pub total: usize,
@@ -66,10 +62,8 @@ pub struct BuildState {
 }
 
 impl BuildState {
-    pub fn new(options: BuildOptions) -> Self {
+    pub fn new(_options: BuildOptions) -> Self {
         Self {
-            options,
-            work: Vec::new(),
             started: 0,
             finished: 0,
             total: 0,
@@ -124,17 +118,36 @@ impl Plan {
         self.completed.resize(edge_count, false);
     }
 
+    // [spec:samurai:def:build.buildreset-fn]
+    // [spec:samurai:sem:build.buildreset-fn]
+    // [spec:samurai:def:build.isnewer-fn]
+    // [spec:samurai:sem:build.isnewer-fn]
+    // [spec:samurai:def:build.isdirty-fn]
+    // [spec:samurai:sem:build.isdirty-fn]
+    // [spec:samurai:def:build.queue-fn]
+    // [spec:samurai:sem:build.queue-fn]
+    // [spec:samurai:def:build.buildadd-fn]
+    // [spec:samurai:sem:build.buildadd-fn]
     pub fn add_target(&mut self, graph: &mut Graph, node: NodeId) -> Result<(), String> {
         self.synchronize_arenas(graph.edge_count());
         self.add_node(graph, node, 1)
     }
 
     fn add_node(&mut self, graph: &mut Graph, node: NodeId, weight: i64) -> Result<(), String> {
-        let mut work = vec![(node, weight)];
-        while let Some((node, weight)) = work.pop() {
+        let mut work = vec![(node, weight, None)];
+        while let Some((node, weight, needed_by)) = work.pop() {
             let Some(edge) = graph.node(node).gen else {
                 if graph.node(node).dirty {
-                    return Err("file is missing and has no generating edge".into());
+                    let path = graph.node(node).path.to_str_lossy();
+                    return Err(needed_by.map_or_else(
+                        || format!("'{path}' missing and no known rule to make it"),
+                        |needed_by| {
+                            format!(
+                                "'{path}', needed by '{}', missing and no known rule to make it",
+                                graph.node(needed_by).path.to_str_lossy()
+                            )
+                        },
+                    ));
                 }
                 continue;
             };
@@ -172,6 +185,7 @@ impl Plan {
             }
 
             let edge = graph.edge(edge);
+            let needed_by = edge.out.first().copied();
             let depfile_start = edge.inorderidx.saturating_sub(edge.depfile_deps);
             let depfile_end = edge.inorderidx;
             for index in (0..edge.input.len()).rev() {
@@ -180,7 +194,7 @@ impl Plan {
                     && index < depfile_end
                     && graph.node(input).gen.is_none())
                 {
-                    work.push((input, weight + 1));
+                    work.push((input, weight + 1, needed_by));
                 }
             }
         }
@@ -362,6 +376,7 @@ impl Plan {
     }
 }
 
+// [spec:samurai:def:build.job]
 pub struct Builder<'a> {
     graph: &'a mut Graph,
     options: BuildOptions,
@@ -416,10 +431,12 @@ impl<'a> Builder<'a> {
         }
     }
 
+    #[cfg(test)]
     pub fn new(graph: &'a mut Graph, options: BuildOptions) -> Self {
         Self::from_parts(graph, options, None, None, None, None)
     }
 
+    #[cfg(test)]
     pub fn with_output(
         graph: &'a mut Graph,
         options: BuildOptions,
@@ -428,6 +445,7 @@ impl<'a> Builder<'a> {
         Self::from_parts(graph, options, None, None, Some(output), None)
     }
 
+    #[cfg(test)]
     pub fn with_build_log(
         graph: &'a mut Graph,
         options: BuildOptions,
@@ -436,6 +454,7 @@ impl<'a> Builder<'a> {
         Self::from_parts(graph, options, Some(build_log), None, None, None)
     }
 
+    #[cfg(test)]
     pub fn with_deps_log(
         graph: &'a mut Graph,
         options: BuildOptions,
@@ -766,7 +785,8 @@ impl<'a> Builder<'a> {
 
         for output in &self.graph.edge(edge).out {
             let path = self.graph.node(*output).path.clone();
-            osmkdirs(path.to_path().expect("byte paths are valid on Unix"), true)
+            RealDiskInterface
+                .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
                 .map_err(|error| error.to_string())?;
         }
 
@@ -775,14 +795,14 @@ impl<'a> Builder<'a> {
             remove_on_drop: !self.options.keeprsp,
         });
         if let Some(response_file) = &response_file {
-            osmkdirs(
-                response_file
-                    .path
-                    .to_path()
-                    .expect("byte paths are valid on Unix"),
-                true,
-            )
-            .map_err(|error| error.to_string())?;
+            RealDiskInterface
+                .make_dirs(
+                    response_file
+                        .path
+                        .to_path()
+                        .expect("byte paths are valid on Unix"),
+                )
+                .map_err(|error| error.to_string())?;
             fs::write(
                 response_file
                     .path
@@ -816,6 +836,14 @@ impl<'a> Builder<'a> {
         })
     }
 
+    // [spec:samurai:def:build.nodedone-fn]
+    // [spec:samurai:sem:build.nodedone-fn]
+    // [spec:samurai:def:build.shouldprune-fn]
+    // [spec:samurai:sem:build.shouldprune-fn]
+    // [spec:samurai:def:build.edgedone-fn]
+    // [spec:samurai:sem:build.edgedone-fn]
+    // [spec:samurai:def:build.jobdone-fn]
+    // [spec:samurai:sem:build.jobdone-fn]
     fn finish_edge(
         &mut self,
         prepared: PreparedEdge,
@@ -1145,7 +1173,21 @@ impl<'a> Builder<'a> {
 
     // [spec:samurai:req:compat.scheduling]
     // [spec:samurai:req:compat.process-integration]
+    // [spec:samurai:def:build.catchsig-fn]
+    // [spec:samurai:sem:build.catchsig-fn]
+    // [spec:samurai:def:build.build-fn]
+    // [spec:samurai:sem:build.build-fn]
     // [spec:samurai:req:compat.command-runtime]
+    // [spec:samurai:def:build.formatstatus-fn]
+    // [spec:samurai:sem:build.formatstatus-fn]
+    // [spec:samurai:def:build.printstatus-fn]
+    // [spec:samurai:sem:build.printstatus-fn]
+    // [spec:samurai:def:build.jobstart-fn]
+    // [spec:samurai:sem:build.jobstart-fn]
+    // [spec:samurai:def:build.jobwork-fn]
+    // [spec:samurai:sem:build.jobwork-fn]
+    // [spec:samurai:def:build.queryload-fn]
+    // [spec:samurai:sem:build.queryload-fn]
     pub fn build(&mut self) -> Result<(), String> {
         self.plan.prepare_queue(self.graph);
         self.progress.started = 0;
@@ -1177,7 +1219,7 @@ impl<'a> Builder<'a> {
                 }
                 let mut waiting_for_jobserver = false;
                 let maxjobs =
-                    if self.options.maxload > 0.0 && legacy::queryload() > self.options.maxload {
+                    if self.options.maxload > 0.0 && status::queryload() > self.options.maxload {
                         1
                     } else {
                         self.options.maxjobs.max(1)
@@ -1293,182 +1335,10 @@ impl<'a> Builder<'a> {
     }
 }
 
-// [spec:samurai:def:build.buildreset-fn]
-// [spec:samurai:sem:build.buildreset-fn]
-pub fn buildreset(graph: &mut Graph) {
-    for edge in graph.edge_ids() {
-        graph.edge_mut(edge).flags &= !FLAG_WORK;
-    }
-}
-
-// [spec:samurai:def:build.isnewer-fn]
-// [spec:samurai:sem:build.isnewer-fn]
-fn isnewer(graph: &Graph, left: Option<NodeId>, right: NodeId) -> bool {
-    left.is_some_and(|left| graph.node(left).mtime > graph.node(right).mtime)
-}
-
-// [spec:samurai:def:build.isdirty-fn]
-// [spec:samurai:sem:build.isdirty-fn]
-fn isdirty(
-    graph: &Graph,
-    node: NodeId,
-    newest: Option<NodeId>,
-    generator: bool,
-    restat: bool,
-) -> bool {
-    let newer = isnewer(graph, newest, node);
-    let node = graph.node(node);
-    if node.mtime == MTIME_MISSING {
-        return true;
-    }
-    if newer && (!restat || node.logmtime == MTIME_MISSING) {
-        return true;
-    }
-    !generator && node.hash == 0
-}
-
-// [spec:samurai:def:build.queue-fn]
-// [spec:samurai:sem:build.queue-fn]
-fn queue(state: &mut BuildState, edge: EdgeId) {
-    state.work.push(edge);
-}
-
-// [spec:samurai:def:build.buildadd-fn]
-// [spec:samurai:sem:build.buildadd-fn]
-pub fn buildadd(state: &mut BuildState, graph: &mut Graph, node: NodeId) -> Result<(), String> {
-    let Some(edge) = graph.node(node).gen else {
-        if graph.node(node).mtime == MTIME_MISSING {
-            return Err("file is missing and has no generating edge".into());
-        }
-        return Ok(());
-    };
-    if graph.edge(edge).flags & crate::graph::FLAG_CYCLE != 0 {
-        return Err(format!(
-            "dependency cycle involving '{}'",
-            node_path_string(graph, node)
-        ));
-    }
-    if graph.edge(edge).flags & FLAG_WORK != 0 {
-        return Ok(());
-    }
-    {
-        let outputs = graph.edge(edge).out.clone();
-        {
-            let edge = graph.edge_mut(edge);
-            edge.flags |= FLAG_WORK | crate::graph::FLAG_CYCLE;
-            edge.flags &= !FLAG_DIRTY;
-            edge.nblock = 0;
-            edge.nprune = 0;
-        }
-        for output in outputs {
-            graph.node_mut(output).dirty = false;
-        }
-    }
-    let inputs = graph.edge(edge).input.clone();
-    for input in &inputs {
-        buildadd(state, graph, *input)?;
-    }
-    let inorderidx = graph.edge(edge).inorderidx;
-    let mut newest: Option<NodeId> = None;
-    let mut nblock = 0;
-    let mut dirty_input = false;
-    for (index, input) in inputs.iter().enumerate() {
-        if index < inorderidx {
-            dirty_input |= graph.node(*input).dirty;
-            let mtime = graph.node(*input).mtime;
-            if mtime != MTIME_MISSING
-                && newest.is_none_or(|current| graph.node(current).mtime < mtime)
-            {
-                newest = Some(*input);
-            }
-        }
-        let generated_blocked = graph
-            .node(*input)
-            .gen
-            .is_some_and(|edge| graph.edge(edge).nblock > 0);
-        if graph.node(*input).dirty || generated_blocked {
-            nblock += 1;
-        }
-    }
-    let generator =
-        crate::env::edgevar(graph, edge, "generator", false).is_some_and(|value| !value.is_empty());
-    let restat =
-        crate::env::edgevar(graph, edge, "restat", false).is_some_and(|value| !value.is_empty());
-    let dirty_output = graph
-        .edge(edge)
-        .out
-        .iter()
-        .any(|output| isdirty(graph, *output, newest, generator, restat));
-    let is_phony = graph
-        .edge(edge)
-        .rule
-        .is_some_and(|rule| graph.rule(rule).name == "phony");
-    {
-        let outputs = graph.edge(edge).out.clone();
-        let dirty = {
-            let edge = graph.edge_mut(edge);
-            edge.nblock = nblock;
-            if dirty_input {
-                edge.flags |= crate::graph::FLAG_DIRTY_IN;
-            }
-            if dirty_output {
-                edge.flags |= FLAG_DIRTY_OUT;
-            }
-            edge.flags & FLAG_DIRTY != 0
-        };
-        if dirty {
-            for output in outputs {
-                graph.node_mut(output).dirty = true;
-            }
-        }
-        let edge = graph.edge_mut(edge);
-        if edge.flags & FLAG_DIRTY_OUT == 0 {
-            edge.nprune = edge.nblock;
-        }
-        edge.flags &= !crate::graph::FLAG_CYCLE;
-    }
-    if graph.edge(edge).flags & FLAG_DIRTY != 0 {
-        state.total += 1;
-        if graph.edge(edge).nblock == 0 {
-            queue(state, edge);
-        }
-        if is_phony {
-            state.total = state.total.saturating_sub(1);
-        }
-    }
-    Ok(())
-}
-
-fn node_path_string(graph: &Graph, node: NodeId) -> String {
-    let node = graph.node(node);
-    String::from_utf8_lossy(node.path.as_bytes()).into_owned()
-}
-
-// [spec:samurai:def:build.formatstatus-fn]
-// [spec:samurai:sem:build.formatstatus-fn]
-// [spec:samurai:def:build.printstatus-fn]
-// [spec:samurai:sem:build.printstatus-fn]
-// [spec:samurai:def:build.jobstart-fn]
-// [spec:samurai:sem:build.jobstart-fn]
-// [spec:samurai:def:build.nodedone-fn]
-// [spec:samurai:sem:build.nodedone-fn]
-// [spec:samurai:def:build.shouldprune-fn]
-// [spec:samurai:sem:build.shouldprune-fn]
-// [spec:samurai:def:build.edgedone-fn]
-// [spec:samurai:sem:build.edgedone-fn]
-// [spec:samurai:def:build.jobdone-fn]
-// [spec:samurai:sem:build.jobdone-fn]
-// [spec:samurai:def:build.jobwork-fn]
-// [spec:samurai:sem:build.jobwork-fn]
-// [spec:samurai:def:build.queryload-fn]
-// [spec:samurai:sem:build.queryload-fn]
-// [spec:samurai:def:build.catchsig-fn]
-// [spec:samurai:sem:build.catchsig-fn]
-// [spec:samurai:def:build.build-fn]
-// [spec:samurai:sem:build.build-fn]
 mod command;
-mod legacy;
-pub use legacy::{build, format_progress_status};
+mod status;
+#[cfg(test)]
+pub use status::format_progress_status;
 
 #[cfg(test)]
 #[path = "build/tests.rs"]

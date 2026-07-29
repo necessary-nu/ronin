@@ -29,6 +29,11 @@ read it, does not interpret it, and does not provide a compatibility alias for
 it. A replacement such as `RONINFLAGS` is not required; command-line arguments
 are the supported option source.
 
+The current Unix distribution does not bundle Ninja's Python `browse` helper.
+Ronin recognizes `-t browse` but reports it as unsupported instead of starting
+the browser frontend. All other Linux tools listed by the pinned oracle are in
+the supported CLI surface.
+
 ## Product boundary
 
 > [spec:samurai:req:product.ronin-identity]

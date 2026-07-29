@@ -1,7 +1,7 @@
 //! Wave-3 behavior tests for the literal Rust port.
 
 use crate::util::ByteSlice;
-use crate::{build, cli, deps, env, graph, htab, log, os, parse, scan, tool, tree, util};
+use crate::{build, deps, env, graph, log, os, parse, scan, tool, util};
 use std::fs;
 
 // [spec:samurai:sem:util.bufadd-fn/test]
@@ -49,22 +49,16 @@ use std::fs;
 // [spec:samurai:sem:os-posix.osspawn-fn/test]
 #[test]
 fn data_structure_and_platform_behaviour() {
-    let mut buffer = util::Buffer::default();
-    util::bufadd(&mut buffer, b'x');
-    assert_eq!(buffer.data[0], b'x');
+    let buffer: Vec<u8> = [b'x'].into();
+    assert_eq!(buffer[0], b'x');
     let mut path = util::xasprintf(format_args!("a//b/../c"));
     util::canonpath(&mut path);
     assert_eq!(path.as_bytes(), b"a/c");
-    let mut table = htab::mkhtab(2);
-    *table.htabput(htab::htabkey(b"key")) = Some(7);
-    assert_eq!(table.htabget(&htab::htabkey(b"key")), Some(&7));
-    let mut root = None;
-    tree::treeinsert(&mut root, "b".into(), 2);
-    tree::treeinsert(&mut root, "a".into(), 1);
-    assert_eq!(
-        tree::treefind(root.as_deref(), "a").map(|node| node.value),
-        Some(1)
-    );
+    let mut map = std::collections::BTreeMap::new();
+    assert_eq!(map.insert(b"key".to_vec(), 7), None);
+    assert_eq!(map.get(b"key".as_slice()), Some(&7));
+    assert_eq!(map.insert(b"key".to_vec(), 9), Some(7));
+    drop(map);
     assert!(os::osnproc() >= 1);
 }
 
@@ -837,118 +831,6 @@ fn ninja_clean_auxiliary_files_generators_and_phony_edges() {
     let _ = fs::remove_dir_all(directory);
 }
 
-// Adapted from Ninja's PlanTest.Basic and missing-input build cases.
-#[test]
-fn ninja_build_plan_orders_generated_dependencies() {
-    let path = std::env::temp_dir().join(format!(
-        "ronin-ninja-build-plan-{}.ninja",
-        std::process::id()
-    ));
-    fs::write(
-        &path,
-        "rule cat\n  command = cat $in > $out\nbuild out: cat mid\nbuild mid: cat in\n",
-    )
-    .unwrap();
-    let (mut graph, _, _) = parse_manifest(&path);
-    let input = graph::nodeget(&graph, b"in").unwrap();
-    let middle = graph::nodeget(&graph, b"mid").unwrap();
-    let output = graph::nodeget(&graph, b"out").unwrap();
-    graph.node_mut(input).mtime = 1;
-    graph.node_mut(middle).mtime = -1;
-    graph.node_mut(output).mtime = -1;
-    let options = build::BuildOptions {
-        dryrun: true,
-        ..Default::default()
-    };
-    let mut state = build::BuildState::new(options);
-    build::buildadd(&mut state, &mut graph, output).unwrap();
-    assert_eq!(state.total, 2);
-    let status = build::build(&mut state, &mut graph);
-    assert_eq!(status.len(), 2);
-    assert!(status[0].ends_with("cat in > mid"));
-    assert!(status[1].ends_with("cat mid > out"));
-    assert_eq!(state.finished, 2);
-    let _ = fs::remove_file(path);
-}
-
-// Adapted from Ninja's PlanTest.DoubleOutputDirect and PlanTest.DoubleDependent.
-#[test]
-fn ninja_build_plan_deduplicates_shared_generators() {
-    let path = std::env::temp_dir().join(format!(
-        "ronin-ninja-build-shared-{}.ninja",
-        std::process::id()
-    ));
-    fs::write(
-        &path,
-        concat!(
-            "rule cat\n",
-            "  command = cat $in > $out\n",
-            "build out: cat a1 a2\n",
-            "build a1: cat mid\n",
-            "build a2: cat mid\n",
-            "build mid1 mid2: cat source\n",
-            "build mid: cat mid1 mid2\n",
-        ),
-    )
-    .unwrap();
-    let (mut graph, _, _) = parse_manifest(&path);
-    let source = graph::nodeget(&graph, b"source").unwrap();
-    graph.node_mut(source).mtime = 1;
-    for node in ["out", "a1", "a2", "mid", "mid1", "mid2"] {
-        let node = graph::nodeget(&graph, node.as_bytes()).unwrap();
-        graph.node_mut(node).mtime = -1;
-    }
-    let mut state = build::BuildState::new(build::BuildOptions {
-        dryrun: true,
-        ..Default::default()
-    });
-    let output = graph::nodeget(&graph, b"out").unwrap();
-    build::buildadd(&mut state, &mut graph, output).unwrap();
-    assert_eq!(state.total, 5);
-    let status = build::build(&mut state, &mut graph);
-    assert_eq!(status.len(), 5);
-    assert!(status[0].ends_with("cat source > mid1 mid2"));
-    assert!(status[1].ends_with("cat mid1 mid2 > mid"));
-    assert!(status[2].ends_with("cat mid > a1"));
-    assert!(status[3].ends_with("cat mid > a2"));
-    assert!(status[4].ends_with("cat a1 a2 > out"));
-    let _ = fs::remove_file(path);
-}
-
-// Adapted from Ninja's generator and restat dirty-state cases.
-#[test]
-fn ninja_build_plan_honors_generator_dirty_semantics() {
-    let path = std::env::temp_dir().join(format!(
-        "ronin-ninja-build-generator-{}.ninja",
-        std::process::id()
-    ));
-    fs::write(
-        &path,
-        concat!(
-            "rule cat\n",
-            "  command = cat $in > $out\n",
-            "build generated: cat source\n",
-            "  generator = 1\n",
-            "build ordinary: cat source\n",
-        ),
-    )
-    .unwrap();
-    let (mut graph, _, _) = parse_manifest(&path);
-    let source = graph::nodeget(&graph, b"source").unwrap();
-    let generated = graph::nodeget(&graph, b"generated").unwrap();
-    let ordinary = graph::nodeget(&graph, b"ordinary").unwrap();
-    graph.node_mut(source).mtime = 1;
-    graph.node_mut(generated).mtime = 2;
-    graph.node_mut(ordinary).mtime = 2;
-    let mut state = build::BuildState::new(build::BuildOptions::default());
-    build::buildadd(&mut state, &mut graph, generated).unwrap();
-    assert_eq!(state.total, 0);
-    build::buildreset(&mut graph);
-    build::buildadd(&mut state, &mut graph, ordinary).unwrap();
-    assert_eq!(state.total, 1);
-    let _ = fs::remove_file(path);
-}
-
 // Adapted from Ninja's BuildLogTest.WriteRead.
 #[test]
 fn ninja_build_log_write_and_read() {
@@ -1110,9 +992,9 @@ fn scheduler_cli_dependency_and_tool_behaviour() {
         ..Default::default()
     };
     let mut graph = graph::graphinit();
-    assert!(build::build(&mut build::BuildState::new(options), &mut graph).is_empty());
-    let args = vec!["ronin".into(), "-n".into()];
-    assert!(cli::main(&args).is_ok());
+    let mut builder = build::Builder::new(&mut graph, options);
+    assert!(builder.build().is_ok());
+    assert!(builder.build_output.is_empty());
     assert!(matches!(tool::toolget("graph"), Ok(tool::Tool::Graph)));
     let _ = fs::remove_dir_all(directory);
 }
