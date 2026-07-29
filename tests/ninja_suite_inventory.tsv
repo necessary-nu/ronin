@@ -1,0 +1,36 @@
+# Ninja source revision: b51a1e37c2fb89bbefa600bd155e1ce13983f09d
+# kind	scope	expected-tests	disposition	Ronin evidence or explicit reason
+suite	BuildLogTest	10	mapped	log::tests and port_tests build-log cases
+suite	BuildLogRecompactTest	1	mapped	log::tests::ninja_build_log_recompacts_latest_live_entries
+suite	PlanTest	10	mapped	build::tests::ninja_plan_*
+suite	BuildTest	77	mapped	build::tests::ninja_build_*
+suite	BuildWithLogTest	13	mapped	build::tests::ninja_build_log_*
+suite	BuildDryRun	2	mapped	build::tests::ninja_build_dry_run_*
+suite	BuildWithQueryDepsLogTest	6	mapped	build::tests::ninja_build_deps_log_two_outputs_*
+suite	BuildWithDepsLogTest	10	mapped	build::tests::ninja_build_deps_log_*
+suite	StateTestWithBuiltinRules	1	mapped	parse::ninja_manifest_tests::ninja_state_complex_target_is_preserved
+suite	CleanTest	18	mapped	tool::tests::ninja_clean_* and port_tests::ninja_clean_*
+suite	CleanDeadTest	2	mapped	tool::tests::ninja_clean_dead_removes_only_unreferenced_outputs
+suite	CLParserTest	8	mapped	msvc::tests::ninja_clparser_*
+suite	DepfileParserTest	29	mapped	deps::ninja_depfile_tests::ninja_depfile_parser_*
+suite	DepsLogTest	10	mapped	deps::ninja_depfile_tests::ninja_deps_log_*
+suite	DiskInterfaceTest	10	rust-native	os::tests plus Rust std::fs delegation for read, remove, and metadata caching
+suite	StatTest	4	mapped	graph::tests::ninja_stat_scan_*
+suite	DyndepParserTest	42	mapped	dyndep::tests::ninja_dyndep_parser_*
+suite	EditDistanceTest	4	mapped	util::tests::ninja_edit_distance_cases
+suite	ElideMiddle	3	mapped	util::tests::ninja_elide_middle_cases
+suite	Explanations	3	rust-native	explanations::tests plus direct Option<Explanations> coverage in build::tests
+suite	GraphTest	54	mapped	graph::tests, dyndep::tests, and build::tests graph-state cases
+suite	Jobserver	6	mapped	jobserver::tests::ninja_jobserver_* and jobserver::tests::posix::*
+suite	JSONTest	4	mapped	util::tests::ninja_json_encoding_cases and tool::compdb::tests
+suite	Lexer	8	mapped	port_tests::ninja_lexer_* and scanner_and_parser_behaviour
+suite	ParserTest	51	mapped	parse::ninja_manifest_tests and port_tests::ninja_manifest_parser_*
+suite	MissingDependencyScannerTest	7	mapped	missing_deps::tests::ninja_missing_deps_*
+suite	State	1	mapped	graph::tests::ninja_state_basic_command_evaluation
+suite	StringPieceTest	2	mapped	util::tests::ninja_string_piece_basic_and_substring_cases
+suite	StringPieceUtilTest	5	mapped	util::tests::ninja_string_piece_utility_cases
+suite	SubprocessTest	14	mapped	subprocess::tests, build supervisor tests, and tests::cli signal integration
+suite	CanonicalizePath	5	mapped	util::tests and port_tests canonical-path cases
+suite	PathEscaping	3	mapped	graph::tests::ninja_shell_path_escaping_torture_case and interns_nodes_and_quotes_shell_paths
+suite	StripAnsiEscapeCodes	2	mapped	util::tests::ninja_strip_ansi_escape_codes
+test	PathEscaping.SensibleWin32PathsAreNotNeedlesslyEscaped	-	platform-inapplicable	Windows-only path semantics are outside the current Unix platform target

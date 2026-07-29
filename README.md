@@ -37,3 +37,17 @@ Ronin's compatibility contract is in
 [`docs/spec/ronin/compatibility.md`](docs/spec/ronin/compatibility.md). The
 upstream Ninja test suite is the behavioral oracle for ongoing idiomatization
 and performance work.
+
+Run the complete compatibility gate with:
+
+```sh
+scripts/check-ninja-conformance.sh
+```
+
+By default the harness expects the pinned Ninja source and build trees at
+`/tmp/ninja` and `/tmp/ninja-build`. It verifies the source revision, accounts
+for all 425 tests in 33 upstream suites using
+[`tests/ninja_suite_inventory.tsv`](tests/ninja_suite_inventory.tsv), runs the
+full Rust and Ninja suites, compares Ninja and Ronin tool output, and checks
+bidirectional `.ninja_log` and `.ninja_deps` interoperability. Alternate paths
+can be supplied with `--ninja-source`, `--ninja-build`, and `--ronin`.

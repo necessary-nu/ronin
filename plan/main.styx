@@ -458,6 +458,20 @@ children (
                         kind @note
                         text "Run the complete relevant upstream Ninja test suite plus Rust unit/integration tests and differential CLI fixtures. Verify build-language results, scheduling constraints, tools, diagnostics where contractually relevant, exit status, signals, and bidirectional .ninja_log/.ninja_deps interoperability. Do not add SAMUFLAGS expectations."
                     }
+
+                    {
+                        at 2026-07-29T18:54:24.164559152Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T19:02:26.116368321Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Pinned Ninja b51a1e37c2fb89bbefa600bd155e1ce13983f09d is accounted for by a 425-test/33-suite inventory. scripts/check-ninja-conformance.sh passed 337 Rust unit tests, 8 integration checks, all 425 upstream tests, 10 exact CLI/tool differential cases, and bidirectional Ninja→Ronin→Ninja .ninja_log/.ninja_deps interoperability. The harness builds the release Ronin binary itself and contains no SAMUFLAGS cases."
+                    }
                 )
             }
 
