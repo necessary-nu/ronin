@@ -2,11 +2,10 @@
 
 use crate::env::{
     edgevar, envaddrule, enveval, envrule, mkpool, mkrule, poolget, ruleaddvar, EnvState,
-    Environment,
+    EnvironmentId,
 };
-use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeRef};
+use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId};
 use crate::util::{canonpath, BString, ByteSlice, EvalPart, EvalString};
-use std::rc::Rc;
 
 // [spec:samurai:def:parse.parseoptions]
 #[derive(Clone, Copy, Default)]
@@ -16,7 +15,7 @@ pub struct ParseOptions {
 
 pub struct Parser {
     pub options: ParseOptions,
-    pub defaults: Vec<NodeRef>,
+    pub defaults: Vec<NodeId>,
 }
 
 // [spec:samurai:def:parse.parseinit-fn]
@@ -109,7 +108,12 @@ fn is_variable_character(character: char) -> bool {
 
 // [spec:samurai:def:parse.parserule-fn]
 // [spec:samurai:sem:parse.parserule-fn]
-fn parserule(lines: &[String], index: &mut usize, env: &Rc<Environment>) -> Result<(), String> {
+fn parserule(
+    lines: &[String],
+    index: &mut usize,
+    graph: &mut Graph,
+    environment: EnvironmentId,
+) -> Result<(), String> {
     let name = lines[*index]
         .trim_start()
         .trim_start_matches("rule ")
@@ -118,7 +122,7 @@ fn parserule(lines: &[String], index: &mut usize, env: &Rc<Environment>) -> Resu
     if name.is_empty() || !name.chars().all(is_variable_character) {
         return Err("expected rule name".into());
     }
-    let rule = mkrule(name.clone());
+    let rule = mkrule(graph, name.clone());
     *index += 1;
     let mut command = false;
     let mut rspfile = false;
@@ -153,7 +157,7 @@ fn parserule(lines: &[String], index: &mut usize, env: &Rc<Environment>) -> Resu
         command |= name == "command";
         rspfile |= name == "rspfile";
         rspfile_content |= name == "rspfile_content";
-        ruleaddvar(&rule, name, value);
+        ruleaddvar(graph, rule, name, value);
     }
     if !command {
         return Err(format!("rule '{name}' has no command"));
@@ -163,12 +167,16 @@ fn parserule(lines: &[String], index: &mut usize, env: &Rc<Environment>) -> Resu
             "rule '{name}' has rspfile and no rspfile_content or vice versa"
         ));
     }
-    envaddrule(env, rule)
+    envaddrule(graph, environment, rule)
 }
 
-fn evaluated_path(path: &str, env: &Rc<Environment>) -> Result<BString, String> {
+fn evaluated_path(
+    graph: &Graph,
+    path: &str,
+    environment: EnvironmentId,
+) -> Result<BString, String> {
     let value = parsevalue(path)?;
-    let value = enveval(env, &value);
+    let value = enveval(graph, environment, &value);
     if value.is_empty() {
         return Err("empty path".into());
     }
@@ -228,8 +236,8 @@ fn split_build_outputs(line: &str) -> Option<(&str, &str)> {
     None
 }
 
-fn node_for(graph: &mut Graph, path: &str, env: &Rc<Environment>) -> Result<NodeRef, String> {
-    let mut path = evaluated_path(path, env)?;
+fn node_for(graph: &mut Graph, path: &str, environment: EnvironmentId) -> Result<NodeId, String> {
+    let mut path = evaluated_path(graph, path, environment)?;
     canonpath(&mut path);
     Ok(mknode(graph, path))
 }
@@ -240,7 +248,7 @@ fn parseedge(
     lines: &[String],
     index: &mut usize,
     graph: &mut Graph,
-    env: Rc<Environment>,
+    environment: EnvironmentId,
     state: &EnvState,
     options: &ParseOptions,
 ) -> Result<(), String> {
@@ -249,9 +257,8 @@ fn parseedge(
     let (outputs, rest) = split_build_outputs(build).ok_or_else(|| "build lacks ':'".to_owned())?;
     let mut fields = split_path_fields(rest)?.into_iter();
     let rule_name = fields.next().ok_or_else(|| "build lacks rule".to_owned())?;
-    let rule = envrule(&env, &rule_name).ok_or_else(|| format!("undefined rule '{rule_name}'"))?;
-    let edge = mkedge(graph, env);
-    let edge_env = edge.borrow().env.clone();
+    let rule = envrule(graph, environment, &rule_name)
+        .ok_or_else(|| format!("undefined rule '{rule_name}'"))?;
     let mut out = Vec::new();
     let mut outimpidx = None;
     for output in split_path_fields(outputs)? {
@@ -259,19 +266,17 @@ fn parseedge(
             outimpidx = Some(out.len());
             continue;
         }
-        let node = node_for(graph, &output, &edge_env)?;
-        if node.borrow().gen.is_some() {
+        let node = node_for(graph, &output, environment)?;
+        if graph.node(node).gen.is_some() || out.contains(&node) {
             if !options.dupbuildwarn {
                 return Err(format!("multiple rules generate '{output}'"));
             }
             continue;
         }
-        node.borrow_mut().gen = Some(Rc::downgrade(&edge));
         out.push(node);
     }
     if out.is_empty() {
         if options.dupbuildwarn {
-            graph.edges.pop();
             *index += 1;
             while *index < lines.len()
                 && lines[*index].starts_with([' ', '\t'])
@@ -305,12 +310,10 @@ fn parseedge(
             "|@" if stage < 3 => stage = 3,
             "|" | "||" | "|@" => return Err("unexpected dependency separator".into()),
             _ => {
-                let node = node_for(graph, &field, &edge_env)?;
+                let node = node_for(graph, &field, environment)?;
                 if stage == 3 {
-                    node.borrow_mut().validation_uses.push(Rc::downgrade(&edge));
                     validation.push(node);
                 } else {
-                    nodeuse(&node, &edge);
                     input.push(node);
                 }
             }
@@ -318,8 +321,19 @@ fn parseedge(
     }
     let inimpidx = inimpidx.unwrap_or(input.len());
     let inorderidx = inorderidx.unwrap_or(input.len());
+    let edge = mkedge(graph, environment);
+    let edge_env = graph.edge(edge).env;
+    for output in &out {
+        graph.node_mut(*output).gen = Some(edge);
+    }
+    for input_node in &input {
+        nodeuse(graph, *input_node, edge);
+    }
+    for validation_node in &validation {
+        graph.node_mut(*validation_node).validation_uses.push(edge);
+    }
     {
-        let mut edge_mut = edge.borrow_mut();
+        let edge_mut = graph.edge_mut(edge);
         edge_mut.rule = Some(rule);
         edge_mut.outimpidx = outimpidx.unwrap_or(out.len());
         edge_mut.out = out;
@@ -341,55 +355,52 @@ fn parseedge(
         }
         let (name, value) = parselet(line)?;
         let value = parsevalue(&value)?;
-        let value = enveval(&edge_env, &value);
-        edge.borrow_mut().bindings.insert(name, value);
+        let value = enveval(graph, edge_env, &value);
+        graph.edge_mut(edge).bindings.insert(name, value);
     }
 
-    if let Some(pool_name) = edgevar(&edge, "pool", true).filter(|pool| !pool.is_empty()) {
+    if let Some(pool_name) = edgevar(graph, edge, "pool", true).filter(|pool| !pool.is_empty()) {
         let pool_name = String::from_utf8_lossy(pool_name.as_bytes());
-        edge.borrow_mut().pool = Some(poolget(state, &pool_name)?);
+        graph.edge_mut(edge).pool = Some(poolget(state, &pool_name)?);
     }
 
-    if let Some(mut dyndep_path) = edgevar(&edge, "dyndep", false).filter(|path| !path.is_empty()) {
+    if let Some(mut dyndep_path) =
+        edgevar(graph, edge, "dyndep", false).filter(|path| !path.is_empty())
+    {
         canonpath(&mut dyndep_path);
         let dyndep = mknode(graph, dyndep_path.clone());
-        if !edge
-            .borrow()
-            .input
-            .iter()
-            .any(|input| Rc::ptr_eq(input, &dyndep))
-        {
+        if !graph.edge(edge).input.contains(&dyndep) {
             return Err(format!(
                 "dyndep '{}' is not an input",
                 String::from_utf8_lossy(dyndep_path.as_bytes())
             ));
         }
-        dyndep.borrow_mut().dyndep_pending = true;
-        edge.borrow_mut().dyndep = Some(dyndep);
+        graph.node_mut(dyndep).dyndep_pending = true;
+        graph.edge_mut(edge).dyndep = Some(dyndep);
     }
 
     let ignore_phony_self_reference = {
-        let edge = edge.borrow();
-        edge.rule.as_ref().is_some_and(|rule| rule.name == "phony")
+        let edge = graph.edge(edge);
+        edge.rule
+            .is_some_and(|rule| graph.rule(rule).name == "phony")
             && edge.out.len() == 1
             && edge.outimpidx == 1
             && edge.inimpidx == edge.input.len()
     };
     if ignore_phony_self_reference {
-        let output = edge.borrow().out[0].clone();
+        let output = graph.edge(edge).out[0];
         let mut removed = 0;
-        edge.borrow_mut().input.retain(|input| {
-            let keep = !Rc::ptr_eq(input, &output);
+        graph.edge_mut(edge).input.retain(|input| {
+            let keep = *input != output;
             removed += usize::from(!keep);
             keep
         });
         if removed != 0 {
-            output.borrow_mut().uses.retain(|candidate| {
-                candidate
-                    .upgrade()
-                    .is_none_or(|candidate| !Rc::ptr_eq(&candidate, &edge))
-            });
-            let mut edge = edge.borrow_mut();
+            graph
+                .node_mut(output)
+                .uses
+                .retain(|candidate| *candidate != edge);
+            let edge = graph.edge_mut(edge);
             edge.inimpidx -= removed;
             edge.inorderidx -= removed;
         }
@@ -403,21 +414,21 @@ fn parseinclude(
     path: &str,
     graph: &mut Graph,
     parser: &mut Parser,
-    env: Rc<Environment>,
+    environment: EnvironmentId,
     state: &mut EnvState,
     newscope: bool,
 ) -> Result<(), String> {
-    let path = evaluated_path(path, &env)?;
-    let env = if newscope {
-        crate::env::mkenv(Some(env))
+    let path = evaluated_path(graph, path, environment)?;
+    let environment = if newscope {
+        crate::env::mkenv(graph, Some(environment))
     } else {
-        env
+        environment
     };
     parse(
         path.to_path().expect("byte paths are valid on Unix"),
         graph,
         parser,
-        env,
+        environment,
         state,
     )
 }
@@ -428,14 +439,14 @@ fn parsedefault(
     line: &str,
     graph: &Graph,
     parser: &mut Parser,
-    env: &Rc<Environment>,
+    environment: EnvironmentId,
 ) -> Result<(), String> {
     let targets = split_path_fields(line.trim_start_matches("default "))?;
     if targets.is_empty() {
         return Err("expected target name".into());
     }
     for target in targets {
-        let target = evaluated_path(&target, env)?;
+        let target = evaluated_path(graph, &target, environment)?;
         parser.defaults.push(
             crate::graph::nodeget(graph, target.as_bytes()).ok_or_else(|| {
                 format!(
@@ -453,14 +464,16 @@ fn parsedefault(
 fn parsepool(
     lines: &[String],
     index: &mut usize,
+    graph: &mut Graph,
     state: &mut EnvState,
-    env: &Rc<Environment>,
+    environment: EnvironmentId,
 ) -> Result<(), String> {
     let pool = mkpool(
+        graph,
         state,
         lines[*index].trim_start_matches("pool ").trim().to_owned(),
     )?;
-    if pool.borrow().name.is_empty() {
+    if graph.pool(pool).name.is_empty() {
         return Err("expected pool name".into());
     }
     *index += 1;
@@ -478,13 +491,13 @@ fn parsepool(
             return Err(format!("unexpected pool variable '{name}'"));
         }
         let value = parsevalue(&value)?;
-        let value = enveval(env, &value);
+        let value = enveval(graph, environment, &value);
         let text = String::from_utf8_lossy(value.as_bytes());
-        pool.borrow_mut().maxjobs = text
+        graph.pool_mut(pool).maxjobs = text
             .parse()
             .map_err(|_| format!("invalid pool depth '{text}'"))?;
     }
-    if pool.borrow().maxjobs <= 0 {
+    if graph.pool(pool).maxjobs <= 0 {
         return Err("pool has no depth".into());
     }
     Ok(())
@@ -553,7 +566,7 @@ pub fn parse(
     name: impl AsRef<std::path::Path>,
     graph: &mut Graph,
     parser: &mut Parser,
-    env: Rc<Environment>,
+    environment: EnvironmentId,
     state: &mut EnvState,
 ) -> Result<(), String> {
     let source = std::fs::read_to_string(name).map_err(|error| error.to_string())?;
@@ -570,11 +583,11 @@ pub fn parse(
             return Err(format!("unexpected indent: {line}"));
         }
         if content.starts_with("rule ") {
-            parserule(&lines, &mut index, &env)?;
+            parserule(&lines, &mut index, graph, environment)?;
             continue;
         }
         if content.starts_with("pool ") {
-            parsepool(&lines, &mut index, state, &env)?;
+            parsepool(&lines, &mut index, graph, state, environment)?;
             continue;
         }
         if content.starts_with("build ") {
@@ -582,24 +595,24 @@ pub fn parse(
                 &lines,
                 &mut index,
                 graph,
-                env.clone(),
+                environment,
                 state,
                 &parser.options,
             )?;
             continue;
         } else if content.starts_with("default ") {
-            parsedefault(content, graph, parser, &env)?;
+            parsedefault(content, graph, parser, environment)?;
         } else if let Some(path) = content.strip_prefix("include ") {
-            parseinclude(path.trim(), graph, parser, env.clone(), state, false)?;
+            parseinclude(path.trim(), graph, parser, environment, state, false)?;
         } else if let Some(path) = content.strip_prefix("subninja ") {
-            parseinclude(path.trim(), graph, parser, env.clone(), state, true)?;
+            parseinclude(path.trim(), graph, parser, environment, state, true)?;
         } else if let Ok((name, value)) = parselet(content) {
             let value = parsevalue(&value)?;
-            let value = enveval(&env, &value);
+            let value = enveval(graph, environment, &value);
             if name == "ninja_required_version" {
                 checkversion(&String::from_utf8_lossy(value.as_bytes()))?;
             }
-            crate::env::envaddvar(&env, name, value);
+            crate::env::envaddvar(graph, environment, name, value);
         } else {
             return Err(format!("unrecognized manifest line: {line}"));
         }
@@ -610,7 +623,7 @@ pub fn parse(
 
 // [spec:samurai:def:parse.defaultnodes-fn]
 // [spec:samurai:sem:parse.defaultnodes-fn]
-pub fn defaultnodes(parser: &Parser, graph: &Graph) -> Vec<NodeRef> {
+pub fn defaultnodes(parser: &Parser, graph: &Graph) -> Vec<NodeId> {
     if !parser.defaults.is_empty() {
         parser.defaults.clone()
     } else {
@@ -618,7 +631,7 @@ pub fn defaultnodes(parser: &Parser, graph: &Graph) -> Vec<NodeRef> {
             .nodes()
             .into_iter()
             .filter(|node| {
-                let node = node.borrow();
+                let node = graph.node(*node);
                 node.gen.is_some() && node.uses.is_empty()
             })
             .collect()
@@ -642,12 +655,12 @@ mod ninja_manifest_tests {
         fs::write(&path, source).unwrap();
         let mut graph = crate::graph::graphinit();
         let mut parser = parseinit();
-        let mut state = crate::env::envinit();
+        let mut state = crate::env::envinit(&mut graph);
         let result = parse(
             path.to_str().unwrap(),
             &mut graph,
             &mut parser,
-            state.root.clone(),
+            state.root,
             &mut state,
         );
         fs::remove_file(path).unwrap();
@@ -657,12 +670,12 @@ mod ninja_manifest_tests {
     fn parse_path(path: &std::path::Path) -> Result<(Graph, Parser, EnvState), String> {
         let mut graph = crate::graph::graphinit();
         let mut parser = parseinit();
-        let mut state = crate::env::envinit();
+        let mut state = crate::env::envinit(&mut graph);
         parse(
             path.to_str().unwrap(),
             &mut graph,
             &mut parser,
-            state.root.clone(),
+            state.root,
             &mut state,
         )?;
         Ok((graph, parser, state))
@@ -678,14 +691,10 @@ mod ninja_manifest_tests {
         path
     }
 
-    fn output_edge(graph: &Graph, output: &[u8]) -> crate::graph::EdgeRef {
-        crate::graph::nodeget(graph, output)
-            .unwrap()
-            .borrow()
+    fn output_edge(graph: &Graph, output: &[u8]) -> crate::graph::EdgeId {
+        graph
+            .node(crate::graph::nodeget(graph, output).unwrap())
             .gen
-            .as_ref()
-            .unwrap()
-            .upgrade()
             .unwrap()
     }
 
@@ -699,9 +708,9 @@ mod ninja_manifest_tests {
     fn assert_dyndep(source: &str, expected: &[u8]) {
         let (graph, _, _) = parse_source(source).unwrap();
         let edge = output_edge(&graph, b"result");
-        let dyndep = edge.borrow().dyndep.clone().unwrap();
-        assert_eq!(dyndep.borrow().path.as_bytes(), expected);
-        assert!(dyndep.borrow().dyndep_pending);
+        let dyndep = graph.edge(edge).dyndep.unwrap();
+        assert_eq!(graph.node(dyndep).path.as_bytes(), expected);
+        assert!(graph.node(dyndep).dyndep_pending);
     }
 
     #[test]
@@ -710,13 +719,15 @@ mod ninja_manifest_tests {
             parse_source("rule cat\n  command = cat $in > $out\nbuild foo: cat bar |@ baz\n")
                 .unwrap();
         let edge = output_edge(&graph, b"foo");
-        assert_eq!(edge.borrow().input.len(), 1);
-        assert_eq!(edge.borrow().validation.len(), 1);
-        assert_eq!(edge.borrow().validation[0].borrow().path.as_bytes(), b"baz");
+        assert_eq!(graph.edge(edge).input.len(), 1);
+        assert_eq!(graph.edge(edge).validation.len(), 1);
         assert_eq!(
-            crate::graph::nodeget(&graph, b"baz")
-                .unwrap()
-                .borrow()
+            graph.node(graph.edge(edge).validation[0]).path.as_bytes(),
+            b"baz"
+        );
+        assert_eq!(
+            graph
+                .node(crate::graph::nodeget(&graph, b"baz").unwrap())
                 .validation_uses
                 .len(),
             1
@@ -729,9 +740,9 @@ mod ninja_manifest_tests {
             parse_source("rule cat\n  command = cat $in > $out\nbuild foo | imp: cat bar\n")
                 .unwrap();
         let edge = output_edge(&graph, b"imp");
-        assert_eq!(edge.borrow().out.len(), 2);
-        assert_eq!(edge.borrow().outimpidx, 1);
-        assert!(Rc::ptr_eq(&edge, &output_edge(&graph, b"foo")));
+        assert_eq!(graph.edge(edge).out.len(), 2);
+        assert_eq!(graph.edge(edge).outimpidx, 1);
+        assert_eq!(edge, output_edge(&graph, b"foo"));
     }
 
     #[test]
@@ -739,8 +750,8 @@ mod ninja_manifest_tests {
         let (graph, _, _) =
             parse_source("rule cat\n  command = cat $in > $out\nbuild foo | : cat bar\n").unwrap();
         let edge = output_edge(&graph, b"foo");
-        assert_eq!(edge.borrow().out.len(), 1);
-        assert_eq!(edge.borrow().outimpidx, 1);
+        assert_eq!(graph.edge(edge).out.len(), 1);
+        assert_eq!(graph.edge(edge).outimpidx, 1);
     }
 
     #[test]
@@ -748,8 +759,8 @@ mod ninja_manifest_tests {
         let (graph, _, _) =
             parse_source("rule cat\n  command = cat $in > $out\nbuild | imp: cat bar\n").unwrap();
         let edge = output_edge(&graph, b"imp");
-        assert_eq!(edge.borrow().out.len(), 1);
-        assert_eq!(edge.borrow().outimpidx, 0);
+        assert_eq!(graph.edge(edge).out.len(), 1);
+        assert_eq!(graph.edge(edge).outimpidx, 0);
     }
 
     #[test]
@@ -764,10 +775,9 @@ mod ninja_manifest_tests {
     fn ninja_manifest_parser_phony_self_reference_ignored() {
         let (graph, _, _) = parse_source("build a: phony a\n").unwrap();
         let edge = output_edge(&graph, b"a");
-        assert!(edge.borrow().input.is_empty());
-        assert!(crate::graph::nodeget(&graph, b"a")
-            .unwrap()
-            .borrow()
+        assert!(graph.edge(edge).input.is_empty());
+        assert!(graph
+            .node(crate::graph::nodeget(&graph, b"a").unwrap())
             .uses
             .is_empty());
     }
@@ -786,7 +796,7 @@ mod ninja_manifest_tests {
     fn ninja_manifest_parser_dyndep_not_specified() {
         let (graph, _, _) =
             parse_source("rule cat\n  command = cat $in > $out\nbuild result: cat in\n").unwrap();
-        assert!(output_edge(&graph, b"result").borrow().dyndep.is_none());
+        assert!(graph.edge(output_edge(&graph, b"result")).dyndep.is_none());
     }
 
     #[test]
@@ -835,13 +845,10 @@ mod ninja_manifest_tests {
             "pool link_pool\n  depth = 15\nrule link\n  command = link\n  pool = link_pool\nbuild result: link input\n",
         )
         .unwrap();
-        let pool = output_edge(&graph, b"result")
-            .borrow()
-            .pool
-            .clone()
-            .unwrap();
-        assert_eq!(pool.borrow().name, "link_pool");
-        assert_eq!(pool.borrow().maxjobs, 15);
+        let edge = output_edge(&graph, b"result");
+        let pool = graph.edge(edge).pool.unwrap();
+        assert_eq!(graph.pool(pool).name, "link_pool");
+        assert_eq!(graph.pool(pool).maxjobs, 15);
     }
 
     #[test]
@@ -894,9 +901,9 @@ mod ninja_manifest_tests {
         let inner = output_edge(&graph, b"some_dir/inner");
         let outer = output_edge(&graph, b"some_dir/outer");
         let outer2 = output_edge(&graph, b"some_dir/outer2");
-        let inner_command = edgevar(&inner, "command", false).unwrap();
-        let outer_command = edgevar(&outer, "command", false).unwrap();
-        let outer2_command = edgevar(&outer2, "command", false).unwrap();
+        let inner_command = edgevar(&graph, inner, "command", false).unwrap();
+        let outer_command = edgevar(&graph, outer, "command", false).unwrap();
+        let outer2_command = edgevar(&graph, outer2, "command", false).unwrap();
         assert_eq!(inner_command.as_bytes(), b"varref inner");
         assert_eq!(outer_command.as_bytes(), b"varref outer");
         assert_eq!(outer2_command.as_bytes(), b"varref outer");
@@ -959,8 +966,8 @@ mod ninja_manifest_tests {
             format!("var = outer\ninclude {}\n", include.display()),
         )
         .unwrap();
-        let (_, _, state) = parse_path(&root).unwrap();
-        let value = crate::env::envvar(&state.root, "var").unwrap();
+        let (graph, _, state) = parse_path(&root).unwrap();
+        let value = crate::env::envvar(&graph, state.root, "var").unwrap();
         assert_eq!(value.as_bytes(), b"inner");
         fs::remove_dir_all(directory).unwrap();
     }
@@ -1016,17 +1023,17 @@ mod ninja_manifest_tests {
         let mut graph = crate::graph::graphinit();
         let mut parser = parseinit();
         parser.options.dupbuildwarn = true;
-        let mut state = crate::env::envinit();
+        let mut state = crate::env::envinit(&mut graph);
         parse(
             path.to_str().unwrap(),
             &mut graph,
             &mut parser,
-            state.root.clone(),
+            state.root,
             &mut state,
         )
         .unwrap();
-        assert_eq!(graph.edges.len(), 1);
-        assert_eq!(output_edge(&graph, b"out").borrow().input.len(), 1);
+        assert_eq!(graph.edge_count(), 1);
+        assert_eq!(graph.edge(output_edge(&graph, b"out")).input.len(), 1);
         fs::remove_file(path).unwrap();
     }
 
@@ -1053,7 +1060,7 @@ mod ninja_manifest_tests {
         .unwrap();
         let defaults = defaultnodes(&parser, &graph);
         assert_eq!(defaults.len(), 1);
-        assert_eq!(defaults[0].borrow().path.as_bytes(), b"foo bar");
+        assert_eq!(graph.node(defaults[0]).path.as_bytes(), b"foo bar");
     }
 
     #[test]
@@ -1063,6 +1070,6 @@ mod ninja_manifest_tests {
         )
         .unwrap();
         let node = crate::graph::nodeget(&graph, b"foo %2F bar?baz&x=1").unwrap();
-        assert_eq!(node.borrow().path.as_bytes(), b"foo %2F bar?baz&x=1");
+        assert_eq!(graph.node(node).path.as_bytes(), b"foo %2F bar?baz&x=1");
     }
 }

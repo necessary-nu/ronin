@@ -1,10 +1,9 @@
 //! Detection of generated depfile inputs without a manifest dependency path.
 
 use crate::env::edgevar;
-use crate::graph::{EdgeRef, Graph, NodeRef};
+use crate::graph::{EdgeId, Graph, NodeId};
 use crate::util::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet};
-use std::rc::Rc;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MissingDependency {
@@ -15,80 +14,64 @@ pub struct MissingDependency {
 
 #[derive(Default)]
 pub struct MissingDependencyScanner {
-    dependency_log: BTreeMap<Vec<u8>, Vec<NodeRef>>,
-    seen: BTreeSet<usize>,
-    nodes_missing_deps: BTreeSet<Vec<u8>>,
-    generated_nodes: BTreeSet<Vec<u8>>,
+    dependency_log: BTreeMap<NodeId, Vec<NodeId>>,
+    seen: BTreeSet<NodeId>,
+    nodes_missing_deps: BTreeSet<NodeId>,
+    generated_nodes: BTreeSet<NodeId>,
     generator_rules: BTreeSet<String>,
     missing_dep_path_count: usize,
     reports: Vec<MissingDependency>,
-    adjacency: BTreeMap<(usize, usize), bool>,
-}
-
-fn node_key(node: &NodeRef) -> Vec<u8> {
-    let node = node.borrow();
-    node.path.as_bytes().to_vec()
-}
-
-fn edge_identity(edge: &EdgeRef) -> usize {
-    Rc::as_ptr(edge) as usize
+    adjacency: BTreeMap<(EdgeId, EdgeId), bool>,
 }
 
 impl MissingDependencyScanner {
-    pub fn record_dependency(&mut self, from: &NodeRef, to: &NodeRef) {
-        self.dependency_log
-            .entry(node_key(from))
-            .or_default()
-            .push(to.clone());
+    pub fn record_dependency(&mut self, from: NodeId, to: NodeId) {
+        self.dependency_log.entry(from).or_default().push(to);
     }
 
-    pub fn process_node(&mut self, node: &NodeRef) {
-        let Some(edge) = node.borrow().gen.as_ref().and_then(|edge| edge.upgrade()) else {
+    pub fn process_node(&mut self, graph: &Graph, node: NodeId) {
+        let Some(edge) = graph.node(node).gen else {
             return;
         };
-        if !self.seen.insert(Rc::as_ptr(node) as usize) {
+        if !self.seen.insert(node) {
             return;
         }
-        let inputs = edge.borrow().input.clone();
+        let inputs = graph.edge(edge).input.clone();
         for input in &inputs {
-            self.process_node(input);
+            self.process_node(graph, *input);
         }
-        if edgevar(&edge, "deps", false).is_none() {
+        if edgevar(graph, edge, "deps", false).is_none() {
             return;
         }
-        if let Some(dependencies) = self.dependency_log.get(&node_key(node)).cloned() {
-            self.process_node_dependencies(node, &edge, &dependencies);
+        if let Some(dependencies) = self.dependency_log.get(&node).cloned() {
+            self.process_node_dependencies(graph, node, edge, &dependencies);
         }
     }
 
     fn process_node_dependencies(
         &mut self,
-        node: &NodeRef,
-        consumer_edge: &EdgeRef,
-        dependencies: &[NodeRef],
+        graph: &Graph,
+        node: NodeId,
+        consumer_edge: EdgeId,
+        dependencies: &[NodeId],
     ) {
         if dependencies
             .iter()
-            .any(|dependency| node_key(dependency) == b"build.ninja")
+            .any(|dependency| graph.node(*dependency).path == b"build.ninja")
         {
             return;
         }
-        let mut generated_edges = BTreeMap::<usize, EdgeRef>::new();
+        let mut generated_edges = BTreeSet::new();
         for dependency in dependencies {
-            if let Some(edge) = dependency
-                .borrow()
-                .gen
-                .as_ref()
-                .and_then(|edge| edge.upgrade())
-            {
-                generated_edges.insert(edge_identity(&edge), edge);
+            if let Some(edge) = graph.node(*dependency).gen {
+                generated_edges.insert(edge);
             }
         }
 
         let mut missing_edges = BTreeSet::new();
-        for (identity, generator) in &generated_edges {
-            if !self.path_exists_between(generator, consumer_edge, &mut BTreeSet::new()) {
-                missing_edges.insert(*identity);
+        for generator in generated_edges {
+            if !self.path_exists_between(graph, generator, consumer_edge, &mut BTreeSet::new()) {
+                missing_edges.insert(generator);
             }
         }
         if missing_edges.is_empty() {
@@ -97,59 +80,50 @@ impl MissingDependencyScanner {
 
         let mut missing_rules = BTreeSet::new();
         for dependency in dependencies {
-            let Some(generator) = dependency
-                .borrow()
-                .gen
-                .as_ref()
-                .and_then(|edge| edge.upgrade())
-            else {
+            let Some(generator) = graph.node(*dependency).gen else {
                 continue;
             };
-            if !missing_edges.contains(&edge_identity(&generator)) {
+            if !missing_edges.contains(&generator) {
                 continue;
             }
-            let rule_name = generator
-                .borrow()
+            let rule_name = graph
+                .edge(generator)
                 .rule
-                .as_ref()
-                .map(|rule| rule.name.clone())
+                .map(|rule| graph.rule(rule).name.clone())
                 .unwrap_or_default();
             missing_rules.insert(rule_name.clone());
-            self.generated_nodes.insert(node_key(dependency));
+            self.generated_nodes.insert(*dependency);
             self.generator_rules.insert(rule_name.clone());
             self.reports.push(MissingDependency {
-                consumer: String::from_utf8_lossy(&node_key(node)).into_owned(),
-                generated: String::from_utf8_lossy(&node_key(dependency)).into_owned(),
+                consumer: String::from_utf8_lossy(graph.node(node).path.as_bytes()).into_owned(),
+                generated: String::from_utf8_lossy(graph.node(*dependency).path.as_bytes())
+                    .into_owned(),
                 generator_rule: rule_name,
             });
         }
         self.missing_dep_path_count += missing_rules.len();
-        self.nodes_missing_deps.insert(node_key(node));
+        self.nodes_missing_deps.insert(node);
     }
 
     fn path_exists_between(
         &mut self,
-        from: &EdgeRef,
-        to: &EdgeRef,
-        visiting: &mut BTreeSet<usize>,
+        graph: &Graph,
+        from: EdgeId,
+        to: EdgeId,
+        visiting: &mut BTreeSet<EdgeId>,
     ) -> bool {
-        let key = (edge_identity(from), edge_identity(to));
+        let key = (from, to);
         if let Some(found) = self.adjacency.get(&key) {
             return *found;
         }
         if !visiting.insert(key.1) {
             return false;
         }
-        let inputs = to.borrow().input.clone();
+        let inputs = graph.edge(to).input.clone();
         let found = inputs.iter().any(|input| {
-            input
-                .borrow()
-                .gen
-                .as_ref()
-                .and_then(|edge| edge.upgrade())
-                .is_some_and(|edge| {
-                    Rc::ptr_eq(&edge, from) || self.path_exists_between(from, &edge, visiting)
-                })
+            graph.node(*input).gen.is_some_and(|edge| {
+                edge == from || self.path_exists_between(graph, from, edge, visiting)
+            })
         });
         visiting.remove(&key.1);
         self.adjacency.insert(key, found);
@@ -181,16 +155,16 @@ impl MissingDependencyScanner {
     }
 }
 
-pub fn root_nodes(graph: &Graph) -> Result<Vec<NodeRef>, String> {
+pub fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
     let outputs = graph
-        .edges
-        .iter()
-        .flat_map(|edge| edge.borrow().out.clone())
+        .edge_ids()
+        .into_iter()
+        .flat_map(|edge| graph.edge(edge).out.clone())
         .collect::<Vec<_>>();
     let roots = outputs
         .iter()
-        .filter(|node| node.borrow().uses.is_empty())
-        .cloned()
+        .filter(|node| graph.node(**node).uses.is_empty())
+        .copied()
         .collect::<Vec<_>>();
     if roots.is_empty() && !outputs.is_empty() {
         Err("dependency cycle".into())
@@ -204,7 +178,7 @@ pub fn process_all_nodes(
     scanner: &mut MissingDependencyScanner,
 ) -> Result<(), String> {
     for node in root_nodes(graph)? {
-        scanner.process_node(&node);
+        scanner.process_node(graph, node);
     }
     Ok(())
 }
@@ -212,64 +186,62 @@ pub fn process_all_nodes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env::{envinit, mkrule, ruleaddvar, Environment, Rule};
+    use crate::env::{envinit, mkrule, ruleaddvar, EnvironmentId, RuleId};
     use crate::graph::{graphinit, mkedge, mknode, nodeuse};
     use crate::util::{xasprintf, EvalString};
 
     struct Fixture {
         graph: Graph,
-        root: Rc<Environment>,
-        generator_rule: Rc<Rule>,
-        compile_rule: Rc<Rule>,
+        root: EnvironmentId,
+        generator_rule: RuleId,
+        compile_rule: RuleId,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let state = envinit();
-            let generator_rule = deps_rule("generator_rule");
-            let compile_rule = deps_rule("compile_rule");
+            let mut graph = graphinit();
+            let state = envinit(&mut graph);
+            let generator_rule = deps_rule(&mut graph, "generator_rule");
+            let compile_rule = deps_rule(&mut graph, "compile_rule");
             Self {
-                graph: graphinit(),
+                graph,
                 root: state.root,
                 generator_rule,
                 compile_rule,
             }
         }
 
-        fn create_initial_state(&mut self) -> (NodeRef, NodeRef) {
-            let generated = self.add_output("generated_header", self.generator_rule.clone());
-            let compiled = self.add_output("compiled_object", self.compile_rule.clone());
+        fn create_initial_state(&mut self) -> (NodeId, NodeId) {
+            let generated = self.add_output("generated_header", self.generator_rule);
+            let compiled = self.add_output("compiled_object", self.compile_rule);
             (generated, compiled)
         }
 
-        fn add_output(&mut self, path: &str, rule: Rc<Rule>) -> NodeRef {
+        fn add_output(&mut self, path: &str, rule: RuleId) -> NodeId {
             let output = mknode(&mut self.graph, xasprintf(format_args!("{path}")));
-            let edge = mkedge(&mut self.graph, self.root.clone());
-            edge.borrow_mut().rule = Some(rule);
-            edge.borrow_mut().out.push(output.clone());
-            edge.borrow_mut().outimpidx = 1;
-            output.borrow_mut().gen = Some(Rc::downgrade(&edge));
+            let edge = mkedge(&mut self.graph, self.root);
+            let edge_mut = self.graph.edge_mut(edge);
+            edge_mut.rule = Some(rule);
+            edge_mut.out.push(output);
+            edge_mut.outimpidx = 1;
+            self.graph.node_mut(output).gen = Some(edge);
             output
         }
 
-        fn add_graph_dependency(&mut self, from: &NodeRef, to: &NodeRef) {
-            let edge = from
-                .borrow()
-                .gen
-                .as_ref()
-                .and_then(|edge| edge.upgrade())
-                .unwrap();
-            nodeuse(to, &edge);
-            edge.borrow_mut().input.push(to.clone());
-            let input_count = edge.borrow().input.len();
-            edge.borrow_mut().inimpidx = input_count;
-            edge.borrow_mut().inorderidx = input_count;
+        fn add_graph_dependency(&mut self, from: NodeId, to: NodeId) {
+            let edge = self.graph.node(from).gen.unwrap();
+            nodeuse(&mut self.graph, to, edge);
+            let edge_mut = self.graph.edge_mut(edge);
+            edge_mut.input.push(to);
+            let input_count = edge_mut.input.len();
+            edge_mut.inimpidx = input_count;
+            edge_mut.inorderidx = input_count;
         }
     }
 
-    fn deps_rule(name: &str) -> Rc<Rule> {
-        let rule = mkrule(name.into());
-        ruleaddvar(&rule, "deps".into(), EvalString::literal("gcc"));
+    fn deps_rule(graph: &mut Graph, name: &str) -> RuleId {
+        let rule = mkrule(graph, name.into());
+        ruleaddvar(graph, rule, "deps".into(), EvalString::literal("gcc"));
         rule
     }
 
@@ -295,7 +267,7 @@ mod tests {
         let mut fixture = Fixture::new();
         let (generated, compiled) = fixture.create_initial_state();
         let mut scanner = MissingDependencyScanner::default();
-        scanner.record_dependency(&compiled, &generated);
+        scanner.record_dependency(compiled, generated);
         process_all_nodes(&fixture.graph, &mut scanner).unwrap();
         assert!(scanner.had_missing_dependencies());
         assert_eq!(scanner.nodes_missing_dependencies(), 1);
@@ -316,9 +288,9 @@ mod tests {
     fn ninja_missing_deps_direct_path_fixes_issue() {
         let mut fixture = Fixture::new();
         let (generated, compiled) = fixture.create_initial_state();
-        fixture.add_graph_dependency(&compiled, &generated);
+        fixture.add_graph_dependency(compiled, generated);
         let mut scanner = MissingDependencyScanner::default();
-        scanner.record_dependency(&compiled, &generated);
+        scanner.record_dependency(compiled, generated);
         process_all_nodes(&fixture.graph, &mut scanner).unwrap();
         assert!(!scanner.had_missing_dependencies());
     }
@@ -327,11 +299,11 @@ mod tests {
     fn ninja_missing_deps_indirect_path_fixes_issue() {
         let mut fixture = Fixture::new();
         let (generated, compiled) = fixture.create_initial_state();
-        let intermediate = fixture.add_output("intermediate", fixture.generator_rule.clone());
-        fixture.add_graph_dependency(&compiled, &intermediate);
-        fixture.add_graph_dependency(&intermediate, &generated);
+        let intermediate = fixture.add_output("intermediate", fixture.generator_rule);
+        fixture.add_graph_dependency(compiled, intermediate);
+        fixture.add_graph_dependency(intermediate, generated);
         let mut scanner = MissingDependencyScanner::default();
-        scanner.record_dependency(&compiled, &generated);
+        scanner.record_dependency(compiled, generated);
         process_all_nodes(&fixture.graph, &mut scanner).unwrap();
         assert!(!scanner.had_missing_dependencies());
     }
@@ -341,8 +313,8 @@ mod tests {
         let mut fixture = Fixture::new();
         let (generated, compiled) = fixture.create_initial_state();
         let mut scanner = MissingDependencyScanner::default();
-        scanner.record_dependency(&generated, &compiled);
-        scanner.record_dependency(&compiled, &generated);
+        scanner.record_dependency(generated, compiled);
+        scanner.record_dependency(compiled, generated);
         process_all_nodes(&fixture.graph, &mut scanner).unwrap();
         assert!(scanner.had_missing_dependencies());
         assert_eq!(scanner.nodes_missing_dependencies(), 2);
@@ -355,8 +327,8 @@ mod tests {
     fn ninja_missing_deps_graph_cycle_has_no_roots() {
         let mut fixture = Fixture::new();
         let (generated, compiled) = fixture.create_initial_state();
-        fixture.add_graph_dependency(&compiled, &generated);
-        fixture.add_graph_dependency(&generated, &compiled);
+        fixture.add_graph_dependency(compiled, generated);
+        fixture.add_graph_dependency(generated, compiled);
         match root_nodes(&fixture.graph) {
             Err(error) => assert_eq!(error, "dependency cycle"),
             Ok(_) => panic!("cyclic graph unexpectedly had root nodes"),

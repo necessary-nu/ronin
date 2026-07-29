@@ -355,7 +355,7 @@ fn default_target_names(parser: &crate::parse::Parser, graph: &crate::graph::Gra
     crate::parse::defaultnodes(parser, graph)
         .into_iter()
         .map(|node| {
-            let node = node.borrow();
+            let node = graph.node(node);
             String::from_utf8_lossy(node.path.as_bytes()).into_owned()
         })
         .collect()
@@ -367,7 +367,7 @@ fn default_target_paths(
 ) -> Vec<BString> {
     crate::parse::defaultnodes(parser, graph)
         .into_iter()
-        .map(|node| node.borrow().path.clone())
+        .map(|node| graph.node(node).path.clone())
         .collect()
 }
 
@@ -395,7 +395,7 @@ fn run_clean_tool(
     }
     if rule_mode {
         for rule in &names {
-            crate::env::envrule(&state.root, rule)
+            crate::env::envrule(graph, state.root, rule)
                 .ok_or_else(|| format!("unknown rule '{rule}'"))?;
         }
     }
@@ -482,7 +482,7 @@ fn run_bytes(arguments: &[BString]) -> Result<String, String> {
         let mut graph = crate::graph::graphinit();
         let mut parser = crate::parse::parseinit();
         parser.options = invocation.parse_options;
-        let mut state = crate::env::envinit();
+        let mut state = crate::env::envinit(&mut graph);
         crate::parse::parse(
             invocation
                 .manifest
@@ -490,7 +490,7 @@ fn run_bytes(arguments: &[BString]) -> Result<String, String> {
                 .map_err(|_| "manifest path is not representable on this platform")?,
             &mut graph,
             &mut parser,
-            state.root.clone(),
+            state.root,
             &mut state,
         )?;
 
@@ -515,14 +515,14 @@ fn run_bytes(arguments: &[BString]) -> Result<String, String> {
             );
         }
 
-        let builddir = crate::env::envvar(&state.root, "builddir")
+        let builddir = crate::env::envvar(&graph, state.root, "builddir")
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
         if let Some(directory) = &builddir {
             std::fs::create_dir_all(directory).map_err(|error| error.to_string())?;
         }
-        let mut build_log =
-            crate::log::loginit(builddir.as_deref(), &graph).map_err(|error| error.to_string())?;
+        let mut build_log = crate::log::loginit(builddir.as_deref(), &mut graph)
+            .map_err(|error| error.to_string())?;
         let deps_path = builddir.as_ref().map_or_else(
             || PathBuf::from(".ninja_deps"),
             |path| path.join(".ninja_deps"),
@@ -534,7 +534,7 @@ fn run_bytes(arguments: &[BString]) -> Result<String, String> {
         }
 
         let manifest_edge = crate::graph::nodeget(&graph, invocation.manifest.as_bytes())
-            .and_then(|node| node.borrow().gen.as_ref().and_then(|edge| edge.upgrade()));
+            .and_then(|node| graph.node(node).gen);
         let manifest_result = if let Some(edge) = manifest_edge {
             let mut builder = crate::build::Builder::with_logs(
                 &mut graph,
@@ -548,7 +548,7 @@ fn run_bytes(arguments: &[BString]) -> Result<String, String> {
                     return Ok(false);
                 }
                 builder.build()?;
-                let rebuilt = builder.ran_edge(&edge) && !edge.borrow().restat_clean;
+                let rebuilt = builder.ran_edge_without_restat_pruning(edge);
                 append_output(&mut output, &builder_output(&builder));
                 Ok(rebuilt)
             })();

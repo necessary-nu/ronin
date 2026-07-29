@@ -1,21 +1,42 @@
-//! Literal environment, rule, and pool model from `env.c`.
+//! Manifest environments, rules, and pools stored in graph-owned arenas.
 
+use crate::graph::{EdgeId, Graph, NodeId};
 use crate::util::{BString, EvalPart, EvalString};
-use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::rc::Rc;
+
+macro_rules! arena_id {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[repr(transparent)]
+        pub struct $name(usize);
+
+        impl $name {
+            pub(crate) const fn from_index(index: usize) -> Self {
+                Self(index)
+            }
+
+            pub const fn index(self) -> usize {
+                self.0
+            }
+        }
+    };
+}
+
+arena_id!(EnvironmentId);
+arena_id!(RuleId);
+arena_id!(PoolId);
 
 // [spec:samurai:def:env.environment]
 pub struct Environment {
-    pub parent: Option<Rc<Environment>>,
-    bindings: RefCell<BTreeMap<String, BString>>,
-    rules: RefCell<BTreeMap<String, Rc<Rule>>>,
+    pub parent: Option<EnvironmentId>,
+    pub(crate) bindings: BTreeMap<String, BString>,
+    pub(crate) rules: BTreeMap<String, RuleId>,
 }
 
 // [spec:samurai:def:env.rule]
 pub struct Rule {
     pub name: String,
-    pub(crate) bindings: RefCell<BTreeMap<String, EvalString>>,
+    pub(crate) bindings: BTreeMap<String, EvalString>,
 }
 
 // [spec:samurai:def:env.pool]
@@ -23,15 +44,15 @@ pub struct Pool {
     pub name: String,
     pub numjobs: i32,
     pub maxjobs: i32,
-    /// Scheduler edge IDs blocked by this pool's capacity.
-    pub work: Vec<usize>,
+    /// Scheduler edges blocked by this pool's capacity.
+    pub work: Vec<EdgeId>,
 }
 
 pub struct EnvState {
-    pub root: Rc<Environment>,
-    pub phony: Rc<Rule>,
-    pub console: Rc<RefCell<Pool>>,
-    pools: BTreeMap<String, Rc<RefCell<Pool>>>,
+    pub root: EnvironmentId,
+    pub phony: RuleId,
+    pub console: PoolId,
+    pools: BTreeMap<String, PoolId>,
 }
 
 // [spec:samurai:def:env.addvar-fn]
@@ -42,38 +63,43 @@ fn addvar<T>(tree: &mut BTreeMap<String, T>, name: String, value: T) {
 
 // [spec:samurai:def:env.mkenv-fn]
 // [spec:samurai:sem:env.mkenv-fn]
-pub fn mkenv(parent: Option<Rc<Environment>>) -> Rc<Environment> {
-    Rc::new(Environment {
+pub fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> EnvironmentId {
+    graph.push_environment(Environment {
         parent,
-        bindings: RefCell::new(BTreeMap::new()),
-        rules: RefCell::new(BTreeMap::new()),
+        bindings: BTreeMap::new(),
+        rules: BTreeMap::new(),
     })
 }
 
 // [spec:samurai:def:env.mkrule-fn]
 // [spec:samurai:sem:env.mkrule-fn]
-pub fn mkrule(name: String) -> Rc<Rule> {
-    Rc::new(Rule {
+pub fn mkrule(graph: &mut Graph, name: String) -> RuleId {
+    graph.push_rule(Rule {
         name,
-        bindings: RefCell::new(BTreeMap::new()),
+        bindings: BTreeMap::new(),
     })
 }
 
 // [spec:samurai:def:env.envaddrule-fn]
 // [spec:samurai:sem:env.envaddrule-fn]
-pub fn envaddrule(env: &Rc<Environment>, rule: Rc<Rule>) -> Result<(), String> {
-    let mut rules = env.rules.borrow_mut();
-    if rules.contains_key(&rule.name) {
-        return Err(format!("rule '{}' redefined", rule.name));
+pub fn envaddrule(
+    graph: &mut Graph,
+    environment: EnvironmentId,
+    rule: RuleId,
+) -> Result<(), String> {
+    let name = graph.rule(rule).name.clone();
+    let rules = &mut graph.environment_mut(environment).rules;
+    if rules.contains_key(&name) {
+        return Err(format!("rule '{name}' redefined"));
     }
-    rules.insert(rule.name.clone(), rule);
+    rules.insert(name, rule);
     Ok(())
 }
 
 // [spec:samurai:def:env.addpool-fn]
 // [spec:samurai:sem:env.addpool-fn]
-fn addpool(state: &mut EnvState, pool: Rc<RefCell<Pool>>) -> Result<(), String> {
-    let name = pool.borrow().name.clone();
+fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), String> {
+    let name = graph.pool(pool).name.clone();
     if state.pools.contains_key(&name) {
         return Err(format!("pool '{name}' redefined"));
     }
@@ -83,43 +109,48 @@ fn addpool(state: &mut EnvState, pool: Rc<RefCell<Pool>>) -> Result<(), String> 
 
 // [spec:samurai:def:env.envinit-fn]
 // [spec:samurai:sem:env.envinit-fn]
-pub fn envinit() -> EnvState {
-    let root = mkenv(None);
-    let phony = mkrule("phony".into());
-    envaddrule(&root, phony.clone()).expect("fresh root rule table");
-    let console = Rc::new(RefCell::new(Pool {
+pub fn envinit(graph: &mut Graph) -> EnvState {
+    let root = mkenv(graph, None);
+    let phony = mkrule(graph, "phony".into());
+    envaddrule(graph, root, phony).expect("fresh root rule table");
+    let console = graph.push_pool(Pool {
         name: "console".into(),
         numjobs: 0,
         maxjobs: 1,
         work: Vec::new(),
-    }));
+    });
     let mut state = EnvState {
         root,
         phony,
-        console: console.clone(),
+        console,
         pools: BTreeMap::new(),
     };
-    addpool(&mut state, console).expect("fresh pool table");
+    addpool(graph, &mut state, console).expect("fresh pool table");
     state
 }
 
 // [spec:samurai:def:env.envvar-fn]
 // [spec:samurai:sem:env.envvar-fn]
-pub fn envvar(env: &Rc<Environment>, name: &str) -> Option<BString> {
-    let mut current = Some(env.clone());
+pub fn envvar(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<BString> {
+    let mut current = Some(environment);
     while let Some(scope) = current {
-        if let Some(value) = scope.bindings.borrow().get(name) {
+        let environment = graph.environment(scope);
+        if let Some(value) = environment.bindings.get(name) {
             return Some(value.clone());
         }
-        current = scope.parent.clone();
+        current = environment.parent;
     }
     None
 }
 
 // [spec:samurai:def:env.envaddvar-fn]
 // [spec:samurai:sem:env.envaddvar-fn]
-pub fn envaddvar(env: &Rc<Environment>, name: String, value: BString) {
-    addvar(&mut env.bindings.borrow_mut(), name, value);
+pub fn envaddvar(graph: &mut Graph, environment: EnvironmentId, name: String, value: BString) {
+    addvar(
+        &mut graph.environment_mut(environment).bindings,
+        name,
+        value,
+    );
 }
 
 // [spec:samurai:def:env.merge-fn]
@@ -134,13 +165,13 @@ fn merge(parts: &[BString]) -> BString {
 
 // [spec:samurai:def:env.enveval-fn]
 // [spec:samurai:sem:env.enveval-fn]
-pub fn enveval(env: &Rc<Environment>, string: &EvalString) -> BString {
+pub fn enveval(graph: &Graph, environment: EnvironmentId, string: &EvalString) -> BString {
     let mut parts = Vec::new();
     for part in &string.parts {
         match part {
             EvalPart::Literal(value) => parts.push(value.clone()),
             EvalPart::Variable(name) => {
-                if let Some(value) = envvar(env, name) {
+                if let Some(value) = envvar(graph, environment, name) {
                     parts.push(value);
                 }
             }
@@ -151,13 +182,14 @@ pub fn enveval(env: &Rc<Environment>, string: &EvalString) -> BString {
 
 // [spec:samurai:def:env.envrule-fn]
 // [spec:samurai:sem:env.envrule-fn]
-pub fn envrule(env: &Rc<Environment>, name: &str) -> Option<Rc<Rule>> {
-    let mut current = Some(env.clone());
+pub fn envrule(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<RuleId> {
+    let mut current = Some(environment);
     while let Some(scope) = current {
-        if let Some(rule) = scope.rules.borrow().get(name) {
-            return Some(rule.clone());
+        let environment = graph.environment(scope);
+        if let Some(rule) = environment.rules.get(name) {
+            return Some(*rule);
         }
-        current = scope.parent.clone();
+        current = environment.parent;
     }
     None
 }
@@ -181,46 +213,47 @@ pub fn pathlist(paths: &[BString], separator: u8) -> Option<BString> {
 
 // [spec:samurai:def:env.ruleaddvar-fn]
 // [spec:samurai:sem:env.ruleaddvar-fn]
-pub fn ruleaddvar(rule: &Rc<Rule>, name: String, value: EvalString) {
-    addvar(&mut rule.bindings.borrow_mut(), name, value);
+pub fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: String, value: EvalString) {
+    addvar(&mut graph.rule_mut(rule).bindings, name, value);
 }
 
 // [spec:samurai:def:env.mkpool-fn]
 // [spec:samurai:sem:env.mkpool-fn]
-pub fn mkpool(state: &mut EnvState, name: String) -> Result<Rc<RefCell<Pool>>, String> {
-    let pool = Rc::new(RefCell::new(Pool {
+pub fn mkpool(graph: &mut Graph, state: &mut EnvState, name: String) -> Result<PoolId, String> {
+    let pool = graph.push_pool(Pool {
         name,
         numjobs: 0,
         maxjobs: 0,
         work: Vec::new(),
-    }));
-    addpool(state, pool.clone())?;
+    });
+    addpool(graph, state, pool)?;
     Ok(pool)
 }
 
 // [spec:samurai:def:env.delrule-fn]
 // [spec:samurai:sem:env.delrule-fn]
-pub fn delrule(_rule: Rc<Rule>) {}
+pub fn delrule(_rule: RuleId) {}
 
 // [spec:samurai:def:env.delpool-fn]
 // [spec:samurai:sem:env.delpool-fn]
-pub fn delpool(_pool: Rc<RefCell<Pool>>) {}
+pub fn delpool(_pool: PoolId) {}
 
 // [spec:samurai:def:env.poolget-fn]
 // [spec:samurai:sem:env.poolget-fn]
-pub fn poolget(state: &EnvState, name: &str) -> Result<Rc<RefCell<Pool>>, String> {
+pub fn poolget(state: &EnvState, name: &str) -> Result<PoolId, String> {
     state
         .pools
         .get(name)
-        .cloned()
+        .copied()
         .ok_or_else(|| format!("unknown pool '{name}'"))
 }
 
 // [spec:samurai:def:env.edgevar-fn]
 // [spec:samurai:sem:env.edgevar-fn]
-pub fn edgevar(edge: &crate::graph::EdgeRef, name: &str, escape: bool) -> Option<BString> {
+pub fn edgevar(graph: &Graph, edge: EdgeId, name: &str, escape: bool) -> Option<BString> {
     fn evaluate(
-        edge: &crate::graph::EdgeRef,
+        graph: &Graph,
+        edge: EdgeId,
         value: &EvalString,
         escape: bool,
         stack: &mut Vec<String>,
@@ -229,7 +262,7 @@ pub fn edgevar(edge: &crate::graph::EdgeRef, name: &str, escape: bool) -> Option
         for part in &value.parts {
             match part {
                 EvalPart::Variable(name) => {
-                    if let Some(value) = edgevar_inner(edge, name, escape, stack) {
+                    if let Some(value) = edgevar_inner(graph, edge, name, escape, stack) {
                         parts.push(value);
                     }
                 }
@@ -240,69 +273,63 @@ pub fn edgevar(edge: &crate::graph::EdgeRef, name: &str, escape: bool) -> Option
     }
 
     fn edgevar_inner(
-        edge: &crate::graph::EdgeRef,
+        graph: &Graph,
+        edge_id: EdgeId,
         name: &str,
         escape: bool,
         stack: &mut Vec<String>,
     ) -> Option<BString> {
-        let (env, rule, direct, paths, separator) = {
-            let edge = edge.borrow();
-            let computed = match name {
-                "in" => Some((&edge.input[..edge.inimpidx], b' ')),
-                "in_newline" => Some((&edge.input[..edge.inimpidx], b'\n')),
-                "out" => Some((&edge.out[..edge.outimpidx], b' ')),
-                _ => None,
-            };
-            if let Some((nodes, separator)) = computed {
-                let paths = nodes
-                    .iter()
-                    .map(|node| crate::graph::nodepath(node, escape))
-                    .collect();
-                (edge.env.clone(), None, None, paths, Some(separator))
-            } else {
-                (
-                    edge.env.clone(),
-                    edge.rule.clone(),
-                    edge.bindings.get(name).cloned(),
-                    Vec::new(),
-                    None,
-                )
-            }
+        let edge = graph.edge(edge_id);
+        let computed: Option<(&[NodeId], u8)> = match name {
+            "in" => Some((&edge.input[..edge.inimpidx], b' ')),
+            "in_newline" => Some((&edge.input[..edge.inimpidx], b'\n')),
+            "out" => Some((&edge.out[..edge.outimpidx], b' ')),
+            _ => None,
         };
-        if let Some(separator) = separator {
+        if let Some((nodes, separator)) = computed {
+            let paths = nodes
+                .iter()
+                .map(|node| crate::graph::nodepath(graph, *node, escape))
+                .collect::<Vec<_>>();
             return pathlist(&paths, separator);
         }
-        if direct.is_some() {
-            return direct;
+        if let Some(value) = edge.bindings.get(name) {
+            return Some(value.clone());
         }
-        let value = rule.and_then(|rule| rule.bindings.borrow().get(name).cloned());
+        let environment = edge.env;
+        let value = edge
+            .rule
+            .and_then(|rule| graph.rule(rule).bindings.get(name))
+            .cloned();
         let Some(value) = value else {
-            return envvar(&env, name);
+            return envvar(graph, environment, name);
         };
         if stack.iter().any(|active| active == name) {
             return None;
         }
         stack.push(name.to_owned());
-        let result = evaluate(edge, &value, escape, stack);
+        let result = evaluate(graph, edge_id, &value, escape, stack);
         stack.pop();
         Some(result)
     }
 
-    edgevar_inner(edge, name, escape, &mut Vec::new())
+    edgevar_inner(graph, edge, name, escape, &mut Vec::new())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::graphinit;
     use crate::util::mkstr;
 
     #[test]
     fn resolves_nearest_variable_binding() {
-        let state = envinit();
+        let mut graph = graphinit();
+        let state = envinit(&mut graph);
         let mut root_value = mkstr(4);
         root_value.copy_from_slice(b"root");
-        envaddvar(&state.root, "value".into(), root_value);
-        let child = mkenv(Some(state.root.clone()));
-        assert_eq!(envvar(&child, "value").unwrap(), b"root");
+        envaddvar(&mut graph, state.root, "value".into(), root_value);
+        let child = mkenv(&mut graph, Some(state.root));
+        assert_eq!(envvar(&graph, child, "value").unwrap(), b"root");
     }
 }

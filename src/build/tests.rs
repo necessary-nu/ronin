@@ -18,12 +18,12 @@ fn plan_graph(source: &str) -> Graph {
     .unwrap();
     let mut graph = graphinit();
     let mut parser = crate::parse::parseinit();
-    let mut state = crate::env::envinit();
+    let mut state = crate::env::envinit(&mut graph);
     crate::parse::parse(
         path.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
@@ -31,16 +31,21 @@ fn plan_graph(source: &str) -> Graph {
     graph
 }
 
-fn mark_dirty(graph: &Graph, paths: &[&str]) {
+fn mark_dirty(graph: &mut Graph, paths: &[&str]) {
     for path in paths {
-        nodeget(graph, path.as_bytes()).unwrap().borrow_mut().dirty = true;
+        let node = nodeget(graph, path.as_bytes()).unwrap();
+        graph.node_mut(node).dirty = true;
     }
 }
 
-fn output_path(edge: &EdgeRef) -> String {
-    let output = edge.borrow().out[0].clone();
-    let output = output.borrow();
-    String::from_utf8_lossy(output.path.as_bytes()).into_owned()
+fn output_path(graph: &Graph, edge: EdgeId) -> String {
+    let output = graph.edge(edge).out[0];
+    String::from_utf8_lossy(graph.node(output).path.as_bytes()).into_owned()
+}
+
+fn add_plan_target(plan: &mut Plan, graph: &mut Graph, path: &[u8]) {
+    let node = nodeget(graph, path).unwrap();
+    plan.add_target(graph, node).unwrap();
 }
 
 fn build_fixture(label: &str, manifest: &str) -> (Graph, std::path::PathBuf) {
@@ -58,12 +63,12 @@ fn build_fixture(label: &str, manifest: &str) -> (Graph, std::path::PathBuf) {
     .unwrap();
     let mut graph = graphinit();
     let mut parser = crate::parse::parseinit();
-    let mut state = crate::env::envinit();
+    let mut state = crate::env::envinit(&mut graph);
     crate::parse::parse(
         path.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
@@ -74,26 +79,26 @@ fn parse_fixture(directory: &Path) -> Graph {
     let path = directory.join("build.ninja");
     let mut graph = graphinit();
     let mut parser = crate::parse::parseinit();
-    let mut state = crate::env::envinit();
+    let mut state = crate::env::envinit(&mut graph);
     crate::parse::parse(
         path.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
     graph
 }
 
-fn reset_graph_state(graph: &Graph) {
+fn reset_graph_state(graph: &mut Graph) {
     for node in graph.nodes() {
-        let mut node = node.borrow_mut();
+        let node = graph.node_mut(node);
         node.mtime = crate::graph::MTIME_UNKNOWN;
         node.dirty = false;
     }
-    for edge in &graph.edges {
-        let mut edge = edge.borrow_mut();
+    for edge in graph.edge_ids() {
+        let edge = graph.edge_mut(edge);
         edge.command_dirty = false;
         edge.restat_clean = false;
     }
@@ -127,13 +132,13 @@ fn assert_multi_output_deps_log(label: &str, depfile: &str) {
     }
     for output in [&out1, &out2] {
         let output = nodeget(&graph, output.as_bytes()).unwrap();
-        let entry = crate::deps::depsentry(&deps_log, &output).unwrap();
+        let entry = crate::deps::depsentry(&deps_log, output).unwrap();
         assert_eq!(
             entry
                 .deps
                 .nodes
                 .iter()
-                .map(|node| node.borrow().path.clone())
+                .map(|node| graph.node(*node).path.clone())
                 .collect::<Vec<_>>(),
             expected
         );
@@ -168,7 +173,7 @@ fn assert_phony_use_case(case: usize) {
         .into_owned();
     if case == 2 || case == 5 {
         for _ in 0..2 {
-            reset_graph_state(&graph);
+            reset_graph_state(&mut graph);
             let mut builder = Builder::new(&mut graph, BuildOptions::default());
             builder.add_target(&target).unwrap();
             assert!(!builder.already_up_to_date());
@@ -176,7 +181,7 @@ fn assert_phony_use_case(case: usize) {
             assert_eq!(builder.commands_ran.len(), 1);
         }
     } else {
-        reset_graph_state(&graph);
+        reset_graph_state(&mut graph);
         {
             let mut builder = Builder::new(&mut graph, BuildOptions::default());
             builder.add_target(&target).unwrap();
@@ -184,7 +189,7 @@ fn assert_phony_use_case(case: usize) {
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
         fs::write(directory.join("blank"), "changed").unwrap();
-        reset_graph_state(&graph);
+        reset_graph_state(&mut graph);
         {
             let mut builder = Builder::new(&mut graph, BuildOptions::default());
             builder.add_target(&target).unwrap();
@@ -201,8 +206,8 @@ fn assert_phony_use_case(case: usize) {
         )
         .unwrap();
         let blank = nodeget(&graph, directory.join("blank").to_string_lossy().as_bytes()).unwrap();
-        assert_eq!(phony.borrow().mtime, blank.borrow().mtime);
-        assert!(!phony.borrow().dirty);
+        assert_eq!(graph.node(phony).mtime, graph.node(blank).mtime);
+        assert!(!graph.node(phony).dirty);
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -242,89 +247,97 @@ fn ninja_build_status_format_replace_placeholder() {
 
 #[test]
 fn ninja_plan_basic() {
-    let graph = plan_graph("build out: cat mid\nbuild mid: cat in\n");
-    mark_dirty(&graph, &["mid", "out"]);
+    let mut graph = plan_graph("build out: cat mid\nbuild mid: cat in\n");
+    mark_dirty(&mut graph, &["mid", "out"]);
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"out").unwrap()).unwrap();
-    plan.prepare_queue();
-    let edge = plan.find_work().unwrap();
-    assert_eq!(output_path(&edge), "mid");
-    assert!(plan.find_work().is_none());
-    plan.edge_finished(&edge, EdgeResult::Succeeded).unwrap();
-    let edge = plan.find_work().unwrap();
-    assert_eq!(output_path(&edge), "out");
-    plan.edge_finished(&edge, EdgeResult::Succeeded).unwrap();
+    add_plan_target(&mut plan, &mut graph, b"out");
+    plan.prepare_queue(&graph);
+    let edge = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, edge), "mid");
+    assert!(plan.find_work(&mut graph).is_none());
+    plan.edge_finished(&mut graph, edge, EdgeResult::Succeeded)
+        .unwrap();
+    let edge = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, edge), "out");
+    plan.edge_finished(&mut graph, edge, EdgeResult::Succeeded)
+        .unwrap();
     assert!(!plan.more_to_do());
-    assert!(plan.find_work().is_none());
+    assert!(plan.find_work(&mut graph).is_none());
 }
 
 #[test]
 fn ninja_plan_double_output_direct() {
-    let graph = plan_graph("build out: cat mid1 mid2\nbuild mid1 mid2: cat in\n");
-    mark_dirty(&graph, &["mid1", "mid2", "out"]);
+    let mut graph = plan_graph("build out: cat mid1 mid2\nbuild mid1 mid2: cat in\n");
+    mark_dirty(&mut graph, &["mid1", "mid2", "out"]);
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"out").unwrap()).unwrap();
-    plan.prepare_queue();
-    let first = plan.find_work().unwrap();
-    assert_eq!(output_path(&first), "mid1");
-    plan.edge_finished(&first, EdgeResult::Succeeded).unwrap();
-    let second = plan.find_work().unwrap();
-    assert_eq!(output_path(&second), "out");
-    plan.edge_finished(&second, EdgeResult::Succeeded).unwrap();
-    assert!(plan.find_work().is_none());
+    add_plan_target(&mut plan, &mut graph, b"out");
+    plan.prepare_queue(&graph);
+    let first = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, first), "mid1");
+    plan.edge_finished(&mut graph, first, EdgeResult::Succeeded)
+        .unwrap();
+    let second = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, second), "out");
+    plan.edge_finished(&mut graph, second, EdgeResult::Succeeded)
+        .unwrap();
+    assert!(plan.find_work(&mut graph).is_none());
 }
 
 #[test]
 fn ninja_plan_double_output_indirect() {
-    let graph = plan_graph(
+    let mut graph = plan_graph(
         "build out: cat b1 b2\nbuild b1: cat a1\nbuild b2: cat a2\nbuild a1 a2: cat in\n",
     );
-    mark_dirty(&graph, &["a1", "a2", "b1", "b2", "out"]);
+    mark_dirty(&mut graph, &["a1", "a2", "b1", "b2", "out"]);
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"out").unwrap()).unwrap();
-    plan.prepare_queue();
+    add_plan_target(&mut plan, &mut graph, b"out");
+    plan.prepare_queue(&graph);
     for expected in ["a1", "b1", "b2", "out"] {
-        let edge = plan.find_work().unwrap();
-        assert_eq!(output_path(&edge), expected);
-        plan.edge_finished(&edge, EdgeResult::Succeeded).unwrap();
+        let edge = plan.find_work(&mut graph).unwrap();
+        assert_eq!(output_path(&graph, edge), expected);
+        plan.edge_finished(&mut graph, edge, EdgeResult::Succeeded)
+            .unwrap();
     }
-    assert!(plan.find_work().is_none());
+    assert!(plan.find_work(&mut graph).is_none());
 }
 
 #[test]
 fn ninja_plan_double_dependent() {
-    let graph = plan_graph(
+    let mut graph = plan_graph(
         "build out: cat a1 a2\nbuild a1: cat mid\nbuild a2: cat mid\nbuild mid: cat in\n",
     );
-    mark_dirty(&graph, &["mid", "a1", "a2", "out"]);
+    mark_dirty(&mut graph, &["mid", "a1", "a2", "out"]);
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"out").unwrap()).unwrap();
-    plan.prepare_queue();
+    add_plan_target(&mut plan, &mut graph, b"out");
+    plan.prepare_queue(&graph);
     for expected in ["mid", "a1", "a2", "out"] {
-        let edge = plan.find_work().unwrap();
-        assert_eq!(output_path(&edge), expected);
-        plan.edge_finished(&edge, EdgeResult::Succeeded).unwrap();
+        let edge = plan.find_work(&mut graph).unwrap();
+        assert_eq!(output_path(&graph, edge), expected);
+        plan.edge_finished(&mut graph, edge, EdgeResult::Succeeded)
+            .unwrap();
     }
     assert!(!plan.more_to_do());
 }
 
 fn check_depth_one_pool(pool_definition: &str) {
-    let graph = plan_graph(&format!(
+    let mut graph = plan_graph(&format!(
             "{pool_definition}rule poolcat\n  command = cat $in > $out\n  pool = selected\nbuild out1: poolcat in\nbuild out2: poolcat in\n"
         ));
-    mark_dirty(&graph, &["out1", "out2"]);
+    mark_dirty(&mut graph, &["out1", "out2"]);
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"out1").unwrap()).unwrap();
-    plan.add_target(&nodeget(&graph, b"out2").unwrap()).unwrap();
-    plan.prepare_queue();
-    let first = plan.find_work().unwrap();
-    assert_eq!(output_path(&first), "out1");
-    assert!(plan.find_work().is_none());
-    plan.edge_finished(&first, EdgeResult::Succeeded).unwrap();
-    let second = plan.find_work().unwrap();
-    assert_eq!(output_path(&second), "out2");
-    assert!(plan.find_work().is_none());
-    plan.edge_finished(&second, EdgeResult::Succeeded).unwrap();
+    add_plan_target(&mut plan, &mut graph, b"out1");
+    add_plan_target(&mut plan, &mut graph, b"out2");
+    plan.prepare_queue(&graph);
+    let first = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, first), "out1");
+    assert!(plan.find_work(&mut graph).is_none());
+    plan.edge_finished(&mut graph, first, EdgeResult::Succeeded)
+        .unwrap();
+    let second = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, second), "out2");
+    assert!(plan.find_work(&mut graph).is_none());
+    plan.edge_finished(&mut graph, second, EdgeResult::Succeeded)
+        .unwrap();
     assert!(!plan.more_to_do());
 }
 
@@ -335,29 +348,31 @@ fn ninja_plan_pool_with_depth_one() {
 
 #[test]
 fn ninja_plan_console_pool() {
-    let graph = plan_graph(
+    let mut graph = plan_graph(
             "rule poolcat\n  command = cat $in > $out\n  pool = console\nbuild out1: poolcat in\nbuild out2: poolcat in\n",
         );
-    mark_dirty(&graph, &["out1", "out2"]);
+    mark_dirty(&mut graph, &["out1", "out2"]);
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"out1").unwrap()).unwrap();
-    plan.add_target(&nodeget(&graph, b"out2").unwrap()).unwrap();
-    plan.prepare_queue();
-    let first = plan.find_work().unwrap();
-    assert!(plan.find_work().is_none());
-    plan.edge_finished(&first, EdgeResult::Succeeded).unwrap();
-    let second = plan.find_work().unwrap();
-    plan.edge_finished(&second, EdgeResult::Succeeded).unwrap();
+    add_plan_target(&mut plan, &mut graph, b"out1");
+    add_plan_target(&mut plan, &mut graph, b"out2");
+    plan.prepare_queue(&graph);
+    let first = plan.find_work(&mut graph).unwrap();
+    assert!(plan.find_work(&mut graph).is_none());
+    plan.edge_finished(&mut graph, first, EdgeResult::Succeeded)
+        .unwrap();
+    let second = plan.find_work(&mut graph).unwrap();
+    plan.edge_finished(&mut graph, second, EdgeResult::Succeeded)
+        .unwrap();
     assert!(!plan.more_to_do());
 }
 
 #[test]
 fn ninja_plan_pools_with_depth_two() {
-    let graph = plan_graph(
+    let mut graph = plan_graph(
             "pool foobar\n  depth = 2\npool bazbin\n  depth = 2\nrule foocat\n  command = cat\n  pool = foobar\nrule bazcat\n  command = cat\n  pool = bazbin\nbuild out1: foocat in\nbuild out2: foocat in\nbuild out3: foocat in\nbuild outb1: bazcat in\nbuild outb2: bazcat in\nbuild outb3: bazcat in\n  pool =\nbuild allTheThings: cat out1 out2 out3 outb1 outb2 outb3\n",
         );
     mark_dirty(
-        &graph,
+        &mut graph,
         &[
             "out1",
             "out2",
@@ -369,120 +384,131 @@ fn ninja_plan_pools_with_depth_two() {
         ],
     );
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"allTheThings").unwrap())
-        .unwrap();
-    plan.prepare_queue();
+    add_plan_target(&mut plan, &mut graph, b"allTheThings");
+    plan.prepare_queue(&graph);
     let mut initial = Vec::new();
-    while let Some(edge) = plan.find_work() {
+    while let Some(edge) = plan.find_work(&mut graph) {
         initial.push(edge);
     }
     assert_eq!(
-        initial.iter().map(output_path).collect::<Vec<_>>(),
+        initial
+            .iter()
+            .map(|edge| output_path(&graph, *edge))
+            .collect::<Vec<_>>(),
         ["out1", "out2", "outb1", "outb2", "outb3"]
     );
-    plan.edge_finished(&initial[0], EdgeResult::Succeeded)
+    plan.edge_finished(&mut graph, initial[0], EdgeResult::Succeeded)
         .unwrap();
-    let out3 = plan.find_work().unwrap();
-    assert_eq!(output_path(&out3), "out3");
-    plan.edge_finished(&out3, EdgeResult::Succeeded).unwrap();
+    let out3 = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, out3), "out3");
+    plan.edge_finished(&mut graph, out3, EdgeResult::Succeeded)
+        .unwrap();
     for edge in &initial[1..] {
-        plan.edge_finished(edge, EdgeResult::Succeeded).unwrap();
+        plan.edge_finished(&mut graph, *edge, EdgeResult::Succeeded)
+            .unwrap();
     }
-    let final_edge = plan.find_work().unwrap();
-    assert_eq!(output_path(&final_edge), "allTheThings");
-    plan.edge_finished(&final_edge, EdgeResult::Succeeded)
+    let final_edge = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, final_edge), "allTheThings");
+    plan.edge_finished(&mut graph, final_edge, EdgeResult::Succeeded)
         .unwrap();
     assert!(!plan.more_to_do());
 }
 
 #[test]
 fn ninja_plan_pool_with_failing_edge() {
-    let graph = plan_graph(
+    let mut graph = plan_graph(
             "pool foobar\n  depth = 1\nrule poolcat\n  command = cat\n  pool = foobar\nbuild out1: poolcat in\nbuild out2: poolcat in\n",
         );
-    mark_dirty(&graph, &["out1", "out2"]);
+    mark_dirty(&mut graph, &["out1", "out2"]);
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"out1").unwrap()).unwrap();
-    plan.add_target(&nodeget(&graph, b"out2").unwrap()).unwrap();
-    plan.prepare_queue();
-    let first = plan.find_work().unwrap();
-    assert!(plan.find_work().is_none());
-    plan.edge_finished(&first, EdgeResult::Failed).unwrap();
-    let second = plan.find_work().unwrap();
-    assert!(plan.find_work().is_none());
-    plan.edge_finished(&second, EdgeResult::Failed).unwrap();
+    add_plan_target(&mut plan, &mut graph, b"out1");
+    add_plan_target(&mut plan, &mut graph, b"out2");
+    plan.prepare_queue(&graph);
+    let first = plan.find_work(&mut graph).unwrap();
+    assert!(plan.find_work(&mut graph).is_none());
+    plan.edge_finished(&mut graph, first, EdgeResult::Failed)
+        .unwrap();
+    let second = plan.find_work(&mut graph).unwrap();
+    assert!(plan.find_work(&mut graph).is_none());
+    plan.edge_finished(&mut graph, second, EdgeResult::Failed)
+        .unwrap();
     assert!(plan.more_to_do());
-    assert!(plan.find_work().is_none());
+    assert!(plan.find_work(&mut graph).is_none());
 }
 
 #[test]
 fn ninja_plan_pool_with_redundant_edges() {
-    let graph = plan_graph(
+    let mut graph = plan_graph(
             "pool compile\n  depth = 1\nrule generate\n  command = touch $out\nrule echo\n  command = echo $out\nbuild foo.obj: echo foo || foo\n  pool = compile\nbuild bar.obj: echo bar || bar\n  pool = compile\nbuild lib: echo foo.obj bar.obj\nbuild foo: generate\nbuild bar: generate\nbuild all: phony lib\n",
         );
-    mark_dirty(&graph, &["foo", "bar", "foo.obj", "bar.obj", "lib", "all"]);
+    mark_dirty(
+        &mut graph,
+        &["foo", "bar", "foo.obj", "bar.obj", "lib", "all"],
+    );
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"all").unwrap()).unwrap();
-    plan.prepare_queue();
+    add_plan_target(&mut plan, &mut graph, b"all");
+    plan.prepare_queue(&graph);
 
-    let first = plan.find_work().unwrap();
-    let second = plan.find_work().unwrap();
-    assert_eq!([output_path(&first), output_path(&second)], ["foo", "bar"]);
-    assert!(plan.find_work().is_none());
+    let first = plan.find_work(&mut graph).unwrap();
+    let second = plan.find_work(&mut graph).unwrap();
+    assert_eq!(
+        [output_path(&graph, first), output_path(&graph, second)],
+        ["foo", "bar"]
+    );
+    assert!(plan.find_work(&mut graph).is_none());
 
-    plan.edge_finished(&first, EdgeResult::Succeeded).unwrap();
-    let foo_object = plan.find_work().unwrap();
-    assert_eq!(output_path(&foo_object), "foo.obj");
-    assert!(plan.find_work().is_none());
-    plan.edge_finished(&foo_object, EdgeResult::Succeeded)
+    plan.edge_finished(&mut graph, first, EdgeResult::Succeeded)
+        .unwrap();
+    let foo_object = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, foo_object), "foo.obj");
+    assert!(plan.find_work(&mut graph).is_none());
+    plan.edge_finished(&mut graph, foo_object, EdgeResult::Succeeded)
         .unwrap();
 
-    plan.edge_finished(&second, EdgeResult::Succeeded).unwrap();
-    let bar_object = plan.find_work().unwrap();
-    assert_eq!(output_path(&bar_object), "bar.obj");
-    assert!(plan.find_work().is_none());
-    plan.edge_finished(&bar_object, EdgeResult::Succeeded)
+    plan.edge_finished(&mut graph, second, EdgeResult::Succeeded)
+        .unwrap();
+    let bar_object = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, bar_object), "bar.obj");
+    assert!(plan.find_work(&mut graph).is_none());
+    plan.edge_finished(&mut graph, bar_object, EdgeResult::Succeeded)
         .unwrap();
 
-    let library = plan.find_work().unwrap();
-    assert_eq!(output_path(&library), "lib");
-    plan.edge_finished(&library, EdgeResult::Succeeded).unwrap();
-    let all = plan.find_work().unwrap();
-    assert_eq!(output_path(&all), "all");
-    plan.edge_finished(&all, EdgeResult::Succeeded).unwrap();
+    let library = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, library), "lib");
+    plan.edge_finished(&mut graph, library, EdgeResult::Succeeded)
+        .unwrap();
+    let all = plan.find_work(&mut graph).unwrap();
+    assert_eq!(output_path(&graph, all), "all");
+    plan.edge_finished(&mut graph, all, EdgeResult::Succeeded)
+        .unwrap();
     assert!(!plan.more_to_do());
 }
 
 #[test]
 fn ninja_plan_priority_without_build_log() {
-    let graph = plan_graph(
+    let mut graph = plan_graph(
             "rule r\n  command = unused\nbuild out: r a0 b0 c0\nbuild a0: r a1\nbuild a1: r a2\nbuild b0: r b1\nbuild c0: r b1\n",
         );
-    mark_dirty(&graph, &["a1", "a0", "b0", "c0", "out"]);
+    mark_dirty(&mut graph, &["a1", "a0", "b0", "c0", "out"]);
     let mut plan = Plan::default();
-    plan.add_target(&nodeget(&graph, b"out").unwrap()).unwrap();
-    plan.prepare_queue();
+    add_plan_target(&mut plan, &mut graph, b"out");
+    plan.prepare_queue(&graph);
     assert_eq!(
         [("out", 1), ("a0", 2), ("b0", 2), ("c0", 2), ("a1", 3)].map(|(path, weight)| {
-            let edge = nodeget(&graph, path.as_bytes())
-                .unwrap()
-                .borrow()
-                .gen
-                .as_ref()
-                .unwrap()
-                .upgrade()
-                .unwrap();
-            let actual = edge.borrow().critical_path_weight;
+            let node = nodeget(&graph, path.as_bytes()).unwrap();
+            let edge = graph.node(node).gen.unwrap();
+            let actual = graph.edge(edge).critical_path_weight;
             (actual, weight)
         }),
         [(1, 1), (2, 2), (2, 2), (2, 2), (3, 3)]
     );
     for expected in ["a1", "a0", "b0", "c0", "out"] {
-        let edge = plan.find_work().unwrap();
-        assert_eq!(output_path(&edge), expected);
-        plan.edge_finished(&edge, EdgeResult::Succeeded).unwrap();
+        let edge = plan.find_work(&mut graph).unwrap();
+        assert_eq!(output_path(&graph, edge), expected);
+        plan.edge_finished(&mut graph, edge, EdgeResult::Succeeded)
+            .unwrap();
     }
-    assert!(plan.find_work().is_none());
+    assert!(plan.find_work(&mut graph).is_none());
 }
 
 #[test]
@@ -616,7 +642,7 @@ fn ninja_build_chain_is_clean_on_second_scan() {
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 4);
     }
-    reset_graph_state(&graph);
+    reset_graph_state(&mut graph);
     {
         let mut builder = Builder::new(&mut graph, BuildOptions::default());
         builder.add_target(&target).unwrap();
@@ -884,16 +910,10 @@ fn ninja_build_loads_existing_depfile() {
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());
     }
-    let edge = nodeget(&graph, target.as_bytes())
-        .unwrap()
-        .borrow()
-        .gen
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
-    assert_eq!(edge.borrow().input.len(), 3);
-    let command = crate::env::edgevar(&edge, "command", false).unwrap();
+    let output = nodeget(&graph, target.as_bytes()).unwrap();
+    let edge = graph.node(output).gen.unwrap();
+    assert_eq!(graph.edge(edge).input.len(), 3);
+    let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
     assert_eq!(
         String::from_utf8_lossy(command.as_bytes()),
         format!("cp {} {}", directory.join("in").display(), target)
@@ -1029,15 +1049,9 @@ fn ninja_build_records_generated_depfile() {
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());
     }
-    let edge = nodeget(&graph, target.as_bytes())
-        .unwrap()
-        .borrow()
-        .gen
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
-    assert_eq!(edge.borrow().input.len(), 2);
+    let output = nodeget(&graph, target.as_bytes()).unwrap();
+    let edge = graph.node(output).gen.unwrap();
+    assert_eq!(graph.edge(edge).input.len(), 2);
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1115,7 +1129,7 @@ fn ninja_build_phony_with_no_inputs_respects_order_only() {
         assert!(builder.already_up_to_date());
     }
     for node in graph.nodes() {
-        let mut node = node.borrow_mut();
+        let node = graph.node_mut(node);
         node.mtime = crate::graph::MTIME_UNKNOWN;
         node.dirty = false;
     }
@@ -1476,7 +1490,7 @@ fn ninja_build_log_rebuilds_output_not_in_log() {
     fs::write(directory.join("in"), "hello").unwrap();
     fs::write(directory.join("out"), "hello").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1486,7 +1500,7 @@ fn ninja_build_log_rebuilds_output_not_in_log() {
     assert!(crate::log::logentry(&log, &target).is_some());
 
     for node in graph.nodes() {
-        let mut node = node.borrow_mut();
+        let node = graph.node_mut(node);
         node.mtime = crate::graph::MTIME_UNKNOWN;
         node.dirty = false;
     }
@@ -1509,7 +1523,7 @@ fn ninja_build_log_generator_rebuilds_for_newer_implicit_input() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1530,7 +1544,7 @@ fn ninja_build_log_generator_implicit_inputs_are_clean_after_each_rebuild() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in2"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1539,7 +1553,7 @@ fn ninja_build_log_generator_implicit_inputs_are_clean_after_each_rebuild() {
     crate::log::logclose(log).unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1550,7 +1564,7 @@ fn ninja_build_log_generator_implicit_inputs_are_clean_after_each_rebuild() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in1"), "changed").unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1560,7 +1574,7 @@ fn ninja_build_log_generator_implicit_inputs_are_clean_after_each_rebuild() {
     crate::log::logclose(log).unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1577,7 +1591,7 @@ fn ninja_build_log_does_not_record_failure() {
         "rule fail\n  command = false\nbuild $dir/out: fail\n",
     );
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1595,7 +1609,7 @@ fn ninja_build_log_rspfile_content_change_rebuilds() {
             "rule rsp\n  command = cat $rspfile > $out\n  rspfile = $dir/args.rsp\n  rspfile_content = first\nbuild $dir/out: rsp\n",
         );
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1614,7 +1628,7 @@ fn ninja_build_log_rspfile_content_change_rebuilds() {
         )
         .unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1633,7 +1647,7 @@ fn ninja_build_log_generator_command_change_is_ignored() {
         "rule generate\n  command = touch $out\n  generator = 1\nbuild $dir/out: generate\n",
     );
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1650,7 +1664,7 @@ fn ninja_build_log_generator_command_change_is_ignored() {
         )
         .unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
     builder.add_target(&target).unwrap();
     assert!(builder.already_up_to_date());
@@ -1669,7 +1683,7 @@ fn ninja_build_log_restat_prunes_downstream_edge() {
     fs::write(directory.join("mid"), "").unwrap();
     fs::write(directory.join("out"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1679,7 +1693,7 @@ fn ninja_build_log_restat_prunes_downstream_edge() {
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "changed").unwrap();
-    reset_graph_state(&graph);
+    reset_graph_state(&mut graph);
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1702,7 +1716,7 @@ fn ninja_build_log_restat_does_not_hide_missing_sibling_output() {
     fs::write(directory.join("out2"), "").unwrap();
     fs::write(directory.join("final"), "").unwrap();
     let target = directory.join("final").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1712,7 +1726,7 @@ fn ninja_build_log_restat_does_not_hide_missing_sibling_output() {
     std::thread::sleep(std::time::Duration::from_millis(2));
     fs::write(directory.join("in"), "changed").unwrap();
     fs::remove_file(directory.join("out2")).unwrap();
-    reset_graph_state(&graph);
+    reset_graph_state(&mut graph);
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1732,7 +1746,7 @@ fn ninja_build_log_rebuild_with_no_inputs() {
     fs::write(directory.join("in"), "").unwrap();
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&out1).unwrap();
@@ -1743,7 +1757,7 @@ fn ninja_build_log_rebuild_with_no_inputs() {
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "changed").unwrap();
-    reset_graph_state(&graph);
+    reset_graph_state(&mut graph);
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&out1).unwrap();
@@ -1764,7 +1778,7 @@ fn ninja_build_log_rebuilds_after_failed_output_update() {
         );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1774,7 +1788,7 @@ fn ninja_build_log_rebuilds_after_failed_output_update() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "changed").unwrap();
     fs::write(directory.join("fail"), "").unwrap();
-    reset_graph_state(&graph);
+    reset_graph_state(&mut graph);
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1782,7 +1796,7 @@ fn ninja_build_log_rebuilds_after_failed_output_update() {
     }
 
     fs::remove_file(directory.join("fail")).unwrap();
-    reset_graph_state(&graph);
+    reset_graph_state(&mut graph);
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1800,7 +1814,7 @@ fn ninja_build_log_detects_input_changed_during_command() {
     let (mut graph, directory) = build_fixture("log-input-mtime-race", manifest);
     fs::write(directory.join("in"), "source").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1812,7 +1826,7 @@ fn ninja_build_log_detects_input_changed_during_command() {
     crate::log::logclose(log).unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1823,7 +1837,7 @@ fn ninja_build_log_detects_input_changed_during_command() {
     crate::log::logclose(log).unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1839,7 +1853,7 @@ fn ninja_build_log_restat_missing_output_prunes_dependent() {
     let (mut graph, directory) = build_fixture("log-restat-missing-output", manifest);
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1851,7 +1865,7 @@ fn ninja_build_log_restat_missing_output_prunes_dependent() {
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "changed").unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1879,7 +1893,7 @@ fn ninja_build_log_restat_missing_discovered_input_prunes_dependent() {
     )
     .unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1890,7 +1904,7 @@ fn ninja_build_log_restat_missing_discovered_input_prunes_dependent() {
 
     fs::remove_file(directory.join("discovered")).unwrap();
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1907,7 +1921,7 @@ fn ninja_build_log_generated_plain_depfile_mtime() {
     let (mut graph, directory) = build_fixture("log-plain-depfile", manifest);
     fs::write(directory.join("header"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1918,7 +1932,7 @@ fn ninja_build_log_generated_plain_depfile_mtime() {
     assert!(directory.join("out.d").exists());
 
     let mut graph = parse_fixture(&directory);
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1946,7 +1960,7 @@ fn ninja_build_log_dyndep_discovers_restat() {
     )
     .unwrap();
     let target = directory.join("out2").to_string_lossy().into_owned();
-    let mut log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -1956,7 +1970,7 @@ fn ninja_build_log_dyndep_discovers_restat() {
 
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "changed").unwrap();
-    reset_graph_state(&graph);
+    reset_graph_state(&mut graph);
     {
         let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
@@ -2045,7 +2059,7 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
     fs::write(directory.join("header"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let deps_path = directory.join(".ninja_deps");
-    let mut build_log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut build_log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     let mut deps_log = crate::deps::depsinit(Some(&directory)).unwrap();
     {
         let mut builder = Builder::with_logs(
@@ -2066,7 +2080,7 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
     crate::deps::depsclose(deps_log).unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut build_log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut build_log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     let (mut deps_log, warning) = crate::deps::depsloadlog(&deps_path, &mut graph).unwrap();
     assert!(warning.is_none());
     {
@@ -2085,7 +2099,7 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
     crate::deps::depsclose(deps_log).unwrap();
 
     let mut graph = parse_fixture(&directory);
-    let mut build_log = crate::log::loginit(Some(&directory), &graph).unwrap();
+    let mut build_log = crate::log::loginit(Some(&directory), &mut graph).unwrap();
     let (mut deps_log, warning) = crate::deps::depsloadlog(&deps_path, &mut graph).unwrap();
     assert!(warning.is_none());
     {
@@ -2147,7 +2161,7 @@ fn ninja_build_deps_log_records_all_outputs() {
     let out1_node = nodeget(&graph, out1.as_bytes()).unwrap();
     let out2_node = nodeget(&graph, out2.as_bytes()).unwrap();
     assert_eq!(
-        crate::deps::depsentry(&deps_log, &out1_node)
+        crate::deps::depsentry(&deps_log, out1_node)
             .unwrap()
             .deps
             .nodes
@@ -2155,7 +2169,7 @@ fn ninja_build_deps_log_records_all_outputs() {
         1
     );
     assert_eq!(
-        crate::deps::depsentry(&deps_log, &out2_node)
+        crate::deps::depsentry(&deps_log, out2_node)
             .unwrap()
             .deps
             .nodes
@@ -2223,10 +2237,10 @@ fn ninja_build_deps_log_msvc_records_all_outputs() {
     }
     for output in [&out1, &out2] {
         let output = nodeget(&graph, output.as_bytes()).unwrap();
-        let entry = crate::deps::depsentry(&deps_log, &output).unwrap();
+        let entry = crate::deps::depsentry(&deps_log, output).unwrap();
         assert_eq!(entry.deps.nodes.len(), 1);
         assert_eq!(
-            entry.deps.nodes[0].borrow().path,
+            graph.node(entry.deps.nodes[0]).path,
             directory.join("in").to_string_lossy().as_ref()
         );
     }
@@ -2270,16 +2284,10 @@ fn ninja_build_deps_log_escaped_output_preserves_command_inputs() {
             Builder::with_deps_log(&mut graph, BuildOptions::default(), &mut deps_log);
         builder.add_target(&target).unwrap();
     }
-    let edge = nodeget(&graph, target.as_bytes())
-        .unwrap()
-        .borrow()
-        .gen
-        .as_ref()
-        .unwrap()
-        .upgrade()
-        .unwrap();
-    assert_eq!(edge.borrow().input.len(), 3);
-    let command = crate::env::edgevar(&edge, "command", false).unwrap();
+    let output = nodeget(&graph, target.as_bytes()).unwrap();
+    let edge = graph.node(output).gen.unwrap();
+    assert_eq!(graph.edge(edge).input.len(), 3);
+    let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
     let command = String::from_utf8_lossy(command.as_bytes());
     assert!(command.contains("foo.c"));
     assert!(!command.contains("blah.h"));
@@ -2484,25 +2492,15 @@ fn ninja_build_stale_depfile_does_not_introduce_cycle() {
         let mut builder = Builder::new(&mut graph, BuildOptions::default());
         let target_node = nodeget(builder.graph, target.as_bytes()).unwrap();
         builder
-            .load_depfiles_for(&target_node, &mut BTreeSet::new())
+            .load_depfiles_for(target_node, &mut BTreeSet::new())
             .unwrap();
         let b = nodeget(
             builder.graph,
             directory.join("b").to_string_lossy().as_bytes(),
         )
         .unwrap();
-        assert_eq!(
-            b.borrow()
-                .gen
-                .as_ref()
-                .unwrap()
-                .upgrade()
-                .unwrap()
-                .borrow()
-                .input
-                .len(),
-            1
-        );
+        let edge = builder.graph.node(b).gen.unwrap();
+        assert_eq!(builder.graph.edge(edge).input.len(), 1);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 3);
@@ -2535,9 +2533,8 @@ fn ninja_build_generated_dyndep() {
     assert!(directory.join("dd").exists());
     assert!(directory.join("out").exists());
     assert!(
-        !nodeget(&graph, directory.join("dd").to_string_lossy().as_bytes())
-            .unwrap()
-            .borrow()
+        !graph
+            .node(nodeget(&graph, directory.join("dd").to_string_lossy().as_bytes()).unwrap())
             .dyndep_pending
     );
     fs::remove_dir_all(directory).unwrap();
@@ -2809,12 +2806,11 @@ fn ninja_build_generated_dyndep_connects_depfile_input() {
         directory.join("tmp.imp").to_string_lossy().as_bytes(),
     )
     .unwrap();
-    let generator = implicit.borrow().gen.as_ref().unwrap().upgrade().unwrap();
-    assert!(!generator
-        .borrow()
+    let generator = graph.node(implicit).gen.unwrap();
+    assert!(graph
+        .edge(generator)
         .rule
-        .as_ref()
-        .is_some_and(|rule| rule.name == "phony"));
+        .is_none_or(|rule| graph.rule(rule).name != "phony"));
     fs::remove_dir_all(directory).unwrap();
 }
 

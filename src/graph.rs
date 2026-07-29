@@ -1,14 +1,12 @@
-//! Literal graph ownership and dependency operations from `graph.c`.
+//! Dense graph arenas and dependency operations.
 
-use crate::env::{Environment, Pool, Rule};
+use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::htab::rapidhashv1;
 use crate::os::{osmtime, MTIME_MISSING};
 use crate::util::{BStr, BString, ByteSlice};
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::Path;
-use std::rc::{Rc, Weak};
 
 pub const MTIME_UNKNOWN: i64 = -1;
 
@@ -20,18 +18,36 @@ pub const FLAG_DIRTY: u32 = FLAG_DIRTY_IN | FLAG_DIRTY_OUT;
 pub const FLAG_CYCLE: u32 = 1 << 5;
 pub const FLAG_DEPS: u32 = 1 << 6;
 
-pub type NodeRef = Rc<RefCell<Node>>;
-pub type EdgeRef = Rc<RefCell<Edge>>;
+macro_rules! arena_id {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[repr(transparent)]
+        pub struct $name(usize);
+
+        impl $name {
+            pub(crate) const fn from_index(index: usize) -> Self {
+                Self(index)
+            }
+
+            pub const fn index(self) -> usize {
+                self.0
+            }
+        }
+    };
+}
+
+arena_id!(NodeId);
+arena_id!(EdgeId);
 
 // [spec:samurai:def:graph.node]
 pub struct Node {
     pub path: BString,
-    pub shellpath: Option<BString>,
+    pub shellpath: BString,
     pub mtime: i64,
     pub logmtime: i64,
-    pub gen: Option<Weak<RefCell<Edge>>>,
-    pub uses: Vec<Weak<RefCell<Edge>>>,
-    pub validation_uses: Vec<Weak<RefCell<Edge>>>,
+    pub gen: Option<EdgeId>,
+    pub uses: Vec<EdgeId>,
+    pub validation_uses: Vec<EdgeId>,
     pub hash: u64,
     pub id: i32,
     pub dirty: bool,
@@ -40,16 +56,16 @@ pub struct Node {
 
 // [spec:samurai:def:graph.edge]
 pub struct Edge {
-    pub id: usize,
+    pub id: EdgeId,
     pub critical_path_weight: i64,
-    pub rule: Option<Rc<Rule>>,
-    pub pool: Option<Rc<RefCell<Pool>>>,
-    pub env: Rc<Environment>,
+    pub rule: Option<RuleId>,
+    pub pool: Option<PoolId>,
+    pub env: EnvironmentId,
     pub bindings: BTreeMap<String, BString>,
-    pub out: Vec<NodeRef>,
-    pub input: Vec<NodeRef>,
-    pub validation: Vec<NodeRef>,
-    pub dyndep: Option<NodeRef>,
+    pub out: Vec<NodeId>,
+    pub input: Vec<NodeId>,
+    pub validation: Vec<NodeId>,
+    pub dyndep: Option<NodeId>,
     pub outimpidx: usize,
     pub inimpidx: usize,
     pub inorderidx: usize,
@@ -65,39 +81,115 @@ pub struct Edge {
 }
 
 pub struct Graph {
-    nodes: BTreeMap<Vec<u8>, NodeRef>,
-    pub edges: Vec<EdgeRef>,
+    node_by_path: BTreeMap<Vec<u8>, NodeId>,
+    nodes: Vec<Node>,
+    edges: Vec<Edge>,
+    environments: Vec<Environment>,
+    rules: Vec<Rule>,
+    pools: Vec<Pool>,
 }
 
 impl Graph {
-    pub fn nodes(&self) -> Vec<NodeRef> {
-        self.nodes.values().cloned().collect()
+    pub fn nodes(&self) -> Vec<NodeId> {
+        self.node_by_path.values().copied().collect()
+    }
+
+    pub fn node(&self, id: NodeId) -> &Node {
+        &self.nodes[id.index()]
+    }
+
+    pub fn node_mut(&mut self, id: NodeId) -> &mut Node {
+        &mut self.nodes[id.index()]
+    }
+
+    pub fn edge(&self, id: EdgeId) -> &Edge {
+        &self.edges[id.index()]
+    }
+
+    pub fn edge_mut(&mut self, id: EdgeId) -> &mut Edge {
+        &mut self.edges[id.index()]
+    }
+
+    pub fn edge_ids(&self) -> Vec<EdgeId> {
+        (0..self.edges.len()).map(EdgeId::from_index).collect()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edges.len()
+    }
+
+    pub fn environment(&self, id: EnvironmentId) -> &Environment {
+        &self.environments[id.index()]
+    }
+
+    pub fn environment_mut(&mut self, id: EnvironmentId) -> &mut Environment {
+        &mut self.environments[id.index()]
+    }
+
+    pub(crate) fn push_environment(&mut self, environment: Environment) -> EnvironmentId {
+        let id = EnvironmentId::from_index(self.environments.len());
+        self.environments.push(environment);
+        id
+    }
+
+    pub fn rule(&self, id: RuleId) -> &Rule {
+        &self.rules[id.index()]
+    }
+
+    pub fn rule_mut(&mut self, id: RuleId) -> &mut Rule {
+        &mut self.rules[id.index()]
+    }
+
+    pub(crate) fn push_rule(&mut self, rule: Rule) -> RuleId {
+        let id = RuleId::from_index(self.rules.len());
+        self.rules.push(rule);
+        id
+    }
+
+    pub fn pool(&self, id: PoolId) -> &Pool {
+        &self.pools[id.index()]
+    }
+
+    pub fn pool_mut(&mut self, id: PoolId) -> &mut Pool {
+        &mut self.pools[id.index()]
+    }
+
+    pub(crate) fn push_pool(&mut self, pool: Pool) -> PoolId {
+        let id = PoolId::from_index(self.pools.len());
+        self.pools.push(pool);
+        id
     }
 }
 
 // [spec:samurai:def:graph.delnode-fn]
 // [spec:samurai:sem:graph.delnode-fn]
-pub fn delnode(_node: NodeRef) {}
+pub fn delnode(_node: NodeId) {}
 
 // [spec:samurai:def:graph.graphinit-fn]
 // [spec:samurai:sem:graph.graphinit-fn]
 pub fn graphinit() -> Graph {
     Graph {
-        nodes: BTreeMap::new(),
+        node_by_path: BTreeMap::new(),
+        nodes: Vec::new(),
         edges: Vec::new(),
+        environments: Vec::new(),
+        rules: Vec::new(),
+        pools: Vec::new(),
     }
 }
 
 // [spec:samurai:def:graph.mknode-fn]
 // [spec:samurai:sem:graph.mknode-fn]
-pub fn mknode(graph: &mut Graph, path: BString) -> NodeRef {
+pub fn mknode(graph: &mut Graph, path: BString) -> NodeId {
     let key = path.as_bytes().to_vec();
-    if let Some(node) = graph.nodes.get(&key) {
-        return node.clone();
+    if let Some(node) = graph.node_by_path.get(&key) {
+        return *node;
     }
-    let node = Rc::new(RefCell::new(Node {
+    let shellpath = shell_escape_path(path.as_bytes());
+    let node = NodeId::from_index(graph.nodes.len());
+    graph.nodes.push(Node {
         path,
-        shellpath: None,
+        shellpath,
         mtime: MTIME_UNKNOWN,
         logmtime: MTIME_MISSING,
         gen: None,
@@ -107,63 +199,73 @@ pub fn mknode(graph: &mut Graph, path: BString) -> NodeRef {
         id: -1,
         dirty: false,
         dyndep_pending: false,
-    }));
-    graph.nodes.insert(key, node.clone());
+    });
+    graph.node_by_path.insert(key, node);
     node
 }
 
 // [spec:samurai:def:graph.nodeget-fn]
 // [spec:samurai:sem:graph.nodeget-fn]
-pub fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeRef> {
-    graph.nodes.get(path).cloned()
+pub fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
+    graph.node_by_path.get(path).copied()
 }
 
 // [spec:samurai:def:graph.nodestat-fn]
 // [spec:samurai:sem:graph.nodestat-fn]
-pub fn nodestat(node: &NodeRef) -> std::io::Result<()> {
-    let mtime = {
-        let node = node.borrow();
-        osmtime(node.path.to_path().expect("byte paths are valid on Unix"))?
-    };
-    node.borrow_mut().mtime = mtime;
+pub fn nodestat(graph: &mut Graph, node: NodeId) -> std::io::Result<()> {
+    let mtime = osmtime(
+        graph
+            .node(node)
+            .path
+            .to_path()
+            .expect("byte paths are valid on Unix"),
+    )?;
+    graph.node_mut(node).mtime = mtime;
     Ok(())
 }
 
-pub fn nodestat_with<F>(node: &NodeRef, stat: &mut F) -> io::Result<()>
+pub fn nodestat_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<()>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    let mtime = {
-        let node = node.borrow();
-        stat(node.path.to_path().expect("byte paths are valid on Unix"))?
-    };
-    node.borrow_mut().mtime = mtime;
+    let mtime = stat(
+        graph
+            .node(node)
+            .path
+            .to_path()
+            .expect("byte paths are valid on Unix"),
+    )?;
+    graph.node_mut(node).mtime = mtime;
     Ok(())
 }
 
 /// Stat a dependency graph depth-first and update each node's dirty bit.
-pub fn recompute_dirty_with<F>(node: &NodeRef, stat: &mut F) -> io::Result<bool>
+pub fn recompute_dirty_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<bool>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    fn visit<F>(node: &NodeRef, stat: &mut F, visiting: &mut BTreeSet<usize>) -> io::Result<bool>
+    fn visit<F>(
+        graph: &mut Graph,
+        node: NodeId,
+        stat: &mut F,
+        visiting: &mut BTreeSet<NodeId>,
+    ) -> io::Result<bool>
     where
         F: FnMut(&Path) -> io::Result<i64>,
     {
-        let identity = Rc::as_ptr(node) as usize;
-        if !visiting.insert(identity) {
+        if !visiting.insert(node) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 "dependency cycle",
             ));
         }
-        let edge = node.borrow().gen.as_ref().and_then(Weak::upgrade);
+        let edge = graph.node(node).gen;
         let dirty = if let Some(edge) = edge {
-            if edge.borrow().restat_clean {
-                for output in edge.borrow().out.clone() {
-                    output.borrow_mut().dirty = false;
+            if graph.edge(edge).restat_clean {
+                for output in graph.edge(edge).out.clone() {
+                    graph.node_mut(output).dirty = false;
                 }
-                visiting.remove(&identity);
+                visiting.remove(&node);
                 return Ok(false);
             }
             let (
@@ -175,25 +277,26 @@ where
                 deps_missing,
                 command_dirty,
             ) = {
-                let edge = edge.borrow();
+                let edge = graph.edge(edge);
                 (
                     edge.input.clone(),
                     edge.out.clone(),
                     edge.inorderidx,
-                    edge.rule.as_ref().is_some_and(|rule| rule.name == "phony"),
+                    edge.rule
+                        .is_some_and(|rule| graph.rule(rule).name == "phony"),
                     !edge.validation.is_empty(),
                     edge.deps_missing,
                     edge.command_dirty,
                 )
             };
             for output in &outputs {
-                if output.borrow().mtime == MTIME_UNKNOWN {
-                    nodestat_with(output, stat)?;
+                if graph.node(*output).mtime == MTIME_UNKNOWN {
+                    nodestat_with(graph, *output, stat)?;
                 }
             }
             let mut input_dirty = false;
             for (index, input) in inputs.iter().enumerate() {
-                let dirty = visit(input, stat, visiting)?;
+                let dirty = visit(graph, *input, stat, visiting)?;
                 if index < inorderidx {
                     input_dirty |= dirty;
                 }
@@ -201,30 +304,30 @@ where
             let dirty = if is_phony {
                 let missing_without_inputs = inputs.is_empty()
                     && !has_validations
-                    && outputs.iter().any(|output| output.borrow().mtime == 0);
+                    && outputs.iter().any(|output| graph.node(*output).mtime == 0);
                 let newest_input = inputs
                     .iter()
                     .take(inorderidx)
-                    .map(|input| input.borrow().mtime)
+                    .map(|input| graph.node(*input).mtime)
                     .max()
                     .unwrap_or(0);
                 for output in &outputs {
-                    let mut output = output.borrow_mut();
-                    if output.mtime == 0 {
-                        output.mtime = newest_input;
+                    if graph.node(*output).mtime == 0 {
+                        graph.node_mut(*output).mtime = newest_input;
                     }
                 }
                 input_dirty || missing_without_inputs
             } else {
                 let oldest_output = outputs
                     .iter()
-                    .map(|output| output.borrow().mtime)
+                    .map(|output| graph.node(*output).mtime)
                     .min()
                     .unwrap_or(0);
                 let recorded_output_older = inputs.iter().take(inorderidx).any(|input| {
                     outputs.iter().any(|output| {
-                        let output = output.borrow();
-                        output.logmtime != MTIME_MISSING && input.borrow().mtime > output.logmtime
+                        let output = graph.node(*output);
+                        output.logmtime != MTIME_MISSING
+                            && graph.node(*input).mtime > output.logmtime
                     })
                 });
                 oldest_output == 0
@@ -235,64 +338,69 @@ where
                     || inputs
                         .iter()
                         .take(inorderidx)
-                        .any(|input| input.borrow().mtime > oldest_output)
+                        .any(|input| graph.node(*input).mtime > oldest_output)
             };
             for output in outputs {
-                output.borrow_mut().dirty = dirty;
+                graph.node_mut(output).dirty = dirty;
             }
             dirty
         } else {
-            if node.borrow().mtime == MTIME_UNKNOWN {
-                nodestat_with(node, stat)?;
+            if graph.node(node).mtime == MTIME_UNKNOWN {
+                nodestat_with(graph, node, stat)?;
             }
-            node.borrow().mtime == 0
+            graph.node(node).mtime == 0
         };
-        node.borrow_mut().dirty = dirty;
-        visiting.remove(&identity);
+        graph.node_mut(node).dirty = dirty;
+        visiting.remove(&node);
         Ok(dirty)
     }
 
-    visit(node, stat, &mut BTreeSet::new())
+    visit(graph, node, stat, &mut BTreeSet::new())
 }
 
-pub fn recompute_dirty_with_validations<F>(node: &NodeRef, stat: &mut F) -> io::Result<Vec<NodeRef>>
+pub fn recompute_dirty_with_validations<F>(
+    graph: &mut Graph,
+    node: NodeId,
+    stat: &mut F,
+) -> io::Result<Vec<NodeId>>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
     fn collect<F>(
-        node: &NodeRef,
+        graph: &mut Graph,
+        node: NodeId,
         stat: &mut F,
-        validations: &mut Vec<NodeRef>,
-        seen_nodes: &mut BTreeSet<usize>,
-        seen_edges: &mut BTreeSet<usize>,
+        validations: &mut Vec<NodeId>,
+        seen_nodes: &mut BTreeSet<NodeId>,
+        seen_edges: &mut BTreeSet<EdgeId>,
     ) -> io::Result<()>
     where
         F: FnMut(&Path) -> io::Result<i64>,
     {
-        let Some(edge) = node.borrow().gen.as_ref().and_then(Weak::upgrade) else {
+        let Some(edge) = graph.node(node).gen else {
             return Ok(());
         };
-        if !seen_edges.insert(Rc::as_ptr(&edge) as usize) {
+        if !seen_edges.insert(edge) {
             return Ok(());
         }
-        for input in edge.borrow().input.clone() {
-            collect(&input, stat, validations, seen_nodes, seen_edges)?;
+        for input in graph.edge(edge).input.clone() {
+            collect(graph, input, stat, validations, seen_nodes, seen_edges)?;
         }
-        for validation in edge.borrow().validation.clone() {
-            let identity = Rc::as_ptr(&validation) as usize;
-            if !seen_nodes.insert(identity) {
+        for validation in graph.edge(edge).validation.clone() {
+            if !seen_nodes.insert(validation) {
                 continue;
             }
-            recompute_dirty_with(&validation, stat)?;
-            collect(&validation, stat, validations, seen_nodes, seen_edges)?;
+            recompute_dirty_with(graph, validation, stat)?;
+            collect(graph, validation, stat, validations, seen_nodes, seen_edges)?;
             validations.push(validation);
         }
         Ok(())
     }
 
-    recompute_dirty_with(node, stat)?;
+    recompute_dirty_with(graph, node, stat)?;
     let mut validations = Vec::new();
     collect(
+        graph,
         node,
         stat,
         &mut validations,
@@ -304,19 +412,23 @@ where
 
 // [spec:samurai:def:graph.nodepath-fn]
 // [spec:samurai:sem:graph.nodepath-fn]
-pub fn nodepath(node: &NodeRef, escape: bool) -> BString {
-    let mut node = node.borrow_mut();
-    if !escape {
-        return node.path.clone();
+pub fn nodepath(graph: &Graph, node: NodeId, escape: bool) -> BString {
+    let node = graph.node(node);
+    if escape {
+        node.shellpath.clone()
+    } else {
+        node.path.clone()
     }
-    if let Some(path) = &node.shellpath {
-        return path.clone();
-    }
-    let source = node.path.as_bytes();
+}
+
+fn shell_escape_path(source: &[u8]) -> BString {
     let quote = source
         .iter()
         .any(|byte| !byte.is_ascii_alphanumeric() && !b"_+-./".contains(byte));
-    let mut bytes = Vec::new();
+    if !quote {
+        return BString::from(source);
+    }
+    let mut bytes = Vec::with_capacity(source.len() + 2);
     if quote {
         bytes.push(b'\'');
         for byte in source {
@@ -326,30 +438,27 @@ pub fn nodepath(node: &NodeRef, escape: bool) -> BString {
             }
         }
         bytes.push(b'\'');
-    } else {
-        bytes.extend_from_slice(source);
     }
-    let escaped = BString::from(bytes);
-    node.shellpath = Some(escaped.clone());
-    escaped
+    BString::from(bytes)
 }
 
 // [spec:samurai:def:graph.nodeuse-fn]
 // [spec:samurai:sem:graph.nodeuse-fn]
-pub fn nodeuse(node: &NodeRef, edge: &EdgeRef) {
-    node.borrow_mut().uses.push(Rc::downgrade(edge));
+pub fn nodeuse(graph: &mut Graph, node: NodeId, edge: EdgeId) {
+    graph.node_mut(node).uses.push(edge);
 }
 
 // [spec:samurai:def:graph.mkedge-fn]
 // [spec:samurai:sem:graph.mkedge-fn]
-pub fn mkedge(graph: &mut Graph, parent: Rc<Environment>) -> EdgeRef {
-    let id = graph.edges.len();
-    let edge = Rc::new(RefCell::new(Edge {
+pub fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
+    let id = EdgeId::from_index(graph.edges.len());
+    let environment = crate::env::mkenv(graph, Some(parent));
+    graph.edges.push(Edge {
         id,
         critical_path_weight: -1,
         rule: None,
         pool: None,
-        env: crate::env::mkenv(Some(parent)),
+        env: environment,
         bindings: BTreeMap::new(),
         out: Vec::new(),
         input: Vec::new(),
@@ -367,15 +476,14 @@ pub fn mkedge(graph: &mut Graph, parent: Rc<Environment>) -> EdgeRef {
         command_dirty: false,
         restat_clean: false,
         flags: 0,
-    }));
-    graph.edges.push(edge.clone());
-    edge
+    });
+    id
 }
 
 // [spec:samurai:def:graph.edgehash-fn]
 // [spec:samurai:sem:graph.edgehash-fn]
-pub fn edgehash(edge: &EdgeRef, command: &BStr, rspfile_content: Option<&BStr>) {
-    let mut edge = edge.borrow_mut();
+pub fn edgehash(graph: &mut Graph, edge: EdgeId, command: &BStr, rspfile_content: Option<&BStr>) {
+    let edge = graph.edge_mut(edge);
     if edge.flags & FLAG_HASH != 0 {
         return;
     }
@@ -393,45 +501,38 @@ pub fn edgehash(edge: &EdgeRef, command: &BStr, rspfile_content: Option<&BStr>) 
 
 // [spec:samurai:def:graph.mkphony-fn]
 // [spec:samurai:sem:graph.mkphony-fn]
-pub fn mkphony(
-    graph: &mut Graph,
-    root: Rc<Environment>,
-    phony: Rc<Rule>,
-    node: NodeRef,
-) -> EdgeRef {
+pub fn mkphony(graph: &mut Graph, root: EnvironmentId, phony: RuleId, node: NodeId) -> EdgeId {
     let edge = mkedge(graph, root);
-    {
-        let mut edge_mut = edge.borrow_mut();
-        edge_mut.rule = Some(phony);
-        edge_mut.outimpidx = 1;
-        edge_mut.out.push(node);
-    }
+    let edge_mut = graph.edge_mut(edge);
+    edge_mut.rule = Some(phony);
+    edge_mut.outimpidx = 1;
+    edge_mut.out.push(node);
     edge
 }
 
 // [spec:samurai:def:graph.edgeadddeps-fn]
 // [spec:samurai:sem:graph.edgeadddeps-fn]
-pub fn edgeadddeps(edge: &EdgeRef, deps: &[NodeRef]) {
+pub fn edgeadddeps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
     for node in deps {
-        nodeuse(node, edge);
+        nodeuse(graph, *node, edge);
     }
-    let mut edge = edge.borrow_mut();
+    let edge = graph.edge_mut(edge);
     let index = edge.inorderidx;
-    edge.input.splice(index..index, deps.iter().cloned());
+    edge.input.splice(index..index, deps.iter().copied());
     edge.inorderidx += deps.len();
 }
 
 /// Return generated outputs that are not consumed by another build edge.
-pub fn rootnodes(graph: &Graph) -> Result<Vec<NodeRef>, String> {
+pub fn rootnodes(graph: &Graph) -> Result<Vec<NodeId>, String> {
     let roots = graph
         .nodes()
         .into_iter()
         .filter(|node| {
-            let node = node.borrow();
+            let node = graph.node(*node);
             node.gen.is_some() && node.uses.is_empty()
         })
         .collect::<Vec<_>>();
-    if roots.is_empty() && !graph.edges.is_empty() {
+    if roots.is_empty() && graph.edge_count() != 0 {
         Err("could not determine root nodes of build graph".into())
     } else {
         Ok(roots)
@@ -440,44 +541,41 @@ pub fn rootnodes(graph: &Graph) -> Result<Vec<NodeRef>, String> {
 
 #[derive(Default)]
 pub struct InputsCollector {
-    inputs: Vec<NodeRef>,
-    visited_nodes: BTreeSet<usize>,
+    inputs: Vec<NodeId>,
+    visited_nodes: BTreeSet<NodeId>,
 }
 
 impl InputsCollector {
-    pub fn visit_node(&mut self, node: &NodeRef) {
-        let Some(edge) = node.borrow().gen.as_ref().and_then(Weak::upgrade) else {
+    pub fn visit_node(&mut self, graph: &Graph, node: NodeId) {
+        let Some(edge) = graph.node(node).gen else {
             return;
         };
-        let inputs = edge.borrow().input.clone();
+        let inputs = graph.edge(edge).input.clone();
         for input in inputs {
-            let identity = Rc::as_ptr(&input) as usize;
-            if !self.visited_nodes.insert(identity) {
+            if !self.visited_nodes.insert(input) {
                 continue;
             }
-            self.visit_node(&input);
-            let generated_by_phony = input
-                .borrow()
+            self.visit_node(graph, input);
+            let generated_by_phony = graph
+                .node(input)
                 .gen
-                .as_ref()
-                .and_then(Weak::upgrade)
-                .and_then(|edge| edge.borrow().rule.clone())
-                .is_some_and(|rule| rule.name == "phony");
+                .and_then(|edge| graph.edge(edge).rule)
+                .is_some_and(|rule| graph.rule(rule).name == "phony");
             if !generated_by_phony {
                 self.inputs.push(input);
             }
         }
     }
 
-    pub fn inputs(&self) -> &[NodeRef] {
+    pub fn inputs(&self) -> &[NodeId] {
         &self.inputs
     }
 
-    pub fn input_strings(&self, shell_escape: bool) -> Vec<String> {
+    pub fn input_strings(&self, graph: &Graph, shell_escape: bool) -> Vec<String> {
         self.inputs
             .iter()
             .map(|node| {
-                let path = nodepath(node, shell_escape);
+                let path = nodepath(graph, *node, shell_escape);
                 String::from_utf8_lossy(path.as_bytes()).into_owned()
             })
             .collect()
@@ -491,32 +589,29 @@ impl InputsCollector {
 
 #[derive(Default)]
 pub struct CommandCollector {
-    pub edges: Vec<EdgeRef>,
-    visited_nodes: BTreeSet<usize>,
-    visited_edges: BTreeSet<usize>,
+    pub edges: Vec<EdgeId>,
+    visited_nodes: BTreeSet<NodeId>,
+    visited_edges: BTreeSet<EdgeId>,
 }
 
 impl CommandCollector {
-    pub fn collect_from(&mut self, node: &NodeRef) {
-        let node_identity = Rc::as_ptr(node) as usize;
-        if !self.visited_nodes.insert(node_identity) {
+    pub fn collect_from(&mut self, graph: &Graph, node: NodeId) {
+        if !self.visited_nodes.insert(node) {
             return;
         }
-        let Some(edge) = node.borrow().gen.as_ref().and_then(Weak::upgrade) else {
+        let Some(edge) = graph.node(node).gen else {
             return;
         };
-        let edge_identity = Rc::as_ptr(&edge) as usize;
-        if !self.visited_edges.insert(edge_identity) {
+        if !self.visited_edges.insert(edge) {
             return;
         }
-        for input in edge.borrow().input.clone() {
-            self.collect_from(&input);
+        for input in graph.edge(edge).input.clone() {
+            self.collect_from(graph, input);
         }
-        let is_phony = edge
-            .borrow()
+        let is_phony = graph
+            .edge(edge)
             .rule
-            .as_ref()
-            .is_some_and(|rule| rule.name == "phony");
+            .is_some_and(|rule| graph.rule(rule).name == "phony");
         if !is_phony {
             self.edges.push(edge);
         }
@@ -525,22 +620,22 @@ impl CommandCollector {
 
 #[derive(Default)]
 pub struct EdgePriorityQueue {
-    edges: Vec<EdgeRef>,
+    edges: Vec<EdgeId>,
 }
 
 impl EdgePriorityQueue {
-    pub fn push(&mut self, edge: EdgeRef) {
+    pub fn push(&mut self, edge: EdgeId) {
         self.edges.push(edge);
     }
 
-    pub fn pop(&mut self) -> Option<EdgeRef> {
+    pub fn pop(&mut self, graph: &Graph) -> Option<EdgeId> {
         let index = self
             .edges
             .iter()
             .enumerate()
             .max_by(|(_, left), (_, right)| {
-                let left = left.borrow();
-                let right = right.borrow();
+                let left = graph.edge(**left);
+                let right = graph.edge(**right);
                 left.critical_path_weight
                     .cmp(&right.critical_path_weight)
                     .then_with(|| right.id.cmp(&left.id))
@@ -548,53 +643,42 @@ impl EdgePriorityQueue {
             .map(|(index, _)| index)?;
         Some(self.edges.swap_remove(index))
     }
-
-    pub fn len(&self) -> usize {
-        self.edges.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.edges.is_empty()
-    }
 }
 
-pub fn verify_dag(node: &NodeRef) -> Result<(), String> {
+pub fn verify_dag(graph: &Graph, node: NodeId) -> Result<(), String> {
     fn visit(
-        node: &NodeRef,
-        visiting: &mut Vec<NodeRef>,
-        finished: &mut BTreeSet<usize>,
+        graph: &Graph,
+        node: NodeId,
+        visiting: &mut Vec<NodeId>,
+        finished: &mut BTreeSet<NodeId>,
     ) -> Result<(), String> {
-        let identity = Rc::as_ptr(node) as usize;
-        if let Some(index) = visiting
-            .iter()
-            .position(|candidate| Rc::ptr_eq(candidate, node))
-        {
+        if let Some(index) = visiting.iter().position(|candidate| *candidate == node) {
             let mut paths = visiting[index..]
                 .iter()
                 .map(|node| {
-                    let node = node.borrow();
+                    let node = graph.node(*node);
                     String::from_utf8_lossy(node.path.as_bytes()).into_owned()
                 })
                 .collect::<Vec<_>>();
-            let node = node.borrow();
+            let node = graph.node(node);
             paths.push(String::from_utf8_lossy(node.path.as_bytes()).into_owned());
             return Err(format!("dependency cycle: {}", paths.join(" -> ")));
         }
-        if finished.contains(&identity) {
+        if finished.contains(&node) {
             return Ok(());
         }
-        visiting.push(node.clone());
-        if let Some(edge) = node.borrow().gen.as_ref().and_then(Weak::upgrade) {
-            for input in edge.borrow().input.clone() {
-                visit(&input, visiting, finished)?;
+        visiting.push(node);
+        if let Some(edge) = graph.node(node).gen {
+            for input in graph.edge(edge).input.iter().copied() {
+                visit(graph, input, visiting, finished)?;
             }
         }
         visiting.pop();
-        finished.insert(identity);
+        finished.insert(node);
         Ok(())
     }
 
-    visit(node, &mut Vec::new(), &mut BTreeSet::new())
+    visit(graph, node, &mut Vec::new(), &mut BTreeSet::new())
 }
 
 #[cfg(test)]
@@ -621,12 +705,12 @@ mod tests {
         .unwrap();
         let mut graph = graphinit();
         let mut parser = crate::parse::parseinit();
-        let mut state = crate::env::envinit();
+        let mut state = crate::env::envinit(&mut graph);
         crate::parse::parse(
             path.to_str().unwrap(),
             &mut graph,
             &mut parser,
-            state.root.clone(),
+            state.root,
             &mut state,
         )
         .unwrap();
@@ -639,8 +723,8 @@ mod tests {
         let mut graph = graphinit();
         let first = mknode(&mut graph, xasprintf(format_args!("a b")));
         let second = mknode(&mut graph, xasprintf(format_args!("a b")));
-        assert!(Rc::ptr_eq(&first, &second));
-        assert_eq!(nodepath(&first, true).as_bytes(), b"'a b'");
+        assert_eq!(first, second);
+        assert_eq!(nodepath(&graph, first, true).as_bytes(), b"'a b'");
     }
 
     #[test]
@@ -650,7 +734,7 @@ mod tests {
             &mut graph,
             xasprintf(format_args!("foo bar\"/'$@d!st!c'/path'")),
         );
-        let path = nodepath(&node, true);
+        let path = nodepath(&graph, node, true);
         assert_eq!(
             std::str::from_utf8(path.as_bytes()).unwrap(),
             "'foo bar\"/'\\''$@d!st!c'\\''/path'\\'''"
@@ -659,29 +743,28 @@ mod tests {
 
     fn generated_node(
         graph: &mut Graph,
-        root: &Rc<Environment>,
+        root: EnvironmentId,
         output: &str,
         inputs: &[&str],
-    ) -> NodeRef {
+    ) -> NodeId {
         let output = mknode(graph, xasprintf(format_args!("{output}")));
-        let edge = mkedge(graph, root.clone());
-        {
-            let mut edge = edge.borrow_mut();
-            edge.out.push(output.clone());
-            for input in inputs {
-                let input = mknode(graph, xasprintf(format_args!("{input}")));
-                nodeuse(&input, &graph.edges.last().unwrap().clone());
-                edge.input.push(input);
-            }
-            edge.inimpidx = edge.input.len();
-            edge.inorderidx = edge.input.len();
+        let edge = mkedge(graph, root);
+        graph.edge_mut(edge).out.push(output);
+        for input in inputs {
+            let input = mknode(graph, xasprintf(format_args!("{input}")));
+            nodeuse(graph, input, edge);
+            graph.edge_mut(edge).input.push(input);
         }
-        output.borrow_mut().gen = Some(Rc::downgrade(&edge));
+        let input_count = graph.edge(edge).input.len();
+        graph.edge_mut(edge).inimpidx = input_count;
+        graph.edge_mut(edge).inorderidx = input_count;
+        graph.node_mut(output).gen = Some(edge);
         output
     }
 
     fn scan_graph(
-        node: &NodeRef,
+        graph: &mut Graph,
+        node: NodeId,
         mtimes: &[(&str, i64)],
         stats: &mut Vec<String>,
     ) -> io::Result<()> {
@@ -694,62 +777,68 @@ mod tests {
             stats.push(path.clone());
             Ok(*mtimes.get(&path).unwrap_or(&0))
         };
-        nodestat_with(node, &mut stat)?;
-        recompute_dirty_with(node, &mut stat)?;
+        nodestat_with(graph, node, &mut stat)?;
+        recompute_dirty_with(graph, node, &mut stat)?;
         Ok(())
     }
 
     #[test]
     fn ninja_stat_scan_simple() {
         let mut graph = graphinit();
-        let root = mkenv(None);
-        let output = generated_node(&mut graph, &root, "out", &["in"]);
+        let root = mkenv(&mut graph, None);
+        let output = generated_node(&mut graph, root, "out", &["in"]);
         let mut stats = Vec::new();
-        scan_graph(&output, &[], &mut stats).unwrap();
+        scan_graph(&mut graph, output, &[], &mut stats).unwrap();
         assert_eq!(stats, ["out", "in"]);
     }
 
     #[test]
     fn ninja_stat_scan_two_step() {
         let mut graph = graphinit();
-        let root = mkenv(None);
-        let output = generated_node(&mut graph, &root, "out", &["mid"]);
-        let middle = generated_node(&mut graph, &root, "mid", &["in"]);
+        let root = mkenv(&mut graph, None);
+        let output = generated_node(&mut graph, root, "out", &["mid"]);
+        let middle = generated_node(&mut graph, root, "mid", &["in"]);
         let mut stats = Vec::new();
-        scan_graph(&output, &[], &mut stats).unwrap();
+        scan_graph(&mut graph, output, &[], &mut stats).unwrap();
         assert_eq!(stats, ["out", "mid", "in"]);
-        assert!(output.borrow().dirty);
-        assert!(middle.borrow().dirty);
+        assert!(graph.node(output).dirty);
+        assert!(graph.node(middle).dirty);
     }
 
     #[test]
     fn ninja_stat_scan_tree() {
         let mut graph = graphinit();
-        let root = mkenv(None);
-        let output = generated_node(&mut graph, &root, "out", &["mid1", "mid2"]);
-        let middle1 = generated_node(&mut graph, &root, "mid1", &["in11", "in12"]);
-        generated_node(&mut graph, &root, "mid2", &["in21", "in22"]);
+        let root = mkenv(&mut graph, None);
+        let output = generated_node(&mut graph, root, "out", &["mid1", "mid2"]);
+        let middle1 = generated_node(&mut graph, root, "mid1", &["in11", "in12"]);
+        generated_node(&mut graph, root, "mid2", &["in21", "in22"]);
         let mut stats = Vec::new();
-        scan_graph(&output, &[], &mut stats).unwrap();
+        scan_graph(&mut graph, output, &[], &mut stats).unwrap();
         assert_eq!(
             stats,
             ["out", "mid1", "in11", "in12", "mid2", "in21", "in22"]
         );
-        assert!(middle1.borrow().dirty);
+        assert!(graph.node(middle1).dirty);
     }
 
     #[test]
     fn ninja_stat_scan_middle_missing() {
         let mut graph = graphinit();
-        let root = mkenv(None);
-        let output = generated_node(&mut graph, &root, "out", &["mid"]);
-        let middle = generated_node(&mut graph, &root, "mid", &["in"]);
+        let root = mkenv(&mut graph, None);
+        let output = generated_node(&mut graph, root, "out", &["mid"]);
+        let middle = generated_node(&mut graph, root, "mid", &["in"]);
         let input = nodeget(&graph, b"in").unwrap();
         let mut stats = Vec::new();
-        scan_graph(&output, &[("in", 1), ("mid", 0), ("out", 1)], &mut stats).unwrap();
-        assert!(!input.borrow().dirty);
-        assert!(middle.borrow().dirty);
-        assert!(output.borrow().dirty);
+        scan_graph(
+            &mut graph,
+            output,
+            &[("in", 1), ("mid", 0), ("out", 1)],
+            &mut stats,
+        )
+        .unwrap();
+        assert!(!graph.node(input).dirty);
+        assert!(graph.node(middle).dirty);
+        assert!(graph.node(output).dirty);
     }
 
     #[test]
@@ -776,8 +865,9 @@ mod tests {
             result
         }
 
-        let state = crate::env::envinit();
-        let rule = crate::env::mkrule("cat".into());
+        let mut graph = graphinit();
+        let state = crate::env::envinit(&mut graph);
+        let rule = crate::env::mkrule(&mut graph, "cat".into());
         let command = text(
             "cat ",
             Some(Box::new(variable(
@@ -785,27 +875,26 @@ mod tests {
                 Some(Box::new(text(" > ", Some(Box::new(variable("out", None)))))),
             ))),
         );
-        crate::env::ruleaddvar(&rule, "command".into(), command);
+        crate::env::ruleaddvar(&mut graph, rule, "command".into(), command);
 
-        let mut graph = graphinit();
         let edge = mkedge(&mut graph, state.root);
-        edge.borrow_mut().rule = Some(rule);
+        graph.edge_mut(edge).rule = Some(rule);
         let input1 = mknode(&mut graph, xasprintf(format_args!("in1")));
         let input2 = mknode(&mut graph, xasprintf(format_args!("in2")));
         let output = mknode(&mut graph, xasprintf(format_args!("out")));
         {
-            let mut edge = edge.borrow_mut();
-            edge.input.extend([input1.clone(), input2.clone()]);
+            let edge = graph.edge_mut(edge);
+            edge.input.extend([input1, input2]);
             edge.inimpidx = 2;
             edge.inorderidx = 2;
-            edge.out.push(output.clone());
+            edge.out.push(output);
             edge.outimpidx = 1;
         }
-        let command = crate::env::edgevar(&edge, "command", false).unwrap();
+        let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
         assert_eq!(command.as_bytes(), b"cat in1 in2 > out");
-        assert!(!input1.borrow().dirty);
-        assert!(!input2.borrow().dirty);
-        assert!(!output.borrow().dirty);
+        assert!(!graph.node(input1).dirty);
+        assert!(!graph.node(input2).dirty);
+        assert!(!graph.node(output).dirty);
     }
 
     #[test]
@@ -815,10 +904,9 @@ mod tests {
         );
         let roots = rootnodes(&graph).unwrap();
         assert_eq!(roots.len(), 4);
-        assert!(roots.iter().all(|node| {
-            let node = node.borrow();
-            node.path.as_bytes().starts_with(b"out")
-        }));
+        assert!(roots
+            .iter()
+            .all(|node| graph.node(*node).path.as_bytes().starts_with(b"out")));
     }
 
     #[test]
@@ -827,20 +915,20 @@ mod tests {
             "build out1: cat in1\nbuild mid1: cat in1\nbuild out2: cat mid1\nbuild out3 out4: cat mid1\nbuild all: phony out1 out2 out3\n",
         );
         let mut collector = InputsCollector::default();
-        collector.visit_node(&nodeget(&graph, b"out1").unwrap());
-        assert_eq!(collector.input_strings(false), ["in1"]);
-        collector.visit_node(&nodeget(&graph, b"out2").unwrap());
-        assert_eq!(collector.input_strings(false), ["in1", "mid1"]);
-        collector.visit_node(&nodeget(&graph, b"all").unwrap());
+        collector.visit_node(&graph, nodeget(&graph, b"out1").unwrap());
+        assert_eq!(collector.input_strings(&graph, false), ["in1"]);
+        collector.visit_node(&graph, nodeget(&graph, b"out2").unwrap());
+        assert_eq!(collector.input_strings(&graph, false), ["in1", "mid1"]);
+        collector.visit_node(&graph, nodeget(&graph, b"all").unwrap());
         assert_eq!(
-            collector.input_strings(false),
+            collector.input_strings(&graph, false),
             ["in1", "mid1", "out1", "out2", "out3"]
         );
 
         collector.reset();
-        collector.visit_node(&nodeget(&graph, b"all").unwrap());
+        collector.visit_node(&graph, nodeget(&graph, b"all").unwrap());
         assert_eq!(
-            collector.input_strings(false),
+            collector.input_strings(&graph, false),
             ["in1", "out1", "mid1", "out2", "out3"]
         );
     }
@@ -850,30 +938,30 @@ mod tests {
         let graph =
             parse_graph("build out$ 1: cat in1 in2 in$ with$ space | implicit || order_only\n");
         let mut collector = InputsCollector::default();
-        collector.visit_node(&nodeget(&graph, b"out 1").unwrap());
+        collector.visit_node(&graph, nodeget(&graph, b"out 1").unwrap());
         assert_eq!(
-            collector.input_strings(false),
+            collector.input_strings(&graph, false),
             ["in1", "in2", "in with space", "implicit", "order_only"]
         );
         assert_eq!(
-            collector.input_strings(true),
+            collector.input_strings(&graph, true),
             ["in1", "in2", "'in with space'", "implicit", "order_only"]
         );
     }
 
-    fn commands(collector: &CommandCollector) -> Vec<String> {
+    fn commands(graph: &Graph, collector: &CommandCollector) -> Vec<String> {
         collector
             .edges
             .iter()
             .map(|edge| {
-                let command = crate::env::edgevar(edge, "command", false).unwrap();
+                let command = crate::env::edgevar(graph, *edge, "command", false).unwrap();
                 String::from_utf8_lossy(command.as_bytes()).into_owned()
             })
             .collect()
     }
 
     fn recompute_with_mtimes(
-        graph: &Graph,
+        graph: &mut Graph,
         target: &[u8],
         mtimes: &[(&str, i64)],
     ) -> io::Result<bool> {
@@ -885,7 +973,7 @@ mod tests {
             let path = path.to_string_lossy();
             Ok(*mtimes.get(path.as_ref()).unwrap_or(&0))
         };
-        recompute_dirty_with(&nodeget(graph, target).unwrap(), &mut stat)
+        recompute_dirty_with(graph, nodeget(graph, target).unwrap(), &mut stat)
     }
 
     #[test]
@@ -894,16 +982,19 @@ mod tests {
             "build out1: cat in1\nbuild mid1: cat in1\nbuild out2: cat mid1\nbuild out3 out4: cat mid1\nbuild all: phony out1 out2 out3\n",
         );
         let mut collector = CommandCollector::default();
-        collector.collect_from(&nodeget(&graph, b"out2").unwrap());
-        assert_eq!(commands(&collector), ["cat in1 > mid1", "cat mid1 > out2"]);
-        collector.collect_from(&nodeget(&graph, b"out1").unwrap());
+        collector.collect_from(&graph, nodeget(&graph, b"out2").unwrap());
         assert_eq!(
-            commands(&collector),
+            commands(&graph, &collector),
+            ["cat in1 > mid1", "cat mid1 > out2"]
+        );
+        collector.collect_from(&graph, nodeget(&graph, b"out1").unwrap());
+        assert_eq!(
+            commands(&graph, &collector),
             ["cat in1 > mid1", "cat mid1 > out2", "cat in1 > out1"]
         );
-        collector.collect_from(&nodeget(&graph, b"all").unwrap());
+        collector.collect_from(&graph, nodeget(&graph, b"all").unwrap());
         assert_eq!(
-            commands(&collector),
+            commands(&graph, &collector),
             [
                 "cat in1 > mid1",
                 "cat mid1 > out2",
@@ -913,9 +1004,9 @@ mod tests {
         );
 
         let mut collector = CommandCollector::default();
-        collector.collect_from(&nodeget(&graph, b"all").unwrap());
+        collector.collect_from(&graph, nodeget(&graph, b"all").unwrap());
         assert_eq!(
-            commands(&collector),
+            commands(&graph, &collector),
             [
                 "cat in1 > out1",
                 "cat in1 > mid1",
@@ -928,15 +1019,9 @@ mod tests {
     #[test]
     fn ninja_graph_variable_paths_are_shell_escaped() {
         let graph = parse_graph("build a$ b: cat no'space with$ space$$ no\"space2\n");
-        let edge = nodeget(&graph, b"a b")
-            .unwrap()
-            .borrow()
-            .gen
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
-        let command = crate::env::edgevar(&edge, "command", true).unwrap();
+        let edge = nodeget(&graph, b"a b").unwrap();
+        let edge = graph.node(edge).gen.unwrap();
+        let command = crate::env::edgevar(&graph, edge, "command", true).unwrap();
         assert_eq!(
             command.as_bytes(),
             b"cat 'no'\\''space' 'with space$' 'no\"space2' > 'a b'"
@@ -948,15 +1033,9 @@ mod tests {
         let graph = parse_graph(
             "rule r\n  depfile = x\n  command = depfile is $depfile\nbuild out: r in\n",
         );
-        let edge = nodeget(&graph, b"out")
-            .unwrap()
-            .borrow()
-            .gen
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
-        let command = crate::env::edgevar(&edge, "command", false).unwrap();
+        let edge = nodeget(&graph, b"out").unwrap();
+        let edge = graph.node(edge).gen.unwrap();
+        let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
         assert_eq!(command.as_bytes(), b"depfile is x");
     }
 
@@ -965,16 +1044,10 @@ mod tests {
         let graph = parse_graph(
             "rule r\n  depfile = x\n  command = depfile is $depfile\nbuild out: r in\n  depfile = y\n",
         );
-        let edge = nodeget(&graph, b"out")
-            .unwrap()
-            .borrow()
-            .gen
-            .as_ref()
-            .unwrap()
-            .upgrade()
-            .unwrap();
-        let depfile = crate::env::edgevar(&edge, "depfile", false).unwrap();
-        let command = crate::env::edgevar(&edge, "command", false).unwrap();
+        let edge = nodeget(&graph, b"out").unwrap();
+        let edge = graph.node(edge).gen.unwrap();
+        let depfile = crate::env::edgevar(&graph, edge, "depfile", false).unwrap();
+        let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
         assert_eq!(depfile.as_bytes(), b"y");
         assert_eq!(command.as_bytes(), b"depfile is y");
     }
@@ -985,7 +1058,7 @@ mod tests {
             "build out: cat mid\nbuild mid: cat in\nbuild in: cat pre\nbuild pre: cat out\n",
         );
         assert_eq!(
-            verify_dag(&nodeget(&graph, b"out").unwrap()),
+            verify_dag(&graph, nodeget(&graph, b"out").unwrap()),
             Err("dependency cycle: out -> mid -> in -> pre -> out".into())
         );
     }
@@ -994,68 +1067,67 @@ mod tests {
     fn ninja_graph_cycle_in_multi_output_edge() {
         let graph = parse_graph("build a b: cat a\n");
         assert_eq!(
-            verify_dag(&nodeget(&graph, b"b").unwrap()),
+            verify_dag(&graph, nodeget(&graph, b"b").unwrap()),
             Err("dependency cycle: a -> a".into())
         );
     }
 
     #[test]
     fn ninja_graph_edge_queue_priority() {
-        let graph = parse_graph("build out1: cat in1\nbuild out2: cat in2\nbuild out3: cat in3\n");
+        let mut graph =
+            parse_graph("build out1: cat in1\nbuild out2: cat in2\nbuild out3: cat in3\n");
         let edges = ["out1", "out2", "out3"].map(|output| {
-            nodeget(&graph, output.as_bytes())
-                .unwrap()
-                .borrow()
+            graph
+                .node(nodeget(&graph, output.as_bytes()).unwrap())
                 .gen
-                .as_ref()
-                .unwrap()
-                .upgrade()
                 .unwrap()
         });
-        for (index, edge) in edges.iter().enumerate() {
-            edge.borrow_mut().critical_path_weight = index as i64 * 10;
+        for (index, edge) in edges.iter().copied().enumerate() {
+            graph.edge_mut(edge).critical_path_weight = index as i64 * 10;
         }
         let mut queue = EdgePriorityQueue::default();
-        for edge in &edges {
-            queue.push(edge.clone());
+        for edge in edges {
+            queue.push(edge);
         }
-        assert_eq!(queue.len(), 3);
-        for expected in edges.iter().rev() {
-            assert!(Rc::ptr_eq(&queue.pop().unwrap(), expected));
+        assert_eq!(queue.edges.len(), 3);
+        for expected in edges.into_iter().rev() {
+            assert_eq!(queue.pop(&graph).unwrap(), expected);
         }
-        assert!(queue.is_empty());
+        assert!(queue.edges.is_empty());
 
-        for edge in &edges {
-            edge.borrow_mut().critical_path_weight = 0;
+        for edge in edges {
+            graph.edge_mut(edge).critical_path_weight = 0;
         }
-        queue.push(edges[1].clone());
-        queue.push(edges[2].clone());
-        queue.push(edges[0].clone());
-        for expected in &edges {
-            assert!(Rc::ptr_eq(&queue.pop().unwrap(), expected));
+        queue.push(edges[1]);
+        queue.push(edges[2]);
+        queue.push(edges[0]);
+        for expected in edges {
+            assert_eq!(queue.pop(&graph).unwrap(), expected);
         }
     }
 
     #[test]
     fn ninja_graph_missing_implicit_input_is_dirty() {
-        let graph = parse_graph("build out: cat in | implicit\n");
-        assert!(recompute_with_mtimes(&graph, b"out", &[("in", 1), ("out", 1)]).unwrap());
+        let mut graph = parse_graph("build out: cat in | implicit\n");
+        assert!(recompute_with_mtimes(&mut graph, b"out", &[("in", 1), ("out", 1)]).unwrap());
     }
 
     #[test]
     fn ninja_graph_modified_implicit_input_is_dirty() {
-        let graph = parse_graph("build out: cat in | implicit\n");
-        assert!(
-            recompute_with_mtimes(&graph, b"out", &[("in", 1), ("out", 1), ("implicit", 2)])
-                .unwrap()
-        );
+        let mut graph = parse_graph("build out: cat in | implicit\n");
+        assert!(recompute_with_mtimes(
+            &mut graph,
+            b"out",
+            &[("in", 1), ("out", 1), ("implicit", 2)]
+        )
+        .unwrap());
     }
 
     #[test]
     fn ninja_graph_newer_order_only_input_is_clean() {
-        let graph = parse_graph("build out: cat in || order_only\n");
+        let mut graph = parse_graph("build out: cat in || order_only\n");
         assert!(!recompute_with_mtimes(
-            &graph,
+            &mut graph,
             b"out",
             &[("in", 1), ("out", 1), ("order_only", 2)]
         )
@@ -1064,70 +1136,74 @@ mod tests {
 
     #[test]
     fn ninja_graph_missing_implicit_output_dirties_all_outputs() {
-        let graph = parse_graph("build out | out.imp: cat in\n");
-        assert!(recompute_with_mtimes(&graph, b"out", &[("in", 1), ("out", 1)]).unwrap());
-        assert!(nodeget(&graph, b"out").unwrap().borrow().dirty);
-        assert!(nodeget(&graph, b"out.imp").unwrap().borrow().dirty);
+        let mut graph = parse_graph("build out | out.imp: cat in\n");
+        assert!(recompute_with_mtimes(&mut graph, b"out", &[("in", 1), ("out", 1)]).unwrap());
+        assert!(graph.node(nodeget(&graph, b"out").unwrap()).dirty);
+        assert!(graph.node(nodeget(&graph, b"out.imp").unwrap()).dirty);
     }
 
     #[test]
     fn ninja_graph_old_implicit_output_dirties_all_outputs() {
-        let graph = parse_graph("build out | out.imp: cat in\n");
-        assert!(
-            recompute_with_mtimes(&graph, b"out", &[("out.imp", 1), ("in", 2), ("out", 2)])
-                .unwrap()
-        );
-        assert!(nodeget(&graph, b"out").unwrap().borrow().dirty);
-        assert!(nodeget(&graph, b"out.imp").unwrap().borrow().dirty);
+        let mut graph = parse_graph("build out | out.imp: cat in\n");
+        assert!(recompute_with_mtimes(
+            &mut graph,
+            b"out",
+            &[("out.imp", 1), ("in", 2), ("out", 2)]
+        )
+        .unwrap());
+        assert!(graph.node(nodeget(&graph, b"out").unwrap()).dirty);
+        assert!(graph.node(nodeget(&graph, b"out.imp").unwrap()).dirty);
     }
 
     #[test]
     fn ninja_graph_implicit_only_output_missing() {
-        let graph = parse_graph("build | out.imp: cat in\n");
-        assert!(recompute_with_mtimes(&graph, b"out.imp", &[("in", 1)]).unwrap());
+        let mut graph = parse_graph("build | out.imp: cat in\n");
+        assert!(recompute_with_mtimes(&mut graph, b"out.imp", &[("in", 1)]).unwrap());
     }
 
     #[test]
     fn ninja_graph_implicit_only_output_outdated() {
-        let graph = parse_graph("build | out.imp: cat in\n");
-        assert!(recompute_with_mtimes(&graph, b"out.imp", &[("out.imp", 1), ("in", 2)]).unwrap());
+        let mut graph = parse_graph("build | out.imp: cat in\n");
+        assert!(
+            recompute_with_mtimes(&mut graph, b"out.imp", &[("out.imp", 1), ("in", 2)]).unwrap()
+        );
     }
 
     #[test]
     fn ninja_graph_validation_is_scanned_separately() {
-        let graph = parse_graph("build out: cat in |@ validate\nbuild validate: cat in\n");
+        let mut graph = parse_graph("build out: cat in |@ validate\nbuild validate: cat in\n");
         let mtimes = BTreeMap::from([("in".to_owned(), 1)]);
         let mut stat = |path: &Path| {
             let path = path.to_string_lossy();
             Ok(*mtimes.get(path.as_ref()).unwrap_or(&0))
         };
-        let validations =
-            recompute_dirty_with_validations(&nodeget(&graph, b"out").unwrap(), &mut stat).unwrap();
+        let output = nodeget(&graph, b"out").unwrap();
+        let validations = recompute_dirty_with_validations(&mut graph, output, &mut stat).unwrap();
         assert_eq!(validations.len(), 1);
-        assert!(nodeget(&graph, b"out").unwrap().borrow().dirty);
-        assert!(nodeget(&graph, b"validate").unwrap().borrow().dirty);
+        assert!(graph.node(nodeget(&graph, b"out").unwrap()).dirty);
+        assert!(graph.node(nodeget(&graph, b"validate").unwrap()).dirty);
     }
 
     #[test]
     fn ninja_graph_phony_dependency_propagates_mtime() {
-        let graph = parse_graph("build in_ph: phony in1\nbuild out1: cat in_ph\n");
-        assert!(!recompute_with_mtimes(&graph, b"out1", &[("in1", 1), ("out1", 2)]).unwrap());
+        let mut graph = parse_graph("build in_ph: phony in1\nbuild out1: cat in_ph\n");
+        assert!(!recompute_with_mtimes(&mut graph, b"out1", &[("in1", 1), ("out1", 2)]).unwrap());
         for node in graph.nodes() {
-            let mut node = node.borrow_mut();
+            let node = graph.node_mut(node);
             node.mtime = MTIME_UNKNOWN;
             node.dirty = false;
         }
-        assert!(recompute_with_mtimes(&graph, b"out1", &[("in1", 3), ("out1", 2)]).unwrap());
+        assert!(recompute_with_mtimes(&mut graph, b"out1", &[("in1", 3), ("out1", 2)]).unwrap());
     }
 
     #[test]
     fn ninja_graph_phony_output_with_validation_is_clean() {
-        let graph = parse_graph("build valid: phony\nbuild out: phony |@ valid\n");
+        let mut graph = parse_graph("build valid: phony\nbuild out: phony |@ valid\n");
         let mut stat = |_path: &Path| Ok(0);
-        let validations =
-            recompute_dirty_with_validations(&nodeget(&graph, b"out").unwrap(), &mut stat).unwrap();
-        assert!(!nodeget(&graph, b"out").unwrap().borrow().dirty);
+        let output = nodeget(&graph, b"out").unwrap();
+        let validations = recompute_dirty_with_validations(&mut graph, output, &mut stat).unwrap();
+        assert!(!graph.node(nodeget(&graph, b"out").unwrap()).dirty);
         assert_eq!(validations.len(), 1);
-        assert_eq!(validations[0].borrow().path.as_bytes(), b"valid");
+        assert_eq!(graph.node(validations[0]).path.as_bytes(), b"valid");
     }
 }

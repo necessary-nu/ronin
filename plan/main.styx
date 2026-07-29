@@ -243,6 +243,13 @@ children (
                         kind @note
                         text "Introduce NodeId, EdgeId, RuleId, PoolId, and EnvironmentId over stable arenas. Replace Rc<RefCell>, Weak links, pointer identities, and reference-cloning adjacency with IDs and graph-owned mutation helpers. Preserve append/dyndep behavior, deterministic tie-breaking, and the existing graph semantic tests."
                     }
+
+                    {
+                        at 2026-07-29T15:35:59.896533089Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 

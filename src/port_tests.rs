@@ -143,13 +143,16 @@ fn ninja_canonicalize_path_samples() {
 // [spec:samurai:sem:log.nextfield-fn/test]
 #[test]
 fn environment_graph_and_log_behaviour() {
-    let state = env::envinit();
     let mut graph = graph::graphinit();
+    let state = env::envinit(&mut graph);
     let node = graph::mknode(&mut graph, util::xasprintf(format_args!("out file")));
-    assert_eq!(graph::nodepath(&node, true).as_bytes(), b"'out file'");
-    let edge = graph::mkedge(&mut graph, state.root.clone());
-    graph::edgeadddeps(&edge, std::slice::from_ref(&node));
-    assert_eq!(edge.borrow().input.len(), 1);
+    assert_eq!(
+        graph::nodepath(&graph, node, true).as_bytes(),
+        b"'out file'"
+    );
+    let edge = graph::mkedge(&mut graph, state.root);
+    graph::edgeadddeps(&mut graph, edge, std::slice::from_ref(&node));
+    assert_eq!(graph.edge(edge).input.len(), 1);
 }
 
 // [spec:samurai:sem:scan.addstringpart-fn/test]
@@ -199,12 +202,12 @@ fn scanner_and_parser_behaviour() {
     scan::scanclose(scanner);
     let mut graph = graph::graphinit();
     let mut parser = parse::parseinit();
-    let mut state = env::envinit();
+    let mut state = env::envinit(&mut graph);
     parse::parse(
         path.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
@@ -355,12 +358,12 @@ fn ninja_manifest_parser_rules() {
     .unwrap();
     let mut graph = graph::graphinit();
     let mut parser = parse::parseinit();
-    let mut state = env::envinit();
+    let mut state = env::envinit(&mut graph);
     parse::parse(
         path.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
@@ -391,26 +394,25 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
     .unwrap();
     let mut graph = graph::graphinit();
     let mut parser = parse::parseinit();
-    let mut state = env::envinit();
+    let mut state = env::envinit(&mut graph);
     parse::parse(
         path.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
     let out = graph::nodeget(&graph, b"out").unwrap();
-    let edge = out.borrow().gen.as_ref().unwrap().upgrade().unwrap();
-    assert_eq!(edge.borrow().outimpidx, 1);
-    assert_eq!(edge.borrow().inimpidx, 1);
-    assert_eq!(edge.borrow().inorderidx, 2);
-    let command = env::edgevar(&edge, "command", false).unwrap();
+    let edge = graph.node(out).gen.unwrap();
+    assert_eq!(graph.edge(edge).outimpidx, 1);
+    assert_eq!(graph.edge(edge).inimpidx, 1);
+    assert_eq!(graph.edge(edge).inorderidx, 2);
+    let command = env::edgevar(&graph, edge, "command", false).unwrap();
     assert_eq!(command.as_bytes(), b"ld one-letter-test -s -o out input");
     assert_eq!(
-        graph::nodeget(&graph, b"input")
-            .unwrap()
-            .borrow()
+        graph
+            .node(graph::nodeget(&graph, b"input").unwrap())
             .uses
             .len(),
         1
@@ -421,12 +423,12 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
 fn parse_manifest(path: &std::path::Path) -> (graph::Graph, parse::Parser, env::EnvState) {
     let mut graph = graph::graphinit();
     let mut parser = parse::parseinit();
-    let mut state = env::envinit();
+    let mut state = env::envinit(&mut graph);
     parse::parse(
         path.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
@@ -463,13 +465,13 @@ fn ninja_manifest_parser_rule_attributes_and_special_variables() {
     .unwrap();
     let (graph, _, _) = parse_manifest(&path);
     let out = graph::nodeget(&graph, b"out").unwrap();
-    let edge = out.borrow().gen.as_ref().unwrap().upgrade().unwrap();
-    let command = env::edgevar(&edge, "command", false).unwrap();
+    let edge = graph.node(out).gen.unwrap();
+    let command = env::edgevar(&graph, edge, "command", false).unwrap();
     assert_eq!(command.as_bytes(), b"cat out.rsp > out");
-    let inputs = env::edgevar(&edge, "in_newline", false).unwrap();
+    let inputs = env::edgevar(&graph, edge, "in_newline", false).unwrap();
     assert_eq!(inputs.as_bytes(), b"in\nin2");
     assert_eq!(
-        env::edgevar(&edge, "rspfile_content", false)
+        env::edgevar(&graph, edge, "rspfile_content", false)
             .unwrap()
             .as_bytes(),
         b"in in2"
@@ -506,39 +508,33 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
     .unwrap();
     let (graph, _, state) = parse_manifest(&path);
     assert_eq!(
-        env::envvar(&state.root, "nested2").unwrap().as_bytes(),
+        env::envvar(&graph, state.root, "nested2")
+            .unwrap()
+            .as_bytes(),
         b"1/2"
     );
     assert_eq!(
-        env::envvar(&state.root, "foo").unwrap().as_bytes(),
+        env::envvar(&graph, state.root, "foo").unwrap().as_bytes(),
         b"bar\\baz"
     );
     assert_eq!(
-        env::envvar(&state.root, "foo2").unwrap().as_bytes(),
+        env::envvar(&graph, state.root, "foo2").unwrap().as_bytes(),
         b"bar\\ baz"
     );
-    let first = graph::nodeget(&graph, b"a")
-        .unwrap()
-        .borrow()
+    let first = graph
+        .node(graph::nodeget(&graph, b"a").unwrap())
         .gen
-        .as_ref()
-        .unwrap()
-        .upgrade()
         .unwrap();
-    let second = graph::nodeget(&graph, b"supernested")
-        .unwrap()
-        .borrow()
+    let second = graph
+        .node(graph::nodeget(&graph, b"supernested").unwrap())
         .gen
-        .as_ref()
-        .unwrap()
-        .upgrade()
         .unwrap();
-    let command = env::edgevar(&first, "command", false).unwrap();
+    let command = env::edgevar(&graph, first, "command", false).unwrap();
     assert_eq!(
         command.as_bytes(),
         b"ld one-letter-test -pthread -under -o a b c suffix"
     );
-    let command = env::edgevar(&second, "command", false).unwrap();
+    let command = env::edgevar(&graph, second, "command", false).unwrap();
     assert_eq!(
         command.as_bytes(),
         b"ld one-letter-test 1/2/3 -under -o supernested x suffix"
@@ -605,15 +601,15 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
     .unwrap();
     let (graph, _, state) = parse_manifest(&path);
     assert_eq!(
-        env::envvar(&state.root, "x").unwrap().as_bytes(),
+        env::envvar(&graph, state.root, "x").unwrap().as_bytes(),
         b"$dollar"
     );
     assert!(graph::nodeget(&graph, b"foo bar").is_some());
     assert!(graph::nodeget(&graph, b"$one").is_some());
     assert!(graph::nodeget(&graph, b"two$ three").is_some());
     let output = graph::nodeget(&graph, b"$dollar").unwrap();
-    let edge = output.borrow().gen.as_ref().unwrap().upgrade().unwrap();
-    let command = env::edgevar(&edge, "command", true).unwrap();
+    let edge = graph.node(output).gen.unwrap();
+    let command = env::edgevar(&graph, edge, "command", true).unwrap();
     assert_eq!(command.as_bytes(), b"'$dollar'bar$baz$blah");
     let _ = fs::remove_file(path);
 }
@@ -648,12 +644,12 @@ fn ninja_manifest_parser_includes_and_errors() {
     .unwrap();
     let mut graph = graph::graphinit();
     let mut parser = parse::parseinit();
-    let mut state = env::envinit();
+    let mut state = env::envinit(&mut graph);
     assert!(parse::parse(
         root.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap_err()
@@ -662,12 +658,12 @@ fn ninja_manifest_parser_includes_and_errors() {
     fs::write(&root, "rule cat\n  rspfile = cat.rsp\n").unwrap();
     let mut graph = graph::graphinit();
     let mut parser = parse::parseinit();
-    let mut state = env::envinit();
+    let mut state = env::envinit(&mut graph);
     assert!(parse::parse(
         root.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap_err()
@@ -734,12 +730,12 @@ fn ninja_clean_all_removes_generated_outputs() {
     }
     let mut graph = graph::graphinit();
     let mut parser = parse::parseinit();
-    let mut state = env::envinit();
+    let mut state = env::envinit(&mut graph);
     parse::parse(
         manifest.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
@@ -853,16 +849,21 @@ fn ninja_build_plan_orders_generated_dependencies() {
         "rule cat\n  command = cat $in > $out\nbuild out: cat mid\nbuild mid: cat in\n",
     )
     .unwrap();
-    let (graph, _, _) = parse_manifest(&path);
-    graph::nodeget(&graph, b"in").unwrap().borrow_mut().mtime = 1;
-    graph::nodeget(&graph, b"mid").unwrap().borrow_mut().mtime = -1;
-    graph::nodeget(&graph, b"out").unwrap().borrow_mut().mtime = -1;
-    let mut options = build::BuildOptions::default();
-    options.dryrun = true;
+    let (mut graph, _, _) = parse_manifest(&path);
+    let input = graph::nodeget(&graph, b"in").unwrap();
+    let middle = graph::nodeget(&graph, b"mid").unwrap();
+    let output = graph::nodeget(&graph, b"out").unwrap();
+    graph.node_mut(input).mtime = 1;
+    graph.node_mut(middle).mtime = -1;
+    graph.node_mut(output).mtime = -1;
+    let options = build::BuildOptions {
+        dryrun: true,
+        ..Default::default()
+    };
     let mut state = build::BuildState::new(options);
-    build::buildadd(&mut state, &graph::nodeget(&graph, b"out").unwrap()).unwrap();
+    build::buildadd(&mut state, &mut graph, output).unwrap();
     assert_eq!(state.total, 2);
-    let status = build::build(&mut state);
+    let status = build::build(&mut state, &mut graph);
     assert_eq!(status.len(), 2);
     assert!(status[0].ends_with("cat in > mid"));
     assert!(status[1].ends_with("cat mid > out"));
@@ -890,24 +891,21 @@ fn ninja_build_plan_deduplicates_shared_generators() {
         ),
     )
     .unwrap();
-    let (graph, _, _) = parse_manifest(&path);
-    graph::nodeget(&graph, b"source")
-        .unwrap()
-        .borrow_mut()
-        .mtime = 1;
+    let (mut graph, _, _) = parse_manifest(&path);
+    let source = graph::nodeget(&graph, b"source").unwrap();
+    graph.node_mut(source).mtime = 1;
     for node in ["out", "a1", "a2", "mid", "mid1", "mid2"] {
-        graph::nodeget(&graph, node.as_bytes())
-            .unwrap()
-            .borrow_mut()
-            .mtime = -1;
+        let node = graph::nodeget(&graph, node.as_bytes()).unwrap();
+        graph.node_mut(node).mtime = -1;
     }
     let mut state = build::BuildState::new(build::BuildOptions {
         dryrun: true,
         ..Default::default()
     });
-    build::buildadd(&mut state, &graph::nodeget(&graph, b"out").unwrap()).unwrap();
+    let output = graph::nodeget(&graph, b"out").unwrap();
+    build::buildadd(&mut state, &mut graph, output).unwrap();
     assert_eq!(state.total, 5);
-    let status = build::build(&mut state);
+    let status = build::build(&mut state, &mut graph);
     assert_eq!(status.len(), 5);
     assert!(status[0].ends_with("cat source > mid1 mid2"));
     assert!(status[1].ends_with("cat mid1 mid2 > mid"));
@@ -935,24 +933,18 @@ fn ninja_build_plan_honors_generator_dirty_semantics() {
         ),
     )
     .unwrap();
-    let (graph, _, _) = parse_manifest(&path);
-    graph::nodeget(&graph, b"source")
-        .unwrap()
-        .borrow_mut()
-        .mtime = 1;
-    graph::nodeget(&graph, b"generated")
-        .unwrap()
-        .borrow_mut()
-        .mtime = 2;
-    graph::nodeget(&graph, b"ordinary")
-        .unwrap()
-        .borrow_mut()
-        .mtime = 2;
+    let (mut graph, _, _) = parse_manifest(&path);
+    let source = graph::nodeget(&graph, b"source").unwrap();
+    let generated = graph::nodeget(&graph, b"generated").unwrap();
+    let ordinary = graph::nodeget(&graph, b"ordinary").unwrap();
+    graph.node_mut(source).mtime = 1;
+    graph.node_mut(generated).mtime = 2;
+    graph.node_mut(ordinary).mtime = 2;
     let mut state = build::BuildState::new(build::BuildOptions::default());
-    build::buildadd(&mut state, &graph::nodeget(&graph, b"generated").unwrap()).unwrap();
+    build::buildadd(&mut state, &mut graph, generated).unwrap();
     assert_eq!(state.total, 0);
-    build::buildreset(&graph);
-    build::buildadd(&mut state, &graph::nodeget(&graph, b"ordinary").unwrap()).unwrap();
+    build::buildreset(&mut graph);
+    build::buildadd(&mut state, &mut graph, ordinary).unwrap();
     assert_eq!(state.total, 1);
     let _ = fs::remove_file(path);
 }
@@ -971,32 +963,26 @@ fn ninja_build_log_write_and_read() {
     .unwrap();
     let mut graph = graph::graphinit();
     let mut parser = parse::parseinit();
-    let mut state = env::envinit();
+    let mut state = env::envinit(&mut graph);
     parse::parse(
         manifest.to_str().unwrap(),
         &mut graph,
         &mut parser,
-        state.root.clone(),
+        state.root,
         &mut state,
     )
     .unwrap();
     let output = graph::nodeget(&graph, b"out").unwrap();
-    {
-        let mut output = output.borrow_mut();
-        output.logmtime = 25;
-        output.hash = 0xface;
-    }
-    let mut build_log = log::loginit(Some(&directory), &graph).unwrap();
-    log::logrecord(&mut build_log, &output).unwrap();
+    graph.node_mut(output).logmtime = 25;
+    graph.node_mut(output).hash = 0xface;
+    let mut build_log = log::loginit(Some(&directory), &mut graph).unwrap();
+    log::logrecord(&mut build_log, &graph, output).unwrap();
     log::logclose(build_log).unwrap();
-    {
-        let mut output = output.borrow_mut();
-        output.logmtime = 0;
-        output.hash = 0;
-    }
-    log::logclose(log::loginit(Some(&directory), &graph).unwrap()).unwrap();
-    assert_eq!(output.borrow().logmtime, 25);
-    assert_eq!(output.borrow().hash, 0xface);
+    graph.node_mut(output).logmtime = 0;
+    graph.node_mut(output).hash = 0;
+    log::logclose(log::loginit(Some(&directory), &mut graph).unwrap()).unwrap();
+    assert_eq!(graph.node(output).logmtime, 25);
+    assert_eq!(graph.node(output).hash, 0xface);
     let _ = fs::remove_dir_all(directory);
 }
 
@@ -1019,7 +1005,7 @@ fn ninja_build_log_loads_duplicate_and_spaced_records() {
         ),
     )
     .unwrap();
-    let (graph, _, _) = parse_manifest(&manifest);
+    let (mut graph, _, _) = parse_manifest(&manifest);
     fs::write(
         directory.join(".ninja_log"),
         concat!(
@@ -1032,16 +1018,16 @@ fn ninja_build_log_loads_duplicate_and_spaced_records() {
         ),
     )
     .unwrap();
-    log::logclose(log::loginit(Some(&directory), &graph).unwrap()).unwrap();
+    log::logclose(log::loginit(Some(&directory), &mut graph).unwrap()).unwrap();
     let out = graph::nodeget(&graph, b"out").unwrap();
-    assert_eq!(out.borrow().logmtime, 3);
-    assert_eq!(out.borrow().hash, 2);
+    assert_eq!(graph.node(out).logmtime, 3);
+    assert_eq!(graph.node(out).hash, 2);
     let spaced = graph::nodeget(&graph, b"out with space").unwrap();
-    assert_eq!(spaced.borrow().logmtime, 456);
-    assert_eq!(spaced.borrow().hash, 0xface);
+    assert_eq!(graph.node(spaced).logmtime, 456);
+    assert_eq!(graph.node(spaced).hash, 0xface);
     let out2 = graph::nodeget(&graph, b"out2").unwrap();
-    assert_eq!(out2.borrow().logmtime, 789);
-    assert_eq!(out2.borrow().hash, 0xbeef);
+    assert_eq!(graph.node(out2).logmtime, 789);
+    assert_eq!(graph.node(out2).hash, 0xbeef);
     let _ = fs::remove_dir_all(directory);
 }
 
@@ -1056,8 +1042,8 @@ fn ninja_build_log_resets_obsolete_headers() {
         "# ninja log v3\n123 456 0 out command\n",
     )
     .unwrap();
-    let graph = graph::graphinit();
-    log::logclose(log::loginit(Some(&directory), &graph).unwrap()).unwrap();
+    let mut graph = graph::graphinit();
+    log::logclose(log::loginit(Some(&directory), &mut graph).unwrap()).unwrap();
     assert_eq!(
         fs::read_to_string(directory.join(".ninja_log")).unwrap(),
         "# ninja log v7\n"
@@ -1119,9 +1105,12 @@ fn scheduler_cli_dependency_and_tool_behaviour() {
     let directory = std::env::temp_dir().join(format!("ronin-wave3-deps-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
     deps::depsclose(deps::depsinit(Some(&directory)).unwrap()).unwrap();
-    let mut options = build::BuildOptions::default();
-    options.dryrun = true;
-    assert!(build::build(&mut build::BuildState::new(options)).is_empty());
+    let options = build::BuildOptions {
+        dryrun: true,
+        ..Default::default()
+    };
+    let mut graph = graph::graphinit();
+    assert!(build::build(&mut build::BuildState::new(options), &mut graph).is_empty());
     let args = vec!["ronin".into(), "-n".into()];
     assert!(cli::main(&args).is_ok());
     assert!(matches!(tool::toolget("graph"), Ok(tool::Tool::Graph)));
@@ -1135,8 +1124,8 @@ fn scheduler_cli_dependency_and_tool_behaviour() {
 fn ninja_build_log_signature_and_clean_path() {
     let directory = std::env::temp_dir().join(format!("ronin-ninja-log-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
-    let graph = graph::graphinit();
-    log::logclose(log::loginit(Some(&directory), &graph).unwrap()).unwrap();
+    let mut graph = graph::graphinit();
+    log::logclose(log::loginit(Some(&directory), &mut graph).unwrap()).unwrap();
     assert_eq!(
         fs::read_to_string(directory.join(".ninja_log")).unwrap(),
         "# ninja log v7\n"

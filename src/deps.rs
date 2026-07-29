@@ -1,7 +1,7 @@
 //! Dependency-log support translated from `deps.c`.
 
 use crate::env::edgevar;
-use crate::graph::{edgeadddeps, EdgeRef, Graph, NodeRef};
+use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId};
 use crate::util::ByteSlice;
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
@@ -12,21 +12,21 @@ use std::path::{Path, PathBuf};
 // [spec:samurai:def:deps.nodearray]
 #[derive(Clone, Default)]
 pub struct NodeArray {
-    pub nodes: Vec<NodeRef>,
+    pub nodes: Vec<NodeId>,
 }
 
 // [spec:samurai:def:deps.entry]
 #[derive(Clone)]
 pub struct Entry {
-    pub node: NodeRef,
+    pub node: NodeId,
     pub deps: NodeArray,
     pub mtime: i64,
 }
 
 pub struct DepsLog {
     writer: BufWriter<File>,
-    entries: BTreeMap<Vec<u8>, Entry>,
-    nodes: Vec<NodeRef>,
+    entries: BTreeMap<NodeId, Entry>,
+    nodes: Vec<NodeId>,
     next_id: i32,
     path: PathBuf,
 }
@@ -36,6 +36,8 @@ struct ParsedDepfile {
     outputs: Vec<Vec<u8>>,
     inputs: Vec<Vec<u8>>,
 }
+
+type DepfileRule = (Vec<Vec<u8>>, Vec<Vec<u8>>);
 
 fn append_unique(paths: &mut Vec<Vec<u8>>, path: Vec<u8>) {
     if !paths.contains(&path) {
@@ -58,13 +60,13 @@ fn logical_depfile_lines(text: &[u8]) -> Vec<Vec<u8>> {
                 Some([b'\n', ..]) => Some(1),
                 _ => None,
             };
-            if slashes % 2 == 1 && newline.is_some() {
+            if let Some(newline) = newline.filter(|_| slashes % 2 == 1) {
                 lines
                     .last_mut()
                     .unwrap()
                     .extend(std::iter::repeat_n(b'\\', slashes / 2));
                 lines.last_mut().unwrap().push(b' ');
-                index += newline.unwrap();
+                index += newline;
                 continue;
             }
             lines
@@ -84,7 +86,7 @@ fn logical_depfile_lines(text: &[u8]) -> Vec<Vec<u8>> {
     lines
 }
 
-fn parse_depfile_rule(line: &[u8]) -> Result<Option<(Vec<Vec<u8>>, Vec<Vec<u8>>)>, String> {
+fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, String> {
     let mut outputs = Vec::new();
     let mut inputs = Vec::new();
     let mut token = Vec::new();
@@ -203,11 +205,6 @@ fn parse_depfile(text: &str) -> Result<ParsedDepfile, String> {
     Ok(ParsedDepfile { outputs, inputs })
 }
 
-fn key(node: &NodeRef) -> Vec<u8> {
-    let node = node.borrow();
-    node.path.as_bytes().to_vec()
-}
-
 // [spec:samurai:def:deps.depswrite-fn]
 // [spec:samurai:sem:deps.depswrite-fn]
 fn depswrite(writer: &mut BufWriter<File>, bytes: &[u8]) -> io::Result<()> {
@@ -216,13 +213,13 @@ fn depswrite(writer: &mut BufWriter<File>, bytes: &[u8]) -> io::Result<()> {
 
 // [spec:samurai:def:deps.recordid-fn]
 // [spec:samurai:sem:deps.recordid-fn]
-fn recordid(log: &mut DepsLog, node: &NodeRef) -> io::Result<bool> {
-    if node.borrow().id != -1 {
+fn recordid(log: &mut DepsLog, graph: &mut Graph, node: NodeId) -> io::Result<bool> {
+    if graph.node(node).id != -1 {
         return Ok(false);
     }
     const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
     let id = log.next_id;
-    let path = key(node);
+    let path = graph.node(node).path.as_bytes().to_vec();
     let padding = (4 - path.len() % 4) % 4;
     let size = path.len() + padding + 4;
     if size > MAX_RECORD_SIZE {
@@ -232,23 +229,28 @@ fn recordid(log: &mut DepsLog, node: &NodeRef) -> io::Result<bool> {
         ));
     }
     log.next_id += 1;
-    node.borrow_mut().id = id;
+    graph.node_mut(node).id = id;
     let mut record = Vec::new();
     record.extend_from_slice(&(size as u32).to_ne_bytes());
     record.extend_from_slice(&path);
     record.extend(std::iter::repeat_n(0, padding));
     record.extend_from_slice(&(!(id as u32)).to_ne_bytes());
     depswrite(&mut log.writer, &record)?;
-    log.nodes.push(node.clone());
+    log.nodes.push(node);
     Ok(true)
 }
 
 // [spec:samurai:def:deps.recorddeps-fn]
 // [spec:samurai:sem:deps.recorddeps-fn]
-fn recorddeps(log: &mut DepsLog, output: &NodeRef, deps: &NodeArray, mtime: i64) -> io::Result<()> {
+fn recorddeps(
+    log: &mut DepsLog,
+    graph: &Graph,
+    output: NodeId,
+    deps: &NodeArray,
+    mtime: i64,
+) -> io::Result<()> {
     const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
-    let output_key = key(output);
-    if let Some(existing) = log.entries.get(&output_key) {
+    if let Some(existing) = log.entries.get(&output) {
         let unchanged = existing.mtime == mtime
             && existing.deps.nodes.len() == deps.nodes.len()
             && existing
@@ -256,7 +258,7 @@ fn recorddeps(log: &mut DepsLog, output: &NodeRef, deps: &NodeArray, mtime: i64)
                 .nodes
                 .iter()
                 .zip(&deps.nodes)
-                .all(|(left, right)| std::rc::Rc::ptr_eq(left, right));
+                .all(|(left, right)| left == right);
         if unchanged {
             return Ok(());
         }
@@ -270,17 +272,17 @@ fn recorddeps(log: &mut DepsLog, output: &NodeRef, deps: &NodeArray, mtime: i64)
         ));
     }
     record.extend_from_slice(&((size as u32) | 0x8000_0000).to_ne_bytes());
-    record.extend_from_slice(&(output.borrow().id as u32).to_ne_bytes());
+    record.extend_from_slice(&(graph.node(output).id as u32).to_ne_bytes());
     record.extend_from_slice(&(mtime as u64 as u32).to_ne_bytes());
     record.extend_from_slice(&((mtime as u64 >> 32) as u32).to_ne_bytes());
     for dependency in &deps.nodes {
-        record.extend_from_slice(&(dependency.borrow().id as u32).to_ne_bytes());
+        record.extend_from_slice(&(graph.node(*dependency).id as u32).to_ne_bytes());
     }
     depswrite(&mut log.writer, &record)?;
     log.entries.insert(
-        output_key,
+        output,
         Entry {
-            node: output.clone(),
+            node: output,
             deps: deps.clone(),
             mtime,
         },
@@ -325,7 +327,7 @@ pub fn depsclose(mut log: DepsLog) -> io::Result<()> {
     log.writer.flush()
 }
 
-fn node_from_path(graph: &mut Graph, path: &[u8]) -> NodeRef {
+fn node_from_path(graph: &mut Graph, path: &[u8]) -> NodeId {
     let mut value = crate::util::mkstr(path.len());
     value.copy_from_slice(path);
     crate::graph::mknode(graph, value)
@@ -365,7 +367,7 @@ pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Optio
         return Ok((depsinit_path(path.to_path_buf())?, Some(warning.into())));
     }
 
-    let mut nodes: Vec<NodeRef> = Vec::new();
+    let mut nodes: Vec<NodeId> = Vec::new();
     let mut entries = BTreeMap::new();
     let mut offset = HEADER_LEN;
     let mut recovery = false;
@@ -388,7 +390,7 @@ pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Optio
         let record = &content[offset..offset + size];
 
         let valid = if is_deps {
-            if size < 12 || size % 4 != 0 {
+            if size < 12 || !size.is_multiple_of(4) {
                 false
             } else {
                 let output_id = native_u32(&record[..4]) as usize;
@@ -401,15 +403,12 @@ pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Optio
                 } else {
                     let low = native_u32(&record[4..8]) as u64;
                     let high = native_u32(&record[8..12]) as u64;
-                    let output = nodes[output_id].clone();
+                    let output = nodes[output_id];
                     let deps = NodeArray {
-                        nodes: dependency_ids
-                            .into_iter()
-                            .map(|id| nodes[id].clone())
-                            .collect(),
+                        nodes: dependency_ids.into_iter().map(|id| nodes[id]).collect(),
                     };
                     entries.insert(
-                        key(&output),
+                        output,
                         Entry {
                             node: output,
                             deps,
@@ -419,28 +418,26 @@ pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Optio
                     true
                 }
             }
+        } else if size < 5 {
+            false
         } else {
-            if size < 5 {
+            let mut path_size = size - 4;
+            for _ in 0..3 {
+                if path_size != 0 && record[path_size - 1] == 0 {
+                    path_size -= 1;
+                }
+            }
+            if path_size == 0 {
                 false
             } else {
-                let mut path_size = size - 4;
-                for _ in 0..3 {
-                    if path_size != 0 && record[path_size - 1] == 0 {
-                        path_size -= 1;
-                    }
-                }
-                if path_size == 0 {
+                let expected_id = !native_u32(&record[size - 4..]) as usize;
+                let node = node_from_path(graph, &record[..path_size]);
+                if expected_id != nodes.len() || graph.node(node).id >= 0 {
                     false
                 } else {
-                    let expected_id = !native_u32(&record[size - 4..]) as usize;
-                    let node = node_from_path(graph, &record[..path_size]);
-                    if expected_id != nodes.len() || node.borrow().id >= 0 {
-                        false
-                    } else {
-                        node.borrow_mut().id = expected_id as i32;
-                        nodes.push(node);
-                        true
-                    }
+                    graph.node_mut(node).id = expected_id as i32;
+                    nodes.push(node);
+                    true
                 }
             }
         };
@@ -466,29 +463,26 @@ pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Optio
     Ok((log, warning))
 }
 
-fn deps_entry_is_live(entry: &Entry) -> bool {
-    entry
-        .node
-        .borrow()
+fn deps_entry_is_live(graph: &Graph, entry: &Entry) -> bool {
+    graph
+        .node(entry.node)
         .gen
-        .as_ref()
-        .and_then(|edge| edge.upgrade())
-        .is_some_and(|edge| edgevar(&edge, "deps", false).is_some())
+        .is_some_and(|edge| edgevar(graph, edge, "deps", false).is_some())
 }
 
 /// Rewrite the log with only dependency entries that are still reachable from
 /// an edge using Ninja's deps attribute.
-pub fn depsrecompact(log: &mut DepsLog) -> io::Result<()> {
+pub fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<()> {
     let mut live_entries = log
         .entries
         .values()
-        .filter(|entry| deps_entry_is_live(entry))
+        .filter(|entry| deps_entry_is_live(graph, entry))
         .cloned()
         .collect::<Vec<_>>();
-    live_entries.sort_by_key(|entry| entry.node.borrow().id);
+    live_entries.sort_by_key(|entry| graph.node(entry.node).id);
 
     for node in &log.nodes {
-        node.borrow_mut().id = -1;
+        graph.node_mut(*node).id = -1;
     }
     let mut temp_name = log.path.as_os_str().to_os_string();
     temp_name.push(".recompact");
@@ -500,11 +494,11 @@ pub fn depsrecompact(log: &mut DepsLog) -> io::Result<()> {
     }
     let mut compacted = depsinit_path(temp_path.clone())?;
     for entry in &live_entries {
-        recordid(&mut compacted, &entry.node)?;
+        recordid(&mut compacted, graph, entry.node)?;
         for node in &entry.deps.nodes {
-            recordid(&mut compacted, node)?;
+            recordid(&mut compacted, graph, *node)?;
         }
-        recorddeps(&mut compacted, &entry.node, &entry.deps, entry.mtime)?;
+        recorddeps(&mut compacted, graph, entry.node, &entry.deps, entry.mtime)?;
     }
     compacted.writer.flush()?;
     let entries = mem::take(&mut compacted.entries);
@@ -553,7 +547,7 @@ fn canonical_dep_path(path: &[u8]) -> Vec<u8> {
 pub fn depsparse_for_edge(
     graph: &mut Graph,
     path: &Path,
-    edge: &EdgeRef,
+    edge: EdgeId,
 ) -> io::Result<Option<NodeArray>> {
     let text = match std::fs::read_to_string(path) {
         Ok(text) => text,
@@ -571,17 +565,20 @@ pub fn depsparse_for_edge(
             "no outputs declared",
         ));
     }
-    let outputs = edge.borrow().out.clone();
+    let outputs = graph.edge(edge).out.clone();
     let expected = outputs
         .first()
-        .map(|output| key(output))
+        .map(|output| graph.node(*output).path.as_bytes().to_vec())
         .unwrap_or_default();
     if canonical_dep_path(&parsed.outputs[0]) != expected {
         return Ok(None);
     }
     for output in &parsed.outputs {
         let output = canonical_dep_path(output);
-        if !outputs.iter().any(|expected| key(expected) == output) {
+        if !outputs
+            .iter()
+            .any(|expected| graph.node(*expected).path.as_bytes() == output)
+        {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
@@ -601,22 +598,22 @@ pub fn depsparse_for_edge(
 
 // [spec:samurai:def:deps.depsload-fn]
 // [spec:samurai:sem:deps.depsload-fn]
-pub fn depsload(edge: &EdgeRef, log: &DepsLog) {
-    let output = edge.borrow().out.first().cloned();
+pub fn depsload(graph: &mut Graph, edge: EdgeId, log: &DepsLog) {
+    let output = graph.edge(edge).out.first().copied();
     let Some(output) = output else { return };
-    if let Some(entry) = log.entries.get(&key(&output)) {
-        edgeadddeps(edge, &entry.deps.nodes);
+    if let Some(entry) = log.entries.get(&output) {
+        edgeadddeps(graph, edge, &entry.deps.nodes);
     }
 }
 
-pub fn depsentry<'a>(log: &'a DepsLog, output: &NodeRef) -> Option<&'a Entry> {
-    log.entries.get(&key(output))
+pub fn depsentry(log: &DepsLog, output: NodeId) -> Option<&Entry> {
+    log.entries.get(&output)
 }
 
 // [spec:samurai:def:deps.depsrecord-fn]
 // [spec:samurai:sem:deps.depsrecord-fn]
-pub fn depsrecord(log: &mut DepsLog, edge: &EdgeRef, graph: &mut Graph) -> io::Result<()> {
-    let Some(depfile) = edgevar(edge, "depfile", false) else {
+pub fn depsrecord(log: &mut DepsLog, edge: EdgeId, graph: &mut Graph) -> io::Result<()> {
+    let Some(depfile) = edgevar(graph, edge, "depfile", false) else {
         return Ok(());
     };
     let deps = depsparse(
@@ -624,21 +621,26 @@ pub fn depsrecord(log: &mut DepsLog, edge: &EdgeRef, graph: &mut Graph) -> io::R
         depfile.to_path().expect("byte paths are valid on Unix"),
         true,
     )?;
-    depsrecordnodes(log, edge, &deps.nodes)
+    depsrecordnodes(log, graph, edge, &deps.nodes)
 }
 
-pub fn depsrecordnodes(log: &mut DepsLog, edge: &EdgeRef, deps: &[NodeRef]) -> io::Result<()> {
-    let outputs = edge.borrow().out.clone();
+pub fn depsrecordnodes(
+    log: &mut DepsLog,
+    graph: &mut Graph,
+    edge: EdgeId,
+    deps: &[NodeId],
+) -> io::Result<()> {
+    let outputs = graph.edge(edge).out.clone();
     let deps = NodeArray {
         nodes: deps.to_vec(),
     };
     for output in outputs {
-        recordid(log, &output)?;
+        recordid(log, graph, output)?;
         for dependency in &deps.nodes {
-            recordid(log, dependency)?;
+            recordid(log, graph, *dependency)?;
         }
-        let mtime = output.borrow().mtime;
-        recorddeps(log, &output, &deps, mtime)?;
+        let mtime = graph.node(output).mtime;
+        recorddeps(log, graph, output, &deps, mtime)?;
     }
     log.writer.flush()
 }
@@ -646,6 +648,7 @@ pub fn depsrecordnodes(log: &mut DepsLog, edge: &EdgeRef, deps: &[NodeRef]) -> i
 #[cfg(test)]
 mod ninja_depfile_tests {
     use super::*;
+    use crate::graph::nodeget;
 
     fn assert_depfile(input: &str, outputs: &[&str], inputs: &[&str]) {
         let parsed = parse_depfile(input).unwrap();
@@ -818,41 +821,42 @@ mod ninja_depfile_tests {
         let _ = fs::remove_dir_all(directory);
     }
 
-    fn make_node(graph: &mut Graph, path: &str) -> NodeRef {
+    fn make_node(graph: &mut Graph, path: &str) -> NodeId {
         node_from_path(graph, path.as_bytes())
     }
 
-    fn record(log: &mut DepsLog, output: &NodeRef, paths: &[NodeRef], mtime: i64) {
+    fn record(log: &mut DepsLog, graph: &mut Graph, output: NodeId, paths: &[NodeId], mtime: i64) {
         let deps = NodeArray {
             nodes: paths.to_vec(),
         };
-        recordid(log, output).unwrap();
+        recordid(log, graph, output).unwrap();
         for dependency in paths {
-            recordid(log, dependency).unwrap();
+            recordid(log, graph, *dependency).unwrap();
         }
-        recorddeps(log, output, &deps, mtime).unwrap();
+        recorddeps(log, graph, output, &deps, mtime).unwrap();
         log.writer.flush().unwrap();
     }
 
-    fn paths(nodes: &[NodeRef]) -> Vec<String> {
+    fn paths(graph: &Graph, nodes: &[NodeId]) -> Vec<String> {
         nodes
             .iter()
-            .map(|node| String::from_utf8(key(node)).unwrap())
+            .map(|node| String::from_utf8(graph.node(*node).path.as_bytes().to_vec()).unwrap())
             .collect()
     }
 
-    fn make_deps_edge(graph: &mut Graph, output: &NodeRef) {
-        let state = crate::env::envinit();
-        let rule = crate::env::mkrule("cc".into());
+    fn make_deps_edge(graph: &mut Graph, output: NodeId) {
+        let state = crate::env::envinit(graph);
+        let rule = crate::env::mkrule(graph, "cc".into());
         crate::env::ruleaddvar(
-            &rule,
+            graph,
+            rule,
             "deps".into(),
             crate::util::EvalString::literal("gcc"),
         );
         let edge = crate::graph::mkedge(graph, state.root);
-        edge.borrow_mut().rule = Some(rule);
-        edge.borrow_mut().out.push(output.clone());
-        output.borrow_mut().gen = Some(std::rc::Rc::downgrade(&edge));
+        graph.edge_mut(edge).rule = Some(rule);
+        graph.edge_mut(edge).out.push(output);
+        graph.node_mut(output).gen = Some(edge);
     }
 
     #[test]
@@ -865,8 +869,8 @@ mod ninja_depfile_tests {
         let bar = make_node(&mut source, "bar.h");
         let bar2 = make_node(&mut source, "bar2.h");
         let mut log = depsinit_path(path.clone()).unwrap();
-        record(&mut log, &output, &[foo.clone(), bar], 1);
-        record(&mut log, &output2, &[foo, bar2], 2);
+        record(&mut log, &mut source, output, &[foo, bar], 1);
+        record(&mut log, &mut source, output2, &[foo, bar2], 2);
         depsclose(log).unwrap();
 
         let mut loaded_graph = crate::graph::graphinit();
@@ -874,9 +878,9 @@ mod ninja_depfile_tests {
         assert_eq!(warning, None);
         assert_eq!(loaded.nodes.len(), 5);
         let output2 = make_node(&mut loaded_graph, "out2.o");
-        let entry = loaded.entries.get(&key(&output2)).unwrap();
+        let entry = loaded.entries.get(&output2).unwrap();
         assert_eq!(entry.mtime, 2);
-        assert_eq!(paths(&entry.deps.nodes), ["foo.h", "bar2.h"]);
+        assert_eq!(paths(&loaded_graph, &entry.deps.nodes), ["foo.h", "bar2.h"]);
         drop(loaded);
         remove_test_log(directory);
     }
@@ -890,7 +894,7 @@ mod ninja_depfile_tests {
             .map(|index| make_node(&mut source, &format!("file{index}.h")))
             .collect::<Vec<_>>();
         let mut log = depsinit_path(path.clone()).unwrap();
-        record(&mut log, &output, &dependencies, 1);
+        record(&mut log, &mut source, output, &dependencies, 1);
         depsclose(log).unwrap();
 
         let mut loaded_graph = crate::graph::graphinit();
@@ -898,7 +902,7 @@ mod ninja_depfile_tests {
         assert_eq!(warning, None);
         let output = make_node(&mut loaded_graph, "out.o");
         assert_eq!(
-            loaded.entries.get(&key(&output)).unwrap().deps.nodes.len(),
+            loaded.entries.get(&output).unwrap().deps.nodes.len(),
             100_000
         );
         drop(loaded);
@@ -913,7 +917,7 @@ mod ninja_depfile_tests {
         let foo = make_node(&mut graph, "foo.h");
         let bar = make_node(&mut graph, "bar.h");
         let mut log = depsinit_path(path.clone()).unwrap();
-        record(&mut log, &output, &[foo.clone(), bar.clone()], 1);
+        record(&mut log, &mut graph, output, &[foo, bar], 1);
         depsclose(log).unwrap();
         let original_size = fs::metadata(&path).unwrap().len();
 
@@ -923,7 +927,7 @@ mod ninja_depfile_tests {
         let output = make_node(&mut reloaded_graph, "out.o");
         let foo = make_node(&mut reloaded_graph, "foo.h");
         let bar = make_node(&mut reloaded_graph, "bar.h");
-        record(&mut log, &output, &[foo, bar], 1);
+        record(&mut log, &mut reloaded_graph, output, &[foo, bar], 1);
         depsclose(log).unwrap();
         assert_eq!(fs::metadata(&path).unwrap().len(), original_size);
         remove_test_log(directory);
@@ -939,8 +943,8 @@ mod ninja_depfile_tests {
         let bar = make_node(&mut source, "bar.h");
         let baz = make_node(&mut source, "baz.h");
         let mut log = depsinit_path(path.clone()).unwrap();
-        record(&mut log, &output, &[foo.clone(), bar], 1);
-        record(&mut log, &other_output, &[foo.clone(), baz], 1);
+        record(&mut log, &mut source, output, &[foo, bar], 1);
+        record(&mut log, &mut source, other_output, &[foo, baz], 1);
         depsclose(log).unwrap();
 
         let mut graph = crate::graph::graphinit();
@@ -949,24 +953,24 @@ mod ninja_depfile_tests {
         let output = make_node(&mut graph, "out.o");
         let other_output = make_node(&mut graph, "other_out.o");
         let foo = make_node(&mut graph, "foo.h");
-        make_deps_edge(&mut graph, &output);
-        make_deps_edge(&mut graph, &other_output);
-        record(&mut log, &output, &[foo], 1);
+        make_deps_edge(&mut graph, output);
+        make_deps_edge(&mut graph, other_output);
+        record(&mut log, &mut graph, output, &[foo], 1);
         let grown_size = fs::metadata(&path).unwrap().len();
-        depsrecompact(&mut log).unwrap();
+        depsrecompact(&mut log, &mut graph).unwrap();
         assert_eq!(
-            paths(&log.entries.get(&key(&output)).unwrap().deps.nodes),
+            paths(&graph, &log.entries.get(&output).unwrap().deps.nodes),
             ["foo.h"]
         );
         assert_eq!(
-            paths(&log.entries.get(&key(&other_output)).unwrap().deps.nodes),
+            paths(&graph, &log.entries.get(&other_output).unwrap().deps.nodes),
             ["foo.h", "baz.h"]
         );
         assert!(fs::metadata(&path).unwrap().len() < grown_size);
         for entry in log.entries.values() {
             assert_eq!(
-                log.nodes[entry.node.borrow().id as usize].borrow().id,
-                entry.node.borrow().id
+                graph.node(log.nodes[graph.node(entry.node).id as usize]).id,
+                graph.node(entry.node).id
             );
         }
 
@@ -974,9 +978,9 @@ mod ninja_depfile_tests {
         let (mut dead_log, warning) = depsloadlog(&path, &mut dead_graph).unwrap();
         assert_eq!(warning, None);
         let foo = make_node(&mut dead_graph, "foo.h");
-        depsrecompact(&mut dead_log).unwrap();
+        depsrecompact(&mut dead_log, &mut dead_graph).unwrap();
         assert!(dead_log.entries.is_empty());
-        assert_eq!(foo.borrow().id, -1);
+        assert_eq!(dead_graph.node(foo).id, -1);
         drop(dead_log);
         drop(log);
         remove_test_log(directory);
@@ -1014,8 +1018,8 @@ mod ninja_depfile_tests {
         let bar = make_node(&mut source, "bar.h");
         let bar2 = make_node(&mut source, "bar2.h");
         let mut log = depsinit_path(path.clone()).unwrap();
-        record(&mut log, &output, &[foo.clone(), bar], 1);
-        record(&mut log, &output2, &[foo, bar2], 2);
+        record(&mut log, &mut source, output, &[foo, bar], 1);
+        record(&mut log, &mut source, output2, &[foo, bar2], 2);
         depsclose(log).unwrap();
         let original_size = fs::metadata(&path).unwrap().len();
         OpenOptions::new()
@@ -1031,8 +1035,10 @@ mod ninja_depfile_tests {
             warning.as_deref(),
             Some("premature end of file; recovering")
         );
-        assert!(log.entries.get(b"out.o".as_slice()).is_some());
-        assert!(log.entries.get(b"out2.o".as_slice()).is_none());
+        let out = nodeget(&graph, b"out.o").unwrap();
+        let out2 = nodeget(&graph, b"out2.o").unwrap();
+        assert!(log.entries.contains_key(&out));
+        assert!(!log.entries.contains_key(&out2));
         drop(log);
         let mut reloaded_graph = crate::graph::graphinit();
         let (_log, warning) = depsloadlog(&path, &mut reloaded_graph).unwrap();
@@ -1050,8 +1056,8 @@ mod ninja_depfile_tests {
         let bar = make_node(&mut source, "bar.h");
         let bar2 = make_node(&mut source, "bar2.h");
         let mut log = depsinit_path(path.clone()).unwrap();
-        record(&mut log, &output, &[foo.clone(), bar], 1);
-        record(&mut log, &output2, &[foo, bar2], 2);
+        record(&mut log, &mut source, output, &[foo, bar], 1);
+        record(&mut log, &mut source, output2, &[foo, bar2], 2);
         depsclose(log).unwrap();
 
         let original_size = fs::metadata(&path).unwrap().len();
@@ -1071,16 +1077,22 @@ mod ninja_depfile_tests {
         let output2 = make_node(&mut recovered_graph, "out2.o");
         let foo = make_node(&mut recovered_graph, "foo.h");
         let bar2 = make_node(&mut recovered_graph, "bar2.h");
-        record(&mut recovered, &output2, &[foo, bar2], 3);
+        record(
+            &mut recovered,
+            &mut recovered_graph,
+            output2,
+            &[foo, bar2],
+            3,
+        );
         depsclose(recovered).unwrap();
 
         let mut final_graph = crate::graph::graphinit();
         let (final_log, warning) = depsloadlog(&path, &mut final_graph).unwrap();
         assert_eq!(warning, None);
         let output2 = make_node(&mut final_graph, "out2.o");
-        let entry = final_log.entries.get(&key(&output2)).unwrap();
+        let entry = final_log.entries.get(&output2).unwrap();
         assert_eq!(entry.mtime, 3);
-        assert_eq!(paths(&entry.deps.nodes), ["foo.h", "bar2.h"]);
+        assert_eq!(paths(&final_graph, &entry.deps.nodes), ["foo.h", "bar2.h"]);
         drop(final_log);
         remove_test_log(directory);
     }
@@ -1095,35 +1107,20 @@ mod ninja_depfile_tests {
         let bar = make_node(&mut graph, "bar.h");
         let bar2 = make_node(&mut graph, "bar2.h");
         let mut log = depsinit_path(path).unwrap();
-        record(&mut log, &output, &[foo.clone(), bar.clone()], 1);
-        record(&mut log, &output2, &[foo.clone(), bar2], 2);
+        record(&mut log, &mut graph, output, &[foo, bar], 1);
+        record(&mut log, &mut graph, output2, &[foo, bar2], 2);
         let reverse = log
             .entries
             .values()
-            .find(|entry| {
-                entry
-                    .deps
-                    .nodes
-                    .iter()
-                    .any(|node| std::rc::Rc::ptr_eq(node, &foo))
-            })
+            .find(|entry| entry.deps.nodes.contains(&foo))
             .unwrap();
-        assert!(
-            std::rc::Rc::ptr_eq(&reverse.node, &output)
-                || std::rc::Rc::ptr_eq(&reverse.node, &output2)
-        );
+        assert!(reverse.node == output || reverse.node == output2);
         let reverse = log
             .entries
             .values()
-            .find(|entry| {
-                entry
-                    .deps
-                    .nodes
-                    .iter()
-                    .any(|node| std::rc::Rc::ptr_eq(node, &bar))
-            })
+            .find(|entry| entry.deps.nodes.contains(&bar))
             .unwrap();
-        assert!(std::rc::Rc::ptr_eq(&reverse.node, &output));
+        assert_eq!(reverse.node, output);
         depsclose(log).unwrap();
         remove_test_log(directory);
     }
@@ -1136,7 +1133,7 @@ mod ninja_depfile_tests {
         let foo = make_node(&mut graph, "foo.hh");
         let bar = make_node(&mut graph, "bar.hpp");
         let mut log = depsinit_path(path.clone()).unwrap();
-        record(&mut log, &output, &[foo, bar], 1);
+        record(&mut log, &mut graph, output, &[foo, bar], 1);
         depsclose(log).unwrap();
         let original = fs::read(&path).unwrap();
         assert_eq!(&original[..12], b"# ninjadeps\n");
@@ -1170,7 +1167,7 @@ mod ninja_depfile_tests {
         let foo = make_node(&mut graph, "foo.h");
         let bar = make_node(&mut graph, "bar.h");
         let mut log = depsinit_path(path.clone()).unwrap();
-        record(&mut log, &output, &[foo, bar], 1);
+        record(&mut log, &mut graph, output, &[foo, bar], 1);
         depsclose(log).unwrap();
 
         let mut duplicate = Vec::new();
@@ -1187,12 +1184,14 @@ mod ninja_depfile_tests {
             warning.as_deref(),
             Some("premature end of file; recovering")
         );
-        assert!(first.entries.get(b"out.o".as_slice()).is_some());
+        let out = nodeget(&first_graph, b"out.o").unwrap();
+        assert!(first.entries.contains_key(&out));
         drop(first);
         let mut second_graph = crate::graph::graphinit();
         let (second, warning) = depsloadlog(&path, &mut second_graph).unwrap();
         assert_eq!(warning, None);
-        assert!(second.entries.get(b"out.o".as_slice()).is_some());
+        let out = nodeget(&second_graph, b"out.o").unwrap();
+        assert!(second.entries.contains_key(&out));
         drop(second);
         remove_test_log(directory);
     }

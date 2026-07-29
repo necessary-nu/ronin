@@ -1,6 +1,6 @@
 //! Version-7 Ninja build log reader and writer.
 
-use crate::graph::{nodeget, EdgeRef, Graph, NodeRef};
+use crate::graph::{nodeget, EdgeId, Graph, NodeId};
 use crate::util::ByteSlice;
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -91,7 +91,7 @@ fn rewrite(log: &mut BuildLog) -> io::Result<()> {
 
 // [spec:samurai:def:log.loginit-fn]
 // [spec:samurai:sem:log.loginit-fn]
-pub fn loginit(builddir: Option<&Path>, graph: &Graph) -> io::Result<BuildLog> {
+pub fn loginit(builddir: Option<&Path>, graph: &mut Graph) -> io::Result<BuildLog> {
     let path = builddir.map_or_else(
         || std::path::PathBuf::from(".ninja_log"),
         |dir| dir.join(".ninja_log"),
@@ -107,7 +107,7 @@ pub fn loginit(builddir: Option<&Path>, graph: &Graph) -> io::Result<BuildLog> {
                 let line = line?;
                 if let Some(entry) = parse_entry(&line) {
                     if let Some(node) = nodeget(graph, entry.output.as_bytes()) {
-                        let mut node = node.borrow_mut();
+                        let node = graph.node_mut(node);
                         if node.gen.is_some() {
                             node.logmtime = entry.mtime;
                             node.hash = entry.command_hash;
@@ -140,8 +140,8 @@ fn record_entry(log: &mut BuildLog, entry: LogEntry) -> io::Result<()> {
 
 // [spec:samurai:def:log.logrecord-fn]
 // [spec:samurai:sem:log.logrecord-fn]
-pub fn logrecord(log: &mut BuildLog, node: &NodeRef) -> io::Result<()> {
-    let node = node.borrow();
+pub fn logrecord(log: &mut BuildLog, graph: &Graph, node: NodeId) -> io::Result<()> {
+    let node = graph.node(node);
     record_entry(
         log,
         LogEntry {
@@ -156,17 +156,18 @@ pub fn logrecord(log: &mut BuildLog, node: &NodeRef) -> io::Result<()> {
 
 pub fn logrecordedge(
     log: &mut BuildLog,
-    edge: &EdgeRef,
+    graph: &Graph,
+    edge: EdgeId,
     start_time: i32,
     end_time: i32,
     record_mtime: i64,
 ) -> io::Result<()> {
     let (outputs, command_hash) = {
-        let edge = edge.borrow();
+        let edge = graph.edge(edge);
         (edge.out.clone(), edge.hash)
     };
     for output in outputs {
-        let output = output.borrow();
+        let output = graph.node(output);
         record_entry(
             log,
             LogEntry {
@@ -273,10 +274,10 @@ mod tests {
             "15\t18\t18\tout\t1234\n",
             "20\t25\t25\tmid\t5678\n",
         );
-        let graph = graphinit();
+        let mut graph = graphinit();
         for size in (1..=complete.len()).rev() {
             fs::write(&temp.path, &complete.as_bytes()[..size]).unwrap();
-            logclose(loginit(Some(&temp.directory), &graph).unwrap()).unwrap();
+            logclose(loginit(Some(&temp.directory), &mut graph).unwrap()).unwrap();
         }
     }
 
@@ -284,8 +285,8 @@ mod tests {
     fn ninja_build_log_restat_filters_and_updates_mtime() {
         let temp = TempLog::new("restat");
         fs::write(&temp.path, "# ninja log v7\n1\t2\t3\tout\tc0ffee\n").unwrap();
-        let graph = graphinit();
-        let mut log = loginit(Some(&temp.directory), &graph).unwrap();
+        let mut graph = graphinit();
+        let mut log = loginit(Some(&temp.directory), &mut graph).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 3);
         logrestat(&mut log, &["out2"], |_| Ok(4)).unwrap();
         assert_eq!(logentry(&log, "out").unwrap().mtime, 3);
@@ -305,8 +306,8 @@ mod tests {
         contents.push_str("456\t789\t789\tout2\tbeef\n");
         fs::write(&temp.path, contents).unwrap();
 
-        let graph = graphinit();
-        let log = loginit(Some(&temp.directory), &graph).unwrap();
+        let mut graph = graphinit();
+        let log = loginit(Some(&temp.directory), &mut graph).unwrap();
         assert!(logentry(&log, "out").is_none());
         let entry = logentry(&log, "out2").unwrap();
         assert_eq!(entry.start_time, 456);
@@ -320,21 +321,21 @@ mod tests {
     fn ninja_build_log_records_every_multi_target_output() {
         let temp = TempLog::new("multi-target");
         let mut graph = graphinit();
-        let root = crate::env::mkenv(None);
+        let root = crate::env::mkenv(&mut graph, None);
         let edge = mkedge(&mut graph, root);
         let output = mknode(&mut graph, xasprintf(format_args!("out")));
         let depfile = mknode(&mut graph, xasprintf(format_args!("out.d")));
-        output.borrow_mut().mtime = 22;
-        depfile.borrow_mut().mtime = 22;
+        graph.node_mut(output).mtime = 22;
+        graph.node_mut(depfile).mtime = 22;
         {
-            let mut edge = edge.borrow_mut();
+            let edge = graph.edge_mut(edge);
             edge.out.extend([output, depfile]);
             edge.outimpidx = 2;
             edge.hash = 0x1234;
         }
 
-        let mut log = loginit(Some(&temp.directory), &graph).unwrap();
-        logrecordedge(&mut log, &edge, 21, 22, 23).unwrap();
+        let mut log = loginit(Some(&temp.directory), &mut graph).unwrap();
+        logrecordedge(&mut log, &graph, edge, 21, 22, 23).unwrap();
         let output = logentry(&log, "out").unwrap();
         let depfile = logentry(&log, "out.d").unwrap();
         assert_eq!(output.start_time, 21);
@@ -356,8 +357,8 @@ mod tests {
         contents.push_str("21\t22\t22\tout2\t5678\n");
         fs::write(&temp.path, contents).unwrap();
 
-        let graph = graphinit();
-        let mut log = loginit(Some(&temp.directory), &graph).unwrap();
+        let mut graph = graphinit();
+        let mut log = loginit(Some(&temp.directory), &mut graph).unwrap();
         assert_eq!(log.entries.len(), 2);
         assert_eq!(logentry(&log, "out").unwrap().end_time, 217);
         logrecompact(&mut log, |path| path == "out2").unwrap();
@@ -366,7 +367,7 @@ mod tests {
         assert!(logentry(&log, "out2").is_none());
         logclose(log).unwrap();
 
-        let reloaded = loginit(Some(&temp.directory), &graph).unwrap();
+        let reloaded = loginit(Some(&temp.directory), &mut graph).unwrap();
         assert_eq!(reloaded.entries.len(), 1);
         assert!(logentry(&reloaded, "out").is_some());
         assert!(logentry(&reloaded, "out2").is_none());

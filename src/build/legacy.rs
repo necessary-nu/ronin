@@ -75,7 +75,7 @@ fn printstatus(state: &BuildState, command: &BString) -> String {
     )
 }
 
-fn jobstart(state: &mut BuildState, edge: EdgeRef, command: BString) -> Job {
+fn jobstart(state: &mut BuildState, edge: EdgeId, command: BString) -> Job {
     state.started += 1;
     Job {
         command,
@@ -85,16 +85,11 @@ fn jobstart(state: &mut BuildState, edge: EdgeRef, command: BString) -> Job {
     }
 }
 
-fn nodedone(state: &mut BuildState, node: &NodeRef, prune: bool) {
-    let uses = node
-        .borrow()
-        .uses
-        .iter()
-        .filter_map(|edge| edge.upgrade())
-        .collect::<Vec<_>>();
+fn nodedone(state: &mut BuildState, graph: &mut Graph, node: NodeId, prune: bool) {
+    let uses = graph.node(node).uses.clone();
     for edge in uses {
         let (prune_outputs, ready) = {
-            let mut edge = edge.borrow_mut();
+            let edge = graph.edge_mut(edge);
             if edge.flags & FLAG_WORK == 0 {
                 continue;
             }
@@ -115,15 +110,17 @@ fn nodedone(state: &mut BuildState, node: &NodeRef, prune: bool) {
         };
         if prune_outputs {
             let (outputs, counted_command) = {
-                let edge = edge.borrow();
+                let edge = graph.edge(edge);
                 (
                     edge.out.clone(),
                     edge.flags & FLAG_DIRTY != 0
-                        && !edge.rule.as_ref().is_some_and(|rule| rule.name == "phony"),
+                        && edge
+                            .rule
+                            .is_none_or(|rule| graph.rule(rule).name != "phony"),
                 )
             };
             for output in outputs {
-                nodedone(state, &output, true);
+                nodedone(state, graph, output, true);
             }
             if counted_command {
                 state.total = state.total.saturating_sub(1);
@@ -134,69 +131,69 @@ fn nodedone(state: &mut BuildState, node: &NodeRef, prune: bool) {
     }
 }
 
-fn shouldprune(edge: &EdgeRef, node: &NodeRef, old_mtime: i64) -> bool {
-    if node.borrow().mtime != old_mtime {
+fn shouldprune(graph: &mut Graph, edge: EdgeId, node: NodeId, old_mtime: i64) -> bool {
+    if graph.node(node).mtime != old_mtime {
         return false;
     }
     let (inputs, inorderidx) = {
-        let edge = edge.borrow();
+        let edge = graph.edge(edge);
         (edge.input.clone(), edge.inorderidx)
     };
     let mut newest = None;
     for input in inputs.into_iter().take(inorderidx) {
-        if crate::graph::nodestat(&input).is_err() {
+        if crate::graph::nodestat(graph, input).is_err() {
             return false;
         }
-        let mtime = input.borrow().mtime;
-        if mtime != MTIME_MISSING
-            && newest
-                .as_ref()
-                .is_none_or(|current: &NodeRef| current.borrow().mtime < mtime)
+        let mtime = graph.node(input).mtime;
+        if mtime != MTIME_MISSING && newest.is_none_or(|current| graph.node(current).mtime < mtime)
         {
             newest = Some(input);
         }
     }
     if let Some(newest) = newest {
-        node.borrow_mut().logmtime = newest.borrow().mtime;
+        graph.node_mut(node).logmtime = graph.node(newest).mtime;
     }
     true
 }
 
-fn edgedone(state: &mut BuildState, edge: &EdgeRef) {
-    let restat = crate::env::edgevar(edge, "restat", false).is_some_and(|value| !value.is_empty());
-    for output in &edge.borrow().out {
-        let old = output.borrow().mtime;
-        let _ = crate::graph::nodestat(output);
-        let mtime = output.borrow().mtime;
-        output.borrow_mut().logmtime = if mtime == MTIME_MISSING { 0 } else { mtime };
-        nodedone(state, output, restat && shouldprune(edge, output, old));
+fn edgedone(state: &mut BuildState, graph: &mut Graph, edge: EdgeId) {
+    let restat =
+        crate::env::edgevar(graph, edge, "restat", false).is_some_and(|value| !value.is_empty());
+    for output in graph.edge(edge).out.clone() {
+        let old = graph.node(output).mtime;
+        let _ = crate::graph::nodestat(graph, output);
+        let mtime = graph.node(output).mtime;
+        graph.node_mut(output).logmtime = if mtime == MTIME_MISSING { 0 } else { mtime };
+        let prune = restat && shouldprune(graph, edge, output, old);
+        nodedone(state, graph, output, prune);
     }
-    if let Some(rspfile) = crate::env::edgevar(edge, "rspfile", false) {
+    if let Some(rspfile) = crate::env::edgevar(graph, edge, "rspfile", false) {
         if !rspfile.is_empty() && !state.options.keeprsp {
             let _ = fs::remove_file(rspfile.to_path().expect("byte paths are valid on Unix"));
         }
     }
-    let command = crate::env::edgevar(edge, "command", true).unwrap_or_default();
-    let rspfile_content = crate::env::edgevar(edge, "rspfile_content", false);
+    let command = crate::env::edgevar(graph, edge, "command", true).unwrap_or_default();
+    let rspfile_content = crate::env::edgevar(graph, edge, "rspfile_content", false);
     edgehash(
+        graph,
         edge,
         command.as_bstr(),
         rspfile_content.as_ref().map(|content| content.as_bstr()),
     );
-    let hash = edge.borrow().hash;
-    for output in &edge.borrow().out {
-        output.borrow_mut().hash = hash;
+    let hash = graph.edge(edge).hash;
+    for output in graph.edge(edge).out.clone() {
+        graph.node_mut(output).hash = hash;
     }
 }
 
-fn jobdone(state: &mut BuildState, job: Job) {
+fn jobdone(state: &mut BuildState, graph: &mut Graph, job: Job) {
     state.finished += 1;
-    if let Some(pool) = &job.edge.borrow().pool {
-        let mut pool = pool.borrow_mut();
+    if let Some(pool) = graph.edge(job.edge).pool {
+        let pool = graph.pool_mut(pool);
         pool.numjobs = pool.numjobs.saturating_sub(1);
     }
     if !job.failed {
-        edgedone(state, &job.edge);
+        edgedone(state, graph, job.edge);
     }
 }
 
@@ -216,14 +213,14 @@ fn catchsig(signal: i32) -> i32 {
     signal
 }
 
-pub fn build(state: &mut BuildState) -> Vec<String> {
+pub fn build(state: &mut BuildState, graph: &mut Graph) -> Vec<String> {
     let mut status = Vec::new();
     while !state.work.is_empty() {
         if state.options.maxload > 0.0 && queryload() > state.options.maxload {
             std::thread::yield_now();
         }
         let edge = state.work.remove(0);
-        let command = crate::env::edgevar(&edge, "command", true).unwrap_or_default();
+        let command = crate::env::edgevar(graph, edge, "command", true).unwrap_or_default();
         status.push(printstatus(state, &command));
         let mut job = jobstart(state, edge, command);
         if state.options.dryrun {
@@ -250,7 +247,7 @@ pub fn build(state: &mut BuildState) -> Vec<String> {
                 }
             }
         }
-        jobdone(state, job);
+        jobdone(state, graph, job);
     }
     let _ = queryload();
     let _ = catchsig(0);

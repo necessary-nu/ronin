@@ -1,7 +1,7 @@
 //! Build scheduling state translated from `build.c`.
 
 use crate::graph::{
-    edgeadddeps, edgehash, nodeget, recompute_dirty_with_validations, EdgeRef, Graph, NodeRef,
+    edgeadddeps, edgehash, nodeget, recompute_dirty_with_validations, EdgeId, Graph, NodeId,
     FLAG_DIRTY, FLAG_DIRTY_OUT, FLAG_WORK,
 };
 use crate::os::{osmkdirs, RealDiskInterface, MTIME_MISSING};
@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::rc::Rc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 // [spec:samurai:def:build.buildoptions]
@@ -46,14 +45,14 @@ impl Default for BuildOptions {
 // [spec:samurai:def:build.job]
 pub struct Job {
     pub command: BString,
-    pub edge: EdgeRef,
+    pub edge: EdgeId,
     pub output: Vec<u8>,
     pub failed: bool,
 }
 
 pub struct BuildState {
     pub options: BuildOptions,
-    pub work: Vec<EdgeRef>,
+    pub work: Vec<EdgeId>,
     pub started: usize,
     pub finished: usize,
     pub total: usize,
@@ -81,35 +80,35 @@ pub enum EdgeResult {
 
 #[derive(Default)]
 pub struct Plan {
-    wanted: BTreeMap<usize, EdgeRef>,
-    pending: BTreeMap<usize, usize>,
-    dependents: BTreeMap<usize, Vec<EdgeRef>>,
-    ready: Vec<EdgeRef>,
-    running: BTreeSet<usize>,
-    completed: BTreeSet<usize>,
+    wanted: BTreeSet<EdgeId>,
+    pending: BTreeMap<EdgeId, usize>,
+    dependents: BTreeMap<EdgeId, Vec<EdgeId>>,
+    ready: Vec<EdgeId>,
+    running: BTreeSet<EdgeId>,
+    completed: BTreeSet<EdgeId>,
     failures: usize,
 }
 
-fn edge_identity(edge: &EdgeRef) -> usize {
-    Rc::as_ptr(edge) as usize
-}
-
 impl Plan {
-    pub fn add_target(&mut self, node: &NodeRef) -> Result<(), String> {
-        self.add_node(node, 1)
+    pub fn add_target(&mut self, graph: &mut Graph, node: NodeId) -> Result<(), String> {
+        self.add_node(graph, node, 1)
     }
 
-    fn add_node(&mut self, node: &NodeRef, weight: i64) -> Result<(), String> {
-        let Some(edge) = node.borrow().gen.as_ref().and_then(|edge| edge.upgrade()) else {
-            if node.borrow().dirty {
+    fn add_node(&mut self, graph: &mut Graph, node: NodeId, weight: i64) -> Result<(), String> {
+        let Some(edge) = graph.node(node).gen else {
+            if graph.node(node).dirty {
                 return Err("file is missing and has no generating edge".into());
             }
             return Ok(());
         };
-        let edge_dirty = edge.borrow().out.iter().any(|output| output.borrow().dirty);
+        let edge_dirty = graph
+            .edge(edge)
+            .out
+            .iter()
+            .any(|output| graph.node(*output).dirty);
         if !edge_dirty {
             let (inputs, depfile_start, depfile_end) = {
-                let edge = edge.borrow();
+                let edge = graph.edge(edge);
                 (
                     edge.input.clone(),
                     edge.inorderidx.saturating_sub(edge.depfile_deps),
@@ -117,30 +116,32 @@ impl Plan {
                 )
             };
             for (index, input) in inputs.into_iter().enumerate() {
-                if index >= depfile_start && index < depfile_end && input.borrow().gen.is_none() {
+                if index >= depfile_start && index < depfile_end && graph.node(input).gen.is_none()
+                {
                     continue;
                 }
-                self.add_node(&input, weight + 1)?;
+                self.add_node(graph, input, weight + 1)?;
             }
             return Ok(());
         }
         let phony_with_no_inputs = {
-            let edge = edge.borrow();
-            edge.rule.as_ref().is_some_and(|rule| rule.name == "phony") && edge.input.is_empty()
+            let edge = graph.edge(edge);
+            edge.rule
+                .is_some_and(|rule| graph.rule(rule).name == "phony")
+                && edge.input.is_empty()
         };
         if phony_with_no_inputs {
             return Ok(());
         }
 
-        let identity = edge_identity(&edge);
-        let previous_weight = edge.borrow().critical_path_weight;
-        let newly_wanted = self.wanted.insert(identity, edge.clone()).is_none();
+        let previous_weight = graph.edge(edge).critical_path_weight;
+        let newly_wanted = self.wanted.insert(edge);
         if !newly_wanted && weight <= previous_weight {
             return Ok(());
         }
-        edge.borrow_mut().critical_path_weight = weight.max(previous_weight);
+        graph.edge_mut(edge).critical_path_weight = weight.max(previous_weight);
         let (inputs, depfile_start, depfile_end) = {
-            let edge = edge.borrow();
+            let edge = graph.edge(edge);
             (
                 edge.input.clone(),
                 edge.inorderidx.saturating_sub(edge.depfile_deps),
@@ -148,154 +149,151 @@ impl Plan {
             )
         };
         for (index, input) in inputs.into_iter().enumerate() {
-            if index >= depfile_start && index < depfile_end && input.borrow().gen.is_none() {
+            if index >= depfile_start && index < depfile_end && graph.node(input).gen.is_none() {
                 continue;
             }
-            self.add_node(&input, weight + 1)?;
+            self.add_node(graph, input, weight + 1)?;
         }
         Ok(())
     }
 
-    pub fn prepare_queue(&mut self) {
+    pub fn prepare_queue(&mut self, graph: &Graph) {
         self.running.clear();
         self.completed.clear();
         self.failures = 0;
-        self.rebuild_frontier();
+        self.rebuild_frontier(graph);
     }
 
-    fn rebuild_frontier(&mut self) {
+    fn rebuild_frontier(&mut self, graph: &Graph) {
         self.pending.clear();
         self.dependents.clear();
         self.ready.clear();
-        for (identity, edge) in &self.wanted {
-            if self.completed.contains(identity) {
+        for edge in &self.wanted {
+            if self.completed.contains(edge) {
                 continue;
             }
             let mut dependencies = BTreeSet::new();
-            for input in edge.borrow().input.clone() {
-                let Some(generator) = input.borrow().gen.as_ref().and_then(|edge| edge.upgrade())
-                else {
+            for input in graph.edge(*edge).input.iter().copied() {
+                let Some(generator) = graph.node(input).gen else {
                     continue;
                 };
-                let dependency = edge_identity(&generator);
-                if self.wanted.contains_key(&dependency) && !self.completed.contains(&dependency) {
-                    dependencies.insert(dependency);
+                if self.wanted.contains(&generator) && !self.completed.contains(&generator) {
+                    dependencies.insert(generator);
                 }
             }
-            self.pending.insert(*identity, dependencies.len());
+            self.pending.insert(*edge, dependencies.len());
             for dependency in dependencies {
-                self.dependents
-                    .entry(dependency)
-                    .or_default()
-                    .push(edge.clone());
+                self.dependents.entry(dependency).or_default().push(*edge);
             }
         }
         self.ready.extend(
             self.wanted
                 .iter()
-                .filter(|(identity, _)| {
-                    !self.completed.contains(identity)
-                        && !self.running.contains(identity)
-                        && self.pending.get(identity) == Some(&0)
+                .filter(|edge| {
+                    !self.completed.contains(edge)
+                        && !self.running.contains(edge)
+                        && self.pending.get(edge) == Some(&0)
                 })
-                .map(|(_, edge)| edge.clone()),
+                .copied(),
         );
     }
 
-    pub fn refresh_dependencies(&mut self) -> Result<(), String> {
+    pub fn refresh_dependencies(&mut self, graph: &mut Graph) -> Result<(), String> {
         loop {
             let previous = self.wanted.len();
-            let edges = self.wanted.values().cloned().collect::<Vec<_>>();
+            let edges = self.wanted.iter().copied().collect::<Vec<_>>();
             for edge in edges {
-                let weight = edge.borrow().critical_path_weight;
-                for input in edge.borrow().input.clone() {
-                    self.add_node(&input, weight + 1)?;
+                let weight = graph.edge(edge).critical_path_weight;
+                for input in graph.edge(edge).input.clone() {
+                    self.add_node(graph, input, weight + 1)?;
                 }
             }
             if self.wanted.len() == previous {
                 break;
             }
         }
-        self.rebuild_frontier();
+        self.rebuild_frontier(graph);
         Ok(())
     }
 
-    pub fn wanted_edges(&self) -> Vec<EdgeRef> {
-        self.wanted.values().cloned().collect()
+    pub fn wanted_edges(&self) -> Vec<EdgeId> {
+        self.wanted.iter().copied().collect()
     }
 
-    pub fn find_work(&mut self) -> Option<EdgeRef> {
+    pub fn find_work(&mut self, graph: &mut Graph) -> Option<EdgeId> {
         let index = self
             .ready
             .iter()
             .enumerate()
             .filter(|(_, edge)| {
-                edge.borrow().pool.as_ref().is_none_or(|pool| {
-                    let pool = pool.borrow();
+                graph.edge(**edge).pool.is_none_or(|pool| {
+                    let pool = graph.pool(pool);
                     pool.numjobs < pool.maxjobs
                 })
             })
             .max_by(|(_, left), (_, right)| {
-                let left = left.borrow();
-                let right = right.borrow();
+                let left = graph.edge(**left);
+                let right = graph.edge(**right);
                 left.critical_path_weight
                     .cmp(&right.critical_path_weight)
                     .then_with(|| right.id.cmp(&left.id))
             })
             .map(|(index, _)| index)?;
         let edge = self.ready.remove(index);
-        if let Some(pool) = &edge.borrow().pool {
-            pool.borrow_mut().numjobs += 1;
+        if let Some(pool) = graph.edge(edge).pool {
+            graph.pool_mut(pool).numjobs += 1;
         }
-        self.running.insert(edge_identity(&edge));
+        self.running.insert(edge);
         Some(edge)
     }
 
-    fn defer_work(&mut self, edge: EdgeRef) {
-        let identity = edge_identity(&edge);
-        if self.running.remove(&identity) {
-            if let Some(pool) = &edge.borrow().pool {
-                pool.borrow_mut().numjobs -= 1;
+    fn defer_work(&mut self, graph: &mut Graph, edge: EdgeId) {
+        if self.running.remove(&edge) {
+            if let Some(pool) = graph.edge(edge).pool {
+                graph.pool_mut(pool).numjobs -= 1;
             }
             self.ready.push(edge);
         }
     }
 
-    pub fn edge_finished(&mut self, edge: &EdgeRef, result: EdgeResult) -> Result<(), String> {
-        let identity = edge_identity(edge);
-        if !self.running.remove(&identity) {
+    pub fn edge_finished(
+        &mut self,
+        graph: &mut Graph,
+        edge: EdgeId,
+        result: EdgeResult,
+    ) -> Result<(), String> {
+        if !self.running.remove(&edge) {
             return Err("edge was not running".into());
         }
-        if let Some(pool) = &edge.borrow().pool {
-            pool.borrow_mut().numjobs -= 1;
+        if let Some(pool) = graph.edge(edge).pool {
+            graph.pool_mut(pool).numjobs -= 1;
         }
-        self.completed.insert(identity);
+        self.completed.insert(edge);
         if result == EdgeResult::Failed {
             self.failures += 1;
             return Ok(());
         }
-        self.release_dependents(identity);
+        self.release_dependents(graph, edge);
         Ok(())
     }
 
-    fn release_dependents(&mut self, identity: usize) {
-        for dependent in self.dependents.get(&identity).cloned().unwrap_or_default() {
-            let dependent_identity = edge_identity(&dependent);
+    fn release_dependents(&mut self, graph: &Graph, edge: EdgeId) {
+        for dependent in self.dependents.get(&edge).cloned().unwrap_or_default() {
             let pending = self
                 .pending
-                .get_mut(&dependent_identity)
+                .get_mut(&dependent)
                 .expect("planned dependent has a pending count");
             *pending -= 1;
             if *pending == 0 {
-                let dirty = dependent
-                    .borrow()
+                let dirty = graph
+                    .edge(dependent)
                     .out
                     .iter()
-                    .any(|output| output.borrow().dirty);
+                    .any(|output| graph.node(*output).dirty);
                 if dirty {
                     self.ready.push(dependent);
-                } else if self.completed.insert(dependent_identity) {
-                    self.release_dependents(dependent_identity);
+                } else if self.completed.insert(dependent) {
+                    self.release_dependents(graph, dependent);
                 }
             }
         }
@@ -305,14 +303,14 @@ impl Plan {
         self.failures != 0 || self.completed.len() < self.wanted.len()
     }
 
-    pub fn command_edge_count(&self) -> usize {
+    pub fn command_edge_count(&self, graph: &Graph) -> usize {
         self.wanted
-            .values()
+            .iter()
             .filter(|edge| {
-                edge.borrow()
+                graph
+                    .edge(**edge)
                     .rule
-                    .as_ref()
-                    .is_some_and(|rule| rule.name != "phony")
+                    .is_some_and(|rule| graph.rule(rule).name != "phony")
             })
             .count()
     }
@@ -328,14 +326,14 @@ pub struct Builder<'a> {
     plan: Plan,
     build_log: Option<&'a mut crate::log::BuildLog>,
     deps_log: Option<&'a mut crate::deps::DepsLog>,
-    targets: Vec<NodeRef>,
-    executed_edges: BTreeSet<usize>,
+    targets: Vec<NodeId>,
+    executed_edges: BTreeSet<EdgeId>,
     pub commands_ran: Vec<BString>,
     pub command_output: Vec<u8>,
 }
 
 struct PreparedEdge {
-    edge: EdgeRef,
+    edge: EdgeId,
     old_mtimes: Vec<i64>,
     rspfile: Option<BString>,
     command: BString,
@@ -434,59 +432,59 @@ impl<'a> Builder<'a> {
         }
     }
 
-    fn replace_depfile_deps(edge: &EdgeRef, deps: &[NodeRef]) {
+    fn replace_depfile_deps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
         {
-            let mut edge = edge.borrow_mut();
+            let edge = graph.edge_mut(edge);
             let start = edge.inorderidx.saturating_sub(edge.depfile_deps);
             let end = edge.inorderidx;
             edge.input.drain(start..end);
             edge.inorderidx -= edge.depfile_deps;
             edge.depfile_deps = 0;
         }
-        edgeadddeps(edge, deps);
-        edge.borrow_mut().depfile_deps = deps.len();
+        edgeadddeps(graph, edge, deps);
+        graph.edge_mut(edge).depfile_deps = deps.len();
     }
 
     fn load_depfiles_for(
         &mut self,
-        node: &NodeRef,
-        visited: &mut BTreeSet<usize>,
+        node: NodeId,
+        visited: &mut BTreeSet<EdgeId>,
     ) -> Result<(), String> {
-        let Some(edge) = node.borrow().gen.as_ref().and_then(|edge| edge.upgrade()) else {
+        let Some(edge) = self.graph.node(node).gen else {
             return Ok(());
         };
-        let identity = edge_identity(&edge);
-        if !visited.insert(identity) {
+        if !visited.insert(edge) {
             return Ok(());
         }
-        if edge.borrow().deps_loaded {
-            for input in edge.borrow().input.clone() {
-                self.load_depfiles_for(&input, visited)?;
+        if self.graph.edge(edge).deps_loaded {
+            for input in self.graph.edge(edge).input.clone() {
+                self.load_depfiles_for(input, visited)?;
             }
             return Ok(());
         }
-        for input in edge.borrow().input.clone() {
-            self.load_depfiles_for(&input, visited)?;
+        for input in self.graph.edge(edge).input.clone() {
+            self.load_depfiles_for(input, visited)?;
         }
-        let base_dirty = if let Some(output) = edge.borrow().out.first().cloned() {
+        let base_dirty = if let Some(output) = self.graph.edge(edge).out.first().copied() {
             let disk = RealDiskInterface;
             let mut stat = |path: &Path| disk.stat(path);
-            crate::graph::recompute_dirty_with(&output, &mut stat)
+            crate::graph::recompute_dirty_with(self.graph, output, &mut stat)
                 .map_err(|error| error.to_string())?
         } else {
             false
         };
         let uses_deps_log = self.deps_log.is_some()
-            && crate::env::edgevar(&edge, "deps", false).is_some_and(|value| !value.is_empty());
+            && crate::env::edgevar(self.graph, edge, "deps", false)
+                .is_some_and(|value| !value.is_empty());
         if uses_deps_log {
-            let output = edge.borrow().out.first().cloned();
-            let entry_is_current = if let Some(output) = output.as_ref() {
+            let output = self.graph.edge(edge).out.first().copied();
+            let entry_is_current = if let Some(output) = output {
                 let disk = RealDiskInterface;
-                let output_path = output.borrow().path.clone();
+                let output_path = self.graph.node(output).path.clone();
                 let output_mtime = disk
                     .stat(output_path.to_path().expect("byte paths are valid on Unix"))
                     .map_err(|error| error.to_string())?;
-                output.borrow_mut().mtime = output_mtime;
+                self.graph.node_mut(output).mtime = output_mtime;
                 self.deps_log
                     .as_deref()
                     .and_then(|log| crate::deps::depsentry(log, output))
@@ -496,17 +494,17 @@ impl<'a> Builder<'a> {
             };
             if !base_dirty && entry_is_current {
                 if let Some(log) = self.deps_log.as_deref() {
-                    crate::deps::depsload(&edge, log);
+                    crate::deps::depsload(self.graph, edge, log);
                 }
             }
-            let mut edge = edge.borrow_mut();
+            let edge = self.graph.edge_mut(edge);
             edge.deps_loaded = true;
             edge.deps_missing = !entry_is_current;
         } else if let Some(depfile) =
-            crate::env::edgevar(&edge, "depfile", false).filter(|path| !path.is_empty())
+            crate::env::edgevar(self.graph, edge, "depfile", false).filter(|path| !path.is_empty())
         {
             if base_dirty {
-                let mut edge = edge.borrow_mut();
+                let edge = self.graph.edge_mut(edge);
                 edge.deps_loaded = true;
                 edge.deps_missing = !depfile
                     .to_path()
@@ -517,94 +515,95 @@ impl<'a> Builder<'a> {
                 .expect("byte paths are valid on Unix")
                 .exists()
             {
-                edge.borrow_mut().deps_loaded = true;
+                self.graph.edge_mut(edge).deps_loaded = true;
                 match crate::deps::depsparse_for_edge(
                     self.graph,
                     depfile.to_path().expect("byte paths are valid on Unix"),
-                    &edge,
+                    edge,
                 )
                 .map_err(|error| format!("{depfile}: {error}"))?
                 {
                     Some(deps) => {
-                        Self::replace_depfile_deps(&edge, &deps.nodes);
-                        edge.borrow_mut().deps_missing = false;
+                        Self::replace_depfile_deps(self.graph, edge, &deps.nodes);
+                        self.graph.edge_mut(edge).deps_missing = false;
                     }
-                    None => edge.borrow_mut().deps_missing = true,
+                    None => self.graph.edge_mut(edge).deps_missing = true,
                 }
             } else {
-                let mut edge = edge.borrow_mut();
+                let edge = self.graph.edge_mut(edge);
                 edge.deps_loaded = true;
                 edge.deps_missing = true;
             }
         }
-        for input in edge.borrow().input.clone() {
-            self.load_depfiles_for(&input, visited)?;
+        for input in self.graph.edge(edge).input.clone() {
+            self.load_depfiles_for(input, visited)?;
         }
         Ok(())
     }
 
     fn load_ready_dyndeps_for(
         &mut self,
-        node: &NodeRef,
-        visited_edges: &mut BTreeSet<usize>,
-        loaded_files: &mut BTreeSet<usize>,
+        node: NodeId,
+        visited_edges: &mut BTreeSet<EdgeId>,
+        loaded_files: &mut BTreeSet<NodeId>,
     ) -> Result<(), String> {
-        let Some(edge) = node.borrow().gen.as_ref().and_then(|edge| edge.upgrade()) else {
+        let Some(edge) = self.graph.node(node).gen else {
             return Ok(());
         };
-        if !visited_edges.insert(edge_identity(&edge)) {
+        if !visited_edges.insert(edge) {
             return Ok(());
         }
-        let dyndep = edge.borrow().dyndep.clone();
-        if let Some(dyndep) = dyndep.filter(|dyndep| dyndep.borrow().dyndep_pending) {
-            let identity = Rc::as_ptr(&dyndep) as usize;
-            let path = dyndep.borrow().path.clone();
+        let dyndep = self.graph.edge(edge).dyndep;
+        if let Some(dyndep) = dyndep.filter(|dyndep| self.graph.node(*dyndep).dyndep_pending) {
+            let path = self.graph.node(dyndep).path.clone();
             if path
                 .to_path()
                 .expect("byte paths are valid on Unix")
                 .exists()
-                && loaded_files.insert(identity)
+                && loaded_files.insert(dyndep)
             {
-                crate::dyndep::load_dyndep(self.graph, &dyndep)?;
+                crate::dyndep::load_dyndep(self.graph, dyndep)?;
             }
         }
-        for input in edge.borrow().input.clone() {
-            self.load_ready_dyndeps_for(&input, visited_edges, loaded_files)?;
+        for input in self.graph.edge(edge).input.clone() {
+            self.load_ready_dyndeps_for(input, visited_edges, loaded_files)?;
         }
         Ok(())
     }
 
     fn prepare_build_log_for(
         &mut self,
-        node: &NodeRef,
-        visited: &mut BTreeSet<usize>,
+        node: NodeId,
+        visited: &mut BTreeSet<EdgeId>,
     ) -> Result<(), String> {
-        let Some(edge) = node.borrow().gen.as_ref().and_then(|edge| edge.upgrade()) else {
+        let Some(edge) = self.graph.node(node).gen else {
             return Ok(());
         };
-        if !visited.insert(edge_identity(&edge)) {
+        if !visited.insert(edge) {
             return Ok(());
         }
-        let command = crate::env::edgevar(&edge, "command", true).unwrap_or_default();
-        let rspfile_content = crate::env::edgevar(&edge, "rspfile_content", false);
+        let command = crate::env::edgevar(self.graph, edge, "command", true).unwrap_or_default();
+        let rspfile_content = crate::env::edgevar(self.graph, edge, "rspfile_content", false);
         edgehash(
-            &edge,
+            self.graph,
+            edge,
             command.as_bstr(),
             rspfile_content.as_ref().map(|content| content.as_bstr()),
         );
         let (hash, outputs) = {
-            let edge = edge.borrow();
+            let edge = self.graph.edge(edge);
             (edge.hash, edge.out.clone())
         };
-        let generator =
-            crate::env::edgevar(&edge, "generator", false).is_some_and(|value| !value.is_empty());
-        edge.borrow_mut().command_dirty = !generator
+        let generator = crate::env::edgevar(self.graph, edge, "generator", false)
+            .is_some_and(|value| !value.is_empty());
+        let command_dirty = !generator
             && outputs.iter().any(|output| {
-                let output = output.borrow();
+                let output = self.graph.node(*output);
                 output.hash == 0 || output.hash != hash
             });
-        for input in edge.borrow().input.clone() {
-            self.prepare_build_log_for(&input, visited)?;
+        self.graph.edge_mut(edge).command_dirty = command_dirty;
+        for input in self.graph.edge(edge).input.clone() {
+            self.prepare_build_log_for(input, visited)?;
         }
         Ok(())
     }
@@ -613,20 +612,20 @@ impl<'a> Builder<'a> {
         let path = path.as_ref();
         let node = nodeget(self.graph, path)
             .ok_or_else(|| format!("unknown target: '{}'", String::from_utf8_lossy(path)))?;
-        if !self.targets.iter().any(|target| Rc::ptr_eq(target, &node)) {
-            self.targets.push(node.clone());
+        if !self.targets.contains(&node) {
+            self.targets.push(node);
         }
         if self.build_log.is_some() {
-            self.prepare_build_log_for(&node, &mut BTreeSet::new())?;
+            self.prepare_build_log_for(node, &mut BTreeSet::new())?;
         }
-        self.load_depfiles_for(&node, &mut BTreeSet::new())?;
-        self.load_ready_dyndeps_for(&node, &mut BTreeSet::new(), &mut BTreeSet::new())?;
+        self.load_depfiles_for(node, &mut BTreeSet::new())?;
+        self.load_ready_dyndeps_for(node, &mut BTreeSet::new(), &mut BTreeSet::new())?;
         let disk = RealDiskInterface;
         let mut stat = |path: &Path| disk.stat(path);
-        let validations = recompute_dirty_with_validations(&node, &mut stat)
+        let validations = recompute_dirty_with_validations(self.graph, node, &mut stat)
             .map_err(|error| error.to_string())?;
-        self.plan.add_target(&node).map_err(|error| {
-            if node.borrow().gen.is_none() {
+        self.plan.add_target(self.graph, node).map_err(|error| {
+            if self.graph.node(node).gen.is_none() {
                 format!(
                     "'{}' missing and no known rule to make it",
                     String::from_utf8_lossy(path)
@@ -636,7 +635,7 @@ impl<'a> Builder<'a> {
             }
         })?;
         for validation in validations {
-            self.plan.add_target(&validation)?;
+            self.plan.add_target(self.graph, validation)?;
         }
         Ok(())
     }
@@ -645,27 +644,33 @@ impl<'a> Builder<'a> {
         self.plan.is_empty()
     }
 
-    pub fn ran_edge(&self, edge: &EdgeRef) -> bool {
-        self.executed_edges.contains(&edge_identity(edge))
+    pub fn ran_edge(&self, edge: EdgeId) -> bool {
+        self.executed_edges.contains(&edge)
     }
 
-    fn prepare_edge(&mut self, edge: &EdgeRef) -> Result<PreparedEdge, String> {
-        let old_mtimes = edge
-            .borrow()
+    pub fn ran_edge_without_restat_pruning(&self, edge: EdgeId) -> bool {
+        self.ran_edge(edge) && !self.graph.edge(edge).restat_clean
+    }
+
+    fn prepare_edge(&mut self, edge: EdgeId) -> Result<PreparedEdge, String> {
+        let old_mtimes = self
+            .graph
+            .edge(edge)
             .out
             .iter()
-            .map(|output| output.borrow().mtime)
+            .map(|output| self.graph.node(*output).mtime)
             .collect::<Vec<_>>();
 
-        for output in &edge.borrow().out {
-            let path = output.borrow().path.clone();
+        for output in &self.graph.edge(edge).out {
+            let path = self.graph.node(*output).path.clone();
             osmkdirs(path.to_path().expect("byte paths are valid on Unix"), true)
                 .map_err(|error| error.to_string())?;
         }
 
-        let rspfile = crate::env::edgevar(edge, "rspfile", false).filter(|path| !path.is_empty());
+        let rspfile =
+            crate::env::edgevar(self.graph, edge, "rspfile", false).filter(|path| !path.is_empty());
         if let Some(path) = &rspfile {
-            let contents = crate::env::edgevar(edge, "rspfile_content", false)
+            let contents = crate::env::edgevar(self.graph, edge, "rspfile_content", false)
                 .map(|contents| contents.as_bytes().to_vec())
                 .unwrap_or_default();
             osmkdirs(path.to_path().expect("byte paths are valid on Unix"), true)
@@ -677,8 +682,8 @@ impl<'a> Builder<'a> {
             .map_err(|error| error.to_string())?;
         }
 
-        let command = crate::env::edgevar(edge, "command", true).unwrap_or_default();
-        let deps_type = crate::env::edgevar(edge, "deps", false)
+        let command = crate::env::edgevar(self.graph, edge, "command", true).unwrap_or_default();
+        let deps_type = crate::env::edgevar(self.graph, edge, "deps", false)
             .map(|value| {
                 String::from_utf8(Vec::from(value))
                     .map_err(|_| "deps binding is not valid UTF-8".to_owned())
@@ -686,7 +691,7 @@ impl<'a> Builder<'a> {
             .transpose()?
             .unwrap_or_default();
         let depfile_path =
-            crate::env::edgevar(edge, "depfile", false).filter(|path| !path.is_empty());
+            crate::env::edgevar(self.graph, edge, "depfile", false).filter(|path| !path.is_empty());
         let command_start_mtime = if self.options.dryrun {
             0
         } else {
@@ -697,15 +702,15 @@ impl<'a> Builder<'a> {
                 .try_into()
                 .unwrap_or(i64::MAX)
         };
-        self.executed_edges.insert(edge_identity(edge));
+        self.executed_edges.insert(edge);
         self.commands_ran.push(command.clone());
-        let use_console = edge
-            .borrow()
+        let use_console = self
+            .graph
+            .edge(edge)
             .pool
-            .as_ref()
-            .is_some_and(|pool| pool.borrow().name == "console");
+            .is_some_and(|pool| self.graph.pool(pool).name == "console");
         Ok(PreparedEdge {
-            edge: edge.clone(),
+            edge,
             old_mtimes,
             rspfile,
             command,
@@ -754,7 +759,7 @@ impl<'a> Builder<'a> {
         &mut self,
         prepared: PreparedEdge,
         result: Result<Option<ShellOutput>, String>,
-    ) -> Result<(bool, Vec<NodeRef>), String> {
+    ) -> Result<(bool, Vec<NodeId>), String> {
         let PreparedEdge {
             edge,
             old_mtimes,
@@ -785,7 +790,7 @@ impl<'a> Builder<'a> {
         }) = result
         {
             if deps_type == "msvc" {
-                let prefix = crate::env::edgevar(&edge, "msvc_deps_prefix", false)
+                let prefix = crate::env::edgevar(self.graph, edge, "msvc_deps_prefix", false)
                     .map(|value| String::from_utf8_lossy(value.as_bytes()).into_owned())
                     .unwrap_or_default();
                 let mut parser = crate::msvc::ClParser::default();
@@ -804,8 +809,8 @@ impl<'a> Builder<'a> {
             if !status.success() {
                 if status_interrupted(&status) {
                     let disk = RealDiskInterface;
-                    for (output, old_mtime) in edge.borrow().out.iter().zip(&old_mtimes) {
-                        let path = output.borrow().path.clone();
+                    for (output, old_mtime) in self.graph.edge(edge).out.iter().zip(&old_mtimes) {
+                        let path = self.graph.node(*output).path.clone();
                         if disk
                             .stat(path.to_path().expect("byte paths are valid on Unix"))
                             .ok()
@@ -845,8 +850,8 @@ impl<'a> Builder<'a> {
                     false,
                 )
                 .map_err(|error| format!("{path}: {error}"))?;
-                Self::replace_depfile_deps(&edge, &deps.nodes);
-                let mut edge = edge.borrow_mut();
+                Self::replace_depfile_deps(self.graph, edge, &deps.nodes);
+                let edge = self.graph.edge_mut(edge);
                 edge.deps_loaded = true;
                 edge.deps_missing = false;
             }
@@ -854,14 +859,17 @@ impl<'a> Builder<'a> {
 
         let disk = RealDiskInterface;
         let mut new_mtimes = Vec::new();
-        for output in &edge.borrow().out {
-            let path = output.borrow().path.clone();
-            let mut output = output.borrow_mut();
-            output.mtime = disk
+        let output_ids = self.graph.edge(edge).out.clone();
+        let edge_hash = self.graph.edge(edge).hash;
+        for output in output_ids {
+            let path = self.graph.node(output).path.clone();
+            let mtime = disk
                 .stat(path.to_path().expect("byte paths are valid on Unix"))
                 .map_err(|error| error.to_string())?;
+            let output = self.graph.node_mut(output);
+            output.mtime = mtime;
             output.dirty = false;
-            output.hash = edge.borrow().hash;
+            output.hash = edge_hash;
             new_mtimes.push(output.mtime);
         }
         if !deps_type.is_empty() && !self.options.dryrun {
@@ -875,13 +883,13 @@ impl<'a> Builder<'a> {
                         return Err("subcommand succeeded but dependency file is missing".into());
                     }
                     if let Some(deps_log) = self.deps_log.as_deref_mut() {
-                        crate::deps::depsrecord(deps_log, &edge, self.graph)
+                        crate::deps::depsrecord(deps_log, edge, self.graph)
                             .map_err(|error| error.to_string())?;
                     }
                 }
                 "msvc" => {
                     if let Some(deps_log) = self.deps_log.as_deref_mut() {
-                        crate::deps::depsrecordnodes(deps_log, &edge, &msvc_deps)
+                        crate::deps::depsrecordnodes(deps_log, self.graph, edge, &msvc_deps)
                             .map_err(|error| error.to_string())?;
                     }
                 }
@@ -897,28 +905,29 @@ impl<'a> Builder<'a> {
         }
         let mut loaded_dyndeps = Vec::new();
         if !self.options.dryrun {
-            let generated_dyndeps = edge
-                .borrow()
+            let generated_dyndeps = self
+                .graph
+                .edge(edge)
                 .out
                 .iter()
-                .filter(|output| output.borrow().dyndep_pending)
-                .cloned()
+                .filter(|output| self.graph.node(**output).dyndep_pending)
+                .copied()
                 .collect::<Vec<_>>();
             for dyndep in generated_dyndeps {
-                crate::dyndep::load_dyndep(self.graph, &dyndep)?;
+                crate::dyndep::load_dyndep(self.graph, dyndep)?;
                 loaded_dyndeps.push(dyndep);
             }
         }
-        edge.borrow_mut().command_dirty = false;
+        self.graph.edge_mut(edge).command_dirty = false;
         if let Some(path) = rspfile {
             if !self.options.keeprsp {
                 let _ = fs::remove_file(path.to_path().expect("byte paths are valid on Unix"));
             }
         }
-        let restat =
-            crate::env::edgevar(&edge, "restat", false).is_some_and(|value| !value.is_empty());
-        let generator =
-            crate::env::edgevar(&edge, "generator", false).is_some_and(|value| !value.is_empty());
+        let restat = crate::env::edgevar(self.graph, edge, "restat", false)
+            .is_some_and(|value| !value.is_empty());
+        let generator = crate::env::edgevar(self.graph, edge, "generator", false)
+            .is_some_and(|value| !value.is_empty());
         let unchanged_outputs = old_mtimes
             .iter()
             .zip(&new_mtimes)
@@ -934,26 +943,26 @@ impl<'a> Builder<'a> {
         if pruned {
             record_mtime = command_start_mtime;
         }
-        for output in &edge.borrow().out {
-            output.borrow_mut().logmtime = record_mtime;
+        for output in self.graph.edge(edge).out.clone() {
+            self.graph.node_mut(output).logmtime = record_mtime;
         }
         if let Some(build_log) = self.build_log.as_deref_mut() {
-            crate::log::logrecordedge(build_log, &edge, 0, 0, record_mtime)
+            crate::log::logrecordedge(build_log, self.graph, edge, 0, 0, record_mtime)
                 .map_err(|error| error.to_string())?;
         }
-        edge.borrow_mut().restat_clean = all_pruned;
+        self.graph.edge_mut(edge).restat_clean = all_pruned;
         Ok((pruned, loaded_dyndeps))
     }
 
-    fn run_edge(&mut self, edge: &EdgeRef) -> Result<(bool, Vec<NodeRef>), String> {
-        let is_phony = edge
-            .borrow()
+    fn run_edge(&mut self, edge: EdgeId) -> Result<(bool, Vec<NodeId>), String> {
+        let is_phony = self
+            .graph
+            .edge(edge)
             .rule
-            .as_ref()
-            .is_some_and(|rule| rule.name == "phony");
+            .is_some_and(|rule| self.graph.rule(rule).name == "phony");
         if is_phony {
-            for output in &edge.borrow().out {
-                output.borrow_mut().dirty = false;
+            for output in self.graph.edge(edge).out.clone() {
+                self.graph.node_mut(output).dirty = false;
             }
             return Ok((false, Vec::new()));
         }
@@ -963,103 +972,98 @@ impl<'a> Builder<'a> {
         self.finish_edge(prepared, result)
     }
 
-    fn recompute_consumers_after_restat(&self, edge: &EdgeRef) -> Result<(), String> {
-        let mut queue = edge
-            .borrow()
+    fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> Result<(), String> {
+        let mut queue = self
+            .graph
+            .edge(edge)
             .out
             .iter()
             .flat_map(|output| {
-                let output = output.borrow();
+                let output = self.graph.node(*output);
                 output
                     .uses
                     .iter()
                     .chain(output.validation_uses.iter())
-                    .filter_map(|edge| edge.upgrade())
+                    .copied()
                     .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
         let disk = RealDiskInterface;
         while let Some(dependent) = queue.pop() {
-            if !visited.insert(edge_identity(&dependent)) {
+            if !visited.insert(dependent) {
                 continue;
             }
-            let outputs = dependent.borrow().out.clone();
+            let outputs = self.graph.edge(dependent).out.clone();
             for output in &outputs {
                 let mut stat = |path: &Path| disk.stat(path);
-                recompute_dirty_with_validations(output, &mut stat)
+                recompute_dirty_with_validations(self.graph, *output, &mut stat)
                     .map_err(|error| error.to_string())?;
             }
             for output in outputs {
-                let output = output.borrow();
-                queue.extend(output.uses.iter().filter_map(|edge| edge.upgrade()));
-                queue.extend(
-                    output
-                        .validation_uses
-                        .iter()
-                        .filter_map(|edge| edge.upgrade()),
-                );
+                let output = self.graph.node(output);
+                queue.extend(output.uses.iter().copied());
+                queue.extend(output.validation_uses.iter().copied());
             }
         }
         Ok(())
     }
 
-    fn recompute_planned_after_dyndep(&mut self, loaded_dyndeps: &[NodeRef]) -> Result<(), String> {
+    fn recompute_planned_after_dyndep(&mut self, loaded_dyndeps: &[NodeId]) -> Result<(), String> {
         let disk = RealDiskInterface;
         let mut nodes = self.targets.clone();
         nodes.extend(
             self.plan
                 .wanted_edges()
                 .into_iter()
-                .filter_map(|edge| edge.borrow().out.first().cloned()),
+                .filter_map(|edge| self.graph.edge(edge).out.first().copied()),
         );
         let affected = self
             .graph
-            .edges
-            .iter()
+            .edge_ids()
+            .into_iter()
             .filter(|edge| {
-                edge.borrow().dyndep.as_ref().is_some_and(|dyndep| {
-                    loaded_dyndeps
-                        .iter()
-                        .any(|loaded| Rc::ptr_eq(dyndep, loaded))
-                })
+                self.graph
+                    .edge(*edge)
+                    .dyndep
+                    .is_some_and(|dyndep| loaded_dyndeps.contains(&dyndep))
             })
-            .filter_map(|edge| edge.borrow().out.first().cloned())
+            .filter_map(|edge| self.graph.edge(edge).out.first().copied())
             .collect::<Vec<_>>();
-        nodes.extend(affected.iter().cloned());
+        nodes.extend(affected.iter().copied());
         let mut visited_edges = BTreeSet::new();
         let mut loaded_files = BTreeSet::new();
-        for node in nodes.clone() {
-            self.load_ready_dyndeps_for(&node, &mut visited_edges, &mut loaded_files)?;
+        for node in nodes.iter().copied() {
+            self.load_ready_dyndeps_for(node, &mut visited_edges, &mut loaded_files)?;
         }
         let mut visited = BTreeSet::new();
         let mut validations = Vec::new();
         for node in nodes {
-            if !visited.insert(Rc::as_ptr(&node) as usize) {
+            if !visited.insert(node) {
                 continue;
             }
             let mut stat = |path: &Path| disk.stat(path);
             validations.extend(
-                recompute_dirty_with_validations(&node, &mut stat)
+                recompute_dirty_with_validations(self.graph, node, &mut stat)
                     .map_err(|error| error.to_string())?,
             );
         }
-        for target in self.targets.clone() {
-            self.plan.add_target(&target)?;
+        for target in self.targets.iter().copied() {
+            self.plan.add_target(self.graph, target)?;
         }
         for output in affected {
-            self.plan.add_target(&output)?;
+            self.plan.add_target(self.graph, output)?;
         }
         for validation in validations {
-            self.plan.add_target(&validation)?;
+            self.plan.add_target(self.graph, validation)?;
         }
         Ok(())
     }
 
     fn settle_edge(
         &mut self,
-        edge: &EdgeRef,
-        result: Result<(bool, Vec<NodeRef>), String>,
+        edge: EdgeId,
+        result: Result<(bool, Vec<NodeId>), String>,
     ) -> Result<(), String> {
         match result {
             Ok((pruned, loaded_dyndeps)) => {
@@ -1068,19 +1072,21 @@ impl<'a> Builder<'a> {
                 }
                 if !loaded_dyndeps.is_empty() {
                     self.recompute_planned_after_dyndep(&loaded_dyndeps)?;
-                    self.plan.refresh_dependencies()?;
+                    self.plan.refresh_dependencies(self.graph)?;
                 }
-                self.plan.edge_finished(edge, EdgeResult::Succeeded)
+                self.plan
+                    .edge_finished(self.graph, edge, EdgeResult::Succeeded)
             }
             Err(error) => {
-                self.plan.edge_finished(edge, EdgeResult::Failed)?;
+                self.plan
+                    .edge_finished(self.graph, edge, EdgeResult::Failed)?;
                 Err(error)
             }
         }
     }
 
     pub fn build(&mut self) -> Result<(), String> {
-        self.plan.prepare_queue();
+        self.plan.prepare_queue(self.graph);
         let mut failures = 0;
         let mut last_error = None;
         let failure_limit = self.options.maxfail.max(1);
@@ -1096,32 +1102,32 @@ impl<'a> Builder<'a> {
                 };
             let mut batch = Vec::new();
             while batch.len() < maxjobs && failures < failure_limit {
-                let Some(edge) = self.plan.find_work() else {
+                let Some(edge) = self.plan.find_work(self.graph) else {
                     break;
                 };
-                let is_phony = edge
-                    .borrow()
+                let is_phony = self
+                    .graph
+                    .edge(edge)
                     .rule
-                    .as_ref()
-                    .is_some_and(|rule| rule.name == "phony");
+                    .is_some_and(|rule| self.graph.rule(rule).name == "phony");
                 if is_phony {
-                    let result = self.run_edge(&edge);
-                    if let Err(error) = self.settle_edge(&edge, result) {
+                    let result = self.run_edge(edge);
+                    if let Err(error) = self.settle_edge(edge, result) {
                         failures += 1;
                         last_error = Some(error);
                     }
                     continue;
                 }
-                let use_console = edge
-                    .borrow()
+                let use_console = self
+                    .graph
+                    .edge(edge)
                     .pool
-                    .as_ref()
-                    .is_some_and(|pool| pool.borrow().name == "console");
+                    .is_some_and(|pool| self.graph.pool(pool).name == "console");
                 if use_console && !batch.is_empty() {
-                    self.plan.defer_work(edge);
+                    self.plan.defer_work(self.graph, edge);
                     break;
                 }
-                match self.prepare_edge(&edge) {
+                match self.prepare_edge(edge) {
                     Ok(prepared) => {
                         batch.push((edge, prepared));
                         if use_console {
@@ -1129,7 +1135,8 @@ impl<'a> Builder<'a> {
                         }
                     }
                     Err(error) => {
-                        self.plan.edge_finished(&edge, EdgeResult::Failed)?;
+                        self.plan
+                            .edge_finished(self.graph, edge, EdgeResult::Failed)?;
                         failures += 1;
                         last_error = Some(error);
                     }
@@ -1159,7 +1166,7 @@ impl<'a> Builder<'a> {
             });
             for ((edge, prepared), result) in batch.into_iter().zip(results) {
                 let result = self.finish_edge(prepared, result);
-                if let Err(error) = self.settle_edge(&edge, result) {
+                if let Err(error) = self.settle_edge(edge, result) {
                     failures += 1;
                     last_error = Some(error);
                 }
@@ -1177,23 +1184,29 @@ impl<'a> Builder<'a> {
 
 // [spec:samurai:def:build.buildreset-fn]
 // [spec:samurai:sem:build.buildreset-fn]
-pub fn buildreset(graph: &Graph) {
-    for edge in &graph.edges {
-        edge.borrow_mut().flags &= !FLAG_WORK;
+pub fn buildreset(graph: &mut Graph) {
+    for edge in graph.edge_ids() {
+        graph.edge_mut(edge).flags &= !FLAG_WORK;
     }
 }
 
 // [spec:samurai:def:build.isnewer-fn]
 // [spec:samurai:sem:build.isnewer-fn]
-fn isnewer(left: Option<&NodeRef>, right: &NodeRef) -> bool {
-    left.is_some_and(|left| left.borrow().mtime > right.borrow().mtime)
+fn isnewer(graph: &Graph, left: Option<NodeId>, right: NodeId) -> bool {
+    left.is_some_and(|left| graph.node(left).mtime > graph.node(right).mtime)
 }
 
 // [spec:samurai:def:build.isdirty-fn]
 // [spec:samurai:sem:build.isdirty-fn]
-fn isdirty(node: &NodeRef, newest: Option<&NodeRef>, generator: bool, restat: bool) -> bool {
-    let newer = isnewer(newest, node);
-    let node = node.borrow();
+fn isdirty(
+    graph: &Graph,
+    node: NodeId,
+    newest: Option<NodeId>,
+    generator: bool,
+    restat: bool,
+) -> bool {
+    let newer = isnewer(graph, newest, node);
+    let node = graph.node(node);
     if node.mtime == MTIME_MISSING {
         return true;
     }
@@ -1205,105 +1218,108 @@ fn isdirty(node: &NodeRef, newest: Option<&NodeRef>, generator: bool, restat: bo
 
 // [spec:samurai:def:build.queue-fn]
 // [spec:samurai:sem:build.queue-fn]
-fn queue(state: &mut BuildState, edge: EdgeRef) {
+fn queue(state: &mut BuildState, edge: EdgeId) {
     state.work.push(edge);
 }
 
 // [spec:samurai:def:build.buildadd-fn]
 // [spec:samurai:sem:build.buildadd-fn]
-pub fn buildadd(state: &mut BuildState, node: &NodeRef) -> Result<(), String> {
-    let edge = node.borrow().gen.as_ref().and_then(|edge| edge.upgrade());
-    let Some(edge) = edge else {
-        if node.borrow().mtime == MTIME_MISSING {
+pub fn buildadd(state: &mut BuildState, graph: &mut Graph, node: NodeId) -> Result<(), String> {
+    let Some(edge) = graph.node(node).gen else {
+        if graph.node(node).mtime == MTIME_MISSING {
             return Err("file is missing and has no generating edge".into());
         }
         return Ok(());
     };
-    if edge.borrow().flags & crate::graph::FLAG_CYCLE != 0 {
+    if graph.edge(edge).flags & crate::graph::FLAG_CYCLE != 0 {
         return Err(format!(
             "dependency cycle involving '{}'",
-            node_path_string(node)
+            node_path_string(graph, node)
         ));
     }
-    if edge.borrow().flags & FLAG_WORK != 0 {
+    if graph.edge(edge).flags & FLAG_WORK != 0 {
         return Ok(());
     }
     {
-        let mut edge = edge.borrow_mut();
-        edge.flags |= FLAG_WORK | crate::graph::FLAG_CYCLE;
-        edge.flags &= !FLAG_DIRTY;
-        edge.nblock = 0;
-        edge.nprune = 0;
-        for output in &edge.out {
-            output.borrow_mut().dirty = false;
+        let outputs = graph.edge(edge).out.clone();
+        {
+            let edge = graph.edge_mut(edge);
+            edge.flags |= FLAG_WORK | crate::graph::FLAG_CYCLE;
+            edge.flags &= !FLAG_DIRTY;
+            edge.nblock = 0;
+            edge.nprune = 0;
+        }
+        for output in outputs {
+            graph.node_mut(output).dirty = false;
         }
     }
-    let inputs = edge.borrow().input.clone();
+    let inputs = graph.edge(edge).input.clone();
     for input in &inputs {
-        buildadd(state, input)?;
+        buildadd(state, graph, *input)?;
     }
-    let inorderidx = edge.borrow().inorderidx;
-    let mut newest: Option<NodeRef> = None;
+    let inorderidx = graph.edge(edge).inorderidx;
+    let mut newest: Option<NodeId> = None;
     let mut nblock = 0;
     let mut dirty_input = false;
     for (index, input) in inputs.iter().enumerate() {
         if index < inorderidx {
-            dirty_input |= input.borrow().dirty;
-            let mtime = input.borrow().mtime;
+            dirty_input |= graph.node(*input).dirty;
+            let mtime = graph.node(*input).mtime;
             if mtime != MTIME_MISSING
-                && newest
-                    .as_ref()
-                    .is_none_or(|current| current.borrow().mtime < mtime)
+                && newest.is_none_or(|current| graph.node(current).mtime < mtime)
             {
-                newest = Some(input.clone());
+                newest = Some(*input);
             }
         }
-        let generated_blocked = input
-            .borrow()
+        let generated_blocked = graph
+            .node(*input)
             .gen
-            .as_ref()
-            .and_then(|edge| edge.upgrade())
-            .is_some_and(|edge| edge.borrow().nblock > 0);
-        if input.borrow().dirty || generated_blocked {
+            .is_some_and(|edge| graph.edge(edge).nblock > 0);
+        if graph.node(*input).dirty || generated_blocked {
             nblock += 1;
         }
     }
     let generator =
-        crate::env::edgevar(&edge, "generator", false).is_some_and(|value| !value.is_empty());
-    let restat = crate::env::edgevar(&edge, "restat", false).is_some_and(|value| !value.is_empty());
-    let dirty_output = edge
-        .borrow()
+        crate::env::edgevar(graph, edge, "generator", false).is_some_and(|value| !value.is_empty());
+    let restat =
+        crate::env::edgevar(graph, edge, "restat", false).is_some_and(|value| !value.is_empty());
+    let dirty_output = graph
+        .edge(edge)
         .out
         .iter()
-        .any(|output| isdirty(output, newest.as_ref(), generator, restat));
-    let is_phony = edge
-        .borrow()
+        .any(|output| isdirty(graph, *output, newest, generator, restat));
+    let is_phony = graph
+        .edge(edge)
         .rule
-        .as_ref()
-        .is_some_and(|rule| rule.name == "phony");
+        .is_some_and(|rule| graph.rule(rule).name == "phony");
     {
-        let mut edge = edge.borrow_mut();
-        edge.nblock = nblock;
-        if dirty_input {
-            edge.flags |= crate::graph::FLAG_DIRTY_IN;
-        }
-        if dirty_output {
-            edge.flags |= FLAG_DIRTY_OUT;
-        }
-        if edge.flags & FLAG_DIRTY != 0 {
-            for output in &edge.out {
-                output.borrow_mut().dirty = true;
+        let outputs = graph.edge(edge).out.clone();
+        let dirty = {
+            let edge = graph.edge_mut(edge);
+            edge.nblock = nblock;
+            if dirty_input {
+                edge.flags |= crate::graph::FLAG_DIRTY_IN;
+            }
+            if dirty_output {
+                edge.flags |= FLAG_DIRTY_OUT;
+            }
+            edge.flags & FLAG_DIRTY != 0
+        };
+        if dirty {
+            for output in outputs {
+                graph.node_mut(output).dirty = true;
             }
         }
+        let edge = graph.edge_mut(edge);
         if edge.flags & FLAG_DIRTY_OUT == 0 {
             edge.nprune = edge.nblock;
         }
         edge.flags &= !crate::graph::FLAG_CYCLE;
     }
-    if edge.borrow().flags & FLAG_DIRTY != 0 {
+    if graph.edge(edge).flags & FLAG_DIRTY != 0 {
         state.total += 1;
-        if edge.borrow().nblock == 0 {
-            queue(state, edge.clone());
+        if graph.edge(edge).nblock == 0 {
+            queue(state, edge);
         }
         if is_phony {
             state.total = state.total.saturating_sub(1);
@@ -1312,8 +1328,8 @@ pub fn buildadd(state: &mut BuildState, node: &NodeRef) -> Result<(), String> {
     Ok(())
 }
 
-fn node_path_string(node: &NodeRef) -> String {
-    let node = node.borrow();
+fn node_path_string(graph: &Graph, node: NodeId) -> String {
+    let node = graph.node(node);
     String::from_utf8_lossy(node.path.as_bytes()).into_owned()
 }
 
