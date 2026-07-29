@@ -1,0 +1,32 @@
+# schema=ronin-performance-baseline-v2
+# workload_version=1
+# ronin_revision=1b4518c6b4a0fd0490d63005d00ca72becb3c73c
+# ronin_dirty=false
+# ninja_revision=b51a1e37c2fb89bbefa600bd155e1ce13983f09d
+# build_profile=release
+# platform=Linux n-debian13-dev 6.12.57+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.57-1 (2025-11-05) x86_64 GNU/Linux
+# rustc=rustc 1.92.0 (ded5c06cf 2025-12-08)
+# warmups=2
+# repetitions=15
+# noise_control=interleaved tool samples; stdout/stderr discarded; 2 warmup(s); median wall time; Linux peak RSS sampled from /proc every 100 us; no CPU pinning
+# validation_thresholds=Ronin/Ninja runtime ratio <= 120% of recorded v1 ratio and Ronin runtime <= 120% of pinned Ninja; peak RSS <= 200% of pinned Ninja
+# sizes=command:4000,deep:2000,wide:4000,canonical:4000,deps:300,scheduler:128
+tool,tool_version,workload,median_ms,min_ms,max_ms,median_peak_rss_kib,min_peak_rss_kib,max_peak_rss_kib
+ronin,1.9.0,manifest-command-evaluation,49.104,41.062,110.827,10388,10212,10524
+ninja,1.14.0.git,manifest-command-evaluation,85.884,71.996,245.013,7928,7880,8144
+samurai-c,1.9.0,manifest-command-evaluation,25.541,19.412,54.056,5116,4976,5244
+ronin,1.9.0,deep-graph-evaluation,22.900,17.292,61.913,5236,4512,5308
+ninja,1.14.0.git,deep-graph-evaluation,38.945,32.862,98.165,6108,5968,6408
+samurai-c,1.9.0,deep-graph-evaluation,11.040,8.864,26.315,2724,2648,2792
+ronin,1.9.0,wide-noop-build,35.037,29.925,96.227,7416,6444,7536
+ninja,1.14.0.git,wide-noop-build,60.017,53.166,84.244,6044,5928,6320
+samurai-c,1.9.0,wide-noop-build,21.944,16.821,67.241,3724,3584,3812
+ronin,1.9.0,path-canonicalization,23.983,16.070,36.016,5356,5216,5452
+ninja,1.14.0.git,path-canonicalization,37.197,31.112,109.962,5772,5672,6024
+samurai-c,1.9.0,path-canonicalization,15.665,9.634,25.346,3408,2004,3472
+ronin,1.9.0,dependency-log-load,8.114,7.394,19.810,3500,3408,3552
+ninja,1.14.0.git,dependency-log-load,13.730,12.888,27.792,4612,4536,4908
+samurai-c,1.9.0,dependency-log-load,5.380,4.278,11.399,2108,2012,2180
+ronin,1.9.0,scheduler-barrier,175.547,132.452,215.630,3372,3272,3460
+ninja,1.14.0.git,scheduler-barrier,242.611,205.477,336.269,4424,4360,4684
+samurai-c,1.9.0,scheduler-barrier,242.109,167.311,391.643,1936,1836,2720

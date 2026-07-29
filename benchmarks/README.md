@@ -28,11 +28,11 @@ cargo run --release --example baseline -- \
 The harness refuses a Ninja source checkout other than commit
 `b51a1e37c2fb89bbefa600bd155e1ce13983f09d`. Results include the Ronin and
 Ninja revisions, tool versions, release profile, platform, Rust compiler,
-workload sizes, repetition count, and noise-control method. Runs are
-sequential, discard command output, warm each workload, and report median,
-minimum, and maximum wall time. On Linux they also sample each coordinator
-process's peak RSS from `/proc`. CPU frequency and affinity are not controlled,
-so compare large changes and rerun noisy cases before drawing conclusions.
+workload sizes, repetition count, and noise-control method. Runs interleave
+tools, discard command output, warm each workload, and report median, minimum,
+and maximum wall time. On Linux they also sample each coordinator process's
+peak RSS from `/proc`. CPU frequency and affinity are not controlled, so
+compare large changes and rerun noisy cases before drawing conclusions.
 
 The original Ronin medians are stored as machine-readable input in
 [`baseline-v1.csv`](baseline-v1.csv). Run the release gate with:
@@ -50,3 +50,7 @@ median above 120% of the current pinned Ninja median. On Linux it also rejects
 peak RSS above 200% of Ninja. Normalizing the historical comparison against
 Ninja makes it portable across differently loaded hosts while preventing a
 large regression from being hidden by an old, slower absolute baseline.
+
+The completed clean-revision comparison is recorded in
+[`performance-validation-2026-07-29.md`](performance-validation-2026-07-29.md),
+with the exact machine-readable output beside it.

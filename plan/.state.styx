@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T19:02:31.098153301Z
+last_sync_at 2026-07-29T19:14:21.857523596Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -27,7 +27,6 @@ assertions (
     {id ronin-compatibility-contract, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T14:43:16.619792904Z}
     {id ronin-architecture-decisions, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T15:04:54.558370385Z}
     {id ronin-graph-arenas, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T16:13:24.752029646Z}
-    {id ronin-performance-validation, kind @doing, author "brendan@bbqsrc.net", at 2026-07-29T19:03:11.648406159Z}
 )
 
 impl_evidence (
@@ -73,12 +72,24 @@ impl_evidence (
     ), rule_versions_seen (
         {id compat.graph-semantics, version 0}
     )}
+    {id ronin-ninja-conformance, covered_rules (
+        compat.upstream-conformance
+    ), covered_claims (
+        {impl_name target-impl, rule compat.upstream-conformance}
+    ), rule_versions_seen (
+        {id compat.upstream-conformance, version 0}
+    )}
     {id ronin-performance-baseline, covered_rules (
         performance.reproducible-baseline
     ), covered_claims (
         {impl_name target-impl, rule performance.reproducible-baseline}
     ), rule_versions_seen (
         {id performance.reproducible-baseline, version 0}
+    )}
+    {id ronin-performance-validation, covered_rules (
+        performance.no-unexplained-regression
+    ), covered_claims (
+        {impl_name target-impl, rule performance.no-unexplained-regression}
     )}
     {id ronin-process-integration, covered_rules (
         compat.process-integration
@@ -109,10 +120,5 @@ impl_evidence (
         {impl_name target-impl, rule compat.cli-and-tools}
     ), rule_versions_seen (
         {id compat.cli-and-tools, version 0}
-    )}
-    {id ronin-ninja-conformance, covered_rules (
-        compat.upstream-conformance
-    ), covered_claims (
-        {impl_name target-impl, rule compat.upstream-conformance}
     )}
 )

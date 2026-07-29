@@ -504,6 +504,14 @@ children (
                         kind @note
                         text "Added an executable v2 performance gate over all six recorded workloads. Samples are interleaved across Ronin and pinned Ninja, Linux peak RSS is sampled from /proc, and validation rejects a normalized Ronin/Ninja runtime ratio above 120% of the v1 ratio, runtime above 120% of current Ninja, or peak RSS above 200% of Ninja. A noisy 15-repetition run passed with Ronin at 0.53–0.67x Ninja runtime across all workloads."
                     }
+
+                    {
+                        at 2026-07-29T19:14:31.753941991Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Clean revision 1b4518c6b4a0fd0490d63005d00ca72becb3c73c passed the v2 gate with 2 warmups and 15 interleaved samples. Ronin was 0.572–0.724x pinned Ninja runtime on all six workloads and 0.76–1.31x Ninja peak RSS. The Ronin/Ninja ratio improved 8.3–96.4% on five workloads; canonicalization moved +3.9%, below the 20% materiality threshold and consistent with host noise. Raw results and analysis are recorded under benchmarks/performance-validation-2026-07-29.*. The v1 baseline had no allocation counts and this host has no allocation profiler, so the gate makes no allocation-count claim and uses peak RSS as its reproducible memory signal."
+                        after_done true
+                    }
                 )
             }
 

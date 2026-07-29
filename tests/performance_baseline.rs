@@ -1,5 +1,6 @@
 const HARNESS: &str = include_str!("../examples/baseline.rs");
 const RECORDED_BASELINE: &str = include_str!("../benchmarks/baseline-v1.csv");
+const VALIDATION: &str = include_str!("../benchmarks/performance-validation-2026-07-29.csv");
 
 // [spec:samurai:req:performance.reproducible-baseline/test]
 #[test]
@@ -47,5 +48,15 @@ fn baseline_catalog_and_metadata_remain_complete() {
             1,
             "recorded baseline must contain {workload} exactly once"
         );
+        assert!(
+            VALIDATION.contains(&format!("ronin,1.9.0,{workload},")),
+            "validation must contain Ronin's {workload} result"
+        );
+        assert!(
+            VALIDATION.contains(&format!("ninja,1.14.0.git,{workload},")),
+            "validation must contain Ninja's {workload} result"
+        );
     }
+    assert!(VALIDATION.contains("# ronin_dirty=false"));
+    assert!(VALIDATION.contains("# ninja_revision=b51a1e37c2fb89bbefa600bd155e1ce13983f09d"));
 }
