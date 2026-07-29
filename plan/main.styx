@@ -641,6 +641,20 @@ children (
                         kind @note
                         text "Require cargo fmt --check, cargo check, all Rust tests, full relevant Ninja conformance and differential suites, release build/package verification under the Ronin name, performance thresholds, nplan lint/audit, and zero uncovered or stale spec rules."
                     }
+
+                    {
+                        at 2026-07-29T20:06:33.555468525Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-29T20:10:25.251096312Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Implemented an executable repository release gate covering format, check, strict Clippy, rustdoc, all-target tests, wave-4 port coverage, pinned Ninja conformance/differential/persistence checks, performance thresholds, spec coverage and stale-requirement checks, nplan lint/audit, package-content policy, and cargo package verification. Added a target-side contract test for release.compatibility-gate. Restricted the Ronin crate package to Rust product and verification assets, excluding the legacy C corpus and planning internals; cargo package verifies 53 files at 716.3 KiB (134.8 KiB compressed)."
+                    }
                 )
             }
         )

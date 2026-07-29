@@ -4,6 +4,20 @@ version = "0.1.0"
 edition = "2021"
 description = "A fast Ninja-compatible build tool implemented in Rust"
 license-file = "LICENSE"
+readme = "README.md"
+repository = "https://github.com/necessary-nu/samurai"
+include = [
+    "src/**",
+    "examples/**",
+    "tests/**",
+    "scripts/**",
+    "benchmarks/**",
+    "docs/spec/ronin/**",
+    "Cargo.toml",
+    "Cargo.lock",
+    "README.md",
+    "LICENSE",
+]
 
 [lib]
 path = "src/lib.rs"
