@@ -1,8 +1,11 @@
 //! Ninja version-1 dynamic dependency file parser.
 
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
-use crate::util::{canonpath, xasprintf, ByteSlice};
-use std::collections::BTreeMap;
+use crate::scan::{
+    scanchar, scanfrombytes, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring,
+    Scanner, Token,
+};
+use crate::util::{canonpath, xasprintf, BString, ByteSlice, ByteVec, EvalPart, EvalString};
 use std::fmt;
 use std::fs;
 
@@ -14,7 +17,64 @@ pub struct Dyndeps {
     pub implicit_outputs: Vec<NodeId>,
 }
 
-pub type DyndepFile = BTreeMap<EdgeId, Dyndeps>;
+#[derive(Default)]
+pub struct DyndepFile {
+    slots: Vec<Option<Dyndeps>>,
+    edges: Vec<EdgeId>,
+}
+
+impl DyndepFile {
+    fn insert(&mut self, edge: EdgeId, dyndeps: Dyndeps) -> Result<(), Dyndeps> {
+        if self.slots.len() <= edge.index() {
+            self.slots.resize_with(edge.index() + 1, || None);
+        }
+        if self.slots[edge.index()].is_some() {
+            return Err(dyndeps);
+        }
+        self.slots[edge.index()] = Some(dyndeps);
+        self.edges.push(edge);
+        Ok(())
+    }
+
+    pub fn get(&self, edge: &EdgeId) -> Option<&Dyndeps> {
+        self.slots.get(edge.index()).and_then(Option::as_ref)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (EdgeId, &Dyndeps)> {
+        self.edges
+            .iter()
+            .map(|edge| (*edge, self.get(edge).expect("indexed dyndep entry")))
+    }
+}
+
+impl IntoIterator for DyndepFile {
+    type Item = (EdgeId, Dyndeps);
+    type IntoIter = DyndepIntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        DyndepIntoIter {
+            slots: self.slots,
+            edges: self.edges.into_iter(),
+        }
+    }
+}
+
+pub struct DyndepIntoIter {
+    slots: Vec<Option<Dyndeps>>,
+    edges: std::vec::IntoIter<EdgeId>,
+}
+
+impl Iterator for DyndepIntoIter {
+    type Item = (EdgeId, Dyndeps);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let edge = self.edges.next()?;
+        let dyndeps = self.slots[edge.index()]
+            .take()
+            .expect("indexed dyndep entry");
+        Some((edge, dyndeps))
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DyndepError {
@@ -37,67 +97,57 @@ fn error(line: usize, message: impl Into<String>) -> DyndepError {
     }
 }
 
-fn tokens(line: &str) -> Vec<String> {
-    let mut result = Vec::new();
-    let bytes = line.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index].is_ascii_whitespace() {
-            index += 1;
-            continue;
+fn scanner_error(scanner: &Scanner, message: String) -> DyndepError {
+    let prefix = format!(
+        "{}:{}:{}: ",
+        scanner.path.display(),
+        scanner.line,
+        scanner.col
+    );
+    error(
+        scanner.line,
+        message.strip_prefix(&prefix).unwrap_or(&message).to_owned(),
+    )
+}
+
+macro_rules! scan {
+    ($scanner:expr, $operation:expr) => {
+        $operation.map_err(|message| scanner_error($scanner, message))?
+    };
+}
+
+fn evaluate_empty(value: EvalString) -> BString {
+    let capacity = value
+        .parts
+        .iter()
+        .map(|part| match part {
+            EvalPart::Literal(value) => value.len(),
+            EvalPart::Variable(_) => 0,
+        })
+        .sum();
+    let mut result = BString::from(Vec::with_capacity(capacity));
+    for part in value.parts {
+        if let EvalPart::Literal(value) = part {
+            result.push_str(value.as_bytes());
         }
-        if bytes[index] == b':' {
-            result.push(":".into());
-            index += 1;
-            continue;
-        }
-        if bytes[index] == b'|' {
-            match bytes.get(index + 1) {
-                Some(b'|') => {
-                    result.push("||".into());
-                    index += 2;
-                }
-                Some(b'@') => {
-                    result.push("|@".into());
-                    index += 2;
-                }
-                _ => {
-                    result.push("|".into());
-                    index += 1;
-                }
-            }
-            continue;
-        }
-        let start = index;
-        while index < bytes.len()
-            && !bytes[index].is_ascii_whitespace()
-            && !matches!(bytes[index], b':' | b'|')
-        {
-            index += 1;
-        }
-        result.push(line[start..index].into());
     }
     result
 }
 
-fn parse_version(line_number: usize, line: &str, terminated: bool) -> Result<(), DyndepError> {
-    if line.starts_with(char::is_whitespace) {
-        return Err(error(line_number, "unexpected indent"));
+fn parse_version(scanner: &mut Scanner) -> Result<(), DyndepError> {
+    let line = scanner.line;
+    let name = scanner
+        .take_variable()
+        .ok_or_else(|| error(line, "expected 'ninja_dyndep_version = ...'"))?;
+    if name != "ninja_dyndep_version" {
+        return Err(error(line, "expected 'ninja_dyndep_version = ...'"));
     }
-    if line.starts_with('=') {
-        return Err(error(line_number, "unexpected '='"));
-    }
-    let Some((name, value)) = line.split_once('=') else {
-        return Err(error(line_number, "expected 'ninja_dyndep_version = ...'"));
-    };
-    if name.trim() != "ninja_dyndep_version" {
-        return Err(error(line_number, "expected 'ninja_dyndep_version = ...'"));
-    }
-    if !terminated {
-        return Err(error(line_number, "unexpected EOF"));
-    }
-    let value = value.trim();
-    let numeric = value.split('-').next().unwrap_or_default();
+    scan!(scanner, scanchar(scanner, '='));
+    let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
+    scan!(scanner, scannewline(scanner));
+    let value = evaluate_empty(value);
+    let text = value.to_str_lossy();
+    let numeric = text.split('-').next().unwrap_or_default();
     let mut components = numeric.split('.');
     let major = components.next().and_then(|part| part.parse::<u32>().ok());
     let minor = components
@@ -106,207 +156,172 @@ fn parse_version(line_number: usize, line: &str, terminated: bool) -> Result<(),
         .unwrap_or(Some(0));
     if major != Some(1) || minor != Some(0) {
         return Err(error(
-            line_number,
-            format!("unsupported 'ninja_dyndep_version = {value}'"),
+            line,
+            format!("unsupported 'ninja_dyndep_version = {text}'"),
         ));
     }
     Ok(())
 }
 
-fn dynamic_node(graph: &mut Graph, path: &str) -> NodeId {
-    let mut path = xasprintf(format_args!("{path}"));
+fn dynamic_node(graph: &mut Graph, path: EvalString, line: usize) -> Result<NodeId, DyndepError> {
+    let mut path = evaluate_empty(path);
+    if path.is_empty() {
+        return Err(error(line, "empty path"));
+    }
     canonpath(&mut path);
-    mknode(graph, path)
+    Ok(mknode(graph, path))
 }
 
 fn parse_build(
     graph: &mut Graph,
     file: &mut DyndepFile,
-    line_number: usize,
-    line: &str,
-    terminated: bool,
-) -> Result<Dyndeps, DyndepError> {
-    let fields = tokens(line);
-    if fields.len() == 1 && !terminated {
-        return Err(error(line_number, "unexpected EOF"));
-    }
-    let mut index = 1;
-    let Some(output) = fields.get(index) else {
-        return Err(error(line_number, "expected path"));
+    scanner: &mut Scanner,
+) -> Result<(), DyndepError> {
+    let line = scanner.line;
+    let Some(output) = scan!(scanner, scanstring(scanner, true)) else {
+        return Err(error(
+            line,
+            if scanner.current().is_none() {
+                "unexpected EOF"
+            } else {
+                "expected path"
+            },
+        ));
     };
-    if output == ":" {
-        return Err(error(line_number, "expected path"));
+    let mut output = evaluate_empty(output);
+    if output.is_empty() {
+        return Err(error(line, "empty path"));
     }
-    index += 1;
+    canonpath(&mut output);
     let Some(node) = nodeget(graph, output.as_bytes()) else {
         return Err(error(
-            line_number,
-            format!("no build statement exists for '{output}'"),
+            line,
+            format!("no build statement exists for '{}'", output.to_str_lossy()),
         ));
     };
     let Some(edge) = graph.node(node).gen else {
         return Err(error(
-            line_number,
-            format!("no build statement exists for '{output}'"),
+            line,
+            format!("no build statement exists for '{}'", output.to_str_lossy()),
         ));
     };
-    if file.contains_key(&edge) {
+    if file.get(&edge).is_some() {
         return Err(error(
-            line_number,
-            format!("multiple statements for '{output}'"),
+            line,
+            format!("multiple statements for '{}'", output.to_str_lossy()),
         ));
     }
 
-    if index >= fields.len() && !terminated {
-        return Err(error(line_number, "unexpected EOF"));
-    }
-    if fields
-        .get(index)
-        .is_some_and(|field| field != "|" && field != ":")
-    {
-        return Err(error(line_number, "explicit outputs not supported"));
+    if scan!(scanner, scanstring(scanner, true)).is_some() {
+        return Err(error(line, "explicit outputs not supported"));
     }
     let mut implicit_outputs = Vec::new();
-    if fields.get(index).is_some_and(|field| field == "|") {
-        index += 1;
-        while fields.get(index).is_some_and(|field| field != ":") {
-            implicit_outputs.push(fields[index].clone());
-            index += 1;
+    if scan!(scanner, scanpipe(scanner, 1)) != 0 {
+        while let Some(path) = scan!(scanner, scanstring(scanner, true)) {
+            implicit_outputs.push(dynamic_node(graph, path, line)?);
         }
     }
-    if fields.get(index).is_none() {
-        return Err(error(line_number, "unexpected EOF"));
+    if scanner.current().is_none() {
+        return Err(error(line, "unexpected EOF"));
     }
-    index += 1;
+    scan!(scanner, scanchar(scanner, ':'));
+    let rule =
+        scanname(scanner).map_err(|_| error(line, "expected build command name 'dyndep'"))?;
+    if rule != "dyndep" {
+        return Err(error(line, "expected build command name 'dyndep'"));
+    }
 
-    if fields.get(index).is_none() || fields[index] != "dyndep" {
-        return Err(error(line_number, "expected build command name 'dyndep'"));
-    }
-    index += 1;
-    if fields.get(index).is_some_and(|field| field == "|@") {
-        return Err(error(line_number, "expected newline, got '|@'"));
-    }
-    if fields
-        .get(index)
-        .is_some_and(|field| field != "|" && field != "||")
-    {
-        return Err(error(line_number, "explicit inputs not supported"));
+    if scan!(scanner, scanstring(scanner, true)).is_some() {
+        return Err(error(line, "explicit inputs not supported"));
     }
     let mut implicit_inputs = Vec::new();
-    if fields.get(index).is_some_and(|field| field == "|") {
-        index += 1;
-        while fields.get(index).is_some_and(|field| field != "||") {
-            implicit_inputs.push(fields[index].clone());
-            index += 1;
+    match scan!(scanner, scanpipe(scanner, 1 | 2 | 4)) {
+        1 => {
+            while let Some(path) = scan!(scanner, scanstring(scanner, true)) {
+                implicit_inputs.push(dynamic_node(graph, path, line)?);
+            }
+            match scan!(scanner, scanpipe(scanner, 2 | 4)) {
+                2 => return Err(error(line, "order-only inputs not supported")),
+                4 => return Err(error(line, "expected newline, got '|@'")),
+                _ => {}
+            }
         }
+        2 => return Err(error(line, "order-only inputs not supported")),
+        4 => return Err(error(line, "expected newline, got '|@'")),
+        _ => {}
     }
-    if fields.get(index).is_some_and(|field| field == "||") {
-        return Err(error(line_number, "order-only inputs not supported"));
-    }
-    if !terminated {
-        return Err(error(line_number, "unexpected EOF"));
-    }
+    scan!(scanner, scannewline(scanner));
 
-    Ok(Dyndeps {
+    let mut dyndeps = Dyndeps {
         used: false,
         restat: false,
-        implicit_inputs: implicit_inputs
-            .iter()
-            .map(|path| dynamic_node(graph, path))
-            .collect(),
-        implicit_outputs: implicit_outputs
-            .iter()
-            .map(|path| dynamic_node(graph, path))
-            .collect(),
+        implicit_inputs,
+        implicit_outputs,
+    };
+    if scan!(scanner, scanindent(scanner)) {
+        let binding_line = scanner.line;
+        let name = scan!(scanner, scanname(scanner));
+        scan!(scanner, scanchar(scanner, '='));
+        let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
+        scan!(scanner, scannewline(scanner));
+        if name != "restat" {
+            return Err(error(binding_line, "binding is not 'restat'"));
+        }
+        dyndeps.restat = !evaluate_empty(value).is_empty();
+    }
+    file.insert(edge, dyndeps).map_err(|_| {
+        error(
+            line,
+            format!("multiple statements for '{}'", output.to_str_lossy()),
+        )
     })
 }
 
-pub fn parse_dyndep(input: &str, graph: &mut Graph) -> Result<DyndepFile, DyndepError> {
-    let records = input
-        .split_inclusive('\n')
-        .enumerate()
-        .map(|(index, record)| {
-            let terminated = record.ends_with('\n');
-            let line = record
-                .strip_suffix('\n')
-                .unwrap_or(record)
-                .strip_suffix('\r')
-                .unwrap_or_else(|| record.strip_suffix('\n').unwrap_or(record));
-            (index + 1, line.to_string(), terminated)
-        })
-        .collect::<Vec<_>>();
-    if records.is_empty() {
-        return Err(error(1, "expected 'ninja_dyndep_version = ...'"));
-    }
-
+pub fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFile, DyndepError> {
+    let mut scanner = scanfrombytes("input", input);
     let mut have_version = false;
-    let mut file = DyndepFile::new();
-    let mut index = 0;
-    while index < records.len() {
-        let (line_number, line, terminated) = &records[index];
-        if line.is_empty() || line.starts_with('#') {
-            index += 1;
-            continue;
+    let mut file = DyndepFile::default();
+    loop {
+        if scanner.current() == Some(b'=') {
+            return Err(error(scanner.line, "unexpected '='"));
         }
-        if !have_version {
-            if line.starts_with("build") {
-                return Err(error(*line_number, "expected 'ninja_dyndep_version = ...'"));
+        match scan!(&scanner, scankeyword(&mut scanner)) {
+            Some(Token::Build) if have_version => parse_build(graph, &mut file, &mut scanner)?,
+            Some(Token::Build) => {
+                return Err(error(scanner.line, "expected 'ninja_dyndep_version = ...'"));
             }
-            parse_version(*line_number, line, *terminated)?;
-            have_version = true;
-            index += 1;
-            continue;
-        }
-        if line.starts_with(char::is_whitespace) {
-            return Err(error(*line_number, "unexpected indent"));
-        }
-        if !line.starts_with("build") {
-            return Err(error(*line_number, "unexpected identifier"));
-        }
-
-        let output_name = tokens(line).get(1).cloned();
-        let mut dyndeps = parse_build(graph, &mut file, *line_number, line, *terminated)?;
-        if records
-            .get(index + 1)
-            .is_some_and(|(_, line, _)| line.starts_with(char::is_whitespace))
-        {
-            let (binding_line, binding, _) = &records[index + 1];
-            let Some((name, value)) = binding.trim().split_once('=') else {
-                return Err(error(*binding_line, "expected variable binding"));
-            };
-            if name.trim() != "restat" {
-                return Err(error(*binding_line, "binding is not 'restat'"));
+            Some(Token::Variable) if !have_version => {
+                parse_version(&mut scanner)?;
+                have_version = true;
             }
-            dyndeps.restat = !value.trim().is_empty();
-            index += 1;
+            Some(_) if have_version => return Err(error(scanner.line, "unexpected identifier")),
+            Some(_) => {
+                return Err(error(scanner.line, "expected 'ninja_dyndep_version = ...'"));
+            }
+            None if have_version => return Ok(file),
+            None => {
+                return Err(error(scanner.line, "expected 'ninja_dyndep_version = ...'"));
+            }
         }
-        let output = output_name.expect("validated build output");
-        let node = nodeget(graph, output.as_bytes()).expect("validated output node");
-        let edge = graph.node(node).gen.expect("validated output edge");
-        file.insert(edge, dyndeps);
-        index += 1;
     }
-    if !have_version {
-        return Err(error(1, "expected 'ninja_dyndep_version = ...'"));
-    }
-    Ok(file)
 }
 
 pub fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), String> {
     let path = graph.node(dyndep).path.clone();
-    let input = fs::read_to_string(path.to_path().expect("byte paths are valid on Unix"))
+    let input = fs::read(path.to_path().expect("byte paths are valid on Unix"))
         .map_err(|error| format!("loading '{path}': {error}"))?;
-    let file = parse_dyndep(&input, graph).map_err(|error| error.to_string())?;
-    let expected_edges = graph
-        .edge_ids()
-        .into_iter()
-        .filter(|edge| graph.edge(*edge).dyndep == Some(dyndep))
-        .collect::<Vec<_>>();
+    let file = parse_dyndep(input, graph).map_err(|error| error.to_string())?;
 
-    for edge in &expected_edges {
-        if !file.contains_key(edge) {
+    for edge in graph
+        .node(dyndep)
+        .uses
+        .iter()
+        .copied()
+        .filter(|edge| graph.edge(*edge).dyndep == Some(dyndep))
+    {
+        if file.get(&edge).is_none() {
             let output = graph
-                .edge(*edge)
+                .edge(edge)
                 .out
                 .first()
                 .map(|output| {
@@ -320,11 +335,11 @@ pub fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), String> {
         }
     }
 
-    for edge in file.keys() {
-        let belongs_to_file = graph.edge(*edge).dyndep == Some(dyndep);
+    for (edge, _) in file.iter() {
+        let belongs_to_file = graph.edge(edge).dyndep == Some(dyndep);
         if !belongs_to_file {
             let output = graph
-                .edge(*edge)
+                .edge(edge)
                 .out
                 .first()
                 .map(|output| {
@@ -399,7 +414,7 @@ mod tests {
 
     fn parse(input: &str) -> Result<(Graph, DyndepFile), DyndepError> {
         let mut graph = fixture();
-        let file = parse_dyndep(input, &mut graph)?;
+        let file = parse_dyndep(input.as_bytes().to_vec(), &mut graph)?;
         Ok((graph, file))
     }
 
@@ -667,6 +682,25 @@ mod tests {
     }
 
     #[test]
+    fn ninja_dyndep_parser_preserves_non_utf8_paths() {
+        let mut graph = fixture();
+        let file = parse_dyndep(
+            b"ninja_dyndep_version = 1\nbuild out | imp-\xff: dyndep | dep-\xfe\n".to_vec(),
+            &mut graph,
+        )
+        .unwrap();
+        let entry = entry_for(&graph, &file, "out");
+        assert_eq!(
+            graph.node(entry.implicit_outputs[0]).path.as_bytes(),
+            b"imp-\xff"
+        );
+        assert_eq!(
+            graph.node(entry.implicit_inputs[0]).path.as_bytes(),
+            b"dep-\xfe"
+        );
+    }
+
+    #[test]
     fn ninja_dyndep_parser_restat_binding() {
         let (graph, file) =
             parse("ninja_dyndep_version = 1\nbuild out: dyndep\n  restat = 1\n").unwrap();
@@ -677,7 +711,7 @@ mod tests {
     fn ninja_dyndep_parser_other_output_of_same_edge() {
         let (graph, file) = parse("ninja_dyndep_version = 1\nbuild otherout: dyndep\n").unwrap();
         let edge = graph.node(nodeget(&graph, b"out").unwrap()).gen.unwrap();
-        assert!(file.contains_key(&edge));
+        assert!(file.get(&edge).is_some());
     }
 
     #[test]
@@ -685,11 +719,12 @@ mod tests {
         let mut graph = fixture();
         add_output(&mut graph, "out2");
         let file = parse_dyndep(
-            "ninja_dyndep_version = 1\nbuild out: dyndep\nbuild out2: dyndep\n  restat = 1\n",
+            b"ninja_dyndep_version = 1\nbuild out: dyndep\nbuild out2: dyndep\n  restat = 1\n"
+                .to_vec(),
             &mut graph,
         )
         .unwrap();
-        assert_eq!(file.len(), 2);
+        assert_eq!(file.edges.len(), 2);
         assert!(!entry_for(&graph, &file, "out").restat);
         assert!(entry_for(&graph, &file, "out2").restat);
     }

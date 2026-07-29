@@ -319,6 +319,13 @@ children (
                         kind @note
                         text "Make depfile deduplication linear while preserving order; use typed IDs for deps and dyndep lookup; remove whole-graph identity scans; reuse buffers or stream log parsing where beneficial. Preserve Ninja .ninja_log and .ninja_deps signatures, versions, truncation recovery, recompact behavior, durability requirements, and cross-tool readability."
                     }
+
+                    {
+                        at 2026-07-29T16:24:40.026808775Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 

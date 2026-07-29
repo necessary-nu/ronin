@@ -3,7 +3,7 @@
 use crate::env::edgevar;
 use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId};
 use crate::util::ByteSlice;
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::mem;
@@ -25,10 +25,42 @@ pub struct Entry {
 
 pub struct DepsLog {
     writer: BufWriter<File>,
-    entries: BTreeMap<NodeId, Entry>,
+    entries: EntryMap,
     nodes: Vec<NodeId>,
     next_id: i32,
     path: PathBuf,
+}
+
+#[derive(Default)]
+struct EntryMap {
+    slots: Vec<Option<Entry>>,
+}
+
+impl EntryMap {
+    fn get(&self, node: &NodeId) -> Option<&Entry> {
+        self.slots.get(node.index()).and_then(Option::as_ref)
+    }
+
+    fn insert(&mut self, node: NodeId, entry: Entry) -> Option<Entry> {
+        if self.slots.len() <= node.index() {
+            self.slots.resize_with(node.index() + 1, || None);
+        }
+        self.slots[node.index()].replace(entry)
+    }
+
+    #[cfg(test)]
+    fn contains_key(&self, node: &NodeId) -> bool {
+        self.get(node).is_some()
+    }
+
+    fn values(&self) -> impl Iterator<Item = &Entry> {
+        self.slots.iter().filter_map(Option::as_ref)
+    }
+
+    #[cfg(test)]
+    fn is_empty(&self) -> bool {
+        self.values().next().is_none()
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -39,56 +71,33 @@ struct ParsedDepfile {
 
 type DepfileRule = (Vec<Vec<u8>>, Vec<Vec<u8>>);
 
-fn append_unique(paths: &mut Vec<Vec<u8>>, path: Vec<u8>) {
-    if !paths.contains(&path) {
-        paths.push(path);
-    }
+#[derive(Default)]
+struct OrderedPaths {
+    indices: HashMap<Vec<u8>, usize>,
 }
 
-fn logical_depfile_lines(text: &[u8]) -> Vec<Vec<u8>> {
-    let mut lines = vec![Vec::new()];
-    let mut index = 0;
-    while index < text.len() {
-        if text[index] == b'\\' {
-            let start = index;
-            while index < text.len() && text[index] == b'\\' {
-                index += 1;
-            }
-            let slashes = index - start;
-            let newline = match text.get(index..) {
-                Some([b'\r', b'\n', ..]) => Some(2),
-                Some([b'\n', ..]) => Some(1),
-                _ => None,
-            };
-            if let Some(newline) = newline.filter(|_| slashes % 2 == 1) {
-                lines
-                    .last_mut()
-                    .unwrap()
-                    .extend(std::iter::repeat_n(b'\\', slashes / 2));
-                lines.last_mut().unwrap().push(b' ');
-                index += newline;
-                continue;
-            }
-            lines
-                .last_mut()
-                .unwrap()
-                .extend(std::iter::repeat_n(b'\\', slashes));
-            continue;
-        }
-        if text[index] == b'\n' {
-            lines.push(Vec::new());
-            index += 1;
-            continue;
-        }
-        lines.last_mut().unwrap().push(text[index]);
-        index += 1;
+impl OrderedPaths {
+    fn insert(&mut self, path: Vec<u8>) {
+        let next = self.indices.len();
+        self.indices.entry(path).or_insert(next);
     }
-    lines
+
+    fn contains(&self, path: &[u8]) -> bool {
+        self.indices.contains_key(path)
+    }
+
+    fn into_vec(self) -> Vec<Vec<u8>> {
+        let mut paths = vec![Vec::new(); self.indices.len()];
+        for (path, index) in self.indices {
+            paths[index] = path;
+        }
+        paths
+    }
 }
 
 fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, String> {
-    let mut outputs = Vec::new();
-    let mut inputs = Vec::new();
+    let mut outputs = OrderedPaths::default();
+    let mut inputs = OrderedPaths::default();
     let mut token = Vec::new();
     let mut inputs_started = false;
     let mut index = 0;
@@ -100,9 +109,9 @@ fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, String> {
         }
         let path = std::mem::take(token);
         if inputs_started {
-            append_unique(&mut inputs, path);
+            inputs.insert(path);
         } else {
-            append_unique(&mut outputs, path);
+            outputs.insert(path);
         }
     };
 
@@ -178,31 +187,72 @@ fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, String> {
     if !inputs_started {
         return Err("expected ':' in depfile".into());
     }
-    Ok(Some((outputs, inputs)))
+    Ok(Some((outputs.into_vec(), inputs.into_vec())))
 }
 
-fn parse_depfile(text: &str) -> Result<ParsedDepfile, String> {
-    let mut outputs = Vec::new();
-    let mut inputs = Vec::new();
-    for line in logical_depfile_lines(text.as_bytes()) {
-        let Some((rule_outputs, rule_inputs)) = parse_depfile_rule(&line)? else {
-            continue;
-        };
-        let output_is_input = rule_outputs.iter().any(|output| inputs.contains(output));
-        if output_is_input && !rule_inputs.is_empty() {
-            return Err("inputs may not also have inputs".into());
-        }
-        if output_is_input {
-            continue;
-        }
+fn merge_depfile_rule(
+    line: &[u8],
+    outputs: &mut OrderedPaths,
+    inputs: &mut OrderedPaths,
+) -> Result<(), String> {
+    let Some((rule_outputs, rule_inputs)) = parse_depfile_rule(line)? else {
+        return Ok(());
+    };
+    let output_is_input = rule_outputs.iter().any(|output| inputs.contains(output));
+    if output_is_input && !rule_inputs.is_empty() {
+        return Err("inputs may not also have inputs".into());
+    }
+    if !output_is_input {
         for output in rule_outputs {
-            append_unique(&mut outputs, output);
+            outputs.insert(output);
         }
         for input in rule_inputs {
-            append_unique(&mut inputs, input);
+            inputs.insert(input);
         }
     }
-    Ok(ParsedDepfile { outputs, inputs })
+    Ok(())
+}
+
+fn parse_depfile(text: &[u8]) -> Result<ParsedDepfile, String> {
+    let mut outputs = OrderedPaths::default();
+    let mut inputs = OrderedPaths::default();
+    let mut line = Vec::new();
+    let mut index = 0;
+    while index < text.len() {
+        if text[index] == b'\\' {
+            let start = index;
+            while index < text.len() && text[index] == b'\\' {
+                index += 1;
+            }
+            let slashes = index - start;
+            let newline = match text.get(index..) {
+                Some([b'\r', b'\n', ..]) => Some(2),
+                Some([b'\n', ..]) => Some(1),
+                _ => None,
+            };
+            if let Some(newline) = newline.filter(|_| slashes % 2 == 1) {
+                line.extend(std::iter::repeat_n(b'\\', slashes / 2));
+                line.push(b' ');
+                index += newline;
+            } else {
+                line.extend(std::iter::repeat_n(b'\\', slashes));
+            }
+            continue;
+        }
+        if text[index] == b'\n' {
+            merge_depfile_rule(&line, &mut outputs, &mut inputs)?;
+            line.clear();
+            index += 1;
+            continue;
+        }
+        line.push(text[index]);
+        index += 1;
+    }
+    merge_depfile_rule(&line, &mut outputs, &mut inputs)?;
+    Ok(ParsedDepfile {
+        outputs: outputs.into_vec(),
+        inputs: inputs.into_vec(),
+    })
 }
 
 // [spec:samurai:def:deps.depswrite-fn]
@@ -230,12 +280,10 @@ fn recordid(log: &mut DepsLog, graph: &mut Graph, node: NodeId) -> io::Result<bo
     }
     log.next_id += 1;
     graph.node_mut(node).id = id;
-    let mut record = Vec::new();
-    record.extend_from_slice(&(size as u32).to_ne_bytes());
-    record.extend_from_slice(&path);
-    record.extend(std::iter::repeat_n(0, padding));
-    record.extend_from_slice(&(!(id as u32)).to_ne_bytes());
-    depswrite(&mut log.writer, &record)?;
+    depswrite(&mut log.writer, &(size as u32).to_ne_bytes())?;
+    depswrite(&mut log.writer, &path)?;
+    depswrite(&mut log.writer, &[0; 3][..padding])?;
+    depswrite(&mut log.writer, &(!(id as u32)).to_ne_bytes())?;
     log.nodes.push(node);
     Ok(true)
 }
@@ -263,7 +311,6 @@ fn recorddeps(
             return Ok(());
         }
     }
-    let mut record = Vec::new();
     let size = 12 + deps.nodes.len() * 4;
     if size > MAX_RECORD_SIZE {
         return Err(io::Error::new(
@@ -271,14 +318,25 @@ fn recorddeps(
             "dependency record is too large",
         ));
     }
-    record.extend_from_slice(&((size as u32) | 0x8000_0000).to_ne_bytes());
-    record.extend_from_slice(&(graph.node(output).id as u32).to_ne_bytes());
-    record.extend_from_slice(&(mtime as u64 as u32).to_ne_bytes());
-    record.extend_from_slice(&((mtime as u64 >> 32) as u32).to_ne_bytes());
+    depswrite(
+        &mut log.writer,
+        &((size as u32) | 0x8000_0000).to_ne_bytes(),
+    )?;
+    depswrite(
+        &mut log.writer,
+        &(graph.node(output).id as u32).to_ne_bytes(),
+    )?;
+    depswrite(&mut log.writer, &(mtime as u64 as u32).to_ne_bytes())?;
+    depswrite(
+        &mut log.writer,
+        &((mtime as u64 >> 32) as u32).to_ne_bytes(),
+    )?;
     for dependency in &deps.nodes {
-        record.extend_from_slice(&(graph.node(*dependency).id as u32).to_ne_bytes());
+        depswrite(
+            &mut log.writer,
+            &(graph.node(*dependency).id as u32).to_ne_bytes(),
+        )?;
     }
-    depswrite(&mut log.writer, &record)?;
     log.entries.insert(
         output,
         Entry {
@@ -299,7 +357,7 @@ fn depsinit_path(path: PathBuf) -> io::Result<DepsLog> {
         .open(&path)?;
     let mut log = DepsLog {
         writer: BufWriter::new(file),
-        entries: BTreeMap::new(),
+        entries: EntryMap::default(),
         nodes: Vec::new(),
         next_id: 0,
         path,
@@ -341,6 +399,7 @@ fn native_u32(bytes: &[u8]) -> u32 {
 ///
 /// The returned warning is non-fatal: just like Ninja, the valid prefix stays
 /// usable and the invalid suffix is discarded before future records append.
+// [spec:samurai:req:compat.persistent-state]
 pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Option<String>)> {
     const SIGNATURE: &[u8] = b"# ninjadeps\n";
     const HEADER_LEN: usize = SIGNATURE.len() + 4;
@@ -368,7 +427,7 @@ pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Optio
     }
 
     let mut nodes: Vec<NodeId> = Vec::new();
-    let mut entries = BTreeMap::new();
+    let mut entries = EntryMap::default();
     let mut offset = HEADER_LEN;
     let mut recovery = false;
     while offset < content.len() {
@@ -394,18 +453,17 @@ pub fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog, Optio
                 false
             } else {
                 let output_id = native_u32(&record[..4]) as usize;
-                let dependency_count = size / 4 - 3;
-                let dependency_ids = (0..dependency_count)
-                    .map(|index| native_u32(&record[12 + index * 4..16 + index * 4]) as usize)
-                    .collect::<Vec<_>>();
-                if output_id >= nodes.len() || dependency_ids.iter().any(|id| *id >= nodes.len()) {
+                let dependency_ids = record[12..]
+                    .chunks_exact(4)
+                    .map(|bytes| native_u32(bytes) as usize);
+                if output_id >= nodes.len() || dependency_ids.clone().any(|id| id >= nodes.len()) {
                     false
                 } else {
                     let low = native_u32(&record[4..8]) as u64;
                     let high = native_u32(&record[8..12]) as u64;
                     let output = nodes[output_id];
                     let deps = NodeArray {
-                        nodes: dependency_ids.into_iter().map(|id| nodes[id]).collect(),
+                        nodes: dependency_ids.map(|id| nodes[id]).collect(),
                     };
                     entries.insert(
                         output,
@@ -501,6 +559,7 @@ pub fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<()> {
         recorddeps(&mut compacted, graph, entry.node, &entry.deps, entry.mtime)?;
     }
     compacted.writer.flush()?;
+    compacted.writer.get_ref().sync_all()?;
     let entries = mem::take(&mut compacted.entries);
     let nodes = mem::take(&mut compacted.nodes);
     let next_id = compacted.next_id;
@@ -518,7 +577,7 @@ pub fn depsrecompact(log: &mut DepsLog, graph: &mut Graph) -> io::Result<()> {
 // [spec:samurai:def:deps.depsparse-fn]
 // [spec:samurai:sem:deps.depsparse-fn]
 pub fn depsparse(graph: &mut Graph, path: &Path, allow_missing: bool) -> io::Result<NodeArray> {
-    let text = match std::fs::read_to_string(path) {
+    let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if allow_missing && error.kind() == io::ErrorKind::NotFound => {
             return Ok(NodeArray::default())
@@ -549,7 +608,7 @@ pub fn depsparse_for_edge(
     path: &Path,
     edge: EdgeId,
 ) -> io::Result<Option<NodeArray>> {
-    let text = match std::fs::read_to_string(path) {
+    let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
@@ -634,11 +693,11 @@ pub fn depsrecordnodes(
     let deps = NodeArray {
         nodes: deps.to_vec(),
     };
+    for dependency in &deps.nodes {
+        recordid(log, graph, *dependency)?;
+    }
     for output in outputs {
         recordid(log, graph, output)?;
-        for dependency in &deps.nodes {
-            recordid(log, graph, *dependency)?;
-        }
         let mtime = graph.node(output).mtime;
         recorddeps(log, graph, output, &deps, mtime)?;
     }
@@ -651,7 +710,7 @@ mod ninja_depfile_tests {
     use crate::graph::nodeget;
 
     fn assert_depfile(input: &str, outputs: &[&str], inputs: &[&str]) {
-        let parsed = parse_depfile(input).unwrap();
+        let parsed = parse_depfile(input.as_bytes()).unwrap();
         assert_eq!(
             parsed.outputs,
             outputs
@@ -786,13 +845,20 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_depfile_parser_rejects_invalid_rules() {
         assert_eq!(
-            parse_depfile("foo: x y z\nx: alsoin\ny:\nz:\n").unwrap_err(),
+            parse_depfile(b"foo: x y z\nx: alsoin\ny:\nz:\n").unwrap_err(),
             "inputs may not also have inputs"
         );
         assert_eq!(
-            parse_depfile("foo.o foo.c\n").unwrap_err(),
+            parse_depfile(b"foo.o foo.c\n").unwrap_err(),
             "expected ':' in depfile"
         );
+    }
+
+    #[test]
+    fn ninja_depfile_parser_preserves_non_utf8_paths() {
+        let parsed = parse_depfile(b"out: in-\xff.h in-\xff.h\n").unwrap();
+        assert_eq!(parsed.outputs, [b"out".to_vec()]);
+        assert_eq!(parsed.inputs, [b"in-\xff.h".to_vec()]);
     }
 
     use std::fs;
@@ -859,6 +925,7 @@ mod ninja_depfile_tests {
         graph.node_mut(output).gen = Some(edge);
     }
 
+    // [spec:samurai:req:compat.persistent-state/test]
     #[test]
     fn ninja_deps_log_write_read() {
         let (directory, path) = test_log_path("write-read");

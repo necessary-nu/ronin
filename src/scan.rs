@@ -31,7 +31,7 @@ pub struct Scanner {
 }
 
 impl Scanner {
-    fn current(&self) -> Option<u8> {
+    pub(crate) fn current(&self) -> Option<u8> {
         self.input.get(self.index).copied()
     }
 
@@ -44,9 +44,15 @@ impl Scanner {
 // [spec:samurai:sem:scan.scaninit-fn]
 pub fn scaninit(path: impl AsRef<Path>) -> Result<Scanner, String> {
     let path = path.as_ref();
-    Ok(Scanner {
+    let input = fs::read(path).map_err(|error| error.to_string())?;
+    Ok(scanfrombytes(path, input))
+}
+
+pub(crate) fn scanfrombytes(path: impl AsRef<Path>, input: Vec<u8>) -> Scanner {
+    let path = path.as_ref();
+    Scanner {
         path: path.to_owned(),
-        input: fs::read(path).map_err(|error| error.to_string())?,
+        input,
         index: 0,
         line: 1,
         col: 1,
@@ -55,7 +61,7 @@ pub fn scaninit(path: impl AsRef<Path>) -> Result<Scanner, String> {
         continuation_at_eof: false,
         manifest_version_major: 1,
         manifest_version_minor: 9,
-    })
+    }
 }
 
 // [spec:samurai:def:scan.scanclose-fn]

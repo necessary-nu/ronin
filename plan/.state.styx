@@ -61,4 +61,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule compat.manifest-semantics}
     )}
+    {id ronin-dependency-io, covered_rules (
+        compat.persistent-state
+    ), covered_claims (
+        {impl_name target-impl, rule compat.persistent-state}
+    )}
 )
