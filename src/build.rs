@@ -143,22 +143,6 @@ impl CriticalPathWeight {
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 #[repr(transparent)]
-struct TraversalMark(usize);
-
-impl TraversalMark {
-    const UNMARKED: Self = Self(usize::MAX);
-
-    const fn is_marked_for(self, edge: EdgeId) -> bool {
-        self.0 == edge.index()
-    }
-
-    const fn mark(&mut self, edge: EdgeId) {
-        self.0 = edge.index();
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-#[repr(transparent)]
 struct PoolOccupancy(usize);
 
 impl PoolOccupancy {
@@ -188,7 +172,12 @@ pub(crate) struct Plan {
     running: Vec<bool>,
     completed: Vec<bool>,
     pool_occupancy: Vec<PoolOccupancy>,
-    dependency_marks: Vec<TraversalMark>,
+    /// Which consuming edge last recorded a dependency on each generator.
+    ///
+    /// Deduplicates the edges pushed onto `dependents` within one rebuild.
+    /// A niche-packed identifier makes the empty case free, so this is half
+    /// the width of the index-plus-sentinel it replaced.
+    dependency_marks: Vec<Option<EdgeId>>,
     completed_count: usize,
     failures: usize,
 }
@@ -208,8 +197,7 @@ impl Plan {
         self.completed.resize(edge_count, false);
         self.pool_occupancy
             .resize(graph.pool_count(), PoolOccupancy::default());
-        self.dependency_marks
-            .resize(edge_count, TraversalMark::UNMARKED);
+        self.dependency_marks.resize(edge_count, None);
     }
 
     // [spec:samurai:def:build.buildreset-fn]
@@ -323,7 +311,7 @@ impl Plan {
         self.ready.clear();
         // Marks persist across rebuilds, so a stale mark from the previous
         // frontier would wrongly suppress a dependency; reset before reuse.
-        self.dependency_marks.fill(TraversalMark::UNMARKED);
+        self.dependency_marks.fill(None);
         for index in 0..graph.edge_count() {
             let edge = EdgeId::from_index(index);
             if !self.wanted[index] || self.completed[index] {
@@ -335,9 +323,9 @@ impl Plan {
                 };
                 if self.wanted[generator.index()]
                     && !self.completed[generator.index()]
-                    && !self.dependency_marks[generator.index()].is_marked_for(edge)
+                    && self.dependency_marks[generator.index()] != Some(edge)
                 {
-                    self.dependency_marks[generator.index()].mark(edge);
+                    self.dependency_marks[generator.index()] = Some(edge);
                     self.pending[index] += 1;
                     self.dependents[generator.index()].push(edge);
                 }

@@ -89,7 +89,8 @@ assertions (
     {id ronin-inline-slice-hoisting, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:13.324619869Z}
     {id ronin-scanner-byte-primitive, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:15.304546849Z}
     {id ronin-prune-clean-subtrees, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:20.10319646Z}
-    {id ronin-stale-bool-suppression, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T23:51:22.140151698Z}
+    {id ronin-stale-bool-suppression, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:52:43.832510735Z}
+    {id ronin-traversal-mark-option, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T23:52:45.714258388Z}
 )
 
 impl_evidence (

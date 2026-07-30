@@ -1132,6 +1132,20 @@ children (
                                 kind @note
                                 text "TraversalMark (src/build.rs:144-158) is a magic-sentinel newtype: struct TraversalMark(usize) with const UNMARKED = Self(usize::MAX), where is_marked_for(edge) compares self.0 against edge.index() and mark(edge) stores it. It records which traversal root last marked an edge, so the value is either an edge identifier or nothing — precisely Option<EdgeId>. The arena_id! documentation at src/util.rs:20-25 already advertises that the niche-packed NonZeroU32 makes Option<Id> four bytes rather than sixteen, and every other side table in the codebase takes that route; dependency_marks is the one place that did not get the message. Converting halves Plan::dependency_marks from Vec<usize> to Vec<Option<EdgeId>> (32 KiB to 16 KiB on a 4,000-edge graph, with correspondingly better locality in rebuild_frontier, which fills and rescans it), turns is_marked_for into self.0 == Some(edge), and makes an unmarked slot stop being representable as a valid edge index. Note that rebuild_frontier resets the table with fill(TraversalMark::UNMARKED) on every call, so the reset becomes fill(None). Deliberately no percentage estimated; do it for the type safety and treat any speed as incidental."
                             }
+
+                            {
+                                at 2026-07-30T23:52:45.714258388Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-30T23:54:26.991418749Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done. TraversalMark — a repr(transparent) newtype over usize with usize::MAX standing for \"unmarked\" — is deleted, and dependency_marks becomes Vec<Option<EdgeId>>. is_marked_for(edge) becomes a comparison against Some(edge), mark(edge) an assignment of Some(edge), and both the resize in synchronize_arenas and the reset in rebuild_frontier now pass None. The niche in the NonZeroU32 identifier makes the empty case free, so the table halves from eight bytes per edge to four — 32 KiB to 16 KiB on a 4,000-edge graph — and an unmarked slot stops being representable as a valid edge index. Measured: wide no-op 22,776,535 to 22,744,529 instructions, −0.14%; command evaluation unchanged at 40,892,549, which is expected because that fixture runs the commands tool and never reaches rebuild_frontier. This node deliberately carried no estimate, and the outcome matches the stated reason for doing it — the type safety is the point and the 0.14% is incidental. It also removes the last magic-value sentinel standing against the arena_id! documentation's own claim that Option<Id> occupies four bytes rather than sixteen. 366 tests pass, clippy clean under nursery and pedantic."
+                            }
                         )
                     }
 
@@ -1151,6 +1165,7 @@ children (
                     {
                         id ronin-stale-bool-suppression
                         title "Delete the lint suppression Edge no longer needs"
+                        sealed true
                         log (
                             {
                                 at 2026-07-30T23:48:16.496395301Z
@@ -1171,6 +1186,13 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @decision
                                 text "Deleted. Edge carried #[allow(clippy::struct_excessive_bools)] with the reason \"these independent cached graph facts avoid repeated evaluation on hot paths\", but the struct holds no bool at all — rule, pool, env, bindings, out, input, validation, dyndep and partitions. The cached boolean facts that reason described were moved into EdgeRuntimeFlags(u8) in src/runtime.rs, and the suppression outlived them, documenting a design that is no longer present and standing ready to silently license the lint if bools were added back. Clippy passes with zero diagnostics under the crate's nursery and pedantic configuration after removal, confirming the suppression was genuinely dead rather than load-bearing. Checked the duplicate the parent node flagged: BuildOptions in src/build.rs:43-46 carries the same lint with a different and accurate reason — \"independent Ninja CLI switches are clearer as named options than a synthetic state machine\" — and the struct really does hold eight bools, so that one is legitimate and was left alone. 366 tests pass."
+                            }
+
+                            {
+                                at 2026-07-30T23:52:43.832510735Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
