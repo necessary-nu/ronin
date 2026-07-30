@@ -2,6 +2,7 @@
 
 mod edge;
 mod marks;
+mod path;
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
@@ -11,6 +12,8 @@ use crate::util::{arena_id, BStr, BString, ByteSlice};
 use edge::EdgePartitions;
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
+use path::shell_escape_path;
+pub(crate) use path::{nodepath, nodepath_bytes};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
@@ -501,38 +504,6 @@ where
         }
     }
     Ok(validations)
-}
-
-// [spec:samurai:def:graph.nodepath-fn]
-// [spec:samurai:sem:graph.nodepath-fn]
-pub(crate) fn nodepath(graph: &Graph, node: NodeId, style: PathStyle) -> BString {
-    let node = graph.node(node);
-    if style.shell_escaped() {
-        node.shellpath.clone()
-    } else {
-        node.path.clone()
-    }
-}
-
-fn shell_escape_path(source: &[u8]) -> BString {
-    let quote = source
-        .iter()
-        .any(|byte| !byte.is_ascii_alphanumeric() && !b"_+-./".contains(byte));
-    if !quote {
-        return BString::from(source);
-    }
-    let mut bytes = Vec::with_capacity(source.len() + 2);
-    if quote {
-        bytes.push(b'\'');
-        for byte in source {
-            bytes.push(*byte);
-            if *byte == b'\'' {
-                bytes.extend_from_slice(b"\\''");
-            }
-        }
-        bytes.push(b'\'');
-    }
-    BString::from(bytes)
 }
 
 // [spec:samurai:def:graph.nodeuse-fn]

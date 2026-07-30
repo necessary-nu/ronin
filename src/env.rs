@@ -3,7 +3,7 @@
 use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
 use crate::scan::{ScannedEvalPart, ScannedEvalString};
-use crate::util::{arena_id, BString, EvalPart, EvalString};
+use crate::util::{arena_id, BString, ByteSlice, EvalPart, EvalString};
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
@@ -169,6 +169,10 @@ pub(crate) fn envaddvar(
 
 // [spec:samurai:def:env.merge-fn]
 // [spec:samurai:sem:env.merge-fn]
+#[allow(
+    dead_code,
+    reason = "the ported concatenation helper stays part of the documented C surface; command evaluation now appends in place"
+)]
 fn merge(parts: &[BString]) -> BString {
     let mut output = Vec::with_capacity(parts.iter().map(|part| part.len()).sum());
     for part in parts {
@@ -226,6 +230,10 @@ pub(crate) fn envrule(graph: &Graph, environment: EnvironmentId, name: &str) -> 
 
 // [spec:samurai:def:env.pathlist-fn]
 // [spec:samurai:sem:env.pathlist-fn]
+#[allow(
+    dead_code,
+    reason = "the ported path-joining helper stays part of the documented C surface; command evaluation now appends in place"
+)]
 pub(crate) fn pathlist(paths: &[BString], separator: u8) -> Option<BString> {
     if paths.is_empty() {
         return None;
@@ -281,34 +289,69 @@ pub(crate) fn edgevar(
     name: &str,
     style: PathStyle,
 ) -> Option<BString> {
-    fn evaluate(
-        graph: &Graph,
-        edge: EdgeId,
-        value: &EvalString,
-        style: PathStyle,
-        stack: &mut Vec<String>,
-    ) -> BString {
-        let mut parts = Vec::with_capacity(value.parts.len());
-        for part in &value.parts {
-            match part {
-                EvalPart::Variable(name) => {
-                    if let Some(value) = edgevar_inner(graph, edge, name, style, stack) {
-                        parts.push(value);
-                    }
-                }
-                EvalPart::Literal(value) => parts.push(value.clone()),
-            }
-        }
-        merge(&parts)
-    }
+    let mut value = Vec::new();
+    edgevar_into(graph, edge, name, style, &mut value).then(|| BString::from(value))
+}
 
-    fn edgevar_inner(
-        graph: &Graph,
-        edge_id: EdgeId,
-        name: &str,
-        style: PathStyle,
-        stack: &mut Vec<String>,
-    ) -> Option<BString> {
+/// Append one edge variable's value to `out`, reporting whether it resolved.
+///
+/// A caller evaluating several bindings for the same edge reuses one buffer.
+/// Resolving to nothing and resolving to an empty value stay distinct, because
+/// Ninja treats an absent `$in` differently from an empty one.
+pub(crate) fn edgevar_into(
+    graph: &Graph,
+    edge: EdgeId,
+    name: &str,
+    style: PathStyle,
+    out: &mut Vec<u8>,
+) -> bool {
+    Evaluator {
+        graph,
+        style,
+        active: Vec::new(),
+    }
+    .append_variable(edge, name, out)
+}
+
+/// Appending evaluator for edge variables.
+///
+/// Evaluating into one buffer removes the intermediate part and path vectors,
+/// and borrowing rule bindings out of the graph removes an `EvalString` clone
+/// per lookup. Ninja and C samurai both evaluate this way; the clones were an
+/// artifact of returning owned values from every recursion level.
+struct Evaluator<'a> {
+    graph: &'a Graph,
+    style: PathStyle,
+    /// Rule bindings currently being expanded, for cycle detection. Real
+    /// manifests nest two or three deep, so a linear scan is the cheapest
+    /// structure and it needs no allocation for the names.
+    active: Vec<&'a str>,
+}
+
+fn append_paths(
+    graph: &Graph,
+    nodes: &[NodeId],
+    style: PathStyle,
+    separator: u8,
+    out: &mut Vec<u8>,
+) -> bool {
+    if nodes.is_empty() {
+        return false;
+    }
+    for (index, node) in nodes.iter().enumerate() {
+        if index != 0 {
+            out.push(separator);
+        }
+        out.extend_from_slice(crate::graph::nodepath_bytes(graph, *node, style));
+    }
+    true
+}
+
+impl<'a> Evaluator<'a> {
+    fn append_variable(&mut self, edge_id: EdgeId, name: &'a str, out: &mut Vec<u8>) -> bool {
+        // Copying the shared graph reference out of `self` keeps the borrows
+        // that follow independent of the recursive `&mut self`.
+        let graph = self.graph;
         let edge = graph.edge(edge_id);
         let computed: Option<(&[NodeId], u8)> = match name {
             "in" => Some((edge.explicit_inputs(), b' ')),
@@ -317,33 +360,37 @@ pub(crate) fn edgevar(
             _ => None,
         };
         if let Some((nodes, separator)) = computed {
-            let paths = nodes
-                .iter()
-                .map(|node| crate::graph::nodepath(graph, *node, style))
-                .collect::<Vec<_>>();
-            return pathlist(&paths, separator);
+            return append_paths(graph, nodes, self.style, separator, out);
         }
         if let Some(value) = edge.bindings.get(name) {
-            return Some(value.clone());
+            out.extend_from_slice(value.as_bytes());
+            return true;
         }
-        let environment = edge.env;
-        let value = edge
+        let Some(value) = edge
             .rule
             .and_then(|rule| graph.rule(rule).bindings.get(name))
-            .cloned();
-        let Some(value) = value else {
-            return envvar(graph, environment, name).cloned();
+        else {
+            let Some(value) = envvar(graph, edge.env, name) else {
+                return false;
+            };
+            out.extend_from_slice(value.as_bytes());
+            return true;
         };
-        if stack.iter().any(|active| active == name) {
-            return None;
+        if self.active.contains(&name) {
+            return false;
         }
-        stack.push(name.to_owned());
-        let result = evaluate(graph, edge_id, &value, style, stack);
-        stack.pop();
-        Some(result)
+        self.active.push(name);
+        for part in &value.parts {
+            match part {
+                EvalPart::Literal(literal) => out.extend_from_slice(literal.as_bytes()),
+                EvalPart::Variable(name) => {
+                    self.append_variable(edge_id, name, out);
+                }
+            }
+        }
+        self.active.pop();
+        true
     }
-
-    edgevar_inner(graph, edge, name, style, &mut Vec::new())
 }
 
 #[cfg(test)]

@@ -1190,12 +1190,27 @@ children (
                 id ronin-eval-scratch-buffers
                 title "Evaluate edge variables into reusable scratch buffers"
                 deps (ronin-alloc-metrics)
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:10:02.532771134Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "edgevar (src/env.rs:294-363) is the largest allocation source: rule bindings are deep-cloned per lookup (env.rs:348-349 clones the whole EvalString including every part), every literal part is cloned into a parts Vec (env.rs:315) then copied again by merge, $in/$out expansion clones a BString per node via nodepath (graph.rs:494-497) then copies through pathlist, and the cycle-guard allocates Vec<String> plus name.to_owned() per level (env.rs:356). Rewrite evaluation to append into one caller-owned byte buffer, holding &EvalString and &BStr references against &Graph instead of returning owned values — the clones are borrow-appeasement, not the samurai design (both C tools evaluate into an owned buffer). nodepath should return &BStr; shell-escaped paths append directly. Replace the recursion-guard stack with a small fixed-capacity buffer of borrowed names (depth in real manifests is 2-4). This is the main lever on the manifest-command-evaluation gap (36.9 ms ronin vs 9.7 ms C samurai in benchmarks/baseline-2026-07-29.md)."
+                    }
+
+                    {
+                        at 2026-07-30T14:01:39.317556959Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T14:06:08.663439714Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

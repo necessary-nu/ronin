@@ -142,6 +142,45 @@ compressed adjacency layout: `rebuild_frontier` clears the inner vectors
 instead of dropping them, so their capacity is already reused across rebuilds
 and a conversion would trade readable code for no measurable allocation.
 
+### Appending command evaluation (`ronin-eval-scratch-buffers`)
+
+`edgevar` returned an owned value from every recursion level, so each lookup
+cloned the rule binding's whole `EvalString`, copied every literal part into a
+parts vector, copied a `BString` per `$in`/`$out` node into a path vector, and
+then merged all of it into a third buffer. The cycle guard allocated a vector
+and an owned name per level on top.
+
+Evaluation now appends into one caller-owned buffer, borrows rule bindings
+straight out of the graph, appends node paths from the interned bytes, and
+tracks the cycle guard with borrowed names. `edgevar_into` exposes the buffer
+so a caller reading several bindings for one edge reuses it. Absent and empty
+values stay distinct, because Ninja treats a missing `$in` differently from an
+empty one.
+
+| Workload | Requests before | Requests after | Change | Bytes change |
+| --- | ---: | ---: | ---: | ---: |
+| manifest-command-evaluation | 192,172 | 128,072 | −33.4% | −10.9% |
+| dependency-log-load | 24,572 | 12,272 | −50.1% | −17.0% |
+| depfile-scan | 27,732 | 24,332 | −12.3% | −4.1% |
+| scheduler-barrier | 7,535 | 6,509 | −13.6% | −4.6% |
+
+Requests per build statement on command evaluation fell from 48.0 — untouched
+by the seven preceding nodes — to 32.0. The phony-only workloads are
+unchanged, as expected: they declare no rule bindings to evaluate.
+
+Wall time moved much less than allocation count. Against C samurai, command
+evaluation went from 1.65x to 1.58x, dependency-log loading from 1.38x to
+1.28x, and the scheduler barrier from 1.14x to 1.12x. That gap is the useful
+signal: a third of the allocations were real but were not the dominant cost.
+What remains in evaluation is lookup cost — every binding still resolves
+through `String`-keyed `BTreeMap`s — which is what `ronin-name-interning`
+targets, and the per-call output buffer that `ronin-edge-metadata-cache`
+removes by batching an edge's bindings into one pass.
+
+`merge` and `pathlist` keep documented `dead_code` allowances. They are ported
+C symbols the port specification requires, and nothing in production calls them
+now that evaluation appends in place.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release
