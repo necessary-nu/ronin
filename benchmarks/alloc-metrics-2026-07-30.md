@@ -600,6 +600,36 @@ unsound: it treated allocation count as the mechanism when it was only ever a
 proxy. Allocation *count* had indeed saturated; allocation *growth events*,
 which cost malloc plus memcpy plus free apiece, had not.
 
+### Hoisting the inline discriminant — `ronin-inline-slice-hoisting`
+
+Kept, but it came in at a third of the predicted size, and the shortfall is
+the interesting part.
+
+Inline capacity charges a discriminant check per access, and six traversal
+loops paid it per element rather than per edge — several also re-resolved the
+arena entry itself, `graph.edge(edge).out[index]` doing an arena bounds check,
+an inline-vs-heap branch and a slice bounds check for every element. Binding
+`let outputs: &[NodeId] = &graph.edge(edge).out;` once resolves all three. Every
+hoist compiled unchanged, which confirms the per-element form was gratuitous
+rather than borrow-driven.
+
+| Metric | before | after | change |
+| --- | ---: | ---: | ---: |
+| Instructions, wide no-op | 24,102,023 | 23,905,714 | −0.81% |
+| Instructions, command evaluation | 42,784,164 | 42,784,009 | −0.0004% |
+| `DirtyEvaluator::evaluate` | 1,348,434 | 1,220,413 | −9.5% |
+| `Builder::add_target` | 1,772,899 | 1,752,928 | −1.1% |
+
+The prediction was around 2%, recovering the 212,024 and 328,070 instructions
+that inline capacity had added to `add_target` and `DirtyEvaluator::evaluate`.
+Only the latter gave much back, and command evaluation did not move at all.
+The explanation is loop length: that workload's edges have one input and one
+output apiece, so there is nothing to amortize a hoist over, and `add_target`
+already bound its edge to a local, leaving only a discriminant that the
+optimizer was evidently hoisting on its own. Hoisting pays in proportion to how
+long the loop is, which the estimate failed to account for. Wall time was not
+measured — 0.81% is well inside the noise floor established above.
+
 ### SIMD, and why the gap is not a vectorization gap
 
 The profile also settled the question that prompted it. C samurai contains one

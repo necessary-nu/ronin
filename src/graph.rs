@@ -369,10 +369,9 @@ impl DirtyEvaluator {
                         }
 
                         self.edges.set(edge.index(), VisitState::Active);
-                        let output_count = graph.edge(edge).out.len();
+                        let outputs: &[NodeId] = &graph.edge(edge).out;
                         if runtime.edge(edge).restat_clean() {
-                            for index in 0..output_count {
-                                let output = graph.edge(edge).out[index];
+                            for &output in outputs {
                                 runtime.node_mut(output).set_dirty(false);
                                 self.nodes.set(output.index(), VisitState::Done);
                             }
@@ -380,24 +379,23 @@ impl DirtyEvaluator {
                             continue;
                         }
 
-                        for index in 0..output_count {
-                            let output = graph.edge(edge).out[index];
+                        for &output in outputs {
                             if runtime.node(output).mtime().is_unobserved() {
                                 nodestat_with(graph, runtime, output, stat)?;
                             }
                             self.nodes.set(output.index(), VisitState::Active);
                         }
                         work.push(Work::Finish(edge));
-                        for index in (0..graph.edge(edge).input.len()).rev() {
-                            work.push(Work::Enter(graph.edge(edge).input[index]));
+                        let inputs: &[NodeId] = &graph.edge(edge).input;
+                        for &input in inputs.iter().rev() {
+                            work.push(Work::Enter(input));
                         }
                     }
                 },
                 Work::Finish(edge) => {
                     recompute_edge_dirty_with(graph, runtime, edge, stat)?;
-                    let output_count = graph.edge(edge).out.len();
-                    for index in 0..output_count {
-                        let output = graph.edge(edge).out[index];
+                    let outputs: &[NodeId] = &graph.edge(edge).out;
+                    for &output in outputs {
                         self.nodes.set(output.index(), VisitState::Done);
                     }
                     self.edges.set(edge.index(), VisitState::Done);
@@ -456,11 +454,13 @@ where
                 if scratch.seen_edges.replace(edge.index()) {
                     continue;
                 }
-                for index in (0..graph.edge(edge).validation.len()).rev() {
-                    work.push(Work::EvaluateValidation(graph.edge(edge).validation[index]));
+                let edge_validations: &[NodeId] = &graph.edge(edge).validation;
+                for &validation in edge_validations.iter().rev() {
+                    work.push(Work::EvaluateValidation(validation));
                 }
-                for index in (0..graph.edge(edge).input.len()).rev() {
-                    work.push(Work::Enter(graph.edge(edge).input[index]));
+                let inputs: &[NodeId] = &graph.edge(edge).input;
+                for &input in inputs.iter().rev() {
+                    work.push(Work::Enter(input));
                 }
             }
             Work::EvaluateValidation(validation) => {

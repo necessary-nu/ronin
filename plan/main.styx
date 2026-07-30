@@ -1798,6 +1798,27 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-inline-slice-hoisting
+                title "Resolve inline-vs-heap once per edge in graph traversals"
+                priority 0
+                log (
+                    {
+                        at 2026-07-30T22:24:49.005651677Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T22:27:51.251995738Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Kept, at roughly a third of the predicted size. Six traversal loops paid the inline-vs-heap discriminant check per element instead of per edge, and several re-resolved the arena entry as well — graph.edge(edge).out[index] performing an arena bounds check, a discriminant branch and a slice bounds check for every element. Binding the slice once per edge resolves all three. Every hoist compiled without a borrow-checker change, confirming the per-element form was gratuitous rather than forced. Wide no-op 24,102,023 to 23,905,714 instructions, −0.81%; command evaluation 42,784,164 to 42,784,009, which is no movement at all. DirtyEvaluator::evaluate fell 1,348,434 to 1,220,413 (−9.5%) but Builder::add_target only 1,772,899 to 1,752,928 (−1.1%). The prediction was around 2%, on the theory that this would recover the 212,024 and 328,070 instructions inline capacity had added to those two functions. The shortfall is explained by loop length: the command-evaluation fixture gives each edge one input and one output, so there is nothing for a hoist to amortize over, and add_target already bound its edge to a local, leaving only a discriminant the optimizer was evidently hoisting unaided. Hoisting pays in proportion to loop length, which the estimate did not account for. Wall time was not measured because 0.81% sits well inside the established noise floor. Kept regardless: iterating a slice is also simply better code than indexing with a bounds check per element. 366 tests pass, clippy clean."
+                    }
+                )
+            }
         )
     }
 

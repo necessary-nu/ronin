@@ -291,8 +291,8 @@ impl Plan {
             let depfile_end = edge.non_order_only_input_count();
             let depfile_start =
                 depfile_end.saturating_sub(runtime.edge(edge_id).depfile_dependencies());
-            for index in (0..edge.input.len()).rev() {
-                let input = edge.input[index];
+            let inputs: &[NodeId] = &edge.input;
+            for (index, &input) in inputs.iter().enumerate().rev() {
                 if !(index >= depfile_start
                     && index < depfile_end
                     && graph.node(input).gen.is_none())
@@ -367,13 +367,9 @@ impl Plan {
             }
             let edge = EdgeId::from_index(index);
             let weight = self.weight[index];
-            for input_index in (0..graph.edge(edge).input.len()).rev() {
-                self.add_node(
-                    graph,
-                    runtime,
-                    graph.edge(edge).input[input_index],
-                    weight.next(),
-                )?;
+            let inputs: &[NodeId] = &graph.edge(edge).input;
+            for &input in inputs.iter().rev() {
+                self.add_node(graph, runtime, input, weight.next())?;
             }
         }
         self.rebuild_frontier(graph);
@@ -1276,8 +1272,8 @@ impl<'a> Builder<'a> {
     }
 
     fn finish_phony_edge(&mut self, edge: EdgeId) -> (bool, Vec<NodeId>) {
-        for index in 0..self.graph.edge(edge).out.len() {
-            let output = self.graph.edge(edge).out[index];
+        let outputs: &[NodeId] = &self.graph.edge(edge).out;
+        for &output in outputs {
             self.runtime.node_mut(output).set_dirty(false);
         }
         (false, Vec::new())
@@ -1296,8 +1292,8 @@ impl<'a> Builder<'a> {
             if self.visited_edges.replace(dependent.index()) {
                 continue;
             }
-            for index in 0..self.graph.edge(dependent).out.len() {
-                let output = self.graph.edge(dependent).out[index];
+            let outputs: &[NodeId] = &self.graph.edge(dependent).out;
+            for &output in outputs {
                 let mut stat = |path: &Path| disk.stat(path);
                 recompute_dirty_with_validations(
                     self.graph,
@@ -1307,8 +1303,7 @@ impl<'a> Builder<'a> {
                     &mut stat,
                 )?;
             }
-            for index in 0..self.graph.edge(dependent).out.len() {
-                let output = self.graph.edge(dependent).out[index];
+            for &output in outputs {
                 let output = self.graph.node(output);
                 queue.extend(output.uses.iter().copied());
                 queue.extend(output.validation_uses.iter().copied());
