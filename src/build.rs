@@ -1,6 +1,6 @@
 //! Build scheduling state translated from `build.c`.
 
-use crate::error::{BuildError, ProcessError};
+use crate::error::{BuildError, BuildOperation, ProcessError};
 use crate::graph::{
     edgeadddeps, nodeget, nodestat_with, recompute_dirty_with_validations,
     recompute_edge_dirty_with, EdgeId, Graph, NodeId,
@@ -145,18 +145,14 @@ impl Plan {
         while let Some((node, weight, needed_by)) = work.pop() {
             let Some(edge) = graph.node(node).gen else {
                 if graph.node(node).dirty {
-                    let path = graph.node(node).path.to_str_lossy();
-                    return Err(needed_by
-                        .map_or_else(
-                            || format!("'{path}' missing and no known rule to make it"),
-                            |needed_by| {
-                                format!(
-                                    "'{path}', needed by '{}', missing and no known rule to make it",
-                                    graph.node(needed_by).path.to_str_lossy()
-                                )
-                            },
-                        )
-                        .into());
+                    let path = graph.node(node).path.clone();
+                    let needed_by =
+                        needed_by.map(|needed_by| (needed_by, graph.node(needed_by).path.clone()));
+                    return Err(BuildError::MissingInput {
+                        node,
+                        path,
+                        needed_by,
+                    });
                 }
                 continue;
             };
@@ -322,7 +318,7 @@ impl Plan {
         result: EdgeResult,
     ) -> BuildResult<()> {
         if !std::mem::replace(&mut self.running[edge.index()], false) {
-            return Err("edge was not running".into());
+            return Err(BuildError::EdgeNotRunning { edge });
         }
         if let Some(pool) = graph.edge(edge).pool {
             graph.pool_mut(pool).numjobs -= 1;
@@ -599,9 +595,7 @@ impl<'a> Builder<'a> {
                             edge.deps_missing = !path.exists();
                         } else if path.exists() {
                             self.graph.edge_mut(edge).deps_loaded = true;
-                            match crate::deps::depsparse_for_edge(self.graph, path, edge)
-                                .map_err(|error| format!("{depfile}: {error}"))?
-                            {
+                            match crate::deps::depsparse_for_edge(self.graph, path, edge)? {
                                 Some(deps) => {
                                     Self::replace_depfile_deps(self.graph, edge, &deps.nodes);
                                     self.graph.edge_mut(edge).deps_missing = false;
@@ -736,8 +730,9 @@ impl<'a> Builder<'a> {
 
     pub(crate) fn add_target(&mut self, path: impl AsRef<[u8]>) -> BuildResult<()> {
         let path = path.as_ref();
-        let node = nodeget(self.graph, path)
-            .ok_or_else(|| format!("unknown target: '{}'", String::from_utf8_lossy(path)))?;
+        let node = nodeget(self.graph, path).ok_or_else(|| BuildError::UnknownTarget {
+            path: BString::from(path),
+        })?;
         if !self.targets.contains(&node) {
             self.targets.push(node);
         }
@@ -751,10 +746,10 @@ impl<'a> Builder<'a> {
         let validations = recompute_dirty_with_validations(self.graph, node, &mut stat)?;
         self.plan.add_target(self.graph, node).map_err(|error| {
             if self.graph.node(node).gen.is_none() {
-                BuildError::from(format!(
-                    "'{}' missing and no known rule to make it",
-                    String::from_utf8_lossy(path)
-                ))
+                BuildError::MissingRule {
+                    node,
+                    path: BString::from(path),
+                }
             } else {
                 error
             }
@@ -790,7 +785,16 @@ impl<'a> Builder<'a> {
 
         for output in &self.graph.edge(edge).out {
             let path = self.graph.node(*output).path.clone();
-            RealDiskInterface.make_dirs(path.to_path().expect("byte paths are valid on Unix"))?;
+            RealDiskInterface
+                .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
+                .map_err(|source| {
+                    BuildError::io(
+                        BuildOperation::CreateOutputDirectory,
+                        Some(path),
+                        Some(edge),
+                        source,
+                    )
+                })?;
         }
 
         let response_file = command.rspfile.as_ref().map(|path| ResponseFile {
@@ -798,19 +802,29 @@ impl<'a> Builder<'a> {
             remove_on_drop: !self.options.keeprsp,
         });
         if let Some(response_file) = &response_file {
-            RealDiskInterface.make_dirs(
-                response_file
-                    .path
-                    .to_path()
-                    .expect("byte paths are valid on Unix"),
-            )?;
+            let path = response_file.path.clone();
+            RealDiskInterface
+                .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
+                .map_err(|source| {
+                    BuildError::io(
+                        BuildOperation::CreateOutputDirectory,
+                        Some(path.clone()),
+                        Some(edge),
+                        source,
+                    )
+                })?;
             fs::write(
-                response_file
-                    .path
-                    .to_path()
-                    .expect("byte paths are valid on Unix"),
+                path.to_path().expect("byte paths are valid on Unix"),
                 command.rspfile_content.as_bytes(),
-            )?;
+            )
+            .map_err(|source| {
+                BuildError::io(
+                    BuildOperation::WriteResponseFile,
+                    Some(path),
+                    Some(edge),
+                    source,
+                )
+            })?;
         }
 
         let command_start_mtime = if self.options.dryrun {
@@ -818,7 +832,7 @@ impl<'a> Builder<'a> {
         } else {
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .map_err(BuildError::source)?
+                .map_err(|source| BuildError::Clock { source })?
                 .as_nanos()
                 .try_into()
                 .unwrap_or(i64::MAX)
@@ -897,8 +911,8 @@ impl<'a> Builder<'a> {
                     match command.deps_type.as_str() {
                         "" | "msvc" => Ok(()),
                         "gcc" => {
-                            let path = command.depfile_path.as_ref().ok_or_else(|| {
-                                "subcommand succeeded but dependency file is missing".to_string()
+                            let path = command.depfile_path.as_ref().ok_or({
+                                BuildError::DependencyFileMissing { edge, path: None }
                             })?;
                             if path
                                 .to_path()
@@ -909,18 +923,23 @@ impl<'a> Builder<'a> {
                                     self.graph,
                                     path.to_path().expect("byte paths are valid on Unix"),
                                     false,
-                                )
-                                .map_err(|error| format!("{path}: {error}"))?;
+                                )?;
                                 Self::replace_depfile_deps(self.graph, edge, &deps.nodes);
                                 let edge = self.graph.edge_mut(edge);
                                 edge.deps_loaded = true;
                                 edge.deps_missing = false;
                                 Ok(())
                             } else {
-                                Err("subcommand succeeded but dependency file is missing".into())
+                                Err(BuildError::DependencyFileMissing {
+                                    edge,
+                                    path: Some(path.clone()),
+                                })
                             }
                         }
-                        deps_type => Err(format!("unsupported deps type '{deps_type}'").into()),
+                        deps_type => Err(BuildError::UnsupportedDepsType {
+                            edge,
+                            deps_type: deps_type.to_owned(),
+                        }),
                     }
                 } else {
                     Ok(())
@@ -953,9 +972,15 @@ impl<'a> Builder<'a> {
                     }
                 }
                 if status_interrupted(status) {
-                    return Err("interrupted by user".into());
+                    return Err(BuildError::Interrupted {
+                        status: Some(status),
+                    });
                 }
-                return Err(format!("subcommand failed: {}", command.command).into());
+                return Err(BuildError::SubcommandFailed {
+                    edge,
+                    command: command.command,
+                    status,
+                });
             }
         } else {
             self.command_finished(edge, &command, None, &[])?;
@@ -967,7 +992,16 @@ impl<'a> Builder<'a> {
         let edge_hash = self.graph.edge(edge).hash;
         for output in output_ids {
             let path = self.graph.node(output).path.clone();
-            let mtime = disk.stat(path.to_path().expect("byte paths are valid on Unix"))?;
+            let mtime = disk
+                .stat(path.to_path().expect("byte paths are valid on Unix"))
+                .map_err(|source| {
+                    BuildError::io(
+                        BuildOperation::StatOutput,
+                        Some(path.clone()),
+                        Some(edge),
+                        source,
+                    )
+                })?;
             let output = self.graph.node_mut(output);
             output.mtime = mtime;
             output.dirty = false;
@@ -1224,7 +1258,7 @@ impl<'a> Builder<'a> {
                 if let Some(signal) = crate::subprocess::interrupted_signal() {
                     processes.interrupt(signal);
                     failures = failure_limit;
-                    last_error = Some("interrupted by user".into());
+                    last_error = Some(BuildError::Interrupted { status: None });
                 }
                 let maxjobs =
                     if self.options.maxload > 0.0 && status::queryload() > self.options.maxload {
@@ -1342,7 +1376,7 @@ impl<'a> Builder<'a> {
         if let Some(error) = last_error {
             Err(error)
         } else if self.plan.more_to_do() {
-            Err("build stopped: dependencies are blocked".into())
+            Err(BuildError::DependenciesBlocked)
         } else {
             Ok(())
         }

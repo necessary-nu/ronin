@@ -1,9 +1,9 @@
 //! Dependency-log support translated from `deps.c`.
 
 use crate::env::edgevar;
-use crate::error::PersistenceError;
+use crate::error::{DepfileProblem, PersistenceError, PersistenceOperation};
 use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId};
-use crate::util::ByteSlice;
+use crate::util::{BString, ByteSlice};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -47,6 +47,10 @@ impl DepsLog {
     // [spec:samurai:sem:deps.depsclose-fn]
     pub(crate) fn finish(mut self) -> io::Result<()> {
         self.writer.flush()
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -143,7 +147,7 @@ fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, PersistenceErr
             b'$' => {
                 saw_non_whitespace = true;
                 if line.get(index + 1) != Some(&b'$') {
-                    return Err("depfile contains a variable reference".into());
+                    return Err(PersistenceError::depfile(DepfileProblem::VariableReference));
                 }
                 token.push(b'$');
                 index += 2;
@@ -204,7 +208,7 @@ fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, PersistenceErr
         return Ok(None);
     }
     if !inputs_started {
-        return Err("expected ':' in depfile".into());
+        return Err(PersistenceError::depfile(DepfileProblem::MissingColon));
     }
     Ok(Some((outputs.into_vec(), inputs.into_vec())))
 }
@@ -219,7 +223,7 @@ fn merge_depfile_rule(
     };
     let output_is_input = rule_outputs.iter().any(|output| inputs.contains(output));
     if output_is_input && !rule_inputs.is_empty() {
-        return Err("inputs may not also have inputs".into());
+        return Err(PersistenceError::depfile(DepfileProblem::NestedInputs));
     }
     if !output_is_input {
         for output in rule_outputs {
@@ -714,17 +718,28 @@ pub(crate) fn depsparse(
     graph: &mut Graph,
     path: &Path,
     allow_missing: bool,
-) -> io::Result<NodeArray> {
+) -> Result<NodeArray, PersistenceError> {
     let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if allow_missing && error.kind() == io::ErrorKind::NotFound => {
             return Ok(NodeArray::default())
         }
-        Err(error) => return Err(error),
+        Err(source) => {
+            return Err(PersistenceError::io(
+                PersistenceOperation::ReadDepfile,
+                path,
+                source,
+            ))
+        }
     };
     let mut nodes = Vec::new();
-    let parsed =
-        parse_depfile(&text).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let display_path = BString::from(path.as_os_str().as_encoded_bytes());
+    let parsed = parse_depfile(&text).map_err(|error| match error {
+        PersistenceError::Depfile { problem, .. } => {
+            PersistenceError::depfile_at(display_path, problem)
+        }
+        PersistenceError::Io { .. } => unreachable!("depfile parsing performs no I/O"),
+    })?;
     for dependency in parsed.inputs {
         let mut path = crate::util::mkstr(dependency.len());
         path.copy_from_slice(&dependency);
@@ -745,21 +760,32 @@ pub(crate) fn depsparse_for_edge(
     graph: &mut Graph,
     path: &Path,
     edge: EdgeId,
-) -> io::Result<Option<NodeArray>> {
+) -> Result<Option<NodeArray>, PersistenceError> {
     let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        Err(error) => return Err(error),
+        Err(source) => {
+            return Err(PersistenceError::io(
+                PersistenceOperation::ReadDepfile,
+                path,
+                source,
+            ))
+        }
     };
     if text.is_empty() {
         return Ok(None);
     }
-    let parsed =
-        parse_depfile(&text).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let display_path = BString::from(path.as_os_str().as_encoded_bytes());
+    let parsed = parse_depfile(&text).map_err(|error| match error {
+        PersistenceError::Depfile { problem, .. } => {
+            PersistenceError::depfile_at(display_path.clone(), problem)
+        }
+        PersistenceError::Io { .. } => unreachable!("depfile parsing performs no I/O"),
+    })?;
     if parsed.outputs.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "no outputs declared",
+        return Err(PersistenceError::depfile_at(
+            display_path,
+            DepfileProblem::NoOutputs,
         ));
     }
     let outputs = graph.edge(edge).out.clone();
@@ -776,12 +802,9 @@ pub(crate) fn depsparse_for_edge(
             .iter()
             .any(|expected| graph.node(*expected).path.as_bytes() == output)
         {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "depfile mentions '{}' as an output, but no such output was declared",
-                    String::from_utf8_lossy(&output)
-                ),
+            return Err(PersistenceError::depfile_at(
+                display_path,
+                DepfileProblem::UndeclaredOutput(BString::from(output)),
             ));
         }
     }
@@ -824,7 +847,11 @@ pub(crate) fn visit_dependencies(log: &DepsLog, mut visit: impl FnMut(NodeId, No
 
 // [spec:samurai:def:deps.depsrecord-fn]
 // [spec:samurai:sem:deps.depsrecord-fn]
-pub(crate) fn depsrecord(log: &mut DepsLog, edge: EdgeId, graph: &mut Graph) -> io::Result<()> {
+pub(crate) fn depsrecord(
+    log: &mut DepsLog,
+    edge: EdgeId,
+    graph: &mut Graph,
+) -> Result<(), PersistenceError> {
     let Some(depfile) = edgevar(graph, edge, "depfile", false) else {
         return Ok(());
     };
@@ -881,13 +908,19 @@ pub(crate) fn depsrecordnodes(
     graph: &mut Graph,
     edge: EdgeId,
     deps: &[NodeId],
-) -> io::Result<()> {
+) -> Result<(), PersistenceError> {
     let outputs = graph.edge(edge).out.clone();
     let mtimes = outputs
         .iter()
         .map(|output| graph.node(*output).mtime)
         .collect::<Vec<_>>();
-    record_nodes(log, graph, &outputs, deps, &mtimes)
+    record_nodes(log, graph, &outputs, deps, &mtimes).map_err(|source| {
+        PersistenceError::io(
+            PersistenceOperation::RecordDepsLog,
+            log.path.clone(),
+            source,
+        )
+    })
 }
 
 #[cfg(test)]
@@ -1031,11 +1064,13 @@ mod ninja_depfile_tests {
     #[test]
     fn ninja_depfile_parser_rejects_invalid_rules() {
         assert_eq!(
-            parse_depfile(b"foo: x y z\nx: alsoin\ny:\nz:\n").unwrap_err(),
+            parse_depfile(b"foo: x y z\nx: alsoin\ny:\nz:\n")
+                .unwrap_err()
+                .to_string(),
             "inputs may not also have inputs"
         );
         assert_eq!(
-            parse_depfile(b"foo.o foo.c\n").unwrap_err(),
+            parse_depfile(b"foo.o foo.c\n").unwrap_err().to_string(),
             "expected ':' in depfile"
         );
     }

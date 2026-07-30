@@ -867,12 +867,22 @@ children (
                 id ronin-semantic-errors
                 title "Replace stringly subsystem errors with semantic variants"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.semantic-errors])
+                }
                 log (
                     {
                         at 2026-07-29T22:58:22.74463505Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Introduce concrete error variants carrying paths, source spans, edge or node identity, process exit status, and retained source errors. Derive the stable public ErrorKind classifier from semantic variants; remove Display-string parsing and broad String/io conversions that misclassify failures; keep invariant-only expects explicit; move string equality helpers into tests; and handle final output write failures including BrokenPipe deliberately."
+                    }
+
+                    {
+                        at 2026-07-29T23:57:53.472154364Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

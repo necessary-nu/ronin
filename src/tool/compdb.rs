@@ -1,5 +1,5 @@
 use crate::env::edgevar;
-use crate::error::ToolError;
+use crate::error::{ToolError, ToolOperation};
 use crate::graph::{nodeget, CommandCollector, EdgeId, Graph};
 use crate::util::{BString, ByteSlice};
 
@@ -89,7 +89,10 @@ fn render_with_current_directory(
     skip_phony: bool,
     current_directory: impl FnOnce() -> std::io::Result<std::path::PathBuf>,
 ) -> Result<BString, ToolError> {
-    let directory = current_directory()?.into_os_string().into_encoded_bytes();
+    let directory = current_directory()
+        .map_err(|source| ToolError::io(ToolOperation::CurrentDirectory, None, source))?
+        .into_os_string()
+        .into_encoded_bytes();
     let mut output = Vec::from(&b"[\n"[..]);
     let mut first = true;
     for edge in edges {
@@ -150,18 +153,19 @@ pub(crate) fn compdb_for_targets(
     expand_rsp: bool,
 ) -> Result<BString, ToolError> {
     if targets.is_empty() {
-        return Err("compdb-targets expects the name of at least one target".into());
+        return Err(ToolError::MissingArgument {
+            diagnostic: "compdb-targets expects the name of at least one target",
+        });
     }
     let mut collector = CommandCollector::default();
     for target in targets {
-        let node = nodeget(graph, target.as_bytes())
-            .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))?;
+        let node = nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
+            path: target.clone(),
+        })?;
         if graph.node(node).gen.is_none() {
-            return Err(format!(
-                "'{}' is not a target (i.e. it is not an output of any `build` statement)",
-                target.to_str_lossy()
-            )
-            .into());
+            return Err(ToolError::NotTarget {
+                path: target.clone(),
+            });
         }
         collector.collect_from(graph, node);
     }
@@ -199,7 +203,9 @@ mod tests {
             .contains_str("\"command\": \"cc -DVALUE source -o object\""));
         assert!(!expanded.as_bytes().contains_str("@object.rsp"));
         assert_eq!(
-            compdb_for_targets(&fixture.graph, &["source".into()], false).unwrap_err(),
+            compdb_for_targets(&fixture.graph, &["source".into()], false)
+                .unwrap_err()
+                .to_string(),
             "'source' is not a target (i.e. it is not an output of any `build` statement)"
         );
     }

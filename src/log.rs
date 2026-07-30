@@ -1,5 +1,6 @@
 //! Version-7 Ninja build log reader and writer.
 
+use crate::error::{PersistenceError, PersistenceOperation};
 #[cfg(test)]
 use crate::graph::NodeId;
 use crate::graph::{nodeget, EdgeId, Graph};
@@ -88,6 +89,10 @@ impl BuildLog {
         self.writer
             .take()
             .map_or(Ok(()), |mut writer| writer.flush())
+    }
+
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -265,7 +270,7 @@ pub(crate) fn logrecordedge(
     start_time: i32,
     end_time: i32,
     record_mtime: i64,
-) -> io::Result<()> {
+) -> Result<(), PersistenceError> {
     let (outputs, command_hash) = {
         let edge = graph.edge(edge);
         (edge.out.clone(), edge.hash)
@@ -283,7 +288,13 @@ pub(crate) fn logrecordedge(
             }
         })
         .collect();
-    record_entries(log, entries)
+    record_entries(log, entries).map_err(|source| {
+        PersistenceError::io(
+            PersistenceOperation::RecordBuildLog,
+            log.path.clone(),
+            source,
+        )
+    })
 }
 
 pub(crate) fn logrestat<F>(log: &mut BuildLog, filters: &[BString], mut stat: F) -> io::Result<()>

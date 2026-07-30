@@ -155,4 +155,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule runtime.persistence-transactions}
     )}
+    {id ronin-semantic-errors, covered_rules (
+        runtime.semantic-errors
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.semantic-errors}
+    )}
 )

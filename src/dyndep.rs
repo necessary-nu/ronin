@@ -1,6 +1,6 @@
 //! Ninja version-1 dynamic dependency file parser.
 
-use crate::error::ManifestError;
+use crate::error::{ManifestError, ScanError, SourceSpan};
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring, Scanner, Token,
@@ -76,43 +76,98 @@ impl Iterator for DyndepIntoIter {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+enum DyndepErrorKind {
+    Scan(ScanError),
+    ExpectedVersion,
+    UnsupportedVersion(BString),
+    EmptyPath,
+    ExpectedPath,
+    UnexpectedEof,
+    NoBuildStatement(BString),
+    MultipleStatements(BString),
+    ExplicitOutputsUnsupported,
+    ExpectedDyndepCommand,
+    ExplicitInputsUnsupported,
+    OrderOnlyInputsUnsupported,
+    ValidationExpectedNewline,
+    BindingNotRestat,
+    UnexpectedEquals,
+    UnexpectedIdentifier,
+}
+
+impl fmt::Display for DyndepErrorKind {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scan(error) => error.diagnostic().fmt(formatter),
+            Self::ExpectedVersion => formatter.write_str("expected 'ninja_dyndep_version = ...'"),
+            Self::UnsupportedVersion(value) => {
+                write!(formatter, "unsupported 'ninja_dyndep_version = {value}'")
+            }
+            Self::EmptyPath => formatter.write_str("empty path"),
+            Self::ExpectedPath => formatter.write_str("expected path"),
+            Self::UnexpectedEof => formatter.write_str("unexpected EOF"),
+            Self::NoBuildStatement(output) => {
+                write!(formatter, "no build statement exists for '{output}'")
+            }
+            Self::MultipleStatements(output) => {
+                write!(formatter, "multiple statements for '{output}'")
+            }
+            Self::ExplicitOutputsUnsupported => {
+                formatter.write_str("explicit outputs not supported")
+            }
+            Self::ExpectedDyndepCommand => {
+                formatter.write_str("expected build command name 'dyndep'")
+            }
+            Self::ExplicitInputsUnsupported => formatter.write_str("explicit inputs not supported"),
+            Self::OrderOnlyInputsUnsupported => {
+                formatter.write_str("order-only inputs not supported")
+            }
+            Self::ValidationExpectedNewline => formatter.write_str("expected newline, got '|@'"),
+            Self::BindingNotRestat => formatter.write_str("binding is not 'restat'"),
+            Self::UnexpectedEquals => formatter.write_str("unexpected '='"),
+            Self::UnexpectedIdentifier => formatter.write_str("unexpected identifier"),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct DyndepError {
-    pub(crate) line: usize,
-    pub(crate) message: String,
+    pub(crate) span: SourceSpan,
+    kind: DyndepErrorKind,
 }
 
 impl fmt::Display for DyndepError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "input:{}: {}", self.line, self.message)
+        write!(formatter, "input:{}: {}", self.span.line, self.kind)
     }
 }
 
-impl std::error::Error for DyndepError {}
+impl std::error::Error for DyndepError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match &self.kind {
+            DyndepErrorKind::Scan(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
-fn error(line: usize, message: impl Into<String>) -> DyndepError {
+fn error(line: usize, kind: DyndepErrorKind) -> DyndepError {
     DyndepError {
-        line,
-        message: message.into(),
+        span: SourceSpan::new("input", line, 0),
+        kind,
     }
 }
 
-fn scanner_error(scanner: &Scanner, message: &ManifestError) -> DyndepError {
-    let message = message.to_string();
-    let prefix = format!(
-        "{}:{}:{}: ",
-        scanner.path.display(),
-        scanner.line,
-        scanner.col
-    );
-    error(
-        scanner.line,
-        message.strip_prefix(&prefix).unwrap_or(&message).to_owned(),
-    )
+fn scanner_error(error: ScanError) -> DyndepError {
+    DyndepError {
+        span: error.span.clone(),
+        kind: DyndepErrorKind::Scan(error),
+    }
 }
 
 macro_rules! scan {
     ($scanner:expr, $operation:expr) => {
-        $operation.map_err(|message| scanner_error($scanner, &message))?
+        $operation.map_err(scanner_error)?
     };
 }
 
@@ -138,9 +193,9 @@ fn parse_version(scanner: &mut Scanner) -> Result<(), DyndepError> {
     let line = scanner.line;
     let name = scanner
         .take_variable()
-        .ok_or_else(|| error(line, "expected 'ninja_dyndep_version = ...'"))?;
+        .ok_or_else(|| error(line, DyndepErrorKind::ExpectedVersion))?;
     if name != "ninja_dyndep_version" {
-        return Err(error(line, "expected 'ninja_dyndep_version = ...'"));
+        return Err(error(line, DyndepErrorKind::ExpectedVersion));
     }
     scan!(scanner, scanchar(scanner, '='));
     let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
@@ -154,10 +209,7 @@ fn parse_version(scanner: &mut Scanner) -> Result<(), DyndepError> {
         .next()
         .map_or(Some(0), |part| part.parse::<u32>().ok());
     if major != Some(1) || minor != Some(0) {
-        return Err(error(
-            line,
-            format!("unsupported 'ninja_dyndep_version = {text}'"),
-        ));
+        return Err(error(line, DyndepErrorKind::UnsupportedVersion(value)));
     }
     Ok(())
 }
@@ -165,7 +217,7 @@ fn parse_version(scanner: &mut Scanner) -> Result<(), DyndepError> {
 fn dynamic_node(graph: &mut Graph, path: EvalString, line: usize) -> Result<NodeId, DyndepError> {
     let mut path = evaluate_empty(path);
     if path.is_empty() {
-        return Err(error(line, "empty path"));
+        return Err(error(line, DyndepErrorKind::EmptyPath));
     }
     canonpath(&mut path);
     Ok(mknode(graph, path))
@@ -181,38 +233,29 @@ fn parse_build(
         return Err(error(
             line,
             if scanner.current().is_none() {
-                "unexpected EOF"
+                DyndepErrorKind::UnexpectedEof
             } else {
-                "expected path"
+                DyndepErrorKind::ExpectedPath
             },
         ));
     };
     let mut output = evaluate_empty(output);
     if output.is_empty() {
-        return Err(error(line, "empty path"));
+        return Err(error(line, DyndepErrorKind::EmptyPath));
     }
     canonpath(&mut output);
     let Some(node) = nodeget(graph, output.as_bytes()) else {
-        return Err(error(
-            line,
-            format!("no build statement exists for '{}'", output.to_str_lossy()),
-        ));
+        return Err(error(line, DyndepErrorKind::NoBuildStatement(output)));
     };
     let Some(edge) = graph.node(node).gen else {
-        return Err(error(
-            line,
-            format!("no build statement exists for '{}'", output.to_str_lossy()),
-        ));
+        return Err(error(line, DyndepErrorKind::NoBuildStatement(output)));
     };
     if file.get(edge).is_some() {
-        return Err(error(
-            line,
-            format!("multiple statements for '{}'", output.to_str_lossy()),
-        ));
+        return Err(error(line, DyndepErrorKind::MultipleStatements(output)));
     }
 
     if scan!(scanner, scanstring(scanner, true)).is_some() {
-        return Err(error(line, "explicit outputs not supported"));
+        return Err(error(line, DyndepErrorKind::ExplicitOutputsUnsupported));
     }
     let mut implicit_outputs = Vec::new();
     if scan!(scanner, scanpipe(scanner, 1)) != 0 {
@@ -221,17 +264,17 @@ fn parse_build(
         }
     }
     if scanner.current().is_none() {
-        return Err(error(line, "unexpected EOF"));
+        return Err(error(line, DyndepErrorKind::UnexpectedEof));
     }
     scan!(scanner, scanchar(scanner, ':'));
     let rule =
-        scanname(scanner).map_err(|_| error(line, "expected build command name 'dyndep'"))?;
+        scanname(scanner).map_err(|_| error(line, DyndepErrorKind::ExpectedDyndepCommand))?;
     if rule != "dyndep" {
-        return Err(error(line, "expected build command name 'dyndep'"));
+        return Err(error(line, DyndepErrorKind::ExpectedDyndepCommand));
     }
 
     if scan!(scanner, scanstring(scanner, true)).is_some() {
-        return Err(error(line, "explicit inputs not supported"));
+        return Err(error(line, DyndepErrorKind::ExplicitInputsUnsupported));
     }
     let mut implicit_inputs = Vec::new();
     match scan!(scanner, scanpipe(scanner, 1 | 2 | 4)) {
@@ -240,13 +283,13 @@ fn parse_build(
                 implicit_inputs.push(dynamic_node(graph, path, line)?);
             }
             match scan!(scanner, scanpipe(scanner, 2 | 4)) {
-                2 => return Err(error(line, "order-only inputs not supported")),
-                4 => return Err(error(line, "expected newline, got '|@'")),
+                2 => return Err(error(line, DyndepErrorKind::OrderOnlyInputsUnsupported)),
+                4 => return Err(error(line, DyndepErrorKind::ValidationExpectedNewline)),
                 _ => {}
             }
         }
-        2 => return Err(error(line, "order-only inputs not supported")),
-        4 => return Err(error(line, "expected newline, got '|@'")),
+        2 => return Err(error(line, DyndepErrorKind::OrderOnlyInputsUnsupported)),
+        4 => return Err(error(line, DyndepErrorKind::ValidationExpectedNewline)),
         _ => {}
     }
     scan!(scanner, scannewline(scanner));
@@ -263,16 +306,12 @@ fn parse_build(
         let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
         scan!(scanner, scannewline(scanner));
         if name != "restat" {
-            return Err(error(binding_line, "binding is not 'restat'"));
+            return Err(error(binding_line, DyndepErrorKind::BindingNotRestat));
         }
         dyndeps.restat = !evaluate_empty(value).is_empty();
     }
-    file.insert(edge, dyndeps).map_err(|_| {
-        error(
-            line,
-            format!("multiple statements for '{}'", output.to_str_lossy()),
-        )
-    })
+    file.insert(edge, dyndeps)
+        .map_err(|_| error(line, DyndepErrorKind::MultipleStatements(output)))
 }
 
 pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFile, DyndepError> {
@@ -281,28 +320,28 @@ pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFi
     let mut file = DyndepFile::default();
     loop {
         if scanner.current() == Some(b'=') {
-            return Err(error(scanner.line, "unexpected '='"));
+            return Err(error(scanner.line, DyndepErrorKind::UnexpectedEquals));
         }
         match scan!(&scanner, scankeyword(&mut scanner)) {
             Some(Token::Build) if have_version => parse_build(graph, &mut file, &mut scanner)?,
             Some(Token::Build) => {
-                return Err(error(scanner.line, "expected 'ninja_dyndep_version = ...'"));
+                return Err(error(scanner.line, DyndepErrorKind::ExpectedVersion));
             }
             Some(Token::Variable) if !have_version => {
                 parse_version(&mut scanner)?;
                 have_version = true;
             }
             Some(_) => {
-                let message = if have_version {
-                    "unexpected identifier"
+                let kind = if have_version {
+                    DyndepErrorKind::UnexpectedIdentifier
                 } else {
-                    "expected 'ninja_dyndep_version = ...'"
+                    DyndepErrorKind::ExpectedVersion
                 };
-                return Err(error(scanner.line, message));
+                return Err(error(scanner.line, kind));
             }
             None if have_version => return Ok(file),
             None => {
-                return Err(error(scanner.line, "expected 'ninja_dyndep_version = ...'"));
+                return Err(error(scanner.line, DyndepErrorKind::ExpectedVersion));
             }
         }
     }
@@ -310,8 +349,13 @@ pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFi
 
 pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), ManifestError> {
     let path = graph.node(dyndep).path.clone();
-    let input = fs::read(path.to_path().expect("byte paths are valid on Unix"))
-        .map_err(|error| format!("loading '{path}': {error}"))?;
+    let input =
+        fs::read(path.to_path().expect("byte paths are valid on Unix")).map_err(|source| {
+            ManifestError::DyndepRead {
+                path: path.clone(),
+                source,
+            }
+        })?;
     let file = parse_dyndep(input, graph)?;
 
     for edge in graph
@@ -326,12 +370,9 @@ pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), Manif
                 .edge(edge)
                 .out
                 .first()
-                .map(|output| {
-                    let output = graph.node(*output);
-                    String::from_utf8_lossy(output.path.as_bytes()).into_owned()
-                })
+                .map(|output| graph.node(*output).path.clone())
                 .unwrap_or_default();
-            return Err(format!("'{output}' not mentioned in its dyndep file '{path}'").into());
+            return Err(ManifestError::DyndepMissingOutput { path, output });
         }
     }
 
@@ -342,15 +383,9 @@ pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), Manif
                 .edge(edge)
                 .out
                 .first()
-                .map(|output| {
-                    let output = graph.node(*output);
-                    String::from_utf8_lossy(output.path.as_bytes()).into_owned()
-                })
+                .map(|output| graph.node(*output).path.clone())
                 .unwrap_or_default();
-            return Err(format!(
-                "dyndep file '{path}' mentions output '{output}' whose build statement does not have a dyndep binding for the file"
-            )
-            .into());
+            return Err(ManifestError::DyndepWrongOwner { path, output });
         }
     }
 
@@ -358,12 +393,10 @@ pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), Manif
         for output in &dyndeps.implicit_outputs {
             if let Some(generator) = graph.node(*output).gen {
                 if generator != edge {
-                    let output = graph.node(*output);
-                    return Err(format!(
-                        "multiple rules generate {}",
-                        String::from_utf8_lossy(output.path.as_bytes())
-                    )
-                    .into());
+                    return Err(ManifestError::DyndepDuplicateOutput {
+                        path,
+                        output: graph.node(*output).path.clone(),
+                    });
                 }
             }
         }
@@ -486,11 +519,12 @@ mod tests {
                 let Err(error) = parse($input) else {
                     panic!("invalid dyndep input unexpectedly parsed");
                 };
+                let diagnostic = error.kind.to_string();
                 assert!(
-                    error.message.contains($message),
+                    diagnostic.contains($message),
                     "expected {:?} in {:?}",
                     $message,
-                    error.message
+                    diagnostic
                 );
             }
         };
@@ -852,7 +886,7 @@ mod tests {
             Some("ninja_dyndep_version = 1\nbuild out2 | shared: dyndep\n"),
         );
         assert_eq!(
-            load_dyndep(&mut graph, dyndep).unwrap_err(),
+            load_dyndep(&mut graph, dyndep).unwrap_err().to_string(),
             "multiple rules generate shared"
         );
         fs::remove_dir_all(directory).unwrap();

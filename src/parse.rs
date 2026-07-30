@@ -4,7 +4,7 @@ use crate::env::{
     edgevar, envaddrule, enveval, envrule, mkpool, mkrule, poolget, ruleaddvar, EnvState,
     EnvironmentId,
 };
-use crate::error::ManifestError;
+use crate::error::{ManifestError, ManifestProblem, SourceSpan};
 use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId};
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
@@ -13,6 +13,13 @@ use crate::scan::{
 use crate::util::{canonpath, BStr, BString, ByteSlice, EvalString};
 
 type ManifestResult<T> = Result<T, ManifestError>;
+
+fn manifest_error(scanner: &Scanner, problem: ManifestProblem) -> ManifestError {
+    ManifestError::at(
+        SourceSpan::new(&scanner.path, scanner.line, scanner.col),
+        problem,
+    )
+}
 
 // [spec:samurai:def:parse.parseoptions]
 #[derive(Clone, Copy, Default)]
@@ -72,7 +79,10 @@ fn parserule(
                 | "rspfile_content"
                 | "msvc_deps_prefix"
         ) {
-            return Err(format!("unexpected rule variable '{name}'").into());
+            return Err(manifest_error(
+                scanner,
+                ManifestProblem::UnexpectedRuleVariable { name },
+            ));
         }
         command |= name == "command";
         rspfile |= name == "rspfile";
@@ -80,24 +90,29 @@ fn parserule(
         ruleaddvar(graph, rule, name, value);
     }
     if !command {
-        return Err(format!("rule '{name}' has no command").into());
+        return Err(manifest_error(
+            scanner,
+            ManifestProblem::RuleMissingCommand { name },
+        ));
     }
     if rspfile != rspfile_content {
-        return Err(
-            format!("rule '{name}' has rspfile and no rspfile_content or vice versa").into(),
-        );
+        return Err(manifest_error(
+            scanner,
+            ManifestProblem::IncompleteResponseFileBinding { name },
+        ));
     }
     Ok(envaddrule(graph, environment, rule)?)
 }
 
 fn evaluated_path(
+    scanner: &Scanner,
     graph: &Graph,
     path: &EvalString,
     environment: EnvironmentId,
 ) -> ManifestResult<BString> {
     let value = enveval(graph, environment, path);
     if value.is_empty() {
-        return Err("empty path".into());
+        return Err(manifest_error(scanner, ManifestProblem::EmptyPath));
     }
     Ok(value)
 }
@@ -107,11 +122,12 @@ fn take_paths(scanner: &mut Scanner) -> Vec<EvalString> {
 }
 
 fn node_for(
+    scanner: &Scanner,
     graph: &mut Graph,
     path: &EvalString,
     environment: EnvironmentId,
 ) -> ManifestResult<NodeId> {
-    let mut path = evaluated_path(graph, path, environment)?;
+    let mut path = evaluated_path(scanner, graph, path, environment)?;
     canonpath(&mut path);
     Ok(mknode(graph, path))
 }
@@ -137,12 +153,21 @@ fn parseedge(
         output_paths.extend(take_paths(scanner));
     }
     if output_paths.is_empty() {
-        return Err("build has no outputs".into());
+        return Err(manifest_error(
+            scanner,
+            ManifestProblem::BuildWithoutOutputs,
+        ));
     }
     scanchar(scanner, ':')?;
     let rule_name = scanname(scanner)?;
-    let rule = envrule(graph, environment, &rule_name)
-        .ok_or_else(|| format!("undefined rule '{rule_name}'"))?;
+    let rule = envrule(graph, environment, &rule_name).ok_or_else(|| {
+        manifest_error(
+            scanner,
+            ManifestProblem::UndefinedRule {
+                name: rule_name.clone(),
+            },
+        )
+    })?;
 
     scanpaths(scanner)?;
     let mut input_paths = take_paths(scanner);
@@ -175,14 +200,15 @@ fn parseedge(
     let mut out = Vec::new();
     let mut outimpidx = 0;
     for (index, output) in output_paths.iter().enumerate() {
-        let node = node_for(graph, output, environment)?;
+        let node = node_for(scanner, graph, output, environment)?;
         if graph.node(node).gen.is_some() || out.contains(&node) {
             if !options.dupbuildwarn {
-                return Err(format!(
-                    "multiple rules generate '{}'",
-                    String::from_utf8_lossy(graph.node(node).path.as_bytes())
-                )
-                .into());
+                return Err(manifest_error(
+                    scanner,
+                    ManifestProblem::DuplicateOutput {
+                        path: graph.node(node).path.clone(),
+                    },
+                ));
             }
             continue;
         }
@@ -193,16 +219,19 @@ fn parseedge(
         if options.dupbuildwarn {
             return Ok(());
         }
-        return Err("build has no outputs".into());
+        return Err(manifest_error(
+            scanner,
+            ManifestProblem::BuildWithoutOutputs,
+        ));
     }
 
     let input = input_paths
         .iter()
-        .map(|path| node_for(graph, path, environment))
+        .map(|path| node_for(scanner, graph, path, environment))
         .collect::<Result<Vec<_>, _>>()?;
     let validation = validation_paths
         .iter()
-        .map(|path| node_for(graph, path, environment))
+        .map(|path| node_for(scanner, graph, path, environment))
         .collect::<Result<Vec<_>, _>>()?;
     let edge = mkedge(graph, environment);
     let edge_env = graph.edge(edge).env;
@@ -242,11 +271,10 @@ fn parseedge(
         canonpath(&mut dyndep_path);
         let dyndep = mknode(graph, dyndep_path.clone());
         if !graph.edge(edge).input.contains(&dyndep) {
-            return Err(format!(
-                "dyndep '{}' is not an input",
-                String::from_utf8_lossy(dyndep_path.as_bytes())
-            )
-            .into());
+            return Err(manifest_error(
+                scanner,
+                ManifestProblem::DyndepNotInput { path: dyndep_path },
+            ));
         }
         graph.node_mut(dyndep).dyndep_pending = true;
         graph.edge_mut(edge).dyndep = Some(dyndep);
@@ -291,9 +319,10 @@ fn parseinclude(
     state: &mut EnvState,
     newscope: bool,
 ) -> ManifestResult<()> {
-    let path = scanstring(scanner, true)?.ok_or_else(|| "expected include path".to_owned())?;
+    let path = scanstring(scanner, true)?
+        .ok_or_else(|| manifest_error(scanner, ManifestProblem::ExpectedIncludePath))?;
     scannewline(scanner)?;
-    let path = evaluated_path(graph, &path, environment)?;
+    let path = evaluated_path(scanner, graph, &path, environment)?;
     let environment = if newscope {
         crate::env::mkenv(graph, Some(environment))
     } else {
@@ -320,16 +349,18 @@ fn parsedefault(
     let targets = take_paths(scanner);
     scannewline(scanner)?;
     if targets.is_empty() {
-        return Err("expected target name".into());
+        return Err(manifest_error(scanner, ManifestProblem::ExpectedTargetName));
     }
     for target in targets {
-        let mut target = evaluated_path(graph, &target, environment)?;
+        let mut target = evaluated_path(scanner, graph, &target, environment)?;
         canonpath(&mut target);
         parser.defaults.push(
             crate::graph::nodeget(graph, target.as_bytes()).ok_or_else(|| {
-                format!(
-                    "unknown target '{}'",
-                    String::from_utf8_lossy(target.as_bytes())
+                manifest_error(
+                    scanner,
+                    ManifestProblem::UnknownTarget {
+                        path: target.clone(),
+                    },
                 )
             })?,
         );
@@ -351,35 +382,48 @@ fn parsepool(
     while scanindent(scanner)? {
         let (name, value) = parselet(scanner)?;
         if name != "depth" {
-            return Err(format!("unexpected pool variable '{name}'").into());
+            return Err(manifest_error(
+                scanner,
+                ManifestProblem::UnexpectedPoolVariable { name },
+            ));
         }
         let value = enveval(graph, environment, &value);
-        let text = String::from_utf8_lossy(value.as_bytes());
-        graph.pool_mut(pool).maxjobs = text
-            .parse()
-            .map_err(|_| format!("invalid pool depth '{text}'"))?;
+        graph.pool_mut(pool).maxjobs =
+            String::from_utf8_lossy(value.as_bytes())
+                .parse()
+                .map_err(|_| {
+                    manifest_error(
+                        scanner,
+                        ManifestProblem::InvalidPoolDepth {
+                            value: value.clone(),
+                        },
+                    )
+                })?;
     }
     if graph.pool(pool).maxjobs <= 0 {
-        return Err("pool has no depth".into());
+        return Err(manifest_error(scanner, ManifestProblem::PoolWithoutDepth));
     }
     Ok(())
 }
 
 // [spec:samurai:def:parse.checkversion-fn]
 // [spec:samurai:sem:parse.checkversion-fn]
-fn checkversion(version: &BStr) -> ManifestResult<(i32, i32)> {
+fn checkversion(scanner: &Scanner, version: &BStr) -> ManifestResult<(i32, i32)> {
     let bytes = version.as_bytes();
     let major_end = bytes
         .iter()
         .position(|byte| !byte.is_ascii_digit())
         .unwrap_or(bytes.len());
     if major_end == 0 {
-        return Err("invalid ninja_required_version".into());
+        return Err(manifest_error(
+            scanner,
+            ManifestProblem::InvalidRequiredVersion,
+        ));
     }
     let major = std::str::from_utf8(&bytes[..major_end])
         .unwrap()
         .parse::<i32>()
-        .map_err(|_| "invalid ninja_required_version".to_owned())?;
+        .map_err(|_| manifest_error(scanner, ManifestProblem::InvalidRequiredVersion))?;
     let mut minor = 0;
     if bytes.get(major_end) == Some(&b'.') {
         let minor_bytes = &bytes[major_end + 1..];
@@ -391,15 +435,16 @@ fn checkversion(version: &BStr) -> ManifestResult<(i32, i32)> {
             minor = std::str::from_utf8(&minor_bytes[..minor_end])
                 .unwrap()
                 .parse::<i32>()
-                .map_err(|_| "invalid ninja_required_version".to_owned())?;
+                .map_err(|_| manifest_error(scanner, ManifestProblem::InvalidRequiredVersion))?;
         }
     }
     if major > 1 || major == 1 && minor > 9 {
-        Err(format!(
-            "ninja_required_version {} is newer than 1.9",
-            String::from_utf8_lossy(bytes)
-        )
-        .into())
+        Err(manifest_error(
+            scanner,
+            ManifestProblem::RequiredVersionTooNew {
+                version: BString::from(bytes),
+            },
+        ))
     } else {
         Ok((major, minor))
     }
@@ -415,7 +460,9 @@ pub(crate) fn parse(
     environment: EnvironmentId,
     state: &mut EnvState,
 ) -> ManifestResult<()> {
-    let mut scanner = crate::scan::Scanner::from_path(name)?;
+    let path = name.as_ref().to_owned();
+    let mut scanner = crate::scan::Scanner::from_path(&path)
+        .map_err(|source| ManifestError::read(path, source))?;
     while let Some(token) = scankeyword(&mut scanner)? {
         match token {
             Token::Rule => parserule(&mut scanner, graph, environment)?,
@@ -431,7 +478,7 @@ pub(crate) fn parse(
                 let value = parse_assignment(&mut scanner)?;
                 let value = enveval(graph, environment, &value);
                 if name == "ninja_required_version" {
-                    let (major, minor) = checkversion(BStr::new(value.as_bytes()))?;
+                    let (major, minor) = checkversion(&scanner, BStr::new(value.as_bytes()))?;
                     scanner.manifest_version_major = major;
                     scanner.manifest_version_minor = minor;
                 }

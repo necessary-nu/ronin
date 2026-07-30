@@ -218,17 +218,17 @@ pub(crate) fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
 
 // [spec:samurai:def:graph.nodestat-fn]
 // [spec:samurai:sem:graph.nodestat-fn]
-pub(crate) fn nodestat_with<F>(graph: &mut Graph, node: NodeId, stat: &mut F) -> io::Result<()>
+pub(crate) fn nodestat_with<F>(
+    graph: &mut Graph,
+    node: NodeId,
+    stat: &mut F,
+) -> Result<(), GraphError>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    let mtime = stat(
-        graph
-            .node(node)
-            .path
-            .to_path()
-            .expect("byte paths are valid on Unix"),
-    )?;
+    let path = graph.node(node).path.clone();
+    let mtime = stat(path.to_path().expect("byte paths are valid on Unix"))
+        .map_err(|source| GraphError::Stat { node, path, source })?;
     graph.node_mut(node).mtime = mtime;
     Ok(())
 }
@@ -238,7 +238,7 @@ pub(crate) fn recompute_edge_dirty_with<F>(
     graph: &mut Graph,
     edge: EdgeId,
     stat: &mut F,
-) -> io::Result<bool>
+) -> Result<bool, GraphError>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
@@ -341,7 +341,12 @@ struct DirtyEvaluator {
 }
 
 impl DirtyEvaluator {
-    fn evaluate<F>(&mut self, graph: &mut Graph, target: NodeId, stat: &mut F) -> io::Result<bool>
+    fn evaluate<F>(
+        &mut self,
+        graph: &mut Graph,
+        target: NodeId,
+        stat: &mut F,
+    ) -> Result<bool, GraphError>
     where
         F: FnMut(&Path) -> io::Result<i64>,
     {
@@ -356,10 +361,7 @@ impl DirtyEvaluator {
                 Work::Enter(node) => match self.nodes[node.index()] {
                     VisitState::Done => {}
                     VisitState::Active => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "dependency cycle",
-                        ));
+                        return Err(GraphError::DependencyCycle { node: Some(node) });
                     }
                     VisitState::New => {
                         let Some(edge) = graph.node(node).gen else {
@@ -378,10 +380,7 @@ impl DirtyEvaluator {
                                 continue;
                             }
                             VisitState::Active => {
-                                return Err(io::Error::new(
-                                    io::ErrorKind::InvalidData,
-                                    "dependency cycle",
-                                ));
+                                return Err(GraphError::DependencyCycle { node: Some(node) });
                             }
                             VisitState::New => {}
                         }
@@ -433,7 +432,7 @@ pub(crate) fn recompute_dirty_with<F>(
     graph: &mut Graph,
     node: NodeId,
     stat: &mut F,
-) -> io::Result<bool>
+) -> Result<bool, GraphError>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
@@ -448,7 +447,7 @@ pub(crate) fn recompute_dirty_with_validations<F>(
     graph: &mut Graph,
     node: NodeId,
     stat: &mut F,
-) -> io::Result<Vec<NodeId>>
+) -> Result<Vec<NodeId>, GraphError>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
@@ -614,7 +613,7 @@ pub(crate) fn rootnodes(graph: &Graph) -> Result<Vec<NodeId>, GraphError> {
         })
         .collect::<Vec<_>>();
     if roots.is_empty() && graph.edge_count() != 0 {
-        Err("could not determine root nodes of build graph".into())
+        Err(GraphError::NoRootNodes)
     } else {
         Ok(roots)
     }
@@ -815,7 +814,7 @@ mod tests {
         node: NodeId,
         mtimes: &[(&str, i64)],
         stats: &mut Vec<String>,
-    ) -> io::Result<()> {
+    ) -> Result<(), GraphError> {
         let mtimes = mtimes
             .iter()
             .map(|(path, mtime)| (path.to_string(), *mtime))
@@ -1036,7 +1035,7 @@ mod tests {
         graph: &mut Graph,
         target: &[u8],
         mtimes: &[(&str, i64)],
-    ) -> io::Result<bool> {
+    ) -> Result<bool, GraphError> {
         let mtimes = mtimes
             .iter()
             .map(|(path, mtime)| (path.to_string(), *mtime))

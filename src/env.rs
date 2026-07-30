@@ -123,7 +123,7 @@ pub(crate) fn envaddrule(
     let name = graph.rule(rule).name.clone();
     let rules = &mut graph.environment_mut(environment).rules;
     if rules.contains_key(&name) {
-        return Err(format!("rule '{name}' redefined").into());
+        return Err(GraphError::DuplicateRule { name });
     }
     rules.insert(name, rule);
     Ok(())
@@ -134,7 +134,7 @@ pub(crate) fn envaddrule(
 fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), GraphError> {
     let name = graph.pool(pool).name.clone();
     if state.pools.contains_key(&name) {
-        return Err(format!("pool '{name}' redefined").into());
+        return Err(GraphError::DuplicatePool { name });
     }
     state.pools.insert(name, pool);
     Ok(())
@@ -254,11 +254,13 @@ pub(crate) fn mkpool(
 // [spec:samurai:def:env.poolget-fn]
 // [spec:samurai:sem:env.poolget-fn]
 pub(crate) fn poolget(state: &EnvState, name: &str) -> Result<PoolId, GraphError> {
-    Ok(state
+    state
         .pools
         .get(name)
         .copied()
-        .ok_or_else(|| format!("unknown pool '{name}'"))?)
+        .ok_or_else(|| GraphError::UnknownPool {
+            name: name.to_owned(),
+        })
 }
 
 // [spec:samurai:def:env.edgevar-fn]

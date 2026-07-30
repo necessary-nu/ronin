@@ -1,6 +1,6 @@
 //! Shell subprocess execution and completion-set bookkeeping.
 
-use crate::error::ProcessError;
+use crate::error::{ProcessError, ShellOperation};
 use crate::graph::EdgeId;
 use crate::util::{BString, ByteSlice};
 use std::collections::HashMap;
@@ -202,9 +202,14 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                         process_group,
                     });
                 })
-                .map_err(ProcessError::from)
+                .map_err(|failure| ProcessError::Shell {
+                    edge,
+                    command: command.clone(),
+                    operation: failure.operation,
+                    source: failure.source,
+                })
             }))
-            .unwrap_or_else(|_| Err("subcommand thread panicked".into()));
+            .unwrap_or(Err(ProcessError::ThreadPanicked { edge }));
             let _ = sender.send(ProcessEvent::Finished(ProcessCompletion { edge, result }));
         });
     }
@@ -219,14 +224,14 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                     Ok(event) => Some(event),
                     Err(mpsc::RecvTimeoutError::Timeout) => None,
                     Err(mpsc::RecvTimeoutError::Disconnected) => {
-                        return Err("subcommand completion channel disconnected".into());
+                        return Err(ProcessError::CompletionChannelDisconnected);
                     }
                 }
             } else {
                 Some(
                     self.receiver
                         .recv()
-                        .map_err(|_| "subcommand completion channel disconnected".to_owned())?,
+                        .map_err(|_| ProcessError::CompletionChannelDisconnected)?,
                 )
             };
             match event {
@@ -290,12 +295,17 @@ pub(crate) fn status_interrupted(status: std::process::ExitStatus) -> bool {
 // [spec:samurai:sem:os.osspawn-fn]
 // [spec:samurai:def:os-posix.osspawn-fn]
 // [spec:samurai:sem:os-posix.osspawn-fn]
+struct ShellFailure {
+    operation: ShellOperation,
+    source: io::Error,
+}
+
 fn run_shell(
     command: &BString,
     use_console: bool,
     dryrun: bool,
     started: impl FnOnce(u32, bool),
-) -> io::Result<Option<ProcessOutput>> {
+) -> Result<Option<ProcessOutput>, ShellFailure> {
     if dryrun {
         return Ok(None);
     }
@@ -310,9 +320,15 @@ fn run_shell(
         child.process_group(0);
     }
     if use_console {
-        let mut child = child.spawn()?;
+        let mut child = child.spawn().map_err(|source| ShellFailure {
+            operation: ShellOperation::Spawn,
+            source,
+        })?;
         started(child.id(), false);
-        let status = child.wait()?;
+        let status = child.wait().map_err(|source| ShellFailure {
+            operation: ShellOperation::Wait,
+            source,
+        })?;
         Ok(Some(ProcessOutput {
             status,
             stdout: Vec::new(),
@@ -325,18 +341,39 @@ fn run_shell(
             use std::os::fd::OwnedFd;
             use std::os::unix::net::UnixStream;
 
-            let (mut output_reader, output_writer) = UnixStream::pair()?;
-            let stdout: OwnedFd = output_writer.try_clone()?.into();
+            let (mut output_reader, output_writer) =
+                UnixStream::pair().map_err(|source| ShellFailure {
+                    operation: ShellOperation::CreateOutputPipe,
+                    source,
+                })?;
+            let stdout: OwnedFd = output_writer
+                .try_clone()
+                .map_err(|source| ShellFailure {
+                    operation: ShellOperation::DuplicateOutputPipe,
+                    source,
+                })?
+                .into();
             let stderr: OwnedFd = output_writer.into();
             child
                 .stdout(Stdio::from(stdout))
                 .stderr(Stdio::from(stderr));
-            let mut process = child.spawn()?;
+            let mut process = child.spawn().map_err(|source| ShellFailure {
+                operation: ShellOperation::Spawn,
+                source,
+            })?;
             drop(child);
             started(process.id(), true);
             let mut output = Vec::new();
-            output_reader.read_to_end(&mut output)?;
-            let status = process.wait()?;
+            output_reader
+                .read_to_end(&mut output)
+                .map_err(|source| ShellFailure {
+                    operation: ShellOperation::ReadOutput,
+                    source,
+                })?;
+            let status = process.wait().map_err(|source| ShellFailure {
+                operation: ShellOperation::Wait,
+                source,
+            })?;
             Ok(Some(ProcessOutput {
                 status,
                 stdout: output,
@@ -346,9 +383,15 @@ fn run_shell(
         #[cfg(not(unix))]
         {
             child.stdout(Stdio::piped()).stderr(Stdio::piped());
-            let child = child.spawn()?;
+            let child = child.spawn().map_err(|source| ShellFailure {
+                operation: ShellOperation::Spawn,
+                source,
+            })?;
             started(child.id(), false);
-            let result = child.wait_with_output()?;
+            let result = child.wait_with_output().map_err(|source| ShellFailure {
+                operation: ShellOperation::Wait,
+                source,
+            })?;
             Ok(Some(ProcessOutput {
                 status: result.status,
                 stdout: result.stdout,

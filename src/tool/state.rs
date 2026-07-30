@@ -1,5 +1,5 @@
 use crate::deps::{depsentry, depsnodes, visit_dependencies, DepsLog};
-use crate::error::ToolError;
+use crate::error::{ToolError, ToolOperation};
 use crate::graph::{nodeget, Graph, NodeId};
 use crate::missing_deps::MissingDependencyScanner;
 use crate::os::RealDiskInterface;
@@ -13,8 +13,9 @@ pub(crate) fn deps(graph: &Graph, log: &DepsLog, targets: &[BString]) -> Result<
         targets
             .iter()
             .map(|target| {
-                nodeget(graph, target.as_bytes())
-                    .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))
+                nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
+                    path: target.clone(),
+                })
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -26,7 +27,9 @@ pub(crate) fn deps(graph: &Graph, log: &DepsLog, targets: &[BString]) -> Result<
             let _ = writeln!(output, "{path}: deps not found");
             continue;
         };
-        let mtime = disk.stat(path.to_path().expect("byte paths are valid on Unix"))?;
+        let mtime = disk
+            .stat(path.to_path().expect("byte paths are valid on Unix"))
+            .map_err(|source| ToolError::io(ToolOperation::Stat, Some(path.clone()), source))?;
         let state = if mtime == 0 || mtime > entry.mtime {
             "STALE"
         } else {

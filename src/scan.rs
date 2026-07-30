@@ -1,11 +1,11 @@
 //! Byte-oriented Ninja manifest lexer.
 
-use crate::error::ManifestError;
+use crate::error::{ScanError, ScanErrorKind, SeparatorKind, SourceSpan};
 use crate::util::{BString, EvalPart, EvalString};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-type ScanResult<T> = Result<T, ManifestError>;
+type ScanResult<T> = Result<T, ScanError>;
 
 // [spec:samurai:def:scan.token]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -38,7 +38,7 @@ impl Scanner {
     // [spec:samurai:sem:scan.scaninit-fn]
     // [spec:samurai:def:scan.scanclose-fn]
     // [spec:samurai:sem:scan.scanclose-fn]
-    pub(crate) fn from_path(path: impl AsRef<Path>) -> ScanResult<Self> {
+    pub(crate) fn from_path(path: impl AsRef<Path>) -> std::io::Result<Self> {
         let path = path.as_ref();
         let input = fs::read(path)?;
         Ok(Self::from_bytes(path, input))
@@ -71,14 +71,11 @@ impl Scanner {
 
 // [spec:samurai:def:scan.scanerror-fn]
 // [spec:samurai:sem:scan.scanerror-fn]
-pub(crate) fn scanerror(scanner: &Scanner, message: &str) -> ManifestError {
-    format!(
-        "{}:{}:{}: {message}",
-        scanner.path.display(),
-        scanner.line,
-        scanner.col
-    )
-    .into()
+pub(crate) fn scanerror(scanner: &Scanner, kind: ScanErrorKind) -> ScanError {
+    ScanError {
+        span: SourceSpan::new(&scanner.path, scanner.line, scanner.col),
+        kind,
+    }
 }
 
 // [spec:samurai:def:scan.next-fn]
@@ -113,7 +110,10 @@ fn newline(scanner: &mut Scanner) -> ScanResult<bool> {
         Some(b'\r') => {
             next(scanner);
             if scanner.current() != Some(b'\n') {
-                return Err(scanerror(scanner, "expected '\\n' after '\\r'"));
+                return Err(scanerror(
+                    scanner,
+                    ScanErrorKind::ExpectedNewlineAfterCarriageReturn,
+                ));
             }
             next(scanner);
             Ok(true)
@@ -134,7 +134,7 @@ fn singlespace(scanner: &mut Scanner) -> ScanResult<bool> {
             next(scanner);
             Ok(true)
         }
-        Some(b'\t') => Err(scanerror(scanner, "tabs are not allowed, use spaces")),
+        Some(b'\t') => Err(scanerror(scanner, ScanErrorKind::TabsNotAllowed)),
         Some(b'$') => {
             let index = scanner.index;
             let line = scanner.line;
@@ -184,7 +184,7 @@ fn name(scanner: &mut Scanner) -> ScanResult<String> {
         next(scanner);
     }
     if scanner.index == start {
-        return Err(scanerror(scanner, "expected name"));
+        return Err(scanerror(scanner, ScanErrorKind::ExpectedName));
     }
     let name = std::str::from_utf8(&scanner.input[start..scanner.index])
         .expect("variable names are ASCII")
@@ -202,7 +202,7 @@ pub(crate) fn scankeyword(scanner: &mut Scanner) -> ScanResult<Option<Token>> {
             Some(b' ' | b'\t') => {
                 space(scanner)?;
                 if !comment(scanner)? && !newline(scanner)? {
-                    return Err(scanerror(scanner, "unexpected indent"));
+                    return Err(scanerror(scanner, ScanErrorKind::UnexpectedIndent));
                 }
             }
             Some(b'#') => {
@@ -275,7 +275,7 @@ fn escape(
                 next(scanner);
             }
             if scanner.current() != Some(b'}') {
-                return Err(scanerror(scanner, "invalid variable name"));
+                return Err(scanerror(scanner, ScanErrorKind::InvalidVariableName));
             }
             let variable = scanner.input[start..scanner.index].to_vec();
             next(scanner);
@@ -292,7 +292,7 @@ fn escape(
             {
                 return Err(scanerror(
                     scanner,
-                    "using $^ escape requires specifying 'ninja_required_version' with version greater or equal 1.14",
+                    ScanErrorKind::CaretEscapeRequiresVersion,
                 ));
             }
             next(scanner);
@@ -305,7 +305,7 @@ fn escape(
                 next(scanner);
             }
             if scanner.index == start {
-                return Err(scanerror(scanner, "invalid $ escape"));
+                return Err(scanerror(scanner, ScanErrorKind::InvalidDollarEscape));
             }
             addstringpart(parts, scanner.input[start..scanner.index].to_vec(), true);
         }
@@ -326,7 +326,7 @@ pub(crate) fn scanstring(scanner: &mut Scanner, path: bool) -> ScanResult<Option
             }
             Some(b':' | b'|' | b' ') if path => break,
             Some(b'\t') if path => {
-                return Err(scanerror(scanner, "tabs are not allowed, use spaces"));
+                return Err(scanerror(scanner, ScanErrorKind::TabsNotAllowed));
             }
             Some(b'\r' | b'\n') | None => break,
             Some(byte) => {
@@ -355,12 +355,12 @@ pub(crate) fn scanpaths(scanner: &mut Scanner) -> ScanResult<()> {
 // [spec:samurai:def:scan.scanchar-fn]
 // [spec:samurai:sem:scan.scanchar-fn]
 pub(crate) fn scanchar(scanner: &mut Scanner, expected: char) -> ScanResult<()> {
-    let expected =
-        u8::try_from(expected).map_err(|_| scanerror(scanner, "expected ASCII token"))?;
+    let expected = u8::try_from(expected)
+        .map_err(|_| scanerror(scanner, ScanErrorKind::ExpectedAsciiToken))?;
     if scanner.current() != Some(expected) {
         return Err(scanerror(
             scanner,
-            &format!("expected '{}'", char::from(expected)),
+            ScanErrorKind::ExpectedCharacter(char::from(expected)),
         ));
     }
     next(scanner);
@@ -387,13 +387,14 @@ pub(crate) fn scanpipe(scanner: &mut Scanner, allowed: i32) -> ScanResult<i32> {
         _ => 1,
     };
     if allowed & kind == 0 {
+        let separator = match kind {
+            1 => SeparatorKind::Implicit,
+            2 => SeparatorKind::OrderOnly,
+            _ => SeparatorKind::Validation,
+        };
         return Err(scanerror(
             scanner,
-            match kind {
-                1 => "unexpected '|'",
-                2 => "unexpected '||'",
-                _ => "unexpected '|@'",
-            },
+            ScanErrorKind::UnexpectedSeparator(separator),
         ));
     }
     space(scanner)?;
@@ -419,11 +420,21 @@ pub(crate) fn scannewline(scanner: &mut Scanner) -> ScanResult<()> {
         Ok(())
     } else if scanner.current().is_none() {
         if scanner.continuation_at_eof {
-            Err("unexpected EOF after continuation".into())
+            Err(scanerror(
+                scanner,
+                ScanErrorKind::UnexpectedEof {
+                    after_continuation: true,
+                },
+            ))
         } else {
-            Err("unexpected EOF".into())
+            Err(scanerror(
+                scanner,
+                ScanErrorKind::UnexpectedEof {
+                    after_continuation: false,
+                },
+            ))
         }
     } else {
-        Err(scanerror(scanner, "expected newline"))
+        Err(scanerror(scanner, ScanErrorKind::ExpectedNewline))
     }
 }

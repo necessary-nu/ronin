@@ -1,9 +1,13 @@
 //! Ronin command-line parsing and runtime orchestration.
 
 use crate::build::BuildOptions;
+use crate::error::{
+    BuildError, CliError, EncodingContext, PersistenceError, PersistenceOperation,
+    ToolAvailability, ToolError,
+};
 use crate::parse::ParseOptions;
 use crate::util::{BString, ByteSlice, ByteVec};
-use crate::{Error, ErrorKind};
+use crate::Error;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -97,7 +101,12 @@ pub(crate) fn debugflag(options: &mut BuildOptions, flag: &str) -> CliResult<()>
         "explain" => options.explain = true,
         "keepdepfile" => options.keepdepfile = true,
         "keeprsp" => options.keeprsp = true,
-        _ => return Err(format!("unknown debug flag '{flag}'").into()),
+        _ => {
+            return Err(CliError::UnknownDebugFlag {
+                flag: flag.to_owned(),
+            }
+            .into())
+        }
     }
     Ok(())
 }
@@ -107,7 +116,7 @@ pub(crate) fn debugflag(options: &mut BuildOptions, flag: &str) -> CliResult<()>
 pub(crate) fn loadflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> {
     let value: f64 = flag
         .parse()
-        .map_err(|_| "invalid -l parameter".to_owned())?;
+        .map_err(|_| CliError::InvalidParameter { option: "-l" })?;
     options.maxload = value;
     Ok(())
 }
@@ -118,7 +127,12 @@ pub(crate) fn warnflag(options: &mut ParseOptions, flag: &str) -> CliResult<()> 
     match flag {
         "dupbuild=err" => options.dupbuildwarn = false,
         "dupbuild=warn" => options.dupbuildwarn = true,
-        _ => return Err(format!("unknown warning flag '{flag}'").into()),
+        _ => {
+            return Err(CliError::UnknownWarningFlag {
+                flag: flag.to_owned(),
+            }
+            .into())
+        }
     }
     Ok(())
 }
@@ -128,14 +142,14 @@ pub(crate) fn warnflag(options: &mut ParseOptions, flag: &str) -> CliResult<()> 
 pub(crate) fn jobsflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> {
     let value: i64 = flag
         .parse()
-        .map_err(|_| "invalid -j parameter".to_owned())?;
+        .map_err(|_| CliError::InvalidParameter { option: "-j" })?;
     if value < 0 {
-        return Err("invalid -j parameter".into());
+        return Err(CliError::InvalidParameter { option: "-j" }.into());
     }
     options.maxjobs = if value == 0 {
         usize::MAX
     } else {
-        usize::try_from(value).map_err(|_| "invalid -j parameter")?
+        usize::try_from(value).map_err(|_| CliError::InvalidParameter { option: "-j" })?
     };
     Ok(())
 }
@@ -225,7 +239,10 @@ fn status_placeholder(name: &str) -> CliResult<&'static str> {
         "eta" => Ok("%W"),
         "eta_seconds" => Ok("%E"),
         "description" => Ok("\u{1f}"),
-        _ => Err(format!("unknown variable '{name}' in --status format").into()),
+        _ => Err(CliError::UnknownStatusVariable {
+            name: name.to_owned(),
+        }
+        .into()),
     }
 }
 
@@ -245,7 +262,7 @@ fn expand_status_format(format: &str) -> CliResult<String> {
         }
         index += 1;
         let Some(next) = bytes.get(index).copied() else {
-            return Err("invalid --status: bad $-escape (literal $ must be written as $$)".into());
+            return Err(CliError::InvalidStatusEscape.into());
         };
         if next == b'$' {
             output.push('$');
@@ -258,7 +275,7 @@ fn expand_status_format(format: &str) -> CliResult<String> {
                 .iter()
                 .position(|byte| *byte == b'}')
                 .map(|offset| start + offset)
-                .ok_or_else(|| "invalid --status: unterminated variable".to_owned())?;
+                .ok_or(CliError::UnterminatedStatusVariable)?;
             (&format[start..close], close + 1)
         } else if next.is_ascii_alphanumeric() || next == b'_' {
             let start = index;
@@ -290,10 +307,16 @@ fn expand_status_format(format: &str) -> CliResult<String> {
 // [spec:samurai:def:os-posix.oschdir-fn]
 // [spec:samurai:sem:os-posix.oschdir-fn]
 fn set_current_directory(directory: &BString) -> CliResult<()> {
-    let path = directory
-        .to_path()
-        .map_err(|_| "-C path is not representable on this platform")?;
-    std::env::set_current_dir(path).map_err(|source| Error::source(ErrorKind::Cli, source))
+    let path = directory.to_path().map_err(|_| CliError::InvalidEncoding {
+        context: EncodingContext::ChangeDirectory,
+    })?;
+    std::env::set_current_dir(path).map_err(|source| {
+        CliError::ChangeDirectory {
+            path: directory.clone(),
+            source,
+        }
+        .into()
+    })
 }
 
 fn option_value(
@@ -309,7 +332,9 @@ fn option_value(
     Ok(arguments
         .get(*index)
         .cloned()
-        .ok_or_else(|| format!("missing {option} value"))?)
+        .ok_or_else(|| CliError::MissingOptionValue {
+            option: option.to_owned(),
+        })?)
 }
 
 fn invalid_option(arguments: &[BString], message: impl std::fmt::Display) -> RunAction {
@@ -390,15 +415,22 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
                 index += 1;
                 let format = arguments
                     .get(index)
-                    .ok_or_else(|| "missing --status value".to_owned())?
+                    .ok_or_else(|| CliError::MissingOptionValue {
+                        option: "--status".to_owned(),
+                    })?
                     .to_str()
-                    .map_err(|_| "invalid --status value")?;
+                    .map_err(|_| CliError::InvalidEncoding {
+                        context: EncodingContext::StatusValue,
+                    })?;
                 invocation.build_options.statusfmt = expand_status_format(format)?;
                 invocation.build_options.status_from_cli = true;
             }
             option if option.starts_with(b"--status=") => {
-                let format = std::str::from_utf8(&option[b"--status=".len()..])
-                    .map_err(|_| "invalid --status value")?;
+                let format = std::str::from_utf8(&option[b"--status=".len()..]).map_err(|_| {
+                    CliError::InvalidEncoding {
+                        context: EncodingContext::StatusValue,
+                    }
+                })?;
                 invocation.build_options.statusfmt = expand_status_format(format)?;
                 invocation.build_options.status_from_cli = true;
             }
@@ -443,31 +475,37 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
                                 b'f' => invocation.manifest = value,
                                 b'j' => jobsflag(
                                     &mut invocation.build_options,
-                                    value.to_str().map_err(|_| "invalid -j parameter")?,
+                                    value.to_str().map_err(|_| CliError::InvalidEncoding {
+                                        context: EncodingContext::JobsValue,
+                                    })?,
                                 )?,
                                 b'k' => {
                                     let value = value
                                         .to_str()
-                                        .map_err(|_| "invalid -k parameter")?
+                                        .map_err(|_| CliError::InvalidEncoding {
+                                            context: EncodingContext::KeepGoingValue,
+                                        })?
                                         .parse::<i64>()
-                                        .map_err(|_| {
-                                            "-k parameter not numeric; did you mean -k 0?"
-                                                .to_owned()
-                                        })?;
+                                        .map_err(|_| CliError::KeepGoingNotNumeric)?;
                                     invocation.build_options.maxfail = if value <= 0 {
                                         usize::MAX
                                     } else {
-                                        usize::try_from(value)
-                                            .map_err(|_| "invalid -k parameter")?
+                                        usize::try_from(value).map_err(|_| {
+                                            CliError::InvalidParameter { option: "-k" }
+                                        })?
                                     };
                                 }
                                 b'l' => loadflag(
                                     &mut invocation.build_options,
-                                    value.to_str().map_err(|_| "invalid -l parameter")?,
+                                    value.to_str().map_err(|_| CliError::InvalidEncoding {
+                                        context: EncodingContext::LoadValue,
+                                    })?,
                                 )?,
                                 b'd' => {
                                     let value =
-                                        value.to_str().map_err(|_| "invalid -d parameter")?;
+                                        value.to_str().map_err(|_| CliError::InvalidEncoding {
+                                            context: EncodingContext::DebugValue,
+                                        })?;
                                     if value == "list" {
                                         return Ok(RunAction::Immediate(RunResult::exit(
                                             debugging_modes(),
@@ -479,7 +517,9 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
                                 }
                                 b'w' => {
                                     let value =
-                                        value.to_str().map_err(|_| "invalid -w parameter")?;
+                                        value.to_str().map_err(|_| CliError::InvalidEncoding {
+                                            context: EncodingContext::WarningValue,
+                                        })?;
                                     if value == "list" {
                                         return Ok(RunAction::Immediate(RunResult::exit(
                                             warning_flags(),
@@ -494,7 +534,9 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
                                 }
                                 b't' => {
                                     let value =
-                                        value.to_str().map_err(|_| "invalid -t parameter")?;
+                                        value.to_str().map_err(|_| CliError::InvalidEncoding {
+                                            context: EncodingContext::ToolValue,
+                                        })?;
                                     invocation.selected_tool = Some(crate::tool::toolget(value)?);
                                     invocation
                                         .tool_arguments
@@ -580,13 +622,20 @@ fn run_clean_tool(
             b"-g" => include_generators = true,
             b"-r" => rule_mode = true,
             option if option.starts_with(b"-") => {
-                return Err(format!("unknown clean option '{}'", argument.to_str_lossy()).into());
+                return Err(ToolError::UnknownOption {
+                    tool: "clean",
+                    option: argument.clone(),
+                }
+                .into());
             }
             _ => names.push(argument.clone()),
         }
     }
     if rule_mode && names.is_empty() {
-        return Err("expected a rule to clean".into());
+        return Err(ToolError::MissingArgument {
+            diagnostic: "expected a rule to clean",
+        }
+        .into());
     }
     let rule_names = if rule_mode {
         names
@@ -594,7 +643,7 @@ fn run_clean_tool(
             .map(|name| {
                 name.to_str()
                     .map(str::to_owned)
-                    .map_err(|_| "clean rule names must be valid UTF-8".to_owned())
+                    .map_err(|_| ToolError::InvalidRuleEncoding { tool: "clean" })
             })
             .collect::<Result<Vec<_>, _>>()?
     } else {
@@ -603,7 +652,7 @@ fn run_clean_tool(
     if rule_mode {
         for rule in &rule_names {
             crate::env::envrule(graph, state.root, rule)
-                .ok_or_else(|| format!("unknown rule '{rule}'"))?;
+                .ok_or_else(|| ToolError::UnknownRule { name: rule.clone() })?;
         }
     }
     let (targets, rules) = if rule_mode {
@@ -644,13 +693,17 @@ fn run_compdb_tool(graph: &crate::graph::Graph, arguments: &[BString]) -> CliRes
         match argument.as_bytes() {
             b"-x" => expand_rsp = true,
             option if option.starts_with(b"-") => {
-                return Err(format!("unknown compdb option '{}'", argument.to_str_lossy()).into());
+                return Err(ToolError::UnknownOption {
+                    tool: "compdb",
+                    option: argument.clone(),
+                }
+                .into());
             }
             _ => rules.push(
                 argument
                     .to_str()
                     .map(str::to_owned)
-                    .map_err(|_| "compdb rule names must be valid UTF-8")?,
+                    .map_err(|_| ToolError::InvalidRuleEncoding { tool: "compdb" })?,
             ),
         }
     }
@@ -667,13 +720,16 @@ fn run_compdb_targets_tool(
         match argument.as_bytes() {
             b"-x" => expand_rsp = true,
             b"-h" | b"--help" => {
-                return Err("usage: ronin -t compdb-targets [-hx] target [targets]".into())
+                return Err(ToolError::Usage {
+                    text: "usage: ronin -t compdb-targets [-hx] target [targets]",
+                }
+                .into())
             }
             option if option.starts_with(b"-") => {
-                return Err(format!(
-                    "unknown compdb-targets option '{}'",
-                    argument.to_str_lossy()
-                )
+                return Err(ToolError::UnknownOption {
+                    tool: "compdb-targets",
+                    option: argument.clone(),
+                }
                 .into());
             }
             _ => targets.push(argument.clone()),
@@ -690,6 +746,18 @@ fn tool_result(output: impl AsRef<[u8]>) -> RunResult {
         output.push(b'\n');
     }
     RunResult::stdout(output)
+}
+
+fn finish_build_log(log: crate::log::BuildLog) -> Result<(), PersistenceError> {
+    let path = log.path().to_owned();
+    log.finish()
+        .map_err(|source| PersistenceError::io(PersistenceOperation::FlushBuildLog, path, source))
+}
+
+fn finish_deps_log(log: crate::deps::DepsLog) -> Result<(), PersistenceError> {
+    let path = log.path().to_owned();
+    log.finish()
+        .map_err(|source| PersistenceError::io(PersistenceOperation::FlushDepsLog, path, source))
 }
 
 const fn tool_help(tool: crate::tool::Tool) -> Option<&'static str> {
@@ -784,7 +852,9 @@ fn run_flag_tool(
                         builddir = Some(
                             arguments
                                 .get(index)
-                                .ok_or_else(|| "missing --builddir value".to_owned())?
+                                .ok_or_else(|| CliError::MissingOptionValue {
+                                    option: "--builddir".to_owned(),
+                                })?
                                 .clone(),
                         );
                     }
@@ -799,10 +869,10 @@ fn run_flag_tool(
                         ))
                     }
                     option if option.starts_with(b"-") => {
-                        return Err(format!(
-                            "unknown restat option '{}'",
-                            arguments[index].to_str_lossy()
-                        )
+                        return Err(ToolError::UnknownOption {
+                            tool: "restat",
+                            option: arguments[index].clone(),
+                        }
                         .into())
                     }
                     _ => filters.push(arguments[index].clone()),
@@ -812,10 +882,11 @@ fn run_flag_tool(
             let directory = builddir
                 .as_ref()
                 .map(|directory| {
-                    directory
-                        .to_path()
-                        .map(Path::to_path_buf)
-                        .map_err(|_| "build directory is not representable on this platform")
+                    directory.to_path().map(Path::to_path_buf).map_err(|_| {
+                        CliError::InvalidEncoding {
+                            context: EncodingContext::BuildDirectory,
+                        }
+                    })
                 })
                 .transpose()?;
             let directory = directory.as_deref();
@@ -827,18 +898,28 @@ fn run_flag_tool(
                 return Ok(RunResult::stdout([]));
             }
             let mut graph = crate::graph::Graph::default();
-            let mut log = crate::log::BuildLog::open(directory, &mut graph)
-                .map_err(|error| format!("loading build log {}: {error}", path.display()))?;
+            let mut log = crate::log::BuildLog::open(directory, &mut graph).map_err(|source| {
+                PersistenceError::io(PersistenceOperation::LoadBuildLog, path.clone(), source)
+            })?;
             if !dryrun {
                 let disk = crate::os::RealDiskInterface;
-                crate::log::logrestat(&mut log, &filters, |path| disk.stat(path))
-                    .map_err(|error| format!("failed recompaction: {error}"))?;
+                crate::log::logrestat(&mut log, &filters, |path| disk.stat(path)).map_err(
+                    |source| {
+                        PersistenceError::io(
+                            PersistenceOperation::RecompactBuildLog,
+                            path.clone(),
+                            source,
+                        )
+                    },
+                )?;
             }
-            log.finish()?;
+            log.finish().map_err(|source| {
+                PersistenceError::io(PersistenceOperation::FlushBuildLog, path, source)
+            })?;
             Ok(RunResult::stdout([]))
         }
         crate::tool::Tool::Urtle => Ok(RunResult::stdout(crate::tool::urtle())),
-        _ => Err("tool is not available before loading the manifest".into()),
+        _ => Err(ToolError::Availability(ToolAvailability::BeforeManifest).into()),
     }
 }
 
@@ -880,7 +961,9 @@ fn run_manifest_tool(
         arguments
     };
     match tool {
-        crate::tool::Tool::Browse => Err("browse tool not supported on this platform".into()),
+        crate::tool::Tool::Browse => {
+            Err(ToolError::Availability(ToolAvailability::BrowseUnsupported).into())
+        }
         crate::tool::Tool::Clean => run_clean_tool(
             graph,
             state,
@@ -900,7 +983,7 @@ fn run_manifest_tool(
         | crate::tool::Tool::MultiInputs
         | crate::tool::Tool::Targets
         | crate::tool::Tool::Rules => Ok(tool_result(crate::tool::run(tool, graph, arguments)?)),
-        _ => Err("tool requires persistent runtime state".into()),
+        _ => Err(ToolError::Availability(ToolAvailability::RequiresPersistentRuntimeState).into()),
     }
 }
 
@@ -926,8 +1009,11 @@ fn run_log_tool(
             let targets = arguments
                 .iter()
                 .map(|target| {
-                    crate::graph::nodeget(graph, target.as_bytes())
-                        .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))
+                    crate::graph::nodeget(graph, target.as_bytes()).ok_or_else(|| {
+                        ToolError::UnknownTarget {
+                            path: target.clone(),
+                        }
+                    })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let (output, exit_code) = crate::tool::missing_deps(graph, deps_log, &targets);
@@ -944,15 +1030,32 @@ fn run_log_tool(
         }
         crate::tool::Tool::Recompact => {
             if !options.dry_run {
+                let build_log_path = build_log.path().to_owned();
                 crate::log::logrecompact(build_log, |path| {
                     crate::graph::nodeget(graph, path.as_bytes())
                         .is_none_or(|node| graph.node(node).gen.is_none())
+                })
+                .map_err(|source| {
+                    PersistenceError::io(
+                        PersistenceOperation::RecompactBuildLog,
+                        build_log_path,
+                        source,
+                    )
                 })?;
-                crate::deps::depsrecompact(deps_log, graph)?;
+                let deps_log_path = deps_log.path().to_owned();
+                crate::deps::depsrecompact(deps_log, graph).map_err(|source| {
+                    PersistenceError::io(
+                        PersistenceOperation::RecompactDepsLog,
+                        deps_log_path,
+                        source,
+                    )
+                })?;
             }
             Ok(RunResult::stdout([]))
         }
-        _ => Err("tool does not use persistent runtime state".into()),
+        _ => {
+            Err(ToolError::Availability(ToolAvailability::DoesNotUsePersistentRuntimeState).into())
+        }
     }
 }
 
@@ -980,10 +1083,14 @@ pub fn run(arguments: &[String]) -> CliResult<String> {
         Ok(stdout)
     } else {
         let stderr = String::from_utf8_lossy(&result.stderr);
-        Err(if stderr.is_empty() {
+        let diagnostic = if stderr.is_empty() {
             stdout
         } else {
             stderr.into_owned()
+        };
+        Err(CliError::InvocationFailed {
+            exit_code: result.exit_code,
+            diagnostic,
         }
         .into())
     }
@@ -1006,7 +1113,9 @@ pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
         .map(|argument| {
             Vec::from_os_string(argument)
                 .map(BString::from)
-                .map_err(|_| "argument is not representable as bytes on this platform".to_owned())
+                .map_err(|_| CliError::InvalidEncoding {
+                    context: EncodingContext::Argument,
+                })
         })
         .collect::<Result<Vec<_>, _>>()?;
     let stdout = std::io::stdout();
@@ -1063,7 +1172,9 @@ fn run_bytes(
             invocation
                 .manifest
                 .to_path()
-                .map_err(|_| "manifest path is not representable on this platform")?,
+                .map_err(|_| CliError::InvalidEncoding {
+                    context: EncodingContext::ManifestPath,
+                })?,
             &mut graph,
             &mut parser,
             state.root,
@@ -1090,14 +1201,30 @@ fn run_bytes(
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
         if let Some(directory) = &builddir {
-            std::fs::create_dir_all(directory)?;
+            std::fs::create_dir_all(directory).map_err(|source| {
+                PersistenceError::io(
+                    PersistenceOperation::CreateBuildDirectory,
+                    directory.clone(),
+                    source,
+                )
+            })?;
         }
-        let mut build_log = crate::log::BuildLog::open(builddir.as_deref(), &mut graph)?;
+        let build_log_path = builddir.as_ref().map_or_else(
+            || PathBuf::from(".ninja_log"),
+            |path| path.join(".ninja_log"),
+        );
+        let mut build_log =
+            crate::log::BuildLog::open(builddir.as_deref(), &mut graph).map_err(|source| {
+                PersistenceError::io(PersistenceOperation::OpenBuildLog, build_log_path, source)
+            })?;
         let deps_path = builddir.as_ref().map_or_else(
             || PathBuf::from(".ninja_deps"),
             |path| path.join(".ninja_deps"),
         );
-        let (mut deps_log, warning) = crate::deps::depsloadlog(&deps_path, &mut graph)?;
+        let (mut deps_log, warning) =
+            crate::deps::depsloadlog(&deps_path, &mut graph).map_err(|source| {
+                PersistenceError::io(PersistenceOperation::OpenDepsLog, deps_path.clone(), source)
+            })?;
         if let Some(warning) = warning {
             append_output(&mut output, &warning);
         }
@@ -1111,8 +1238,8 @@ fn run_bytes(
                 &invocation.tool_arguments,
                 ToolRunOptions::from(&invocation.build_options),
             );
-            let build_log_result = build_log.finish();
-            let deps_log_result = deps_log.finish();
+            let build_log_result = finish_build_log(build_log);
+            let deps_log_result = finish_deps_log(deps_log);
             let result = result?;
             build_log_result?;
             deps_log_result?;
@@ -1177,8 +1304,8 @@ fn run_bytes(
             }
         };
         if manifest_rebuilt {
-            build_log.finish()?;
-            deps_log.finish()?;
+            finish_build_log(build_log)?;
+            finish_deps_log(deps_log)?;
             if invocation.build_options.dryrun {
                 return Ok(tool_result(output));
             }
@@ -1224,7 +1351,7 @@ fn run_bytes(
                 for target in &selected_targets {
                     builder
                         .add_target(target.as_bytes())
-                        .map_err(|error| format!("error: {error}"))?;
+                        .map_err(BuildError::target_context)?;
                 }
                 already_up_to_date = builder.already_up_to_date();
                 let result = builder.build();
@@ -1235,8 +1362,8 @@ fn run_bytes(
             })();
             (result, already_up_to_date)
         };
-        let build_log_result = build_log.finish();
-        let deps_log_result = deps_log.finish();
+        let build_log_result = finish_build_log(build_log);
+        let deps_log_result = finish_deps_log(deps_log);
         append_output(&mut output, &result?);
         build_log_result?;
         deps_log_result?;
@@ -1248,7 +1375,11 @@ fn run_bytes(
         }
         return Ok(tool_result(output));
     }
-    Err(format!("manifest '{}' dirty after 100 tries", invocation.manifest).into())
+    Err(CliError::ManifestRetryLimit {
+        path: invocation.manifest,
+        attempts: 100,
+    }
+    .into())
 }
 
 #[cfg(test)]
@@ -1309,7 +1440,12 @@ mod tests {
         normalize_runtime_options(
             &mut options,
             Some("-j --jobserver-auth=fifo:/tmp/ronin-jobserver"),
-            || jobserver::Client::new(0).map_err(crate::error::ProcessError::from),
+            || {
+                jobserver::Client::new(0).map_err(|source| crate::error::ProcessError::Jobserver {
+                    operation: crate::error::JobserverOperation::StartHelper,
+                    source,
+                })
+            },
         )
         .unwrap();
         assert_eq!(options.maxjobs, usize::MAX);

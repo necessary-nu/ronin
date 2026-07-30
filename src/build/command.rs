@@ -1,5 +1,5 @@
 use super::{status, Builder};
-use crate::error::BuildError;
+use crate::error::{BuildError, BuildOperation};
 use crate::graph::{edgehash, invalidate_edge_hash, EdgeId, Graph};
 use crate::util::{BString, ByteSlice};
 use std::fs;
@@ -31,7 +31,7 @@ impl CommandSpec {
             .map(Vec::from)
             .map(String::from_utf8)
             .transpose()
-            .map_err(|_| "deps binding is not valid UTF-8".to_owned())?
+            .map_err(|_| BuildError::InvalidDepsEncoding { edge })?
             .unwrap_or_default();
         let depfile_path =
             crate::env::edgevar(graph, edge, "depfile", false).filter(|path| !path.is_empty());
@@ -138,8 +138,12 @@ impl Builder<'_> {
             self.build_output.extend_from_slice(bytes);
         }
         if let Some(output) = self.output_sink.as_deref_mut() {
-            output.write_all(bytes)?;
-            output.flush()?;
+            output.write_all(bytes).map_err(|source| {
+                BuildError::io(BuildOperation::WriteOutput, None, None, source)
+            })?;
+            output.flush().map_err(|source| {
+                BuildError::io(BuildOperation::WriteOutput, None, None, source)
+            })?;
         }
         Ok(())
     }
@@ -152,8 +156,12 @@ impl Builder<'_> {
 
     fn emit_diagnostic(&mut self, bytes: &[u8]) -> BuildResult<()> {
         if let Some(output) = self.diagnostic_sink.as_deref_mut() {
-            output.write_all(bytes)?;
-            Ok(output.flush()?)
+            output.write_all(bytes).map_err(|source| {
+                BuildError::io(BuildOperation::WriteDiagnostic, None, None, source)
+            })?;
+            output.flush().map_err(|source| {
+                BuildError::io(BuildOperation::WriteDiagnostic, None, None, source)
+            })
         } else {
             self.emit(bytes)
         }

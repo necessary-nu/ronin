@@ -217,7 +217,7 @@ pub(crate) fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, GraphError> {
         }
     }
     if roots.is_empty() && has_outputs {
-        Err("dependency cycle".into())
+        Err(GraphError::DependencyCycle { node: None })
     } else {
         Ok(roots)
     }
@@ -381,7 +381,7 @@ mod tests {
         fixture.add_graph_dependency(compiled, generated);
         fixture.add_graph_dependency(generated, compiled);
         match root_nodes(&fixture.graph) {
-            Err(error) => assert_eq!(error, "dependency cycle"),
+            Err(error) => assert_eq!(error.to_string(), "dependency cycle"),
             Ok(_) => panic!("cyclic graph unexpectedly had root nodes"),
         }
     }

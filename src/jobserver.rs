@@ -1,6 +1,6 @@
 //! GNU Make jobserver discovery and resource-safe slot ownership.
 
-use crate::error::ProcessError;
+use crate::error::{JobserverOperation, ProcessError};
 use std::cell::Cell;
 use std::io;
 use std::rc::Rc;
@@ -103,7 +103,9 @@ pub(crate) fn parse_makeflags_value(makeflags: Option<&str>) -> ProcessResult<Jo
         return Ok(JobserverConfig::default());
     };
     let Some(mode) = parse_file_descriptor_pair(value) else {
-        return Err(format!("Invalid file descriptor pair [{value}]").into());
+        return Err(ProcessError::InvalidJobserverDescriptors {
+            value: value.to_owned(),
+        });
     };
     Ok(JobserverConfig {
         path: if mode == JobserverMode::Pipe {
@@ -122,9 +124,9 @@ pub(crate) fn inherited_client() -> ProcessResult<jobserver::Client> {
     // jobserver transport validates and duplicates inherited descriptors and
     // documents repeated calls as safe.
     let inherited = unsafe { jobserver::Client::from_env_ext(true) };
-    inherited.client.map_err(|source| {
-        ProcessError::context("Error opening inherited GNU Make jobserver", source)
-    })
+    inherited
+        .client
+        .map_err(|source| ProcessError::JobserverEnvironment { source })
 }
 
 #[derive(Debug)]
@@ -197,9 +199,13 @@ impl JobserverClient {
         client: jobserver::Client,
         notify: impl FnMut(Acquisition) + Send + 'static,
     ) -> ProcessResult<Self> {
-        let helper = client.into_helper_thread(notify).map_err(|source| {
-            ProcessError::context("Error starting GNU Make jobserver helper", source)
-        })?;
+        let helper =
+            client
+                .into_helper_thread(notify)
+                .map_err(|source| ProcessError::Jobserver {
+                    operation: JobserverOperation::StartHelper,
+                    source,
+                })?;
         Ok(Self {
             implicit_available: Rc::new(Cell::new(true)),
             helper,
@@ -223,9 +229,12 @@ impl JobserverClient {
     pub(crate) fn receive_token(&mut self, result: Acquisition) -> ProcessResult<Slot> {
         debug_assert!(self.request_pending, "jobserver token was not requested");
         self.request_pending = false;
-        result.map(Slot::explicit).map_err(|source| {
-            ProcessError::context("Error acquiring GNU Make jobserver token", source)
-        })
+        result
+            .map(Slot::explicit)
+            .map_err(|source| ProcessError::Jobserver {
+                operation: JobserverOperation::AcquireToken,
+                source,
+            })
     }
 }
 
@@ -310,7 +319,9 @@ mod tests {
             }
         );
         assert_eq!(
-            parse_makeflags_value(Some("--jobserver-fds=10,")).unwrap_err(),
+            parse_makeflags_value(Some("--jobserver-fds=10,"))
+                .unwrap_err()
+                .to_string(),
             "Invalid file descriptor pair [10,]"
         );
     }

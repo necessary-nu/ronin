@@ -1,7 +1,7 @@
 //! MSVC show-includes parsing compatible with Ninja's clparser source.
 
 #[cfg(test)]
-use crate::error::ToolError;
+use crate::error::{ToolError, ToolOperation};
 use crate::util::{canonpath, BString};
 use std::collections::BTreeSet;
 
@@ -96,7 +96,7 @@ fn relative_parts(base: &[String], target: &[String]) -> String {
 #[cfg(test)]
 pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, ToolError> {
     if path.len() > 260 || relative_to.len() > 260 {
-        return Err("path too long".into());
+        return Err(ToolError::PathTooLong);
     }
     let (path_drive, path_absolute, path_components) = path_parts(path);
     let (relative_drive, relative_absolute, relative_components) = path_parts(relative_to);
@@ -116,7 +116,9 @@ pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<St
         return Ok(result);
     }
 
-    let (_, _, mut cwd) = path_parts(&std::env::current_dir()?.to_string_lossy());
+    let current_directory = std::env::current_dir()
+        .map_err(|source| ToolError::io(ToolOperation::CurrentDirectory, None, source))?;
+    let (_, _, mut cwd) = path_parts(&current_directory.to_string_lossy());
     if relative_absolute {
         cwd = relative_components;
     } else {
@@ -130,7 +132,9 @@ pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<St
     }
     let base = cwd;
 
-    let (_, _, mut target) = path_parts(&std::env::current_dir()?.to_string_lossy());
+    let current_directory = std::env::current_dir()
+        .map_err(|source| ToolError::io(ToolOperation::CurrentDirectory, None, source))?;
+    let (_, _, mut target) = path_parts(&current_directory.to_string_lossy());
     if path_absolute {
         target = path_components;
     } else {
@@ -305,7 +309,9 @@ mod tests {
             "P:/wee/stuff.h"
         );
         assert_eq!(
-            normalize_include_path(&"a".repeat(261), ".").unwrap_err(),
+            normalize_include_path(&"a".repeat(261), ".")
+                .unwrap_err()
+                .to_string(),
             "path too long"
         );
     }

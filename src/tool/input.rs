@@ -8,8 +8,8 @@ fn collect_targets(graph: &Graph, targets: &[BString]) -> ToolResult<Vec<NodeId>
     targets
         .iter()
         .map(|target| {
-            nodeget(graph, target.as_bytes()).ok_or_else(|| {
-                ToolError::from(format!("unknown target '{}'", target.to_str_lossy()))
+            nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
+                path: target.clone(),
             })
         })
         .collect()
@@ -25,9 +25,16 @@ pub(crate) fn inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<BString
             b"-0" | b"--print0" => print0 = true,
             b"-E" | b"--no-shell-escape" => shell_escape = false,
             b"-d" | b"--dependency-order" => dependency_order = true,
-            b"-h" | b"--help" => return Err("Usage '-t inputs [options] [targets]".into()),
+            b"-h" | b"--help" => {
+                return Err(ToolError::Usage {
+                    text: "Usage '-t inputs [options] [targets]",
+                })
+            }
             option if option.starts_with(b"-") => {
-                return Err(format!("unknown inputs option '{}'", argument.to_str_lossy()).into())
+                return Err(ToolError::UnknownOption {
+                    tool: "inputs",
+                    option: argument.clone(),
+                })
             }
             _ => targets.push(argument.clone()),
         }
@@ -57,23 +64,28 @@ pub(crate) fn multi_inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<B
     while index < arguments.len() {
         match arguments[index].as_bytes() {
             b"-0" | b"--print0" => print0 = true,
-            b"-h" | b"--help" => return Err("Usage '-t multi-inputs [options] [targets]".into()),
+            b"-h" | b"--help" => {
+                return Err(ToolError::Usage {
+                    text: "Usage '-t multi-inputs [options] [targets]",
+                })
+            }
             b"-d" | b"--delimiter" => {
                 index += 1;
                 delimiter = arguments
                     .get(index)
-                    .ok_or_else(|| "missing multi-inputs delimiter".to_owned())?
+                    .ok_or(ToolError::MissingArgument {
+                        diagnostic: "missing multi-inputs delimiter",
+                    })?
                     .clone();
             }
             option if option.starts_with(b"--delimiter=") => {
                 delimiter = BString::from(&option[b"--delimiter=".len()..]);
             }
             option if option.starts_with(b"-") => {
-                return Err(format!(
-                    "unknown multi-inputs option '{}'",
-                    arguments[index].to_str_lossy()
-                )
-                .into())
+                return Err(ToolError::UnknownOption {
+                    tool: "multi-inputs",
+                    option: arguments[index].clone(),
+                })
             }
             _ => targets.push(arguments[index].clone()),
         }

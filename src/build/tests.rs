@@ -906,7 +906,10 @@ fn ninja_build_interrupted_command_cleans_only_changed_outputs() {
     {
         let mut builder = Builder::new(&mut graph, BuildOptions::default());
         builder.add_target(&out1).unwrap();
-        assert_eq!(builder.build().unwrap_err(), "interrupted by user");
+        assert_eq!(
+            builder.build().unwrap_err().to_string(),
+            "interrupted by user"
+        );
     }
     assert!(directory.join("out1").exists());
 
@@ -915,7 +918,10 @@ fn ninja_build_interrupted_command_cleans_only_changed_outputs() {
     {
         let mut builder = Builder::new(&mut graph, BuildOptions::default());
         builder.add_target(&out2).unwrap();
-        assert_eq!(builder.build().unwrap_err(), "interrupted by user");
+        assert_eq!(
+            builder.build().unwrap_err().to_string(),
+            "interrupted by user"
+        );
     }
     assert!(!directory.join("out2").exists());
     fs::remove_dir_all(directory).unwrap();

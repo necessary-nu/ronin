@@ -50,3 +50,18 @@ second work item.
 > entries, and graph IDs usable and unchanged. Log opening MUST distinguish a
 > missing file from every other filesystem error, and records whose durability
 > boundary is shared MAY be emitted and flushed as one batch.
+
+## Semantic error boundaries
+
+> [spec:samurai:req:runtime.semantic-errors]
+> Ronin MUST represent CLI, manifest, graph, build, persistence, process, and
+> tool failures with semantic variants rather than unrestricted diagnostic
+> strings. Variants MUST retain applicable byte-exact paths, source locations,
+> typed node or edge identities, process exit statuses, and underlying source
+> errors. The public error classifier MUST be derived from the semantic error
+> chain, including errors propagated across subsystem boundaries. Production
+> code MUST NOT use blanket conversions from strings or `io::Error` into
+> subsystem errors, parse rendered diagnostics to recover structure, or expose
+> diagnostic-string equality as error semantics. Final stdout and stderr
+> writes MUST report real failures while treating `BrokenPipe` as an
+> intentional downstream close.

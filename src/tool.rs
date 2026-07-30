@@ -1,7 +1,7 @@
 //! Graph-inspection and cleanup tools translated from `tool.c`.
 
 use crate::env::edgevar;
-use crate::error::ToolError;
+use crate::error::{ToolAvailability, ToolError, ToolOperation};
 use crate::graph::{nodeget, EdgeId, Graph, NodeId};
 use crate::util::{BString, ByteSlice};
 use std::collections::BTreeSet;
@@ -196,9 +196,15 @@ impl Cleaner {
         }
     }
 
-    fn remove(&mut self, path: Option<&BString>) -> io::Result<()> {
+    fn remove(&mut self, path: Option<&BString>) -> ToolResult<()> {
         let Some(path) = path else { return Ok(()) };
-        if self.seen_paths.insert(path.clone()) && cleanpath_mode(Some(path), self.dry_run)? {
+        let removed = if self.seen_paths.insert(path.clone()) {
+            cleanpath_mode(Some(path), self.dry_run)
+                .map_err(|source| ToolError::io(ToolOperation::Clean, Some(path.clone()), source))?
+        } else {
+            false
+        };
+        if removed {
             self.removed.push(path.clone());
         }
         Ok(())
@@ -206,7 +212,7 @@ impl Cleaner {
 
     // [spec:samurai:def:tool.cleanedge-fn]
     // [spec:samurai:sem:tool.cleanedge-fn]
-    fn clean_edge(&mut self, graph: &Graph, edge: EdgeId) -> io::Result<()> {
+    fn clean_edge(&mut self, graph: &Graph, edge: EdgeId) -> ToolResult<()> {
         if !self.visited_edges.insert(edge) {
             return Ok(());
         }
@@ -224,7 +230,7 @@ impl Cleaner {
 
     // [spec:samurai:def:tool.cleantarget-fn]
     // [spec:samurai:sem:tool.cleantarget-fn]
-    fn clean_target(&mut self, graph: &Graph, node: NodeId) -> io::Result<()> {
+    fn clean_target(&mut self, graph: &Graph, node: NodeId) -> ToolResult<()> {
         let Some(edge) = graph.node(node).gen else {
             return Ok(());
         };
@@ -301,7 +307,7 @@ pub(crate) fn clean(
     targets: &[BString],
     rules: &[String],
     include_generators: bool,
-) -> io::Result<usize> {
+) -> ToolResult<usize> {
     clean_with_options(graph, targets, rules, include_generators, false)
 }
 
@@ -311,7 +317,7 @@ pub(crate) fn clean_with_options(
     rules: &[String],
     include_generators: bool,
     dry_run: bool,
-) -> io::Result<usize> {
+) -> ToolResult<usize> {
     clean_with_report(graph, targets, rules, include_generators, dry_run)
         .map(|removed| removed.len())
 }
@@ -322,7 +328,7 @@ pub(crate) fn clean_with_report(
     rules: &[String],
     include_generators: bool,
     dry_run: bool,
-) -> io::Result<Vec<BString>> {
+) -> ToolResult<Vec<BString>> {
     let mut cleaner = Cleaner::new(dry_run);
     if !rules.is_empty() {
         for edge in graph
@@ -333,9 +339,10 @@ pub(crate) fn clean_with_report(
         }
     } else if !targets.is_empty() {
         for target in targets {
-            let node = nodeget(graph, target.as_bytes()).ok_or_else(|| {
-                io::Error::new(io::ErrorKind::NotFound, target.to_str_lossy().into_owned())
-            })?;
+            let node =
+                nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
+                    path: target.clone(),
+                })?;
             cleaner.clean_target(graph, node)?;
         }
     } else {
@@ -357,7 +364,7 @@ pub(crate) fn clean_dead(
     graph: &Graph,
     logged_outputs: &[BString],
     dry_run: bool,
-) -> io::Result<usize> {
+) -> ToolResult<usize> {
     clean_dead_with_report(graph, logged_outputs, dry_run).map(|removed| removed.len())
 }
 
@@ -365,7 +372,7 @@ pub(crate) fn clean_dead_with_report(
     graph: &Graph,
     logged_outputs: &[BString],
     dry_run: bool,
-) -> io::Result<Vec<BString>> {
+) -> ToolResult<Vec<BString>> {
     let mut cleaner = Cleaner::new(dry_run);
     for output in logged_outputs {
         if nodeget(graph, output.as_bytes()).is_some() {
@@ -412,8 +419,9 @@ pub(crate) fn commands(graph: &Graph, targets: &[BString]) -> ToolResult<Vec<BSt
         targets
             .iter()
             .map(|target| {
-                nodeget(graph, target.as_bytes())
-                    .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))
+                nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
+                    path: target.clone(),
+                })
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -443,17 +451,15 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolRe
         match argument.as_bytes() {
             b"-s" => single = true,
             b"-h" | b"--help" => {
-                return Err(
-                    "usage: ronin -t commands [options] [targets]\n\noptions:\n  -s     only print the final command to build [target], not the whole chain"
-                        .into(),
-                )
+                return Err(ToolError::Usage {
+                    text: "usage: ronin -t commands [options] [targets]\n\noptions:\n  -s     only print the final command to build [target], not the whole chain",
+                })
             }
             option if option.starts_with(b"-") => {
-                return Err(format!(
-                    "unknown commands option '{}'",
-                    argument.to_str_lossy()
-                )
-                .into())
+                return Err(ToolError::UnknownOption {
+                    tool: "commands",
+                    option: argument.clone(),
+                })
             }
             _ => targets.push(argument.clone()),
         }
@@ -464,8 +470,9 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolRe
     let mut output = Vec::new();
     let mut seen = BTreeSet::new();
     for target in targets {
-        let node = nodeget(graph, target.as_bytes())
-            .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))?;
+        let node = nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
+            path: target.clone(),
+        })?;
         let Some(edge) = graph.node(node).gen else {
             continue;
         };
@@ -572,8 +579,9 @@ pub(crate) fn graph(graph: &Graph, targets: &[BString]) -> ToolResult<BString> {
         targets
             .iter()
             .map(|target| {
-                nodeget(graph, target.as_bytes())
-                    .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))
+                nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
+                    path: target.clone(),
+                })
             })
             .collect::<Result<Vec<_>, _>>()?
     };
@@ -592,12 +600,15 @@ pub(crate) fn graph(graph: &Graph, targets: &[BString]) -> ToolResult<BString> {
 // [spec:samurai:sem:tool.query-fn]
 pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
     if targets.is_empty() {
-        return Err("query expects at least one target".into());
+        return Err(ToolError::MissingArgument {
+            diagnostic: "query expects at least one target",
+        });
     }
     let mut output = String::new();
     for target in targets {
-        let node = nodeget(graph, target.as_bytes())
-            .ok_or_else(|| format!("unknown target '{}'", target.to_str_lossy()))?;
+        let node = nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
+            path: target.clone(),
+        })?;
         let node_borrow = graph.node(node);
         let _ = writeln!(output, "{}:", target.to_str_lossy());
         if let Some(edge) = node_borrow.gen {
@@ -691,16 +702,18 @@ pub(crate) const fn targetsusage() -> &'static str {
 // [spec:samurai:sem:tool.targets-fn]
 pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<String> {
     if args.len() > 2 {
-        return Err(targetsusage().into());
+        return Err(ToolError::Usage {
+            text: targetsusage(),
+        });
     }
     match args.first().map(String::as_str) {
         None | Some("depth") => {
             let depth = args
                 .get(1)
                 .map(|depth| {
-                    depth
-                        .parse::<usize>()
-                        .map_err(|_| targetsusage().to_owned())
+                    depth.parse::<usize>().map_err(|_| ToolError::Usage {
+                        text: targetsusage(),
+                    })
                 })
                 .transpose()?
                 .unwrap_or(1);
@@ -756,7 +769,10 @@ pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<St
             }
             Ok(output)
         }
-        Some(mode) => Err(format!("unknown target tool mode '{mode}'").into()),
+        Some(mode) => Err(ToolError::UnknownMode {
+            tool: "target tool",
+            mode: mode.to_owned(),
+        }),
     }
 }
 
@@ -766,12 +782,16 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
         match argument.as_str() {
             "-d" => descriptions = true,
             "-h" | "--help" => {
-                return Err(
-                    "usage: ronin -t rules [options]\n\noptions:\n  -d     also print the description of the rule\n  -h     print this message"
-                        .into(),
-                )
+                return Err(ToolError::Usage {
+                    text: "usage: ronin -t rules [options]\n\noptions:\n  -d     also print the description of the rule\n  -h     print this message",
+                })
             }
-            option => return Err(format!("unknown rules option '{option}'").into()),
+            option => {
+                return Err(ToolError::UnknownOption {
+                    tool: "rules",
+                    option: BString::from(option),
+                })
+            }
         }
     }
     let mut rules = graph
@@ -809,15 +829,14 @@ pub(crate) fn run(tool: Tool, graph: &Graph, args: &[BString]) -> ToolResult<BSt
         args.iter()
             .map(|argument| {
                 argument.to_str().map(str::to_owned).map_err(|_| {
-                    ToolError::from(format!(
-                        "{} arguments must be valid UTF-8",
-                        match tool {
+                    ToolError::InvalidArgumentsEncoding {
+                        context: match tool {
                             Tool::Compdb => "compdb rule",
                             Tool::Targets => "targets mode",
                             Tool::Rules => "rules option",
                             _ => "tool",
-                        }
-                    ))
+                        },
+                    }
                 })
             })
             .collect::<Result<Vec<_>, _>>()
@@ -834,13 +853,15 @@ pub(crate) fn run(tool: Tool, graph: &Graph, args: &[BString]) -> ToolResult<BSt
         Tool::Inputs => inputs(graph, args),
         Tool::MultiInputs => multi_inputs(graph, args),
         Tool::List => Ok(tool_list().into()),
-        Tool::Browse => Err("browse tool not supported on this platform".into()),
+        Tool::Browse => Err(ToolError::Availability(ToolAvailability::BrowseUnsupported)),
         Tool::Deps
         | Tool::MissingDeps
         | Tool::Recompact
         | Tool::Restat
         | Tool::CleanDead
-        | Tool::Urtle => Err("tool requires runtime state".into()),
+        | Tool::Urtle => Err(ToolError::Availability(
+            ToolAvailability::RequiresRuntimeState,
+        )),
     }
 }
 
@@ -869,12 +890,10 @@ pub(crate) fn toolget(name: &str) -> ToolResult<Tool> {
         })
         .min_by_key(|(distance, _)| *distance)
         .map(|(_, candidate)| candidate);
-    Err(suggestion
-        .map_or_else(
-            || format!("fatal: unknown tool '{name}'"),
-            |suggestion| format!("fatal: unknown tool '{name}', did you mean '{suggestion}'?"),
-        )
-        .into())
+    Err(ToolError::UnknownTool {
+        name: name.to_owned(),
+        suggestion,
+    })
 }
 
 #[cfg(test)]
