@@ -159,10 +159,6 @@ symbols (
         {verb def, id env.envaddvar-fn}
         {verb sem, id env.envaddvar-fn}
     )}
-    {id env.merge-fn, kind @function, name merge, qualified merge, signature "static struct string * merge(struct evalstring *str, size_t n)", file env.c, line_start 93, line_end 111, rules (
-        {verb def, id env.merge-fn}
-        {verb sem, id env.merge-fn}
-    )}
     {id env.enveval-fn, kind @function, name enveval, qualified enveval, signature "struct string * enveval(struct environment *env, struct evalstring *str)", file env.c, line_start 113, line_end 131, rules (
         {verb def, id env.enveval-fn}
         {verb sem, id env.enveval-fn}
@@ -174,10 +170,6 @@ symbols (
     {id env.envrule-fn, kind @function, name envrule, qualified envrule, signature "struct rule * envrule(struct environment *env, char *name)", file env.c, line_start 140, line_end 153, rules (
         {verb def, id env.envrule-fn}
         {verb sem, id env.envrule-fn}
-    )}
-    {id env.pathlist-fn, kind @function, name pathlist, qualified pathlist, signature "static struct string * pathlist(struct node **nodes, size_t n, char sep, bool escape)", file env.c, line_start 155, line_end 179, rules (
-        {verb def, id env.pathlist-fn}
-        {verb sem, id env.pathlist-fn}
     )}
     {id env.mkrule-fn, kind @function, name mkrule, qualified mkrule, signature "struct rule * mkrule(char *name)", file env.c, line_start 181, line_end 191, rules (
         {verb def, id env.mkrule-fn}
@@ -243,10 +235,6 @@ symbols (
     {id graph.nodestat-fn, kind @function, name nodestat, qualified nodestat, signature "void nodestat(struct node *n)", file graph.c, line_start 82, line_end 86, rules (
         {verb def, id graph.nodestat-fn}
         {verb sem, id graph.nodestat-fn}
-    )}
-    {id graph.nodepath-fn, kind @function, name nodepath, qualified nodepath, signature "struct string * nodepath(struct node *n, bool escape)", file graph.c, line_start 88, line_end 123, rules (
-        {verb def, id graph.nodepath-fn}
-        {verb sem, id graph.nodepath-fn}
     )}
     {id graph.nodeuse-fn, kind @function, name nodeuse, qualified nodeuse, signature "void nodeuse(struct node *n, struct edge *e)", file graph.c, line_start 125, line_end 132, rules (
         {verb def, id graph.nodeuse-fn}

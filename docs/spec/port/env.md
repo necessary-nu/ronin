@@ -97,14 +97,6 @@
 > Searches local variable bindings and then successive parent environments,
 > returning the nearest matching string or null when the name is unbound.
 
-> [spec:samurai:def:env.merge-fn]
-> static struct string * merge(struct evalstring *str, size_t n)
-
-> [spec:samurai:sem:env.merge-fn]
-> Allocates a string of the supplied total length, copies each non-null fragment
-> from the linked evaluated-string list in list order, appends a NUL byte, and
-> returns it.
-
 > [spec:samurai:def:env.mkenv-fn]
 > struct environment * mkenv(struct environment *parent)
 
@@ -125,14 +117,6 @@
 
 > [spec:samurai:sem:env.mkrule-fn]
 > Allocates a rule that owns `name` and starts with an empty binding tree.
-
-> [spec:samurai:def:env.pathlist-fn]
-> static struct string * pathlist(struct node **nodes, size_t n, char sep, bool escape)
-
-> [spec:samurai:sem:env.pathlist-fn]
-> Returns null for no nodes and the node path itself for one node. For multiple
-> nodes it obtains each canonical or shell-escaped path, concatenates them in
-> order with `sep` between items, terminates the new string, and returns it.
 
 > [spec:samurai:def:env.pool]
 > struct pool {

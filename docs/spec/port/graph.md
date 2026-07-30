@@ -115,19 +115,6 @@
 > no equal key has been inserted.  The lookup neither allocates nor changes
 > ownership.
 
-> [spec:samurai:def:graph.nodepath-fn]
-> struct string * nodepath(struct node *n, bool escape)
-
-> [spec:samurai:sem:graph.nodepath-fn]
-> If `escape` is false, return the canonical `path` directly.  If an escaped
-> path has already been cached, return that cache.  Otherwise scan the path:
-> characters outside ASCII alphanumerics and `_+-./` require shell quoting.
-> When no quote is needed, cache `path` itself as an alias.  When quoting is
-> needed, cache a new single-quoted string; copy each source byte, and encode
-> every embedded apostrophe as `\''` within the surrounding quotes.  The cache
-> is owned by the node only when it differs from `path` and is reused by later
-> escaped requests.
-
 > [spec:samurai:def:graph.nodestat-fn]
 > void nodestat(struct node *n)
 

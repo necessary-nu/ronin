@@ -167,20 +167,6 @@ pub(crate) fn envaddvar(
     );
 }
 
-// [spec:samurai:def:env.merge-fn]
-// [spec:samurai:sem:env.merge-fn]
-#[allow(
-    dead_code,
-    reason = "the ported concatenation helper stays part of the documented C surface; command evaluation now appends in place"
-)]
-fn merge(parts: &[BString]) -> BString {
-    let mut output = Vec::with_capacity(parts.iter().map(|part| part.len()).sum());
-    for part in parts {
-        output.extend_from_slice(part);
-    }
-    output.into()
-}
-
 // [spec:samurai:def:env.enveval-fn]
 // [spec:samurai:sem:env.enveval-fn]
 pub(crate) fn enveval(
@@ -226,27 +212,6 @@ pub(crate) fn envrule(graph: &Graph, environment: EnvironmentId, name: &str) -> 
         current = environment.parent;
     }
     None
-}
-
-// [spec:samurai:def:env.pathlist-fn]
-// [spec:samurai:sem:env.pathlist-fn]
-#[allow(
-    dead_code,
-    reason = "the ported path-joining helper stays part of the documented C surface; command evaluation now appends in place"
-)]
-pub(crate) fn pathlist(paths: &[BString], separator: u8) -> Option<BString> {
-    if paths.is_empty() {
-        return None;
-    }
-    let mut output =
-        Vec::with_capacity(paths.iter().map(|path| path.len()).sum::<usize>() + paths.len() - 1);
-    for (index, path) in paths.iter().enumerate() {
-        if index != 0 {
-            output.push(separator);
-        }
-        output.extend_from_slice(path);
-    }
-    Some(output.into())
 }
 
 // [spec:samurai:def:env.ruleaddvar-fn]

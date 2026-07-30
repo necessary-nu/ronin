@@ -45,49 +45,6 @@ macro_rules! arena_id {
 
 pub(crate) use arena_id;
 
-#[cfg(test)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct StringPiece<'a> {
-    bytes: &'a [u8],
-}
-
-#[cfg(test)]
-impl<'a> StringPiece<'a> {
-    pub(crate) fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes }
-    }
-
-    pub(crate) fn from_cstr(value: &'a str) -> Self {
-        Self {
-            bytes: value
-                .as_bytes()
-                .split(|byte| *byte == 0)
-                .next()
-                .unwrap_or_default(),
-        }
-    }
-
-    pub(crate) fn len(self) -> usize {
-        self.bytes.len()
-    }
-
-    pub(crate) fn is_empty(self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    pub(crate) fn as_str(self) -> &'a str {
-        std::str::from_utf8(self.bytes).unwrap()
-    }
-
-    pub(crate) fn substr(self, start: usize, length: Option<usize>) -> Self {
-        let start = start.min(self.bytes.len());
-        let end = length
-            .map_or(self.bytes.len(), |length| start.saturating_add(length))
-            .min(self.bytes.len());
-        Self::new(&self.bytes[start..end])
-    }
-}
-
 // Rust containers and ownership replace the source's manual allocation,
 // buffer-growth, and destruction helpers.
 // [spec:samurai:def:util.buffer]
@@ -206,33 +163,6 @@ pub(crate) fn canonpath(path: &mut BString) {
     *path = BString::from(output);
 }
 
-#[cfg(test)]
-pub(crate) fn strip_ansi_escape_codes(input: &str) -> String {
-    let bytes = input.as_bytes();
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        if bytes[index] != 0x1b {
-            output.push(bytes[index]);
-            index += 1;
-            continue;
-        }
-        index += 1;
-        if bytes.get(index) != Some(&b'[') {
-            continue;
-        }
-        index += 1;
-        while index < bytes.len() {
-            let byte = bytes[index];
-            index += 1;
-            if (0x40..=0x7e).contains(&byte) {
-                break;
-            }
-        }
-    }
-    String::from_utf8_lossy(&output).into_owned()
-}
-
 pub(crate) fn edit_distance(
     left: &str,
     right: &str,
@@ -267,134 +197,6 @@ pub(crate) fn edit_distance(
         }
     }
     row[right.len()]
-}
-
-#[cfg(test)]
-pub(crate) fn encode_json_string(input: &str) -> String {
-    let mut output = String::with_capacity(input.len());
-    for character in input.chars() {
-        match character {
-            '\u{08}' => output.push_str("\\b"),
-            '\u{0c}' => output.push_str("\\f"),
-            '\n' => output.push_str("\\n"),
-            '\r' => output.push_str("\\r"),
-            '\t' => output.push_str("\\t"),
-            '\u{00}'..='\u{1f}' => {
-                use std::fmt::Write as _;
-                write!(output, "\\u{:04x}", character as u32).unwrap();
-            }
-            '\\' => output.push_str("\\\\"),
-            '"' => output.push_str("\\\""),
-            _ => output.push(character),
-        }
-    }
-    output
-}
-
-#[cfg(test)]
-fn ansi_color_sequences(input: &[u8]) -> Vec<(usize, usize)> {
-    let mut sequences = Vec::new();
-    let mut index = 0;
-    while index < input.len() {
-        if input[index] != 0x1b || input.get(index + 1) != Some(&b'[') {
-            index += 1;
-            continue;
-        }
-        let mut end = index + 2;
-        while matches!(input.get(end), Some(b'0'..=b'9' | b';')) {
-            end += 1;
-        }
-        if input.get(end) == Some(&b'm') {
-            sequences.push((index, end + 1));
-            index = end + 1;
-        } else {
-            index += 1;
-        }
-    }
-    sequences
-}
-
-#[cfg(test)]
-pub(crate) fn elide_middle(input: &str, width: usize) -> String {
-    if input.len() <= width {
-        return input.to_owned();
-    }
-    let bytes = input.as_bytes();
-    let sequences = ansi_color_sequences(bytes);
-    if sequences.is_empty() {
-        if width <= 3 {
-            return ".".repeat(width);
-        }
-        let remaining = width - 3;
-        let left = remaining / 2;
-        let right = remaining - left;
-        return format!("{}...{}", &input[..left], &input[input.len() - right..]);
-    }
-    let hidden = |index: usize| {
-        sequences
-            .iter()
-            .any(|(start, end)| (*start..*end).contains(&index))
-    };
-    let visible_width = bytes.len()
-        - sequences
-            .iter()
-            .map(|(start, end)| end - start)
-            .sum::<usize>();
-    if visible_width <= width {
-        return input.to_owned();
-    }
-    let ellipsis_width = width.min(3);
-    let remaining = width - ellipsis_width;
-    let visible_left = remaining / 2;
-    let visible_right = remaining - visible_left;
-    let gap_start = visible_left;
-    let gap_end = visible_width - visible_right;
-
-    let raw_index_at = |visible_target: usize| {
-        let mut index = 0;
-        let mut visible = 0;
-        while index < bytes.len() {
-            if visible == visible_target {
-                return index;
-            }
-            if !hidden(index) {
-                visible += 1;
-            }
-            index += 1;
-        }
-        bytes.len()
-    };
-    let left_end = raw_index_at(gap_start);
-    let right_start = raw_index_at(gap_end);
-    let mut output = String::from_utf8_lossy(&bytes[..left_end]).into_owned();
-    output.push_str(&"...".chars().take(ellipsis_width).collect::<String>());
-    for (start, end) in &sequences {
-        if *start >= left_end && *end <= right_start {
-            output.push_str(&String::from_utf8_lossy(&bytes[*start..*end]));
-        }
-    }
-    output.push_str(&String::from_utf8_lossy(&bytes[right_start..]));
-    output
-}
-
-#[cfg(test)]
-pub(crate) fn split_string_piece(input: &str, separator: char) -> Vec<&str> {
-    input.split(separator).collect()
-}
-
-#[cfg(test)]
-pub(crate) fn join_string_piece(parts: &[&str], separator: char) -> String {
-    parts.join(&separator.to_string())
-}
-
-#[cfg(test)]
-pub(crate) const fn to_lower_ascii(character: char) -> char {
-    character.to_ascii_lowercase()
-}
-
-#[cfg(test)]
-pub(crate) const fn equals_case_insensitive_ascii(left: &str, right: &str) -> bool {
-    left.eq_ignore_ascii_case(right)
 }
 
 #[cfg(test)]
@@ -446,18 +248,6 @@ mod tests {
     }
 
     #[test]
-    fn ninja_strip_ansi_escape_codes() {
-        assert_eq!(strip_ansi_escape_codes("foo\x1b"), "foo");
-        assert_eq!(strip_ansi_escape_codes("foo\x1b["), "foo");
-        assert_eq!(
-            strip_ansi_escape_codes(
-                "\x1b[1maffixmgr.cxx:286:15: \x1b[0m\x1b[0;1;35mwarning: \x1b[0m\x1b[1musing the result... [-Wparentheses]\x1b[0m",
-            ),
-            "affixmgr.cxx:286:15: warning: using the result... [-Wparentheses]"
-        );
-    }
-
-    #[test]
     fn ninja_edit_distance_cases() {
         assert_eq!(edit_distance("", "ninja", true, None), 5);
         assert_eq!(edit_distance("ninja", "", true, None), 5);
@@ -478,80 +268,5 @@ mod tests {
             edit_distance("browser_test", "browser_tests", true, None),
             1
         );
-    }
-
-    #[test]
-    fn ninja_json_encoding_cases() {
-        assert_eq!(encode_json_string("foo bar"), "foo bar");
-        assert_eq!(
-            encode_json_string("\"\\\u{08}\u{0c}\n\r\t"),
-            "\\\"\\\\\\b\\f\\n\\r\\t"
-        );
-        assert_eq!(encode_json_string("\u{01}\u{1f}"), "\\u0001\\u001f");
-        assert_eq!(encode_json_string("你好"), "你好");
-    }
-
-    #[test]
-    fn ninja_elide_middle_cases() {
-        let short = "Nothing to elide in this short string.";
-        assert_eq!(elide_middle(short, 80), short);
-        assert_eq!(elide_middle(short, 0), "");
-        assert_eq!(elide_middle(short, 1), ".");
-        assert_eq!(elide_middle(short, 2), "..");
-        assert_eq!(elide_middle(short, 3), "...");
-
-        let input = "01234567890123456789";
-        assert_eq!(elide_middle(input, 4), "...9");
-        assert_eq!(elide_middle(input, 5), "0...9");
-        assert_eq!(elide_middle(input, 9), "012...789");
-        assert_eq!(elide_middle(input, 10), "012...6789");
-        assert_eq!(elide_middle(input, 19), "01234567...23456789");
-
-        assert_eq!(
-            elide_middle("012345\x1b[0;35m67890123456789", 10),
-            "012...\x1b[0;35m6789"
-        );
-        assert_eq!(
-            elide_middle("abcd\x1b[1;31mefg\x1b[0mhlkmnopqrstuvwxyz", 15),
-            "abcd\x1b[1;31mef...\x1b[0muvwxyz"
-        );
-    }
-
-    #[test]
-    fn ninja_string_piece_utility_cases() {
-        assert_eq!(split_string_piece("a:b:c", ':'), ["a", "b", "c"]);
-        assert_eq!(split_string_piece("", ':'), [""]);
-        assert_eq!(split_string_piece(":", ':'), ["", ""]);
-        assert_eq!(split_string_piece(":a:b:c:", ':'), ["", "a", "b", "c", ""]);
-        assert_eq!(join_string_piece(&["a", "b", "c"], ':'), "a:b:c");
-        assert_eq!(join_string_piece(&["a", "b", "c"], '/'), "a/b/c");
-        assert_eq!(join_string_piece(&[], ':'), "");
-        assert_eq!(to_lower_ascii('A'), 'a');
-        assert_eq!(to_lower_ascii('/'), '/');
-        assert!(equals_case_insensitive_ascii("AbC", "aBc"));
-        assert!(!equals_case_insensitive_ascii("a", "ac"));
-        assert!(!equals_case_insensitive_ascii("/", "\\"));
-    }
-
-    #[test]
-    fn ninja_string_piece_basic_and_substring_cases() {
-        let empty = StringPiece::new(b"");
-        assert_eq!(empty.len(), 0);
-        assert!(empty.is_empty());
-        assert_eq!(empty.as_str(), "");
-
-        let source = b"abc";
-        let value = StringPiece::new(source);
-        assert_eq!(value.len(), 3);
-        assert_eq!(value.as_str(), "abc");
-        assert_eq!(StringPiece::from_cstr("abcd\0ef").as_str(), "abcd");
-
-        let value = StringPiece::from_cstr("abc");
-        assert_eq!(value.substr(0, None).as_str(), "abc");
-        assert_eq!(value.substr(0, Some(0)).as_str(), "");
-        assert_eq!(value.substr(0, Some(4)).as_str(), "abc");
-        assert_eq!(value.substr(1, Some(1)).as_str(), "b");
-        assert_eq!(value.substr(2, None).as_str(), "c");
-        assert_eq!(value.substr(3, None).as_str(), "");
     }
 }

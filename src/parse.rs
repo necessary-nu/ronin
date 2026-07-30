@@ -11,7 +11,6 @@ use crate::scan::{
     AllowedSeparators, ScannedEvalString, Scanner, Separator, Source, TokenKind,
 };
 use crate::util::{canonpath, BStr, BString, ByteSlice};
-use std::sync::Arc;
 
 type ManifestResult<T> = Result<T, ManifestError>;
 
@@ -32,11 +31,6 @@ pub(crate) struct Parser {
     pub(crate) options: ParseOptions,
     pub(crate) defaults: Vec<NodeId>,
     working_directory: crate::os::WorkingDirectory,
-    #[allow(
-        dead_code,
-        reason = "successful parses retain exact source buffers for span-aware consumers"
-    )]
-    sources: Vec<Arc<Source>>,
 }
 
 impl Parser {
@@ -484,7 +478,6 @@ pub(crate) fn parse(
     let input = std::fs::read(parser.working_directory.resolve(&path))
         .map_err(|error| ManifestError::read(&path, error))?;
     let source = Source::from_bytes(&path, input);
-    parser.sources.push(Arc::clone(&source));
     let mut scanner = Scanner::new(&source);
     while let Some(token) = scankeyword(&mut scanner)? {
         match token.kind {

@@ -14,8 +14,8 @@ use edge::EdgePartitions;
 use index::NodeIndex;
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
+pub(crate) use path::nodepath_bytes;
 use path::shell_escape_path;
-pub(crate) use path::{nodepath, nodepath_bytes};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
@@ -613,7 +613,7 @@ impl InputsCollector {
     pub(crate) fn input_strings(&self, graph: &Graph, style: PathStyle) -> Vec<BString> {
         self.inputs
             .iter()
-            .map(|node| nodepath(graph, *node, style))
+            .map(|node| BString::from(nodepath_bytes(graph, *node, style)))
             .collect()
     }
 
@@ -780,7 +780,7 @@ mod tests {
         let second = mknode(&mut graph, xasprintf(format_args!("a b")));
         assert_eq!(first, second);
         assert_eq!(
-            nodepath(&graph, first, PathStyle::ShellEscaped).as_bytes(),
+            nodepath_bytes(&graph, first, PathStyle::ShellEscaped),
             b"'a b'"
         );
     }
@@ -792,9 +792,9 @@ mod tests {
             &mut graph,
             xasprintf(format_args!("foo bar\"/'$@d!st!c'/path'")),
         );
-        let path = nodepath(&graph, node, PathStyle::ShellEscaped);
+        let path = nodepath_bytes(&graph, node, PathStyle::ShellEscaped);
         assert_eq!(
-            std::str::from_utf8(path.as_bytes()).unwrap(),
+            std::str::from_utf8(path).unwrap(),
             "'foo bar\"/'\\''$@d!st!c'\\''/path'\\'''"
         );
     }

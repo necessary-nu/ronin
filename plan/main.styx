@@ -1551,4 +1551,32 @@ children (
             }
         )
     }
+
+    {
+        id ronin-drop-port-scaffolding
+        title "Delete code retained only for C port fidelity"
+        sealed true
+        log (
+            {
+                at 2026-07-30T14:21:18.405020142Z
+                author "brendan@bbqsrc.net"
+                kind @decision
+                text "Port fidelity is no longer a constraint on the Rust source (owner direction, 2026-07-30): Ronin is judged on Ninja behavioural compatibility, not on retaining a symbol per C function. Symbols kept alive only to satisfy a port rule are deleted along with the rules that covered them. Behavioural compatibility rules under docs/spec/ronin/ and the pinned Ninja conformance oracle are unaffected and remain the arbiter. This retires the dead_code allowances on env::merge and env::pathlist and the trivial-function bypass taken on graph::nodepath in c2d6b7e, all three of which existed solely for port fidelity."
+            }
+
+            {
+                at 2026-07-30T14:21:20.891314348Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-07-30T14:25:11.568211235Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
+    }
 )

@@ -6,8 +6,6 @@
 use super::{Graph, NodeId, PathStyle};
 use crate::util::{BString, ByteSlice};
 
-// [spec:samurai:def:graph.nodepath-fn]
-// [spec:samurai:sem:graph.nodepath-fn]
 /// Borrow a node's path in the requested style.
 ///
 /// Command evaluation appends these directly, so it must not pay for a copy
@@ -18,10 +16,6 @@ pub(crate) fn nodepath_bytes(graph: &Graph, node: NodeId, style: PathStyle) -> &
         Some(escaped) if style.shell_escaped() => escaped.as_bytes(),
         _ => node.path.as_bytes(),
     }
-}
-
-pub(crate) fn nodepath(graph: &Graph, node: NodeId, style: PathStyle) -> BString {
-    BString::from(nodepath_bytes(graph, node, style))
 }
 
 /// Shell-quote `source`, or report that quoting would not change it.

@@ -113,11 +113,9 @@ fn ninja_canonicalize_path_samples() {
 // [spec:samurai:sem:env.envinit-fn/test]
 // [spec:samurai:sem:env.envrule-fn/test]
 // [spec:samurai:sem:env.envvar-fn/test]
-// [spec:samurai:sem:env.merge-fn/test]
 // [spec:samurai:sem:env.mkenv-fn/test]
 // [spec:samurai:sem:env.mkpool-fn/test]
 // [spec:samurai:sem:env.mkrule-fn/test]
-// [spec:samurai:sem:env.pathlist-fn/test]
 // [spec:samurai:sem:env.poolget-fn/test]
 // [spec:samurai:sem:env.ruleaddvar-fn/test]
 // [spec:samurai:sem:graph.delnode-fn/test]
@@ -128,7 +126,6 @@ fn ninja_canonicalize_path_samples() {
 // [spec:samurai:sem:graph.mknode-fn/test]
 // [spec:samurai:sem:graph.mkphony-fn/test]
 // [spec:samurai:sem:graph.nodeget-fn/test]
-// [spec:samurai:sem:graph.nodepath-fn/test]
 // [spec:samurai:sem:graph.nodestat-fn/test]
 // [spec:samurai:sem:graph.nodeuse-fn/test]
 // [spec:samurai:sem:log.logclose-fn/test]
@@ -141,7 +138,7 @@ fn environment_graph_and_log_behaviour() {
     let state = env::EnvState::new(&mut graph);
     let node = graph::mknode(&mut graph, util::xasprintf(format_args!("out file")));
     assert_eq!(
-        graph::nodepath(&graph, node, graph::PathStyle::ShellEscaped).as_bytes(),
+        graph::nodepath_bytes(&graph, node, graph::PathStyle::ShellEscaped),
         b"'out file'"
     );
     let edge = graph::mkedge(&mut graph, state.root);
