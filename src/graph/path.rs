@@ -14,39 +14,35 @@ use crate::util::{BString, ByteSlice};
 /// per node occurrence.
 pub(crate) fn nodepath_bytes(graph: &Graph, node: NodeId, style: PathStyle) -> &[u8] {
     let node = graph.node(node);
-    if style.shell_escaped() {
-        node.shellpath.as_bytes()
-    } else {
-        node.path.as_bytes()
+    match &node.shellpath {
+        Some(escaped) if style.shell_escaped() => escaped.as_bytes(),
+        _ => node.path.as_bytes(),
     }
 }
 
 pub(crate) fn nodepath(graph: &Graph, node: NodeId, style: PathStyle) -> BString {
-    let node = graph.node(node);
-    if style.shell_escaped() {
-        node.shellpath.clone()
-    } else {
-        node.path.clone()
-    }
+    BString::from(nodepath_bytes(graph, node, style))
 }
 
-pub(super) fn shell_escape_path(source: &[u8]) -> BString {
+/// Shell-quote `source`, or report that quoting would not change it.
+///
+/// Almost every real path needs no quoting, so the unquoted case must not
+/// copy: the node keeps only its plain path and renders that for both styles.
+pub(super) fn shell_escape_path(source: &[u8]) -> Option<BString> {
     let quote = source
         .iter()
         .any(|byte| !byte.is_ascii_alphanumeric() && !b"_+-./".contains(byte));
     if !quote {
-        return BString::from(source);
+        return None;
     }
     let mut bytes = Vec::with_capacity(source.len() + 2);
-    if quote {
-        bytes.push(b'\'');
-        for byte in source {
-            bytes.push(*byte);
-            if *byte == b'\'' {
-                bytes.extend_from_slice(b"\\''");
-            }
+    bytes.push(b'\'');
+    for byte in source {
+        bytes.push(*byte);
+        if *byte == b'\'' {
+            bytes.extend_from_slice(b"\\''");
         }
-        bytes.push(b'\'');
     }
-    BString::from(bytes)
+    bytes.push(b'\'');
+    Some(BString::from(bytes))
 }

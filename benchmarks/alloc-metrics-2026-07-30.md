@@ -181,6 +181,41 @@ removes by batching an edge's bindings into one pass.
 C symbols the port specification requires, and nothing in production calls them
 now that evaluation appends in place.
 
+### One stored copy per node path (`ronin-path-interning-arena`)
+
+Interning a node stored its path three times: the node's own buffer, a copy as
+the lookup map's key, and an eagerly shell-quoted copy that was made even for
+the overwhelming majority of paths that need no quoting.
+
+The lookup map is replaced by an open-addressed index holding only node
+identifiers, so a probe hashes the candidate bytes and compares against the
+path the node already owns — no key copy, and with niche-packed identifiers a
+slot costs four bytes. The shell-quoted form becomes optional, present only
+when quoting actually changes the path, and both styles render from the plain
+buffer otherwise. This is the layout `htab.c` uses, so the ported `htab`
+specification rules move onto the index, where they are now literally true
+rather than approximated by a standard hash map.
+
+Exactly two allocations disappear per interned node, which the numbers
+confirm: path canonicalization interns 4,000 nodes and shed 8,003 requests.
+
+| Workload | Requests before | Requests after | Change | Bytes change |
+| --- | ---: | ---: | ---: | ---: |
+| manifest-command-evaluation | 128,072 | 112,067 | −12.5% | −8.2% |
+| deep-graph-evaluation | 34,152 | 30,149 | −11.7% | −6.9% |
+| wide-noop-build | 52,243 | 44,238 | −15.3% | −7.0% |
+| path-canonicalization | 36,103 | 28,100 | −22.2% | −13.1% |
+| dependency-log-load | 12,272 | 11,065 | −9.8% | −5.1% |
+| depfile-scan | 24,332 | 23,848 | −2.0% | −1.7% |
+| multi-target-scan | 54,787 | 46,782 | −14.6% | −6.6% |
+| scheduler-barrier | 6,509 | 6,249 | −4.0% | −3.1% |
+
+Every workload improved, which no earlier node achieved. Node paths are still
+individually owned `BString`s rather than spans into one byte arena: that
+further step would touch every `graph.node(id).path` reader for a smaller
+marginal gain than the two copies removed here, so it is left for its own
+change.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release

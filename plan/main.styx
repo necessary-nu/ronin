@@ -1338,12 +1338,27 @@ children (
                 id ronin-path-interning-arena
                 title "Store node paths once behind an interning table and byte arena"
                 deps (ronin-fast-hashing)
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:11:13.985885763Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Every node path is stored three times: Node.path, an eagerly computed Node.shellpath that copies even in the no-quote case covering ~99% of real paths (shell_escape_path, src/graph.rs:505 — C samurai shares the pointer there), and a third copy as the node_by_path HashMap key (graph.rs:193). Steps: make shellpath Option<BString> (None = same bytes as path) or lazy; eliminate the key copy with an interning table storing only NodeIds that hashes/compares against graph.nodes[id].path (hashbrown::HashTable expresses this directly; std HashMap's owned-key requirement is why the to_vec exists). Endgame: a single append-only byte arena for all path text with nodes holding (u32 offset, u32 len) spans — contiguous, cache-friendly, allocation-free per node, and it makes deps-log loading nearly free (see ronin-log-span-loading). This is the n2 interner design and composes with the span-frontend direction."
+                    }
+
+                    {
+                        at 2026-07-30T14:12:06.523212827Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T14:16:00.380927124Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

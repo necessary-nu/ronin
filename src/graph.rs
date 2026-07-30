@@ -1,15 +1,17 @@
 //! Dense graph arenas and dependency operations.
 
 mod edge;
+mod index;
 mod marks;
 mod path;
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
-use crate::htab::{rapidhashv1, RapidHashMap};
+use crate::htab::rapidhashv1;
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{arena_id, BStr, BString, ByteSlice};
 use edge::EdgePartitions;
+use index::NodeIndex;
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 use path::shell_escape_path;
@@ -37,7 +39,8 @@ impl PathStyle {
 // [spec:samurai:def:graph.node]
 pub(crate) struct Node {
     pub(crate) path: BString,
-    pub(crate) shellpath: BString,
+    /// Shell-quoted form, present only when quoting actually changes the path.
+    pub(crate) shellpath: Option<BString>,
     pub(crate) gen: Option<EdgeId>,
     pub(crate) uses: Vec<EdgeId>,
     pub(crate) validation_uses: Vec<EdgeId>,
@@ -60,22 +63,6 @@ pub(crate) struct Edge {
     partitions: EdgePartitions,
 }
 
-// [spec:samurai:def:htab.hashtablekey]
-// [spec:samurai:def:htab.hashtable]
-// [spec:samurai:def:htab.htabkey-fn]
-// [spec:samurai:sem:htab.htabkey-fn]
-// [spec:samurai:def:htab.mkhtab-fn]
-// [spec:samurai:sem:htab.mkhtab-fn]
-// [spec:samurai:def:htab.keyequal-fn]
-// [spec:samurai:sem:htab.keyequal-fn]
-// [spec:samurai:def:htab.keyindex-fn]
-// [spec:samurai:sem:htab.keyindex-fn]
-// [spec:samurai:def:htab.htabput-fn]
-// [spec:samurai:sem:htab.htabput-fn]
-// [spec:samurai:def:htab.htabget-fn]
-// [spec:samurai:sem:htab.htabget-fn]
-// [spec:samurai:def:htab.delhtab-fn]
-// [spec:samurai:sem:htab.delhtab-fn]
 // [spec:samurai:def:graph.graphinit-fn]
 // [spec:samurai:sem:graph.graphinit-fn]
 #[derive(Default)]
@@ -83,8 +70,8 @@ pub(crate) struct Graph {
     // Fixed-seed rapidhash follows Ninja and C samurai: manifests are trusted
     // input (executing them runs arbitrary commands), so SipHash DoS
     // hardening buys nothing here. Observable graph order comes from the
-    // arenas, never map iteration.
-    node_by_path: RapidHashMap<Vec<u8>, NodeId>,
+    // arenas, never index iteration.
+    node_by_path: NodeIndex,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
     environments: Vec<Environment>,
@@ -206,10 +193,9 @@ impl Graph {
 // [spec:samurai:def:graph.delnode-fn]
 // [spec:samurai:sem:graph.delnode-fn]
 pub(crate) fn mknode(graph: &mut Graph, path: BString) -> NodeId {
-    if let Some(node) = graph.node_by_path.get(path.as_bytes()) {
-        return *node;
+    if let Some(node) = graph.node_by_path.get(&graph.nodes, path.as_bytes()) {
+        return node;
     }
-    let key = path.as_bytes().to_vec();
     let shellpath = shell_escape_path(path.as_bytes());
     let node = NodeId::from_index(graph.nodes.len());
     graph.nodes.push(Node {
@@ -219,14 +205,14 @@ pub(crate) fn mknode(graph: &mut Graph, path: BString) -> NodeId {
         uses: Vec::new(),
         validation_uses: Vec::new(),
     });
-    graph.node_by_path.insert(key, node);
+    graph.node_by_path.insert(&graph.nodes, node);
     node
 }
 
 // [spec:samurai:def:graph.nodeget-fn]
 // [spec:samurai:sem:graph.nodeget-fn]
 pub(crate) fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
-    graph.node_by_path.get(path).copied()
+    graph.node_by_path.get(&graph.nodes, path)
 }
 
 // [spec:samurai:def:graph.nodestat-fn]
@@ -740,6 +726,51 @@ mod tests {
         // shifted encoding must keep comparing by index.
         let ids = (0..8).map(EdgeId::from_index).collect::<Vec<_>>();
         assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn node_index_interns_across_growth_and_collisions() {
+        const PATHS: usize = 2_000;
+
+        let mut graph = Graph::default();
+        let mut ids = Vec::new();
+        for index in 0..PATHS {
+            ids.push(mknode(&mut graph, xasprintf(format_args!("out/{index}.o"))));
+        }
+        // A byte path that is not valid UTF-8 must intern like any other.
+        let raw = mknode(&mut graph, BString::from(b"out/\xff.o".as_slice()));
+
+        // Growth rehashes every occupied slot, so every path must still map to
+        // its original node and re-interning must not allocate a new one.
+        assert_eq!(graph.node_ids().len(), PATHS + 1);
+        for (index, id) in ids.iter().enumerate() {
+            let path = xasprintf(format_args!("out/{index}.o"));
+            assert_eq!(nodeget(&graph, path.as_bytes()), Some(*id));
+            assert_eq!(mknode(&mut graph, path), *id);
+        }
+        assert_eq!(nodeget(&graph, b"out/\xff.o"), Some(raw));
+        assert_eq!(nodeget(&graph, b"absent"), None);
+        assert_eq!(graph.node_ids().len(), PATHS + 1);
+    }
+
+    #[test]
+    fn unquoted_paths_do_not_store_a_second_copy() {
+        let mut graph = Graph::default();
+        let plain = mknode(&mut graph, xasprintf(format_args!("src/main.c")));
+        let quoted = mknode(&mut graph, xasprintf(format_args!("src/a b.c")));
+
+        // The common case renders identically in both styles from one buffer.
+        assert!(graph.node(plain).shellpath.is_none());
+        assert_eq!(nodepath_bytes(&graph, plain, PathStyle::Raw), b"src/main.c");
+        assert_eq!(
+            nodepath_bytes(&graph, plain, PathStyle::ShellEscaped),
+            b"src/main.c"
+        );
+        assert!(graph.node(quoted).shellpath.is_some());
+        assert_eq!(
+            nodepath_bytes(&graph, quoted, PathStyle::ShellEscaped),
+            b"'src/a b.c'"
+        );
     }
 
     #[test]
