@@ -1346,13 +1346,35 @@ children (
             {
                 id ronin-path-scratch
                 title "Reuse path evaluation scratch and canonicalize in place"
-                deps (ronin-memchr-scanner)
+                priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:11:05.054232878Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Every path occurrence in parseedge allocates at least twice even when the node already exists: evaluated_path builds a fresh BString (src/parse.rs:134-145), then canonpath allocates a new output Vec and a components Vec per call (src/util.rs:133-170), and only then does mknode hit the intern map. scanstring additionally allocates a Vec<ScannedEvalPart> per path and scanpaths collects a Vec of those Vecs (src/scan.rs:424-467) though most paths are a single literal part. Proposals: give ScannedEvalString an inline single-part fast path or evaluate each path immediately with a reused parts scratch; evaluate into a reusable scratch buffer; canonicalize in place with component offsets in a small stack array (as ninja and samurai both do). End state: an already-interned path reference costs zero allocations."
+                    }
+
+                    {
+                        at 2026-07-30T14:49:03.357658236Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Dependency on ronin-memchr-scanner dropped and priority pinned to 0, on profile evidence. Phase decomposition of the 4,000-edge command manifest: parsing is 93% of the workload (10.31 ms of 11.12 ms; command evaluation is 0.8 ms), and within parsing the scanner is only about 4% — padding the manifest with comment bytes measures roughly 500 MB/s, so the real 222 KiB manifest costs about 0.44 ms to lex. Per-path work dominates instead: holding statement count fixed, a second path per statement costs 0.71 us and a binding 0.45 us, so 8,000 paths account for roughly 5.7 ms of 11.2 ms. The original dependency assumed reusing per-path scratch required restructuring scanstring alongside the scanner; the canonicalization half needs no scanner change at all."
+                    }
+
+                    {
+                        at 2026-07-30T14:49:11.901790623Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T14:54:02.055801403Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

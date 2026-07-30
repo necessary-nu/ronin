@@ -176,6 +176,22 @@ pub(crate) fn enveval(
     environment: EnvironmentId,
     string: &ScannedEvalString<'_>,
 ) -> BString {
+    let mut output = Vec::new();
+    enveval_into(graph, environment, string, &mut output);
+    output.into()
+}
+
+/// Evaluate into a caller-owned buffer.
+///
+/// Parsing evaluates one path per reference and most references name a path
+/// that is already interned, so the result is usually discarded; reusing one
+/// buffer keeps those references allocation-free.
+pub(crate) fn enveval_into(
+    graph: &Graph,
+    environment: EnvironmentId,
+    string: &ScannedEvalString<'_>,
+    output: &mut Vec<u8>,
+) {
     let capacity = string
         .parts
         .iter()
@@ -187,7 +203,7 @@ pub(crate) fn enveval(
             }
         })
         .sum();
-    let mut output = Vec::with_capacity(capacity);
+    output.reserve(capacity);
     for part in &string.parts {
         match part {
             ScannedEvalPart::Literal(value) => output.extend_from_slice(value),
@@ -199,7 +215,6 @@ pub(crate) fn enveval(
             }
         }
     }
-    output.into()
 }
 
 // [spec:samurai:def:env.envrule-fn]

@@ -273,6 +273,50 @@ allocations dominated, and it stopped being one once they did not. The
 harness measures what it measures, and the wall-time gate is what caught the
 divergence.
 
+### Reused path scratch and in-place canonicalization (`ronin-path-scratch`)
+
+Selected by profiling rather than by the plan's order, and the plan's
+dependency on `ronin-memchr-scanner` was dropped as part of it. Phase
+decomposition of the 4,000-edge command manifest showed parsing is 93% of that
+workload (10.31 ms of 11.12 ms), that the scanner is only about 4% of parsing
+— padded comment bytes measure roughly 500 MB/s, so its 222 KiB costs about
+0.44 ms — and that per-path work dominates: holding statement count fixed, a
+second path per statement costs 0.71 us, so 8,000 paths account for roughly
+5.7 ms.
+
+Each path reference allocated about four times: a parts vector while scanning,
+the evaluated result, and `canonpath`'s output buffer plus its component
+stack, the last two even when the path was already canonical. Paths now
+evaluate into one buffer reused for a whole manifest, canonicalize in place
+behind a no-allocation check for the already-canonical case, and intern from
+bytes so a reference to an existing node allocates nothing at all.
+
+| Workload | Requests before | Requests after | Change | Per statement |
+| --- | ---: | ---: | ---: | --- |
+| manifest-command-evaluation | 108,099 | 80,097 | −25.9% | 27.0 → 20.0 |
+| deep-graph-evaluation | 30,182 | 20,185 | −33.1% | 15.1 → 10.1 |
+| wide-noop-build | 44,271 | 24,269 | −45.2% | 11.1 → 6.1 |
+| path-canonicalization | 28,133 | 24,135 | −14.2% | 7.0 → 6.0 |
+| dependency-log-load | 10,790 | 8,688 | −19.5% | 35.8 → 28.9 |
+| depfile-scan | 23,774 | 14,671 | −38.3% | 235.4 → 145.3 |
+| multi-target-scan | 46,815 | 26,813 | −42.7% | 234.1 → 134.1 |
+| scheduler-barrier | 6,153 | 5,507 | −10.5% | 47.7 → 42.7 |
+
+Wall time moved much less. A controlled parse-only comparison, thirty
+invocations per sample and three samples per build, gave 9.895/10.241/10.225 ms
+before and 9.623/9.518/10.950 ms after: roughly 4% to 6%. Command evaluation
+against the C reference improved from 1.13x to 1.06x; the other workloads sat
+inside this host's run-to-run spread, which for the wide no-op build reached
+11.7 to 17.2 ms in a single gate run, so no claim is made about them from one
+sample.
+
+The reading is that allocation was about a tenth of per-path cost. Removing
+half the allocations from a phase worth 5.7 ms returned about 0.5 ms, so what
+remains is the byte work itself — evaluation copying, canonicalization
+scanning, hashing, and index probing — not the allocator calls around it. That
+is consistent with `ronin-name-interning`, where the gain came from removing
+comparisons rather than allocations.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release

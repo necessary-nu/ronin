@@ -118,43 +118,68 @@ pub(crate) fn diagnostic(program: &str, message: impl fmt::Display) -> String {
 
 // [spec:samurai:def:util.canonpath-fn]
 // [spec:samurai:sem:util.canonpath-fn]
-pub(crate) fn canonpath(path: &mut BString) {
-    if path.is_empty() {
+/// Whether a path already has the form `canonpath` would produce.
+///
+/// Almost every manifest path is already canonical, and checking costs one
+/// pass with no allocation, so the rewrite below runs only when it changes
+/// something.
+fn is_canonical(path: &[u8]) -> bool {
+    let body = path.strip_prefix(b"/").unwrap_or(path);
+    !body.is_empty()
+        && body
+            .split(|byte| *byte == b'/')
+            .all(|component| !matches!(component, b"" | b"." | b".."))
+}
+
+/// Canonicalize in place.
+///
+/// Canonicalization only ever removes bytes, so the write cursor never passes
+/// the read cursor and the result can be built over the input.
+pub(crate) fn canonpath(path: &mut Vec<u8>) {
+    if path.is_empty() || is_canonical(path) {
         return;
     }
-    let input = path.as_bytes();
-    let absolute = input[0] == b'/';
-    let mut output = Vec::with_capacity(input.len());
+    let absolute = path[0] == b'/';
+    // Start offsets of the components written so far, so `..` can pop one.
     let mut components = Vec::new();
-    if absolute {
-        output.push(b'/');
-    }
+    let mut write = usize::from(absolute);
+    let mut read = 0;
 
-    for component in input.split(|byte| *byte == b'/') {
-        if component.is_empty() || component == b"." {
+    while read < path.len() {
+        let start = read;
+        while read < path.len() && path[read] != b'/' {
+            read += 1;
+        }
+        let length = read - start;
+        read += 1;
+        if length == 0 || (length == 1 && path[start] == b'.') {
             continue;
         }
-        if component == b".." {
-            if let Some(start) = components.pop() {
-                output.truncate(start);
+        let parent = length == 2 && path[start] == b'.' && path[start + 1] == b'.';
+        if parent {
+            if let Some(previous) = components.pop() {
+                write = previous;
                 continue;
             }
         }
 
-        let truncate_to = output.len();
-        if !output.is_empty() && output.last() != Some(&b'/') {
-            output.push(b'/');
+        let component_start = write;
+        if write != 0 && path[write - 1] != b'/' {
+            path[write] = b'/';
+            write += 1;
         }
-        output.extend_from_slice(component);
-        if component != b".." {
-            components.push(truncate_to);
+        debug_assert!(write <= start, "canonicalization never grows the path");
+        path.copy_within(start..start + length, write);
+        write += length;
+        if !parent {
+            components.push(component_start);
         }
     }
 
-    if output.is_empty() {
-        output.push(b'.');
+    path.truncate(write);
+    if path.is_empty() {
+        path.push(b'.');
     }
-    *path = BString::from(output);
 }
 
 pub(crate) fn edit_distance(

@@ -21,9 +21,9 @@
 // [spec:samurai:sem:htab.htabget-fn]
 // [spec:samurai:def:htab.delhtab-fn]
 // [spec:samurai:sem:htab.delhtab-fn]
-use super::{Node, NodeId};
+use super::{shell_escape_path, Graph, Node, NodeId};
 use crate::htab::rapidhashv1;
-use crate::util::ByteSlice;
+use crate::util::{BString, ByteSlice};
 
 #[derive(Default)]
 pub(super) struct NodeIndex {
@@ -82,4 +82,39 @@ impl NodeIndex {
             self.slots[index] = Some(node);
         }
     }
+}
+
+// [spec:samurai:def:graph.mknode-fn]
+// [spec:samurai:sem:graph.mknode-fn]
+// [spec:samurai:def:graph.delnode-fn]
+// [spec:samurai:sem:graph.delnode-fn]
+pub(crate) fn mknode(graph: &mut Graph, path: BString) -> NodeId {
+    if let Some(node) = graph.node_by_path.get(&graph.nodes, path.as_bytes()) {
+        return node;
+    }
+    let shellpath = shell_escape_path(path.as_bytes());
+    let node = NodeId::from_index(graph.nodes.len());
+    graph.nodes.push(Node {
+        path,
+        shellpath,
+        gen: None,
+        uses: Vec::new(),
+        validation_uses: Vec::new(),
+    });
+    graph.node_by_path.insert(&graph.nodes, node);
+    node
+}
+
+/// Intern a path supplied as bytes, allocating only when the node is new.
+pub(crate) fn mknode_bytes(graph: &mut Graph, path: &[u8]) -> NodeId {
+    if let Some(node) = graph.node_by_path.get(&graph.nodes, path) {
+        return node;
+    }
+    mknode(graph, BString::from(path))
+}
+
+// [spec:samurai:def:graph.nodeget-fn]
+// [spec:samurai:sem:graph.nodeget-fn]
+pub(crate) fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
+    graph.node_by_path.get(&graph.nodes, path)
 }

@@ -12,6 +12,7 @@ use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{arena_id, BStr, BString, ByteSlice};
 use edge::EdgePartitions;
 use index::NodeIndex;
+pub(crate) use index::{mknode, mknode_bytes, nodeget};
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 pub(crate) use path::nodepath_bytes;
@@ -194,33 +195,6 @@ impl Graph {
         self.pools.push(pool);
         id
     }
-}
-
-// [spec:samurai:def:graph.mknode-fn]
-// [spec:samurai:sem:graph.mknode-fn]
-// [spec:samurai:def:graph.delnode-fn]
-// [spec:samurai:sem:graph.delnode-fn]
-pub(crate) fn mknode(graph: &mut Graph, path: BString) -> NodeId {
-    if let Some(node) = graph.node_by_path.get(&graph.nodes, path.as_bytes()) {
-        return node;
-    }
-    let shellpath = shell_escape_path(path.as_bytes());
-    let node = NodeId::from_index(graph.nodes.len());
-    graph.nodes.push(Node {
-        path,
-        shellpath,
-        gen: None,
-        uses: Vec::new(),
-        validation_uses: Vec::new(),
-    });
-    graph.node_by_path.insert(&graph.nodes, node);
-    node
-}
-
-// [spec:samurai:def:graph.nodeget-fn]
-// [spec:samurai:sem:graph.nodeget-fn]
-pub(crate) fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
-    graph.node_by_path.get(&graph.nodes, path)
 }
 
 // [spec:samurai:def:graph.nodestat-fn]

@@ -141,15 +141,25 @@ fn evaluated_path(
     Ok(value)
 }
 
+/// Evaluate one path reference and intern it, reusing `scratch`.
+///
+/// Most references name a path that is already interned, so evaluating into a
+/// shared buffer and interning from bytes leaves the common case allocating
+/// nothing at all.
 fn node_for(
     scanner: &Scanner<'_>,
     graph: &mut Graph,
     path: &ScannedEvalString<'_>,
     environment: EnvironmentId,
+    scratch: &mut Vec<u8>,
 ) -> ManifestResult<NodeId> {
-    let mut path = evaluated_path(scanner, graph, path, environment)?;
-    canonpath(&mut path);
-    Ok(mknode(graph, path))
+    scratch.clear();
+    crate::env::enveval_into(graph, environment, path, scratch);
+    if scratch.is_empty() {
+        return Err(manifest_error(scanner, ManifestProblem::EmptyPath));
+    }
+    canonpath(scratch);
+    Ok(crate::graph::mknode_bytes(graph, scratch))
 }
 
 // [spec:samurai:def:parse.parseedge-fn]
@@ -164,6 +174,7 @@ fn parseedge(
     environment: EnvironmentId,
     state: &EnvState,
     options: ParseOptions,
+    scratch: &mut Vec<u8>,
 ) -> ManifestResult<()> {
     let mut output_paths = scanpaths(scanner)?;
     let explicit_output_count = output_paths.len();
@@ -214,7 +225,7 @@ fn parseedge(
     let mut out = Vec::new();
     let mut retained_explicit_output_count = 0;
     for (index, output) in output_paths.iter().enumerate() {
-        let node = node_for(scanner, graph, output, environment)?;
+        let node = node_for(scanner, graph, output, environment, scratch)?;
         if graph.node(node).gen.is_some() || out.contains(&node) {
             if !options.dupbuildwarn {
                 return Err(manifest_error(
@@ -241,11 +252,11 @@ fn parseedge(
 
     let input = input_paths
         .iter()
-        .map(|path| node_for(scanner, graph, path, environment))
+        .map(|path| node_for(scanner, graph, path, environment, scratch))
         .collect::<Result<Vec<_>, _>>()?;
     let validation = validation_paths
         .iter()
-        .map(|path| node_for(scanner, graph, path, environment))
+        .map(|path| node_for(scanner, graph, path, environment, scratch))
         .collect::<Result<Vec<_>, _>>()?;
     let edge = mkedge(graph, environment);
     let edge_env = graph.edge(edge).env;
@@ -483,11 +494,20 @@ pub(crate) fn parse(
         .map_err(|error| ManifestError::read(&path, error))?;
     let source = Source::from_bytes(&path, input);
     let mut scanner = Scanner::new(&source);
+    // One buffer per manifest, reused by every path reference in it.
+    let mut path_scratch = Vec::new();
     while let Some(token) = scankeyword(&mut scanner)? {
         match token.kind {
             TokenKind::Rule => parserule(&mut scanner, graph, environment)?,
             TokenKind::Build => {
-                parseedge(&mut scanner, graph, environment, state, parser.options)?;
+                parseedge(
+                    &mut scanner,
+                    graph,
+                    environment,
+                    state,
+                    parser.options,
+                    &mut path_scratch,
+                )?;
             }
             TokenKind::Include => {
                 parseinclude(&mut scanner, graph, parser, environment, state, false)?;
