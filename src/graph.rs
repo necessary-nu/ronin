@@ -1,17 +1,16 @@
 //! Dense graph arenas and dependency operations.
 
+mod edge;
+
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
 use crate::htab::rapidhashv1_parts;
-use crate::os::MTIME_MISSING;
+use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{BStr, BString, ByteSlice};
+use edge::EdgePartitions;
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::Path;
-
-pub(crate) const MTIME_UNKNOWN: i64 = -1;
-
-pub(crate) const FLAG_HASH: u32 = 1 << 1;
 
 macro_rules! arena_id {
     ($name:ident) => {
@@ -34,19 +33,26 @@ macro_rules! arena_id {
 arena_id!(NodeId);
 arena_id!(EdgeId);
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum PathStyle {
+    #[default]
+    Raw,
+    ShellEscaped,
+}
+
+impl PathStyle {
+    const fn shell_escaped(self) -> bool {
+        matches!(self, Self::ShellEscaped)
+    }
+}
+
 // [spec:samurai:def:graph.node]
 pub(crate) struct Node {
     pub(crate) path: BString,
     pub(crate) shellpath: BString,
-    pub(crate) mtime: i64,
-    pub(crate) logmtime: i64,
     pub(crate) gen: Option<EdgeId>,
     pub(crate) uses: Vec<EdgeId>,
     pub(crate) validation_uses: Vec<EdgeId>,
-    pub(crate) hash: u64,
-    pub(crate) id: i32,
-    pub(crate) dirty: bool,
-    pub(crate) dyndep_pending: bool,
 }
 
 // [spec:samurai:def:graph.edge]
@@ -55,7 +61,6 @@ pub(crate) struct Node {
     reason = "these independent cached graph facts avoid repeated evaluation on hot paths"
 )]
 pub(crate) struct Edge {
-    pub(crate) critical_path_weight: i64,
     pub(crate) rule: Option<RuleId>,
     pub(crate) pool: Option<PoolId>,
     pub(crate) env: EnvironmentId,
@@ -64,16 +69,7 @@ pub(crate) struct Edge {
     pub(crate) input: Vec<NodeId>,
     pub(crate) validation: Vec<NodeId>,
     pub(crate) dyndep: Option<NodeId>,
-    pub(crate) outimpidx: usize,
-    pub(crate) inimpidx: usize,
-    pub(crate) inorderidx: usize,
-    pub(crate) hash: u64,
-    pub(crate) deps_loaded: bool,
-    pub(crate) deps_missing: bool,
-    pub(crate) depfile_deps: usize,
-    pub(crate) command_dirty: bool,
-    pub(crate) restat_clean: bool,
-    pub(crate) flags: u32,
+    partitions: EdgePartitions,
 }
 
 // [spec:samurai:def:htab.hashtablekey]
@@ -175,6 +171,10 @@ impl Graph {
         &mut self.pools[id.index()]
     }
 
+    pub(crate) const fn pool_count(&self) -> usize {
+        self.pools.len()
+    }
+
     pub(crate) fn push_pool(&mut self, pool: Pool) -> PoolId {
         let id = PoolId::from_index(self.pools.len());
         self.pools.push(pool);
@@ -196,15 +196,9 @@ pub(crate) fn mknode(graph: &mut Graph, path: BString) -> NodeId {
     graph.nodes.push(Node {
         path,
         shellpath,
-        mtime: MTIME_UNKNOWN,
-        logmtime: MTIME_MISSING,
         gen: None,
         uses: Vec::new(),
         validation_uses: Vec::new(),
-        hash: 0,
-        id: -1,
-        dirty: false,
-        dyndep_pending: false,
     });
     graph.node_by_path.insert(key, node);
     node
@@ -219,7 +213,8 @@ pub(crate) fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
 // [spec:samurai:def:graph.nodestat-fn]
 // [spec:samurai:sem:graph.nodestat-fn]
 pub(crate) fn nodestat_with<F>(
-    graph: &mut Graph,
+    graph: &Graph,
+    runtime: &mut RuntimeState,
     node: NodeId,
     stat: &mut F,
 ) -> Result<(), GraphError>
@@ -229,40 +224,38 @@ where
     let path = graph.node(node).path.clone();
     let mtime = stat(path.to_path().expect("byte paths are valid on Unix"))
         .map_err(|source| GraphError::Stat { node, path, source })?;
-    graph.node_mut(node).mtime = mtime;
+    runtime.node_mut(node).set_mtime(FileTime::observed(mtime));
     Ok(())
 }
 
 /// Recompute one edge after all of its inputs have already been evaluated.
 pub(crate) fn recompute_edge_dirty_with<F>(
-    graph: &mut Graph,
+    graph: &Graph,
+    runtime: &mut RuntimeState,
     edge: EdgeId,
     stat: &mut F,
 ) -> Result<bool, GraphError>
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    if graph.edge(edge).restat_clean {
-        for index in 0..graph.edge(edge).out.len() {
-            let output = graph.edge(edge).out[index];
-            graph.node_mut(output).dirty = false;
+    if runtime.edge(edge).restat_clean() {
+        for output in &graph.edge(edge).out {
+            runtime.node_mut(*output).set_dirty(false);
         }
         return Ok(false);
     }
 
-    for index in 0..graph.edge(edge).out.len() {
-        let output = graph.edge(edge).out[index];
-        if graph.node(output).mtime == MTIME_UNKNOWN {
-            nodestat_with(graph, output, stat)?;
+    for output in &graph.edge(edge).out {
+        if runtime.node(*output).mtime().is_unobserved() {
+            nodestat_with(graph, runtime, *output, stat)?;
         }
     }
 
     let edge_data = graph.edge(edge);
     let input_dirty = edge_data
-        .input
+        .non_order_only_inputs()
         .iter()
-        .take(edge_data.inorderidx)
-        .any(|input| graph.node(*input).dirty);
+        .any(|input| runtime.node(*input).dirty());
     let is_phony = edge_data
         .rule
         .is_some_and(|rule| graph.rule(rule).name == "phony");
@@ -273,19 +266,16 @@ where
             && edge_data
                 .out
                 .iter()
-                .any(|output| graph.node(*output).mtime == 0);
+                .any(|output| runtime.node(*output).mtime().is_missing());
         let newest_input = edge_data
-            .input
+            .non_order_only_inputs()
             .iter()
-            .take(edge_data.inorderidx)
-            .map(|input| graph.node(*input).mtime)
+            .map(|input| runtime.node(*input).mtime())
             .max()
-            .unwrap_or(0);
-        let output_count = edge_data.out.len();
-        for index in 0..output_count {
-            let output = graph.edge(edge).out[index];
-            if graph.node(output).mtime == 0 {
-                graph.node_mut(output).mtime = newest_input;
+            .unwrap_or(FileTime::MISSING);
+        for output in &edge_data.out {
+            if runtime.node(*output).mtime().is_missing() {
+                runtime.node_mut(*output).set_mtime(newest_input);
             }
         }
         input_dirty || missing_without_inputs
@@ -293,36 +283,33 @@ where
         let oldest_output = edge_data
             .out
             .iter()
-            .map(|output| graph.node(*output).mtime)
+            .map(|output| runtime.node(*output).mtime())
             .min()
-            .unwrap_or(0);
+            .unwrap_or(FileTime::MISSING);
         let oldest_recorded_output = edge_data
             .out
             .iter()
-            .map(|output| graph.node(*output).logmtime)
-            .filter(|mtime| *mtime != MTIME_MISSING)
+            .map(|output| runtime.node(*output).log_mtime())
+            .filter(|mtime| mtime.is_observed())
             .min();
-        oldest_output == 0
-            || edge_data.deps_missing
-            || edge_data.command_dirty
+        oldest_output.is_missing()
+            || runtime.edge(edge).deps_missing()
+            || runtime.edge(edge).command_dirty()
             || input_dirty
             || oldest_recorded_output.is_some_and(|output_mtime| {
                 edge_data
-                    .input
+                    .non_order_only_inputs()
                     .iter()
-                    .take(edge_data.inorderidx)
-                    .any(|input| graph.node(*input).mtime > output_mtime)
+                    .any(|input| runtime.node(*input).mtime() > output_mtime)
             })
             || edge_data
-                .input
+                .non_order_only_inputs()
                 .iter()
-                .take(edge_data.inorderidx)
-                .any(|input| graph.node(*input).mtime > oldest_output)
+                .any(|input| runtime.node(*input).mtime() > oldest_output)
     };
 
-    for index in 0..graph.edge(edge).out.len() {
-        let output = graph.edge(edge).out[index];
-        graph.node_mut(output).dirty = dirty;
+    for output in &graph.edge(edge).out {
+        runtime.node_mut(*output).set_dirty(dirty);
     }
     Ok(dirty)
 }
@@ -343,7 +330,8 @@ struct DirtyEvaluator {
 impl DirtyEvaluator {
     fn evaluate<F>(
         &mut self,
-        graph: &mut Graph,
+        graph: &Graph,
+        runtime: &mut RuntimeState,
         target: NodeId,
         stat: &mut F,
     ) -> Result<bool, GraphError>
@@ -365,11 +353,11 @@ impl DirtyEvaluator {
                     }
                     VisitState::New => {
                         let Some(edge) = graph.node(node).gen else {
-                            if graph.node(node).mtime == MTIME_UNKNOWN {
-                                nodestat_with(graph, node, stat)?;
+                            if runtime.node(node).mtime().is_unobserved() {
+                                nodestat_with(graph, runtime, node, stat)?;
                             }
-                            let dirty = graph.node(node).mtime == 0;
-                            graph.node_mut(node).dirty = dirty;
+                            let dirty = runtime.node(node).mtime().is_missing();
+                            runtime.node_mut(node).set_dirty(dirty);
                             self.nodes[node.index()] = VisitState::Done;
                             continue;
                         };
@@ -387,10 +375,10 @@ impl DirtyEvaluator {
 
                         self.edges[edge.index()] = VisitState::Active;
                         let output_count = graph.edge(edge).out.len();
-                        if graph.edge(edge).restat_clean {
+                        if runtime.edge(edge).restat_clean() {
                             for index in 0..output_count {
                                 let output = graph.edge(edge).out[index];
-                                graph.node_mut(output).dirty = false;
+                                runtime.node_mut(output).set_dirty(false);
                                 self.nodes[output.index()] = VisitState::Done;
                             }
                             self.edges[edge.index()] = VisitState::Done;
@@ -399,8 +387,8 @@ impl DirtyEvaluator {
 
                         for index in 0..output_count {
                             let output = graph.edge(edge).out[index];
-                            if graph.node(output).mtime == MTIME_UNKNOWN {
-                                nodestat_with(graph, output, stat)?;
+                            if runtime.node(output).mtime().is_unobserved() {
+                                nodestat_with(graph, runtime, output, stat)?;
                             }
                             self.nodes[output.index()] = VisitState::Active;
                         }
@@ -411,7 +399,7 @@ impl DirtyEvaluator {
                     }
                 },
                 Work::Finish(edge) => {
-                    recompute_edge_dirty_with(graph, edge, stat)?;
+                    recompute_edge_dirty_with(graph, runtime, edge, stat)?;
                     let output_count = graph.edge(edge).out.len();
                     for index in 0..output_count {
                         let output = graph.edge(edge).out[index];
@@ -421,7 +409,7 @@ impl DirtyEvaluator {
                 }
             }
         }
-        Ok(graph.node(target).dirty)
+        Ok(runtime.node(target).dirty())
     }
 }
 
@@ -429,7 +417,8 @@ impl DirtyEvaluator {
 // [spec:samurai:req:compat.graph-semantics]
 #[cfg(test)]
 pub(crate) fn recompute_dirty_with<F>(
-    graph: &mut Graph,
+    graph: &Graph,
+    runtime: &mut RuntimeState,
     node: NodeId,
     stat: &mut F,
 ) -> Result<bool, GraphError>
@@ -440,11 +429,12 @@ where
         nodes: vec![VisitState::New; graph.nodes.len()],
         edges: vec![VisitState::New; graph.edges.len()],
     };
-    evaluator.evaluate(graph, node, stat)
+    evaluator.evaluate(graph, runtime, node, stat)
 }
 
 pub(crate) fn recompute_dirty_with_validations<F>(
-    graph: &mut Graph,
+    graph: &Graph,
+    runtime: &mut RuntimeState,
     node: NodeId,
     stat: &mut F,
 ) -> Result<Vec<NodeId>, GraphError>
@@ -461,7 +451,7 @@ where
         nodes: vec![VisitState::New; graph.nodes.len()],
         edges: vec![VisitState::New; graph.edges.len()],
     };
-    evaluator.evaluate(graph, node, stat)?;
+    evaluator.evaluate(graph, runtime, node, stat)?;
     let mut validations = Vec::new();
     let mut seen_nodes = vec![false; graph.nodes.len()];
     let mut seen_edges = vec![false; graph.edges.len()];
@@ -486,7 +476,7 @@ where
                 if std::mem::replace(&mut seen_nodes[validation.index()], true) {
                     continue;
                 }
-                evaluator.evaluate(graph, validation, stat)?;
+                evaluator.evaluate(graph, runtime, validation, stat)?;
                 work.push(Work::RecordValidation(validation));
                 work.push(Work::Enter(validation));
             }
@@ -498,9 +488,9 @@ where
 
 // [spec:samurai:def:graph.nodepath-fn]
 // [spec:samurai:sem:graph.nodepath-fn]
-pub(crate) fn nodepath(graph: &Graph, node: NodeId, escape: bool) -> BString {
+pub(crate) fn nodepath(graph: &Graph, node: NodeId, style: PathStyle) -> BString {
     let node = graph.node(node);
-    if escape {
+    if style.shell_escaped() {
         node.shellpath.clone()
     } else {
         node.path.clone()
@@ -542,7 +532,6 @@ pub(crate) fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
     let id = EdgeId::from_index(graph.edges.len());
     let environment = crate::env::mkenv(graph, Some(parent));
     graph.edges.push(Edge {
-        critical_path_weight: -1,
         rule: None,
         pool: None,
         env: environment,
@@ -551,16 +540,7 @@ pub(crate) fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
         input: Vec::new(),
         validation: Vec::new(),
         dyndep: None,
-        outimpidx: 0,
-        inimpidx: 0,
-        inorderidx: 0,
-        hash: 0,
-        deps_loaded: false,
-        deps_missing: false,
-        depfile_deps: 0,
-        command_dirty: false,
-        restat_clean: false,
-        flags: 0,
+        partitions: EdgePartitions::default(),
     });
     id
 }
@@ -568,27 +548,21 @@ pub(crate) fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
 // [spec:samurai:def:graph.edgehash-fn]
 // [spec:samurai:sem:graph.edgehash-fn]
 pub(crate) fn edgehash(
-    graph: &mut Graph,
+    runtime: &mut RuntimeState,
     edge: EdgeId,
     command: &BStr,
     rspfile_content: Option<&BStr>,
-) {
-    let edge = graph.edge_mut(edge);
-    if edge.flags & FLAG_HASH != 0 {
-        return;
+) -> CommandHash {
+    if let Some(cached) = runtime.edge(edge).command_hash() {
+        return cached;
     }
-    edge.flags |= FLAG_HASH;
     let hash = rspfile_content.filter(|rsp| !rsp.is_empty()).map_or_else(
         || rapidhashv1_parts(&[command.as_bytes()]),
         |rsp| rapidhashv1_parts(&[command.as_bytes(), b";rspfile=", rsp.as_bytes()]),
     );
-    edge.hash = hash;
-}
-
-pub(crate) fn invalidate_edge_hash(graph: &mut Graph, edge: EdgeId) {
-    let edge = graph.edge_mut(edge);
-    edge.flags &= !FLAG_HASH;
-    edge.hash = 0;
+    let hash = CommandHash::from_raw(hash);
+    runtime.edge_mut(edge).set_command_hash(hash);
+    hash
 }
 
 // [spec:samurai:def:graph.edgeadddeps-fn]
@@ -597,10 +571,7 @@ pub(crate) fn edgeadddeps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
     for node in deps {
         nodeuse(graph, *node, edge);
     }
-    let edge = graph.edge_mut(edge);
-    let index = edge.inorderidx;
-    edge.input.splice(index..index, deps.iter().copied());
-    edge.inorderidx += deps.len();
+    graph.edge_mut(edge).insert_implicit_inputs(deps);
 }
 
 /// Return generated outputs that are not consumed by another build edge.
@@ -666,10 +637,10 @@ impl InputsCollector {
         }
     }
 
-    pub(crate) fn input_strings(&self, graph: &Graph, shell_escape: bool) -> Vec<BString> {
+    pub(crate) fn input_strings(&self, graph: &Graph, style: PathStyle) -> Vec<BString> {
         self.inputs
             .iter()
-            .map(|node| nodepath(graph, *node, shell_escape))
+            .map(|node| nodepath(graph, *node, style))
             .collect()
     }
 
@@ -771,7 +742,10 @@ mod tests {
         let first = mknode(&mut graph, xasprintf(format_args!("a b")));
         let second = mknode(&mut graph, xasprintf(format_args!("a b")));
         assert_eq!(first, second);
-        assert_eq!(nodepath(&graph, first, true).as_bytes(), b"'a b'");
+        assert_eq!(
+            nodepath(&graph, first, PathStyle::ShellEscaped).as_bytes(),
+            b"'a b'"
+        );
     }
 
     #[test]
@@ -781,7 +755,7 @@ mod tests {
             &mut graph,
             xasprintf(format_args!("foo bar\"/'$@d!st!c'/path'")),
         );
-        let path = nodepath(&graph, node, true);
+        let path = nodepath(&graph, node, PathStyle::ShellEscaped);
         assert_eq!(
             std::str::from_utf8(path.as_bytes()).unwrap(),
             "'foo bar\"/'\\''$@d!st!c'\\''/path'\\'''"
@@ -803,18 +777,20 @@ mod tests {
             graph.edge_mut(edge).input.push(input);
         }
         let input_count = graph.edge(edge).input.len();
-        graph.edge_mut(edge).inimpidx = input_count;
-        graph.edge_mut(edge).inorderidx = input_count;
+        graph
+            .edge_mut(edge)
+            .set_input_partitions(input_count, input_count);
         graph.node_mut(output).gen = Some(edge);
         output
     }
 
     fn scan_graph(
-        graph: &mut Graph,
+        graph: &Graph,
         node: NodeId,
         mtimes: &[(&str, i64)],
         stats: &mut Vec<String>,
-    ) -> Result<(), GraphError> {
+    ) -> Result<RuntimeState, GraphError> {
+        let mut runtime = RuntimeState::new(graph);
         let mtimes = mtimes
             .iter()
             .map(|(path, mtime)| (path.to_string(), *mtime))
@@ -824,9 +800,9 @@ mod tests {
             stats.push(path.clone());
             Ok(*mtimes.get(&path).unwrap_or(&0))
         };
-        nodestat_with(graph, node, &mut stat)?;
-        recompute_dirty_with(graph, node, &mut stat)?;
-        Ok(())
+        nodestat_with(graph, &mut runtime, node, &mut stat)?;
+        recompute_dirty_with(graph, &mut runtime, node, &mut stat)?;
+        Ok(runtime)
     }
 
     #[test]
@@ -835,7 +811,7 @@ mod tests {
         let root = mkenv(&mut graph, None);
         let output = generated_node(&mut graph, root, "out", &["in"]);
         let mut stats = Vec::new();
-        scan_graph(&mut graph, output, &[], &mut stats).unwrap();
+        scan_graph(&graph, output, &[], &mut stats).unwrap();
         assert_eq!(stats, ["out", "in"]);
     }
 
@@ -846,10 +822,10 @@ mod tests {
         let output = generated_node(&mut graph, root, "out", &["mid"]);
         let middle = generated_node(&mut graph, root, "mid", &["in"]);
         let mut stats = Vec::new();
-        scan_graph(&mut graph, output, &[], &mut stats).unwrap();
+        let runtime = scan_graph(&graph, output, &[], &mut stats).unwrap();
         assert_eq!(stats, ["out", "mid", "in"]);
-        assert!(graph.node(output).dirty);
-        assert!(graph.node(middle).dirty);
+        assert!(runtime.node(output).dirty());
+        assert!(runtime.node(middle).dirty());
     }
 
     #[test]
@@ -860,12 +836,12 @@ mod tests {
         let middle1 = generated_node(&mut graph, root, "mid1", &["in11", "in12"]);
         generated_node(&mut graph, root, "mid2", &["in21", "in22"]);
         let mut stats = Vec::new();
-        scan_graph(&mut graph, output, &[], &mut stats).unwrap();
+        let runtime = scan_graph(&graph, output, &[], &mut stats).unwrap();
         assert_eq!(
             stats,
             ["out", "mid1", "in11", "in12", "mid2", "in21", "in22"]
         );
-        assert!(graph.node(middle1).dirty);
+        assert!(runtime.node(middle1).dirty());
     }
 
     #[test]
@@ -888,7 +864,8 @@ mod tests {
             stat_count += 1;
             Ok(0)
         };
-        assert!(recompute_dirty_with(&mut graph, target.unwrap(), &mut stat).unwrap());
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(recompute_dirty_with(&graph, &mut runtime, target.unwrap(), &mut stat).unwrap());
         assert_eq!(stat_count, DEPTH + 1);
     }
 
@@ -900,16 +877,16 @@ mod tests {
         let middle = generated_node(&mut graph, root, "mid", &["in"]);
         let input = nodeget(&graph, b"in").unwrap();
         let mut stats = Vec::new();
-        scan_graph(
-            &mut graph,
+        let runtime = scan_graph(
+            &graph,
             output,
             &[("in", 1), ("mid", 0), ("out", 1)],
             &mut stats,
         )
         .unwrap();
-        assert!(!graph.node(input).dirty);
-        assert!(graph.node(middle).dirty);
-        assert!(graph.node(output).dirty);
+        assert!(!runtime.node(input).dirty());
+        assert!(runtime.node(middle).dirty());
+        assert!(runtime.node(output).dirty());
     }
 
     #[test]
@@ -956,16 +933,12 @@ mod tests {
         {
             let edge = graph.edge_mut(edge);
             edge.input.extend([input1, input2]);
-            edge.inimpidx = 2;
-            edge.inorderidx = 2;
+            edge.set_input_partitions(2, 2);
             edge.out.push(output);
-            edge.outimpidx = 1;
+            edge.set_explicit_output_count(1);
         }
-        let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
+        let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
         assert_eq!(command.as_bytes(), b"cat in1 in2 > out");
-        assert!(!graph.node(input1).dirty);
-        assert!(!graph.node(input2).dirty);
-        assert!(!graph.node(output).dirty);
     }
 
     #[test]
@@ -987,19 +960,22 @@ mod tests {
         );
         let mut collector = InputsCollector::default();
         collector.visit_node(&graph, nodeget(&graph, b"out1").unwrap());
-        assert_eq!(collector.input_strings(&graph, false), ["in1"]);
+        assert_eq!(collector.input_strings(&graph, PathStyle::Raw), ["in1"]);
         collector.visit_node(&graph, nodeget(&graph, b"out2").unwrap());
-        assert_eq!(collector.input_strings(&graph, false), ["in1", "mid1"]);
+        assert_eq!(
+            collector.input_strings(&graph, PathStyle::Raw),
+            ["in1", "mid1"]
+        );
         collector.visit_node(&graph, nodeget(&graph, b"all").unwrap());
         assert_eq!(
-            collector.input_strings(&graph, false),
+            collector.input_strings(&graph, PathStyle::Raw),
             ["in1", "mid1", "out1", "out2", "out3"]
         );
 
         collector.reset();
         collector.visit_node(&graph, nodeget(&graph, b"all").unwrap());
         assert_eq!(
-            collector.input_strings(&graph, false),
+            collector.input_strings(&graph, PathStyle::Raw),
             ["in1", "out1", "mid1", "out2", "out3"]
         );
     }
@@ -1011,11 +987,11 @@ mod tests {
         let mut collector = InputsCollector::default();
         collector.visit_node(&graph, nodeget(&graph, b"out 1").unwrap());
         assert_eq!(
-            collector.input_strings(&graph, false),
+            collector.input_strings(&graph, PathStyle::Raw),
             ["in1", "in2", "in with space", "implicit", "order_only"]
         );
         assert_eq!(
-            collector.input_strings(&graph, true),
+            collector.input_strings(&graph, PathStyle::ShellEscaped),
             ["in1", "in2", "'in with space'", "implicit", "order_only"]
         );
     }
@@ -1025,17 +1001,18 @@ mod tests {
             .edges
             .iter()
             .map(|edge| {
-                let command = crate::env::edgevar(graph, *edge, "command", false).unwrap();
+                let command = crate::env::edgevar(graph, *edge, "command", PathStyle::Raw).unwrap();
                 String::from_utf8_lossy(command.as_bytes()).into_owned()
             })
             .collect()
     }
 
-    fn recompute_with_mtimes(
-        graph: &mut Graph,
+    fn recompute_state_with_mtimes(
+        graph: &Graph,
         target: &[u8],
         mtimes: &[(&str, i64)],
-    ) -> Result<bool, GraphError> {
+    ) -> Result<(bool, RuntimeState), GraphError> {
+        let mut runtime = RuntimeState::new(graph);
         let mtimes = mtimes
             .iter()
             .map(|(path, mtime)| (path.to_string(), *mtime))
@@ -1044,7 +1021,21 @@ mod tests {
             let path = path.to_string_lossy();
             Ok(*mtimes.get(path.as_ref()).unwrap_or(&0))
         };
-        recompute_dirty_with(graph, nodeget(graph, target).unwrap(), &mut stat)
+        let dirty = recompute_dirty_with(
+            graph,
+            &mut runtime,
+            nodeget(graph, target).unwrap(),
+            &mut stat,
+        )?;
+        Ok((dirty, runtime))
+    }
+
+    fn recompute_with_mtimes(
+        graph: &Graph,
+        target: &[u8],
+        mtimes: &[(&str, i64)],
+    ) -> Result<bool, GraphError> {
+        recompute_state_with_mtimes(graph, target, mtimes).map(|(dirty, _)| dirty)
     }
 
     #[test]
@@ -1092,7 +1083,8 @@ mod tests {
         let graph = parse_graph("build a$ b: cat no'space with$ space$$ no\"space2\n");
         let edge = nodeget(&graph, b"a b").unwrap();
         let edge = graph.node(edge).gen.unwrap();
-        let command = crate::env::edgevar(&graph, edge, "command", true).unwrap();
+        let command =
+            crate::env::edgevar(&graph, edge, "command", PathStyle::ShellEscaped).unwrap();
         assert_eq!(
             command.as_bytes(),
             b"cat 'no'\\''space' 'with space$' 'no\"space2' > 'a b'"
@@ -1106,7 +1098,7 @@ mod tests {
         );
         let edge = nodeget(&graph, b"out").unwrap();
         let edge = graph.node(edge).gen.unwrap();
-        let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
+        let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
         assert_eq!(command.as_bytes(), b"depfile is x");
     }
 
@@ -1117,34 +1109,32 @@ mod tests {
         );
         let edge = nodeget(&graph, b"out").unwrap();
         let edge = graph.node(edge).gen.unwrap();
-        let depfile = crate::env::edgevar(&graph, edge, "depfile", false).unwrap();
-        let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
+        let depfile = crate::env::edgevar(&graph, edge, "depfile", PathStyle::Raw).unwrap();
+        let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
         assert_eq!(depfile.as_bytes(), b"y");
         assert_eq!(command.as_bytes(), b"depfile is y");
     }
 
     #[test]
     fn ninja_graph_missing_implicit_input_is_dirty() {
-        let mut graph = parse_graph("build out: cat in | implicit\n");
-        assert!(recompute_with_mtimes(&mut graph, b"out", &[("in", 1), ("out", 1)]).unwrap());
+        let graph = parse_graph("build out: cat in | implicit\n");
+        assert!(recompute_with_mtimes(&graph, b"out", &[("in", 1), ("out", 1)]).unwrap());
     }
 
     #[test]
     fn ninja_graph_modified_implicit_input_is_dirty() {
-        let mut graph = parse_graph("build out: cat in | implicit\n");
-        assert!(recompute_with_mtimes(
-            &mut graph,
-            b"out",
-            &[("in", 1), ("out", 1), ("implicit", 2)]
-        )
-        .unwrap());
+        let graph = parse_graph("build out: cat in | implicit\n");
+        assert!(
+            recompute_with_mtimes(&graph, b"out", &[("in", 1), ("out", 1), ("implicit", 2)])
+                .unwrap()
+        );
     }
 
     #[test]
     fn ninja_graph_newer_order_only_input_is_clean() {
-        let mut graph = parse_graph("build out: cat in || order_only\n");
+        let graph = parse_graph("build out: cat in || order_only\n");
         assert!(!recompute_with_mtimes(
-            &mut graph,
+            &graph,
             b"out",
             &[("in", 1), ("out", 1), ("order_only", 2)]
         )
@@ -1153,73 +1143,70 @@ mod tests {
 
     #[test]
     fn ninja_graph_missing_implicit_output_dirties_all_outputs() {
-        let mut graph = parse_graph("build out | out.imp: cat in\n");
-        assert!(recompute_with_mtimes(&mut graph, b"out", &[("in", 1), ("out", 1)]).unwrap());
-        assert!(graph.node(nodeget(&graph, b"out").unwrap()).dirty);
-        assert!(graph.node(nodeget(&graph, b"out.imp").unwrap()).dirty);
+        let graph = parse_graph("build out | out.imp: cat in\n");
+        let (dirty, runtime) =
+            recompute_state_with_mtimes(&graph, b"out", &[("in", 1), ("out", 1)]).unwrap();
+        assert!(dirty);
+        assert!(runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
+        assert!(runtime.node(nodeget(&graph, b"out.imp").unwrap()).dirty());
     }
 
     #[test]
     fn ninja_graph_old_implicit_output_dirties_all_outputs() {
-        let mut graph = parse_graph("build out | out.imp: cat in\n");
-        assert!(recompute_with_mtimes(
-            &mut graph,
-            b"out",
-            &[("out.imp", 1), ("in", 2), ("out", 2)]
-        )
-        .unwrap());
-        assert!(graph.node(nodeget(&graph, b"out").unwrap()).dirty);
-        assert!(graph.node(nodeget(&graph, b"out.imp").unwrap()).dirty);
+        let graph = parse_graph("build out | out.imp: cat in\n");
+        let (dirty, runtime) =
+            recompute_state_with_mtimes(&graph, b"out", &[("out.imp", 1), ("in", 2), ("out", 2)])
+                .unwrap();
+        assert!(dirty);
+        assert!(runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
+        assert!(runtime.node(nodeget(&graph, b"out.imp").unwrap()).dirty());
     }
 
     #[test]
     fn ninja_graph_implicit_only_output_missing() {
-        let mut graph = parse_graph("build | out.imp: cat in\n");
-        assert!(recompute_with_mtimes(&mut graph, b"out.imp", &[("in", 1)]).unwrap());
+        let graph = parse_graph("build | out.imp: cat in\n");
+        assert!(recompute_with_mtimes(&graph, b"out.imp", &[("in", 1)]).unwrap());
     }
 
     #[test]
     fn ninja_graph_implicit_only_output_outdated() {
-        let mut graph = parse_graph("build | out.imp: cat in\n");
-        assert!(
-            recompute_with_mtimes(&mut graph, b"out.imp", &[("out.imp", 1), ("in", 2)]).unwrap()
-        );
+        let graph = parse_graph("build | out.imp: cat in\n");
+        assert!(recompute_with_mtimes(&graph, b"out.imp", &[("out.imp", 1), ("in", 2)]).unwrap());
     }
 
     #[test]
     fn ninja_graph_validation_is_scanned_separately() {
-        let mut graph = parse_graph("build out: cat in |@ validate\nbuild validate: cat in\n");
+        let graph = parse_graph("build out: cat in |@ validate\nbuild validate: cat in\n");
         let mtimes = BTreeMap::from([("in".to_owned(), 1)]);
         let mut stat = |path: &Path| {
             let path = path.to_string_lossy();
             Ok(*mtimes.get(path.as_ref()).unwrap_or(&0))
         };
         let output = nodeget(&graph, b"out").unwrap();
-        let validations = recompute_dirty_with_validations(&mut graph, output, &mut stat).unwrap();
+        let mut runtime = RuntimeState::new(&graph);
+        let validations =
+            recompute_dirty_with_validations(&graph, &mut runtime, output, &mut stat).unwrap();
         assert_eq!(validations.len(), 1);
-        assert!(graph.node(nodeget(&graph, b"out").unwrap()).dirty);
-        assert!(graph.node(nodeget(&graph, b"validate").unwrap()).dirty);
+        assert!(runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
+        assert!(runtime.node(nodeget(&graph, b"validate").unwrap()).dirty());
     }
 
     #[test]
     fn ninja_graph_phony_dependency_propagates_mtime() {
-        let mut graph = parse_graph("build in_ph: phony in1\nbuild out1: cat in_ph\n");
-        assert!(!recompute_with_mtimes(&mut graph, b"out1", &[("in1", 1), ("out1", 2)]).unwrap());
-        for node in graph.node_ids() {
-            let node = graph.node_mut(node);
-            node.mtime = MTIME_UNKNOWN;
-            node.dirty = false;
-        }
-        assert!(recompute_with_mtimes(&mut graph, b"out1", &[("in1", 3), ("out1", 2)]).unwrap());
+        let graph = parse_graph("build in_ph: phony in1\nbuild out1: cat in_ph\n");
+        assert!(!recompute_with_mtimes(&graph, b"out1", &[("in1", 1), ("out1", 2)]).unwrap());
+        assert!(recompute_with_mtimes(&graph, b"out1", &[("in1", 3), ("out1", 2)]).unwrap());
     }
 
     #[test]
     fn ninja_graph_phony_output_with_validation_is_clean() {
-        let mut graph = parse_graph("build valid: phony\nbuild out: phony |@ valid\n");
+        let graph = parse_graph("build valid: phony\nbuild out: phony |@ valid\n");
         let mut stat = |_path: &Path| Ok(0);
         let output = nodeget(&graph, b"out").unwrap();
-        let validations = recompute_dirty_with_validations(&mut graph, output, &mut stat).unwrap();
-        assert!(!graph.node(nodeget(&graph, b"out").unwrap()).dirty);
+        let mut runtime = RuntimeState::new(&graph);
+        let validations =
+            recompute_dirty_with_validations(&graph, &mut runtime, output, &mut stat).unwrap();
+        assert!(!runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
         assert_eq!(validations.len(), 1);
         assert_eq!(graph.node(validations[0]).path.as_bytes(), b"valid");
     }

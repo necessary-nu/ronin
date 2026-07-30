@@ -1,10 +1,11 @@
 //! Manifest environments, rules, and pools stored in graph-owned arenas.
 
 use crate::error::GraphError;
-use crate::graph::{EdgeId, Graph, NodeId};
+use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
 use crate::scan::{ScannedEvalPart, ScannedEvalString};
 use crate::util::{BString, EvalPart, EvalString};
 use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 
 macro_rules! arena_id {
     ($name:ident) => {
@@ -57,8 +58,17 @@ pub(crate) struct Rule {
 // [spec:samurai:def:env.pool]
 pub(crate) struct Pool {
     pub(crate) name: String,
-    pub(crate) numjobs: i32,
-    pub(crate) maxjobs: i32,
+    depth: Option<NonZeroUsize>,
+}
+
+impl Pool {
+    pub(crate) const fn depth(&self) -> Option<NonZeroUsize> {
+        self.depth
+    }
+
+    pub(crate) const fn set_depth(&mut self, depth: NonZeroUsize) {
+        self.depth = Some(depth);
+    }
 }
 
 pub(crate) struct EnvState {
@@ -75,8 +85,7 @@ impl EnvState {
         envaddrule(graph, root, phony).expect("fresh root rule table");
         let console = graph.push_pool(Pool {
             name: "console".into(),
-            numjobs: 0,
-            maxjobs: 1,
+            depth: NonZeroUsize::new(1),
         });
         let mut state = Self {
             root,
@@ -263,11 +272,7 @@ pub(crate) fn mkpool(
     state: &mut EnvState,
     name: String,
 ) -> Result<PoolId, GraphError> {
-    let pool = graph.push_pool(Pool {
-        name,
-        numjobs: 0,
-        maxjobs: 0,
-    });
+    let pool = graph.push_pool(Pool { name, depth: None });
     addpool(graph, state, pool)?;
     Ok(pool)
 }
@@ -286,19 +291,24 @@ pub(crate) fn poolget(state: &EnvState, name: &str) -> Result<PoolId, GraphError
 
 // [spec:samurai:def:env.edgevar-fn]
 // [spec:samurai:sem:env.edgevar-fn]
-pub(crate) fn edgevar(graph: &Graph, edge: EdgeId, name: &str, escape: bool) -> Option<BString> {
+pub(crate) fn edgevar(
+    graph: &Graph,
+    edge: EdgeId,
+    name: &str,
+    style: PathStyle,
+) -> Option<BString> {
     fn evaluate(
         graph: &Graph,
         edge: EdgeId,
         value: &EvalString,
-        escape: bool,
+        style: PathStyle,
         stack: &mut Vec<String>,
     ) -> BString {
         let mut parts = Vec::with_capacity(value.parts.len());
         for part in &value.parts {
             match part {
                 EvalPart::Variable(name) => {
-                    if let Some(value) = edgevar_inner(graph, edge, name, escape, stack) {
+                    if let Some(value) = edgevar_inner(graph, edge, name, style, stack) {
                         parts.push(value);
                     }
                 }
@@ -312,20 +322,20 @@ pub(crate) fn edgevar(graph: &Graph, edge: EdgeId, name: &str, escape: bool) -> 
         graph: &Graph,
         edge_id: EdgeId,
         name: &str,
-        escape: bool,
+        style: PathStyle,
         stack: &mut Vec<String>,
     ) -> Option<BString> {
         let edge = graph.edge(edge_id);
         let computed: Option<(&[NodeId], u8)> = match name {
-            "in" => Some((&edge.input[..edge.inimpidx], b' ')),
-            "in_newline" => Some((&edge.input[..edge.inimpidx], b'\n')),
-            "out" => Some((&edge.out[..edge.outimpidx], b' ')),
+            "in" => Some((edge.explicit_inputs(), b' ')),
+            "in_newline" => Some((edge.explicit_inputs(), b'\n')),
+            "out" => Some((edge.explicit_outputs(), b' ')),
             _ => None,
         };
         if let Some((nodes, separator)) = computed {
             let paths = nodes
                 .iter()
-                .map(|node| crate::graph::nodepath(graph, *node, escape))
+                .map(|node| crate::graph::nodepath(graph, *node, style))
                 .collect::<Vec<_>>();
             return pathlist(&paths, separator);
         }
@@ -344,12 +354,12 @@ pub(crate) fn edgevar(graph: &Graph, edge: EdgeId, name: &str, escape: bool) -> 
             return None;
         }
         stack.push(name.to_owned());
-        let result = evaluate(graph, edge_id, &value, escape, stack);
+        let result = evaluate(graph, edge_id, &value, style, stack);
         stack.pop();
         Some(result)
     }
 
-    edgevar_inner(graph, edge, name, escape, &mut Vec::new())
+    edgevar_inner(graph, edge, name, style, &mut Vec::new())
 }
 
 #[cfg(test)]

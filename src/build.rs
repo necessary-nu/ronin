@@ -2,22 +2,41 @@
 
 use crate::error::{BuildError, BuildOperation, ProcessError};
 use crate::graph::{
-    edgeadddeps, nodeget, nodestat_with, recompute_dirty_with_validations,
-    recompute_edge_dirty_with, EdgeId, Graph, NodeId,
+    edgeadddeps, edgehash, nodeget, nodestat_with, recompute_dirty_with_validations,
+    recompute_edge_dirty_with, EdgeId, Graph, NodeId, PathStyle,
 };
-use crate::os::{RealDiskInterface, MTIME_MISSING};
+use crate::os::RealDiskInterface;
+use crate::runtime::{FileTime, RuntimeState};
 use crate::subprocess::{status_interrupted, ProcessOutput, ProcessSupervisor, SupervisorWake};
 use crate::util::{BString, ByteSlice};
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
 use std::fs;
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use self::command::{CommandSpec, PreparedEdge, ResponseFile};
+use self::command::{CommandSpec, DepsType, PreparedEdge, ResponseFile};
 
 type BuildResult<T> = Result<T, BuildError>;
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum JobLimit {
+    #[default]
+    Auto,
+    Unlimited,
+    Fixed(NonZeroUsize),
+}
+
+impl JobLimit {
+    pub(crate) const fn fixed(jobs: usize) -> Option<Self> {
+        match NonZeroUsize::new(jobs) {
+            Some(jobs) => Some(Self::Fixed(jobs)),
+            None => None,
+        }
+    }
+}
 
 // [spec:samurai:def:build.buildoptions]
 #[derive(Clone)]
@@ -26,7 +45,7 @@ type BuildResult<T> = Result<T, BuildError>;
     reason = "independent Ninja CLI switches are clearer as named options than a synthetic state machine"
 )]
 pub(crate) struct BuildOptions {
-    pub(crate) maxjobs: usize,
+    pub(crate) jobs: JobLimit,
     pub(crate) maxfail: usize,
     pub(crate) verbose: bool,
     pub(crate) explain: bool,
@@ -44,7 +63,7 @@ pub(crate) struct BuildOptions {
 impl Default for BuildOptions {
     fn default() -> Self {
         Self {
-            maxjobs: 0,
+            jobs: JobLimit::Auto,
             maxfail: 1,
             verbose: false,
             explain: false,
@@ -87,16 +106,71 @@ pub(crate) enum EdgeResult {
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct ReadyEdge {
-    weight: i64,
+    weight: CriticalPathWeight,
     edge: Reverse<EdgeId>,
 }
 
 impl ReadyEdge {
-    fn from_graph(graph: &Graph, edge: EdgeId) -> Self {
+    const fn new(weight: CriticalPathWeight, edge: EdgeId) -> Self {
         Self {
-            weight: graph.edge(edge).critical_path_weight,
+            weight,
             edge: Reverse(edge),
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
+#[repr(transparent)]
+struct CriticalPathWeight(usize);
+
+impl CriticalPathWeight {
+    const ROOT: Self = Self(1);
+
+    const fn next(self) -> Self {
+        Self(self.0.saturating_add(1))
+    }
+
+    const fn max(self, other: Self) -> Self {
+        if self.0 >= other.0 {
+            self
+        } else {
+            other
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(transparent)]
+struct TraversalMark(usize);
+
+impl TraversalMark {
+    const UNMARKED: Self = Self(usize::MAX);
+
+    const fn is_marked_for(self, edge: EdgeId) -> bool {
+        self.0 == edge.index()
+    }
+
+    const fn mark(&mut self, edge: EdgeId) {
+        self.0 = edge.index();
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[repr(transparent)]
+struct PoolOccupancy(usize);
+
+impl PoolOccupancy {
+    const fn has_capacity(self, depth: usize) -> bool {
+        self.0 < depth
+    }
+
+    const fn acquire(&mut self) {
+        self.0 += 1;
+    }
+
+    const fn release(&mut self) {
+        debug_assert!(self.0 > 0);
+        self.0 -= 1;
     }
 }
 
@@ -104,25 +178,33 @@ impl ReadyEdge {
 pub(crate) struct Plan {
     wanted: Vec<bool>,
     wanted_count: usize,
-    expanded_weight: Vec<i64>,
+    weight: Vec<CriticalPathWeight>,
+    expanded_weight: Vec<CriticalPathWeight>,
     pending: Vec<usize>,
     dependents: Vec<Vec<EdgeId>>,
     ready: BinaryHeap<ReadyEdge>,
     running: Vec<bool>,
     completed: Vec<bool>,
+    pool_occupancy: Vec<PoolOccupancy>,
     completed_count: usize,
     failures: usize,
 }
 
 // [spec:samurai:req:compat.graph-semantics]
 impl Plan {
-    fn synchronize_arenas(&mut self, edge_count: usize) {
+    fn synchronize_arenas(&mut self, graph: &Graph) {
+        let edge_count = graph.edge_count();
         self.wanted.resize(edge_count, false);
-        self.expanded_weight.resize(edge_count, i64::MIN);
+        self.weight
+            .resize(edge_count, CriticalPathWeight::default());
+        self.expanded_weight
+            .resize(edge_count, CriticalPathWeight::default());
         self.pending.resize(edge_count, 0);
         self.dependents.resize_with(edge_count, Vec::new);
         self.running.resize(edge_count, false);
         self.completed.resize(edge_count, false);
+        self.pool_occupancy
+            .resize(graph.pool_count(), PoolOccupancy::default());
     }
 
     // [spec:samurai:def:build.buildreset-fn]
@@ -135,16 +217,27 @@ impl Plan {
     // [spec:samurai:sem:build.queue-fn]
     // [spec:samurai:def:build.buildadd-fn]
     // [spec:samurai:sem:build.buildadd-fn]
-    pub(crate) fn add_target(&mut self, graph: &mut Graph, node: NodeId) -> BuildResult<()> {
-        self.synchronize_arenas(graph.edge_count());
-        self.add_node(graph, node, 1)
+    pub(crate) fn add_target(
+        &mut self,
+        graph: &Graph,
+        runtime: &RuntimeState,
+        node: NodeId,
+    ) -> BuildResult<()> {
+        self.synchronize_arenas(graph);
+        self.add_node(graph, runtime, node, CriticalPathWeight::ROOT)
     }
 
-    fn add_node(&mut self, graph: &mut Graph, node: NodeId, weight: i64) -> BuildResult<()> {
+    fn add_node(
+        &mut self,
+        graph: &Graph,
+        runtime: &RuntimeState,
+        node: NodeId,
+        weight: CriticalPathWeight,
+    ) -> BuildResult<()> {
         let mut work = vec![(node, weight, None)];
         while let Some((node, weight, needed_by)) = work.pop() {
             let Some(edge) = graph.node(node).gen else {
-                if graph.node(node).dirty {
+                if runtime.node(node).dirty() {
                     let path = graph.node(node).path.clone();
                     let needed_by =
                         needed_by.map(|needed_by| (needed_by, graph.node(needed_by).path.clone()));
@@ -160,7 +253,7 @@ impl Plan {
                 .edge(edge)
                 .out
                 .iter()
-                .any(|output| graph.node(*output).dirty);
+                .any(|output| runtime.node(*output).dirty());
             let phony_with_no_inputs = {
                 let edge = graph.edge(edge);
                 edge.rule
@@ -172,7 +265,7 @@ impl Plan {
             }
 
             if edge_dirty {
-                let previous_weight = graph.edge(edge).critical_path_weight;
+                let previous_weight = self.weight[edge.index()];
                 let newly_wanted = !self.wanted[edge.index()];
                 if !newly_wanted && weight <= previous_weight {
                     continue;
@@ -181,7 +274,7 @@ impl Plan {
                     self.wanted[edge.index()] = true;
                     self.wanted_count += 1;
                 }
-                graph.edge_mut(edge).critical_path_weight = weight.max(previous_weight);
+                self.weight[edge.index()] = weight.max(previous_weight);
             } else {
                 if weight <= self.expanded_weight[edge.index()] {
                     continue;
@@ -189,17 +282,19 @@ impl Plan {
                 self.expanded_weight[edge.index()] = weight;
             }
 
-            let edge = graph.edge(edge);
+            let edge_id = edge;
+            let edge = graph.edge(edge_id);
             let needed_by = edge.out.first().copied();
-            let depfile_start = edge.inorderidx.saturating_sub(edge.depfile_deps);
-            let depfile_end = edge.inorderidx;
+            let depfile_end = edge.non_order_only_input_count();
+            let depfile_start =
+                depfile_end.saturating_sub(runtime.edge(edge_id).depfile_dependencies());
             for index in (0..edge.input.len()).rev() {
                 let input = edge.input[index];
                 if !(index >= depfile_start
                     && index < depfile_end
                     && graph.node(input).gen.is_none())
                 {
-                    work.push((input, weight + 1, needed_by));
+                    work.push((input, weight.next(), needed_by));
                 }
             }
         }
@@ -207,22 +302,23 @@ impl Plan {
     }
 
     pub(crate) fn prepare_queue(&mut self, graph: &Graph) {
-        self.synchronize_arenas(graph.edge_count());
+        self.synchronize_arenas(graph);
         self.running.fill(false);
         self.completed.fill(false);
+        self.pool_occupancy.fill(PoolOccupancy::default());
         self.completed_count = 0;
         self.failures = 0;
         self.rebuild_frontier(graph);
     }
 
     fn rebuild_frontier(&mut self, graph: &Graph) {
-        self.synchronize_arenas(graph.edge_count());
+        self.synchronize_arenas(graph);
         self.pending.fill(0);
         for dependents in &mut self.dependents {
             dependents.clear();
         }
         self.ready.clear();
-        let mut dependency_marks = vec![usize::MAX; graph.edge_count()];
+        let mut dependency_marks = vec![TraversalMark::UNMARKED; graph.edge_count()];
         for index in 0..graph.edge_count() {
             let edge = EdgeId::from_index(index);
             if !self.wanted[index] || self.completed[index] {
@@ -234,9 +330,9 @@ impl Plan {
                 };
                 if self.wanted[generator.index()]
                     && !self.completed[generator.index()]
-                    && dependency_marks[generator.index()] != index
+                    && !dependency_marks[generator.index()].is_marked_for(edge)
                 {
-                    dependency_marks[generator.index()] = index;
+                    dependency_marks[generator.index()].mark(edge);
                     self.pending[index] += 1;
                     self.dependents[generator.index()].push(edge);
                 }
@@ -248,22 +344,31 @@ impl Plan {
                 && !self.running[index]
                 && self.pending[index] == 0
             {
-                self.ready
-                    .push(ReadyEdge::from_graph(graph, EdgeId::from_index(index)));
+                let edge = EdgeId::from_index(index);
+                self.ready.push(ReadyEdge::new(self.weight[index], edge));
             }
         }
     }
 
-    pub(crate) fn refresh_dependencies(&mut self, graph: &mut Graph) -> BuildResult<()> {
-        self.synchronize_arenas(graph.edge_count());
+    pub(crate) fn refresh_dependencies(
+        &mut self,
+        graph: &Graph,
+        runtime: &RuntimeState,
+    ) -> BuildResult<()> {
+        self.synchronize_arenas(graph);
         for index in 0..graph.edge_count() {
             if !self.wanted[index] {
                 continue;
             }
             let edge = EdgeId::from_index(index);
-            let weight = graph.edge(edge).critical_path_weight;
+            let weight = self.weight[index];
             for input_index in (0..graph.edge(edge).input.len()).rev() {
-                self.add_node(graph, graph.edge(edge).input[input_index], weight + 1)?;
+                self.add_node(
+                    graph,
+                    runtime,
+                    graph.edge(edge).input[input_index],
+                    weight.next(),
+                )?;
             }
         }
         self.rebuild_frontier(graph);
@@ -278,7 +383,7 @@ impl Plan {
             .collect()
     }
 
-    pub(crate) fn find_work(&mut self, graph: &mut Graph) -> Option<EdgeId> {
+    pub(crate) fn find_work(&mut self, graph: &Graph) -> Option<EdgeId> {
         let mut blocked = Vec::new();
         let edge = loop {
             let Some(candidate) = self.ready.pop() else {
@@ -287,8 +392,12 @@ impl Plan {
             };
             let edge = candidate.edge.0;
             if graph.edge(edge).pool.is_none_or(|pool| {
-                let pool = graph.pool(pool);
-                pool.numjobs < pool.maxjobs
+                let depth = graph
+                    .pool(pool)
+                    .depth()
+                    .expect("validated pools have a depth")
+                    .get();
+                self.pool_occupancy[pool.index()].has_capacity(depth)
             }) {
                 break edge;
             }
@@ -296,24 +405,26 @@ impl Plan {
         };
         self.ready.extend(blocked);
         if let Some(pool) = graph.edge(edge).pool {
-            graph.pool_mut(pool).numjobs += 1;
+            self.pool_occupancy[pool.index()].acquire();
         }
         self.running[edge.index()] = true;
         Some(edge)
     }
 
-    fn defer_work(&mut self, graph: &mut Graph, edge: EdgeId) {
+    fn defer_work(&mut self, graph: &Graph, edge: EdgeId) {
         if std::mem::replace(&mut self.running[edge.index()], false) {
             if let Some(pool) = graph.edge(edge).pool {
-                graph.pool_mut(pool).numjobs -= 1;
+                self.pool_occupancy[pool.index()].release();
             }
-            self.ready.push(ReadyEdge::from_graph(graph, edge));
+            self.ready
+                .push(ReadyEdge::new(self.weight[edge.index()], edge));
         }
     }
 
     pub(crate) fn edge_finished(
         &mut self,
-        graph: &mut Graph,
+        graph: &Graph,
+        runtime: &RuntimeState,
         edge: EdgeId,
         result: EdgeResult,
     ) -> BuildResult<()> {
@@ -321,7 +432,7 @@ impl Plan {
             return Err(BuildError::EdgeNotRunning { edge });
         }
         if let Some(pool) = graph.edge(edge).pool {
-            graph.pool_mut(pool).numjobs -= 1;
+            self.pool_occupancy[pool.index()].release();
         }
         if !std::mem::replace(&mut self.completed[edge.index()], true) {
             self.completed_count += 1;
@@ -330,11 +441,11 @@ impl Plan {
             self.failures += 1;
             return Ok(());
         }
-        self.release_dependents(graph, edge);
+        self.release_dependents(graph, runtime, edge);
         Ok(())
     }
 
-    fn release_dependents(&mut self, graph: &Graph, finished: EdgeId) {
+    fn release_dependents(&mut self, graph: &Graph, runtime: &RuntimeState, finished: EdgeId) {
         let mut work = vec![finished];
         while let Some(edge) = work.pop() {
             for index in 0..self.dependents[edge.index()].len() {
@@ -347,9 +458,10 @@ impl Plan {
                     .edge(dependent)
                     .out
                     .iter()
-                    .any(|output| graph.node(*output).dirty);
+                    .any(|output| runtime.node(*output).dirty());
                 if dirty {
-                    self.ready.push(ReadyEdge::from_graph(graph, dependent));
+                    self.ready
+                        .push(ReadyEdge::new(self.weight[dependent.index()], dependent));
                 } else if !std::mem::replace(&mut self.completed[dependent.index()], true) {
                     self.completed_count += 1;
                     work.push(dependent);
@@ -384,6 +496,7 @@ impl Plan {
 // [spec:samurai:def:build.job]
 pub(crate) struct Builder<'a> {
     graph: &'a mut Graph,
+    runtime: RuntimeState,
     options: BuildOptions,
     plan: Plan,
     build_log: Option<&'a mut crate::log::BuildLog>,
@@ -412,11 +525,16 @@ impl<'a> Builder<'a> {
         diagnostic_sink: Option<&'a mut dyn Write>,
     ) -> Self {
         let progress = BuildState::new(options.clone());
+        let mut runtime = RuntimeState::new(graph);
+        if let Some(log) = build_log.as_deref() {
+            log.hydrate_runtime(graph, &mut runtime, 0..graph.node_ids().len());
+        }
         let explanations = options
             .explain
             .then(crate::explanations::Explanations::default);
         Self {
             graph,
+            runtime,
             options,
             plan: Plan::default(),
             build_log,
@@ -512,19 +630,29 @@ impl<'a> Builder<'a> {
         )
     }
 
-    fn replace_depfile_deps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
-        {
-            let edge = graph.edge_mut(edge);
-            let start = edge.inorderidx.saturating_sub(edge.depfile_deps);
-            let end = edge.inorderidx;
-            edge.input.drain(start..end);
-            edge.inorderidx -= edge.depfile_deps;
-            edge.depfile_deps = 0;
+    fn synchronize_runtime(&mut self) {
+        let nodes = self.runtime.synchronize(self.graph);
+        if let Some(log) = self.build_log.as_deref() {
+            log.hydrate_runtime(self.graph, &mut self.runtime, nodes);
         }
-        edgeadddeps(graph, edge, deps);
-        graph.edge_mut(edge).depfile_deps = deps.len();
     }
 
+    fn replace_depfile_deps(&mut self, edge: EdgeId, deps: &[NodeId]) {
+        self.synchronize_runtime();
+        let previous_count = self.runtime.edge(edge).depfile_dependencies();
+        self.graph
+            .edge_mut(edge)
+            .drain_discovered_inputs(previous_count);
+        edgeadddeps(self.graph, edge, deps);
+        self.runtime
+            .edge_mut(edge)
+            .set_depfile_dependencies(deps.len());
+    }
+
+    #[allow(
+        clippy::too_many_lines,
+        reason = "the iterative enter/load/refresh traversal is one explicit dependency-loading state machine"
+    )]
     fn load_depfiles_for(&mut self, target: NodeId) -> BuildResult<()> {
         enum Work {
             Enter(NodeId),
@@ -539,17 +667,18 @@ impl<'a> Builder<'a> {
             match item {
                 Work::Enter(node) => {
                     let Some(edge) = self.graph.node(node).gen else {
-                        if self.graph.node(node).mtime == crate::graph::MTIME_UNKNOWN {
+                        if self.runtime.node(node).mtime().is_unobserved() {
                             let mut stat = |path: &Path| disk.stat(path);
-                            nodestat_with(self.graph, node, &mut stat)?;
+                            nodestat_with(self.graph, &mut self.runtime, node, &mut stat)?;
                         }
-                        self.graph.node_mut(node).dirty = self.graph.node(node).mtime == 0;
+                        let dirty = self.runtime.node(node).mtime().is_missing();
+                        self.runtime.node_mut(node).set_dirty(dirty);
                         continue;
                     };
                     if std::mem::replace(&mut visited[edge.index()], true) {
                         continue;
                     }
-                    work.push(if self.graph.edge(edge).deps_loaded {
+                    work.push(if self.runtime.edge(edge).deps_loaded() {
                         Work::Refresh(edge)
                     } else {
                         Work::Load(edge)
@@ -560,13 +689,14 @@ impl<'a> Builder<'a> {
                 }
                 Work::Load(edge) => {
                     let mut stat = |path: &Path| disk.stat(path);
-                    let base_dirty = recompute_edge_dirty_with(self.graph, edge, &mut stat)?;
+                    let base_dirty =
+                        recompute_edge_dirty_with(self.graph, &mut self.runtime, edge, &mut stat)?;
                     let mut dependencies_changed = false;
                     let uses_deps_log = self.deps_log.is_some()
-                        && crate::env::edgevar(self.graph, edge, "deps", false)
+                        && crate::env::edgevar(self.graph, edge, "deps", PathStyle::Raw)
                             .is_some_and(|value| !value.is_empty());
                     let depfile = (!uses_deps_log)
-                        .then(|| crate::env::edgevar(self.graph, edge, "depfile", false))
+                        .then(|| crate::env::edgevar(self.graph, edge, "depfile", PathStyle::Raw))
                         .flatten()
                         .filter(|path| !path.is_empty());
 
@@ -576,7 +706,9 @@ impl<'a> Builder<'a> {
                             self.deps_log
                                 .as_deref()
                                 .and_then(|log| crate::deps::depsentry(log, output))
-                                .is_some_and(|entry| self.graph.node(output).mtime <= entry.mtime)
+                                .is_some_and(|entry| {
+                                    self.runtime.node(output).mtime().raw() <= entry.mtime
+                                })
                         });
                         if !base_dirty && entry_is_current {
                             if let Some(log) = self.deps_log.as_deref() {
@@ -584,32 +716,32 @@ impl<'a> Builder<'a> {
                                 dependencies_changed = true;
                             }
                         }
-                        let edge = self.graph.edge_mut(edge);
-                        edge.deps_loaded = true;
-                        edge.deps_missing = !entry_is_current;
+                        let state = self.runtime.edge_mut(edge);
+                        state.set_deps_loaded(true);
+                        state.set_deps_missing(!entry_is_current);
                     } else if let Some(depfile) = depfile {
                         let path = depfile.to_path().expect("byte paths are valid on Unix");
                         if base_dirty {
-                            let edge = self.graph.edge_mut(edge);
-                            edge.deps_loaded = true;
-                            edge.deps_missing = !path.exists();
+                            let state = self.runtime.edge_mut(edge);
+                            state.set_deps_loaded(true);
+                            state.set_deps_missing(!path.exists());
                         } else if path.exists() {
-                            self.graph.edge_mut(edge).deps_loaded = true;
+                            self.runtime.edge_mut(edge).set_deps_loaded(true);
                             match crate::deps::depsparse_for_edge(self.graph, path, edge)? {
                                 Some(deps) => {
-                                    Self::replace_depfile_deps(self.graph, edge, &deps.nodes);
-                                    self.graph.edge_mut(edge).deps_missing = false;
+                                    self.replace_depfile_deps(edge, &deps.nodes);
+                                    self.runtime.edge_mut(edge).set_deps_missing(false);
                                     dependencies_changed = true;
                                 }
-                                None => self.graph.edge_mut(edge).deps_missing = true,
+                                None => self.runtime.edge_mut(edge).set_deps_missing(true),
                             }
                         } else {
-                            let edge = self.graph.edge_mut(edge);
-                            edge.deps_loaded = true;
-                            edge.deps_missing = true;
+                            let state = self.runtime.edge_mut(edge);
+                            state.set_deps_loaded(true);
+                            state.set_deps_missing(true);
                         }
                     } else {
-                        self.graph.edge_mut(edge).deps_loaded = true;
+                        self.runtime.edge_mut(edge).set_deps_loaded(true);
                     }
 
                     if dependencies_changed {
@@ -621,7 +753,7 @@ impl<'a> Builder<'a> {
                 }
                 Work::Refresh(edge) => {
                     let mut stat = |path: &Path| disk.stat(path);
-                    recompute_edge_dirty_with(self.graph, edge, &mut stat)?;
+                    recompute_edge_dirty_with(self.graph, &mut self.runtime, edge, &mut stat)?;
                 }
             }
         }
@@ -644,7 +776,9 @@ impl<'a> Builder<'a> {
                 continue;
             }
             let dyndep = self.graph.edge(edge).dyndep;
-            if let Some(dyndep) = dyndep.filter(|dyndep| self.graph.node(*dyndep).dyndep_pending) {
+            if let Some(dyndep) =
+                dyndep.filter(|dyndep| self.runtime.node(*dyndep).dyndep_pending())
+            {
                 loaded_files.resize(loaded_files.len().max(dyndep.index() + 1), false);
                 let path = self.graph.node(dyndep).path.clone();
                 if path
@@ -653,7 +787,8 @@ impl<'a> Builder<'a> {
                     .exists()
                     && !std::mem::replace(&mut loaded_files[dyndep.index()], true)
                 {
-                    crate::dyndep::load_dyndep(self.graph, dyndep)?;
+                    crate::dyndep::load_dyndep(self.graph, &mut self.runtime, dyndep)?;
+                    self.synchronize_runtime();
                 }
             }
             for input in self.graph.edge(edge).input.iter().rev() {
@@ -691,34 +826,35 @@ impl<'a> Builder<'a> {
             if std::mem::replace(&mut self.explanations_recorded[edge.index()], true) {
                 continue;
             }
-            let inputs = &self.graph.edge(edge).input[..self.graph.edge(edge).inorderidx];
+            let inputs = self.graph.edge(edge).non_order_only_inputs();
             let newest = inputs
                 .iter()
-                .filter(|input| self.graph.node(**input).mtime != MTIME_MISSING)
-                .max_by_key(|input| self.graph.node(**input).mtime)
+                .filter(|input| !self.runtime.node(**input).mtime().is_missing())
+                .max_by_key(|input| self.runtime.node(**input).mtime())
                 .copied();
             for output in &self.graph.edge(edge).out {
                 let output_node = self.graph.node(*output);
-                if !output_node.dirty {
+                let output_state = self.runtime.node(*output);
+                if !output_state.dirty() {
                     continue;
                 }
                 let path = output_node.path.to_str_lossy();
-                let message = if output_node.mtime <= 0 {
+                let message = if output_state.mtime().is_missing() {
                     format!("output {path} doesn't exist")
-                } else if self.graph.edge(edge).command_dirty {
+                } else if self.runtime.edge(edge).command_dirty() {
                     format!("command line changed for {path}")
-                } else if self.graph.edge(edge).deps_missing {
+                } else if self.runtime.edge(edge).deps_missing() {
                     format!("dependency information for {path} is missing")
                 } else if let Some(input) =
-                    newest.filter(|input| self.graph.node(*input).mtime > output_node.mtime)
+                    newest.filter(|input| self.runtime.node(*input).mtime() > output_state.mtime())
                 {
                     format!(
                         "output {path} older than most recent input {} ({} vs {})",
                         self.graph.node(input).path.to_str_lossy(),
-                        output_node.mtime,
-                        self.graph.node(input).mtime
+                        output_state.mtime().raw(),
+                        self.runtime.node(input).mtime().raw()
                     )
-                } else if inputs.iter().any(|input| self.graph.node(*input).dirty) {
+                } else if inputs.iter().any(|input| self.runtime.node(*input).dirty()) {
                     format!("input to {path} is dirty")
                 } else {
                     format!("output {path} is dirty")
@@ -743,19 +879,23 @@ impl<'a> Builder<'a> {
         }
         let disk = RealDiskInterface;
         let mut stat = |path: &Path| disk.stat(path);
-        let validations = recompute_dirty_with_validations(self.graph, node, &mut stat)?;
-        self.plan.add_target(self.graph, node).map_err(|error| {
-            if self.graph.node(node).gen.is_none() {
-                BuildError::MissingRule {
-                    node,
-                    path: BString::from(path),
+        let validations =
+            recompute_dirty_with_validations(self.graph, &mut self.runtime, node, &mut stat)?;
+        self.plan
+            .add_target(self.graph, &self.runtime, node)
+            .map_err(|error| {
+                if self.graph.node(node).gen.is_none() {
+                    BuildError::MissingRule {
+                        node,
+                        path: BString::from(path),
+                    }
+                } else {
+                    error
                 }
-            } else {
-                error
-            }
-        })?;
+            })?;
         for validation in validations {
-            self.plan.add_target(self.graph, validation)?;
+            self.plan
+                .add_target(self.graph, &self.runtime, validation)?;
         }
         self.record_dirty_explanations();
         Ok(())
@@ -770,7 +910,7 @@ impl<'a> Builder<'a> {
     }
 
     pub(crate) fn ran_edge_without_restat_pruning(&self, edge: EdgeId) -> bool {
-        self.ran_edge(edge) && !self.graph.edge(edge).restat_clean
+        self.ran_edge(edge) && !self.runtime.edge(edge).restat_clean()
     }
 
     fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<PreparedEdge> {
@@ -780,7 +920,7 @@ impl<'a> Builder<'a> {
             .edge(edge)
             .out
             .iter()
-            .map(|output| self.graph.node(*output).mtime)
+            .map(|output| self.runtime.node(*output).mtime().raw())
             .collect::<Vec<_>>();
 
         for output in &self.graph.edge(edge).out {
@@ -889,7 +1029,7 @@ impl<'a> Builder<'a> {
             stderr,
         }) = result
         {
-            if command.deps_type == "msvc" {
+            if command.deps_type == DepsType::Msvc {
                 let mut parser = crate::msvc::ClParser::default();
                 let filtered = parser.parse(&stdout, command.msvc_deps_prefix.as_bytes());
                 self.record_child_output(filtered.as_bytes());
@@ -908,9 +1048,9 @@ impl<'a> Builder<'a> {
             visible_output.extend_from_slice(&stderr);
             let dependency_result = (|| -> BuildResult<()> {
                 if status.success() && !self.options.dryrun {
-                    match command.deps_type.as_str() {
-                        "" | "msvc" => Ok(()),
-                        "gcc" => {
+                    match &command.deps_type {
+                        DepsType::None | DepsType::Msvc => Ok(()),
+                        DepsType::Gcc => {
                             let path = command.depfile_path.as_ref().ok_or({
                                 BuildError::DependencyFileMissing { edge, path: None }
                             })?;
@@ -924,10 +1064,10 @@ impl<'a> Builder<'a> {
                                     path.to_path().expect("byte paths are valid on Unix"),
                                     false,
                                 )?;
-                                Self::replace_depfile_deps(self.graph, edge, &deps.nodes);
-                                let edge = self.graph.edge_mut(edge);
-                                edge.deps_loaded = true;
-                                edge.deps_missing = false;
+                                self.replace_depfile_deps(edge, &deps.nodes);
+                                let state = self.runtime.edge_mut(edge);
+                                state.set_deps_loaded(true);
+                                state.set_deps_missing(false);
                                 Ok(())
                             } else {
                                 Err(BuildError::DependencyFileMissing {
@@ -936,9 +1076,9 @@ impl<'a> Builder<'a> {
                                 })
                             }
                         }
-                        deps_type => Err(BuildError::UnsupportedDepsType {
+                        DepsType::Unsupported(deps_type) => Err(BuildError::UnsupportedDepsType {
                             edge,
-                            deps_type: deps_type.to_owned(),
+                            deps_type: deps_type.clone(),
                         }),
                     }
                 } else {
@@ -989,7 +1129,12 @@ impl<'a> Builder<'a> {
         let disk = RealDiskInterface;
         let mut new_mtimes = Vec::new();
         let output_ids = self.graph.edge(edge).out.clone();
-        let edge_hash = self.graph.edge(edge).hash;
+        let edge_hash = edgehash(
+            &mut self.runtime,
+            edge,
+            command.command.as_bstr(),
+            (!command.rspfile_content.is_empty()).then_some(command.rspfile_content.as_bstr()),
+        );
         for output in output_ids {
             let path = self.graph.node(output).path.clone();
             let mtime = disk
@@ -1002,28 +1147,37 @@ impl<'a> Builder<'a> {
                         source,
                     )
                 })?;
-            let output = self.graph.node_mut(output);
-            output.mtime = mtime;
-            output.dirty = false;
-            output.hash = edge_hash;
-            new_mtimes.push(output.mtime);
+            let output = self.runtime.node_mut(output);
+            output.set_mtime(FileTime::observed(mtime));
+            output.set_dirty(false);
+            output.set_logged_command_hash(edge_hash);
+            new_mtimes.push(mtime);
         }
-        if !command.deps_type.is_empty() && !self.options.dryrun {
-            match command.deps_type.as_str() {
-                "gcc" => {
+        if !self.options.dryrun {
+            match &command.deps_type {
+                DepsType::Gcc => {
                     if let Some(deps_log) = self.deps_log.as_deref_mut() {
-                        crate::deps::depsrecord(deps_log, edge, self.graph)?;
+                        crate::deps::depsrecord(deps_log, edge, self.graph, &self.runtime)?;
                     }
                 }
-                "msvc" => {
+                DepsType::Msvc => {
                     if let Some(deps_log) = self.deps_log.as_deref_mut() {
-                        crate::deps::depsrecordnodes(deps_log, self.graph, edge, &msvc_deps)?;
+                        crate::deps::depsrecordnodes(
+                            deps_log,
+                            self.graph,
+                            &self.runtime,
+                            edge,
+                            &msvc_deps,
+                        )?;
                     }
                 }
-                _ => unreachable!("dependency type was validated before status output"),
+                DepsType::None => {}
+                DepsType::Unsupported(_) => {
+                    unreachable!("dependency type was validated before status output")
+                }
             }
         }
-        if command.deps_type == "gcc" {
+        if command.deps_type == DepsType::Gcc {
             if let Some(path) = &command.depfile_path {
                 if !self.options.keepdepfile {
                     let _ = fs::remove_file(path.to_path().expect("byte paths are valid on Unix"));
@@ -1037,15 +1191,16 @@ impl<'a> Builder<'a> {
                 .edge(edge)
                 .out
                 .iter()
-                .filter(|output| self.graph.node(**output).dyndep_pending)
+                .filter(|output| self.runtime.node(**output).dyndep_pending())
                 .copied()
                 .collect::<Vec<_>>();
             for dyndep in generated_dyndeps {
-                crate::dyndep::load_dyndep(self.graph, dyndep)?;
+                crate::dyndep::load_dyndep(self.graph, &mut self.runtime, dyndep)?;
+                self.synchronize_runtime();
                 loaded_dyndeps.push(dyndep);
             }
         }
-        self.graph.edge_mut(edge).command_dirty = false;
+        self.runtime.edge_mut(edge).set_command_dirty(false);
         let unchanged_outputs = old_mtimes
             .iter()
             .zip(&new_mtimes)
@@ -1063,19 +1218,21 @@ impl<'a> Builder<'a> {
             record_mtime = command_start_mtime;
         }
         for output in self.graph.edge(edge).out.clone() {
-            self.graph.node_mut(output).logmtime = record_mtime;
+            self.runtime
+                .node_mut(output)
+                .set_log_mtime(FileTime::observed(record_mtime));
         }
         if let Some(build_log) = self.build_log.as_deref_mut() {
-            crate::log::logrecordedge(build_log, self.graph, edge, 0, 0, record_mtime)?;
+            crate::log::logrecordedge(build_log, self.graph, edge, edge_hash, 0, 0, record_mtime)?;
         }
-        self.graph.edge_mut(edge).restat_clean = all_pruned;
+        self.runtime.edge_mut(edge).set_restat_clean(all_pruned);
         Ok((pruned, loaded_dyndeps))
     }
 
     fn finish_phony_edge(&mut self, edge: EdgeId) -> (bool, Vec<NodeId>) {
         for index in 0..self.graph.edge(edge).out.len() {
             let output = self.graph.edge(edge).out[index];
-            self.graph.node_mut(output).dirty = false;
+            self.runtime.node_mut(output).set_dirty(false);
         }
         (false, Vec::new())
     }
@@ -1096,7 +1253,7 @@ impl<'a> Builder<'a> {
             for index in 0..self.graph.edge(dependent).out.len() {
                 let output = self.graph.edge(dependent).out[index];
                 let mut stat = |path: &Path| disk.stat(path);
-                recompute_dirty_with_validations(self.graph, output, &mut stat)?;
+                recompute_dirty_with_validations(self.graph, &mut self.runtime, output, &mut stat)?;
             }
             for index in 0..self.graph.edge(dependent).out.len() {
                 let output = self.graph.edge(dependent).out[index];
@@ -1110,7 +1267,9 @@ impl<'a> Builder<'a> {
 
     fn recompute_planned_after_dyndep(&mut self, loaded_dyndeps: &[NodeId]) -> BuildResult<()> {
         let disk = RealDiskInterface;
-        self.plan.expanded_weight.fill(i64::MIN);
+        self.plan
+            .expanded_weight
+            .fill(CriticalPathWeight::default());
         let mut nodes = self.targets.clone();
         nodes.extend(
             self.plan
@@ -1160,17 +1319,21 @@ impl<'a> Builder<'a> {
             }
             let mut stat = |path: &Path| disk.stat(path);
             validations.extend(recompute_dirty_with_validations(
-                self.graph, node, &mut stat,
+                self.graph,
+                &mut self.runtime,
+                node,
+                &mut stat,
             )?);
         }
         for target in self.targets.iter().copied() {
-            self.plan.add_target(self.graph, target)?;
+            self.plan.add_target(self.graph, &self.runtime, target)?;
         }
         for output in affected {
-            self.plan.add_target(self.graph, output)?;
+            self.plan.add_target(self.graph, &self.runtime, output)?;
         }
         for validation in validations {
-            self.plan.add_target(self.graph, validation)?;
+            self.plan
+                .add_target(self.graph, &self.runtime, validation)?;
         }
         self.record_dirty_explanations();
         Ok(())
@@ -1188,14 +1351,14 @@ impl<'a> Builder<'a> {
                 }
                 if !loaded_dyndeps.is_empty() {
                     self.recompute_planned_after_dyndep(&loaded_dyndeps)?;
-                    self.plan.refresh_dependencies(self.graph)?;
+                    self.plan.refresh_dependencies(self.graph, &self.runtime)?;
                 }
                 self.plan
-                    .edge_finished(self.graph, edge, EdgeResult::Succeeded)
+                    .edge_finished(self.graph, &self.runtime, edge, EdgeResult::Succeeded)
             }
             Err(error) => {
                 self.plan
-                    .edge_finished(self.graph, edge, EdgeResult::Failed)?;
+                    .edge_finished(self.graph, &self.runtime, edge, EdgeResult::Failed)?;
                 Err(error)
             }
         }
@@ -1264,7 +1427,11 @@ impl<'a> Builder<'a> {
                     if self.options.maxload > 0.0 && status::queryload() > self.options.maxload {
                         1
                     } else {
-                        self.options.maxjobs.max(1)
+                        match self.options.jobs {
+                            JobLimit::Auto => 1,
+                            JobLimit::Unlimited => usize::MAX,
+                            JobLimit::Fixed(jobs) => jobs.get(),
+                        }
                     };
                 while !console_running
                     && processes.running_len() < maxjobs
@@ -1329,8 +1496,12 @@ impl<'a> Builder<'a> {
                             if let Some(slot) = slot {
                                 slot.release();
                             }
-                            self.plan
-                                .edge_finished(self.graph, edge, EdgeResult::Failed)?;
+                            self.plan.edge_finished(
+                                self.graph,
+                                &self.runtime,
+                                edge,
+                                EdgeResult::Failed,
+                            )?;
                             failures += 1;
                             last_error = Some(error);
                         }

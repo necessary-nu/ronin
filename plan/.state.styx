@@ -170,4 +170,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule runtime.dyndep-transaction}
     )}
+    {id ronin-typed-runtime-state, covered_rules (
+        runtime.typed-runtime-state
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.typed-runtime-state}
+    )}
 )

@@ -22,6 +22,7 @@ mod msvc;
 mod os;
 mod parse;
 mod persistence;
+mod runtime;
 mod scan;
 mod source;
 mod subprocess;

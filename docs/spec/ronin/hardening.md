@@ -90,3 +90,15 @@ second work item.
 > pending state unchanged. Clean-tool discovery MUST reuse the byte-exact
 > dynamic-dependency parser, preserve Ninja escapes and non-UTF-8 paths,
 > tolerate a missing file, and propagate other read or parse failures.
+
+## Typed runtime state
+
+> [spec:samurai:req:runtime.typed-runtime-state]
+> Ronin MUST keep manifest graph entities free of per-build node observation,
+> log comparison, dependency-loading, command-dirtiness, restat, pool
+> occupancy, and critical-path scheduling state. Those facts MUST live in
+> reusable dense runtime or plan side tables indexed by typed arena IDs.
+> Timestamp, dependency-ID, command-hash, partition, concurrency-limit, and
+> traversal-mark sentinels MUST be hidden behind zero-cost semantic types or
+> explicit enums. Reinitialization and failure paths MUST release pool
+> occupancy and clear transient edge state without rebuilding graph topology.

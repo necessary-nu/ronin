@@ -1,6 +1,6 @@
 //! Ronin command-line parsing and runtime orchestration.
 
-use crate::build::BuildOptions;
+use crate::build::{BuildOptions, JobLimit};
 use crate::error::{
     BuildError, CliError, EncodingContext, PersistenceError, PersistenceOperation,
     ToolAvailability, ToolError,
@@ -146,10 +146,12 @@ pub(crate) fn jobsflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> 
     if value < 0 {
         return Err(CliError::InvalidParameter { option: "-j" }.into());
     }
-    options.maxjobs = if value == 0 {
-        usize::MAX
+    options.jobs = if value == 0 {
+        JobLimit::Unlimited
     } else {
-        usize::try_from(value).map_err(|_| CliError::InvalidParameter { option: "-j" })?
+        let value =
+            usize::try_from(value).map_err(|_| CliError::InvalidParameter { option: "-j" })?;
+        JobLimit::fixed(value).ok_or(CliError::InvalidParameter { option: "-j" })?
     };
     Ok(())
 }
@@ -567,17 +569,18 @@ fn normalize_runtime_options(
     makeflags: Option<&str>,
     connect_jobserver: impl FnOnce() -> Result<crate::jobserver::Transport, crate::error::ProcessError>,
 ) -> CliResult<()> {
-    if options.maxjobs == 0 {
+    if options.jobs == JobLimit::Auto {
         let config = crate::jobserver::parse_makeflags_value(makeflags)?;
         if config.has_mode() && config.is_native() {
-            options.maxjobs = usize::MAX;
+            options.jobs = JobLimit::Unlimited;
             options.jobserver = Some(connect_jobserver()?);
         } else {
-            options.maxjobs = match crate::os::osnproc() {
+            let jobs = match crate::os::osnproc() {
                 i64::MIN..=1 => 2,
                 2 => 3,
                 count => usize::try_from(count + 2).unwrap_or(usize::MAX),
             };
+            options.jobs = JobLimit::fixed(jobs).expect("default job count is nonzero");
         }
     }
     if let Ok(status) = std::env::var(NINJA_STATUS_ENV) {
@@ -897,8 +900,7 @@ fn run_flag_tool(
             if !path.exists() {
                 return Ok(RunResult::stdout([]));
             }
-            let mut graph = crate::graph::Graph::default();
-            let mut log = crate::log::BuildLog::open(directory, &mut graph).map_err(|source| {
+            let mut log = crate::log::BuildLog::open(directory).map_err(|source| {
                 PersistenceError::io(PersistenceOperation::LoadBuildLog, path.clone(), source)
             })?;
             if !dryrun {
@@ -989,7 +991,7 @@ fn run_manifest_tool(
 
 fn run_log_tool(
     tool: crate::tool::Tool,
-    graph: &mut crate::graph::Graph,
+    graph: &crate::graph::Graph,
     parser: &crate::parse::Parser,
     build_log: &mut crate::log::BuildLog,
     deps_log: &mut crate::deps::DepsLog,
@@ -1210,10 +1212,9 @@ fn run_bytes(
             || PathBuf::from(".ninja_log"),
             |path| path.join(".ninja_log"),
         );
-        let mut build_log =
-            crate::log::BuildLog::open(builddir.as_deref(), &mut graph).map_err(|source| {
-                PersistenceError::io(PersistenceOperation::OpenBuildLog, build_log_path, source)
-            })?;
+        let mut build_log = crate::log::BuildLog::open(builddir.as_deref()).map_err(|source| {
+            PersistenceError::io(PersistenceOperation::OpenBuildLog, build_log_path, source)
+        })?;
         let deps_path = builddir.as_ref().map_or_else(
             || PathBuf::from(".ninja_deps"),
             |path| path.join(".ninja_deps"),
@@ -1228,7 +1229,7 @@ fn run_bytes(
         if let Some(tool) = invocation.selected_tool {
             let result = run_log_tool(
                 tool,
-                &mut graph,
+                &graph,
                 &parser,
                 &mut build_log,
                 &mut deps_log,
@@ -1445,11 +1446,11 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(options.maxjobs, usize::MAX);
+        assert_eq!(options.jobs, JobLimit::Unlimited);
         assert!(options.jobserver.is_some());
 
         let mut explicit = BuildOptions {
-            maxjobs: 2,
+            jobs: JobLimit::fixed(2).unwrap(),
             ..BuildOptions::default()
         };
         normalize_runtime_options(
@@ -1458,7 +1459,7 @@ mod tests {
             || panic!("explicit -j must not connect to an inherited jobserver"),
         )
         .unwrap();
-        assert_eq!(explicit.maxjobs, 2);
+        assert_eq!(explicit.jobs, JobLimit::fixed(2).unwrap());
         assert!(explicit.jobserver.is_none());
     }
 

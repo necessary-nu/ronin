@@ -960,12 +960,22 @@ children (
                 id ronin-typed-runtime-state
                 title "Encapsulate graph sentinels and separate runtime state"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.typed-runtime-state])
+                }
                 log (
                     {
                         at 2026-07-29T22:58:22.932756095Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Keep dense arenas and compact layouts, but hide timestamp, dependency-ID, command-hash, and partition sentinels behind zero-cost semantic types and private accessors. Replace string and boolean modes with enums where they encode mutually exclusive states. Move pool occupancy, critical-path weights, and other per-build mutable state out of manifest graph entities into scheduler-owned dense side tables, with reuse and failure-path invariants tested."
+                    }
+
+                    {
+                        at 2026-07-30T01:09:21.72224879Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

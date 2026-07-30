@@ -4,8 +4,6 @@ use std::io;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
-pub(crate) const MTIME_MISSING: i64 = -1;
-
 #[derive(Default)]
 pub(crate) struct RealDiskInterface;
 

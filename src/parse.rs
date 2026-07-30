@@ -5,7 +5,7 @@ use crate::env::{
     EnvironmentId,
 };
 use crate::error::{ManifestError, ManifestProblem};
-use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId};
+use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId, PathStyle};
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
     AllowedSeparators, ScannedEvalString, Scanner, Separator, Source, TokenKind,
@@ -186,13 +186,13 @@ fn parseedge(
     })?;
 
     let mut input_paths = scanpaths(scanner)?;
-    let inimpidx = input_paths.len();
+    let explicit_input_count = input_paths.len();
     let mut separator = scanpipe(scanner, AllowedSeparators::INPUTS)?;
     if separator == Some(Separator::Implicit) {
         input_paths.extend(scanpaths(scanner)?);
         separator = scanpipe(scanner, AllowedSeparators::AFTER_IMPLICIT)?;
     }
-    let inorderidx = input_paths.len();
+    let non_order_only_input_count = input_paths.len();
     if separator == Some(Separator::OrderOnly) {
         input_paths.extend(scanpaths(scanner)?);
         separator = scanpipe(scanner, AllowedSeparators::VALIDATION)?;
@@ -210,7 +210,7 @@ fn parseedge(
     }
 
     let mut out = Vec::new();
-    let mut outimpidx = 0;
+    let mut retained_explicit_output_count = 0;
     for (index, output) in output_paths.iter().enumerate() {
         let node = node_for(scanner, graph, output, environment)?;
         if graph.node(node).gen.is_some() || out.contains(&node) {
@@ -224,7 +224,7 @@ fn parseedge(
             }
             continue;
         }
-        outimpidx += usize::from(index < explicit_output_count);
+        retained_explicit_output_count += usize::from(index < explicit_output_count);
         out.push(node);
     }
     if out.is_empty() {
@@ -259,12 +259,11 @@ fn parseedge(
     {
         let edge_mut = graph.edge_mut(edge);
         edge_mut.rule = Some(rule);
-        edge_mut.outimpidx = outimpidx;
         edge_mut.out = out;
-        edge_mut.inimpidx = inimpidx;
-        edge_mut.inorderidx = inorderidx;
         edge_mut.input = input;
         edge_mut.validation = validation;
+        edge_mut.set_explicit_output_count(retained_explicit_output_count);
+        edge_mut.set_input_partitions(explicit_input_count, non_order_only_input_count);
     }
 
     for (name, value) in bindings {
@@ -272,13 +271,15 @@ fn parseedge(
         graph.edge_mut(edge).bindings.insert(name.to_owned(), value);
     }
 
-    if let Some(pool_name) = edgevar(graph, edge, "pool", true).filter(|pool| !pool.is_empty()) {
+    if let Some(pool_name) =
+        edgevar(graph, edge, "pool", PathStyle::ShellEscaped).filter(|pool| !pool.is_empty())
+    {
         let pool_name = String::from_utf8_lossy(pool_name.as_bytes());
         graph.edge_mut(edge).pool = Some(poolget(state, &pool_name)?);
     }
 
     if let Some(mut dyndep_path) =
-        edgevar(graph, edge, "dyndep", false).filter(|path| !path.is_empty())
+        edgevar(graph, edge, "dyndep", PathStyle::Raw).filter(|path| !path.is_empty())
     {
         canonpath(&mut dyndep_path);
         let dyndep = mknode(graph, dyndep_path.clone());
@@ -288,7 +289,6 @@ fn parseedge(
                 ManifestProblem::DyndepNotInput { path: dyndep_path },
             ));
         }
-        graph.node_mut(dyndep).dyndep_pending = true;
         graph.edge_mut(edge).dyndep = Some(dyndep);
     }
 
@@ -297,25 +297,26 @@ fn parseedge(
         edge.rule
             .is_some_and(|rule| graph.rule(rule).name == "phony")
             && edge.out.len() == 1
-            && edge.outimpidx == 1
-            && edge.inimpidx == edge.input.len()
+            && edge.explicit_output_count() == 1
+            && edge.explicit_input_count() == edge.input.len()
     };
     if ignore_phony_self_reference {
         let output = graph.edge(edge).out[0];
-        let mut removed = 0;
-        graph.edge_mut(edge).input.retain(|input| {
-            let keep = *input != output;
-            removed += usize::from(!keep);
-            keep
-        });
-        if removed != 0 {
+        let removed = graph
+            .edge(edge)
+            .input
+            .iter()
+            .enumerate()
+            .filter_map(|(index, input)| (*input == output).then_some(index))
+            .collect::<Vec<_>>();
+        if !removed.is_empty() {
+            for index in removed.into_iter().rev() {
+                graph.edge_mut(edge).remove_input(index);
+            }
             graph
                 .node_mut(output)
                 .uses
                 .retain(|candidate| *candidate != edge);
-            let edge = graph.edge_mut(edge);
-            edge.inimpidx -= removed;
-            edge.inorderidx -= removed;
         }
     }
     Ok(())
@@ -401,19 +402,21 @@ fn parsepool(
             ));
         }
         let value = enveval(graph, environment, &value);
-        graph.pool_mut(pool).maxjobs =
-            String::from_utf8_lossy(value.as_bytes())
-                .parse()
-                .map_err(|_| {
-                    manifest_error(
-                        scanner,
-                        ManifestProblem::InvalidPoolDepth {
-                            value: value.clone(),
-                        },
-                    )
-                })?;
+        let depth = String::from_utf8_lossy(value.as_bytes())
+            .parse()
+            .ok()
+            .and_then(std::num::NonZeroUsize::new)
+            .ok_or_else(|| {
+                manifest_error(
+                    scanner,
+                    ManifestProblem::InvalidPoolDepth {
+                        value: value.clone(),
+                    },
+                )
+            })?;
+        graph.pool_mut(pool).set_depth(depth);
     }
-    if graph.pool(pool).maxjobs <= 0 {
+    if graph.pool(pool).depth().is_none() {
         return Err(manifest_error(scanner, ManifestProblem::PoolWithoutDepth));
     }
     Ok(())
@@ -594,7 +597,8 @@ mod ninja_manifest_tests {
         let edge = output_edge(&graph, b"result");
         let dyndep = graph.edge(edge).dyndep.unwrap();
         assert_eq!(graph.node(dyndep).path.as_bytes(), expected);
-        assert!(graph.node(dyndep).dyndep_pending);
+        let runtime = crate::runtime::RuntimeState::new(&graph);
+        assert!(runtime.node(dyndep).dyndep_pending());
     }
 
     #[test]
@@ -625,7 +629,7 @@ mod ninja_manifest_tests {
                 .unwrap();
         let edge = output_edge(&graph, b"imp");
         assert_eq!(graph.edge(edge).out.len(), 2);
-        assert_eq!(graph.edge(edge).outimpidx, 1);
+        assert_eq!(graph.edge(edge).explicit_output_count(), 1);
         assert_eq!(edge, output_edge(&graph, b"foo"));
     }
 
@@ -635,7 +639,7 @@ mod ninja_manifest_tests {
             parse_source("rule cat\n  command = cat $in > $out\nbuild foo | : cat bar\n").unwrap();
         let edge = output_edge(&graph, b"foo");
         assert_eq!(graph.edge(edge).out.len(), 1);
-        assert_eq!(graph.edge(edge).outimpidx, 1);
+        assert_eq!(graph.edge(edge).explicit_output_count(), 1);
     }
 
     #[test]
@@ -644,7 +648,7 @@ mod ninja_manifest_tests {
             parse_source("rule cat\n  command = cat $in > $out\nbuild | imp: cat bar\n").unwrap();
         let edge = output_edge(&graph, b"imp");
         assert_eq!(graph.edge(edge).out.len(), 1);
-        assert_eq!(graph.edge(edge).outimpidx, 0);
+        assert_eq!(graph.edge(edge).explicit_output_count(), 0);
     }
 
     #[test]
@@ -732,7 +736,7 @@ mod ninja_manifest_tests {
         let edge = output_edge(&graph, b"result");
         let pool = graph.edge(edge).pool.unwrap();
         assert_eq!(graph.pool(pool).name, "link_pool");
-        assert_eq!(graph.pool(pool).maxjobs, 15);
+        assert_eq!(graph.pool(pool).depth().unwrap().get(), 15);
     }
 
     #[test]
@@ -782,7 +786,7 @@ mod ninja_manifest_tests {
         let output = crate::graph::nodeget(&graph, b"out-\xff").unwrap();
         assert!(crate::graph::nodeget(&graph, b"in-\xfe").is_some());
         let edge = graph.node(output).gen.unwrap();
-        let command = crate::env::edgevar(&graph, edge, "command", false).unwrap();
+        let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
         assert_eq!(command.as_bytes(), b"cat in-\xfe > out-\xff");
         fs::remove_dir_all(directory).unwrap();
     }
@@ -805,9 +809,9 @@ mod ninja_manifest_tests {
         let inner = output_edge(&graph, b"some_dir/inner");
         let outer = output_edge(&graph, b"some_dir/outer");
         let outer2 = output_edge(&graph, b"some_dir/outer2");
-        let inner_command = edgevar(&graph, inner, "command", false).unwrap();
-        let outer_command = edgevar(&graph, outer, "command", false).unwrap();
-        let second_outer_command = edgevar(&graph, outer2, "command", false).unwrap();
+        let inner_command = edgevar(&graph, inner, "command", PathStyle::Raw).unwrap();
+        let outer_command = edgevar(&graph, outer, "command", PathStyle::Raw).unwrap();
+        let second_outer_command = edgevar(&graph, outer2, "command", PathStyle::Raw).unwrap();
         assert_eq!(inner_command.as_bytes(), b"varref inner");
         assert_eq!(outer_command.as_bytes(), b"varref outer");
         assert_eq!(second_outer_command.as_bytes(), b"varref outer");

@@ -1,6 +1,6 @@
 use super::{status, Builder};
 use crate::error::{BuildError, BuildOperation};
-use crate::graph::{edgehash, invalidate_edge_hash, EdgeId, Graph};
+use crate::graph::{edgehash, EdgeId, Graph, PathStyle};
 use crate::util::{BString, ByteSlice};
 use std::fs;
 
@@ -11,7 +11,7 @@ pub(super) struct CommandSpec {
     pub(super) description: BString,
     pub(super) rspfile: Option<BString>,
     pub(super) rspfile_content: BString,
-    pub(super) deps_type: String,
+    pub(super) deps_type: DepsType,
     pub(super) depfile_path: Option<BString>,
     pub(super) msvc_deps_prefix: BString,
     pub(super) restat: bool,
@@ -19,27 +19,50 @@ pub(super) struct CommandSpec {
     pub(super) use_console: bool,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum DepsType {
+    None,
+    Gcc,
+    Msvc,
+    Unsupported(String),
+}
+
+impl DepsType {
+    fn from_name(name: String) -> Self {
+        match name.as_str() {
+            "" => Self::None,
+            "gcc" => Self::Gcc,
+            "msvc" => Self::Msvc,
+            _ => Self::Unsupported(name),
+        }
+    }
+}
+
 impl CommandSpec {
     fn evaluate(graph: &Graph, edge: EdgeId) -> BuildResult<Self> {
-        let command = crate::env::edgevar(graph, edge, "command", true).unwrap_or_default();
-        let description = crate::env::edgevar(graph, edge, "description", true).unwrap_or_default();
-        let rspfile =
-            crate::env::edgevar(graph, edge, "rspfile", false).filter(|path| !path.is_empty());
+        let command = crate::env::edgevar(graph, edge, "command", PathStyle::ShellEscaped)
+            .unwrap_or_default();
+        let description = crate::env::edgevar(graph, edge, "description", PathStyle::ShellEscaped)
+            .unwrap_or_default();
+        let rspfile = crate::env::edgevar(graph, edge, "rspfile", PathStyle::Raw)
+            .filter(|path| !path.is_empty());
         let rspfile_content =
-            crate::env::edgevar(graph, edge, "rspfile_content", true).unwrap_or_default();
-        let deps_type = crate::env::edgevar(graph, edge, "deps", false)
+            crate::env::edgevar(graph, edge, "rspfile_content", PathStyle::ShellEscaped)
+                .unwrap_or_default();
+        let deps_type = crate::env::edgevar(graph, edge, "deps", PathStyle::Raw)
             .map(Vec::from)
             .map(String::from_utf8)
             .transpose()
             .map_err(|_| BuildError::InvalidDepsEncoding { edge })?
             .unwrap_or_default();
-        let depfile_path =
-            crate::env::edgevar(graph, edge, "depfile", false).filter(|path| !path.is_empty());
-        let msvc_deps_prefix =
-            crate::env::edgevar(graph, edge, "msvc_deps_prefix", false).unwrap_or_default();
-        let restat = crate::env::edgevar(graph, edge, "restat", false)
+        let deps_type = DepsType::from_name(deps_type);
+        let depfile_path = crate::env::edgevar(graph, edge, "depfile", PathStyle::Raw)
+            .filter(|path| !path.is_empty());
+        let msvc_deps_prefix = crate::env::edgevar(graph, edge, "msvc_deps_prefix", PathStyle::Raw)
+            .unwrap_or_default();
+        let restat = crate::env::edgevar(graph, edge, "restat", PathStyle::Raw)
             .is_some_and(|value| !value.is_empty());
-        let generator = crate::env::edgevar(graph, edge, "generator", false)
+        let generator = crate::env::edgevar(graph, edge, "generator", PathStyle::Raw)
             .is_some_and(|value| !value.is_empty());
         let use_console = graph
             .edge(edge)
@@ -57,15 +80,6 @@ impl CommandSpec {
             generator,
             use_console,
         })
-    }
-
-    fn hash_into(&self, graph: &mut Graph, edge: EdgeId) {
-        edgehash(
-            graph,
-            edge,
-            self.command.as_bstr(),
-            (!self.rspfile_content.is_empty()).then_some(self.rspfile_content.as_bstr()),
-        );
     }
 }
 
@@ -104,7 +118,7 @@ impl Builder<'_> {
         if let Some(command) = self.command_cache.get_mut(edge.index()) {
             *command = None;
         }
-        invalidate_edge_hash(self.graph, edge);
+        self.runtime.edge_mut(edge).invalidate_command_hash();
     }
 
     pub(super) fn take_command(&mut self, edge: EdgeId) -> BuildResult<CommandSpec> {
@@ -116,20 +130,22 @@ impl Builder<'_> {
 
     pub(super) fn refresh_command_hash(&mut self, edge: EdgeId) -> BuildResult<()> {
         self.ensure_command(edge)?;
-        self.command_cache[edge.index()]
+        let command = self.command_cache[edge.index()]
             .as_ref()
-            .expect("command cache was populated")
-            .hash_into(self.graph, edge);
-        let hash = self.graph.edge(edge).hash;
-        let generator = self.command_cache[edge.index()]
-            .as_ref()
-            .expect("command cache was populated")
-            .generator;
-        self.graph.edge_mut(edge).command_dirty = !generator
+            .expect("command cache was populated");
+        let hash = edgehash(
+            &mut self.runtime,
+            edge,
+            command.command.as_bstr(),
+            (!command.rspfile_content.is_empty()).then_some(command.rspfile_content.as_bstr()),
+        );
+        let generator = command.generator;
+        let command_dirty = !generator
             && self.graph.edge(edge).out.iter().any(|output| {
-                let output = self.graph.node(*output);
-                output.hash == 0 || output.hash != hash
+                let logged = self.runtime.node(*output).logged_command_hash();
+                logged.is_missing() || logged != hash
             });
+        self.runtime.edge_mut(edge).set_command_dirty(command_dirty);
         Ok(())
     }
 

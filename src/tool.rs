@@ -2,7 +2,7 @@
 
 use crate::env::edgevar;
 use crate::error::{ManifestError, ToolAvailability, ToolError, ToolOperation};
-use crate::graph::{nodeget, EdgeId, Graph, NodeId};
+use crate::graph::{nodeget, EdgeId, Graph, NodeId, PathStyle};
 use crate::source::Source;
 use crate::util::{BString, ByteSlice};
 use std::collections::{BTreeMap, BTreeSet};
@@ -226,7 +226,7 @@ impl Cleaner {
             self.remove(Some(&output))?;
         }
         for variable in ["rspfile", "depfile"] {
-            self.remove(edgevar(graph, edge, variable, false).as_ref())?;
+            self.remove(edgevar(graph, edge, variable, PathStyle::Raw).as_ref())?;
         }
         Ok(())
     }
@@ -254,7 +254,7 @@ impl Cleaner {
             self.remove(Some(&output))?;
         }
         for variable in ["rspfile", "depfile"] {
-            self.remove(edgevar(graph, edge, variable, false).as_ref())?;
+            self.remove(edgevar(graph, edge, variable, PathStyle::Raw).as_ref())?;
         }
         for input in graph.edge(edge).input.clone() {
             self.clean_target(graph, input)?;
@@ -264,7 +264,7 @@ impl Cleaner {
 
     // [spec:samurai:req:runtime.dyndep-transaction]
     fn dyndep_outputs(&mut self, graph: &Graph, edge: EdgeId) -> ToolResult<Vec<BString>> {
-        let Some(path) = edgevar(graph, edge, "dyndep", false) else {
+        let Some(path) = edgevar(graph, edge, "dyndep", PathStyle::Raw) else {
             return Ok(Vec::new());
         };
         if !self.dyndep_files.contains_key(&path) {
@@ -347,7 +347,7 @@ pub(crate) fn clean_with_report(
             if edge_name(graph, edge) == "phony" {
                 continue;
             }
-            if !include_generators && edgevar(graph, edge, "generator", false).is_some() {
+            if !include_generators && edgevar(graph, edge, "generator", PathStyle::Raw).is_some() {
                 continue;
             }
             cleaner.clean_edge(graph, edge)?;
@@ -397,7 +397,7 @@ fn collect_target_commands(
     for input in graph.edge(edge).input.iter().copied() {
         collect_target_commands(graph, input, output, visited);
     }
-    if let Some(command) = edgevar(graph, edge, "command", true) {
+    if let Some(command) = edgevar(graph, edge, "command", PathStyle::ShellEscaped) {
         if !command.is_empty() {
             output.push(command);
         }
@@ -476,8 +476,8 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolRe
         if !seen.insert(edge) {
             continue;
         }
-        if let Some(command) =
-            edgevar(graph, edge, "command", true).filter(|value| !value.is_empty())
+        if let Some(command) = edgevar(graph, edge, "command", PathStyle::ShellEscaped)
+            .filter(|value| !value.is_empty())
         {
             output.push(command);
         }
@@ -551,7 +551,7 @@ fn graphnode_inner(
             );
         }
         for (index, input) in edge_borrow.input.iter().enumerate() {
-            let style = if index >= edge_borrow.inorderidx {
+            let style = if index >= edge_borrow.non_order_only_input_count() {
                 " style=dotted"
             } else {
                 ""
@@ -612,9 +612,9 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
             let _ = writeln!(output, "  input: {}", edge_name(graph, edge));
             for (index, input) in graph.edge(edge).input.iter().enumerate() {
                 let input = graph.node(*input);
-                let label = if index >= graph.edge(edge).inorderidx {
+                let label = if index >= graph.edge(edge).non_order_only_input_count() {
                     "|| "
-                } else if index >= graph.edge(edge).inimpidx {
+                } else if index >= graph.edge(edge).explicit_input_count() {
                     "| "
                 } else {
                     ""

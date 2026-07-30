@@ -1,5 +1,5 @@
 use crate::error::ToolError;
-use crate::graph::{nodeget, Graph, InputsCollector, NodeId};
+use crate::graph::{nodeget, Graph, InputsCollector, NodeId, PathStyle};
 use crate::util::{BString, ByteSlice};
 
 type ToolResult<T> = Result<T, ToolError>;
@@ -17,13 +17,13 @@ fn collect_targets(graph: &Graph, targets: &[BString]) -> ToolResult<Vec<NodeId>
 
 pub(crate) fn inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<BString> {
     let mut print0 = false;
-    let mut shell_escape = true;
+    let mut path_style = PathStyle::ShellEscaped;
     let mut dependency_order = false;
     let mut targets = Vec::new();
     for argument in arguments {
         match argument.as_bytes() {
             b"-0" | b"--print0" => print0 = true,
-            b"-E" | b"--no-shell-escape" => shell_escape = false,
+            b"-E" | b"--no-shell-escape" => path_style = PathStyle::Raw,
             b"-d" | b"--dependency-order" => dependency_order = true,
             b"-h" | b"--help" => {
                 return Err(ToolError::Usage {
@@ -43,7 +43,7 @@ pub(crate) fn inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<BString
     for node in collect_targets(graph, &targets)? {
         collector.visit_node(graph, node);
     }
-    let mut inputs = collector.input_strings(graph, shell_escape);
+    let mut inputs = collector.input_strings(graph, path_style);
     if !dependency_order {
         inputs.sort();
     }
@@ -97,7 +97,7 @@ pub(crate) fn multi_inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<B
     for (target, node) in targets.iter().zip(nodes) {
         let mut collector = InputsCollector::default();
         collector.visit_node(graph, node);
-        for input in collector.input_strings(graph, true) {
+        for input in collector.input_strings(graph, PathStyle::ShellEscaped) {
             output.extend_from_slice(target.as_bytes());
             output.extend_from_slice(delimiter.as_bytes());
             output.extend_from_slice(input.as_bytes());

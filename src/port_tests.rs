@@ -141,7 +141,7 @@ fn environment_graph_and_log_behaviour() {
     let state = env::EnvState::new(&mut graph);
     let node = graph::mknode(&mut graph, util::xasprintf(format_args!("out file")));
     assert_eq!(
-        graph::nodepath(&graph, node, true).as_bytes(),
+        graph::nodepath(&graph, node, graph::PathStyle::ShellEscaped).as_bytes(),
         b"'out file'"
     );
     let edge = graph::mkedge(&mut graph, state.root);
@@ -405,10 +405,10 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
     .unwrap();
     let out = graph::nodeget(&graph, b"out").unwrap();
     let edge = graph.node(out).gen.unwrap();
-    assert_eq!(graph.edge(edge).outimpidx, 1);
-    assert_eq!(graph.edge(edge).inimpidx, 1);
-    assert_eq!(graph.edge(edge).inorderidx, 2);
-    let command = env::edgevar(&graph, edge, "command", false).unwrap();
+    assert_eq!(graph.edge(edge).explicit_output_count(), 1);
+    assert_eq!(graph.edge(edge).explicit_input_count(), 1);
+    assert_eq!(graph.edge(edge).non_order_only_input_count(), 2);
+    let command = env::edgevar(&graph, edge, "command", graph::PathStyle::Raw).unwrap();
     assert_eq!(command.as_bytes(), b"ld one-letter-test -s -o out input");
     assert_eq!(
         graph
@@ -466,12 +466,12 @@ fn ninja_manifest_parser_rule_attributes_and_special_variables() {
     let (graph, _, _) = parse_manifest(&path);
     let out = graph::nodeget(&graph, b"out").unwrap();
     let edge = graph.node(out).gen.unwrap();
-    let command = env::edgevar(&graph, edge, "command", false).unwrap();
+    let command = env::edgevar(&graph, edge, "command", graph::PathStyle::Raw).unwrap();
     assert_eq!(command.as_bytes(), b"cat out.rsp > out");
-    let inputs = env::edgevar(&graph, edge, "in_newline", false).unwrap();
+    let inputs = env::edgevar(&graph, edge, "in_newline", graph::PathStyle::Raw).unwrap();
     assert_eq!(inputs.as_bytes(), b"in\nin2");
     assert_eq!(
-        env::edgevar(&graph, edge, "rspfile_content", false)
+        env::edgevar(&graph, edge, "rspfile_content", graph::PathStyle::Raw,)
             .unwrap()
             .as_bytes(),
         b"in in2"
@@ -529,12 +529,12 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
         .node(graph::nodeget(&graph, b"supernested").unwrap())
         .gen
         .unwrap();
-    let command = env::edgevar(&graph, first, "command", false).unwrap();
+    let command = env::edgevar(&graph, first, "command", graph::PathStyle::Raw).unwrap();
     assert_eq!(
         command.as_bytes(),
         b"ld one-letter-test -pthread -under -o a b c suffix"
     );
-    let command = env::edgevar(&graph, second, "command", false).unwrap();
+    let command = env::edgevar(&graph, second, "command", graph::PathStyle::Raw).unwrap();
     assert_eq!(
         command.as_bytes(),
         b"ld one-letter-test 1/2/3 -under -o supernested x suffix"
@@ -609,7 +609,7 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
     assert!(graph::nodeget(&graph, b"two$ three").is_some());
     let output = graph::nodeget(&graph, b"$dollar").unwrap();
     let edge = graph.node(output).gen.unwrap();
-    let command = env::edgevar(&graph, edge, "command", true).unwrap();
+    let command = env::edgevar(&graph, edge, "command", graph::PathStyle::ShellEscaped).unwrap();
     assert_eq!(command.as_bytes(), b"'$dollar'bar$baz$blah");
     let _ = fs::remove_file(path);
 }
@@ -869,19 +869,22 @@ fn ninja_build_log_write_and_read() {
     )
     .unwrap();
     let output = graph::nodeget(&graph, b"out").unwrap();
-    graph.node_mut(output).logmtime = 25;
-    graph.node_mut(output).hash = 0xface;
-    let mut build_log = log::BuildLog::open(Some(&directory), &mut graph).unwrap();
-    log::logrecord(&mut build_log, &graph, output).unwrap();
+    let mut runtime = crate::runtime::RuntimeState::new(&graph);
+    runtime
+        .node_mut(output)
+        .set_log_mtime(crate::runtime::FileTime::observed(25));
+    runtime
+        .node_mut(output)
+        .set_logged_command_hash(crate::runtime::CommandHash::from_raw(0xface));
+    let mut build_log = log::BuildLog::open(Some(&directory)).unwrap();
+    log::logrecord(&mut build_log, &graph, &runtime, output).unwrap();
     build_log.finish().unwrap();
-    graph.node_mut(output).logmtime = 0;
-    graph.node_mut(output).hash = 0;
-    log::BuildLog::open(Some(&directory), &mut graph)
-        .unwrap()
-        .finish()
-        .unwrap();
-    assert_eq!(graph.node(output).logmtime, 25);
-    assert_eq!(graph.node(output).hash, 0xface);
+    let build_log = log::BuildLog::open(Some(&directory)).unwrap();
+    let mut runtime = crate::runtime::RuntimeState::new(&graph);
+    build_log.hydrate_runtime(&graph, &mut runtime, 0..graph.node_ids().len());
+    assert_eq!(runtime.node(output).log_mtime().raw(), 25);
+    assert_eq!(runtime.node(output).logged_command_hash().raw(), 0xface);
+    build_log.finish().unwrap();
     let _ = fs::remove_dir_all(directory);
 }
 
@@ -904,7 +907,7 @@ fn ninja_build_log_loads_duplicate_and_spaced_records() {
         ),
     )
     .unwrap();
-    let (mut graph, _, _) = parse_manifest(&manifest);
+    let (graph, _, _) = parse_manifest(&manifest);
     fs::write(
         directory.join(".ninja_log"),
         concat!(
@@ -917,19 +920,19 @@ fn ninja_build_log_loads_duplicate_and_spaced_records() {
         ),
     )
     .unwrap();
-    log::BuildLog::open(Some(&directory), &mut graph)
-        .unwrap()
-        .finish()
-        .unwrap();
+    let build_log = log::BuildLog::open(Some(&directory)).unwrap();
+    let mut runtime = crate::runtime::RuntimeState::new(&graph);
+    build_log.hydrate_runtime(&graph, &mut runtime, 0..graph.node_ids().len());
     let out = graph::nodeget(&graph, b"out").unwrap();
-    assert_eq!(graph.node(out).logmtime, 3);
-    assert_eq!(graph.node(out).hash, 2);
+    assert_eq!(runtime.node(out).log_mtime().raw(), 3);
+    assert_eq!(runtime.node(out).logged_command_hash().raw(), 2);
     let spaced = graph::nodeget(&graph, b"out with space").unwrap();
-    assert_eq!(graph.node(spaced).logmtime, 456);
-    assert_eq!(graph.node(spaced).hash, 0xface);
+    assert_eq!(runtime.node(spaced).log_mtime().raw(), 456);
+    assert_eq!(runtime.node(spaced).logged_command_hash().raw(), 0xface);
     let out2 = graph::nodeget(&graph, b"out2").unwrap();
-    assert_eq!(graph.node(out2).logmtime, 789);
-    assert_eq!(graph.node(out2).hash, 0xbeef);
+    assert_eq!(runtime.node(out2).log_mtime().raw(), 789);
+    assert_eq!(runtime.node(out2).logged_command_hash().raw(), 0xbeef);
+    build_log.finish().unwrap();
     let _ = fs::remove_dir_all(directory);
 }
 
@@ -944,8 +947,7 @@ fn ninja_build_log_resets_obsolete_headers() {
         "# ninja log v3\n123 456 0 out command\n",
     )
     .unwrap();
-    let mut graph = graph::Graph::default();
-    log::BuildLog::open(Some(&directory), &mut graph)
+    log::BuildLog::open(Some(&directory))
         .unwrap()
         .finish()
         .unwrap();
@@ -1032,8 +1034,7 @@ fn scheduler_cli_dependency_and_tool_behaviour() {
 fn ninja_build_log_signature_and_clean_path() {
     let directory = std::env::temp_dir().join(format!("ronin-ninja-log-{}", std::process::id()));
     fs::create_dir_all(&directory).unwrap();
-    let mut graph = graph::Graph::default();
-    log::BuildLog::open(Some(&directory), &mut graph)
+    log::BuildLog::open(Some(&directory))
         .unwrap()
         .finish()
         .unwrap();

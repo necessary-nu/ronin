@@ -3,7 +3,7 @@
 use crate::env::edgevar;
 #[cfg(test)]
 use crate::error::GraphError;
-use crate::graph::{EdgeId, Graph, NodeId};
+use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
 use crate::util::ByteSlice;
 use std::collections::{BTreeSet, HashMap};
 
@@ -59,7 +59,7 @@ impl MissingDependencyScanner {
                     }
                 }
                 Work::Process(node, edge) => {
-                    if edgevar(graph, edge, "deps", false).is_none() {
+                    if edgevar(graph, edge, "deps", PathStyle::Raw).is_none() {
                         continue;
                     }
                     if let Some(dependencies) = self.dependency_log.get(node.index()).cloned() {
@@ -274,7 +274,7 @@ mod tests {
             let edge_mut = self.graph.edge_mut(edge);
             edge_mut.rule = Some(rule);
             edge_mut.out.push(output);
-            edge_mut.outimpidx = 1;
+            edge_mut.set_explicit_output_count(1);
             self.graph.node_mut(output).gen = Some(edge);
             output
         }
@@ -285,8 +285,7 @@ mod tests {
             let edge_mut = self.graph.edge_mut(edge);
             edge_mut.input.push(to);
             let input_count = edge_mut.input.len();
-            edge_mut.inimpidx = input_count;
-            edge_mut.inorderidx = input_count;
+            edge_mut.set_input_partitions(input_count, input_count);
         }
     }
 

@@ -31,6 +31,8 @@ elements (
         owns ([spec:samurai:req:compat.graph-semantics])
         exposes (
             "src/graph.rs"
+            "src/graph/**"
+            "src/runtime.rs"
             "src/explanations.rs"
             "src/missing_deps.rs"
         )
@@ -111,6 +113,7 @@ elements (
             [spec:samurai:req:compat.scheduling]
             [spec:samurai:req:compat.process-integration]
             [spec:samurai:req:compat.command-runtime]
+            [spec:samurai:req:runtime.typed-runtime-state]
         )
         exposes (
             "src/build.rs"
