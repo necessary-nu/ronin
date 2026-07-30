@@ -1125,6 +1125,7 @@ children (
                     {
                         id ronin-traversal-mark-option
                         title "Replace the traversal-mark sentinel with an optional identifier"
+                        sealed true
                         log (
                             {
                                 at 2026-07-30T23:48:00.972075858Z
@@ -1146,6 +1147,13 @@ children (
                                 kind @decision
                                 text "Done. TraversalMark — a repr(transparent) newtype over usize with usize::MAX standing for \"unmarked\" — is deleted, and dependency_marks becomes Vec<Option<EdgeId>>. is_marked_for(edge) becomes a comparison against Some(edge), mark(edge) an assignment of Some(edge), and both the resize in synchronize_arenas and the reset in rebuild_frontier now pass None. The niche in the NonZeroU32 identifier makes the empty case free, so the table halves from eight bytes per edge to four — 32 KiB to 16 KiB on a 4,000-edge graph — and an unmarked slot stops being representable as a valid edge index. Measured: wide no-op 22,776,535 to 22,744,529 instructions, −0.14%; command evaluation unchanged at 40,892,549, which is expected because that fixture runs the commands tool and never reaches rebuild_frontier. This node deliberately carried no estimate, and the outcome matches the stated reason for doing it — the type safety is the point and the 0.14% is incidental. It also removes the last magic-value sentinel standing against the arena_id! documentation's own claim that Option<Id> occupies four bytes rather than sixteen. 366 tests pass, clippy clean under nursery and pedantic."
                             }
+
+                            {
+                                at 2026-07-30T23:56:15.170788734Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
@@ -1158,6 +1166,20 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @note
                                 text "Graph::edge_ids (src/graph.rs:111) already returns an ExactSizeIterator<Item = EdgeId>, and Graph::node_ids (graph.rs:91) does the same for nodes, yet seven sites still write the C form: for index in 0..graph.edge_count() followed by let edge = EdgeId::from_index(index). They are build.rs:327, build.rs:346, build.rs:364, build.rs:1334, missing_deps.rs:102 and missing_deps.rs:227, plus log.rs:100 for nodes. build.rs:383 already uses the idiomatic filter_map with then_some(EdgeId::from_index(index)), so this is drift within one file rather than a missing capability. Several of the loops legitimately need the raw index to reach side tables such as self.wanted[index] and self.completed[index]; EdgeId::index() supplies it, and it is a const accessor over a NonZeroU32 so it costs nothing. Expect no instruction change — the codegen is the same — so this is readability and consistency only, and should be measured merely to confirm it is neutral rather than to justify it. Do not touch build.rs:452, which indexes self.dependents by position specifically to keep the borrow of self.dependents disjoint from the mutation of self.pending; that one is load-bearing and is called out in the parent node."
+                            }
+
+                            {
+                                at 2026-07-30T23:56:17.268308934Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-30T23:58:13.974778283Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done, and confirmed neutral as the node predicted. Six sites converted from the C form — for index in 0..graph.edge_count() followed by EdgeId::from_index(index) — to iterating Graph::edge_ids(): build.rs rebuild_frontier's dependency-counting and ready-heap loops, expand_wanted, the dyndep-affected scan, and missing_deps.rs's missing-edge scan and root_nodes. Four of them still need the raw index to reach side tables, which EdgeId::index() supplies as a const accessor over the NonZeroU32; the dyndep scan needed no index at all and lost the binding entirely. edge_ids() returns impl ExactSizeIterator<Item = EdgeId> capturing no lifetime, since it is (0..len).map(EdgeId::from_index), so iterating it holds no borrow on the graph and none of the conversions fought the borrow checker. Two EdgeId::from_index calls remain and are correct: build.rs:371 and build.rs:481 both enumerate the wanted side table rather than the graph, so reconstructing the identifier from that table's index is the right direction of travel. log.rs:99 was also left alone — its for index in nodes walks a caller-supplied Range<usize> of newly added nodes, which is a genuine partial-range API rather than the 0..count idiom. Measured wide no-op 22,744,529 to 22,752,528 instructions, +0.035%, which is inlining noise either side of neutral; the node stated in advance that no change was expected and that measurement served only to confirm neutrality rather than to justify the work. Value is readability and internal consistency. 366 tests pass, clippy clean, format clean."
                             }
                         )
                     }

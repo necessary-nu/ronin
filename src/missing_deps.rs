@@ -99,9 +99,9 @@ impl MissingDependencyScanner {
 
         self.missing_edges.resize(graph.edge_count(), false);
         self.missing_edges.fill(false);
-        for index in 0..graph.edge_count() {
+        for generator in graph.edge_ids() {
+            let index = generator.index();
             let generated = self.generated_edges[index];
-            let generator = EdgeId::from_index(index);
             if generated && !self.path_exists_between(graph, generator, consumer_edge) {
                 self.missing_edges[index] = true;
             }
@@ -224,8 +224,8 @@ impl MissingDependencyScanner {
 pub(crate) fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, GraphError> {
     let mut roots = Vec::new();
     let mut has_outputs = false;
-    for index in 0..graph.edge_count() {
-        for output in &graph.edge(EdgeId::from_index(index)).out {
+    for edge in graph.edge_ids() {
+        for output in &graph.edge(edge).out {
             has_outputs = true;
             if graph.node(*output).uses.is_empty() {
                 roots.push(*output);

@@ -312,8 +312,8 @@ impl Plan {
         // Marks persist across rebuilds, so a stale mark from the previous
         // frontier would wrongly suppress a dependency; reset before reuse.
         self.dependency_marks.fill(None);
-        for index in 0..graph.edge_count() {
-            let edge = EdgeId::from_index(index);
+        for edge in graph.edge_ids() {
+            let index = edge.index();
             if !self.wanted[index] || self.completed[index] {
                 continue;
             }
@@ -331,13 +331,13 @@ impl Plan {
                 }
             }
         }
-        for index in 0..graph.edge_count() {
+        for edge in graph.edge_ids() {
+            let index = edge.index();
             if self.wanted[index]
                 && !self.completed[index]
                 && !self.running[index]
                 && self.pending[index] == 0
             {
-                let edge = EdgeId::from_index(index);
                 self.ready.push(ReadyEdge::new(self.weight[index], edge));
             }
         }
@@ -349,11 +349,11 @@ impl Plan {
         runtime: &RuntimeState,
     ) -> BuildResult<()> {
         self.synchronize_arenas(graph);
-        for index in 0..graph.edge_count() {
+        for edge in graph.edge_ids() {
+            let index = edge.index();
             if !self.wanted[index] {
                 continue;
             }
-            let edge = EdgeId::from_index(index);
             let weight = self.weight[index];
             let inputs: &[NodeId] = &graph.edge(edge).input;
             for &input in inputs.iter().rev() {
@@ -1319,8 +1319,7 @@ impl<'a> Builder<'a> {
         }
         let mut affected = Vec::new();
         let mut affected_edges = Vec::new();
-        for index in 0..self.graph.edge_count() {
-            let edge = EdgeId::from_index(index);
+        for edge in self.graph.edge_ids() {
             if self
                 .graph
                 .edge(edge)
