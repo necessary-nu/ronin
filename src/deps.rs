@@ -1,11 +1,13 @@
 //! Dependency-log support translated from `deps.c`.
 
+mod depfile;
+
 use crate::env::edgevar;
 use crate::error::{DepfileProblem, PersistenceError, PersistenceOperation};
 use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId, PathStyle};
-use crate::htab::RapidHashMap;
 use crate::runtime::RuntimeState;
 use crate::util::{BString, ByteSlice};
+use depfile::parse_depfile;
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
@@ -115,198 +117,6 @@ impl EntryMap {
     fn is_empty(&self) -> bool {
         self.values().next().is_none()
     }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct ParsedDepfile {
-    outputs: Vec<Vec<u8>>,
-    inputs: Vec<Vec<u8>>,
-}
-
-type DepfileRule = (Vec<Vec<u8>>, Vec<Vec<u8>>);
-
-#[derive(Default)]
-struct OrderedPaths {
-    indices: RapidHashMap<Vec<u8>, usize>,
-}
-
-impl OrderedPaths {
-    fn insert(&mut self, path: Vec<u8>) {
-        let next = self.indices.len();
-        self.indices.entry(path).or_insert(next);
-    }
-
-    fn contains(&self, path: &[u8]) -> bool {
-        self.indices.contains_key(path)
-    }
-
-    fn into_vec(self) -> Vec<Vec<u8>> {
-        let mut paths = vec![Vec::new(); self.indices.len()];
-        for (path, index) in self.indices {
-            paths[index] = path;
-        }
-        paths
-    }
-}
-
-fn parse_depfile_rule(line: &[u8]) -> Result<Option<DepfileRule>, PersistenceError> {
-    let mut outputs = OrderedPaths::default();
-    let mut inputs = OrderedPaths::default();
-    let mut token = Vec::new();
-    let mut inputs_started = false;
-    let mut index = 0;
-    let mut saw_non_whitespace = false;
-
-    let mut finish_token = |token: &mut Vec<u8>, inputs_started: bool| {
-        if token.is_empty() {
-            return;
-        }
-        let path = std::mem::take(token);
-        if inputs_started {
-            inputs.insert(path);
-        } else {
-            outputs.insert(path);
-        }
-    };
-
-    while index < line.len() {
-        match line[index] {
-            b' ' | b'\t' | b'\r' => {
-                finish_token(&mut token, inputs_started);
-                index += 1;
-            }
-            b'$' => {
-                saw_non_whitespace = true;
-                if line.get(index + 1) != Some(&b'$') {
-                    return Err(PersistenceError::depfile(DepfileProblem::VariableReference));
-                }
-                token.push(b'$');
-                index += 2;
-            }
-            b'\\' => {
-                saw_non_whitespace = true;
-                let start = index;
-                while index < line.len() && line[index] == b'\\' {
-                    index += 1;
-                }
-                let slashes = index - start;
-                match line.get(index).copied() {
-                    Some(b' ' | b'\t') if slashes % 2 == 1 => {
-                        token.extend(std::iter::repeat_n(b'\\', slashes / 2));
-                        token.push(line[index]);
-                        index += 1;
-                    }
-                    Some(b'#') => {
-                        token.extend(std::iter::repeat_n(b'\\', slashes / 2));
-                        if slashes % 2 == 1 {
-                            token.push(b'#');
-                            index += 1;
-                        }
-                    }
-                    _ => token.extend(std::iter::repeat_n(b'\\', slashes)),
-                }
-            }
-            b':' if !inputs_started => {
-                saw_non_whitespace = true;
-                if token.len() == 1
-                    && token[0].is_ascii_alphabetic()
-                    && matches!(line.get(index + 1), Some(b'/' | b'\\'))
-                {
-                    token.push(b':');
-                    index += 1;
-                    continue;
-                }
-                if token.ends_with(b"\\") && token.len() == 2 && line.get(index + 1) == Some(&b'\\')
-                {
-                    token.pop();
-                    token.push(b':');
-                    index += 1;
-                    continue;
-                }
-                finish_token(&mut token, false);
-                inputs_started = true;
-                index += 1;
-            }
-            character => {
-                saw_non_whitespace = true;
-                token.push(character);
-                index += 1;
-            }
-        }
-    }
-    finish_token(&mut token, inputs_started);
-    if !saw_non_whitespace {
-        return Ok(None);
-    }
-    if !inputs_started {
-        return Err(PersistenceError::depfile(DepfileProblem::MissingColon));
-    }
-    Ok(Some((outputs.into_vec(), inputs.into_vec())))
-}
-
-fn merge_depfile_rule(
-    line: &[u8],
-    outputs: &mut OrderedPaths,
-    inputs: &mut OrderedPaths,
-) -> Result<(), PersistenceError> {
-    let Some((rule_outputs, rule_inputs)) = parse_depfile_rule(line)? else {
-        return Ok(());
-    };
-    let output_is_input = rule_outputs.iter().any(|output| inputs.contains(output));
-    if output_is_input && !rule_inputs.is_empty() {
-        return Err(PersistenceError::depfile(DepfileProblem::NestedInputs));
-    }
-    if !output_is_input {
-        for output in rule_outputs {
-            outputs.insert(output);
-        }
-        for input in rule_inputs {
-            inputs.insert(input);
-        }
-    }
-    Ok(())
-}
-
-fn parse_depfile(text: &[u8]) -> Result<ParsedDepfile, PersistenceError> {
-    let mut outputs = OrderedPaths::default();
-    let mut inputs = OrderedPaths::default();
-    let mut line = Vec::new();
-    let mut index = 0;
-    while index < text.len() {
-        if text[index] == b'\\' {
-            let start = index;
-            while index < text.len() && text[index] == b'\\' {
-                index += 1;
-            }
-            let slashes = index - start;
-            let newline = match text.get(index..) {
-                Some([b'\r', b'\n', ..]) => Some(2),
-                Some([b'\n', ..]) => Some(1),
-                _ => None,
-            };
-            if let Some(newline) = newline.filter(|_| slashes % 2 == 1) {
-                line.extend(std::iter::repeat_n(b'\\', slashes / 2));
-                line.push(b' ');
-                index += newline;
-            } else {
-                line.extend(std::iter::repeat_n(b'\\', slashes));
-            }
-            continue;
-        }
-        if text[index] == b'\n' {
-            merge_depfile_rule(&line, &mut outputs, &mut inputs)?;
-            line.clear();
-            index += 1;
-            continue;
-        }
-        line.push(text[index]);
-        index += 1;
-    }
-    merge_depfile_rule(&line, &mut outputs, &mut inputs)?;
-    Ok(ParsedDepfile {
-        outputs: outputs.into_vec(),
-        inputs: inputs.into_vec(),
-    })
 }
 
 struct IdPlan {
@@ -783,19 +593,20 @@ pub(crate) fn depsparse(
         PersistenceError::Io { .. } => unreachable!("depfile parsing performs no I/O"),
     })?;
     for dependency in parsed.inputs {
-        let mut path = crate::util::mkstr(dependency.len());
-        path.copy_from_slice(&dependency);
-        crate::util::canonpath(&mut path);
-        nodes.push(crate::graph::mknode(graph, path));
+        nodes.push(crate::graph::mknode(graph, canonical_dep_path(dependency)));
     }
     Ok(NodeArray { nodes })
 }
 
-fn canonical_dep_path(path: &[u8]) -> Vec<u8> {
-    let mut canonical = crate::util::mkstr(path.len());
-    canonical.copy_from_slice(path);
+/// Canonicalize a parsed dependency path, consuming its parsed buffer.
+///
+/// Taking ownership keeps ingestion to the one copy `canonpath` makes
+/// internally, and returning a `BString` lets `mknode` adopt the result
+/// without a further copy.
+fn canonical_dep_path(path: Vec<u8>) -> BString {
+    let mut canonical = BString::from(path);
     crate::util::canonpath(&mut canonical);
-    canonical.as_bytes().to_vec()
+    canonical
 }
 
 pub(crate) fn depsparse_for_edge(
@@ -831,29 +642,28 @@ pub(crate) fn depsparse_for_edge(
         ));
     }
     let outputs = graph.edge(edge).out.clone();
-    let expected = outputs
+    let mut parsed_outputs = parsed.outputs.into_iter().map(canonical_dep_path);
+    let first = parsed_outputs.next().expect("outputs were checked above");
+    let matches_first = outputs
         .first()
-        .map(|output| graph.node(*output).path.as_bytes().to_vec())
-        .unwrap_or_default();
-    if canonical_dep_path(&parsed.outputs[0]) != expected {
+        .is_some_and(|output| graph.node(*output).path == first);
+    if !matches_first {
         return Ok(None);
     }
-    for output in &parsed.outputs {
-        let output = canonical_dep_path(output);
+    for output in std::iter::once(first).chain(parsed_outputs) {
         if !outputs
             .iter()
-            .any(|expected| graph.node(*expected).path.as_bytes() == output)
+            .any(|expected| graph.node(*expected).path == output)
         {
             return Err(PersistenceError::depfile_at(
                 display_path,
-                DepfileProblem::UndeclaredOutput(BString::from(output)),
+                DepfileProblem::UndeclaredOutput(output),
             ));
         }
     }
     let mut nodes = Vec::new();
     for dependency in parsed.inputs {
-        let dependency = canonical_dep_path(&dependency);
-        nodes.push(node_from_path(graph, &dependency));
+        nodes.push(crate::graph::mknode(graph, canonical_dep_path(dependency)));
     }
     Ok(Some(NodeArray { nodes }))
 }
@@ -972,160 +782,6 @@ pub(crate) fn depsrecordnodes(
 mod ninja_depfile_tests {
     use super::*;
     use crate::graph::nodeget;
-
-    fn assert_depfile(input: &str, outputs: &[&str], inputs: &[&str]) {
-        let parsed = parse_depfile(input.as_bytes()).unwrap();
-        assert_eq!(
-            parsed.outputs,
-            outputs
-                .iter()
-                .map(|path| path.as_bytes().to_vec())
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(
-            parsed.inputs,
-            inputs
-                .iter()
-                .map(|path| path.as_bytes().to_vec())
-                .collect::<Vec<_>>()
-        );
-    }
-
-    // Cases adapted from Ninja's src/depfile_parser_test.cc.
-    #[test]
-    fn ninja_depfile_parser_core_cases() {
-        assert_depfile(
-            "build/ninja.o: ninja.cc ninja.h eval_env.h manifest_parser.h\n",
-            &["build/ninja.o"],
-            &["ninja.cc", "ninja.h", "eval_env.h", "manifest_parser.h"],
-        );
-        assert_depfile(" \\\n  out: in\n", &["out"], &["in"]);
-        assert_depfile(
-            "foo.o: \\\n  bar.h baz.h\n",
-            &["foo.o"],
-            &["bar.h", "baz.h"],
-        );
-        assert_depfile("foo.o: //?/c:/bar.h\n", &["foo.o"], &["//?/c:/bar.h"]);
-        assert_depfile(
-            "foo&bar.o foo'bar.o foo\"bar.o: foo&bar.h foo'bar.h foo\"bar.h\n",
-            &["foo&bar.o", "foo'bar.o", "foo\"bar.o"],
-            &["foo&bar.h", "foo'bar.h", "foo\"bar.h"],
-        );
-        assert_depfile(
-            "foo.o: \\\r\n  bar.h baz.h\r\n",
-            &["foo.o"],
-            &["bar.h", "baz.h"],
-        );
-        assert_depfile(
-            "Project\\Dir\\Build\\Release8\\Foo\\Foo.res : \\\n  Dir\\Library\\Foo.rc \\\n  Dir\\Library\\Version\\Bar.h \\\n  Dir\\Library\\Foo.ico \\\n  Project\\Thing\\Bar.tlb \\\n",
-            &["Project\\Dir\\Build\\Release8\\Foo\\Foo.res"],
-            &[
-                "Dir\\Library\\Foo.rc",
-                "Dir\\Library\\Version\\Bar.h",
-                "Dir\\Library\\Foo.ico",
-                "Project\\Thing\\Bar.tlb",
-            ],
-        );
-        assert_depfile(
-            "a\\ bc\\ def:   a\\ b c d",
-            &["a bc def"],
-            &["a b", "c", "d"],
-        );
-        assert_depfile(
-            "a\\ b\\#c.h: \\\\\\\\\\  \\\\\\\\ \\\\share\\info\\\\#1",
-            &["a b#c.h"],
-            &["\\\\ ", "\\\\\\\\", "\\\\share\\info\\#1"],
-        );
-        assert_depfile(
-            "\\!\\@\\#$$\\%\\^\\&\\[\\]\\\\:",
-            &["\\!\\@#$\\%\\^\\&\\[\\]\\\\"],
-            &[],
-        );
-        assert_depfile(
-            "c\\:\\gcc\\x86_64-w64-mingw32\\include\\stddef.o: \\\n c:\\gcc\\x86_64-w64-mingw32\\include\\stddef.h \n",
-            &["c:\\gcc\\x86_64-w64-mingw32\\include\\stddef.o"],
-            &["c:\\gcc\\x86_64-w64-mingw32\\include\\stddef.h"],
-        );
-        assert_depfile(
-            "foo1\\: x\nfoo1\\:\nfoo1\\:\r\nfoo1\\:\t\nfoo1\\:",
-            &["foo1\\"],
-            &["x"],
-        );
-        assert_depfile(
-            "C:/Program\\ Files\\ (x86)/Microsoft\\ crtdefs.h: \\\n en@quot.header~ t+t-x!=1 \\\n openldap/slapd.d/cn=config/cn=schema/cn={0}core.ldif\\\n Fußball\\\n a[1]b@2%c",
-            &["C:/Program Files (x86)/Microsoft crtdefs.h"],
-            &[
-                "en@quot.header~",
-                "t+t-x!=1",
-                "openldap/slapd.d/cn=config/cn=schema/cn={0}core.ldif",
-                "Fußball",
-                "a[1]b@2%c",
-            ],
-        );
-    }
-
-    #[test]
-    fn ninja_depfile_parser_multi_rule_cases() {
-        assert_depfile("foo foo: x y z", &["foo"], &["x", "y", "z"]);
-        assert_depfile("foo bar: x y z", &["foo", "bar"], &["x", "y", "z"]);
-        assert_depfile("foo: x\nfoo: \nfoo:\n", &["foo"], &["x"]);
-        assert_depfile(
-            "foo: x\nfoo: y\nfoo \\\nfoo: z\n",
-            &["foo"],
-            &["x", "y", "z"],
-        );
-        assert_depfile(
-            "foo: x\r\nfoo: y\r\nfoo \\\r\nfoo: z\r\n",
-            &["foo"],
-            &["x", "y", "z"],
-        );
-        assert_depfile(
-            "foo: x\\\n     y\nfoo \\\nfoo: z\n",
-            &["foo"],
-            &["x", "y", "z"],
-        );
-        assert_depfile(
-            "foo: x\\\r\n     y\r\nfoo \\\r\nfoo: z\r\n",
-            &["foo"],
-            &["x", "y", "z"],
-        );
-        assert_depfile(" foo: x\n foo: y\n foo: z\n", &["foo"], &["x", "y", "z"]);
-        assert_depfile(
-            " foo: x\r\n foo: y\r\n foo: z\r\n",
-            &["foo"],
-            &["x", "y", "z"],
-        );
-        assert_depfile("foo: x y z\nx:\ny:\nz:\n", &["foo"], &["x", "y", "z"]);
-        assert_depfile(
-            "foo: x\nx:\nfoo: y\ny:\nfoo: z\nz:\n",
-            &["foo"],
-            &["x", "y", "z"],
-        );
-        assert_depfile("foo: x y\nbar: y z\n", &["foo", "bar"], &["x", "y", "z"]);
-        assert_depfile("", &[], &[]);
-        assert_depfile("\n\n", &[], &[]);
-    }
-
-    #[test]
-    fn ninja_depfile_parser_rejects_invalid_rules() {
-        assert_eq!(
-            parse_depfile(b"foo: x y z\nx: alsoin\ny:\nz:\n")
-                .unwrap_err()
-                .to_string(),
-            "inputs may not also have inputs"
-        );
-        assert_eq!(
-            parse_depfile(b"foo.o foo.c\n").unwrap_err().to_string(),
-            "expected ':' in depfile"
-        );
-    }
-
-    #[test]
-    fn ninja_depfile_parser_preserves_non_utf8_paths() {
-        let parsed = parse_depfile(b"out: in-\xff.h in-\xff.h\n").unwrap();
-        assert_eq!(parsed.outputs, [b"out".to_vec()]);
-        assert_eq!(parsed.inputs, [b"in-\xff.h".to_vec()]);
-    }
 
     use std::fs;
     use std::path::PathBuf;

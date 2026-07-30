@@ -1392,12 +1392,27 @@ children (
             {
                 id ronin-depfile-inplace
                 title "Tokenize depfiles in place over the file buffer"
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:11:54.694119097Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "parse_depfile (src/deps.rs:151-309) builds each logical line byte-by-byte into a Vec, each token byte-by-byte into another Vec, dedups through a SipHash HashMap<Vec<u8>, usize> (OrderedPaths, deps.rs:127-149), then reallocates in into_vec — and it runs per finished compile as well as during scans. The escape-free common case (nearly every real depfile line) can be tokenized as spans over the file buffer with memchr, copying only when an escape is actually present, with dedup via a small hash set over spans."
+                    }
+
+                    {
+                        at 2026-07-30T13:12:05.33374645Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T13:20:14.581769271Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

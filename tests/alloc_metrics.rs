@@ -10,6 +10,7 @@ fn allocation_harness_and_recorded_baseline_remain_complete() {
         "wide-noop-build",
         "path-canonicalization",
         "dependency-log-load",
+        "depfile-scan",
         "scheduler-barrier",
     ] {
         assert!(HARNESS.contains(workload), "missing workload {workload}");

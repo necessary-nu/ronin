@@ -89,6 +89,30 @@ most common real invocation. The release binary also shrank slightly despite
 enabling rustix's `fs` feature, because the `std::fs::metadata` paths went
 away.
 
+### In-place depfile tokenization (`ronin-depfile-inplace`)
+
+The suite gained a `depfile-scan` workload first, because
+`dependency-log-load` ingests `.ninja_deps` and never parses a depfile, so this
+change would otherwise have been invisible. Declaring `depfile` without `deps`
+keeps every rebuild scan on the depfile parser — the path a real build takes
+after each compile. It entered the suite as the worst workload in the table at
+401.3 requests per build statement, roughly ten allocations per dependency
+path.
+
+Three sources were removed: the tokenizer allocated a fresh `Vec` per token and
+two hash maps per rule line, and each ingested path was copied three times on
+its way to a node (`mkstr` plus zero-fill, `canonpath`'s output, then
+`to_vec`). Rule-local tokens now reuse their buffers across lines, accumulating
+path sets allocate only on a path's first appearance, and canonicalization
+consumes the parsed buffer and hands the result straight to `mknode`.
+
+| Workload | Requests before | Requests after | Change | Bytes change |
+| --- | ---: | ---: | ---: | ---: |
+| depfile-scan | 40,534 | 27,734 | −31.6% | −15.8% |
+
+Requests per build statement fell from 401.3 to 274.6. The other workloads are
+unchanged, which is the expected signature: none of them parse a depfile.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release

@@ -7,5 +7,6 @@ manifest-command-evaluation,4001,192172,15135623
 deep-graph-evaluation,2000,34153,3918121
 wide-noop-build,4001,52244,7760802
 path-canonicalization,4000,36103,4960358
-dependency-log-load,301,24573,1660196
-scheduler-barrier,129,7533,554275
+dependency-log-load,301,24573,1664559
+depfile-scan,101,27734,2026391
+scheduler-barrier,129,7536,554832

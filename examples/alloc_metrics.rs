@@ -246,6 +246,59 @@ fn dependency_log(directory: &Path) -> Result<Workload, String> {
     })
 }
 
+/// Scan edges whose dependencies come from depfiles rather than the deps log.
+///
+/// `dependency-log-load` measures `.ninja_deps` ingestion, which never parses a
+/// depfile. Declaring `depfile` without `deps` keeps every rebuild scan on the
+/// depfile parser, which is the path a real build takes after each compile.
+const DEPFILE_EDGES: usize = 100;
+const DEPFILE_HEADERS: usize = 40;
+
+fn depfile_scan(directory: &Path) -> Result<Workload, String> {
+    let error = |error: io::Error| error.to_string();
+    fs::create_dir_all(directory.join("src")).map_err(error)?;
+    fs::create_dir_all(directory.join("out")).map_err(error)?;
+    fs::create_dir_all(directory.join("include")).map_err(error)?;
+
+    let mut headers = String::new();
+    for index in 0..DEPFILE_HEADERS {
+        let path = format!("include/h{index}.h");
+        fs::write(directory.join(&path), b"/* header */\n").map_err(error)?;
+        let _ = write!(headers, " {path}");
+    }
+
+    let mut manifest = String::from(
+        "rule compile\n  command = cp $out.d.in $out.d && touch $out\n  depfile = $out.d\n",
+    );
+    for index in 0..DEPFILE_EDGES {
+        fs::write(directory.join(format!("src/{index}.c")), b"int scan;\n").map_err(error)?;
+        fs::write(
+            directory.join(format!("out/{index}.o.d.in")),
+            format!("out/{index}.o: src/{index}.c{headers}\n"),
+        )
+        .map_err(error)?;
+        let _ = writeln!(manifest, "build out/{index}.o: compile src/{index}.c");
+    }
+    manifest.push_str("build all: phony");
+    for index in 0..DEPFILE_EDGES {
+        let _ = write!(manifest, " out/{index}.o");
+    }
+    manifest.push_str("\ndefault all\n");
+    fs::create_dir_all(directory).map_err(error)?;
+    fs::write(directory.join("build.ninja"), &manifest).map_err(error)?;
+
+    run_ronin(directory, &[])?;
+    if !directory.join("out/0.o.d").is_file() {
+        return Err("priming build did not leave depfiles in place".to_owned());
+    }
+    Ok(Workload {
+        name: "depfile-scan",
+        directory: directory.to_owned(),
+        arguments: Vec::new(),
+        build_statements: DEPFILE_EDGES + 1,
+    })
+}
+
 fn scheduler(directory: &Path) -> io::Result<Workload> {
     workloads::scheduler(directory)?;
     Ok(Workload {
@@ -263,6 +316,7 @@ fn workload_catalog(root: &Path) -> Result<Vec<Workload>, String> {
         wide_noop(&root.join("wide-noop")).map_err(|error| error.to_string())?,
         path_canonicalization(&root.join("canonicalization")).map_err(|error| error.to_string())?,
         dependency_log(&root.join("dependency-log"))?,
+        depfile_scan(&root.join("depfile-scan"))?,
         scheduler(&root.join("scheduler")).map_err(|error| error.to_string())?,
     ])
 }
