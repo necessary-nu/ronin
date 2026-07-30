@@ -1854,6 +1854,27 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-prune-clean-subtrees
+                title "Stop replanning input cones the dirty pass proved clean"
+                priority 0
+                log (
+                    {
+                        at 2026-07-30T23:33:17.863270689Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T23:38:38.30493885Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Attempted, disproved by an existing test, reverted. The premise was that a no-op build walks the graph twice — DirtyEvaluator::evaluate to compute dirtiness, then add_node to plan — and that since recompute_edge_dirty_with stamps one dirty bit onto every output of an edge (graph.rs:298-300) and folds input_dirty in, a clean edge proves its whole input cone clean. The induction is wrong. input_dirty is folded over non_order_only_inputs() only, so a clean edge can still carry a dirty order-only input: order-only dependencies are built without dirtying their consumer. ninja_build_generated_dyndep_now_wants_edge_and_dependent is exactly that shape — build $dir/tmp: touch || $dir/dd, where tmp exists and is clean, dd is missing and dirty, and tmp is reached through the non-order-only input of another clean edge. Pruning at the first clean edge never reaches dd and the build ran zero commands where three were required. Descending into the pruned edge's own order-only inputs does not rescue it, because the dirty order-only input sits further down behind an edge the prune already skipped; finding it needs precisely the traversal being avoided. A sound version exists — fold a per-edge subtree-contains-work flag during the dirty pass's Work::Finish, which does visit the full input vector — but it is not cheap to get right: restat-clean edges short-circuit at graph.rs:240 without reading their inputs, so the flag would be asserted rather than computed, and dyndep adds inputs mid-build, requiring invalidation on paths that presently need no such care. That is new state in the correctness-critical part of the planner. Decisively, it would not have shown on any fixture we have: measured with the unsound version in place, wide no-op came to 22,796,553 instructions against 22,776,535 without it, 20,018 worse, because the prune never fires and only its guard costs. Every edge in that fixture is dirty — build leaf/N: phony has no file on disk, so missing_without_inputs holds for all 4,000 leaves and for the all edge above them. The workload named wide-noop-build is therefore not a no-op but a fully dirty phony graph serving as a scanning benchmark, and the most common real workload for a build tool — running against an up-to-date tree where the whole graph is clean — is not represented in this suite at all. A clean-tree fixture with real files and current mtimes is a prerequisite for judging this node, not a nicety. Baseline conformance was run before the attempt and passed: 425 upstream Ninja tests across 33 suites, 10 differential CLI cases, and the log/deps persistence round trip. After reverting, 366 tests pass and the instruction count returns exactly to 22,776,535."
+                    }
+                )
+            }
         )
     }
 

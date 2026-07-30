@@ -713,6 +713,55 @@ Reverting `ScannedParts` to a plain `Vec` returns the enum to 32 bytes, and
 bytes then land *below* where the node started. Inline capacity is worth paying
 for only where it is load-bearing; here a better representation had displaced it.
 
+### Pruning clean subtrees — `ronin-prune-clean-subtrees`, rejected
+
+Attempted, disproved by an existing test, reverted. Two separate reasons, and
+the second is the more useful one.
+
+The premise was that a no-op build walks the graph twice: `DirtyEvaluator::evaluate`
+computes dirtiness, then `add_node` walks it again to plan. `recompute_edge_dirty_with`
+stamps one dirty bit onto *every* output of an edge (graph.rs:298-300), and
+folds `input_dirty` in, so a clean edge appears to prove its entire input cone
+clean — nothing wanted, no missing input hiding there.
+
+**The induction is wrong, and the test suite produced the counterexample in
+seconds.** `input_dirty` is folded over `non_order_only_inputs()` only, so a
+clean edge may still carry a *dirty order-only input*: order-only dependencies
+are built without dirtying their consumer. That is exactly
+`ninja_build_generated_dyndep_now_wants_edge_and_dependent`, whose manifest is
+`build $dir/tmp: touch || $dir/dd`. `tmp` exists and is clean, `dd` is missing
+and dirty, and `tmp` is reached through the non-order-only input of another
+clean edge. Pruning at the first clean edge never reaches `dd`; the build ran
+zero commands where three were required. Restricting the prune to descend into
+order-only inputs of the pruned edge does not help, because the dirty
+order-only input lives further down, behind an edge the prune already skipped.
+Finding it requires precisely the traversal the change was trying to avoid.
+
+A sound version exists: fold a per-edge "this subtree contains work" flag during
+the dirty pass's `Work::Finish`, which does visit the full input vector, and
+prune on that. It is not cheap to get right. Restat-clean edges short-circuit at
+graph.rs:240 without reading their inputs at all, so their flag would be
+asserted rather than computed, and dyndep adds inputs mid-build, so the flag
+needs invalidating on paths that currently need no such care. That is new state
+in the correctness-critical part of the planner.
+
+**It would not have shown up on any fixture we have.** Measured with the
+unsound version in place, the wide no-op build came to 22,796,553 instructions
+against 22,776,535 without it — 20,018 *worse*, because the prune never fires
+and only its guard costs. Every edge in that fixture is dirty: `build leaf/N: phony`
+has no file on disk, so `missing_without_inputs` holds and
+`recompute_edge_dirty_with` returns dirty for all 4,000 leaves and for the
+`all` edge above them.
+
+That is worth stating plainly, because the workload is called `wide-noop-build`
+and is not a no-op: it is a fully dirty phony graph, and has been serving this
+programme as a *scanning* benchmark. **The most common real workload for a build
+tool — running it against an up-to-date tree, where the whole graph is clean —
+is not represented in this suite at all.** Every improvement recorded above was
+selected against parse-and-plan-dominated fixtures. A clean-tree fixture, with
+real files on disk and current mtimes, would measure a different part of the
+program, and is a prerequisite for judging this node rather than a nicety.
+
 ### SIMD, and why the gap is not a vectorization gap
 
 The profile also settled the question that prompted it. C samurai contains one
