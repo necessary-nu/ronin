@@ -216,6 +216,29 @@ further step would touch every `graph.node(id).path` reader for a smaller
 marginal gain than the two copies removed here, so it is left for its own
 change.
 
+### One stored copy per log entry (`ronin-log-span-loading`)
+
+`LogEntry` carried an `output` path that duplicated the map key it was stored
+under, so loading `.ninja_log` allocated and copied every output path twice.
+The path now lives in the key alone and writers take it alongside the entry.
+The deps log's node construction also stopped zero-filling a buffer it
+overwrote immediately afterwards.
+
+The saving is exactly one allocation per log line, and the arithmetic confirms
+it rather than approximating: dependency-log loading has 301 entries and shed
+301 requests; the scheduler barrier has 129 and shed 128.
+
+| Workload | Requests before | Requests after | Change | Bytes change |
+| --- | ---: | ---: | ---: | ---: |
+| dependency-log-load | 11,065 | 10,764 | −2.7% | −2.1% |
+| scheduler-barrier | 6,249 | 6,121 | −2.0% | −2.6% |
+| depfile-scan | 23,848 | 23,746 | −0.4% | −0.4% |
+
+These percentages understate the change. The fixtures carry logs of 301 and
+129 lines against manifests of thousands of statements, whereas a real tree's
+`.ninja_log` holds one line per build output and is read at every invocation,
+so the per-line invariant is what matters rather than this ratio.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release

@@ -730,10 +730,6 @@ symbols (
         {verb def, id util.bufadd-fn}
         {verb sem, id util.bufadd-fn}
     )}
-    {id util.mkstr-fn, kind @function, name mkstr, qualified mkstr, signature "struct string * mkstr(size_t n)", file util.c, line_start 123, line_end 132, rules (
-        {verb def, id util.mkstr-fn}
-        {verb sem, id util.mkstr-fn}
-    )}
     {id util.delevalstr-fn, kind @function, name delevalstr, qualified delevalstr, signature "void delevalstr(void *ptr)", file util.c, line_start 134, line_end 148, rules (
         {verb def, id util.delevalstr-fn}
         {verb sem, id util.delevalstr-fn}

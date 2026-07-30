@@ -8,7 +8,6 @@ use std::fs;
 // [spec:samurai:sem:util.canonpath-fn/test]
 // [spec:samurai:sem:util.delevalstr-fn/test]
 // [spec:samurai:sem:util.fatal-fn/test]
-// [spec:samurai:sem:util.mkstr-fn/test]
 // [spec:samurai:sem:util.reallocarray-fn/test]
 // [spec:samurai:sem:util.vwarn-fn/test]
 // [spec:samurai:sem:util.warn-fn/test]

@@ -361,15 +361,17 @@ impl<'a> Evaluator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::util::mkstr;
 
     #[test]
     fn resolves_nearest_variable_binding() {
         let mut graph = Graph::default();
         let state = EnvState::new(&mut graph);
-        let mut root_value = mkstr(4);
-        root_value.copy_from_slice(b"root");
-        envaddvar(&mut graph, state.root, "value".into(), root_value);
+        envaddvar(
+            &mut graph,
+            state.root,
+            "value".into(),
+            BString::from("root"),
+        );
         let child = mkenv(&mut graph, Some(state.root));
         assert_eq!(envvar(&graph, child, "value").unwrap(), b"root");
     }

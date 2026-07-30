@@ -13,12 +13,16 @@ use std::path::{Path, PathBuf};
 const MAX_LOG_LINE: usize = 256 << 10;
 const LOG_HEADER: &[u8] = b"# ninja log v7";
 
+/// One recorded output, keyed by its path in [`BuildLog::entries`].
+///
+/// The path lives in the map key alone; duplicating it here cost a second
+/// allocation and copy for every line of a log that can hold one entry per
+/// build output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct LogEntry {
     pub(crate) start_time: i32,
     pub(crate) end_time: i32,
     pub(crate) mtime: i64,
-    pub(crate) output: BString,
     pub(crate) command_hash: u64,
 }
 
@@ -49,8 +53,8 @@ impl BuildLog {
                     while let Some(terminated) = read_line(&mut reader, &mut line)? {
                         if terminated {
                             let line = line.strip_suffix(b"\r").unwrap_or(&line);
-                            if let Some(entry) = parse_entry(line) {
-                                entries.insert(entry.output.clone(), entry);
+                            if let Some((output, entry)) = parse_entry(line) {
+                                entries.insert(output, entry);
                             }
                         }
                     }
@@ -130,7 +134,7 @@ fn open_log(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
-fn parse_entry(line: &[u8]) -> Option<LogEntry> {
+fn parse_entry(line: &[u8]) -> Option<(BString, LogEntry)> {
     if line.len() > MAX_LOG_LINE || line == LOG_HEADER {
         return None;
     }
@@ -150,13 +154,15 @@ fn parse_entry(line: &[u8]) -> Option<LogEntry> {
     let output = BString::from(nextfield(&mut rest)?);
     let command_hash =
         u64::from_str_radix(std::str::from_utf8(nextfield(&mut rest)?).ok()?, 16).ok()?;
-    Some(LogEntry {
-        start_time,
-        end_time,
-        mtime,
+    Some((
         output,
-        command_hash,
-    })
+        LogEntry {
+            start_time,
+            end_time,
+            mtime,
+            command_hash,
+        },
+    ))
 }
 
 fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<Option<bool>> {
@@ -181,13 +187,13 @@ fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<Option
     }
 }
 
-fn write_entry(writer: &mut dyn Write, entry: &LogEntry) -> io::Result<()> {
+fn write_entry(writer: &mut dyn Write, output: &BStr, entry: &LogEntry) -> io::Result<()> {
     write!(
         writer,
         "{}\t{}\t{}\t",
         entry.start_time, entry.end_time, entry.mtime
     )?;
-    writer.write_all(entry.output.as_bytes())?;
+    writer.write_all(output.as_bytes())?;
     writeln!(writer, "\t{:x}", entry.command_hash)
 }
 
@@ -200,8 +206,8 @@ fn rewrite_inner(
     let write_contents = |writer: &mut dyn Write| {
         writer.write_all(LOG_HEADER)?;
         writer.write_all(b"\n")?;
-        for entry in entries.values() {
-            write_entry(writer, entry)?;
+        for (output, entry) in &entries {
+            write_entry(writer, output.as_bstr(), entry)?;
         }
         Ok(())
     };
@@ -238,23 +244,23 @@ fn rewrite_with_fault(
     rewrite_inner(log, entries, Some(stage))
 }
 
-fn record_entries(log: &mut BuildLog, entries: Vec<LogEntry>) -> io::Result<()> {
+fn record_entries(log: &mut BuildLog, entries: Vec<(BString, LogEntry)>) -> io::Result<()> {
     let mut encoded = Vec::new();
-    for entry in &entries {
-        write_entry(&mut encoded, entry)?;
+    for (output, entry) in &entries {
+        write_entry(&mut encoded, output.as_bstr(), entry)?;
     }
     let writer = log.writer.as_mut().expect("open build log");
     writer.write_all(&encoded)?;
     writer.flush()?;
-    for entry in entries {
-        log.entries.insert(entry.output.clone(), entry);
+    for (output, entry) in entries {
+        log.entries.insert(output, entry);
     }
     Ok(())
 }
 
 #[cfg(test)]
-fn record_entry(log: &mut BuildLog, entry: LogEntry) -> io::Result<()> {
-    record_entries(log, vec![entry])
+fn record_entry(log: &mut BuildLog, output: BString, entry: LogEntry) -> io::Result<()> {
+    record_entries(log, vec![(output, entry)])
 }
 
 // [spec:samurai:def:log.logrecord-fn]
@@ -270,11 +276,11 @@ pub(crate) fn logrecord(
     let node = graph.node(node);
     record_entry(
         log,
+        node.path.clone(),
         LogEntry {
             start_time: 0,
             end_time: 0,
             mtime: state.log_mtime().raw(),
-            output: node.path.clone(),
             command_hash: state.logged_command_hash().raw(),
         },
     )
@@ -293,14 +299,15 @@ pub(crate) fn logrecordedge(
     let entries = outputs
         .into_iter()
         .map(|output| {
-            let output = graph.node(output);
-            LogEntry {
-                start_time,
-                end_time,
-                mtime: record_mtime,
-                output: output.path.clone(),
-                command_hash: command_hash.raw(),
-            }
+            (
+                graph.node(output).path.clone(),
+                LogEntry {
+                    start_time,
+                    end_time,
+                    mtime: record_mtime,
+                    command_hash: command_hash.raw(),
+                },
+            )
         })
         .collect();
     record_entries(log, entries).map_err(|source| {
@@ -321,14 +328,9 @@ where
         .map(|filter| filter.as_bytes())
         .collect::<HashSet<_>>();
     let mut entries = log.entries.clone();
-    for entry in entries.values_mut() {
-        if filters.is_empty() || filters.contains(entry.output.as_bytes()) {
-            entry.mtime = stat(
-                entry
-                    .output
-                    .to_path()
-                    .expect("byte paths are valid on Unix"),
-            )?;
+    for (output, entry) in &mut entries {
+        if filters.is_empty() || filters.contains(output.as_bytes()) {
+            entry.mtime = stat(output.to_path().expect("byte paths are valid on Unix"))?;
         }
     }
     rewrite(log, entries)
@@ -455,11 +457,11 @@ mod tests {
 
             record_entry(
                 &mut log,
+                BString::from("probe"),
                 LogEntry {
                     start_time: 3,
                     end_time: 4,
                     mtime: 4,
-                    output: BString::from("probe"),
                     command_hash: 0x1234,
                 },
             )

@@ -1409,12 +1409,27 @@ children (
                 id ronin-log-span-loading
                 title "Load build and deps logs without duplicate path copies"
                 deps (ronin-path-interning-arena)
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:11:46.375223578Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "BuildLog stores every path twice — HashMap key and LogEntry.output both own it (src/log.rs:27, insertion at log.rs:52-54) — so a 100k-line .ninja_log costs ~200k allocations at startup, then hydrate_runtime re-hashes every graph node against it. Ninja keeps entries pointing into the loaded log buffer; do the same: retain the file bytes and store spans, or resolve entries directly to NodeId where the node exists and keep only the residue (entries needed for recompaction) referencing the raw buffer. DepsLog's node_from_path (src/deps.rs:516-520) does mkstr + copy, then mknode copies again for the map key and again for shellpath — 3-4 allocations per path record; with the path arena this collapses to one arena append per new path. Drives the dependency-log-load row (4.7 vs 2.7 ms). While here: finish_edge/logrecordedge clone output-id vectors and every output path per finished edge (build.rs:1151, log.rs:291-304)."
+                    }
+
+                    {
+                        at 2026-07-30T14:26:37.492261533Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T14:29:57.171557661Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

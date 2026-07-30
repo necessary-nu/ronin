@@ -49,14 +49,6 @@
 > Formats the variadic diagnostic through the shared warning formatter, then
 > terminates the process with exit status 1.
 
-> [spec:samurai:def:util.mkstr-fn]
-> struct string * mkstr(size_t n)
-
-> [spec:samurai:sem:util.mkstr-fn]
-> Allocates a `string` object with room for exactly `n` content bytes plus a
-> trailing byte, stores `n` in its length field, and returns it. The character
-> storage, including the extra byte, is intentionally uninitialized.
-
 > [spec:samurai:def:util.reallocarray-fn]
 > static void * reallocarray_(void *p, size_t n, size_t m)
 

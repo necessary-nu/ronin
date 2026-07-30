@@ -104,12 +104,6 @@ pub(crate) fn xasprintf(args: fmt::Arguments<'_>) -> BString {
     BString::from(output)
 }
 
-// [spec:samurai:def:util.mkstr-fn]
-// [spec:samurai:sem:util.mkstr-fn]
-pub(crate) fn mkstr(n: usize) -> BString {
-    BString::from(vec![0; n])
-}
-
 // Formatting diagnostics into owned values replaces global printing and exit
 // helpers; the binary decides which stream and exit status to use.
 // [spec:samurai:def:util.vwarn-fn]
@@ -212,7 +206,7 @@ mod tests {
 
     #[test]
     fn ninja_canonicalize_path_empty_and_many_components() {
-        let mut empty = mkstr(0);
+        let mut empty = BString::default();
         canonpath(&mut empty);
         assert!(empty.is_empty());
 

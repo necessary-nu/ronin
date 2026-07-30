@@ -325,9 +325,9 @@ fn depsinit_path(path: PathBuf) -> io::Result<DepsLog> {
 }
 
 fn node_from_path(graph: &mut Graph, path: &[u8]) -> NodeId {
-    let mut value = crate::util::mkstr(path.len());
-    value.copy_from_slice(path);
-    crate::graph::mknode(graph, value)
+    // One allocation that copies, rather than a zero-filled buffer overwritten
+    // immediately afterwards.
+    crate::graph::mknode(graph, BString::from(path))
 }
 
 fn native_u32(bytes: &[u8]) -> u32 {
