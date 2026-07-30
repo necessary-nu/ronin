@@ -143,10 +143,6 @@ symbols (
         {verb def, id env.envinit-fn}
         {verb sem, id env.envinit-fn}
     )}
-    {id env.addvar-fn, kind @function, name addvar, qualified addvar, signature "static void addvar(struct treenode **tree, char *var, void *val)", file env.c, line_start 47, line_end 55, rules (
-        {verb def, id env.addvar-fn}
-        {verb sem, id env.addvar-fn}
-    )}
     {id env.mkenv-fn, kind @function, name mkenv, qualified mkenv, signature "struct environment * mkenv(struct environment *parent)", file env.c, line_start 57, line_end 70, rules (
         {verb def, id env.mkenv-fn}
         {verb sem, id env.mkenv-fn}

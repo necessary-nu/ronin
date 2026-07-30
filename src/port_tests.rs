@@ -103,7 +103,6 @@ fn ninja_canonicalize_path_samples() {
 }
 
 // [spec:samurai:sem:env.addpool-fn/test]
-// [spec:samurai:sem:env.addvar-fn/test]
 // [spec:samurai:sem:env.delpool-fn/test]
 // [spec:samurai:sem:env.delrule-fn/test]
 // [spec:samurai:sem:env.edgevar-fn/test]

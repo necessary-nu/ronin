@@ -7,14 +7,6 @@
 > Inserts the pool into the global name-indexed pool tree. A name already in
 > that tree is a fatal redefinition error.
 
-> [spec:samurai:def:env.addvar-fn]
-> static void addvar(struct treenode **tree, char *var, void *val)
-
-> [spec:samurai:sem:env.addvar-fn]
-> Inserts `var` and `val` into the supplied binding tree. If the key already
-> exists, retains the new value, frees the replaced value, and leaves key
-> ownership with the tree.
-
 > [spec:samurai:def:env.delpool-fn]
 > static void delpool(void *ptr)
 
