@@ -84,11 +84,12 @@ assertions (
     {id ronin-allocator-revisit, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T20:05:09.406115546Z}
     {id ronin-rapidhash-implementation, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T20:13:12.574430185Z}
     {id ronin-streamed-path-scanning, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T20:24:24.202402634Z}
-    {id ronin-byte-keyed-names, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T21:14:13.298517528Z}
-    {id ronin-smallvec-collections, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T21:52:48.810235124Z}
-    {id ronin-inline-slice-hoisting, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T22:24:49.005651677Z}
-    {id ronin-scanner-byte-primitive, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T22:29:17.315280052Z}
-    {id ronin-prune-clean-subtrees, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T23:33:17.863270689Z}
+    {id ronin-byte-keyed-names, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:06.347675235Z}
+    {id ronin-smallvec-collections, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:08.261676096Z}
+    {id ronin-inline-slice-hoisting, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:13.324619869Z}
+    {id ronin-scanner-byte-primitive, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:15.304546849Z}
+    {id ronin-prune-clean-subtrees, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:20.10319646Z}
+    {id ronin-stale-bool-suppression, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T23:51:22.140151698Z}
 )
 
 impl_evidence (

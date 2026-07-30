@@ -47,10 +47,6 @@ pub(crate) struct Node {
 }
 
 // [spec:samurai:def:graph.edge]
-#[allow(
-    clippy::struct_excessive_bools,
-    reason = "these independent cached graph facts avoid repeated evaluation on hot paths"
-)]
 pub(crate) struct Edge {
     pub(crate) rule: Option<RuleId>,
     pub(crate) pool: Option<PoolId>,

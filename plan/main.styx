@@ -1117,6 +1117,86 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-residual-c-idioms
+                title "Retire the C idioms that survived idiomatization"
+                children (
+                    {
+                        id ronin-traversal-mark-option
+                        title "Replace the traversal-mark sentinel with an optional identifier"
+                        log (
+                            {
+                                at 2026-07-30T23:48:00.972075858Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "TraversalMark (src/build.rs:144-158) is a magic-sentinel newtype: struct TraversalMark(usize) with const UNMARKED = Self(usize::MAX), where is_marked_for(edge) compares self.0 against edge.index() and mark(edge) stores it. It records which traversal root last marked an edge, so the value is either an edge identifier or nothing — precisely Option<EdgeId>. The arena_id! documentation at src/util.rs:20-25 already advertises that the niche-packed NonZeroU32 makes Option<Id> four bytes rather than sixteen, and every other side table in the codebase takes that route; dependency_marks is the one place that did not get the message. Converting halves Plan::dependency_marks from Vec<usize> to Vec<Option<EdgeId>> (32 KiB to 16 KiB on a 4,000-edge graph, with correspondingly better locality in rebuild_frontier, which fills and rescans it), turns is_marked_for into self.0 == Some(edge), and makes an unmarked slot stop being representable as a valid edge index. Note that rebuild_frontier resets the table with fill(TraversalMark::UNMARKED) on every call, so the reset becomes fill(None). Deliberately no percentage estimated; do it for the type safety and treat any speed as incidental."
+                            }
+                        )
+                    }
+
+                    {
+                        id ronin-edge-id-iteration
+                        title "Iterate edge identifiers instead of reconstructing them from indices"
+                        log (
+                            {
+                                at 2026-07-30T23:48:11.820489019Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "Graph::edge_ids (src/graph.rs:111) already returns an ExactSizeIterator<Item = EdgeId>, and Graph::node_ids (graph.rs:91) does the same for nodes, yet seven sites still write the C form: for index in 0..graph.edge_count() followed by let edge = EdgeId::from_index(index). They are build.rs:327, build.rs:346, build.rs:364, build.rs:1334, missing_deps.rs:102 and missing_deps.rs:227, plus log.rs:100 for nodes. build.rs:383 already uses the idiomatic filter_map with then_some(EdgeId::from_index(index)), so this is drift within one file rather than a missing capability. Several of the loops legitimately need the raw index to reach side tables such as self.wanted[index] and self.completed[index]; EdgeId::index() supplies it, and it is a const accessor over a NonZeroU32 so it costs nothing. Expect no instruction change — the codegen is the same — so this is readability and consistency only, and should be measured merely to confirm it is neutral rather than to justify it. Do not touch build.rs:452, which indexes self.dependents by position specifically to keep the borrow of self.dependents disjoint from the mutation of self.pending; that one is load-bearing and is called out in the parent node."
+                            }
+                        )
+                    }
+
+                    {
+                        id ronin-stale-bool-suppression
+                        title "Delete the lint suppression Edge no longer needs"
+                        log (
+                            {
+                                at 2026-07-30T23:48:16.496395301Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "src/graph.rs:50-53 carries #[allow(clippy::struct_excessive_bools)] on struct Edge with the reason \"these independent cached graph facts avoid repeated evaluation on hot paths\". Edge has no bool fields at all: rule, pool, env, bindings, out, input, validation, dyndep and partitions. The cached boolean facts the reason describes were moved into EdgeRuntimeFlags(u8) in src/runtime.rs:132, and the suppression plus its justification were left behind. A dead allow is worse than no allow, because it silently licenses the lint if bools are ever added back to the struct, and because the reason string now documents a design that is not there. Delete both. Verify afterwards that clippy still passes under the crate's nursery and pedantic configuration, and check whether the same reason text was duplicated onto BuildOptions in build.rs:43-46, where it is legitimate — that struct really does hold nine independent CLI switches."
+                            }
+
+                            {
+                                at 2026-07-30T23:51:22.140151698Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-30T23:52:15.614338364Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Deleted. Edge carried #[allow(clippy::struct_excessive_bools)] with the reason \"these independent cached graph facts avoid repeated evaluation on hot paths\", but the struct holds no bool at all — rule, pool, env, bindings, out, input, validation, dyndep and partitions. The cached boolean facts that reason described were moved into EdgeRuntimeFlags(u8) in src/runtime.rs, and the suppression outlived them, documenting a design that is no longer present and standing ready to silently license the lint if bools were added back. Clippy passes with zero diagnostics under the crate's nursery and pedantic configuration after removal, confirming the suppression was genuinely dead rather than load-bearing. Checked the duplicate the parent node flagged: BuildOptions in src/build.rs:43-46 carries the same lint with a different and accurate reason — \"independent Ninja CLI switches are clearer as named options than a synthetic state machine\" — and the struct really does hold eight bools, so that one is legitimate and was left alone. 366 tests pass."
+                            }
+                        )
+                    }
+
+                    {
+                        id ronin-deps-record-bounds
+                        title "Stop encoding conversion failure as an out-of-range index"
+                        log (
+                            {
+                                at 2026-07-30T23:48:28.759141087Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "Four sites in the dependency-log reader encode a failed conversion as an out-of-range value and rely on a later bounds check to reject it: src/deps.rs:387 computes size as usize::try_from(encoded_size & 0x7fff_ffff).unwrap_or(usize::MAX), and lines 399, 402 and 436 do the same for output_id, the dependency_ids iterator and the trailing record identifier, each caught downstream by a comparison against nodes.len() or MAX_RECORD_SIZE. This is the C idiom of returning a sentinel and letting the caller's range test sort it out. On every target this crate supports, u32 to usize is infallible, so the fallback is unreachable defensive code for an impossible case, and expressing it as usize::MAX means a genuine future failure would be indistinguishable from a corrupt record whose index merely happens to be large. Make the impossibility explicit instead — the conversion is widening on all supported targets — while preserving the existing validation behaviour exactly: a corrupt log must still be detected and must still trigger the same recovery path, since .ninja_deps parsing is part of the Ninja compatibility surface [spec:samurai:req:compat.ninja-owned-names] and the persistence round trip is covered by the pinned conformance oracle. Purely an expression change; no measurement expected or needed, but the conformance suite must be run because this touches log recovery."
+                            }
+                        )
+                    }
+                )
+                log (
+                    {
+                        at 2026-07-30T23:47:54.464467653Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Findings from a fresh C-and-C++-idiom review of src/ on 2026-07-31, after the idiomatization and allocation-discipline programmes had both shipped. Four items survive; each leaf carries its own evidence. Recorded here is the equally important negative result — what looks like a C idiom but is a deliberate, measured decision and must not be \"cleaned up\". The &mut Vec<u8> out-parameters in env.rs, parse.rs and build/command.rs read exactly like C out-params but are the product of ronin-eval-scratch-buffers; reverting them would undo a measured win. The parallel side tables indexed by edge in build.rs (wanted, weight, pending, running, completed) look like C parallel arrays but are the typed-dense-arena decision. EdgeRuntimeFlags(u8) bit-packing is deliberate, and the casts in htab.rs are rapidhash's specified arithmetic, which is a cross-tool contract with Ninja's build log. The bool-returning insert and replace methods mirror HashSet::insert and are idiomatic. The index loop at build.rs:452 is genuinely borrow-driven — it reads self.dependents while mutating self.pending — unlike the loops in ronin-edge-id-iteration, where the compiler accepted every rewrite. One further inconsistency was found and deliberately not scheduled: NodeRuntime keeps dirty and dyndep_pending as separate bools while EdgeRuntime uses a packed flags byte, but NodeRuntime is two FileTime(i64) plus a niche-packed CommandHash, so it occupies 32 bytes padded either way and packing buys nothing. Only ronin-traversal-mark-option has any performance content and it is modest; the rest are correctness-of-expression and hygiene. No percentage is estimated for any of them, because four consecutive estimates in the preceding session overshot."
+                    }
+                )
+            }
         )
         log (
             {
@@ -1747,6 +1827,7 @@ children (
                 id ronin-byte-keyed-names
                 title "Key binding and rule names on BStr instead of validated str"
                 priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-30T21:14:07.489411065Z
@@ -1768,6 +1849,13 @@ children (
                         kind @decision
                         text "Implemented and kept. Lexeme.text and ScannedEvalPart::Variable are now &BStr, Names keys on BString with borrowed &BStr probes, and env::envvar_named, env::envrule and env::poolget follow, which carried Environment.rules, EnvState.pools, Rule.name and Pool.name from String to BString and the GraphError DuplicateRule, DuplicatePool and UnknownPool payloads with them. All three std::str::from_utf8 sites in the scanner are gone, along with a String::from_utf8_lossy round trip in parseedge's pool lookup that existed only to reach a &str key. BStr supplies the Display and Debug that &str was providing for diagnostics, so nothing was traded away; ManifestProblem variants keep String and convert lossily on the error path only. from_utf8_unchecked was rejected because the crate has three unsafe blocks, both files FFI-adjacent, and a 2% win does not justify a fourth in the lexer. Callgrind on a 4,000-edge no-op fixture: 29,892,101 to 29,226,333 instructions, −2.23%, with from_utf8's 614,479 gone entirely and scan::name falling 1,224,489 to 1,128,453. Command evaluation 55,119,624 to 54,187,522, −1.69%. Allocation requests unchanged at 24,258 by design — this is the first node chosen from a callgrind profile rather than from the allocation harness, which now guards rather than steers. Wall time was not resolvable: the host held load average 22 and six interleaved minimum-of-40 rounds gave −0.435, −0.976, −1.391, −0.825, +0.657 and +0.256 ms against an 11-15 ms base, four rounds favouring the change and two against with the sign flipping and minimums never converging, which the streamed-path-scanning lesson classifies as drift. 365 tests pass, clippy clean under nursery and pedantic. The instruction gap to C samurai on the identical fixture narrowed from 1.128x to 1.103x."
                     }
+
+                    {
+                        at 2026-07-30T23:51:06.347675235Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -1775,6 +1863,7 @@ children (
                 id ronin-smallvec-collections
                 title "Give small graph collections inline capacity"
                 priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-30T21:52:45.045973526Z
@@ -1796,6 +1885,13 @@ children (
                         kind @decision
                         text "Implemented and kept — the largest result in this programme, and a direct reversal of the inference recorded on ronin-streamed-path-scanning. Node.uses, Node.validation_uses, Edge.out, Edge.input and Edge.validation became IdVec<T> = SmallVec<[T; 4]>, and ScannedEvalString.parts became SmallVec<[ScannedEvalPart; 1]>. Sizing drove the design: under smallvec's union feature a value is eight bytes plus max(inline array, pointer/length pair), so four four-byte arena identifiers occupy exactly the twenty-four bytes a Vec already spends — inline capacity is free for every adjacency list, and util::tests::id_vec_matches_vec_footprint pins both the size equality and the fifth-element spill. ScannedEvalPart is 24 bytes so one inline slot widens ScannedEvalString from 24 to 32, which was measured on its own rather than assumed. Callgrind: wide no-op 29,226,333 to 26,547,330 for the graph vectors alone and to 24,102,023 with the scanner, −17.5% total; command evaluation 54,187,522 to 48,039,297 to 42,784,164, −21.0%. Allocation requests fell 24,258 to 8,254 on wide no-op, taking requests per build statement from 6.1 to 2.1 and reaching the single-digit end state the benchmark document set as the target; command evaluation fell 80,087 to 48,084. Peak RSS fell from 11,532 to 11,288 KiB because inline storage replaced heap blocks whose per-block allocator overhead is no longer paid. Wall time moved for the first time in this programme and unambiguously: interleaved minimum-of-30 rounds on a host at load average 8 gave command-evaluation −11.1, −11.8, −11.3 and −11.9 percent and wide-noop −5.5, −4.0, −5.2 and −4.2 percent, consistent in sign and magnitude across every round. Against C samurai the same protocol gives command-evaluation 0.894x, 0.938x and 0.928x — faster than the C reference, against 1.65x at the 2026-07-29 baseline — and wide-noop 1.031x, 1.055x and 1.066x. 366 tests pass, clippy clean, allocation baseline re-recorded so the guard cannot drift back. The methodological finding: ronin-streamed-path-scanning attacked scanstring and scanpaths, the same two sites, and cost 1.1%; inline capacity on those sites saves 9.2%. The target was never wrong, the mechanism was — reusable buffers pay staging, clearing and index bookkeeping on every path to avoid an allocation, while inline capacity pays nothing because the storage is already there. That entry's inference from \"removing allocations bought nothing\" to \"SmallVec will buy nothing\" was unsound: allocation count had saturated, but growth events, which cost malloc plus memcpy plus free apiece, had not."
                     }
+
+                    {
+                        at 2026-07-30T23:51:08.261676096Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -1803,6 +1899,7 @@ children (
                 id ronin-inline-slice-hoisting
                 title "Resolve inline-vs-heap once per edge in graph traversals"
                 priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-30T22:24:49.005651677Z
@@ -1817,6 +1914,13 @@ children (
                         kind @decision
                         text "Kept, at roughly a third of the predicted size. Six traversal loops paid the inline-vs-heap discriminant check per element instead of per edge, and several re-resolved the arena entry as well — graph.edge(edge).out[index] performing an arena bounds check, a discriminant branch and a slice bounds check for every element. Binding the slice once per edge resolves all three. Every hoist compiled without a borrow-checker change, confirming the per-element form was gratuitous rather than forced. Wide no-op 24,102,023 to 23,905,714 instructions, −0.81%; command evaluation 42,784,164 to 42,784,009, which is no movement at all. DirtyEvaluator::evaluate fell 1,348,434 to 1,220,413 (−9.5%) but Builder::add_target only 1,772,899 to 1,752,928 (−1.1%). The prediction was around 2%, on the theory that this would recover the 212,024 and 328,070 instructions inline capacity had added to those two functions. The shortfall is explained by loop length: the command-evaluation fixture gives each edge one input and one output, so there is nothing for a hoist to amortize over, and add_target already bound its edge to a local, leaving only a discriminant the optimizer was evidently hoisting unaided. Hoisting pays in proportion to loop length, which the estimate did not account for. Wall time was not measured because 0.81% sits well inside the established noise floor. Kept regardless: iterating a slice is also simply better code than indexing with a bounds check per element. 366 tests pass, clippy clean."
                     }
+
+                    {
+                        at 2026-07-30T23:51:13.324619869Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -1824,6 +1928,7 @@ children (
                 id ronin-scanner-byte-primitive
                 title "Stop re-reading each manifest byte three times"
                 priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-30T22:29:17.315280052Z
@@ -1837,6 +1942,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @decision
                         text "Kept at 1.35%, against an estimate of 6 to 8 percent, and the miss invalidates the model the estimate rested on. current() resolved &Arc<Source> to Vec<u8> to slice on every byte read; next() re-read the byte it was consuming to test it for a newline, then read again to return a value that all nineteen call sites discard — three bounds-checked loads per byte where one suffices. Caching the byte slice in the Scanner, changing next to return unit, and adding advance_within_line for the hot loops (all of which match the newline case in an earlier arm, so the test is provably dead there) fixes each. Wide no-op 23,905,714 to 23,584,069, −1.35%; command evaluation 42,784,009 to 42,226,722, −1.30%. scan::space fell 964,293 to 772,233 (−19.9%) because it is almost entirely singlespace calling next; scanstring fell 2,376,959 to 2,273,389 (−4.4%); scan::name rose 1,128,453 to 1,152,462, which at 2% on one function is codegen noise from changed inlining. The estimate assumed roughly 18 instructions per manifest byte and that removing two loads and a branch would halve it. The arithmetic held but the model did not: scanstring runs 16,005 times over a 129,809-byte manifest, 8.1 bytes per call, so its 142 instructions per call are dominated by per-call overhead — building and returning the fragment list, push_literal, the trailing space call on the path branch — rather than by the byte loop, which optimizing could only ever reach a fraction of. Two consequences follow. Deriving line and column lazily on error, the other half of the original proposal, is rejected without being attempted: it would mean stripping line and column from ByteSpan and recovering them in source_span, invasive across the whole error surface, to remove one increment from a loop running eight times per call — about 0.5% by the same arithmetic that just overestimated fivefold. And the escape-free fast path becomes the priority, because it attacks per-call cost directly: a path containing no dollar sign needs no fragment list, no evaluation and no copy, and in this fixture that is every path. 366 tests pass, clippy clean."
+                    }
+
+                    {
+                        at 2026-07-30T23:51:15.304546849Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -1859,6 +1971,7 @@ children (
                 id ronin-prune-clean-subtrees
                 title "Stop replanning input cones the dirty pass proved clean"
                 priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-30T23:33:17.863270689Z
@@ -1872,6 +1985,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @decision
                         text "Attempted, disproved by an existing test, reverted. The premise was that a no-op build walks the graph twice — DirtyEvaluator::evaluate to compute dirtiness, then add_node to plan — and that since recompute_edge_dirty_with stamps one dirty bit onto every output of an edge (graph.rs:298-300) and folds input_dirty in, a clean edge proves its whole input cone clean. The induction is wrong. input_dirty is folded over non_order_only_inputs() only, so a clean edge can still carry a dirty order-only input: order-only dependencies are built without dirtying their consumer. ninja_build_generated_dyndep_now_wants_edge_and_dependent is exactly that shape — build $dir/tmp: touch || $dir/dd, where tmp exists and is clean, dd is missing and dirty, and tmp is reached through the non-order-only input of another clean edge. Pruning at the first clean edge never reaches dd and the build ran zero commands where three were required. Descending into the pruned edge's own order-only inputs does not rescue it, because the dirty order-only input sits further down behind an edge the prune already skipped; finding it needs precisely the traversal being avoided. A sound version exists — fold a per-edge subtree-contains-work flag during the dirty pass's Work::Finish, which does visit the full input vector — but it is not cheap to get right: restat-clean edges short-circuit at graph.rs:240 without reading their inputs, so the flag would be asserted rather than computed, and dyndep adds inputs mid-build, requiring invalidation on paths that presently need no such care. That is new state in the correctness-critical part of the planner. Decisively, it would not have shown on any fixture we have: measured with the unsound version in place, wide no-op came to 22,796,553 instructions against 22,776,535 without it, 20,018 worse, because the prune never fires and only its guard costs. Every edge in that fixture is dirty — build leaf/N: phony has no file on disk, so missing_without_inputs holds for all 4,000 leaves and for the all edge above them. The workload named wide-noop-build is therefore not a no-op but a fully dirty phony graph serving as a scanning benchmark, and the most common real workload for a build tool — running against an up-to-date tree where the whole graph is clean — is not represented in this suite at all. A clean-tree fixture with real files and current mtimes is a prerequisite for judging this node, not a nicety. Baseline conformance was run before the attempt and passed: 425 upstream Ninja tests across 33 suites, 10 differential CLI cases, and the log/deps persistence round trip. After reverting, 366 tests pass and the instruction count returns exactly to 22,776,535."
+                    }
+
+                    {
+                        at 2026-07-30T23:51:20.10319646Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
