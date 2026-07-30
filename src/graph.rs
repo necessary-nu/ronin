@@ -54,6 +54,11 @@ pub(crate) struct Node {
 pub(crate) struct Edge {
     pub(crate) rule: Option<RuleId>,
     pub(crate) pool: Option<PoolId>,
+    /// The scope this edge's bindings and variables resolve against.
+    ///
+    /// This is the enclosing manifest scope directly. Edge-local bindings live
+    /// in `bindings`, so giving each edge its own environment only added an
+    /// arena entry and one more link to walk on every lookup that missed.
     pub(crate) env: EnvironmentId,
     pub(crate) bindings: crate::names::Bindings<BString>,
     pub(crate) out: Vec<NodeId>,
@@ -484,13 +489,12 @@ pub(crate) fn nodeuse(graph: &mut Graph, node: NodeId, edge: EdgeId) {
 // [spec:samurai:sem:graph.mkedge-fn]
 // [spec:samurai:def:graph.mkphony-fn]
 // [spec:samurai:sem:graph.mkphony-fn]
-pub(crate) fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
+pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
     let id = EdgeId::from_index(graph.edges.len());
-    let environment = crate::env::mkenv(graph, Some(parent));
     graph.edges.push(Edge {
         rule: None,
         pool: None,
-        env: environment,
+        env: scope,
         bindings: crate::names::Bindings::default(),
         out: Vec::new(),
         input: Vec::new(),

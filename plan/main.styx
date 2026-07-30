@@ -1477,12 +1477,27 @@ children (
                 id ronin-edge-scope-inline
                 title "Store edge parent scopes without per-edge environments"
                 deps (ronin-name-interning)
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:11:36.872398394Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "mkedge (src/graph.rs:531-546) creates a fresh Environment per edge whose bindings and rules maps are never populated — edge let-bindings live in Edge.bindings, so the per-edge environment exists solely to hold a parent pointer. That is an arena entry per edge plus an extra hop on every variable-lookup chain. Store the parent EnvironmentId directly on the edge and delete the per-edge environment entirely."
+                    }
+
+                    {
+                        at 2026-07-30T19:11:40.935823983Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T19:12:55.588610888Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

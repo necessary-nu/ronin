@@ -368,6 +368,29 @@ it shed 299 requests. Workloads whose edges leave these bindings unset are
 unchanged, because an unset binding already resolved to nothing without
 allocating.
 
+### No environment per edge (`ronin-edge-scope-inline`)
+
+Every edge was given its own environment holding nothing but a link to the
+enclosing scope, because edge-local bindings live on the edge itself. It cost
+an arena entry per edge and one extra link to walk on every lookup that missed
+the edge and its rule. Edges now name their enclosing scope directly, which is
+what the lookup walked to anyway.
+
+| Workload | Bytes before | Bytes after | Change |
+| --- | ---: | ---: | ---: |
+| manifest-command-evaluation | 9,976,845 | 9,518,541 | −4.6% |
+| deep-graph-evaluation | 3,467,342 | 3,238,414 | −6.6% |
+| wide-noop-build | 6,852,358 | 6,394,054 | −6.7% |
+| path-canonicalization | 4,164,034 | 3,705,730 | −11.0% |
+| dependency-log-load | 1,181,122 | 1,124,226 | −4.8% |
+| multi-target-scan | 7,332,930 | 6,874,626 | −6.2% |
+| scheduler-barrier | 483,274 | 455,053 | −5.8% |
+
+Path canonicalization shed 458,304 bytes across 4,000 edges, which is the
+arena those environments occupied. Lookup results are unchanged: the removed
+scope held no bindings, so resolving through it always continued to its
+parent.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release
