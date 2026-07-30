@@ -89,6 +89,30 @@ most common real invocation. The release binary also shrank slightly despite
 enabling rustix's `fs` feature, because the `std::fs::metadata` paths went
 away.
 
+### Wall-time confirmation
+
+Allocation counts are the leading indicator, not the goal, so the release
+performance gate ran against pinned Ninja after the identifier-packing and
+allocation-free-stat nodes landed (7 repetitions, one warmup, interleaved
+samples, revision `867e5ff`). It passed every recorded-ratio, Ninja-runtime,
+and peak-RSS threshold. Medians in milliseconds:
+
+| Workload | Ronin | Pinned Ninja | C samurai | Ronin / samurai |
+| --- | ---: | ---: | ---: | ---: |
+| manifest-command-evaluation | 15.184 | 40.846 | 9.183 | 1.65× |
+| deep-graph-evaluation | 7.174 | 16.855 | 5.682 | 1.26× |
+| wide-noop-build | 12.507 | 31.000 | 9.829 | 1.27× |
+| path-canonicalization | 6.165 | 17.038 | 5.589 | 1.10× |
+| dependency-log-load | 3.600 | 7.085 | 2.612 | 1.38× |
+| scheduler-barrier | 42.978 | 45.129 | 37.824 | 1.14× |
+
+Ronin is faster than this Ninja build on every workload and now within 10% to
+65% of the C reference, against the 1.65× to 16.5× spread recorded in
+[`baseline-2026-07-29.md`](baseline-2026-07-29.md). Command evaluation remains
+the widest gap, which is what `ronin-eval-scratch-buffers` and
+`ronin-edge-metadata-cache` target — consistent with it also being the workload
+whose 48 requests per build statement have not yet moved.
+
 ## Interpretation
 
 ~48 allocation requests per build statement on the command-evaluation

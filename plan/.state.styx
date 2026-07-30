@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-30T09:13:15.704782991Z
+last_sync_at 2026-07-30T12:46:20.098448689Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -20,6 +20,7 @@ rule_versions (
     {id product.no-samuflags, version 0}
     {id product.ronin-identity, version 0}
     {id release.compatibility-gate, version 0}
+    {id runtime.allocation-free-stat, version 0}
     {id runtime.borrowed-span-frontend, version 0}
     {id runtime.dyndep-transaction, version 0}
     {id runtime.explicit-invocation-boundary, version 0}
@@ -68,7 +69,6 @@ assertions (
     {id ronin-single-pass-dirty, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T09:35:49.060129345Z}
     {id ronin-fast-hashing, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T11:54:24.825397939Z}
     {id ronin-compact-graph-ids, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T12:38:17.541702431Z}
-    {id ronin-stat-no-alloc, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T12:39:49.618532345Z}
 )
 
 impl_evidence (
@@ -251,6 +251,13 @@ impl_evidence (
         {impl_name target-impl, rule runtime.borrowed-span-frontend}
     ), rule_versions_seen (
         {id runtime.borrowed-span-frontend, version 0}
+    )}
+    {id ronin-stat-no-alloc, covered_rules (
+        runtime.allocation-free-stat
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.allocation-free-stat}
+    ), rule_versions_seen (
+        {id runtime.allocation-free-stat, version 0}
     )}
     {id ronin-typed-runtime-state, covered_rules (
         runtime.typed-runtime-state
