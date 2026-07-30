@@ -1,6 +1,7 @@
 use crate::env::edgevar;
 use crate::error::ToolError;
 use crate::graph::{nodeget, CommandCollector, EdgeId, Graph, PathStyle};
+use crate::names::Names;
 use crate::util::{BString, ByteSlice};
 
 fn push_json_string(output: &mut Vec<u8>, bytes: &[u8]) {
@@ -23,14 +24,14 @@ fn push_json_string(output: &mut Vec<u8>, bytes: &[u8]) {
 }
 
 fn expanded_command(graph: &Graph, edge: EdgeId, expand_rsp: bool) -> Vec<u8> {
-    let mut command = edgevar(graph, edge, "command", PathStyle::ShellEscaped)
+    let mut command = edgevar(graph, edge, Names::COMMAND, PathStyle::ShellEscaped)
         .map(Vec::from)
         .unwrap_or_default();
     if !expand_rsp {
         return command;
     }
     let Some(rspfile) =
-        edgevar(graph, edge, "rspfile", PathStyle::Raw).filter(|path| !path.is_empty())
+        edgevar(graph, edge, Names::RSPFILE, PathStyle::Raw).filter(|path| !path.is_empty())
     else {
         return command;
     };
@@ -49,7 +50,7 @@ fn expanded_command(graph: &Graph, edge: EdgeId, expand_rsp: bool) -> Vec<u8> {
     } else {
         return command;
     };
-    let mut content = edgevar(graph, edge, "rspfile_content", PathStyle::Raw)
+    let mut content = edgevar(graph, edge, Names::RSPFILE_CONTENT, PathStyle::Raw)
         .map(Vec::from)
         .unwrap_or_default();
     for byte in &mut content {

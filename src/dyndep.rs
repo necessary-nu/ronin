@@ -4,6 +4,7 @@ use crate::error::{ManifestError, ScanError};
 #[cfg(test)]
 use crate::graph::PathStyle;
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
+use crate::names::Names;
 use crate::runtime::RuntimeState;
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring,
@@ -579,7 +580,7 @@ fn commit_dyndep(graph: &mut Graph, runtime: &mut RuntimeState, dyndep: NodeId, 
             graph
                 .edge_mut(edge)
                 .bindings
-                .insert("restat".into(), xasprintf(format_args!("1")));
+                .insert(Names::RESTAT, xasprintf(format_args!("1")));
         }
     }
     runtime.node_mut(dyndep).set_dyndep_pending(false);
@@ -1122,7 +1123,7 @@ mod tests {
         assert!(nodeget(&graph, b"discovered").is_none());
         assert_eq!(graph.edge(edge1).out, original_outputs);
         assert_eq!(graph.edge(edge1).input, original_inputs);
-        assert!(!graph.edge(edge1).bindings.contains_key("restat"));
+        assert!(graph.edge(edge1).bindings.get(Names::RESTAT).is_none());
         assert_eq!(graph.node(dyndep).uses, original_uses);
         assert!(runtime.node(dyndep).dyndep_pending());
         fs::remove_dir_all(directory).unwrap();
@@ -1152,7 +1153,7 @@ mod tests {
             node_paths(&graph, &graph.edge(edge2).input)[0..2],
             ["in2", "in2imp"]
         );
-        let restat = crate::env::edgevar(&graph, edge2, "restat", PathStyle::Raw).unwrap();
+        let restat = crate::env::edgevar(&graph, edge2, Names::RESTAT, PathStyle::Raw).unwrap();
         assert_eq!(restat.as_bytes(), b"1");
         assert_eq!(
             graph.node(nodeget(&graph, b"out1imp").unwrap()).gen,

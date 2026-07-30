@@ -19,6 +19,7 @@ mod jobserver;
 mod log;
 mod missing_deps;
 mod msvc;
+mod names;
 mod os;
 mod parse;
 mod persistence;

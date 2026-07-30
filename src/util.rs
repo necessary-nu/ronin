@@ -64,7 +64,7 @@ pub(crate) use arena_id;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum EvalPart {
     Literal(BString),
-    Variable(String),
+    Variable(crate::names::VarId),
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -81,9 +81,9 @@ impl EvalString {
     }
 
     #[cfg(test)]
-    pub(crate) fn variable(name: impl Into<String>) -> Self {
+    pub(crate) fn variable(name: crate::names::VarId) -> Self {
         Self {
-            parts: vec![EvalPart::Variable(name.into())],
+            parts: vec![EvalPart::Variable(name)],
         }
     }
 

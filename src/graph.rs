@@ -16,7 +16,6 @@ pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 pub(crate) use path::nodepath_bytes;
 use path::shell_escape_path;
-use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
@@ -55,7 +54,7 @@ pub(crate) struct Edge {
     pub(crate) rule: Option<RuleId>,
     pub(crate) pool: Option<PoolId>,
     pub(crate) env: EnvironmentId,
-    pub(crate) bindings: BTreeMap<String, BString>,
+    pub(crate) bindings: crate::names::Bindings<BString>,
     pub(crate) out: Vec<NodeId>,
     pub(crate) input: Vec<NodeId>,
     pub(crate) validation: Vec<NodeId>,
@@ -79,6 +78,7 @@ pub(crate) struct Graph {
     pools: Vec<Pool>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
+    names: crate::names::Names,
 }
 
 impl Graph {
@@ -140,6 +140,14 @@ impl Graph {
         let id = RuleId::from_index(self.rules.len());
         self.rules.push(rule);
         id
+    }
+
+    pub(crate) const fn names(&self) -> &crate::names::Names {
+        &self.names
+    }
+
+    pub(crate) const fn names_mut(&mut self) -> &mut crate::names::Names {
+        &mut self.names
     }
 
     pub(crate) const fn set_phony_rule(&mut self, rule: RuleId) {
@@ -509,7 +517,7 @@ pub(crate) fn mkedge(graph: &mut Graph, parent: EnvironmentId) -> EdgeId {
         rule: None,
         pool: None,
         env: environment,
-        bindings: BTreeMap::new(),
+        bindings: crate::names::Bindings::default(),
         out: Vec::new(),
         input: Vec::new(),
         validation: Vec::new(),
@@ -672,6 +680,7 @@ impl CommandCollector {
 mod tests {
     use super::*;
     use crate::env::mkenv;
+    use crate::names::Names;
     use crate::util::xasprintf;
     use std::collections::BTreeMap;
     use std::fs;
@@ -940,7 +949,7 @@ mod tests {
         }
 
         fn variable(
-            name: &str,
+            name: crate::names::VarId,
             next: Option<Box<crate::util::EvalString>>,
         ) -> crate::util::EvalString {
             let mut result = crate::util::EvalString::variable(name);
@@ -956,11 +965,15 @@ mod tests {
         let command = text(
             "cat ",
             Some(Box::new(variable(
-                "in",
-                Some(Box::new(text(" > ", Some(Box::new(variable("out", None)))))),
+                crate::names::Names::IN,
+                Some(Box::new(text(
+                    " > ",
+                    Some(Box::new(variable(crate::names::Names::OUT, None))),
+                ))),
             ))),
         );
-        crate::env::ruleaddvar(&mut graph, rule, "command".into(), command);
+        let command_name = graph.names_mut().intern("command");
+        crate::env::ruleaddvar(&mut graph, rule, command_name, command);
 
         let edge = mkedge(&mut graph, state.root);
         graph.edge_mut(edge).rule = Some(rule);
@@ -974,7 +987,7 @@ mod tests {
             edge.out.push(output);
             edge.set_explicit_output_count(1);
         }
-        let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
+        let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
         assert_eq!(command.as_bytes(), b"cat in1 in2 > out");
     }
 
@@ -1038,7 +1051,8 @@ mod tests {
             .edges
             .iter()
             .map(|edge| {
-                let command = crate::env::edgevar(graph, *edge, "command", PathStyle::Raw).unwrap();
+                let command =
+                    crate::env::edgevar(graph, *edge, Names::COMMAND, PathStyle::Raw).unwrap();
                 String::from_utf8_lossy(command.as_bytes()).into_owned()
             })
             .collect()
@@ -1121,7 +1135,7 @@ mod tests {
         let edge = nodeget(&graph, b"a b").unwrap();
         let edge = graph.node(edge).gen.unwrap();
         let command =
-            crate::env::edgevar(&graph, edge, "command", PathStyle::ShellEscaped).unwrap();
+            crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::ShellEscaped).unwrap();
         assert_eq!(
             command.as_bytes(),
             b"cat 'no'\\''space' 'with space$' 'no\"space2' > 'a b'"
@@ -1135,7 +1149,7 @@ mod tests {
         );
         let edge = nodeget(&graph, b"out").unwrap();
         let edge = graph.node(edge).gen.unwrap();
-        let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
+        let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
         assert_eq!(command.as_bytes(), b"depfile is x");
     }
 
@@ -1146,8 +1160,8 @@ mod tests {
         );
         let edge = nodeget(&graph, b"out").unwrap();
         let edge = graph.node(edge).gen.unwrap();
-        let depfile = crate::env::edgevar(&graph, edge, "depfile", PathStyle::Raw).unwrap();
-        let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
+        let depfile = crate::env::edgevar(&graph, edge, Names::DEPFILE, PathStyle::Raw).unwrap();
+        let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
         assert_eq!(depfile.as_bytes(), b"y");
         assert_eq!(command.as_bytes(), b"depfile is y");
     }

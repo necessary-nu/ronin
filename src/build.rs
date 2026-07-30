@@ -5,6 +5,7 @@ use crate::graph::{
     edgeadddeps, edgehash, nodeget, nodestat_with, recompute_dirty_with_validations,
     recompute_edge_dirty_with, EdgeId, Graph, NodeId, PathStyle, TraversalScratch,
 };
+use crate::names::Names;
 use crate::os::RealDiskInterface;
 use crate::runtime::{FileTime, RuntimeState};
 use crate::subprocess::{status_interrupted, ProcessOutput, ProcessSupervisor, SupervisorWake};
@@ -701,10 +702,12 @@ impl<'a> Builder<'a> {
                         recompute_edge_dirty_with(self.graph, &mut self.runtime, edge, &mut stat)?;
                     let mut dependencies_changed = false;
                     let uses_deps_log = self.deps_log.is_some()
-                        && crate::env::edgevar(self.graph, edge, "deps", PathStyle::Raw)
+                        && crate::env::edgevar(self.graph, edge, Names::DEPS, PathStyle::Raw)
                             .is_some_and(|value| !value.is_empty());
                     let depfile = (!uses_deps_log)
-                        .then(|| crate::env::edgevar(self.graph, edge, "depfile", PathStyle::Raw))
+                        .then(|| {
+                            crate::env::edgevar(self.graph, edge, Names::DEPFILE, PathStyle::Raw)
+                        })
                         .flatten()
                         .filter(|path| !path.is_empty());
 

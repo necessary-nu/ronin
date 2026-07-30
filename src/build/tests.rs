@@ -1,6 +1,7 @@
 use super::*;
 use crate::env::mkenv;
 use crate::graph::{mkedge, mknode, nodeget, nodeuse, Graph};
+use crate::names::Names;
 use crate::util::xasprintf;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -858,11 +859,12 @@ fn ronin_command_cache_recomputes_after_explicit_binding_invalidation() {
         .command
         .contains_str("first"));
 
+    let value_name = builder.graph.names_mut().intern("value");
     builder
         .graph
         .edge_mut(edge)
         .bindings
-        .insert("value".into(), BString::from("second"));
+        .insert(value_name, BString::from("second"));
     builder.invalidate_command(edge);
     builder.refresh_command_hash(edge).unwrap();
     assert_ne!(builder.runtime.edge(edge).command_hash(), first_hash);
@@ -1144,7 +1146,7 @@ fn ninja_build_loads_existing_depfile() {
     let output = nodeget(&graph, target.as_bytes()).unwrap();
     let edge = graph.node(output).gen.unwrap();
     assert_eq!(graph.edge(edge).input.len(), 3);
-    let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
+    let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
     assert_eq!(
         String::from_utf8_lossy(command.as_bytes()),
         format!("cp {} {}", directory.join("in").display(), target)
@@ -2569,7 +2571,7 @@ fn ninja_build_deps_log_escaped_output_preserves_command_inputs() {
     let output = nodeget(&graph, target.as_bytes()).unwrap();
     let edge = graph.node(output).gen.unwrap();
     assert_eq!(graph.edge(edge).input.len(), 3);
-    let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
+    let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
     let command = String::from_utf8_lossy(command.as_bytes());
     assert!(command.contains("foo.c"));
     assert!(!command.contains("blah.h"));

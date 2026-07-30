@@ -4,6 +4,7 @@ use crate::env::edgevar;
 #[cfg(test)]
 use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
+use crate::names::Names;
 use crate::util::ByteSlice;
 use std::collections::{BTreeSet, HashMap};
 
@@ -64,7 +65,7 @@ impl MissingDependencyScanner {
                     }
                 }
                 Work::Process(node, edge) => {
-                    if edgevar(graph, edge, "deps", PathStyle::Raw).is_none() {
+                    if edgevar(graph, edge, Names::DEPS, PathStyle::Raw).is_none() {
                         continue;
                     }
                     if let Some(dependencies) = self.dependency_log.get(node.index()).cloned() {
@@ -306,7 +307,7 @@ mod tests {
 
     fn deps_rule(graph: &mut Graph, name: &str) -> RuleId {
         let rule = mkrule(graph, name.into());
-        ruleaddvar(graph, rule, "deps".into(), EvalString::literal("gcc"));
+        ruleaddvar(graph, rule, Names::DEPS, EvalString::literal("gcc"));
         rule
     }
 

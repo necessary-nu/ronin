@@ -5,6 +5,7 @@ mod depfile;
 use crate::env::edgevar;
 use crate::error::{DepfileProblem, PersistenceError, PersistenceOperation};
 use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId, PathStyle};
+use crate::names::Names;
 use crate::runtime::RuntimeState;
 use crate::util::{BString, ByteSlice};
 use depfile::parse_depfile;
@@ -480,7 +481,7 @@ fn deps_entry_is_live(graph: &Graph, entry: &Entry) -> bool {
     graph
         .node(entry.node)
         .gen
-        .is_some_and(|edge| edgevar(graph, edge, "deps", PathStyle::Raw).is_some())
+        .is_some_and(|edge| edgevar(graph, edge, Names::DEPS, PathStyle::Raw).is_some())
 }
 
 /// Rewrite the log with only dependency entries that are still reachable from
@@ -706,7 +707,7 @@ pub(crate) fn depsrecord(
     runtime: &RuntimeState,
     disk: &crate::os::RealDiskInterface,
 ) -> Result<(), PersistenceError> {
-    let Some(depfile) = edgevar(graph, edge, "depfile", PathStyle::Raw) else {
+    let Some(depfile) = edgevar(graph, edge, Names::DEPFILE, PathStyle::Raw) else {
         return Ok(());
     };
     let deps = depsparse(
@@ -830,7 +831,7 @@ mod ninja_depfile_tests {
         crate::env::ruleaddvar(
             graph,
             rule,
-            "deps".into(),
+            Names::DEPS,
             crate::util::EvalString::literal("gcc"),
         );
         let edge = crate::graph::mkedge(graph, state.root);

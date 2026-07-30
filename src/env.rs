@@ -2,6 +2,7 @@
 
 use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
+use crate::names::{Bindings, Names, VarId};
 use crate::scan::{ScannedEvalPart, ScannedEvalString};
 use crate::util::{arena_id, BString, ByteSlice, EvalPart, EvalString};
 use std::collections::BTreeMap;
@@ -27,14 +28,14 @@ arena_id!(PoolId);
 // [spec:samurai:def:env.environment]
 pub(crate) struct Environment {
     pub(crate) parent: Option<EnvironmentId>,
-    pub(crate) bindings: BTreeMap<String, BString>,
+    pub(crate) bindings: Bindings<BString>,
     pub(crate) rules: BTreeMap<String, RuleId>,
 }
 
 // [spec:samurai:def:env.rule]
 pub(crate) struct Rule {
     pub(crate) name: String,
-    pub(crate) bindings: BTreeMap<String, EvalString>,
+    pub(crate) bindings: Bindings<EvalString>,
 }
 
 // [spec:samurai:def:env.pool]
@@ -80,18 +81,12 @@ impl EnvState {
     }
 }
 
-// [spec:samurai:def:env.addvar-fn]
-// [spec:samurai:sem:env.addvar-fn]
-fn addvar<T>(tree: &mut BTreeMap<String, T>, name: String, value: T) {
-    tree.insert(name, value);
-}
-
 // [spec:samurai:def:env.mkenv-fn]
 // [spec:samurai:sem:env.mkenv-fn]
 pub(crate) fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> EnvironmentId {
     graph.push_environment(Environment {
         parent,
-        bindings: BTreeMap::new(),
+        bindings: Bindings::default(),
         rules: BTreeMap::new(),
     })
 }
@@ -103,7 +98,7 @@ pub(crate) fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> Environ
 pub(crate) fn mkrule(graph: &mut Graph, name: String) -> RuleId {
     graph.push_rule(Rule {
         name,
-        bindings: BTreeMap::new(),
+        bindings: Bindings::default(),
     })
 }
 
@@ -136,11 +131,7 @@ fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), Grap
 
 // [spec:samurai:def:env.envvar-fn]
 // [spec:samurai:sem:env.envvar-fn]
-pub(crate) fn envvar<'graph>(
-    graph: &'graph Graph,
-    environment: EnvironmentId,
-    name: &str,
-) -> Option<&'graph BString> {
+pub(crate) fn envvar(graph: &Graph, environment: EnvironmentId, name: VarId) -> Option<&BString> {
     let mut current = Some(environment);
     while let Some(scope) = current {
         let environment = graph.environment(scope);
@@ -152,19 +143,30 @@ pub(crate) fn envvar<'graph>(
     None
 }
 
+/// Look up a variable for a caller holding a name rather than a symbol.
+///
+/// A name that was never interned cannot have been bound, so failing to
+/// resolve it is the same answer as an unbound variable.
+pub(crate) fn envvar_named<'graph>(
+    graph: &'graph Graph,
+    environment: EnvironmentId,
+    name: &str,
+) -> Option<&'graph BString> {
+    envvar(graph, environment, graph.names().lookup(name)?)
+}
+
 // [spec:samurai:def:env.envaddvar-fn]
 // [spec:samurai:sem:env.envaddvar-fn]
 pub(crate) fn envaddvar(
     graph: &mut Graph,
     environment: EnvironmentId,
-    name: String,
+    name: VarId,
     value: BString,
 ) {
-    addvar(
-        &mut graph.environment_mut(environment).bindings,
-        name,
-        value,
-    );
+    graph
+        .environment_mut(environment)
+        .bindings
+        .insert(name, value);
 }
 
 // [spec:samurai:def:env.enveval-fn]
@@ -181,7 +183,7 @@ pub(crate) fn enveval(
             ScannedEvalPart::Literal(value) => value.len(),
             ScannedEvalPart::EscapedByte(_) => 1,
             ScannedEvalPart::Variable(name) => {
-                envvar(graph, environment, name).map_or(0, |value| value.len())
+                envvar_named(graph, environment, name).map_or(0, |value| value.len())
             }
         })
         .sum();
@@ -191,7 +193,7 @@ pub(crate) fn enveval(
             ScannedEvalPart::Literal(value) => output.extend_from_slice(value),
             ScannedEvalPart::EscapedByte(byte) => output.push(*byte),
             ScannedEvalPart::Variable(name) => {
-                if let Some(value) = envvar(graph, environment, name) {
+                if let Some(value) = envvar_named(graph, environment, name) {
                     output.extend_from_slice(value);
                 }
             }
@@ -216,8 +218,8 @@ pub(crate) fn envrule(graph: &Graph, environment: EnvironmentId, name: &str) -> 
 
 // [spec:samurai:def:env.ruleaddvar-fn]
 // [spec:samurai:sem:env.ruleaddvar-fn]
-pub(crate) fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: String, value: EvalString) {
-    addvar(&mut graph.rule_mut(rule).bindings, name, value);
+pub(crate) fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: VarId, value: EvalString) {
+    graph.rule_mut(rule).bindings.insert(name, value);
 }
 
 // [spec:samurai:def:env.mkpool-fn]
@@ -251,7 +253,7 @@ pub(crate) fn poolget(state: &EnvState, name: &str) -> Result<PoolId, GraphError
 pub(crate) fn edgevar(
     graph: &Graph,
     edge: EdgeId,
-    name: &str,
+    name: VarId,
     style: PathStyle,
 ) -> Option<BString> {
     let mut value = Vec::new();
@@ -266,7 +268,7 @@ pub(crate) fn edgevar(
 pub(crate) fn edgevar_into(
     graph: &Graph,
     edge: EdgeId,
-    name: &str,
+    name: VarId,
     style: PathStyle,
     out: &mut Vec<u8>,
 ) -> bool {
@@ -290,7 +292,7 @@ struct Evaluator<'a> {
     /// Rule bindings currently being expanded, for cycle detection. Real
     /// manifests nest two or three deep, so a linear scan is the cheapest
     /// structure and it needs no allocation for the names.
-    active: Vec<&'a str>,
+    active: Vec<VarId>,
 }
 
 fn append_paths(
@@ -312,17 +314,20 @@ fn append_paths(
     true
 }
 
-impl<'a> Evaluator<'a> {
-    fn append_variable(&mut self, edge_id: EdgeId, name: &'a str, out: &mut Vec<u8>) -> bool {
+impl Evaluator<'_> {
+    fn append_variable(&mut self, edge_id: EdgeId, name: VarId, out: &mut Vec<u8>) -> bool {
         // Copying the shared graph reference out of `self` keeps the borrows
         // that follow independent of the recursive `&mut self`.
         let graph = self.graph;
         let edge = graph.edge(edge_id);
-        let computed: Option<(&[NodeId], u8)> = match name {
-            "in" => Some((edge.explicit_inputs(), b' ')),
-            "in_newline" => Some((edge.explicit_inputs(), b'\n')),
-            "out" => Some((edge.explicit_outputs(), b' ')),
-            _ => None,
+        let computed: Option<(&[NodeId], u8)> = if name == Names::IN {
+            Some((edge.explicit_inputs(), b' '))
+        } else if name == Names::IN_NEWLINE {
+            Some((edge.explicit_inputs(), b'\n'))
+        } else if name == Names::OUT {
+            Some((edge.explicit_outputs(), b' '))
+        } else {
+            None
         };
         if let Some((nodes, separator)) = computed {
             return append_paths(graph, nodes, self.style, separator, out);
@@ -349,7 +354,7 @@ impl<'a> Evaluator<'a> {
             match part {
                 EvalPart::Literal(literal) => out.extend_from_slice(literal.as_bytes()),
                 EvalPart::Variable(name) => {
-                    self.append_variable(edge_id, name, out);
+                    self.append_variable(edge_id, *name, out);
                 }
             }
         }
@@ -366,13 +371,9 @@ mod tests {
     fn resolves_nearest_variable_binding() {
         let mut graph = Graph::default();
         let state = EnvState::new(&mut graph);
-        envaddvar(
-            &mut graph,
-            state.root,
-            "value".into(),
-            BString::from("root"),
-        );
+        let value = graph.names_mut().intern("value");
+        envaddvar(&mut graph, state.root, value, BString::from("root"));
         let child = mkenv(&mut graph, Some(state.root));
-        assert_eq!(envvar(&graph, child, "value").unwrap(), b"root");
+        assert_eq!(envvar(&graph, child, value).unwrap(), b"root");
     }
 }

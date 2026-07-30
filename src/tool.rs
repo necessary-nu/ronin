@@ -3,6 +3,7 @@
 use crate::env::edgevar;
 use crate::error::{ManifestError, ToolAvailability, ToolError, ToolOperation};
 use crate::graph::{nodeget, EdgeId, Graph, NodeId, PathStyle};
+use crate::names::Names;
 use crate::source::Source;
 use crate::util::{BString, ByteSlice};
 use std::collections::{HashMap, HashSet};
@@ -248,7 +249,7 @@ impl Cleaner {
         for output in dyndep_outputs {
             self.remove(Some(&output))?;
         }
-        for variable in ["rspfile", "depfile"] {
+        for variable in [Names::RSPFILE, Names::DEPFILE] {
             self.remove(edgevar(graph, edge, variable, PathStyle::Raw).as_ref())?;
         }
         Ok(())
@@ -275,7 +276,7 @@ impl Cleaner {
                 for output in dyndep_outputs {
                     self.remove(Some(&output))?;
                 }
-                for variable in ["rspfile", "depfile"] {
+                for variable in [Names::RSPFILE, Names::DEPFILE] {
                     self.remove(edgevar(graph, edge, variable, PathStyle::Raw).as_ref())?;
                 }
             }
@@ -286,7 +287,7 @@ impl Cleaner {
 
     // [spec:samurai:req:runtime.dyndep-transaction]
     fn dyndep_outputs(&mut self, graph: &Graph, edge: EdgeId) -> ToolResult<Vec<BString>> {
-        let Some(path) = edgevar(graph, edge, "dyndep", PathStyle::Raw) else {
+        let Some(path) = edgevar(graph, edge, Names::DYNDEP, PathStyle::Raw) else {
             return Ok(Vec::new());
         };
         if !self.dyndep_files.contains_key(&path) {
@@ -394,7 +395,9 @@ pub(crate) fn clean_with_report_in(
             if rule.is_none() || graph.is_phony_rule(rule) {
                 continue;
             }
-            if !include_generators && edgevar(graph, edge, "generator", PathStyle::Raw).is_some() {
+            if !include_generators
+                && edgevar(graph, edge, Names::GENERATOR, PathStyle::Raw).is_some()
+            {
                 continue;
             }
             cleaner.clean_edge(graph, edge)?;
@@ -478,7 +481,7 @@ fn collect_target_commands(
                 );
             }
             CommandWork::Emit(edge) => {
-                if let Some(command) = edgevar(graph, edge, "command", PathStyle::ShellEscaped)
+                if let Some(command) = edgevar(graph, edge, Names::COMMAND, PathStyle::ShellEscaped)
                     .filter(|command| !command.is_empty())
                 {
                     output.push(command);
@@ -561,7 +564,7 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolRe
         if !seen.insert(edge) {
             continue;
         }
-        if let Some(command) = edgevar(graph, edge, "command", PathStyle::ShellEscaped)
+        if let Some(command) = edgevar(graph, edge, Names::COMMAND, PathStyle::ShellEscaped)
             .filter(|value| !value.is_empty())
         {
             output.push(command);
@@ -912,7 +915,7 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
     for (name, rule) in rules {
         output.push_str(&name);
         if descriptions {
-            if let Some(description) = graph.rule(rule).bindings.get("description") {
+            if let Some(description) = graph.rule(rule).bindings.get(Names::DESCRIPTION) {
                 output.push_str(": ");
                 for part in &description.parts {
                     match part {
@@ -920,7 +923,7 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
                             output.push_str(&String::from_utf8_lossy(value.as_bytes()));
                         }
                         crate::util::EvalPart::Variable(name) => {
-                            let _ = write!(output, "${{{name}}}");
+                            let _ = write!(output, "${{{}}}", graph.names().name(*name));
                         }
                     }
                 }

@@ -1232,13 +1232,36 @@ children (
             {
                 id ronin-name-interning
                 title "Intern binding and rule names as integer symbols"
+                priority 0
                 deps (ronin-alloc-metrics)
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:10:19.408401317Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "All binding and rule lookups are String-keyed BTreeMaps: Environment.bindings/.rules and Rule.bindings (src/env.rs:46-56), Edge.bindings (src/graph.rs:67) — byte-wise string comparisons through pointer-chasing tree nodes, with a key allocation per insert. Intern names into a u32 symbol id at scan time (the scanner already yields &str borrowed from the source); binding tables become sorted Vec<(VarId, value)> — most hold 0-3 entries so linear scan over 8-byte pairs beats any tree and empty tables cost nothing. Reserve constant ids for in/in_newline/out so the special-var dispatch in edgevar_inner (env.rs:329-334) becomes an integer compare. Rule tables per environment get the same treatment."
+                    }
+
+                    {
+                        at 2026-07-30T14:32:55.736004912Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Promoted ahead of the other P3 nodes on measured evidence. After ronin-eval-scratch-buffers cut command-evaluation allocations 33%, wall time against C samurai moved only 1.65x to 1.58x. Allocation is therefore no longer the binding constraint in evaluation; every binding still resolves through String-keyed BTreeMaps, so each lookup is a byte-wise comparison through pointer-chasing tree nodes. Interning names to integer symbols targets that directly, where ronin-edge-metadata-cache and ronin-memchr-scanner would each shave further allocations the measurements say are no longer dominant. Priority pinned to 0 so the computed frontier reflects this."
+                    }
+
+                    {
+                        at 2026-07-30T14:33:09.354708912Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T14:41:42.037626291Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

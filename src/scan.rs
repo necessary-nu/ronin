@@ -1,6 +1,7 @@
 //! Byte-oriented Ninja manifest lexer.
 
 use crate::error::{ScanError, ScanErrorKind, SeparatorKind};
+use crate::names::Names;
 pub(crate) use crate::source::Source;
 use crate::source::{SourceId, SourceSpan};
 use crate::util::{BString, EvalPart, EvalString};
@@ -75,13 +76,13 @@ const fn scanned_literal_len(part: ScannedEvalPart<'_>) -> usize {
 
 impl ScannedEvalString<'_> {
     /// Interns a parsed value at the graph-ownership boundary.
-    pub(crate) fn into_owned(self) -> EvalString {
+    pub(crate) fn into_owned(self, names: &mut Names) -> EvalString {
         let mut scanned = self.parts.into_iter().peekable();
         let mut parts = Vec::new();
         while let Some(part) = scanned.next() {
             match part {
                 ScannedEvalPart::Variable(name) => {
-                    parts.push(EvalPart::Variable(name.to_owned()));
+                    parts.push(EvalPart::Variable(names.intern(name)));
                 }
                 first @ (ScannedEvalPart::Literal(_) | ScannedEvalPart::EscapedByte(_)) => {
                     let mut literal = Vec::with_capacity(scanned_literal_len(first));

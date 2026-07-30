@@ -239,6 +239,40 @@ These percentages understate the change. The fixtures carry logs of 301 and
 `.ninja_log` holds one line per build output and is read at every invocation,
 so the per-line invariant is what matters rather than this ratio.
 
+### Interned binding names (`ronin-name-interning`)
+
+This node was promoted ahead of its pass on the evidence from
+`ronin-eval-scratch-buffers`: cutting a third of command evaluation's
+allocations had bought only 4% of wall time, which said allocation was no
+longer the binding constraint. Every binding still resolved through a
+`BTreeMap<String, _>`, so each lookup compared bytes across pointer-chasing
+nodes, several times per edge plus once per scope in the parent chain.
+
+Names are now interned to integer symbols, with the fourteen that evaluation
+and the build rules refer to by fixed identity interned first so their
+constants are compile-time comparisons. Binding tables became sorted
+contiguous runs keyed by symbol.
+
+Allocation counts barely move — the interner costs a few dozen allocations
+once — but bytes fall sharply as tree nodes give way to contiguous storage,
+and wall time moves more than any other node in this programme:
+
+| Workload | Bytes before | Bytes after | Change | Median before | Median after | Change |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| manifest-command-evaluation | 12,373,629 | 10,499,336 | −15.1% | 14.976 ms | 10.366 ms | −30.8% |
+| path-canonicalization | 4,311,222 | 4,312,632 | +0.0% | 6.165 ms | 5.562 ms | −9.8% |
+| dependency-log-load | 1,278,233 | 1,222,635 | −4.4% | 3.299 ms | 3.186 ms | −3.4% |
+
+Against the C reference, command evaluation went from 1.58x to **1.13x**, and
+path canonicalization to **0.93x — faster than C samurai**, the first workload
+where Ronin leads it. Peak resident memory on command evaluation fell from
+9,784 KiB to 6,884 KiB.
+
+The lesson generalises: allocation count was the right leading indicator while
+allocations dominated, and it stopped being one once they did not. The
+harness measures what it measures, and the wall-time gate is what caught the
+divergence.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release

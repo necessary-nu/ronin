@@ -1,5 +1,6 @@
 //! Wave-3 behavior tests for the literal Rust port.
 
+use crate::names::Names;
 use crate::util::{BString, ByteSlice};
 use crate::{build, deps, env, graph, log, os, parse, scan, tool, util};
 use std::fs;
@@ -230,14 +231,16 @@ fn ninja_lexer_read_ident_and_keywords() {
 }
 
 fn serialized_eval(value: &scan::ScannedEvalString<'_>) -> String {
-    let value = value.clone().into_owned();
+    // Interned and read back through one table, so the names round-trip.
+    let mut names = crate::names::Names::default();
+    let value = value.clone().into_owned(&mut names);
     let mut output = String::new();
     for part in &value.parts {
         output.push('[');
         match part {
             util::EvalPart::Variable(name) => {
                 output.push('$');
-                output.push_str(name);
+                output.push_str(names.name(*name));
             }
             util::EvalPart::Literal(value) => {
                 output.push_str(std::str::from_utf8(value).unwrap());
@@ -404,7 +407,7 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
     assert_eq!(graph.edge(edge).explicit_output_count(), 1);
     assert_eq!(graph.edge(edge).explicit_input_count(), 1);
     assert_eq!(graph.edge(edge).non_order_only_input_count(), 2);
-    let command = env::edgevar(&graph, edge, "command", graph::PathStyle::Raw).unwrap();
+    let command = env::edgevar(&graph, edge, Names::COMMAND, graph::PathStyle::Raw).unwrap();
     assert_eq!(command.as_bytes(), b"ld one-letter-test -s -o out input");
     assert_eq!(
         graph
@@ -462,12 +465,12 @@ fn ninja_manifest_parser_rule_attributes_and_special_variables() {
     let (graph, _, _) = parse_manifest(&path);
     let out = graph::nodeget(&graph, b"out").unwrap();
     let edge = graph.node(out).gen.unwrap();
-    let command = env::edgevar(&graph, edge, "command", graph::PathStyle::Raw).unwrap();
+    let command = env::edgevar(&graph, edge, Names::COMMAND, graph::PathStyle::Raw).unwrap();
     assert_eq!(command.as_bytes(), b"cat out.rsp > out");
-    let inputs = env::edgevar(&graph, edge, "in_newline", graph::PathStyle::Raw).unwrap();
+    let inputs = env::edgevar(&graph, edge, Names::IN_NEWLINE, graph::PathStyle::Raw).unwrap();
     assert_eq!(inputs.as_bytes(), b"in\nin2");
     assert_eq!(
-        env::edgevar(&graph, edge, "rspfile_content", graph::PathStyle::Raw,)
+        env::edgevar(&graph, edge, Names::RSPFILE_CONTENT, graph::PathStyle::Raw,)
             .unwrap()
             .as_bytes(),
         b"in in2"
@@ -504,17 +507,21 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
     .unwrap();
     let (graph, _, state) = parse_manifest(&path);
     assert_eq!(
-        env::envvar(&graph, state.root, "nested2")
+        env::envvar_named(&graph, state.root, "nested2")
             .unwrap()
             .as_bytes(),
         b"1/2"
     );
     assert_eq!(
-        env::envvar(&graph, state.root, "foo").unwrap().as_bytes(),
+        env::envvar_named(&graph, state.root, "foo")
+            .unwrap()
+            .as_bytes(),
         b"bar\\baz"
     );
     assert_eq!(
-        env::envvar(&graph, state.root, "foo2").unwrap().as_bytes(),
+        env::envvar_named(&graph, state.root, "foo2")
+            .unwrap()
+            .as_bytes(),
         b"bar\\ baz"
     );
     let first = graph
@@ -525,12 +532,12 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
         .node(graph::nodeget(&graph, b"supernested").unwrap())
         .gen
         .unwrap();
-    let command = env::edgevar(&graph, first, "command", graph::PathStyle::Raw).unwrap();
+    let command = env::edgevar(&graph, first, Names::COMMAND, graph::PathStyle::Raw).unwrap();
     assert_eq!(
         command.as_bytes(),
         b"ld one-letter-test -pthread -under -o a b c suffix"
     );
-    let command = env::edgevar(&graph, second, "command", graph::PathStyle::Raw).unwrap();
+    let command = env::edgevar(&graph, second, Names::COMMAND, graph::PathStyle::Raw).unwrap();
     assert_eq!(
         command.as_bytes(),
         b"ld one-letter-test 1/2/3 -under -o supernested x suffix"
@@ -597,7 +604,9 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
     .unwrap();
     let (graph, _, state) = parse_manifest(&path);
     assert_eq!(
-        env::envvar(&graph, state.root, "x").unwrap().as_bytes(),
+        env::envvar_named(&graph, state.root, "x")
+            .unwrap()
+            .as_bytes(),
         b"$dollar"
     );
     assert!(graph::nodeget(&graph, b"foo bar").is_some());
@@ -605,7 +614,8 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
     assert!(graph::nodeget(&graph, b"two$ three").is_some());
     let output = graph::nodeget(&graph, b"$dollar").unwrap();
     let edge = graph.node(output).gen.unwrap();
-    let command = env::edgevar(&graph, edge, "command", graph::PathStyle::ShellEscaped).unwrap();
+    let command =
+        env::edgevar(&graph, edge, Names::COMMAND, graph::PathStyle::ShellEscaped).unwrap();
     assert_eq!(command.as_bytes(), b"'$dollar'bar$baz$blah");
     let _ = fs::remove_file(path);
 }

@@ -1,6 +1,7 @@
 use super::{status, Builder};
 use crate::error::{BuildError, BuildOperation};
 use crate::graph::{edgehash, EdgeId, Graph, PathStyle};
+use crate::names::Names;
 use crate::util::{BString, ByteSlice};
 use std::fs;
 
@@ -40,29 +41,31 @@ impl DepsType {
 
 impl CommandSpec {
     fn evaluate(graph: &Graph, edge: EdgeId) -> BuildResult<Self> {
-        let command = crate::env::edgevar(graph, edge, "command", PathStyle::ShellEscaped)
+        let command = crate::env::edgevar(graph, edge, Names::COMMAND, PathStyle::ShellEscaped)
             .unwrap_or_default();
-        let description = crate::env::edgevar(graph, edge, "description", PathStyle::ShellEscaped)
-            .unwrap_or_default();
-        let rspfile = crate::env::edgevar(graph, edge, "rspfile", PathStyle::Raw)
+        let description =
+            crate::env::edgevar(graph, edge, Names::DESCRIPTION, PathStyle::ShellEscaped)
+                .unwrap_or_default();
+        let rspfile = crate::env::edgevar(graph, edge, Names::RSPFILE, PathStyle::Raw)
             .filter(|path| !path.is_empty());
         let rspfile_content =
-            crate::env::edgevar(graph, edge, "rspfile_content", PathStyle::ShellEscaped)
+            crate::env::edgevar(graph, edge, Names::RSPFILE_CONTENT, PathStyle::ShellEscaped)
                 .unwrap_or_default();
-        let deps_type = crate::env::edgevar(graph, edge, "deps", PathStyle::Raw)
+        let deps_type = crate::env::edgevar(graph, edge, Names::DEPS, PathStyle::Raw)
             .map(Vec::from)
             .map(String::from_utf8)
             .transpose()
             .map_err(|_| BuildError::InvalidDepsEncoding { edge })?
             .unwrap_or_default();
         let deps_type = DepsType::from_name(deps_type);
-        let depfile_path = crate::env::edgevar(graph, edge, "depfile", PathStyle::Raw)
+        let depfile_path = crate::env::edgevar(graph, edge, Names::DEPFILE, PathStyle::Raw)
             .filter(|path| !path.is_empty());
-        let msvc_deps_prefix = crate::env::edgevar(graph, edge, "msvc_deps_prefix", PathStyle::Raw)
-            .unwrap_or_default();
-        let restat = crate::env::edgevar(graph, edge, "restat", PathStyle::Raw)
+        let msvc_deps_prefix =
+            crate::env::edgevar(graph, edge, Names::MSVC_DEPS_PREFIX, PathStyle::Raw)
+                .unwrap_or_default();
+        let restat = crate::env::edgevar(graph, edge, Names::RESTAT, PathStyle::Raw)
             .is_some_and(|value| !value.is_empty());
-        let generator = crate::env::edgevar(graph, edge, "generator", PathStyle::Raw)
+        let generator = crate::env::edgevar(graph, edge, Names::GENERATOR, PathStyle::Raw)
             .is_some_and(|value| !value.is_empty());
         let use_console = graph.is_console_pool(graph.edge(edge).pool);
         Ok(Self {

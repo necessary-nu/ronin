@@ -6,6 +6,7 @@ use crate::env::{
 };
 use crate::error::{ManifestError, ManifestProblem};
 use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId, PathStyle};
+use crate::names::Names;
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
     AllowedSeparators, ScannedEvalString, Scanner, Separator, Source, TokenKind,
@@ -104,7 +105,9 @@ fn parserule(
         command |= name == "command";
         rspfile |= name == "rspfile";
         rspfile_content |= name == "rspfile_content";
-        ruleaddvar(graph, rule, name.to_owned(), value.into_owned());
+        let name = graph.names_mut().intern(name);
+        let value = value.into_owned(graph.names_mut());
+        ruleaddvar(graph, rule, name, value);
     }
     if !command {
         return Err(manifest_error(
@@ -267,18 +270,19 @@ fn parseedge(
 
     for (name, value) in bindings {
         let value = enveval(graph, edge_env, &value);
-        graph.edge_mut(edge).bindings.insert(name.to_owned(), value);
+        let name = graph.names_mut().intern(name);
+        graph.edge_mut(edge).bindings.insert(name, value);
     }
 
     if let Some(pool_name) =
-        edgevar(graph, edge, "pool", PathStyle::ShellEscaped).filter(|pool| !pool.is_empty())
+        edgevar(graph, edge, Names::POOL, PathStyle::ShellEscaped).filter(|pool| !pool.is_empty())
     {
         let pool_name = String::from_utf8_lossy(pool_name.as_bytes());
         graph.edge_mut(edge).pool = Some(poolget(state, &pool_name)?);
     }
 
     if let Some(mut dyndep_path) =
-        edgevar(graph, edge, "dyndep", PathStyle::Raw).filter(|path| !path.is_empty())
+        edgevar(graph, edge, Names::DYNDEP, PathStyle::Raw).filter(|path| !path.is_empty())
     {
         canonpath(&mut dyndep_path);
         let dyndep = mknode(graph, dyndep_path.clone());
@@ -501,7 +505,8 @@ pub(crate) fn parse(
                     let (major, minor) = checkversion(&scanner, BStr::new(value.as_bytes()))?;
                     scanner.set_manifest_version(major, minor);
                 }
-                crate::env::envaddvar(graph, environment, name.to_owned(), value);
+                let name = graph.names_mut().intern(name);
+                crate::env::envaddvar(graph, environment, name, value);
             }
         }
     }
@@ -789,7 +794,7 @@ mod ninja_manifest_tests {
         let output = crate::graph::nodeget(&graph, b"out-\xff").unwrap();
         assert!(crate::graph::nodeget(&graph, b"in-\xfe").is_some());
         let edge = graph.node(output).gen.unwrap();
-        let command = crate::env::edgevar(&graph, edge, "command", PathStyle::Raw).unwrap();
+        let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
         assert_eq!(command.as_bytes(), b"cat in-\xfe > out-\xff");
         fs::remove_dir_all(directory).unwrap();
     }
@@ -812,9 +817,9 @@ mod ninja_manifest_tests {
         let inner = output_edge(&graph, b"some_dir/inner");
         let outer = output_edge(&graph, b"some_dir/outer");
         let outer2 = output_edge(&graph, b"some_dir/outer2");
-        let inner_command = edgevar(&graph, inner, "command", PathStyle::Raw).unwrap();
-        let outer_command = edgevar(&graph, outer, "command", PathStyle::Raw).unwrap();
-        let second_outer_command = edgevar(&graph, outer2, "command", PathStyle::Raw).unwrap();
+        let inner_command = edgevar(&graph, inner, Names::COMMAND, PathStyle::Raw).unwrap();
+        let outer_command = edgevar(&graph, outer, Names::COMMAND, PathStyle::Raw).unwrap();
+        let second_outer_command = edgevar(&graph, outer2, Names::COMMAND, PathStyle::Raw).unwrap();
         assert_eq!(inner_command.as_bytes(), b"varref inner");
         assert_eq!(outer_command.as_bytes(), b"varref outer");
         assert_eq!(second_outer_command.as_bytes(), b"varref outer");
@@ -918,7 +923,7 @@ mod ninja_manifest_tests {
         )
         .unwrap();
         let (graph, _, state) = parse_path(&root).unwrap();
-        let value = crate::env::envvar(&graph, state.root, "var").unwrap();
+        let value = crate::env::envvar_named(&graph, state.root, "var").unwrap();
         assert_eq!(value.as_bytes(), b"inner");
         fs::remove_dir_all(directory).unwrap();
     }

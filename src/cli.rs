@@ -1359,7 +1359,7 @@ fn run_bytes(
             );
         }
 
-        let logical_builddir = crate::env::envvar(&graph, state.root, "builddir")
+        let logical_builddir = crate::env::envvar_named(&graph, state.root, "builddir")
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
         let builddir = logical_builddir.as_deref().map_or_else(
