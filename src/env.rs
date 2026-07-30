@@ -83,10 +83,12 @@ impl EnvState {
         let root = mkenv(graph, None);
         let phony = mkrule(graph, "phony".into());
         envaddrule(graph, root, phony).expect("fresh root rule table");
+        graph.set_phony_rule(phony);
         let console = graph.push_pool(Pool {
             name: "console".into(),
             depth: NonZeroUsize::new(1),
         });
+        graph.set_console_pool(console);
         let mut state = Self {
             root,
             pools: BTreeMap::new(),

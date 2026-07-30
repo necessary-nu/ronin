@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-30T02:57:59.767982452Z
+last_sync_at 2026-07-30T09:13:15.704782991Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -14,6 +14,7 @@ rule_versions (
     {id compat.scheduling, version 0}
     {id compat.upstream-conformance, version 0}
     {id compat.version-reporting, version 0}
+    {id performance.allocation-accounting, version 0}
     {id performance.no-unexplained-regression, version 0}
     {id performance.reproducible-baseline, version 0}
     {id product.no-samuflags, version 0}
@@ -21,7 +22,9 @@ rule_versions (
     {id release.compatibility-gate, version 0}
     {id runtime.borrowed-span-frontend, version 0}
     {id runtime.dyndep-transaction, version 0}
+    {id runtime.explicit-invocation-boundary, version 0}
     {id runtime.guarded-signal-boundary, version 0}
+    {id runtime.iterative-tool-traversals, version 0}
     {id runtime.jobserver-resource-safety, version 0}
     {id runtime.msvc-byte-parsing, version 0}
     {id runtime.output-byte-boundaries, version 0}
@@ -29,6 +32,26 @@ rule_versions (
     {id runtime.process-supervisor-scalability, version 0}
     {id runtime.semantic-errors, version 0}
     {id runtime.typed-runtime-state, version 0}
+)
+
+derived_priorities (
+    {id ronin-alloc-metrics, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-allocator-revisit, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-compact-graph-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-depfile-inplace, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-edge-metadata-cache, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-edge-scope-inline, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-eval-scratch-buffers, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-fast-hashing, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-log-span-loading, priority 2, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-memchr-scanner, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-name-interning, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-path-interning-arena, priority 1, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-path-scratch, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-phony-console-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-single-pass-dirty, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-stat-no-alloc, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-traversal-scratch, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
 )
 
 assertions (
@@ -41,10 +64,17 @@ assertions (
     {id ronin-idiom-polish, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T19:55:05.610043373Z}
     {id ronin-release-tuning, kind @complete, author "brendan@bbqsrc.net", at 2026-07-29T20:05:57.148949965Z}
     {id ronin-mimalloc-tuning, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T08:12:55.838147547Z}
-    {id ronin-alloc-metrics, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T09:01:28.381947796Z}
+    {id ronin-phony-console-ids, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T09:34:06.433377307Z}
 )
 
 impl_evidence (
+    {id ronin-alloc-metrics, covered_rules (
+        performance.allocation-accounting
+    ), covered_claims (
+        {impl_name target-impl, rule performance.allocation-accounting}
+    ), rule_versions_seen (
+        {id performance.allocation-accounting, version 0}
+    )}
     {id ronin-byte-data-model, covered_rules (
         compat.byte-inputs
     ), covered_claims (
@@ -94,6 +124,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id compat.graph-semantics, version 0}
     )}
+    {id ronin-iterative-tools, covered_rules (
+        runtime.iterative-tool-traversals
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.iterative-tool-traversals}
+    ), rule_versions_seen (
+        {id runtime.iterative-tool-traversals, version 0}
+    )}
     {id ronin-jobserver-raii, covered_rules (
         runtime.jobserver-resource-safety
     ), covered_claims (
@@ -138,6 +175,13 @@ impl_evidence (
         {impl_name target-impl, rule runtime.persistence-transactions}
     ), rule_versions_seen (
         {id runtime.persistence-transactions, version 0}
+    )}
+    {id ronin-process-boundary, covered_rules (
+        runtime.explicit-invocation-boundary
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.explicit-invocation-boundary}
+    ), rule_versions_seen (
+        {id runtime.explicit-invocation-boundary, version 0}
     )}
     {id ronin-process-integration, covered_rules (
         compat.process-integration
@@ -190,6 +234,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id runtime.semantic-errors, version 0}
     )}
+    {id ronin-signal-boundary, covered_rules (
+        runtime.guarded-signal-boundary
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.guarded-signal-boundary}
+    ), rule_versions_seen (
+        {id runtime.guarded-signal-boundary, version 0}
+    )}
     {id ronin-span-frontend, covered_rules (
         runtime.borrowed-span-frontend
     ), covered_claims (
@@ -203,20 +254,5 @@ impl_evidence (
         {impl_name target-impl, rule runtime.typed-runtime-state}
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
-    )}
-    {id ronin-signal-boundary, covered_rules (
-        runtime.guarded-signal-boundary
-    ), covered_claims (
-        {impl_name target-impl, rule runtime.guarded-signal-boundary}
-    )}
-    {id ronin-process-boundary, covered_rules (
-        runtime.explicit-invocation-boundary
-    ), covered_claims (
-        {impl_name target-impl, rule runtime.explicit-invocation-boundary}
-    )}
-    {id ronin-iterative-tools, covered_rules (
-        runtime.iterative-tool-traversals
-    ), covered_claims (
-        {impl_name target-impl, rule runtime.iterative-tool-traversals}
     )}
 )

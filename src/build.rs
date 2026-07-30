@@ -257,9 +257,7 @@ impl Plan {
                 .any(|output| runtime.node(*output).dirty());
             let phony_with_no_inputs = {
                 let edge = graph.edge(edge);
-                edge.rule
-                    .is_some_and(|rule| graph.rule(rule).name == "phony")
-                    && edge.input.is_empty()
+                graph.is_phony_rule(edge.rule) && edge.input.is_empty()
             };
             if edge_dirty && phony_with_no_inputs {
                 continue;
@@ -480,11 +478,8 @@ impl Plan {
             .iter()
             .enumerate()
             .filter(|(index, wanted)| {
-                **wanted
-                    && graph
-                        .edge(EdgeId::from_index(*index))
-                        .rule
-                        .is_some_and(|rule| graph.rule(rule).name != "phony")
+                let rule = graph.edge(EdgeId::from_index(*index)).rule;
+                **wanted && rule.is_some() && !graph.is_phony_rule(rule)
             })
             .count()
     }
@@ -1467,11 +1462,7 @@ impl<'a> Builder<'a> {
                 let Some(edge) = self.plan.find_work(self.graph) else {
                     break;
                 };
-                let is_phony = self
-                    .graph
-                    .edge(edge)
-                    .rule
-                    .is_some_and(|rule| self.graph.rule(rule).name == "phony");
+                let is_phony = self.graph.is_phony_rule(self.graph.edge(edge).rule);
                 if is_phony {
                     let result = Ok(self.finish_phony_edge(edge));
                     if let Err(error) = self.settle_edge(edge, result) {
@@ -1480,11 +1471,7 @@ impl<'a> Builder<'a> {
                     }
                     continue;
                 }
-                let use_console = self
-                    .graph
-                    .edge(edge)
-                    .pool
-                    .is_some_and(|pool| self.graph.pool(pool).name == "console");
+                let use_console = self.graph.is_console_pool(self.graph.edge(edge).pool);
                 if use_console && processes.running_len() != 0 {
                     self.plan.defer_work(self.graph, edge);
                     break;

@@ -1231,12 +1231,27 @@ children (
             {
                 id ronin-phony-console-ids
                 title "Replace phony and console name comparisons with precomputed IDs"
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:10:28.809955759Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "rule.name == \"phony\" string compares sit on hot paths: recompute_edge_dirty_with (src/graph.rs:259-261), Plan::add_node (build.rs:260-262), the scheduler loop (build.rs:1470-1474), command_edge_count (build.rs:483-489), and both collectors (graph.rs:628-635, 688-694). pool.name == \"console\" likewise (build.rs:1483-1487, build/command.rs:67-70). The phony rule and console pool are created exactly once in EnvState::new (env.rs:82-96): store their RuleId/PoolId there (or an is_phony bit on Edge) and compare integers everywhere."
+                    }
+
+                    {
+                        at 2026-07-30T09:29:24.694211808Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T09:34:06.433377307Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

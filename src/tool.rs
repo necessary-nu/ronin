@@ -265,7 +265,9 @@ impl Cleaner {
             if !self.visited_edges.insert(edge) {
                 continue;
             }
-            if edge_name(graph, edge) != "phony" {
+            // A rule-less edge is displayed as phony and cleans like one.
+            let rule = graph.edge(edge).rule;
+            if rule.is_some() && !graph.is_phony_rule(rule) {
                 let dyndep_outputs = self.dyndep_outputs(graph, edge)?;
                 for output in graph.edge(edge).out.clone() {
                     self.remove(Some(&graph.node(output).path))?;
@@ -387,7 +389,9 @@ pub(crate) fn clean_with_report_in(
         }
     } else {
         for edge in graph.edge_ids() {
-            if edge_name(graph, edge) == "phony" {
+            // A rule-less edge is displayed as phony and cleans like one.
+            let rule = graph.edge(edge).rule;
+            if rule.is_none() || graph.is_phony_rule(rule) {
                 continue;
             }
             if !include_generators && edgevar(graph, edge, "generator", PathStyle::Raw).is_some() {

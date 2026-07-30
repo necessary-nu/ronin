@@ -299,8 +299,7 @@ fn parseedge(
 
     let ignore_phony_self_reference = {
         let edge = graph.edge(edge);
-        edge.rule
-            .is_some_and(|rule| graph.rule(rule).name == "phony")
+        graph.is_phony_rule(edge.rule)
             && edge.out.len() == 1
             && edge.explicit_output_count() == 1
             && edge.explicit_input_count() == edge.input.len()
@@ -751,6 +750,10 @@ mod ninja_manifest_tests {
         assert!(parse_source("pool foo\n  depth = -1\n").is_err());
         assert!(parse_source("pool foo\n  depth = word\n").is_err());
         assert!(parse_source("pool foo\n  bar = 1\n").is_err());
+        assert_eq!(
+            parse_error("pool console\n  depth = 2\n"),
+            "pool 'console' redefined"
+        );
         assert!(parse_source(
             "rule run\n  command = echo\n  pool = unnamed_pool\nbuild out: run in\n"
         )
@@ -823,6 +826,46 @@ mod ninja_manifest_tests {
         assert_eq!(outer_command.as_bytes(), b"varref outer");
         assert_eq!(second_outer_command.as_bytes(), b"varref outer");
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn ninja_manifest_parser_shadowed_phony_rule_is_not_builtin_phony() {
+        let directory = temporary_directory("shadowed-phony");
+        let child = directory.join("child.ninja");
+        let root = directory.join("build.ninja");
+        fs::write(
+            &child,
+            "rule phony\n  command = fake-phony $in > $out\nbuild shadowed: phony in\n",
+        )
+        .unwrap();
+        fs::write(
+            &root,
+            format!(
+                "rule cat\n  command = cat $in > $out\nbuild real: phony in\nsubninja {}\n",
+                child.display()
+            ),
+        )
+        .unwrap();
+        let (graph, _, _) = parse_path(&root).unwrap();
+        let real = output_edge(&graph, b"real");
+        let shadowed = output_edge(&graph, b"shadowed");
+        assert!(graph.is_phony_rule(graph.edge(real).rule));
+        assert!(!graph.is_phony_rule(graph.edge(shadowed).rule));
+
+        // The shadowed rule is an ordinary command edge: collectors must keep
+        // it, exactly as Ninja's rule-identity comparison does.
+        let mut collector = crate::graph::CommandCollector::default();
+        collector.collect_from(&graph, crate::graph::nodeget(&graph, b"shadowed").unwrap());
+        assert_eq!(collector.edges, [shadowed]);
+        collector.collect_from(&graph, crate::graph::nodeget(&graph, b"real").unwrap());
+        assert_eq!(collector.edges, [shadowed]);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn ninja_manifest_parser_rejects_root_phony_redefinition() {
+        let error = parse_error("rule phony\n  command = fake\n");
+        assert_eq!(error, "rule 'phony' redefined");
     }
 
     #[test]

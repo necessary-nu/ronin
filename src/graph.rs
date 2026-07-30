@@ -100,6 +100,8 @@ pub(crate) struct Graph {
     environments: Vec<Environment>,
     rules: Vec<Rule>,
     pools: Vec<Pool>,
+    phony_rule: Option<RuleId>,
+    console_pool: Option<PoolId>,
 }
 
 impl Graph {
@@ -161,6 +163,33 @@ impl Graph {
         let id = RuleId::from_index(self.rules.len());
         self.rules.push(rule);
         id
+    }
+
+    pub(crate) const fn set_phony_rule(&mut self, rule: RuleId) {
+        self.phony_rule = Some(rule);
+    }
+
+    pub(crate) const fn set_console_pool(&mut self, pool: PoolId) {
+        self.console_pool = Some(pool);
+    }
+
+    /// Whether `rule` is the built-in phony rule, by identity as in Ninja.
+    ///
+    /// A manifest-defined rule that shadows the name `phony` in a subninja
+    /// scope is an ordinary rule and must not match.
+    pub(crate) const fn is_phony_rule(&self, rule: Option<RuleId>) -> bool {
+        match (rule, self.phony_rule) {
+            (Some(rule), Some(phony)) => rule.index() == phony.index(),
+            _ => false,
+        }
+    }
+
+    /// Whether `pool` is the built-in console pool, by identity as in Ninja.
+    pub(crate) const fn is_console_pool(&self, pool: Option<PoolId>) -> bool {
+        match (pool, self.console_pool) {
+            (Some(pool), Some(console)) => pool.index() == console.index(),
+            _ => false,
+        }
     }
 
     pub(crate) fn pool(&self, id: PoolId) -> &Pool {
@@ -256,9 +285,7 @@ where
         .non_order_only_inputs()
         .iter()
         .any(|input| runtime.node(*input).dirty());
-    let is_phony = edge_data
-        .rule
-        .is_some_and(|rule| graph.rule(rule).name == "phony");
+    let is_phony = graph.is_phony_rule(edge_data.rule);
 
     let dirty = if is_phony {
         let missing_without_inputs = edge_data.input.is_empty()
@@ -627,8 +654,7 @@ impl InputsCollector {
                     let generated_by_phony = graph
                         .node(input)
                         .gen
-                        .and_then(|edge| graph.edge(edge).rule)
-                        .is_some_and(|rule| graph.rule(rule).name == "phony");
+                        .is_some_and(|edge| graph.is_phony_rule(graph.edge(edge).rule));
                     if !generated_by_phony {
                         self.inputs.push(input);
                     }
@@ -686,11 +712,7 @@ impl CommandCollector {
                     }
                 }
                 Work::Record(edge) => {
-                    let is_phony = graph
-                        .edge(edge)
-                        .rule
-                        .is_some_and(|rule| graph.rule(rule).name == "phony");
-                    if !is_phony {
+                    if !graph.is_phony_rule(graph.edge(edge).rule) {
                         self.edges.push(edge);
                     }
                 }

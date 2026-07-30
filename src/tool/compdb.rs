@@ -91,10 +91,7 @@ fn render(
         let edge_ref = graph.edge(edge);
         if edge_ref.input.is_empty()
             || validation_only(graph, edge)
-            || (skip_phony
-                && edge_ref
-                    .rule
-                    .is_some_and(|rule| graph.rule(rule).name == "phony"))
+            || (skip_phony && graph.is_phony_rule(edge_ref.rule))
         {
             continue;
         }

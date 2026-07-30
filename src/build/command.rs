@@ -64,10 +64,7 @@ impl CommandSpec {
             .is_some_and(|value| !value.is_empty());
         let generator = crate::env::edgevar(graph, edge, "generator", PathStyle::Raw)
             .is_some_and(|value| !value.is_empty());
-        let use_console = graph
-            .edge(edge)
-            .pool
-            .is_some_and(|pool| graph.pool(pool).name == "console");
+        let use_console = graph.is_console_pool(graph.edge(edge).pool);
         Ok(Self {
             command,
             description,
