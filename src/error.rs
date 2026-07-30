@@ -482,13 +482,13 @@ impl From<crate::dyndep::DyndepError> for ManifestError {
 #[derive(Debug)]
 pub(crate) enum GraphError {
     DuplicateRule {
-        name: String,
+        name: BString,
     },
     DuplicatePool {
-        name: String,
+        name: BString,
     },
     UnknownPool {
-        name: String,
+        name: BString,
     },
     DependencyCycle {
         node: Option<NodeId>,

@@ -6,7 +6,7 @@
 //! into an integer comparison over a contiguous table.
 
 use crate::htab::RapidHashMap;
-use crate::util::arena_id;
+use crate::util::{arena_id, BStr, BString};
 
 arena_id!(VarId);
 
@@ -14,26 +14,26 @@ arena_id!(VarId);
 ///
 /// `Names::default` interns these first and in this order, so the constants
 /// below are valid for every graph and the hot comparisons are constants.
-const RESERVED: [&str; 14] = [
-    "in",
-    "in_newline",
-    "out",
-    "command",
-    "depfile",
-    "deps",
-    "description",
-    "dyndep",
-    "generator",
-    "msvc_deps_prefix",
-    "pool",
-    "restat",
-    "rspfile",
-    "rspfile_content",
+const RESERVED: [&[u8]; 14] = [
+    b"in",
+    b"in_newline",
+    b"out",
+    b"command",
+    b"depfile",
+    b"deps",
+    b"description",
+    b"dyndep",
+    b"generator",
+    b"msvc_deps_prefix",
+    b"pool",
+    b"restat",
+    b"rspfile",
+    b"rspfile_content",
 ];
 
 pub(crate) struct Names {
-    ids: RapidHashMap<Box<str>, VarId>,
-    names: Vec<Box<str>>,
+    ids: RapidHashMap<BString, VarId>,
+    names: Vec<BString>,
 }
 
 impl Names {
@@ -52,12 +52,12 @@ impl Names {
     pub(crate) const RSPFILE: VarId = VarId::from_index(12);
     pub(crate) const RSPFILE_CONTENT: VarId = VarId::from_index(13);
 
-    pub(crate) fn intern(&mut self, name: &str) -> VarId {
+    pub(crate) fn intern(&mut self, name: &BStr) -> VarId {
         if let Some(id) = self.ids.get(name) {
             return *id;
         }
         let id = VarId::from_index(self.names.len());
-        let name: Box<str> = Box::from(name);
+        let name = name.to_owned();
         self.names.push(name.clone());
         self.ids.insert(name, id);
         id
@@ -67,12 +67,12 @@ impl Names {
     ///
     /// A name that was never interned cannot be bound anywhere, so `None` is
     /// the correct answer for a lookup rather than a reason to intern.
-    pub(crate) fn lookup(&self, name: &str) -> Option<VarId> {
+    pub(crate) fn lookup(&self, name: &BStr) -> Option<VarId> {
         self.ids.get(name).copied()
     }
 
-    pub(crate) fn name(&self, id: VarId) -> &str {
-        &self.names[id.index()]
+    pub(crate) fn name(&self, id: VarId) -> &BStr {
+        self.names[id.index()].as_ref()
     }
 }
 
@@ -83,7 +83,7 @@ impl Default for Names {
             names: Vec::new(),
         };
         for reserved in RESERVED {
-            names.intern(reserved);
+            names.intern(BStr::new(reserved));
         }
         names
     }
@@ -122,22 +122,22 @@ mod tests {
     #[test]
     fn reserved_names_keep_their_documented_identities() {
         let names = Names::default();
-        assert_eq!(names.lookup("in"), Some(Names::IN));
-        assert_eq!(names.lookup("command"), Some(Names::COMMAND));
+        assert_eq!(names.lookup(BStr::new("in")), Some(Names::IN));
+        assert_eq!(names.lookup(BStr::new("command")), Some(Names::COMMAND));
         assert_eq!(
-            names.lookup("rspfile_content"),
+            names.lookup(BStr::new("rspfile_content")),
             Some(Names::RSPFILE_CONTENT)
         );
         assert_eq!(names.name(Names::OUT), "out");
-        assert_eq!(names.lookup("never_bound"), None);
+        assert_eq!(names.lookup(BStr::new("never_bound")), None);
     }
 
     #[test]
     fn interning_is_stable_and_bindings_round_trip() {
         let mut names = Names::default();
-        let first = names.intern("cflags");
-        assert_eq!(names.intern("cflags"), first);
-        assert_eq!(names.lookup("cflags"), Some(first));
+        let first = names.intern(BStr::new("cflags"));
+        assert_eq!(names.intern(BStr::new("cflags")), first);
+        assert_eq!(names.lookup(BStr::new("cflags")), Some(first));
         assert_eq!(names.name(first), "cflags");
 
         let mut bindings = Bindings::default();

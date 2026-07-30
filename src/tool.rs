@@ -168,10 +168,10 @@ pub(crate) fn tool_list() -> String {
 }
 
 fn edge_name(graph: &Graph, edge: EdgeId) -> String {
-    graph
-        .edge(edge)
-        .rule
-        .map_or_else(|| "phony".into(), |rule| graph.rule(rule).name.clone())
+    graph.edge(edge).rule.map_or_else(
+        || "phony".into(),
+        |rule| graph.rule(rule).name.to_str_lossy().into_owned(),
+    )
 }
 
 // [spec:samurai:def:tool.cleanpath-fn]
@@ -913,7 +913,7 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
     rules.sort_by(|left, right| left.0.cmp(&right.0));
     let mut output = String::new();
     for (name, rule) in rules {
-        output.push_str(&name);
+        output.push_str(&name.to_str_lossy());
         if descriptions {
             if let Some(description) = graph.rule(rule).bindings.get(Names::DESCRIPTION) {
                 output.push_str(": ");

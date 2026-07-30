@@ -484,6 +484,88 @@ with this harness retained as a regression guard rather than used as a target.
 The same reasoning undercuts a planned SmallVec change, which would have
 targeted a further third of the same saturated metric.
 
+### Byte-keyed names — `ronin-byte-keyed-names`
+
+The first node selected under the new rule: chosen from a callgrind profile,
+with no allocation change expected or delivered.
+
+Profiling the whole-program picture to answer whether SIMD was worth pursuing
+put `core::str::converts::from_utf8` at 614,479 instructions, 2.06% of the
+4,000-edge no-op build, across 8,003 calls from `scan::name` alone. The
+scanner accepts a name only through `isvar`, which admits ASCII alphanumerics
+plus `_`, `-` and `.`, so every byte of the slice is ASCII by construction and
+the validation cannot fail — the call sites even said so, in an
+`.expect("variable names are ASCII")`. It existed only so `Lexeme.text` could
+be `&str` and `Names` could key on `str`. The manifest buffer itself cannot be
+`&str`, because Ninja manifests may hold non-UTF-8 paths
+[`compat.byte-inputs`], so names are an ASCII subset of a buffer that is not
+valid UTF-8 as a whole, and safe Rust cannot reinterpret that subslice for
+free.
+
+The fix uses the byte-string type the crate already re-exports rather than
+adding unsafe: `Lexeme.text` and `ScannedEvalPart::Variable` became `&BStr`,
+`Names` keys on `BString` with borrowed `&BStr` probes, and `env::envrule`,
+`env::poolget` and `env::envvar_named` follow, which carries `Environment.rules`,
+`EnvState.pools`, `Rule.name` and `Pool.name` with them. `BStr` supplies the
+`Display` and `Debug` that `&str` was providing for diagnostics, so nothing was
+given up. A `String::from_utf8_lossy` round trip in `parseedge`'s pool lookup
+fell out as well. `from_utf8_unchecked` was rejected: the crate has three
+unsafe blocks, both files FFI-adjacent, and a 2% win does not justify a fourth
+in the lexer.
+
+| Metric | before | after | change |
+| --- | ---: | ---: | ---: |
+| Instructions, wide no-op | 29,892,101 | 29,226,333 | −2.23% |
+| Instructions, command evaluation | 55,119,624 | 54,187,522 | −1.69% |
+| `from_utf8` self cost | 614,479 | absent | — |
+| `scan::name` self cost | 1,224,489 | 1,128,453 | −7.8% |
+| Allocation requests, wide no-op | 24,258 | 24,258 | none |
+
+Allocations were untouched by design, which is the point: the harness now
+guards rather than steers.
+
+Wall time was not resolvable. The host sat at load average 22 throughout, and
+six interleaved minimum-of-40 rounds gave deltas of −0.435, −0.976, −1.391,
+−0.825, +0.657 and +0.256 ms against an 11–15 ms base — four rounds favouring
+the change, two against, with the sign flipping and the minimums never
+converging. Per the lesson recorded above, that is drift, not signal, and the
+deterministic instruction counts carry the result on their own.
+
+Against C samurai on the identical no-op fixture, both built for the same host
+(`cc -O2`), the instruction gap narrowed from 29,892,101/26,506,104 = 1.128× to
+29,226,333/26,506,104 = 1.103×.
+
+### SIMD, and why the gap is not a vectorization gap
+
+The profile also settled the question that prompted it. C samurai contains one
+`strcspn`, in `log.c`, and no other vector code: its lexer reads the manifest
+one byte at a time through `getc` on a `FILE*`, pushes back with `ungetc`,
+classifies with `ctype`, and appends per byte with `bufadd` — 7.84% of its run
+in `getc` and 7.56% in `bufadd`. Ronin's lexer cluster costs 4,945,922
+instructions against samurai's 7,266,555, and Ronin's allocator cluster
+6,201,847 against 8,294,962. We out-scan a `getc`-per-byte lexer by 32% and
+still lose overall, so the deficit is not scanning throughput.
+
+The vector code that does appear is libc's, obtained for free on both sides:
+`__memcpy_avx_unaligned_erms` at 2.92% and `__memcmp_avx2_movbe` at 1.78% for
+Ronin, against `__strcmp_avx2` at 3.95% for samurai — Ronin wins that
+comparison precisely because storing lengths permits `memcmp` where a
+NUL-terminated C string forces `strcmp`. Explicit SIMD in the lexer was already
+tried and rejected under `ronin-memchr-scanner` at a measured 4% ceiling.
+
+The gap is instead concentrated in scalar bookkeeping: `parse` (+1.47M against
+samurai's equivalent), `add_target` (+1.09M), `DirtyEvaluator::evaluate`
+(+1.02M), `node_for` (+0.80M) and `mknode` (+0.61M), plus `RawVec::grow_one` at
+4,638,289 inclusive — 15.52% of the program across 20,115 growth events, which
+alone exceeds the 3,385,997-instruction total gap. Growth is malloc plus memcpy
+plus free per event, a different cost from the fresh small allocations whose
+removal the streamed-path-scanning node showed to be worthless; the largest
+callers are `scanstring` (5.01%), `graph::nodeuse` (3.52%), `parse` (3.42%) and
+`scanpaths` (1.83%). `nodeuse` and `parse` are `Node.uses` and the edge
+vectors, which restores the case for `ronin-smallvec-collections` on
+instruction-count grounds even though the allocation-count grounds recorded
+above are gone.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release

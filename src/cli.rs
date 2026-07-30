@@ -6,7 +6,7 @@ use crate::error::{
     ToolAvailability, ToolError,
 };
 use crate::parse::ParseOptions;
-use crate::util::{BString, ByteSlice, ByteVec};
+use crate::util::{BStr, BString, ByteSlice, ByteVec};
 use crate::Error;
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -759,7 +759,7 @@ fn run_clean_tool(
     };
     if rule_mode {
         for rule in &rule_names {
-            crate::env::envrule(graph, state.root, rule)
+            crate::env::envrule(graph, state.root, BStr::new(rule))
                 .ok_or_else(|| ToolError::UnknownRule { name: rule.clone() })?;
         }
     }
@@ -1359,7 +1359,7 @@ fn run_bytes(
             );
         }
 
-        let logical_builddir = crate::env::envvar_named(&graph, state.root, "builddir")
+        let logical_builddir = crate::env::envvar_named(&graph, state.root, BStr::new("builddir"))
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
         let builddir = logical_builddir.as_deref().map_or_else(

@@ -1,7 +1,7 @@
 //! Wave-3 behavior tests for the literal Rust port.
 
 use crate::names::Names;
-use crate::util::{BString, ByteSlice};
+use crate::util::{BStr, BString, ByteSlice};
 use crate::{build, deps, env, graph, log, os, parse, scan, tool, util};
 use std::fs;
 
@@ -239,7 +239,7 @@ fn serialized_eval(value: &scan::ScannedEvalString<'_>) -> String {
         match part {
             util::EvalPart::Variable(name) => {
                 output.push('$');
-                output.push_str(names.name(*name));
+                output.push_str(&names.name(*name).to_str_lossy());
             }
             util::EvalPart::Literal(value) => {
                 output.push_str(std::str::from_utf8(value).unwrap());
@@ -506,19 +506,19 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
     .unwrap();
     let (graph, _, state) = parse_manifest(&path);
     assert_eq!(
-        env::envvar_named(&graph, state.root, "nested2")
+        env::envvar_named(&graph, state.root, BStr::new("nested2"))
             .unwrap()
             .as_bytes(),
         b"1/2"
     );
     assert_eq!(
-        env::envvar_named(&graph, state.root, "foo")
+        env::envvar_named(&graph, state.root, BStr::new("foo"))
             .unwrap()
             .as_bytes(),
         b"bar\\baz"
     );
     assert_eq!(
-        env::envvar_named(&graph, state.root, "foo2")
+        env::envvar_named(&graph, state.root, BStr::new("foo2"))
             .unwrap()
             .as_bytes(),
         b"bar\\ baz"
@@ -603,7 +603,7 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
     .unwrap();
     let (graph, _, state) = parse_manifest(&path);
     assert_eq!(
-        env::envvar_named(&graph, state.root, "x")
+        env::envvar_named(&graph, state.root, BStr::new("x"))
             .unwrap()
             .as_bytes(),
         b"$dollar"

@@ -2,7 +2,7 @@ use super::*;
 use crate::env::mkenv;
 use crate::graph::{mkedge, mknode, nodeget, nodeuse, Graph};
 use crate::names::Names;
-use crate::util::xasprintf;
+use crate::util::{xasprintf, BStr};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -859,7 +859,7 @@ fn ronin_command_cache_recomputes_after_explicit_binding_invalidation() {
         .command
         .contains_str("first"));
 
-    let value_name = builder.graph.names_mut().intern("value");
+    let value_name = builder.graph.names_mut().intern(BStr::new("value"));
     builder
         .graph
         .edge_mut(edge)

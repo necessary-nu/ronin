@@ -12,7 +12,7 @@ use crate::scan::{
     TokenKind,
 };
 use crate::source::SourceSpan;
-use crate::util::{canonpath, xasprintf, BString, ByteSlice};
+use crate::util::{canonpath, xasprintf, BStr, BString, ByteSlice};
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
@@ -237,7 +237,7 @@ fn evaluate_empty(value: ScannedEvalString<'_>) -> BString {
     result.into()
 }
 
-fn parse_version(scanner: &mut Scanner<'_>, name: &str) -> Result<(), DyndepError> {
+fn parse_version(scanner: &mut Scanner<'_>, name: &BStr) -> Result<(), DyndepError> {
     let line = scanner.line();
     if name != "ninja_dyndep_version" {
         return Err(error(scanner, line, DyndepErrorKind::ExpectedVersion));

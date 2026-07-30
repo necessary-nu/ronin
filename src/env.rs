@@ -4,7 +4,7 @@ use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
 use crate::names::{Bindings, Names, VarId};
 use crate::scan::{ScannedEvalPart, ScannedEvalString};
-use crate::util::{arena_id, BString, ByteSlice, EvalPart, EvalString};
+use crate::util::{arena_id, BStr, BString, ByteSlice, EvalPart, EvalString};
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
@@ -29,18 +29,18 @@ arena_id!(PoolId);
 pub(crate) struct Environment {
     pub(crate) parent: Option<EnvironmentId>,
     pub(crate) bindings: Bindings<BString>,
-    pub(crate) rules: BTreeMap<String, RuleId>,
+    pub(crate) rules: BTreeMap<BString, RuleId>,
 }
 
 // [spec:samurai:def:env.rule]
 pub(crate) struct Rule {
-    pub(crate) name: String,
+    pub(crate) name: BString,
     pub(crate) bindings: Bindings<EvalString>,
 }
 
 // [spec:samurai:def:env.pool]
 pub(crate) struct Pool {
-    pub(crate) name: String,
+    pub(crate) name: BString,
     depth: Option<NonZeroUsize>,
 }
 
@@ -56,7 +56,7 @@ impl Pool {
 
 pub(crate) struct EnvState {
     pub(crate) root: EnvironmentId,
-    pools: BTreeMap<String, PoolId>,
+    pools: BTreeMap<BString, PoolId>,
 }
 
 impl EnvState {
@@ -95,7 +95,7 @@ pub(crate) fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> Environ
 // [spec:samurai:sem:env.mkrule-fn]
 // [spec:samurai:def:env.delrule-fn]
 // [spec:samurai:sem:env.delrule-fn]
-pub(crate) fn mkrule(graph: &mut Graph, name: String) -> RuleId {
+pub(crate) fn mkrule(graph: &mut Graph, name: BString) -> RuleId {
     graph.push_rule(Rule {
         name,
         bindings: Bindings::default(),
@@ -150,7 +150,7 @@ pub(crate) fn envvar(graph: &Graph, environment: EnvironmentId, name: VarId) -> 
 pub(crate) fn envvar_named<'graph>(
     graph: &'graph Graph,
     environment: EnvironmentId,
-    name: &str,
+    name: &BStr,
 ) -> Option<&'graph BString> {
     envvar(graph, environment, graph.names().lookup(name)?)
 }
@@ -219,7 +219,7 @@ pub(crate) fn enveval_into(
 
 // [spec:samurai:def:env.envrule-fn]
 // [spec:samurai:sem:env.envrule-fn]
-pub(crate) fn envrule(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<RuleId> {
+pub(crate) fn envrule(graph: &Graph, environment: EnvironmentId, name: &BStr) -> Option<RuleId> {
     let mut current = Some(environment);
     while let Some(scope) = current {
         let environment = graph.environment(scope);
@@ -244,7 +244,7 @@ pub(crate) fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: VarId, value: Ev
 pub(crate) fn mkpool(
     graph: &mut Graph,
     state: &mut EnvState,
-    name: String,
+    name: BString,
 ) -> Result<PoolId, GraphError> {
     let pool = graph.push_pool(Pool { name, depth: None });
     addpool(graph, state, pool)?;
@@ -253,7 +253,7 @@ pub(crate) fn mkpool(
 
 // [spec:samurai:def:env.poolget-fn]
 // [spec:samurai:sem:env.poolget-fn]
-pub(crate) fn poolget(state: &EnvState, name: &str) -> Result<PoolId, GraphError> {
+pub(crate) fn poolget(state: &EnvState, name: &BStr) -> Result<PoolId, GraphError> {
     state
         .pools
         .get(name)
@@ -386,7 +386,7 @@ mod tests {
     fn resolves_nearest_variable_binding() {
         let mut graph = Graph::default();
         let state = EnvState::new(&mut graph);
-        let value = graph.names_mut().intern("value");
+        let value = graph.names_mut().intern(BStr::new("value"));
         envaddvar(&mut graph, state.root, value, BString::from("root"));
         let child = mkenv(&mut graph, Some(state.root));
         assert_eq!(envvar(&graph, child, value).unwrap(), b"root");

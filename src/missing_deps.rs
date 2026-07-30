@@ -121,7 +121,7 @@ impl MissingDependencyScanner {
             let rule_name = graph
                 .edge(generator)
                 .rule
-                .map(|rule| graph.rule(rule).name.clone())
+                .map(|rule| graph.rule(rule).name.to_str_lossy().into_owned())
                 .unwrap_or_default();
             missing_rules.insert(rule_name.clone());
             self.generated_nodes.resize(

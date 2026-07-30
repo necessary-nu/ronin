@@ -4,7 +4,7 @@ use crate::error::{ScanError, ScanErrorKind, SeparatorKind};
 use crate::names::Names;
 pub(crate) use crate::source::Source;
 use crate::source::{SourceId, SourceSpan};
-use crate::util::{BString, EvalPart, EvalString};
+use crate::util::{BStr, BString, EvalPart, EvalString};
 use std::sync::Arc;
 
 type ScanResult<T> = Result<T, ScanError>;
@@ -22,7 +22,7 @@ pub(crate) struct ByteSpan {
 /// An ASCII manifest name borrowed from its source.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Lexeme<'source> {
-    pub(crate) text: &'source str,
+    pub(crate) text: &'source BStr,
     pub(crate) span: ByteSpan,
 }
 
@@ -49,7 +49,7 @@ pub(crate) struct Token<'source> {
 pub(crate) enum ScannedEvalPart<'source> {
     Literal(&'source [u8]),
     EscapedByte(u8),
-    Variable(&'source str),
+    Variable(&'source BStr),
 }
 
 /// An evaluation string whose source-backed fragments have not been interned.
@@ -298,7 +298,7 @@ fn name<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> 
         return Err(scanerror(scanner, ScanErrorKind::ExpectedName));
     }
     let end = scanner.index;
-    let text = std::str::from_utf8(&source.bytes()[start..end]).expect("variable names are ASCII");
+    let text = BStr::new(&source.bytes()[start..end]);
     let span = scanner.span(start, end, line, column);
     space(scanner)?;
     Ok(Lexeme { text, span })
@@ -326,13 +326,13 @@ pub(crate) fn scankeyword<'source>(
             }
             _ => {
                 let lexeme = name(scanner)?;
-                let kind = match lexeme.text {
-                    "build" => TokenKind::Build,
-                    "default" => TokenKind::Default,
-                    "include" => TokenKind::Include,
-                    "pool" => TokenKind::Pool,
-                    "rule" => TokenKind::Rule,
-                    "subninja" => TokenKind::Subninja,
+                let kind = match &**lexeme.text {
+                    b"build" => TokenKind::Build,
+                    b"default" => TokenKind::Default,
+                    b"include" => TokenKind::Include,
+                    b"pool" => TokenKind::Pool,
+                    b"rule" => TokenKind::Rule,
+                    b"subninja" => TokenKind::Subninja,
                     _ => TokenKind::Variable,
                 };
                 return Ok(Some(Token { kind, lexeme }));
@@ -382,8 +382,7 @@ fn escape<'source>(
             if scanner.current() != Some(b'}') {
                 return Err(scanerror(scanner, ScanErrorKind::InvalidVariableName));
             }
-            let variable = std::str::from_utf8(&source.bytes()[start..scanner.index])
-                .expect("variable names are ASCII");
+            let variable = BStr::new(&source.bytes()[start..scanner.index]);
             next(scanner);
             parts.push(ScannedEvalPart::Variable(variable));
         }
@@ -412,8 +411,7 @@ fn escape<'source>(
             if scanner.index == start {
                 return Err(scanerror(scanner, ScanErrorKind::InvalidDollarEscape));
             }
-            let variable = std::str::from_utf8(&source.bytes()[start..scanner.index])
-                .expect("variable names are ASCII");
+            let variable = BStr::new(&source.bytes()[start..scanner.index]);
             parts.push(ScannedEvalPart::Variable(variable));
         }
     }

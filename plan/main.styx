@@ -1742,6 +1742,34 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-byte-keyed-names
+                title "Key binding and rule names on BStr instead of validated str"
+                priority 0
+                log (
+                    {
+                        at 2026-07-30T21:14:07.489411065Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Scanner names are already ASCII by construction — isvar (src/scan.rs:210) accepts only ascii_alphanumeric, underscore, hyphen and dot, and issimplevar (scan.rs:204) the same minus dot — yet three sites re-validate the slice with std::str::from_utf8().expect (scan.rs:301, 385, 415) purely so Lexeme.text can be &str and Names::intern can take &str. The manifest buffer itself cannot be &str because Ninja manifests may hold non-UTF-8 paths [spec:samurai:req:compat.byte-inputs], so the names are an ASCII subset of a buffer that is not valid UTF-8 as a whole, and safe Rust has no zero-cost way to reinterpret that subslice. Callgrind on a 4,000-edge no-op fixture puts core::str::converts::from_utf8 at 614,479 instructions, 2.06% of the program, across 8,003 calls from scan::name alone — roughly 77 instructions to validate a five-byte keyword, because std's usize-chunked ASCII fast path does not engage below eight bytes. The fix is to use the byte-string type the crate already re-exports at src/util.rs:8 rather than to add unsafe: Lexeme.text and ScannedEvalPart::Variable become &BStr, Names keys on BString with borrowed &BStr probes, and env::envrule and env::poolget take &BStr. Verified that HashMap<BString, _> supports allocation-free &BStr lookup with agreeing hashes, and that BStr provides Display and Debug, which was the only thing &str was buying for diagnostics. Blast radius is 14 .text use sites. The crate has exactly three unsafe blocks, both files FFI-adjacent, so from_utf8_unchecked was rejected as out of character for a 2% win."
+                    }
+
+                    {
+                        at 2026-07-30T21:14:13.298517528Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T21:27:15.493557566Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Implemented and kept. Lexeme.text and ScannedEvalPart::Variable are now &BStr, Names keys on BString with borrowed &BStr probes, and env::envvar_named, env::envrule and env::poolget follow, which carried Environment.rules, EnvState.pools, Rule.name and Pool.name from String to BString and the GraphError DuplicateRule, DuplicatePool and UnknownPool payloads with them. All three std::str::from_utf8 sites in the scanner are gone, along with a String::from_utf8_lossy round trip in parseedge's pool lookup that existed only to reach a &str key. BStr supplies the Display and Debug that &str was providing for diagnostics, so nothing was traded away; ManifestProblem variants keep String and convert lossily on the error path only. from_utf8_unchecked was rejected because the crate has three unsafe blocks, both files FFI-adjacent, and a 2% win does not justify a fourth in the lexer. Callgrind on a 4,000-edge no-op fixture: 29,892,101 to 29,226,333 instructions, −2.23%, with from_utf8's 614,479 gone entirely and scan::name falling 1,224,489 to 1,128,453. Command evaluation 55,119,624 to 54,187,522, −1.69%. Allocation requests unchanged at 24,258 by design — this is the first node chosen from a callgrind profile rather than from the allocation harness, which now guards rather than steers. Wall time was not resolvable: the host held load average 22 and six interleaved minimum-of-40 rounds gave −0.435, −0.976, −1.391, −0.825, +0.657 and +0.256 ms against an 11-15 ms base, four rounds favouring the change and two against with the sign flipping and minimums never converging, which the streamed-path-scanning lesson classifies as drift. 365 tests pass, clippy clean under nursery and pedantic. The instruction gap to C samurai on the identical fixture narrowed from 1.128x to 1.103x."
+                    }
+                )
+            }
         )
     }
 

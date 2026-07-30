@@ -950,7 +950,7 @@ mod tests {
                 ))),
             ))),
         );
-        let command_name = graph.names_mut().intern("command");
+        let command_name = graph.names_mut().intern(BStr::new("command"));
         crate::env::ruleaddvar(&mut graph, rule, command_name, command);
 
         let edge = mkedge(&mut graph, state.root);

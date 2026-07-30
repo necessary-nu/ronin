@@ -51,7 +51,7 @@ impl Parser {
 // [spec:samurai:sem:parse.parselet-fn]
 fn parselet<'source>(
     scanner: &mut Scanner<'source>,
-) -> ManifestResult<(&'source str, ScannedEvalString<'source>)> {
+) -> ManifestResult<(&'source BStr, ScannedEvalString<'source>)> {
     let name = scanname(scanner)?;
     let value = parse_assignment(scanner)?;
     Ok((name.text, value))
@@ -82,23 +82,23 @@ fn parserule(
     while scanindent(scanner)? {
         let (name, value) = parselet(scanner)?;
         if !matches!(
-            name,
-            "command"
-                | "depfile"
-                | "dyndep"
-                | "description"
-                | "deps"
-                | "generator"
-                | "pool"
-                | "restat"
-                | "rspfile"
-                | "rspfile_content"
-                | "msvc_deps_prefix"
+            &**name,
+            b"command"
+                | b"depfile"
+                | b"dyndep"
+                | b"description"
+                | b"deps"
+                | b"generator"
+                | b"pool"
+                | b"restat"
+                | b"rspfile"
+                | b"rspfile_content"
+                | b"msvc_deps_prefix"
         ) {
             return Err(manifest_error(
                 scanner,
                 ManifestProblem::UnexpectedRuleVariable {
-                    name: name.to_owned(),
+                    name: name.to_str_lossy().into_owned(),
                 },
             ));
         }
@@ -113,7 +113,7 @@ fn parserule(
         return Err(manifest_error(
             scanner,
             ManifestProblem::RuleMissingCommand {
-                name: name.to_owned(),
+                name: name.to_str_lossy().into_owned(),
             },
         ));
     }
@@ -121,7 +121,7 @@ fn parserule(
         return Err(manifest_error(
             scanner,
             ManifestProblem::IncompleteResponseFileBinding {
-                name: name.to_owned(),
+                name: name.to_str_lossy().into_owned(),
             },
         ));
     }
@@ -193,7 +193,7 @@ fn parseedge(
         manifest_error(
             scanner,
             ManifestProblem::UndefinedRule {
-                name: rule_name.to_owned(),
+                name: rule_name.to_str_lossy().into_owned(),
             },
         )
     })?;
@@ -288,8 +288,7 @@ fn parseedge(
     if let Some(pool_name) =
         edgevar(graph, edge, Names::POOL, PathStyle::ShellEscaped).filter(|pool| !pool.is_empty())
     {
-        let pool_name = String::from_utf8_lossy(pool_name.as_bytes());
-        graph.edge_mut(edge).pool = Some(poolget(state, &pool_name)?);
+        graph.edge_mut(edge).pool = Some(poolget(state, BStr::new(&pool_name))?);
     }
 
     if let Some(mut dyndep_path) =
@@ -410,7 +409,7 @@ fn parsepool(
             return Err(manifest_error(
                 scanner,
                 ManifestProblem::UnexpectedPoolVariable {
-                    name: name.to_owned(),
+                    name: name.to_str_lossy().into_owned(),
                 },
             ));
         }
@@ -943,7 +942,7 @@ mod ninja_manifest_tests {
         )
         .unwrap();
         let (graph, _, state) = parse_path(&root).unwrap();
-        let value = crate::env::envvar_named(&graph, state.root, "var").unwrap();
+        let value = crate::env::envvar_named(&graph, state.root, BStr::new("var")).unwrap();
         assert_eq!(value.as_bytes(), b"inner");
         fs::remove_dir_all(directory).unwrap();
     }
