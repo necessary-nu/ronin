@@ -1219,12 +1219,27 @@ children (
                 id ronin-edge-metadata-cache
                 title "Evaluate each edge's control bindings once and memoize"
                 deps (ronin-eval-scratch-buffers)
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:10:11.398169252Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "CommandSpec::evaluate (src/build/command.rs:42-83) runs the full edgevar machinery ten times per edge (command, description, rspfile, rspfile_content, deps, depfile, msvc_deps_prefix, restat, generator, pool), the depfile scan repeats deps and depfile per edge (build.rs:700-705), parseedge evaluates pool and dyndep per edge (parse.rs:280-287), and deps_entry_is_live re-evaluates deps per live log entry during recompaction (deps.rs:668-673). Resolve the fixed control-binding set in one pass per edge sharing one scratch buffer and one resolution stack, memoize the result per edge, and make all consumers read the cached metadata. Boolean bindings (restat, generator, deps presence) should short-circuit on non-empty-binding existence without materializing values."
+                    }
+
+                    {
+                        at 2026-07-30T19:09:38.863691453Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T19:11:01.027094153Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

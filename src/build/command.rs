@@ -29,18 +29,28 @@ pub(super) enum DepsType {
 }
 
 impl DepsType {
-    fn from_name(name: String) -> Self {
-        match name.as_str() {
-            "" => Self::None,
-            "gcc" => Self::Gcc,
-            "msvc" => Self::Msvc,
-            _ => Self::Unsupported(name),
+    /// Classify a `deps` value without taking ownership of it.
+    ///
+    /// The two supported values and the empty case need no allocation at all;
+    /// only an unsupported value is kept, to name it in the error.
+    fn from_bytes(value: &[u8]) -> Option<Self> {
+        match value {
+            b"" => Some(Self::None),
+            b"gcc" => Some(Self::Gcc),
+            b"msvc" => Some(Self::Msvc),
+            _ => std::str::from_utf8(value)
+                .ok()
+                .map(|name| Self::Unsupported(name.to_owned())),
         }
     }
 }
 
 impl CommandSpec {
-    fn evaluate(graph: &Graph, edge: EdgeId) -> BuildResult<Self> {
+    /// Evaluate an edge's control bindings in one pass.
+    ///
+    /// Only four of these are kept; the rest are inspected and discarded, so
+    /// they share `scratch` rather than each allocating a result.
+    fn evaluate(graph: &Graph, edge: EdgeId, scratch: &mut Vec<u8>) -> BuildResult<Self> {
         let command = crate::env::edgevar(graph, edge, Names::COMMAND, PathStyle::ShellEscaped)
             .unwrap_or_default();
         let description =
@@ -51,22 +61,21 @@ impl CommandSpec {
         let rspfile_content =
             crate::env::edgevar(graph, edge, Names::RSPFILE_CONTENT, PathStyle::ShellEscaped)
                 .unwrap_or_default();
-        let deps_type = crate::env::edgevar(graph, edge, Names::DEPS, PathStyle::Raw)
-            .map(Vec::from)
-            .map(String::from_utf8)
-            .transpose()
-            .map_err(|_| BuildError::InvalidDepsEncoding { edge })?
-            .unwrap_or_default();
-        let deps_type = DepsType::from_name(deps_type);
+        scratch.clear();
+        crate::env::edgevar_into(graph, edge, Names::DEPS, PathStyle::Raw, scratch);
+        let deps_type =
+            DepsType::from_bytes(scratch).ok_or(BuildError::InvalidDepsEncoding { edge })?;
         let depfile_path = crate::env::edgevar(graph, edge, Names::DEPFILE, PathStyle::Raw)
             .filter(|path| !path.is_empty());
         let msvc_deps_prefix =
             crate::env::edgevar(graph, edge, Names::MSVC_DEPS_PREFIX, PathStyle::Raw)
                 .unwrap_or_default();
-        let restat = crate::env::edgevar(graph, edge, Names::RESTAT, PathStyle::Raw)
-            .is_some_and(|value| !value.is_empty());
-        let generator = crate::env::edgevar(graph, edge, Names::GENERATOR, PathStyle::Raw)
-            .is_some_and(|value| !value.is_empty());
+        scratch.clear();
+        crate::env::edgevar_into(graph, edge, Names::RESTAT, PathStyle::Raw, scratch);
+        let restat = !scratch.is_empty();
+        scratch.clear();
+        crate::env::edgevar_into(graph, edge, Names::GENERATOR, PathStyle::Raw, scratch);
+        let generator = !scratch.is_empty();
         let use_console = graph.is_console_pool(graph.edge(edge).pool);
         Ok(Self {
             command,
@@ -109,7 +118,11 @@ impl Builder<'_> {
         self.command_cache
             .resize_with(self.graph.edge_count(), || None);
         if self.command_cache[edge.index()].is_none() {
-            self.command_cache[edge.index()] = Some(CommandSpec::evaluate(self.graph, edge)?);
+            self.command_cache[edge.index()] = Some(CommandSpec::evaluate(
+                self.graph,
+                edge,
+                &mut self.command_scratch,
+            )?);
         }
         Ok(())
     }

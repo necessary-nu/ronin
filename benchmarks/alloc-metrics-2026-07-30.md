@@ -349,6 +349,25 @@ on a loaded host showed an apparent threefold regression that was entirely
 drift. And the profiling that set the 4% ceiling was worth more than the
 implementation it argued against.
 
+### One pass over an edge's control bindings (`ronin-edge-metadata-cache`)
+
+`CommandSpec::evaluate` made ten separate lookups per edge, each allocating
+its own result. Only four are kept; `deps`, `restat`, and `generator` are
+inspected and discarded, and classifying `deps` additionally moved the value
+through an owned `String`. Those three now share one buffer held by the
+builder, and `deps` is classified from bytes so the supported values cost no
+allocation at all.
+
+| Workload | Requests before | Requests after | Change |
+| --- | ---: | ---: | ---: |
+| dependency-log-load | 8,688 | 8,389 | −3.4% |
+
+The saving is one allocation per edge that sets such a binding, which the
+arithmetic confirms: that workload's 300 edges each declare `deps = gcc` and
+it shed 299 requests. Workloads whose edges leave these bindings unset are
+unchanged, because an unset binding already resolved to nothing without
+allocating.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release
