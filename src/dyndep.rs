@@ -4,52 +4,82 @@ use crate::error::{ManifestError, ScanError};
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring,
-    AllowedSeparators, ScannedEvalPart, ScannedEvalString, Scanner, Separator, Source, TokenKind,
+    AllowedSeparators, ByteSpan, ScannedEvalPart, ScannedEvalString, Scanner, Separator, Source,
+    TokenKind,
 };
 use crate::source::SourceSpan;
 use crate::util::{canonpath, xasprintf, BString, ByteSlice};
+use std::collections::HashSet;
 use std::fmt;
-use std::fs;
+use std::sync::Arc;
+
+#[derive(Clone)]
+struct StagedPath {
+    value: BString,
+    span: SourceSpan,
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct Dyndeps {
     pub(crate) restat: bool,
-    pub(crate) implicit_inputs: Vec<NodeId>,
-    pub(crate) implicit_outputs: Vec<NodeId>,
+    implicit_inputs: Vec<StagedPath>,
+    implicit_outputs: Vec<StagedPath>,
 }
 
+pub(crate) struct DyndepEntry {
+    output: StagedPath,
+    dyndeps: Dyndeps,
+}
+
+// [spec:samurai:req:runtime.dyndep-transaction]
 #[derive(Default)]
 pub(crate) struct DyndepFile {
-    slots: Vec<Option<Dyndeps>>,
+    slots: Vec<Option<DyndepEntry>>,
     edges: Vec<EdgeId>,
 }
 
 impl DyndepFile {
-    fn insert(&mut self, edge: EdgeId, dyndeps: Dyndeps) -> Result<(), Dyndeps> {
+    fn insert(
+        &mut self,
+        edge: EdgeId,
+        output: StagedPath,
+        dyndeps: Dyndeps,
+    ) -> Result<(), Dyndeps> {
         if self.slots.len() <= edge.index() {
             self.slots.resize_with(edge.index() + 1, || None);
         }
         if self.slots[edge.index()].is_some() {
             return Err(dyndeps);
         }
-        self.slots[edge.index()] = Some(dyndeps);
+        self.slots[edge.index()] = Some(DyndepEntry { output, dyndeps });
         self.edges.push(edge);
         Ok(())
     }
 
     pub(crate) fn get(&self, edge: EdgeId) -> Option<&Dyndeps> {
+        self.entry(edge).map(|entry| &entry.dyndeps)
+    }
+
+    fn entry(&self, edge: EdgeId) -> Option<&DyndepEntry> {
         self.slots.get(edge.index()).and_then(Option::as_ref)
     }
 
-    fn iter(&self) -> impl Iterator<Item = (EdgeId, &Dyndeps)> {
+    fn iter(&self) -> impl Iterator<Item = (EdgeId, &DyndepEntry)> {
         self.edges
             .iter()
-            .map(|edge| (*edge, self.get(*edge).expect("indexed dyndep entry")))
+            .map(|edge| (*edge, self.entry(*edge).expect("indexed dyndep entry")))
+    }
+
+    pub(crate) fn implicit_outputs(&self, edge: EdgeId) -> impl Iterator<Item = &BString> {
+        self.get(edge)
+            .into_iter()
+            .flat_map(|dyndeps| &dyndeps.implicit_outputs)
+            .map(|path| &path.value)
     }
 }
 
 impl IntoIterator for DyndepFile {
-    type Item = (EdgeId, Dyndeps);
+    type Item = (EdgeId, DyndepEntry);
     type IntoIter = DyndepIntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -61,19 +91,19 @@ impl IntoIterator for DyndepFile {
 }
 
 pub(crate) struct DyndepIntoIter {
-    slots: Vec<Option<Dyndeps>>,
+    slots: Vec<Option<DyndepEntry>>,
     edges: std::vec::IntoIter<EdgeId>,
 }
 
 impl Iterator for DyndepIntoIter {
-    type Item = (EdgeId, Dyndeps);
+    type Item = (EdgeId, DyndepEntry);
 
     fn next(&mut self) -> Option<Self::Item> {
         let edge = self.edges.next()?;
-        let dyndeps = self.slots[edge.index()]
+        let entry = self.slots[edge.index()]
             .take()
             .expect("indexed dyndep entry");
-        Some((edge, dyndeps))
+        Some((edge, entry))
     }
 }
 
@@ -140,7 +170,13 @@ pub(crate) struct DyndepError {
 
 impl fmt::Display for DyndepError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "input:{}: {}", self.span.line, self.kind)
+        write!(
+            formatter,
+            "{}:{}: {}",
+            self.span.path().display(),
+            self.span.line,
+            self.kind
+        )
     }
 }
 
@@ -223,30 +259,36 @@ fn parse_version(scanner: &mut Scanner<'_>, name: &str) -> Result<(), DyndepErro
     Ok(())
 }
 
-fn dynamic_node(
+fn staged_path(
     scanner: &Scanner<'_>,
-    graph: &mut Graph,
     path: ScannedEvalString<'_>,
-    line: usize,
-) -> Result<NodeId, DyndepError> {
+    mut span: ByteSpan,
+) -> Result<StagedPath, DyndepError> {
     let mut path = evaluate_empty(path);
     if path.is_empty() {
-        return Err(error(scanner, line, DyndepErrorKind::EmptyPath));
+        return Err(error(scanner, span.line, DyndepErrorKind::EmptyPath));
     }
     canonpath(&mut path);
-    Ok(mknode(graph, path))
+    span.byte_end = scanner.position().byte_start;
+    Ok(StagedPath {
+        value: path,
+        span: scanner.source_span(span),
+    })
 }
 
 fn parse_implicit_inputs(
     scanner: &mut Scanner<'_>,
-    graph: &mut Graph,
     line: usize,
-) -> Result<Vec<NodeId>, DyndepError> {
+) -> Result<Vec<StagedPath>, DyndepError> {
     let mut inputs = Vec::new();
     match scan!(scanner, scanpipe(scanner, AllowedSeparators::INPUTS)) {
         Some(Separator::Implicit) => {
-            while let Some(path) = scan!(scanner, scanstring(scanner, true)) {
-                inputs.push(dynamic_node(scanner, graph, path, line)?);
+            loop {
+                let start = scanner.position();
+                let Some(path) = scan!(scanner, scanstring(scanner, true)) else {
+                    break;
+                };
+                inputs.push(staged_path(scanner, path, start)?);
             }
             match scan!(
                 scanner,
@@ -289,11 +331,12 @@ fn parse_implicit_inputs(
 }
 
 fn parse_build(
-    graph: &mut Graph,
+    graph: &Graph,
     file: &mut DyndepFile,
     scanner: &mut Scanner<'_>,
 ) -> Result<(), DyndepError> {
     let line = scanner.line();
+    let output_start = scanner.position();
     let Some(output) = scan!(scanner, scanstring(scanner, true)) else {
         return Err(error(
             scanner,
@@ -305,30 +348,26 @@ fn parse_build(
             },
         ));
     };
-    let mut output = evaluate_empty(output);
-    if output.is_empty() {
-        return Err(error(scanner, line, DyndepErrorKind::EmptyPath));
-    }
-    canonpath(&mut output);
-    let Some(node) = nodeget(graph, output.as_bytes()) else {
+    let output = staged_path(scanner, output, output_start)?;
+    let Some(node) = nodeget(graph, output.value.as_bytes()) else {
         return Err(error(
             scanner,
             line,
-            DyndepErrorKind::NoBuildStatement(output),
+            DyndepErrorKind::NoBuildStatement(output.value),
         ));
     };
     let Some(edge) = graph.node(node).gen else {
         return Err(error(
             scanner,
             line,
-            DyndepErrorKind::NoBuildStatement(output),
+            DyndepErrorKind::NoBuildStatement(output.value),
         ));
     };
     if file.get(edge).is_some() {
         return Err(error(
             scanner,
             line,
-            DyndepErrorKind::MultipleStatements(output),
+            DyndepErrorKind::MultipleStatements(output.value),
         ));
     }
 
@@ -341,8 +380,12 @@ fn parse_build(
     }
     let mut implicit_outputs = Vec::new();
     if scan!(scanner, scanpipe(scanner, AllowedSeparators::IMPLICIT)).is_some() {
-        while let Some(path) = scan!(scanner, scanstring(scanner, true)) {
-            implicit_outputs.push(dynamic_node(scanner, graph, path, line)?);
+        loop {
+            let start = scanner.position();
+            let Some(path) = scan!(scanner, scanstring(scanner, true)) else {
+                break;
+            };
+            implicit_outputs.push(staged_path(scanner, path, start)?);
         }
     }
     if scanner.current().is_none() {
@@ -363,7 +406,7 @@ fn parse_build(
             DyndepErrorKind::ExplicitInputsUnsupported,
         ));
     }
-    let implicit_inputs = parse_implicit_inputs(scanner, graph, line)?;
+    let implicit_inputs = parse_implicit_inputs(scanner, line)?;
     scan!(scanner, scannewline(scanner));
 
     let mut dyndeps = Dyndeps {
@@ -386,13 +429,21 @@ fn parse_build(
         }
         dyndeps.restat = !evaluate_empty(value).is_empty();
     }
-    file.insert(edge, dyndeps)
-        .map_err(|_| error(scanner, line, DyndepErrorKind::MultipleStatements(output)))
+    let duplicate_output = output.value.clone();
+    file.insert(edge, output, dyndeps).map_err(|_| {
+        error(
+            scanner,
+            line,
+            DyndepErrorKind::MultipleStatements(duplicate_output),
+        )
+    })
 }
 
-pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFile, DyndepError> {
-    let source = Source::from_bytes("input", input);
-    let mut scanner = Scanner::new(&source);
+pub(crate) fn parse_dyndep_source(
+    source: &Arc<Source>,
+    graph: &Graph,
+) -> Result<DyndepFile, DyndepError> {
+    let mut scanner = Scanner::new(source);
     let mut have_version = false;
     let mut file = DyndepFile::default();
     loop {
@@ -438,17 +489,26 @@ pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFi
     }
 }
 
-pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), ManifestError> {
-    let path = graph.node(dyndep).path.clone();
-    let input =
-        fs::read(path.to_path().expect("byte paths are valid on Unix")).map_err(|source| {
-            ManifestError::DyndepRead {
-                path: path.clone(),
-                source,
-            }
-        })?;
-    let file = parse_dyndep(input, graph)?;
+#[cfg(test)]
+pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &Graph) -> Result<DyndepFile, DyndepError> {
+    parse_dyndep_source(&Source::from_bytes("input", input), graph)
+}
 
+fn edge_output(graph: &Graph, edge: EdgeId) -> BString {
+    graph
+        .edge(edge)
+        .out
+        .first()
+        .map(|output| graph.node(*output).path.clone())
+        .unwrap_or_default()
+}
+
+fn validate_dyndep(
+    graph: &Graph,
+    dyndep: NodeId,
+    path: &BString,
+    file: &DyndepFile,
+) -> Result<(), ManifestError> {
     for edge in graph
         .node(dyndep)
         .uses
@@ -457,46 +517,62 @@ pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), Manif
         .filter(|edge| graph.edge(*edge).dyndep == Some(dyndep))
     {
         if file.get(edge).is_none() {
-            let output = graph
-                .edge(edge)
-                .out
-                .first()
-                .map(|output| graph.node(*output).path.clone())
-                .unwrap_or_default();
-            return Err(ManifestError::DyndepMissingOutput { path, output });
+            return Err(ManifestError::DyndepMissingOutput {
+                path: path.clone(),
+                output: edge_output(graph, edge),
+            });
         }
     }
 
-    for (edge, _) in file.iter() {
+    for (edge, entry) in file.iter() {
         let belongs_to_file = graph.edge(edge).dyndep == Some(dyndep);
         if !belongs_to_file {
-            let output = graph
-                .edge(edge)
-                .out
-                .first()
-                .map(|output| graph.node(*output).path.clone())
-                .unwrap_or_default();
-            return Err(ManifestError::DyndepWrongOwner { path, output });
+            return Err(ManifestError::DyndepWrongOwner {
+                path: path.clone(),
+                output: entry.output.value.clone(),
+                span: entry.output.span.clone(),
+            });
         }
     }
 
-    for (edge, dyndeps) in file {
-        for output in &dyndeps.implicit_outputs {
-            if let Some(generator) = graph.node(*output).gen {
-                if generator != edge {
-                    return Err(ManifestError::DyndepDuplicateOutput {
-                        path,
-                        output: graph.node(*output).path.clone(),
-                    });
-                }
+    let mut staged_outputs = HashSet::new();
+    for (_, entry) in file.iter() {
+        for output in &entry.dyndeps.implicit_outputs {
+            let existing_generator =
+                nodeget(graph, output.value.as_bytes()).and_then(|node| graph.node(node).gen);
+            if existing_generator.is_some() || !staged_outputs.insert(output.value.as_bytes()) {
+                return Err(ManifestError::DyndepDuplicateOutput {
+                    path: path.clone(),
+                    output: output.value.clone(),
+                    span: output.span.clone(),
+                });
             }
         }
-        for output in dyndeps.implicit_outputs {
+    }
+    Ok(())
+}
+
+fn commit_dyndep(graph: &mut Graph, dyndep: NodeId, file: DyndepFile) {
+    for (edge, entry) in file {
+        let Dyndeps {
+            restat,
+            implicit_inputs,
+            implicit_outputs,
+        } = entry.dyndeps;
+        let inputs = implicit_inputs
+            .into_iter()
+            .map(|input| mknode(graph, input.value))
+            .collect::<Vec<_>>();
+        let outputs = implicit_outputs
+            .into_iter()
+            .map(|output| mknode(graph, output.value))
+            .collect::<Vec<_>>();
+        for output in outputs {
             graph.node_mut(output).gen = Some(edge);
             graph.edge_mut(edge).out.push(output);
         }
-        edgeadddeps(graph, edge, &dyndeps.implicit_inputs);
-        if dyndeps.restat {
+        edgeadddeps(graph, edge, &inputs);
+        if restat {
             graph
                 .edge_mut(edge)
                 .bindings
@@ -504,6 +580,19 @@ pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), Manif
         }
     }
     graph.node_mut(dyndep).dyndep_pending = false;
+}
+
+pub(crate) fn load_dyndep(graph: &mut Graph, dyndep: NodeId) -> Result<(), ManifestError> {
+    let path = graph.node(dyndep).path.clone();
+    let source = Source::from_path(path.to_path().expect("byte paths are valid on Unix")).map_err(
+        |source| ManifestError::DyndepRead {
+            path: path.clone(),
+            source,
+        },
+    )?;
+    let file = parse_dyndep_source(&source, graph)?;
+    validate_dyndep(graph, dyndep, &path, &file)?;
+    commit_dyndep(graph, dyndep, file);
     Ok(())
 }
 
@@ -512,6 +601,7 @@ mod tests {
     use super::*;
     use crate::env::mkenv;
     use crate::graph::{mkedge, mknode};
+    use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT_LOAD_TEST: AtomicUsize = AtomicUsize::new(0);
@@ -539,18 +629,15 @@ mod tests {
     }
 
     fn parse(input: &str) -> Result<(Graph, DyndepFile), DyndepError> {
-        let mut graph = fixture();
-        let file = parse_dyndep(input.as_bytes().to_vec(), &mut graph)?;
+        let graph = fixture();
+        let file = parse_dyndep(input.as_bytes().to_vec(), &graph)?;
         Ok((graph, file))
     }
 
-    fn paths(graph: &Graph, nodes: &[NodeId]) -> Vec<String> {
-        nodes
+    fn paths(paths: &[StagedPath]) -> Vec<String> {
+        paths
             .iter()
-            .map(|node| {
-                let node = graph.node(*node);
-                String::from_utf8_lossy(node.path.as_bytes()).into_owned()
-            })
+            .map(|path| String::from_utf8_lossy(path.value.as_bytes()).into_owned())
             .collect()
     }
 
@@ -758,7 +845,7 @@ mod tests {
     fn ninja_dyndep_parser_one_implicit_input() {
         let (graph, file) = parse("ninja_dyndep_version = 1\nbuild out: dyndep | impin\n").unwrap();
         assert_eq!(
-            paths(&graph, &entry_for(&graph, &file, "out").implicit_inputs),
+            paths(&entry_for(&graph, &file, "out").implicit_inputs),
             ["impin"]
         );
     }
@@ -768,7 +855,7 @@ mod tests {
         let (graph, file) =
             parse("ninja_dyndep_version = 1\nbuild out: dyndep | impin1 impin2\n").unwrap();
         assert_eq!(
-            paths(&graph, &entry_for(&graph, &file, "out").implicit_inputs),
+            paths(&entry_for(&graph, &file, "out").implicit_inputs),
             ["impin1", "impin2"]
         );
     }
@@ -778,7 +865,7 @@ mod tests {
         let (graph, file) =
             parse("ninja_dyndep_version = 1\nbuild out | impout: dyndep\n").unwrap();
         assert_eq!(
-            paths(&graph, &entry_for(&graph, &file, "out").implicit_outputs),
+            paths(&entry_for(&graph, &file, "out").implicit_outputs),
             ["impout"]
         );
     }
@@ -788,7 +875,7 @@ mod tests {
         let (graph, file) =
             parse("ninja_dyndep_version = 1\nbuild out | impout1 impout2 : dyndep\n").unwrap();
         assert_eq!(
-            paths(&graph, &entry_for(&graph, &file, "out").implicit_outputs),
+            paths(&entry_for(&graph, &file, "out").implicit_outputs),
             ["impout1", "impout2"]
         );
     }
@@ -800,30 +887,21 @@ mod tests {
         )
         .unwrap();
         let entry = entry_for(&graph, &file, "out");
-        assert_eq!(
-            paths(&graph, &entry.implicit_outputs),
-            ["impout1", "impout2"]
-        );
-        assert_eq!(paths(&graph, &entry.implicit_inputs), ["impin1", "impin2"]);
+        assert_eq!(paths(&entry.implicit_outputs), ["impout1", "impout2"]);
+        assert_eq!(paths(&entry.implicit_inputs), ["impin1", "impin2"]);
     }
 
     #[test]
     fn ninja_dyndep_parser_preserves_non_utf8_paths() {
-        let mut graph = fixture();
+        let graph = fixture();
         let file = parse_dyndep(
             b"ninja_dyndep_version = 1\nbuild out | imp-\xff: dyndep | dep-\xfe\n".to_vec(),
-            &mut graph,
+            &graph,
         )
         .unwrap();
         let entry = entry_for(&graph, &file, "out");
-        assert_eq!(
-            graph.node(entry.implicit_outputs[0]).path.as_bytes(),
-            b"imp-\xff"
-        );
-        assert_eq!(
-            graph.node(entry.implicit_inputs[0]).path.as_bytes(),
-            b"dep-\xfe"
-        );
+        assert_eq!(entry.implicit_outputs[0].value.as_bytes(), b"imp-\xff");
+        assert_eq!(entry.implicit_inputs[0].value.as_bytes(), b"dep-\xfe");
     }
 
     #[test]
@@ -847,7 +925,7 @@ mod tests {
         let file = parse_dyndep(
             b"ninja_dyndep_version = 1\nbuild out: dyndep\nbuild out2: dyndep\n  restat = 1\n"
                 .to_vec(),
-            &mut graph,
+            &graph,
         )
         .unwrap();
         assert_eq!(file.edges.len(), 2);
@@ -980,6 +1058,40 @@ mod tests {
             load_dyndep(&mut graph, dyndep).unwrap_err().to_string(),
             "multiple rules generate shared"
         );
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    // [spec:samurai:req:runtime.dyndep-transaction/test]
+    #[test]
+    fn ronin_graph_dyndep_late_validation_failure_rolls_back_every_change() {
+        let (mut graph, dyndep, directory) = load_fixture(
+            "build out1: r in1 || $dd\n  dyndep = $dd\n\
+             build out2: r in2 || $dd\n  dyndep = $dd\n",
+            Some(
+                "ninja_dyndep_version = 1\n\
+                 build out1 | shared: dyndep | discovered\n  restat = 1\n\
+                 build out2 | shared: dyndep\n",
+            ),
+        );
+        let out1 = nodeget(&graph, b"out1").unwrap();
+        let edge1 = graph.node(out1).gen.unwrap();
+        let original_outputs = graph.edge(edge1).out.clone();
+        let original_inputs = graph.edge(edge1).input.clone();
+        let original_uses = graph.node(dyndep).uses.clone();
+        let original_node_count = graph.node_ids().len();
+
+        assert_eq!(
+            load_dyndep(&mut graph, dyndep).unwrap_err().to_string(),
+            "multiple rules generate shared"
+        );
+        assert_eq!(graph.node_ids().len(), original_node_count);
+        assert!(nodeget(&graph, b"shared").is_none());
+        assert!(nodeget(&graph, b"discovered").is_none());
+        assert_eq!(graph.edge(edge1).out, original_outputs);
+        assert_eq!(graph.edge(edge1).input, original_inputs);
+        assert!(!graph.edge(edge1).bindings.contains_key("restat"));
+        assert_eq!(graph.node(dyndep).uses, original_uses);
+        assert!(graph.node(dyndep).dyndep_pending);
         fs::remove_dir_all(directory).unwrap();
     }
 

@@ -382,10 +382,12 @@ pub(crate) enum ManifestError {
     DyndepWrongOwner {
         path: BString,
         output: BString,
+        span: SourceSpan,
     },
     DyndepDuplicateOutput {
         path: BString,
         output: BString,
+        span: SourceSpan,
     },
 }
 
@@ -424,7 +426,7 @@ impl fmt::Display for ManifestError {
             Self::DyndepMissingOutput { path, output } => {
                 write!(formatter, "'{output}' not mentioned in its dyndep file '{path}'")
             }
-            Self::DyndepWrongOwner { path, output } => write!(
+            Self::DyndepWrongOwner { path, output, .. } => write!(
                 formatter,
                 "dyndep file '{path}' mentions output '{output}' whose build statement does not have a dyndep binding for the file"
             ),

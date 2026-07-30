@@ -1,13 +1,14 @@
 //! Graph-inspection and cleanup tools translated from `tool.c`.
 
 use crate::env::edgevar;
-use crate::error::{ToolAvailability, ToolError, ToolOperation};
+use crate::error::{ManifestError, ToolAvailability, ToolError, ToolOperation};
 use crate::graph::{nodeget, EdgeId, Graph, NodeId};
+use crate::source::Source;
 use crate::util::{BString, ByteSlice};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{self, Write as _};
+use std::io::{self, ErrorKind, Write as _};
 
 type ToolResult<T> = Result<T, ToolError>;
 
@@ -185,6 +186,7 @@ struct Cleaner {
     dry_run: bool,
     seen_paths: BTreeSet<BString>,
     visited_edges: BTreeSet<EdgeId>,
+    dyndep_files: BTreeMap<BString, Option<crate::dyndep::DyndepFile>>,
     removed: Vec<BString>,
 }
 
@@ -216,10 +218,11 @@ impl Cleaner {
         if !self.visited_edges.insert(edge) {
             return Ok(());
         }
+        let dyndep_outputs = self.dyndep_outputs(graph, edge)?;
         for output in graph.edge(edge).out.clone() {
             self.remove(Some(&graph.node(output).path))?;
         }
-        for output in dyndep_outputs(graph, edge) {
+        for output in dyndep_outputs {
             self.remove(Some(&output))?;
         }
         for variable in ["rspfile", "depfile"] {
@@ -243,10 +246,11 @@ impl Cleaner {
             }
             return Ok(());
         }
+        let dyndep_outputs = self.dyndep_outputs(graph, edge)?;
         for output in graph.edge(edge).out.clone() {
             self.remove(Some(&graph.node(output).path))?;
         }
-        for output in dyndep_outputs(graph, edge) {
+        for output in dyndep_outputs {
             self.remove(Some(&output))?;
         }
         for variable in ["rspfile", "depfile"] {
@@ -257,47 +261,40 @@ impl Cleaner {
         }
         Ok(())
     }
-}
 
-fn dyndep_outputs(graph: &Graph, edge: EdgeId) -> Vec<BString> {
-    let Some(path) = edgevar(graph, edge, "dyndep", false) else {
-        return Vec::new();
-    };
-    let Ok(contents) = fs::read_to_string(path.to_path().expect("byte paths are valid on Unix"))
-    else {
-        return Vec::new();
-    };
-    let explicit_outputs = graph
-        .edge(edge)
-        .out
-        .iter()
-        .map(|output| {
-            let output = graph.node(*output);
-            String::from_utf8_lossy(output.path.as_bytes()).into_owned()
-        })
-        .collect::<Vec<_>>();
-    let mut outputs = Vec::new();
-    for line in contents.lines() {
-        let Some(statement) = line.strip_prefix("build ") else {
-            continue;
+    // [spec:samurai:req:runtime.dyndep-transaction]
+    fn dyndep_outputs(&mut self, graph: &Graph, edge: EdgeId) -> ToolResult<Vec<BString>> {
+        let Some(path) = edgevar(graph, edge, "dyndep", false) else {
+            return Ok(Vec::new());
         };
-        let Some((outputs_text, _)) = statement.split_once(':') else {
-            continue;
-        };
-        let Some((explicit, implicit)) = outputs_text.split_once('|') else {
-            continue;
-        };
-        if !explicit_outputs
-            .iter()
-            .any(|output| explicit.split_whitespace().any(|path| path == output))
-        {
-            continue;
+        if !self.dyndep_files.contains_key(&path) {
+            let source =
+                match Source::from_path(path.to_path().expect("byte paths are valid on Unix")) {
+                    Ok(source) => Some(source),
+                    Err(error) if error.kind() == ErrorKind::NotFound => None,
+                    Err(source) => {
+                        return Err(ManifestError::DyndepRead {
+                            path: path.clone(),
+                            source,
+                        }
+                        .into());
+                    }
+                };
+            let file = source
+                .map(|source| crate::dyndep::parse_dyndep_source(&source, graph))
+                .transpose()
+                .map_err(ManifestError::from)?;
+            self.dyndep_files.insert(path.clone(), file);
         }
-        for output in implicit.split_whitespace() {
-            outputs.push(crate::util::xasprintf(format_args!("{output}")));
-        }
+        Ok(self
+            .dyndep_files
+            .get(&path)
+            .and_then(Option::as_ref)
+            .into_iter()
+            .flat_map(|file| file.implicit_outputs(edge))
+            .cloned()
+            .collect())
     }
-    outputs
 }
 
 // [spec:samurai:def:tool.clean-fn]
@@ -1008,16 +1005,16 @@ mod tests {
         let input = directory.join("in");
         let dyndep = directory.join("dd");
         let output = directory.join("out");
-        let implicit = directory.join("out.imp");
+        let implicit = directory.join("out imp");
         let graph = parse_manifest(
             &directory,
             &format!(
                 "rule cat\n  command = cat $in > $out\n\
                  build {}: cat {} || {}\n  dyndep = {}\n",
-                output.display(),
-                input.display(),
-                dyndep.display(),
-                dyndep.display(),
+                ninja_path(&output),
+                ninja_path(&input),
+                ninja_path(&dyndep),
+                ninja_path(&dyndep),
             ),
         );
         fs::write(&input, "").unwrap();
@@ -1025,8 +1022,8 @@ mod tests {
             &dyndep,
             format!(
                 "ninja_dyndep_version = 1\nbuild {} | {}: dyndep\n",
-                output.display(),
-                implicit.display()
+                ninja_path(&output),
+                ninja_path(&implicit)
             ),
         )
         .unwrap();
@@ -1040,6 +1037,39 @@ mod tests {
         fs::write(&implicit, "").unwrap();
         assert_eq!(clean(&graph, &[], &[], true).unwrap(), 1);
         assert!(!output.exists() && implicit.exists());
+    }
+
+    // [spec:samurai:req:runtime.dyndep-transaction/test]
+    #[test]
+    fn ronin_clean_propagates_dyndep_parse_failures_before_removing_outputs() {
+        let directory = TempDirectory::new("dyndep-error");
+        let input = directory.join("in");
+        let dyndep = directory.join("dd");
+        let output = directory.join("out");
+        let graph = parse_manifest(
+            &directory,
+            &format!(
+                "rule cat\n  command = cat $in > $out\n\
+                 build {}: cat {} || {}\n  dyndep = {}\n",
+                ninja_path(&output),
+                ninja_path(&input),
+                ninja_path(&dyndep),
+                ninja_path(&dyndep),
+            ),
+        );
+        fs::write(&output, "").unwrap();
+        fs::write(
+            &dyndep,
+            format!(
+                "ninja_dyndep_version = 1\nbuild {} | invalid$!: dyndep\n",
+                ninja_path(&output)
+            ),
+        )
+        .unwrap();
+
+        let error = clean(&graph, &[], &[], true).unwrap_err();
+        assert!(error.to_string().contains("invalid $ escape"));
+        assert!(output.exists());
     }
 
     #[test]

@@ -78,3 +78,15 @@ second work item.
 > sets MUST be typed. Allocation count, manifest command-evaluation runtime,
 > and peak RSS MUST be measured against the pre-change implementation while
 > the pinned Ninja suite remains the compatibility oracle.
+
+## Transactional dynamic dependencies
+
+> [spec:samurai:req:runtime.dyndep-transaction]
+> Ronin MUST parse dynamic-dependency files into a source-aware staged
+> representation without interning paths or otherwise mutating graph state.
+> It MUST validate expected entries, edge ownership, duplicate outputs,
+> bindings, and every dynamic path before a single infallible commit phase.
+> Any parse or validation failure MUST leave graph nodes, edges, bindings, and
+> pending state unchanged. Clean-tool discovery MUST reuse the byte-exact
+> dynamic-dependency parser, preserve Ninja escapes and non-UTF-8 paths,
+> tolerate a missing file, and propagate other read or parse failures.

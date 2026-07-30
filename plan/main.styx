@@ -1019,6 +1019,9 @@ children (
                 id ronin-dyndep-transaction
                 title "Validate dyndep state before graph mutation"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.dyndep-transaction])
+                }
                 deps (ronin-persistence-transactions ronin-semantic-errors ronin-span-frontend)
                 log (
                     {
@@ -1026,6 +1029,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Parse dyndep files into a source-aware staged representation without interning or mutating graph state. Validate ownership, duplicate outputs, missing entries, restat values, and all dynamic paths before a single commit phase. Reuse the real byte parser for cleaner output discovery, preserve Ninja escapes and non-UTF-8 paths, propagate intentional diagnostics instead of silently returning an empty result, and test rollback after late validation failures."
+                    }
+
+                    {
+                        at 2026-07-30T00:57:10.643407776Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

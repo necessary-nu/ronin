@@ -165,4 +165,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule runtime.borrowed-span-frontend}
     )}
+    {id ronin-dyndep-transaction, covered_rules (
+        runtime.dyndep-transaction
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.dyndep-transaction}
+    )}
 )
