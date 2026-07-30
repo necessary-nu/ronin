@@ -113,6 +113,35 @@ consumes the parsed buffer and hands the result straight to `mknode`.
 Requests per build statement fell from 401.3 to 274.6. The other workloads are
 unchanged, which is the expected signature: none of them parse a depfile.
 
+### Reused traversal scratch (`ronin-traversal-scratch`)
+
+Graph scans allocated and zeroed graph-sized visit arrays per call: four in
+`recompute_dirty_with_validations` plus one each in the depfile, build-log, and
+restat traversals. That is paid once per target, once per restat completion,
+and once per dyndep reload, so it compounds on exactly the builds that are
+already slow. The arrays now live for the build and reset by bumping a
+generation counter, with stamps packed into a single byte — the same width as
+the arrays they replace — so a real clear is needed only every 63 traversals.
+
+A `multi-target-scan` workload was added to measure it, since every existing
+workload names one target and so never repeats a traversal. It names 200
+targets against the wide manifest:
+
+| Workload | Requests before | Requests after | Change | Bytes before | Bytes after | Change |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| multi-target-scan | 55,982 | 54,787 | −2.1% | 13,018,568 | 8,237,373 | −36.7% |
+
+Single-target workloads move by one or two requests, which is the expected
+result: they traverse once, so they pay the setup and skip the repeat. The
+4.8 MB removed from the 200-target scan is the shape that matters for large
+builds, and restat-heavy and dyndep-heavy builds repeat traversals the same
+way without naming extra targets.
+
+`Plan::dependents` was left as a vector of vectors rather than converted to a
+compressed adjacency layout: `rebuild_frontier` clears the inner vectors
+instead of dropping them, so their capacity is already reused across rebuilds
+and a conversion would trade readable code for no measurable allocation.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release

@@ -1,6 +1,7 @@
 //! Dense graph arenas and dependency operations.
 
 mod edge;
+mod marks;
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
@@ -8,6 +9,8 @@ use crate::htab::{rapidhashv1, RapidHashMap};
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{arena_id, BStr, BString, ByteSlice};
 use edge::EdgePartitions;
+pub(crate) use marks::MarkSet;
+use marks::{VisitMarks, VisitState};
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
@@ -322,17 +325,25 @@ where
     Ok(dirty)
 }
 
-#[derive(Clone, Copy, Default, Eq, PartialEq)]
-enum VisitState {
-    #[default]
-    New,
-    Active,
-    Done,
+#[derive(Default)]
+struct DirtyEvaluator {
+    nodes: VisitMarks,
+    edges: VisitMarks,
 }
 
-struct DirtyEvaluator {
-    nodes: Vec<VisitState>,
-    edges: Vec<VisitState>,
+impl DirtyEvaluator {
+    fn begin(&mut self, graph: &Graph) {
+        self.nodes.begin(graph.nodes.len());
+        self.edges.begin(graph.edges.len());
+    }
+}
+
+/// Traversal buffers reused across every scan of one build.
+#[derive(Default)]
+pub(crate) struct TraversalScratch {
+    evaluator: DirtyEvaluator,
+    seen_nodes: MarkSet,
+    seen_edges: MarkSet,
 }
 
 impl DirtyEvaluator {
@@ -354,7 +365,7 @@ impl DirtyEvaluator {
         let mut work = vec![Work::Enter(target)];
         while let Some(item) = work.pop() {
             match item {
-                Work::Enter(node) => match self.nodes[node.index()] {
+                Work::Enter(node) => match self.nodes.get(node.index()) {
                     VisitState::Done => {}
                     VisitState::Active => {
                         return Err(GraphError::DependencyCycle { node: Some(node) });
@@ -366,13 +377,13 @@ impl DirtyEvaluator {
                             }
                             let dirty = runtime.node(node).mtime().is_missing();
                             runtime.node_mut(node).set_dirty(dirty);
-                            self.nodes[node.index()] = VisitState::Done;
+                            self.nodes.set(node.index(), VisitState::Done);
                             continue;
                         };
 
-                        match self.edges[edge.index()] {
+                        match self.edges.get(edge.index()) {
                             VisitState::Done => {
-                                self.nodes[node.index()] = VisitState::Done;
+                                self.nodes.set(node.index(), VisitState::Done);
                                 continue;
                             }
                             VisitState::Active => {
@@ -381,15 +392,15 @@ impl DirtyEvaluator {
                             VisitState::New => {}
                         }
 
-                        self.edges[edge.index()] = VisitState::Active;
+                        self.edges.set(edge.index(), VisitState::Active);
                         let output_count = graph.edge(edge).out.len();
                         if runtime.edge(edge).restat_clean() {
                             for index in 0..output_count {
                                 let output = graph.edge(edge).out[index];
                                 runtime.node_mut(output).set_dirty(false);
-                                self.nodes[output.index()] = VisitState::Done;
+                                self.nodes.set(output.index(), VisitState::Done);
                             }
-                            self.edges[edge.index()] = VisitState::Done;
+                            self.edges.set(edge.index(), VisitState::Done);
                             continue;
                         }
 
@@ -398,7 +409,7 @@ impl DirtyEvaluator {
                             if runtime.node(output).mtime().is_unobserved() {
                                 nodestat_with(graph, runtime, output, stat)?;
                             }
-                            self.nodes[output.index()] = VisitState::Active;
+                            self.nodes.set(output.index(), VisitState::Active);
                         }
                         work.push(Work::Finish(edge));
                         for index in (0..graph.edge(edge).input.len()).rev() {
@@ -411,9 +422,9 @@ impl DirtyEvaluator {
                     let output_count = graph.edge(edge).out.len();
                     for index in 0..output_count {
                         let output = graph.edge(edge).out[index];
-                        self.nodes[output.index()] = VisitState::Done;
+                        self.nodes.set(output.index(), VisitState::Done);
                     }
-                    self.edges[edge.index()] = VisitState::Done;
+                    self.edges.set(edge.index(), VisitState::Done);
                 }
             }
         }
@@ -433,16 +444,15 @@ pub(crate) fn recompute_dirty_with<F>(
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    let mut evaluator = DirtyEvaluator {
-        nodes: vec![VisitState::New; graph.nodes.len()],
-        edges: vec![VisitState::New; graph.edges.len()],
-    };
+    let mut evaluator = DirtyEvaluator::default();
+    evaluator.begin(graph);
     evaluator.evaluate(graph, runtime, node, stat)
 }
 
 pub(crate) fn recompute_dirty_with_validations<F>(
     graph: &Graph,
     runtime: &mut RuntimeState,
+    scratch: &mut TraversalScratch,
     node: NodeId,
     stat: &mut F,
 ) -> Result<Vec<NodeId>, GraphError>
@@ -455,14 +465,11 @@ where
         RecordValidation(NodeId),
     }
 
-    let mut evaluator = DirtyEvaluator {
-        nodes: vec![VisitState::New; graph.nodes.len()],
-        edges: vec![VisitState::New; graph.edges.len()],
-    };
-    evaluator.evaluate(graph, runtime, node, stat)?;
+    scratch.evaluator.begin(graph);
+    scratch.evaluator.evaluate(graph, runtime, node, stat)?;
+    scratch.seen_nodes.begin(graph.nodes.len());
+    scratch.seen_edges.begin(graph.edges.len());
     let mut validations = Vec::new();
-    let mut seen_nodes = vec![false; graph.nodes.len()];
-    let mut seen_edges = vec![false; graph.edges.len()];
     let mut work = vec![Work::Enter(node)];
     while let Some(item) = work.pop() {
         match item {
@@ -470,7 +477,7 @@ where
                 let Some(edge) = graph.node(node).gen else {
                     continue;
                 };
-                if std::mem::replace(&mut seen_edges[edge.index()], true) {
+                if scratch.seen_edges.replace(edge.index()) {
                     continue;
                 }
                 for index in (0..graph.edge(edge).validation.len()).rev() {
@@ -481,10 +488,12 @@ where
                 }
             }
             Work::EvaluateValidation(validation) => {
-                if std::mem::replace(&mut seen_nodes[validation.index()], true) {
+                if scratch.seen_nodes.replace(validation.index()) {
                     continue;
                 }
-                evaluator.evaluate(graph, runtime, validation, stat)?;
+                scratch
+                    .evaluator
+                    .evaluate(graph, runtime, validation, stat)?;
                 work.push(Work::RecordValidation(validation));
                 work.push(Work::Enter(validation));
             }
@@ -1210,8 +1219,14 @@ mod tests {
         };
         let output = nodeget(&graph, b"out").unwrap();
         let mut runtime = RuntimeState::new(&graph);
-        let validations =
-            recompute_dirty_with_validations(&graph, &mut runtime, output, &mut stat).unwrap();
+        let validations = recompute_dirty_with_validations(
+            &graph,
+            &mut runtime,
+            &mut TraversalScratch::default(),
+            output,
+            &mut stat,
+        )
+        .unwrap();
         assert_eq!(validations.len(), 1);
         assert!(runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
         assert!(runtime.node(nodeget(&graph, b"validate").unwrap()).dirty());
@@ -1230,8 +1245,14 @@ mod tests {
         let mut stat = |_path: &Path| Ok(0);
         let output = nodeget(&graph, b"out").unwrap();
         let mut runtime = RuntimeState::new(&graph);
-        let validations =
-            recompute_dirty_with_validations(&graph, &mut runtime, output, &mut stat).unwrap();
+        let validations = recompute_dirty_with_validations(
+            &graph,
+            &mut runtime,
+            &mut TraversalScratch::default(),
+            output,
+            &mut stat,
+        )
+        .unwrap();
         assert!(!runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
         assert_eq!(validations.len(), 1);
         assert_eq!(graph.node(validations[0]).path.as_bytes(), b"valid");

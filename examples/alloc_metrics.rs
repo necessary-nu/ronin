@@ -246,6 +246,26 @@ fn dependency_log(directory: &Path) -> Result<Workload, String> {
     })
 }
 
+/// Scan many explicit targets in one invocation.
+///
+/// Every other workload names one target, so each scan traverses the graph
+/// once and per-traversal scratch never repeats. Naming many targets is the
+/// shape that repeated traversal actually takes, as do restat completions and
+/// dyndep reloads.
+const MULTI_TARGETS: usize = 200;
+
+fn multi_target_scan(directory: &Path) -> io::Result<Workload> {
+    workloads::wide_noop(directory)?;
+    Ok(Workload {
+        name: "multi-target-scan",
+        directory: directory.to_owned(),
+        arguments: (0..MULTI_TARGETS)
+            .map(|index| format!("leaf/{index}"))
+            .collect(),
+        build_statements: MULTI_TARGETS,
+    })
+}
+
 /// Scan edges whose dependencies come from depfiles rather than the deps log.
 ///
 /// `dependency-log-load` measures `.ninja_deps` ingestion, which never parses a
@@ -317,6 +337,7 @@ fn workload_catalog(root: &Path) -> Result<Vec<Workload>, String> {
         path_canonicalization(&root.join("canonicalization")).map_err(|error| error.to_string())?,
         dependency_log(&root.join("dependency-log"))?,
         depfile_scan(&root.join("depfile-scan"))?,
+        multi_target_scan(&root.join("multi-target")).map_err(|error| error.to_string())?,
         scheduler(&root.join("scheduler")).map_err(|error| error.to_string())?,
     ])
 }

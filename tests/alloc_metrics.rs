@@ -11,6 +11,7 @@ fn allocation_harness_and_recorded_baseline_remain_complete() {
         "path-canonicalization",
         "dependency-log-load",
         "depfile-scan",
+        "multi-target-scan",
         "scheduler-barrier",
     ] {
         assert!(HARNESS.contains(workload), "missing workload {workload}");

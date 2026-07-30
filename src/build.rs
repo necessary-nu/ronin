@@ -3,7 +3,7 @@
 use crate::error::{BuildError, BuildOperation, ProcessError};
 use crate::graph::{
     edgeadddeps, edgehash, nodeget, nodestat_with, recompute_dirty_with_validations,
-    recompute_edge_dirty_with, EdgeId, Graph, NodeId, PathStyle,
+    recompute_edge_dirty_with, EdgeId, Graph, NodeId, PathStyle, TraversalScratch,
 };
 use crate::os::RealDiskInterface;
 use crate::runtime::{FileTime, RuntimeState};
@@ -187,6 +187,7 @@ pub(crate) struct Plan {
     running: Vec<bool>,
     completed: Vec<bool>,
     pool_occupancy: Vec<PoolOccupancy>,
+    dependency_marks: Vec<TraversalMark>,
     completed_count: usize,
     failures: usize,
 }
@@ -206,6 +207,8 @@ impl Plan {
         self.completed.resize(edge_count, false);
         self.pool_occupancy
             .resize(graph.pool_count(), PoolOccupancy::default());
+        self.dependency_marks
+            .resize(edge_count, TraversalMark::UNMARKED);
     }
 
     // [spec:samurai:def:build.buildreset-fn]
@@ -317,7 +320,9 @@ impl Plan {
             dependents.clear();
         }
         self.ready.clear();
-        let mut dependency_marks = vec![TraversalMark::UNMARKED; graph.edge_count()];
+        // Marks persist across rebuilds, so a stale mark from the previous
+        // frontier would wrongly suppress a dependency; reset before reuse.
+        self.dependency_marks.fill(TraversalMark::UNMARKED);
         for index in 0..graph.edge_count() {
             let edge = EdgeId::from_index(index);
             if !self.wanted[index] || self.completed[index] {
@@ -329,9 +334,9 @@ impl Plan {
                 };
                 if self.wanted[generator.index()]
                     && !self.completed[generator.index()]
-                    && !dependency_marks[generator.index()].is_marked_for(edge)
+                    && !self.dependency_marks[generator.index()].is_marked_for(edge)
                 {
-                    dependency_marks[generator.index()].mark(edge);
+                    self.dependency_marks[generator.index()].mark(edge);
                     self.pending[index] += 1;
                     self.dependents[generator.index()].push(edge);
                 }
@@ -496,6 +501,8 @@ pub(crate) struct Builder<'a> {
     options: BuildOptions,
     disk: RealDiskInterface,
     plan: Plan,
+    scratch: TraversalScratch,
+    visited_edges: crate::graph::MarkSet,
     build_log: Option<&'a mut crate::log::BuildLog>,
     deps_log: Option<&'a mut crate::deps::DepsLog>,
     targets: Vec<NodeId>,
@@ -536,6 +543,8 @@ impl<'a> Builder<'a> {
             options,
             disk,
             plan: Plan::default(),
+            scratch: TraversalScratch::default(),
+            visited_edges: crate::graph::MarkSet::default(),
             build_log,
             deps_log,
             targets: Vec::new(),
@@ -660,7 +669,7 @@ impl<'a> Builder<'a> {
         }
 
         let disk = self.disk.clone();
-        let mut visited = vec![false; self.graph.edge_count()];
+        self.visited_edges.begin(self.graph.edge_count());
         let mut work = vec![Work::Enter(target)];
         while let Some(item) = work.pop() {
             match item {
@@ -674,7 +683,7 @@ impl<'a> Builder<'a> {
                         self.runtime.node_mut(node).set_dirty(dirty);
                         continue;
                     };
-                    if std::mem::replace(&mut visited[edge.index()], true) {
+                    if self.visited_edges.replace(edge.index()) {
                         continue;
                     }
                     work.push(if self.runtime.edge(edge).deps_loaded() {
@@ -801,13 +810,13 @@ impl<'a> Builder<'a> {
     }
 
     fn prepare_build_log_for(&mut self, node: NodeId) -> BuildResult<()> {
-        let mut visited = vec![false; self.graph.edge_count()];
+        self.visited_edges.begin(self.graph.edge_count());
         let mut work = vec![node];
         while let Some(node) = work.pop() {
             let Some(edge) = self.graph.node(node).gen else {
                 continue;
             };
-            if std::mem::replace(&mut visited[edge.index()], true) {
+            if self.visited_edges.replace(edge.index()) {
                 continue;
             }
             self.refresh_command_hash(edge)?;
@@ -881,8 +890,13 @@ impl<'a> Builder<'a> {
         }
         let disk = self.disk.clone();
         let mut stat = |path: &Path| disk.stat(path);
-        let validations =
-            recompute_dirty_with_validations(self.graph, &mut self.runtime, node, &mut stat)?;
+        let validations = recompute_dirty_with_validations(
+            self.graph,
+            &mut self.runtime,
+            &mut self.scratch,
+            node,
+            &mut stat,
+        )?;
         self.plan
             .add_target(self.graph, &self.runtime, node)
             .map_err(|error| {
@@ -1267,16 +1281,22 @@ impl<'a> Builder<'a> {
             queue.extend(output.uses.iter().copied());
             queue.extend(output.validation_uses.iter().copied());
         }
-        let mut visited = vec![false; self.graph.edge_count()];
+        self.visited_edges.begin(self.graph.edge_count());
         let disk = self.disk.clone();
         while let Some(dependent) = queue.pop() {
-            if std::mem::replace(&mut visited[dependent.index()], true) {
+            if self.visited_edges.replace(dependent.index()) {
                 continue;
             }
             for index in 0..self.graph.edge(dependent).out.len() {
                 let output = self.graph.edge(dependent).out[index];
                 let mut stat = |path: &Path| disk.stat(path);
-                recompute_dirty_with_validations(self.graph, &mut self.runtime, output, &mut stat)?;
+                recompute_dirty_with_validations(
+                    self.graph,
+                    &mut self.runtime,
+                    &mut self.scratch,
+                    output,
+                    &mut stat,
+                )?;
             }
             for index in 0..self.graph.edge(dependent).out.len() {
                 let output = self.graph.edge(dependent).out[index];
@@ -1344,6 +1364,7 @@ impl<'a> Builder<'a> {
             validations.extend(recompute_dirty_with_validations(
                 self.graph,
                 &mut self.runtime,
+                &mut self.scratch,
                 node,
                 &mut stat,
             )?);

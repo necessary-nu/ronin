@@ -1471,12 +1471,27 @@ children (
             {
                 id ronin-traversal-scratch
                 title "Reuse generation-stamped traversal marks and CSR dependents"
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:12:29.376527704Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Per-call O(V+E) scratch allocations: recompute_dirty_with_validations allocates four graph-sized arrays per target (src/graph.rs:450-457), load_depfiles_for and prepare_build_log_for allocate vec![false; edges] per target (build.rs:668, 809), rebuild_frontier allocates dependency_marks per frontier rebuild (build.rs:322), and recompute_consumers_after_restat allocates vec![false; edges] per restat-pruned edge completion (build.rs:1275). Keep these as generation-stamped marks owned by Builder — the TraversalMark pattern already in build.rs:143-157 — cleared in O(1) by bumping an epoch. Additionally Plan.dependents is Vec<Vec<EdgeId>> (build.rs:185) rebuilt per frontier; a CSR layout (counts pass, prefix sum, fill) removes one heap allocation per edge with dependents."
+                    }
+
+                    {
+                        at 2026-07-30T13:44:33.665911326Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T13:57:20.679493787Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
