@@ -4,11 +4,11 @@ mod edge;
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
-use crate::htab::rapidhashv1_parts;
+use crate::htab::{rapidhashv1, RapidHashMap};
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{BStr, BString, ByteSlice};
 use edge::EdgePartitions;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 
@@ -92,9 +92,11 @@ pub(crate) struct Edge {
 // [spec:samurai:sem:graph.graphinit-fn]
 #[derive(Default)]
 pub(crate) struct Graph {
-    // RandomState protects manifest-controlled paths from collision attacks.
-    // Observable graph order comes from the arenas, never map iteration.
-    node_by_path: HashMap<Vec<u8>, NodeId>,
+    // Fixed-seed rapidhash follows Ninja and C samurai: manifests are trusted
+    // input (executing them runs arbitrary commands), so SipHash DoS
+    // hardening buys nothing here. Observable graph order comes from the
+    // arenas, never map iteration.
+    node_by_path: RapidHashMap<Vec<u8>, NodeId>,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
     environments: Vec<Environment>,
@@ -305,13 +307,14 @@ where
         let mut oldest_recorded_output: Option<FileTime> = None;
         for output in &edge_data.out {
             let output = runtime.node(*output);
-            oldest_output =
-                Some(oldest_output.map_or(output.mtime(), |oldest| oldest.min(output.mtime())));
+            oldest_output = Some(
+                oldest_output.map_or_else(|| output.mtime(), |oldest| oldest.min(output.mtime())),
+            );
             if output.log_mtime().is_observed() {
-                oldest_recorded_output = Some(
-                    oldest_recorded_output
-                        .map_or(output.log_mtime(), |oldest| oldest.min(output.log_mtime())),
-                );
+                oldest_recorded_output = Some(oldest_recorded_output.map_or_else(
+                    || output.log_mtime(),
+                    |oldest| oldest.min(output.log_mtime()),
+                ));
             }
         }
         let oldest_output = oldest_output.unwrap_or(FileTime::MISSING);
@@ -573,8 +576,8 @@ pub(crate) fn edgehash(
         return cached;
     }
     let hash = rspfile_content.filter(|rsp| !rsp.is_empty()).map_or_else(
-        || rapidhashv1_parts(&[command.as_bytes()]),
-        |rsp| rapidhashv1_parts(&[command.as_bytes(), b";rspfile=", rsp.as_bytes()]),
+        || rapidhashv1(command.as_bytes()),
+        |rsp| rapidhashv1(&[command.as_bytes(), b";rspfile=", rsp.as_bytes()][..]),
     );
     let hash = CommandHash::from_raw(hash);
     runtime.edge_mut(edge).set_command_hash(hash);

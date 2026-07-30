@@ -3,6 +3,7 @@
 use crate::env::edgevar;
 use crate::error::{DepfileProblem, PersistenceError, PersistenceOperation};
 use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId, PathStyle};
+use crate::htab::RapidHashMap;
 use crate::runtime::RuntimeState;
 use crate::util::{BString, ByteSlice};
 use std::collections::{HashMap, HashSet};
@@ -126,7 +127,7 @@ type DepfileRule = (Vec<Vec<u8>>, Vec<Vec<u8>>);
 
 #[derive(Default)]
 struct OrderedPaths {
-    indices: HashMap<Vec<u8>, usize>,
+    indices: RapidHashMap<Vec<u8>, usize>,
 }
 
 impl OrderedPaths {

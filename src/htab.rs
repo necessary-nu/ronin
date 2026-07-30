@@ -3,23 +3,21 @@
 // [spec:samurai:def:htab.getle32-fn]
 // [spec:samurai:sem:htab.getle32-fn]
 fn getle32(bytes: &[u8]) -> u32 {
-    u32::from(bytes[0])
-        | (u32::from(bytes[1]) << 8)
-        | (u32::from(bytes[2]) << 16)
-        | (u32::from(bytes[3]) << 24)
+    u32::from_le_bytes(
+        bytes[..4]
+            .try_into()
+            .expect("rapidhash reads four in-bounds bytes"),
+    )
 }
 
 // [spec:samurai:def:htab.getle64-fn]
 // [spec:samurai:sem:htab.getle64-fn]
 fn getle64(bytes: &[u8]) -> u64 {
-    u64::from(bytes[0])
-        | (u64::from(bytes[1]) << 8)
-        | (u64::from(bytes[2]) << 16)
-        | (u64::from(bytes[3]) << 24)
-        | (u64::from(bytes[4]) << 32)
-        | (u64::from(bytes[5]) << 40)
-        | (u64::from(bytes[6]) << 48)
-        | (u64::from(bytes[7]) << 56)
+    u64::from_le_bytes(
+        bytes[..8]
+            .try_into()
+            .expect("rapidhash reads eight in-bounds bytes"),
+    )
 }
 
 // [spec:samurai:def:htab.mum-fn]
@@ -39,38 +37,10 @@ fn mix(a: u64, b: u64) -> u64 {
     low ^ high
 }
 
-struct SegmentedBytes<'a> {
-    parts: &'a [&'a [u8]],
-    len: usize,
-}
-
-impl<'a> SegmentedBytes<'a> {
-    fn new(parts: &'a [&'a [u8]]) -> Self {
-        Self {
-            parts,
-            len: parts.iter().map(|part| part.len()).sum(),
-        }
-    }
-
-    fn byte(&self, mut index: usize) -> u8 {
-        for part in self.parts {
-            if index < part.len() {
-                return part[index];
-            }
-            index -= part.len();
-        }
-        unreachable!("segmented byte index is in bounds")
-    }
-
-    fn contiguous(&self, mut index: usize, len: usize) -> Option<&[u8]> {
-        for part in self.parts {
-            if index < part.len() {
-                return part.get(index..index + len);
-            }
-            index -= part.len();
-        }
-        None
-    }
+pub(crate) trait RapidBytes {
+    fn len(&self) -> usize;
+    fn byte(&self, index: usize) -> u8;
+    fn contiguous(&self, index: usize, len: usize) -> Option<&[u8]>;
 
     fn read_u32(&self, index: usize) -> u32 {
         if let Some(bytes) = self.contiguous(index, 4) {
@@ -90,32 +60,73 @@ impl<'a> SegmentedBytes<'a> {
     }
 }
 
-/// Hash a logical byte sequence without first concatenating its segments.
-pub(crate) fn rapidhashv1_parts(parts: &[&[u8]]) -> u64 {
-    const SECRET: [u64; 3] = [
-        0x2d35_8dcc_aa6c_78a5,
-        0x8bb8_4b93_962e_acc9,
-        0x4b33_a62e_d433_d4a3,
-    ];
+impl RapidBytes for [u8] {
+    fn len(&self) -> usize {
+        <[u8]>::len(self)
+    }
 
-    let bytes = SegmentedBytes::new(parts);
+    fn byte(&self, index: usize) -> u8 {
+        self[index]
+    }
+
+    fn contiguous(&self, index: usize, len: usize) -> Option<&[u8]> {
+        self.get(index..index.checked_add(len)?)
+    }
+}
+
+impl RapidBytes for [&[u8]] {
+    fn len(&self) -> usize {
+        self.iter().map(|part| part.len()).sum()
+    }
+
+    fn byte(&self, mut index: usize) -> u8 {
+        for part in self {
+            if index < part.len() {
+                return part[index];
+            }
+            index -= part.len();
+        }
+        unreachable!("segmented byte index is in bounds")
+    }
+
+    fn contiguous(&self, mut index: usize, len: usize) -> Option<&[u8]> {
+        for part in self {
+            if index < part.len() {
+                return part.get(index..index.checked_add(len)?);
+            }
+            index -= part.len();
+        }
+        None
+    }
+}
+
+const SECRET: [u64; 3] = [
+    0x2d35_8dcc_aa6c_78a5,
+    0x8bb8_4b93_962e_acc9,
+    0x4b33_a62e_d433_d4a3,
+];
+
+// [spec:samurai:def:htab.rapidhashv1-fn]
+// [spec:samurai:sem:htab.rapidhashv1-fn]
+/// Hash a logical byte sequence supplied contiguously or as segments.
+pub(crate) fn rapidhashv1(bytes: &(impl RapidBytes + ?Sized)) -> u64 {
+    let len = bytes.len();
     let mut pos = 0usize;
-    let mut end = bytes.len;
+    let mut end = len;
     let mut seed = [0u64; 3];
-    seed[0] = 0xbdd8_9aa9_8270_4029
-        ^ mix(0xbdd8_9aa9_8270_4029 ^ SECRET[0], SECRET[1])
-        ^ bytes.len as u64;
+    seed[0] =
+        0xbdd8_9aa9_8270_4029 ^ mix(0xbdd8_9aa9_8270_4029 ^ SECRET[0], SECRET[1]) ^ len as u64;
 
-    match bytes.len {
+    match len {
         0 => {}
         1..=3 => {
             seed[1] = (u64::from(bytes.byte(0)) << 56)
-                | (u64::from(bytes.byte(usize::from(bytes.len > 1))) << 32)
+                | (u64::from(bytes.byte(usize::from(len > 1))) << 32)
                 | u64::from(bytes.byte(end - 1));
         }
         4..=16 => {
             seed[1] = (u64::from(bytes.read_u32(pos)) << 32) | u64::from(bytes.read_u32(end - 4));
-            if bytes.len >= 8 {
+            if len >= 8 {
                 pos += 4;
                 end -= 4;
             }
@@ -124,7 +135,7 @@ pub(crate) fn rapidhashv1_parts(parts: &[&[u8]]) -> u64 {
         _ => {
             seed[1] = seed[0];
             seed[2] = seed[0];
-            if bytes.len > 48 {
+            if len > 48 {
                 while end - pos >= 48 {
                     for i in 0..3 {
                         seed[i] = mix(
@@ -154,17 +165,44 @@ pub(crate) fn rapidhashv1_parts(parts: &[&[u8]]) -> u64 {
     seed[1] ^= SECRET[1];
     seed[2] ^= seed[0];
     let (low, high) = mum(seed[1], seed[2]);
-    mix(low ^ SECRET[0] ^ bytes.len as u64, high ^ SECRET[1])
+    mix(low ^ SECRET[0] ^ len as u64, high ^ SECRET[1])
 }
 
-// [spec:samurai:def:htab.rapidhashv1-fn]
-// [spec:samurai:sem:htab.rapidhashv1-fn]
-#[cfg(test)]
-pub(crate) fn rapidhashv1(bytes: &[u8]) -> u64 {
-    if bytes.is_empty() {
-        0x5a6e_f770_74eb_c84b
-    } else {
-        rapidhashv1_parts(&[bytes])
+/// One-shot rapidhash adapted to std's streaming [`Hasher`] contract.
+///
+/// Build manifests are trusted input — executing them runs arbitrary
+/// commands — so path- and log-keyed maps follow Ninja and C samurai in
+/// using a fixed-seed hash instead of `SipHash` denial-of-service hardening.
+/// These maps do not expose iteration order as program semantics.
+#[derive(Default)]
+pub(crate) struct RapidHasher(u64);
+
+type RapidBuildHasher = std::hash::BuildHasherDefault<RapidHasher>;
+pub(crate) type RapidHashMap<K, V> = std::collections::HashMap<K, V, RapidBuildHasher>;
+
+impl std::hash::Hasher for RapidHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        self.0 = self.0.rotate_left(21) ^ rapidhashv1(bytes);
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.0 = self.0.rotate_left(21) ^ value.wrapping_mul(SECRET[2]);
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
     }
 }
 
@@ -174,7 +212,38 @@ mod tests {
 
     #[test]
     fn hashes_the_reference_empty_input() {
-        assert_eq!(rapidhashv1(b""), 0x5a6e_f770_74eb_c84b);
+        assert_eq!(rapidhashv1(b"".as_slice()), 0x5a6e_f770_74eb_c84b);
+    }
+
+    #[test]
+    fn streaming_hasher_is_deterministic_and_write_sensitive() {
+        use std::hash::Hasher as _;
+
+        let hash = |writes: &[&[u8]]| {
+            let mut hasher = RapidHasher::default();
+            for write in writes {
+                hasher.write(write);
+            }
+            hasher.finish()
+        };
+        assert_eq!(hash(&[b"out/main.o"]), hash(&[b"out/main.o"]));
+        assert_ne!(hash(&[b"out/main.o"]), hash(&[b"out/main2.o"]));
+        assert_ne!(hash(&[b"ab", b"c"]), hash(&[b"a", b"bc"]));
+
+        let mut integers = RapidHasher::default();
+        integers.write_usize(7);
+        let mut other = RapidHasher::default();
+        other.write_usize(8);
+        assert_ne!(integers.finish(), other.finish());
+    }
+
+    #[test]
+    fn rapid_map_preserves_borrowed_byte_lookup() {
+        let mut paths = RapidHashMap::default();
+        paths.insert(b"out/main.o".to_vec(), 7);
+
+        assert_eq!(paths.get(b"out/main.o".as_slice()), Some(&7));
+        assert_eq!(paths.get(b"out/missing.o".as_slice()), None);
     }
 
     #[test]
@@ -184,7 +253,7 @@ mod tests {
             let expected = rapidhashv1(&bytes[..end]);
             for split in 0..=end {
                 assert_eq!(
-                    rapidhashv1_parts(&[&bytes[..split], &bytes[split..end]]),
+                    rapidhashv1(&[&bytes[..split], &bytes[split..end]][..]),
                     expected,
                     "end={end}, split={split}"
                 );

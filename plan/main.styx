@@ -1259,12 +1259,34 @@ children (
             {
                 id ronin-fast-hashing
                 title "Adopt rapidhash-keyed maps for paths and log entries"
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:10:36.547110155Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "node_by_path (src/graph.rs:97), BuildLog.entries (src/log.rs:27), and the depfile dedup maps (src/deps.rs:127-149) all pay SipHash via std RandomState. The comment at graph.rs:95 cites collision-attack protection, but the adversary would be the manifest ronin is about to execute arbitrary commands from — hashDoS is outside that threat model, and both ninja and C samurai use fixed hashes. Swap to the in-tree rapidhash (src/htab.rs) as a BuildHasher; if the hardening property is still wanted, seed rapidhash randomly, which keeps it at a fraction of SipHash cost."
+                    }
+
+                    {
+                        at 2026-07-30T09:36:47.625050296Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T11:54:24.795162129Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Adopt a fixed-seed RapidHash BuildHasher for Graph::node_by_path, BuildLog::entries, and depfile OrderedPaths while retaining RandomState for unrelated maps. Share one monomorphized RapidHash core across contiguous and segmented bytes, and use native-endian byte-array loads so the contiguous map-key path does not pay the segmented adapter's per-read overhead. A five-sample release probe over 4,000 representative paths reduced median insertion time from 62.061 ms to 48.917 ms and borrowed-lookup time from 118.622 ms to 94.813 ms. Allocation requests remain unchanged on all six recorded workloads, as expected. The exact final tree passes all configured nplan checks and both the 15-sample and final 7-sample six-workload performance gates against pinned Ninja."
+                    }
+
+                    {
+                        at 2026-07-30T11:54:24.825397939Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

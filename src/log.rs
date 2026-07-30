@@ -2,9 +2,10 @@
 
 use crate::error::{PersistenceError, PersistenceOperation};
 use crate::graph::{EdgeId, Graph, NodeId};
+use crate::htab::RapidHashMap;
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{BStr, BString, ByteSlice};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -24,7 +25,7 @@ pub(crate) struct LogEntry {
 pub(crate) struct BuildLog {
     writer: Option<BufWriter<File>>,
     path: PathBuf,
-    pub(crate) entries: HashMap<BString, LogEntry>,
+    pub(crate) entries: RapidHashMap<BString, LogEntry>,
 }
 
 impl BuildLog {
@@ -38,7 +39,7 @@ impl BuildLog {
         );
         let read_file = OpenOptions::new().read(true).open(&path);
         let mut valid = false;
-        let mut entries = HashMap::new();
+        let mut entries = RapidHashMap::default();
         match read_file {
             Ok(read_file) => {
                 let mut reader = BufReader::new(read_file);
@@ -192,7 +193,7 @@ fn write_entry(writer: &mut dyn Write, entry: &LogEntry) -> io::Result<()> {
 
 fn rewrite_inner(
     log: &mut BuildLog,
-    entries: HashMap<BString, LogEntry>,
+    entries: RapidHashMap<BString, LogEntry>,
     #[cfg(test)] fault: Option<crate::persistence::RewriteStage>,
 ) -> io::Result<()> {
     log.writer.as_mut().expect("open build log").flush()?;
@@ -217,7 +218,7 @@ fn rewrite_inner(
     Ok(())
 }
 
-fn rewrite(log: &mut BuildLog, entries: HashMap<BString, LogEntry>) -> io::Result<()> {
+fn rewrite(log: &mut BuildLog, entries: RapidHashMap<BString, LogEntry>) -> io::Result<()> {
     #[cfg(test)]
     {
         rewrite_inner(log, entries, None)
@@ -231,7 +232,7 @@ fn rewrite(log: &mut BuildLog, entries: HashMap<BString, LogEntry>) -> io::Resul
 #[cfg(test)]
 fn rewrite_with_fault(
     log: &mut BuildLog,
-    entries: HashMap<BString, LogEntry>,
+    entries: RapidHashMap<BString, LogEntry>,
     stage: crate::persistence::RewriteStage,
 ) -> io::Result<()> {
     rewrite_inner(log, entries, Some(stage))
