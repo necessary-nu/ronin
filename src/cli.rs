@@ -1162,10 +1162,7 @@ fn run_bytes(
     let mut parse_elapsed = std::time::Duration::ZERO;
     for _ in 0..100 {
         let mut graph = crate::graph::Graph::default();
-        let mut parser = crate::parse::Parser {
-            options: invocation.parse_options,
-            ..Default::default()
-        };
+        let mut parser = crate::parse::Parser::with_options(invocation.parse_options);
         let mut state = crate::env::EnvState::new(&mut graph);
         let parse_started = std::time::Instant::now();
         crate::parse::parse(

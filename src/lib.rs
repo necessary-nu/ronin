@@ -23,6 +23,7 @@ mod os;
 mod parse;
 mod persistence;
 mod scan;
+mod source;
 mod subprocess;
 mod tool;
 mod util;

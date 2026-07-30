@@ -891,12 +891,22 @@ children (
                 id ronin-span-frontend
                 title "Complete the borrowed byte-span manifest frontend"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.borrowed-span-frontend])
+                }
                 log (
                     {
                         at 2026-07-29T22:58:22.789651447Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Bring the implementation into conformance with the approved byte-span-parser decision: retain source buffers with source identity, return tokens carrying byte spans, borrow lexemes and evaluation parts where lifetimes permit, intern only graph-owned values, replace Scanner scratch side channels and mem::take handoffs with returned values, and replace scanpipe integer masks with typed separators and allowed sets. Measure allocations, command-evaluation runtime, and peak RSS."
+                    }
+
+                    {
+                        at 2026-07-30T00:24:18.565359457Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

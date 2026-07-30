@@ -57,6 +57,7 @@ elements (
         owns ([spec:samurai:req:compat.manifest-semantics])
         exposes (
             "src/scan.rs"
+            "src/source.rs"
             "src/parse.rs"
             "src/dyndep.rs"
         )

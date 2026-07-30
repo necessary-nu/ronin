@@ -2,6 +2,7 @@
 
 use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId};
+use crate::scan::{ScannedEvalPart, ScannedEvalString};
 use crate::util::{BString, EvalPart, EvalString};
 use std::collections::BTreeMap;
 
@@ -142,12 +143,16 @@ fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), Grap
 
 // [spec:samurai:def:env.envvar-fn]
 // [spec:samurai:sem:env.envvar-fn]
-pub(crate) fn envvar(graph: &Graph, environment: EnvironmentId, name: &str) -> Option<BString> {
+pub(crate) fn envvar<'graph>(
+    graph: &'graph Graph,
+    environment: EnvironmentId,
+    name: &str,
+) -> Option<&'graph BString> {
     let mut current = Some(environment);
     while let Some(scope) = current {
         let environment = graph.environment(scope);
         if let Some(value) = environment.bindings.get(name) {
-            return Some(value.clone());
+            return Some(value);
         }
         current = environment.parent;
     }
@@ -181,19 +186,35 @@ fn merge(parts: &[BString]) -> BString {
 
 // [spec:samurai:def:env.enveval-fn]
 // [spec:samurai:sem:env.enveval-fn]
-pub(crate) fn enveval(graph: &Graph, environment: EnvironmentId, string: &EvalString) -> BString {
-    let mut parts = Vec::new();
+pub(crate) fn enveval(
+    graph: &Graph,
+    environment: EnvironmentId,
+    string: &ScannedEvalString<'_>,
+) -> BString {
+    let capacity = string
+        .parts
+        .iter()
+        .map(|part| match part {
+            ScannedEvalPart::Literal(value) => value.len(),
+            ScannedEvalPart::EscapedByte(_) => 1,
+            ScannedEvalPart::Variable(name) => {
+                envvar(graph, environment, name).map_or(0, |value| value.len())
+            }
+        })
+        .sum();
+    let mut output = Vec::with_capacity(capacity);
     for part in &string.parts {
         match part {
-            EvalPart::Literal(value) => parts.push(value.clone()),
-            EvalPart::Variable(name) => {
+            ScannedEvalPart::Literal(value) => output.extend_from_slice(value),
+            ScannedEvalPart::EscapedByte(byte) => output.push(*byte),
+            ScannedEvalPart::Variable(name) => {
                 if let Some(value) = envvar(graph, environment, name) {
-                    parts.push(value);
+                    output.extend_from_slice(value);
                 }
             }
         }
     }
-    merge(&parts)
+    output.into()
 }
 
 // [spec:samurai:def:env.envrule-fn]
@@ -317,7 +338,7 @@ pub(crate) fn edgevar(graph: &Graph, edge: EdgeId, name: &str, escape: bool) -> 
             .and_then(|rule| graph.rule(rule).bindings.get(name))
             .cloned();
         let Some(value) = value else {
-            return envvar(graph, environment, name);
+            return envvar(graph, environment, name).cloned();
         };
         if stack.iter().any(|active| active == name) {
             return None;

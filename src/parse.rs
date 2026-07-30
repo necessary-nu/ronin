@@ -4,21 +4,19 @@ use crate::env::{
     edgevar, envaddrule, enveval, envrule, mkpool, mkrule, poolget, ruleaddvar, EnvState,
     EnvironmentId,
 };
-use crate::error::{ManifestError, ManifestProblem, SourceSpan};
+use crate::error::{ManifestError, ManifestProblem};
 use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId};
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
-    Scanner, Token,
+    AllowedSeparators, ScannedEvalString, Scanner, Separator, Source, TokenKind,
 };
-use crate::util::{canonpath, BStr, BString, ByteSlice, EvalString};
+use crate::util::{canonpath, BStr, BString, ByteSlice};
+use std::sync::Arc;
 
 type ManifestResult<T> = Result<T, ManifestError>;
 
-fn manifest_error(scanner: &Scanner, problem: ManifestProblem) -> ManifestError {
-    ManifestError::at(
-        SourceSpan::new(&scanner.path, scanner.line, scanner.col),
-        problem,
-    )
+fn manifest_error(scanner: &Scanner<'_>, problem: ManifestProblem) -> ManifestError {
+    ManifestError::at(scanner.source_span(scanner.position()), problem)
 }
 
 // [spec:samurai:def:parse.parseoptions]
@@ -33,17 +31,35 @@ pub(crate) struct ParseOptions {
 pub(crate) struct Parser {
     pub(crate) options: ParseOptions,
     pub(crate) defaults: Vec<NodeId>,
+    #[allow(
+        dead_code,
+        reason = "successful parses retain exact source buffers for span-aware consumers"
+    )]
+    sources: Vec<Arc<Source>>,
+}
+
+impl Parser {
+    pub(crate) fn with_options(options: ParseOptions) -> Self {
+        Self {
+            options,
+            ..Self::default()
+        }
+    }
 }
 
 // [spec:samurai:def:parse.parselet-fn]
 // [spec:samurai:sem:parse.parselet-fn]
-fn parselet(scanner: &mut Scanner) -> ManifestResult<(String, EvalString)> {
+fn parselet<'source>(
+    scanner: &mut Scanner<'source>,
+) -> ManifestResult<(&'source str, ScannedEvalString<'source>)> {
     let name = scanname(scanner)?;
     let value = parse_assignment(scanner)?;
-    Ok((name, value))
+    Ok((name.text, value))
 }
 
-fn parse_assignment(scanner: &mut Scanner) -> ManifestResult<EvalString> {
+fn parse_assignment<'source>(
+    scanner: &mut Scanner<'source>,
+) -> ManifestResult<ScannedEvalString<'source>> {
     scanchar(scanner, '=')?;
     let value = scanstring(scanner, false)?.unwrap_or_default();
     scannewline(scanner)?;
@@ -53,12 +69,12 @@ fn parse_assignment(scanner: &mut Scanner) -> ManifestResult<EvalString> {
 // [spec:samurai:def:parse.parserule-fn]
 // [spec:samurai:sem:parse.parserule-fn]
 fn parserule(
-    scanner: &mut Scanner,
+    scanner: &mut Scanner<'_>,
     graph: &mut Graph,
     environment: EnvironmentId,
 ) -> ManifestResult<()> {
-    let name = scanname(scanner)?;
-    let rule = mkrule(graph, name.clone());
+    let name = scanname(scanner)?.text;
+    let rule = mkrule(graph, name.to_owned());
     scannewline(scanner)?;
     let mut command = false;
     let mut rspfile = false;
@@ -66,7 +82,7 @@ fn parserule(
     while scanindent(scanner)? {
         let (name, value) = parselet(scanner)?;
         if !matches!(
-            name.as_str(),
+            name,
             "command"
                 | "depfile"
                 | "dyndep"
@@ -81,33 +97,39 @@ fn parserule(
         ) {
             return Err(manifest_error(
                 scanner,
-                ManifestProblem::UnexpectedRuleVariable { name },
+                ManifestProblem::UnexpectedRuleVariable {
+                    name: name.to_owned(),
+                },
             ));
         }
         command |= name == "command";
         rspfile |= name == "rspfile";
         rspfile_content |= name == "rspfile_content";
-        ruleaddvar(graph, rule, name, value);
+        ruleaddvar(graph, rule, name.to_owned(), value.into_owned());
     }
     if !command {
         return Err(manifest_error(
             scanner,
-            ManifestProblem::RuleMissingCommand { name },
+            ManifestProblem::RuleMissingCommand {
+                name: name.to_owned(),
+            },
         ));
     }
     if rspfile != rspfile_content {
         return Err(manifest_error(
             scanner,
-            ManifestProblem::IncompleteResponseFileBinding { name },
+            ManifestProblem::IncompleteResponseFileBinding {
+                name: name.to_owned(),
+            },
         ));
     }
     Ok(envaddrule(graph, environment, rule)?)
 }
 
 fn evaluated_path(
-    scanner: &Scanner,
+    scanner: &Scanner<'_>,
     graph: &Graph,
-    path: &EvalString,
+    path: &ScannedEvalString<'_>,
     environment: EnvironmentId,
 ) -> ManifestResult<BString> {
     let value = enveval(graph, environment, path);
@@ -117,14 +139,10 @@ fn evaluated_path(
     Ok(value)
 }
 
-fn take_paths(scanner: &mut Scanner) -> Vec<EvalString> {
-    std::mem::take(&mut scanner.paths)
-}
-
 fn node_for(
-    scanner: &Scanner,
+    scanner: &Scanner<'_>,
     graph: &mut Graph,
-    path: &EvalString,
+    path: &ScannedEvalString<'_>,
     environment: EnvironmentId,
 ) -> ManifestResult<NodeId> {
     let mut path = evaluated_path(scanner, graph, path, environment)?;
@@ -139,18 +157,16 @@ fn node_for(
     reason = "a complete Ninja build production shares scanner state and duplicate-output handling"
 )]
 fn parseedge(
-    scanner: &mut Scanner,
+    scanner: &mut Scanner<'_>,
     graph: &mut Graph,
     environment: EnvironmentId,
     state: &EnvState,
     options: ParseOptions,
 ) -> ManifestResult<()> {
-    scanpaths(scanner)?;
-    let mut output_paths = take_paths(scanner);
+    let mut output_paths = scanpaths(scanner)?;
     let explicit_output_count = output_paths.len();
-    if scanpipe(scanner, 1)? == 1 {
-        scanpaths(scanner)?;
-        output_paths.extend(take_paths(scanner));
+    if scanpipe(scanner, AllowedSeparators::IMPLICIT)? == Some(Separator::Implicit) {
+        output_paths.extend(scanpaths(scanner)?);
     }
     if output_paths.is_empty() {
         return Err(manifest_error(
@@ -159,34 +175,30 @@ fn parseedge(
         ));
     }
     scanchar(scanner, ':')?;
-    let rule_name = scanname(scanner)?;
-    let rule = envrule(graph, environment, &rule_name).ok_or_else(|| {
+    let rule_name = scanname(scanner)?.text;
+    let rule = envrule(graph, environment, rule_name).ok_or_else(|| {
         manifest_error(
             scanner,
             ManifestProblem::UndefinedRule {
-                name: rule_name.clone(),
+                name: rule_name.to_owned(),
             },
         )
     })?;
 
-    scanpaths(scanner)?;
-    let mut input_paths = take_paths(scanner);
+    let mut input_paths = scanpaths(scanner)?;
     let inimpidx = input_paths.len();
-    let mut separator = scanpipe(scanner, 1 | 2 | 4)?;
-    if separator == 1 {
-        scanpaths(scanner)?;
-        input_paths.extend(take_paths(scanner));
-        separator = scanpipe(scanner, 2 | 4)?;
+    let mut separator = scanpipe(scanner, AllowedSeparators::INPUTS)?;
+    if separator == Some(Separator::Implicit) {
+        input_paths.extend(scanpaths(scanner)?);
+        separator = scanpipe(scanner, AllowedSeparators::AFTER_IMPLICIT)?;
     }
     let inorderidx = input_paths.len();
-    if separator == 2 {
-        scanpaths(scanner)?;
-        input_paths.extend(take_paths(scanner));
-        separator = scanpipe(scanner, 4)?;
+    if separator == Some(Separator::OrderOnly) {
+        input_paths.extend(scanpaths(scanner)?);
+        separator = scanpipe(scanner, AllowedSeparators::VALIDATION)?;
     }
-    let validation_paths = if separator == 4 {
-        scanpaths(scanner)?;
-        take_paths(scanner)
+    let validation_paths = if separator == Some(Separator::Validation) {
+        scanpaths(scanner)?
     } else {
         Vec::new()
     };
@@ -257,7 +269,7 @@ fn parseedge(
 
     for (name, value) in bindings {
         let value = enveval(graph, edge_env, &value);
-        graph.edge_mut(edge).bindings.insert(name, value);
+        graph.edge_mut(edge).bindings.insert(name.to_owned(), value);
     }
 
     if let Some(pool_name) = edgevar(graph, edge, "pool", true).filter(|pool| !pool.is_empty()) {
@@ -312,7 +324,7 @@ fn parseedge(
 // [spec:samurai:def:parse.parseinclude-fn]
 // [spec:samurai:sem:parse.parseinclude-fn]
 fn parseinclude(
-    scanner: &mut Scanner,
+    scanner: &mut Scanner<'_>,
     graph: &mut Graph,
     parser: &mut Parser,
     environment: EnvironmentId,
@@ -340,13 +352,12 @@ fn parseinclude(
 // [spec:samurai:def:parse.parsedefault-fn]
 // [spec:samurai:sem:parse.parsedefault-fn]
 fn parsedefault(
-    scanner: &mut Scanner,
+    scanner: &mut Scanner<'_>,
     graph: &Graph,
     parser: &mut Parser,
     environment: EnvironmentId,
 ) -> ManifestResult<()> {
-    scanpaths(scanner)?;
-    let targets = take_paths(scanner);
+    let targets = scanpaths(scanner)?;
     scannewline(scanner)?;
     if targets.is_empty() {
         return Err(manifest_error(scanner, ManifestProblem::ExpectedTargetName));
@@ -371,20 +382,22 @@ fn parsedefault(
 // [spec:samurai:def:parse.parsepool-fn]
 // [spec:samurai:sem:parse.parsepool-fn]
 fn parsepool(
-    scanner: &mut Scanner,
+    scanner: &mut Scanner<'_>,
     graph: &mut Graph,
     state: &mut EnvState,
     environment: EnvironmentId,
 ) -> ManifestResult<()> {
-    let name = scanname(scanner)?;
-    let pool = mkpool(graph, state, name)?;
+    let name = scanname(scanner)?.text;
+    let pool = mkpool(graph, state, name.to_owned())?;
     scannewline(scanner)?;
     while scanindent(scanner)? {
         let (name, value) = parselet(scanner)?;
         if name != "depth" {
             return Err(manifest_error(
                 scanner,
-                ManifestProblem::UnexpectedPoolVariable { name },
+                ManifestProblem::UnexpectedPoolVariable {
+                    name: name.to_owned(),
+                },
             ));
         }
         let value = enveval(graph, environment, &value);
@@ -408,7 +421,7 @@ fn parsepool(
 
 // [spec:samurai:def:parse.checkversion-fn]
 // [spec:samurai:sem:parse.checkversion-fn]
-fn checkversion(scanner: &Scanner, version: &BStr) -> ManifestResult<(i32, i32)> {
+fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i32)> {
     let bytes = version.as_bytes();
     let major_end = bytes
         .iter()
@@ -461,28 +474,32 @@ pub(crate) fn parse(
     state: &mut EnvState,
 ) -> ManifestResult<()> {
     let path = name.as_ref().to_owned();
-    let mut scanner = crate::scan::Scanner::from_path(&path)
-        .map_err(|source| ManifestError::read(path, source))?;
+    let source = Source::from_path(&path).map_err(|error| ManifestError::read(&path, error))?;
+    parser.sources.push(Arc::clone(&source));
+    let mut scanner = Scanner::new(&source);
     while let Some(token) = scankeyword(&mut scanner)? {
-        match token {
-            Token::Rule => parserule(&mut scanner, graph, environment)?,
-            Token::Build => parseedge(&mut scanner, graph, environment, state, parser.options)?,
-            Token::Include => parseinclude(&mut scanner, graph, parser, environment, state, false)?,
-            Token::Subninja => parseinclude(&mut scanner, graph, parser, environment, state, true)?,
-            Token::Default => parsedefault(&mut scanner, graph, parser, environment)?,
-            Token::Pool => parsepool(&mut scanner, graph, state, environment)?,
-            Token::Variable => {
-                let name = scanner
-                    .take_variable()
-                    .expect("variable token carries its name");
+        match token.kind {
+            TokenKind::Rule => parserule(&mut scanner, graph, environment)?,
+            TokenKind::Build => {
+                parseedge(&mut scanner, graph, environment, state, parser.options)?;
+            }
+            TokenKind::Include => {
+                parseinclude(&mut scanner, graph, parser, environment, state, false)?;
+            }
+            TokenKind::Subninja => {
+                parseinclude(&mut scanner, graph, parser, environment, state, true)?;
+            }
+            TokenKind::Default => parsedefault(&mut scanner, graph, parser, environment)?,
+            TokenKind::Pool => parsepool(&mut scanner, graph, state, environment)?,
+            TokenKind::Variable => {
+                let name = token.lexeme.text;
                 let value = parse_assignment(&mut scanner)?;
                 let value = enveval(graph, environment, &value);
                 if name == "ninja_required_version" {
                     let (major, minor) = checkversion(&scanner, BStr::new(value.as_bytes()))?;
-                    scanner.manifest_version_major = major;
-                    scanner.manifest_version_minor = minor;
+                    scanner.set_manifest_version(major, minor);
                 }
-                crate::env::envaddvar(graph, environment, name, value);
+                crate::env::envaddvar(graph, environment, name.to_owned(), value);
             }
         }
     }

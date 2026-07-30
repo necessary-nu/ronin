@@ -1,9 +1,10 @@
 use crate::graph::{EdgeId, NodeId};
+use crate::source::SourceSpan;
 use crate::util::BString;
 use std::error;
 use std::fmt;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitStatus;
 
 /// The subsystem that originated a Ronin error.
@@ -200,23 +201,6 @@ impl error::Error for CliError {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct SourceSpan {
-    pub(crate) path: PathBuf,
-    pub(crate) line: usize,
-    pub(crate) column: usize,
-}
-
-impl SourceSpan {
-    pub(crate) fn new(path: impl AsRef<Path>, line: usize, column: usize) -> Self {
-        Self {
-            path: path.as_ref().to_owned(),
-            line,
-            column,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SeparatorKind {
     Implicit,
@@ -300,7 +284,7 @@ impl fmt::Display for ScanError {
             write!(
                 formatter,
                 "{}:{}:{}: {}",
-                self.span.path.display(),
+                self.span.path().display(),
                 self.span.line,
                 self.span.column,
                 self.kind
@@ -1124,13 +1108,19 @@ mod tests {
     #[test]
     fn scan_error_retains_source_span_when_display_omits_it() {
         let error = ScanError {
-            span: SourceSpan::new("build.ninja", 7, 3),
+            span: SourceSpan::new(
+                crate::source::Source::from_bytes("build.ninja", b"source bytes".to_vec()),
+                4,
+                4,
+                7,
+                3,
+            ),
             kind: ScanErrorKind::UnexpectedEof {
                 after_continuation: false,
             },
         };
         assert_eq!(error.to_string(), "unexpected EOF");
-        assert_eq!(error.span.path, Path::new("build.ninja"));
+        assert_eq!(error.span.path(), std::path::Path::new("build.ninja"));
         assert_eq!((error.span.line, error.span.column), (7, 3));
     }
 }

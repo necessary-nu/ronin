@@ -65,3 +65,16 @@ second work item.
 > diagnostic-string equality as error semantics. Final stdout and stderr
 > writes MUST report real failures while treating `BrokenPipe` as an
 > intentional downstream close.
+
+## Borrowed manifest frontend
+
+> [spec:samurai:req:runtime.borrowed-span-frontend]
+> Ronin MUST retain each manifest source as exact bytes with stable source
+> identity, and every returned lexical token MUST identify its byte span.
+> Lexemes and evaluation fragments MUST borrow from retained sources until a
+> value crosses into graph-owned state, where it is materialized exactly once.
+> Scanner results MUST be returned directly rather than transferred through
+> scratch side channels, and dependency separators and their allowed grammar
+> sets MUST be typed. Allocation count, manifest command-evaluation runtime,
+> and peak RSS MUST be measured against the pre-change implementation while
+> the pinned Ninja suite remains the compatibility oracle.

@@ -188,12 +188,14 @@ fn scanner_and_parser_behaviour() {
         "rule touch\n  command = touch $out\nbuild result: touch input\ndefault result\n",
     )
     .unwrap();
-    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
+    let token = scan::scankeyword(&mut scanner).unwrap().unwrap();
+    assert_eq!(token.kind, scan::TokenKind::Rule);
     assert_eq!(
-        scan::scankeyword(&mut scanner).unwrap(),
-        Some(scan::Token::Rule)
+        (token.lexeme.span.byte_start, token.lexeme.span.byte_end),
+        (0, 4)
     );
-    drop(scanner);
     let mut graph = graph::Graph::default();
     let mut parser = parse::Parser::default();
     let mut state = env::EnvState::new(&mut graph);
@@ -216,22 +218,23 @@ fn scanner_and_parser_behaviour() {
 fn ninja_lexer_read_ident_and_keywords() {
     let path = std::env::temp_dir().join(format!("ronin-ninja-lexer-{}.ninja", std::process::id()));
     fs::write(&path, "rule cat\nbuild output: cat input\n").unwrap();
-    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
     assert_eq!(
-        scan::scankeyword(&mut scanner).unwrap(),
-        Some(scan::Token::Rule)
+        scan::scankeyword(&mut scanner).unwrap().unwrap().kind,
+        scan::TokenKind::Rule
     );
-    assert_eq!(scan::scanname(&mut scanner).unwrap(), "cat");
+    assert_eq!(scan::scanname(&mut scanner).unwrap().text, "cat");
     scan::scannewline(&mut scanner).unwrap();
     assert_eq!(
-        scan::scankeyword(&mut scanner).unwrap(),
-        Some(scan::Token::Build)
+        scan::scankeyword(&mut scanner).unwrap().unwrap().kind,
+        scan::TokenKind::Build
     );
-    drop(scanner);
     let _ = fs::remove_file(path);
 }
 
-fn serialized_eval(value: &util::EvalString) -> String {
+fn serialized_eval(value: &scan::ScannedEvalString<'_>) -> String {
+    let value = value.clone().into_owned();
     let mut output = String::new();
     for part in &value.parts {
         output.push('[');
@@ -261,7 +264,8 @@ fn ninja_lexer_variable_values_and_escapes() {
         "plain text $var $VaR $x\n$ $$ab c$: $\ncde\nfoo baR baz_123 foo-bar\n",
     )
     .unwrap();
-    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
     let value = scan::scanstring(&mut scanner, false).unwrap().unwrap();
     assert_eq!(
         serialized_eval(&value),
@@ -272,9 +276,8 @@ fn ninja_lexer_variable_values_and_escapes() {
     assert_eq!(serialized_eval(&value), "[ $ab c: cde]");
     scan::scannewline(&mut scanner).unwrap();
     for expected in ["foo", "baR", "baz_123", "foo-bar"] {
-        assert_eq!(scan::scanname(&mut scanner).unwrap(), expected);
+        assert_eq!(scan::scanname(&mut scanner).unwrap().text, expected);
     }
-    drop(scanner);
     let _ = fs::remove_file(path);
 }
 
@@ -286,34 +289,34 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
         std::process::id()
     ));
     fs::write(&path, "foo$\nbad $").unwrap();
-    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
     assert!(scan::scanstring(&mut scanner, false)
         .unwrap_err()
         .to_string()
         .contains("invalid $ escape"));
-    drop(scanner);
 
     fs::write(&path, "   \tfoobar\n").unwrap();
-    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
     assert!(scan::scankeyword(&mut scanner)
         .unwrap_err()
         .to_string()
         .contains("tabs are not allowed"));
-    drop(scanner);
 
     fs::write(&path, "foo$\nbar$^newline foo\n").unwrap();
-    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
     assert!(scan::scanstring(&mut scanner, false)
         .unwrap_err()
         .to_string()
         .contains("ninja_required_version"));
-    scanner.manifest_version_minor = 14;
-    drop(scanner);
-    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
-    scanner.manifest_version_minor = 14;
+    scanner.set_manifest_version(1, 14);
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
+    scanner.set_manifest_version(1, 14);
     let value = scan::scanstring(&mut scanner, false).unwrap().unwrap();
     assert_eq!(serialized_eval(&value), "[foobar\nnewline foo]");
-    drop(scanner);
     let _ = fs::remove_file(path);
 }
 
@@ -329,13 +332,13 @@ fn ninja_lexer_dotted_and_braced_variables() {
         concat!("foo.dots $bar.dots $", "{bar.dots}\n# trailing comment"),
     )
     .unwrap();
-    let mut scanner = scan::Scanner::from_path(path.to_str().unwrap()).unwrap();
-    assert_eq!(scan::scanname(&mut scanner).unwrap(), "foo.dots");
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
+    assert_eq!(scan::scanname(&mut scanner).unwrap().text, "foo.dots");
     let value = scan::scanstring(&mut scanner, false).unwrap().unwrap();
     assert_eq!(serialized_eval(&value), "[$bar][.dots ][$bar.dots]");
     scan::scannewline(&mut scanner).unwrap();
     assert_eq!(scan::scankeyword(&mut scanner).unwrap(), None);
-    drop(scanner);
     let _ = fs::remove_file(path);
 }
 

@@ -1,11 +1,13 @@
 //! Ninja version-1 dynamic dependency file parser.
 
-use crate::error::{ManifestError, ScanError, SourceSpan};
+use crate::error::{ManifestError, ScanError};
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
 use crate::scan::{
-    scanchar, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring, Scanner, Token,
+    scanchar, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring,
+    AllowedSeparators, ScannedEvalPart, ScannedEvalString, Scanner, Separator, Source, TokenKind,
 };
-use crate::util::{canonpath, xasprintf, BString, ByteSlice, ByteVec, EvalPart, EvalString};
+use crate::source::SourceSpan;
+use crate::util::{canonpath, xasprintf, BString, ByteSlice};
 use std::fmt;
 use std::fs;
 
@@ -151,9 +153,12 @@ impl std::error::Error for DyndepError {
     }
 }
 
-fn error(line: usize, kind: DyndepErrorKind) -> DyndepError {
+fn error(scanner: &Scanner<'_>, line: usize, kind: DyndepErrorKind) -> DyndepError {
+    let mut span = scanner.position();
+    span.line = line;
+    span.column = 0;
     DyndepError {
-        span: SourceSpan::new("input", line, 0),
+        span: scanner.source_span(span),
         kind,
     }
 }
@@ -171,31 +176,31 @@ macro_rules! scan {
     };
 }
 
-fn evaluate_empty(value: EvalString) -> BString {
+fn evaluate_empty(value: ScannedEvalString<'_>) -> BString {
     let capacity = value
         .parts
         .iter()
         .map(|part| match part {
-            EvalPart::Literal(value) => value.len(),
-            EvalPart::Variable(_) => 0,
+            ScannedEvalPart::Literal(value) => value.len(),
+            ScannedEvalPart::EscapedByte(_) => 1,
+            ScannedEvalPart::Variable(_) => 0,
         })
         .sum();
-    let mut result = BString::from(Vec::with_capacity(capacity));
+    let mut result = Vec::with_capacity(capacity);
     for part in value.parts {
-        if let EvalPart::Literal(value) = part {
-            result.push_str(value.as_bytes());
+        match part {
+            ScannedEvalPart::Literal(value) => result.extend_from_slice(value),
+            ScannedEvalPart::EscapedByte(byte) => result.push(byte),
+            ScannedEvalPart::Variable(_) => {}
         }
     }
-    result
+    result.into()
 }
 
-fn parse_version(scanner: &mut Scanner) -> Result<(), DyndepError> {
-    let line = scanner.line;
-    let name = scanner
-        .take_variable()
-        .ok_or_else(|| error(line, DyndepErrorKind::ExpectedVersion))?;
+fn parse_version(scanner: &mut Scanner<'_>, name: &str) -> Result<(), DyndepError> {
+    let line = scanner.line();
     if name != "ninja_dyndep_version" {
-        return Err(error(line, DyndepErrorKind::ExpectedVersion));
+        return Err(error(scanner, line, DyndepErrorKind::ExpectedVersion));
     }
     scan!(scanner, scanchar(scanner, '='));
     let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
@@ -209,28 +214,89 @@ fn parse_version(scanner: &mut Scanner) -> Result<(), DyndepError> {
         .next()
         .map_or(Some(0), |part| part.parse::<u32>().ok());
     if major != Some(1) || minor != Some(0) {
-        return Err(error(line, DyndepErrorKind::UnsupportedVersion(value)));
+        return Err(error(
+            scanner,
+            line,
+            DyndepErrorKind::UnsupportedVersion(value),
+        ));
     }
     Ok(())
 }
 
-fn dynamic_node(graph: &mut Graph, path: EvalString, line: usize) -> Result<NodeId, DyndepError> {
+fn dynamic_node(
+    scanner: &Scanner<'_>,
+    graph: &mut Graph,
+    path: ScannedEvalString<'_>,
+    line: usize,
+) -> Result<NodeId, DyndepError> {
     let mut path = evaluate_empty(path);
     if path.is_empty() {
-        return Err(error(line, DyndepErrorKind::EmptyPath));
+        return Err(error(scanner, line, DyndepErrorKind::EmptyPath));
     }
     canonpath(&mut path);
     Ok(mknode(graph, path))
 }
 
+fn parse_implicit_inputs(
+    scanner: &mut Scanner<'_>,
+    graph: &mut Graph,
+    line: usize,
+) -> Result<Vec<NodeId>, DyndepError> {
+    let mut inputs = Vec::new();
+    match scan!(scanner, scanpipe(scanner, AllowedSeparators::INPUTS)) {
+        Some(Separator::Implicit) => {
+            while let Some(path) = scan!(scanner, scanstring(scanner, true)) {
+                inputs.push(dynamic_node(scanner, graph, path, line)?);
+            }
+            match scan!(
+                scanner,
+                scanpipe(scanner, AllowedSeparators::AFTER_IMPLICIT)
+            ) {
+                Some(Separator::OrderOnly) => {
+                    return Err(error(
+                        scanner,
+                        line,
+                        DyndepErrorKind::OrderOnlyInputsUnsupported,
+                    ));
+                }
+                Some(Separator::Validation) => {
+                    return Err(error(
+                        scanner,
+                        line,
+                        DyndepErrorKind::ValidationExpectedNewline,
+                    ));
+                }
+                Some(Separator::Implicit) | None => {}
+            }
+        }
+        Some(Separator::OrderOnly) => {
+            return Err(error(
+                scanner,
+                line,
+                DyndepErrorKind::OrderOnlyInputsUnsupported,
+            ));
+        }
+        Some(Separator::Validation) => {
+            return Err(error(
+                scanner,
+                line,
+                DyndepErrorKind::ValidationExpectedNewline,
+            ));
+        }
+        None => {}
+    }
+    Ok(inputs)
+}
+
 fn parse_build(
     graph: &mut Graph,
     file: &mut DyndepFile,
-    scanner: &mut Scanner,
+    scanner: &mut Scanner<'_>,
 ) -> Result<(), DyndepError> {
-    let line = scanner.line;
+    let line = scanner.line();
     let Some(output) = scan!(scanner, scanstring(scanner, true)) else {
         return Err(error(
+            scanner,
             line,
             if scanner.current().is_none() {
                 DyndepErrorKind::UnexpectedEof
@@ -241,57 +307,63 @@ fn parse_build(
     };
     let mut output = evaluate_empty(output);
     if output.is_empty() {
-        return Err(error(line, DyndepErrorKind::EmptyPath));
+        return Err(error(scanner, line, DyndepErrorKind::EmptyPath));
     }
     canonpath(&mut output);
     let Some(node) = nodeget(graph, output.as_bytes()) else {
-        return Err(error(line, DyndepErrorKind::NoBuildStatement(output)));
+        return Err(error(
+            scanner,
+            line,
+            DyndepErrorKind::NoBuildStatement(output),
+        ));
     };
     let Some(edge) = graph.node(node).gen else {
-        return Err(error(line, DyndepErrorKind::NoBuildStatement(output)));
+        return Err(error(
+            scanner,
+            line,
+            DyndepErrorKind::NoBuildStatement(output),
+        ));
     };
     if file.get(edge).is_some() {
-        return Err(error(line, DyndepErrorKind::MultipleStatements(output)));
+        return Err(error(
+            scanner,
+            line,
+            DyndepErrorKind::MultipleStatements(output),
+        ));
     }
 
     if scan!(scanner, scanstring(scanner, true)).is_some() {
-        return Err(error(line, DyndepErrorKind::ExplicitOutputsUnsupported));
+        return Err(error(
+            scanner,
+            line,
+            DyndepErrorKind::ExplicitOutputsUnsupported,
+        ));
     }
     let mut implicit_outputs = Vec::new();
-    if scan!(scanner, scanpipe(scanner, 1)) != 0 {
+    if scan!(scanner, scanpipe(scanner, AllowedSeparators::IMPLICIT)).is_some() {
         while let Some(path) = scan!(scanner, scanstring(scanner, true)) {
-            implicit_outputs.push(dynamic_node(graph, path, line)?);
+            implicit_outputs.push(dynamic_node(scanner, graph, path, line)?);
         }
     }
     if scanner.current().is_none() {
-        return Err(error(line, DyndepErrorKind::UnexpectedEof));
+        return Err(error(scanner, line, DyndepErrorKind::UnexpectedEof));
     }
     scan!(scanner, scanchar(scanner, ':'));
-    let rule =
-        scanname(scanner).map_err(|_| error(line, DyndepErrorKind::ExpectedDyndepCommand))?;
+    let rule = scanname(scanner)
+        .map_err(|_| error(scanner, line, DyndepErrorKind::ExpectedDyndepCommand))?
+        .text;
     if rule != "dyndep" {
-        return Err(error(line, DyndepErrorKind::ExpectedDyndepCommand));
+        return Err(error(scanner, line, DyndepErrorKind::ExpectedDyndepCommand));
     }
 
     if scan!(scanner, scanstring(scanner, true)).is_some() {
-        return Err(error(line, DyndepErrorKind::ExplicitInputsUnsupported));
+        return Err(error(
+            scanner,
+            line,
+            DyndepErrorKind::ExplicitInputsUnsupported,
+        ));
     }
-    let mut implicit_inputs = Vec::new();
-    match scan!(scanner, scanpipe(scanner, 1 | 2 | 4)) {
-        1 => {
-            while let Some(path) = scan!(scanner, scanstring(scanner, true)) {
-                implicit_inputs.push(dynamic_node(graph, path, line)?);
-            }
-            match scan!(scanner, scanpipe(scanner, 2 | 4)) {
-                2 => return Err(error(line, DyndepErrorKind::OrderOnlyInputsUnsupported)),
-                4 => return Err(error(line, DyndepErrorKind::ValidationExpectedNewline)),
-                _ => {}
-            }
-        }
-        2 => return Err(error(line, DyndepErrorKind::OrderOnlyInputsUnsupported)),
-        4 => return Err(error(line, DyndepErrorKind::ValidationExpectedNewline)),
-        _ => {}
-    }
+    let implicit_inputs = parse_implicit_inputs(scanner, graph, line)?;
     scan!(scanner, scannewline(scanner));
 
     let mut dyndeps = Dyndeps {
@@ -300,35 +372,50 @@ fn parse_build(
         implicit_outputs,
     };
     if scan!(scanner, scanindent(scanner)) {
-        let binding_line = scanner.line;
-        let name = scan!(scanner, scanname(scanner));
+        let binding_line = scanner.line();
+        let name = scan!(scanner, scanname(scanner)).text;
         scan!(scanner, scanchar(scanner, '='));
         let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
         scan!(scanner, scannewline(scanner));
         if name != "restat" {
-            return Err(error(binding_line, DyndepErrorKind::BindingNotRestat));
+            return Err(error(
+                scanner,
+                binding_line,
+                DyndepErrorKind::BindingNotRestat,
+            ));
         }
         dyndeps.restat = !evaluate_empty(value).is_empty();
     }
     file.insert(edge, dyndeps)
-        .map_err(|_| error(line, DyndepErrorKind::MultipleStatements(output)))
+        .map_err(|_| error(scanner, line, DyndepErrorKind::MultipleStatements(output)))
 }
 
 pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFile, DyndepError> {
-    let mut scanner = Scanner::from_bytes("input", input);
+    let source = Source::from_bytes("input", input);
+    let mut scanner = Scanner::new(&source);
     let mut have_version = false;
     let mut file = DyndepFile::default();
     loop {
         if scanner.current() == Some(b'=') {
-            return Err(error(scanner.line, DyndepErrorKind::UnexpectedEquals));
+            return Err(error(
+                &scanner,
+                scanner.line(),
+                DyndepErrorKind::UnexpectedEquals,
+            ));
         }
         match scan!(&scanner, scankeyword(&mut scanner)) {
-            Some(Token::Build) if have_version => parse_build(graph, &mut file, &mut scanner)?,
-            Some(Token::Build) => {
-                return Err(error(scanner.line, DyndepErrorKind::ExpectedVersion));
+            Some(token) if token.kind == TokenKind::Build && have_version => {
+                parse_build(graph, &mut file, &mut scanner)?;
             }
-            Some(Token::Variable) if !have_version => {
-                parse_version(&mut scanner)?;
+            Some(token) if token.kind == TokenKind::Build => {
+                return Err(error(
+                    &scanner,
+                    scanner.line(),
+                    DyndepErrorKind::ExpectedVersion,
+                ));
+            }
+            Some(token) if token.kind == TokenKind::Variable && !have_version => {
+                parse_version(&mut scanner, token.lexeme.text)?;
                 have_version = true;
             }
             Some(_) => {
@@ -337,11 +424,15 @@ pub(crate) fn parse_dyndep(input: Vec<u8>, graph: &mut Graph) -> Result<DyndepFi
                 } else {
                     DyndepErrorKind::ExpectedVersion
                 };
-                return Err(error(scanner.line, kind));
+                return Err(error(&scanner, scanner.line(), kind));
             }
             None if have_version => return Ok(file),
             None => {
-                return Err(error(scanner.line, DyndepErrorKind::ExpectedVersion));
+                return Err(error(
+                    &scanner,
+                    scanner.line(),
+                    DyndepErrorKind::ExpectedVersion,
+                ));
             }
         }
     }

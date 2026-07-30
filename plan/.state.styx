@@ -160,4 +160,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule runtime.semantic-errors}
     )}
+    {id ronin-span-frontend, covered_rules (
+        runtime.borrowed-span-frontend
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.borrowed-span-frontend}
+    )}
 )
