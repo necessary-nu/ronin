@@ -1,3 +1,4 @@
 *.o
 /samu
 /target/
+/benchmarks/runtime-probe/target/

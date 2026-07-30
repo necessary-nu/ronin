@@ -102,3 +102,20 @@ second work item.
 > traversal-mark sentinels MUST be hidden behind zero-cost semantic types or
 > explicit enums. Reinitialization and failure paths MUST release pool
 > occupancy and clear transient edge state without rebuilding graph topology.
+
+## Scalable process supervision
+
+> [spec:samurai:req:runtime.process-supervisor-scalability]
+> On Unix, Ronin MUST supervise captured child output and external jobserver
+> notifications with one readiness-driven event loop rather than one thread
+> per child, periodic descriptor polling, or a general asynchronous runtime.
+> The supervisor MUST preserve combined stdout/stderr order, process-group
+> interruption, console exclusivity, completion-driven dependency release,
+> and exact child reaping on success, failure, cancellation, and unwinding.
+> Load-average reads MUST be cached for a bounded interval, and output and
+> diagnostic sinks MUST be flushed once per complete semantic output batch
+> while preserving explanation, status, failure-context, and child-output
+> order. Runtime selection MUST be supported by reproducible high-concurrency
+> measurements of throughput, startup, binary size, idle wakeups, peak thread
+> count, peak RSS, signal behavior, console ownership, output ordering,
+> cancellation, child reaping, and jobserver integration.

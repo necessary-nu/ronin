@@ -268,6 +268,7 @@ fn writes_explanations_to_stderr_and_status_to_stdout() {
 #[cfg(unix)]
 // [spec:samurai:req:compat.process-integration/test]
 #[test]
+// [spec:samurai:req:runtime.process-supervisor-scalability/test]
 fn forwards_interrupts_and_removes_partial_outputs() {
     use std::os::raw::c_int;
     use std::os::unix::process::ExitStatusExt;

@@ -780,6 +780,65 @@ fn ronin_build_streams_description_status_and_buffered_output_in_order() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[derive(Default)]
+struct FlushCountingWriter {
+    bytes: Vec<u8>,
+    flushes: usize,
+}
+
+impl std::io::Write for FlushCountingWriter {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.bytes.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.flushes += 1;
+        Ok(())
+    }
+}
+
+#[test]
+// [spec:samurai:req:runtime.process-supervisor-scalability/test]
+fn ronin_build_flushes_each_completed_output_batch_once() {
+    let (mut graph, directory) = build_fixture(
+        "batched-output-flush",
+        "rule emit\n  command = printf child; touch $out\n  description = emitting\nbuild $dir/one: emit\nbuild $dir/two: emit\nbuild all: phony $dir/one $dir/two\n",
+    );
+    let mut output = FlushCountingWriter::default();
+    {
+        let mut builder = Builder::with_output(&mut graph, BuildOptions::default(), &mut output);
+        builder.add_target(b"all").unwrap();
+        builder.build().unwrap();
+    }
+
+    assert_eq!(output.flushes, 2);
+    let output = String::from_utf8(output.bytes).unwrap();
+    assert_eq!(output, "[1/2] emitting\nchild[2/2] emitting\nchild");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+// [spec:samurai:req:runtime.process-supervisor-scalability/test]
+fn ronin_console_build_flushes_its_status_batch_once() {
+    let (mut graph, directory) = build_fixture(
+        "console-output-flush",
+        "rule emit\n  command = touch $out\n  description = console\n  pool = console\nbuild $dir/out: emit\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut output = FlushCountingWriter::default();
+    {
+        let mut builder = Builder::with_output(&mut graph, BuildOptions::default(), &mut output);
+        builder.add_target(&target).unwrap();
+        builder.build().unwrap();
+    }
+
+    assert_eq!(output.flushes, 1);
+    assert_eq!(String::from_utf8(output.bytes).unwrap(), "[0/1] console\n");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn ronin_command_cache_recomputes_after_explicit_binding_invalidation() {
     let (mut graph, directory) = build_fixture(
@@ -1399,6 +1458,7 @@ fn ninja_build_runs_independent_edges_in_parallel() {
 
 #[cfg(unix)]
 #[test]
+// [spec:samurai:req:runtime.process-supervisor-scalability/test]
 fn ronin_build_acquires_and_releases_jobserver_tokens() {
     let (mut graph, directory) = build_fixture(
         "jobserver-tokens",
@@ -1473,6 +1533,7 @@ fn ninja_build_pool_depth_serializes_parallel_commands() {
 }
 
 #[test]
+// [spec:samurai:req:runtime.process-supervisor-scalability/test]
 fn ninja_build_console_pool_is_exclusive() {
     let (mut graph, directory) = build_fixture(
             "parallel-console-exclusive",

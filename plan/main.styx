@@ -984,6 +984,9 @@ children (
                 id ronin-runtime-scalability
                 title "Select and implement the process-supervision runtime"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.process-supervisor-scalability])
+                }
                 deps (ronin-jobserver-raii ronin-typed-runtime-state)
                 log (
                     {
@@ -991,6 +994,20 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Benchmark the current one-thread-per-child supervisor at high -j against two explicit alternatives: a current-thread Tokio runtime using process/I/O readiness, and a smaller polling/reaper design. Include startup time, binary size, idle wakeups, throughput, peak RSS, signal behavior, console ownership, output ordering, cancellation, child reaping, and jobserver integration. Tokio is not preselected: AsyncFd requires a nonblocking descriptor and therefore cannot safely wrap a duplicated GNU Make jobserver pipe by itself. If the winning design changes the approved completion-driven-execution decision, supersede that decision before implementation. Also address cached load sampling and excessive output flushing under the selected design."
+                    }
+
+                    {
+                        at 2026-07-30T01:53:14.38833105Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T02:36:47.791531175Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Select polling 3.11.0 as the narrow Unix readiness reactor for Ronin's explicit process supervisor; do not add Tokio. On the interleaved 1,024-child, -j256 production A/B, evented Ronin reduced median wall time from 382.507 ms to 356.733 ms, coordinator peak threads from 270 to 1, and peak RSS from 8,300 KiB to 4,652 KiB. The isolated evented probe added 1.0% binary size versus 38.7% for current-thread Tokio, while the idle-heavy probe needed 246 readiness wakes versus 1,589 busy scan iterations. This instantiates rather than supersedes [dec:ronin:completion-driven-execution]: the scheduler remains one explicit completion-driven supervisor without a general async runtime. Cache load-average reads for 100 ms and flush output sinks only after complete status/failure/output batches."
                     }
                 )
             }

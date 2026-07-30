@@ -1399,7 +1399,7 @@ impl<'a> Builder<'a> {
         let mut running_slots = Vec::new();
         running_slots.resize_with(self.graph.edge_count(), || None);
         let mut console_running = false;
-        let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::default();
+        let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::new()?;
         let mut jobserver = if self.options.dryrun {
             None
         } else {
@@ -1415,134 +1415,142 @@ impl<'a> Builder<'a> {
                 .transpose()?
         };
         let mut available_slot = None;
+        let mut load = status::LoadSampler::default();
 
-        std::thread::scope(|scope| {
-            loop {
-                if let Some(signal) = crate::subprocess::interrupted_signal() {
-                    processes.interrupt(signal);
-                    failures = failure_limit;
-                    last_error = Some(BuildError::Interrupted { status: None });
+        loop {
+            if let Some(signal) = crate::subprocess::interrupted_signal() {
+                processes.interrupt(signal);
+                failures = failure_limit;
+                last_error = Some(BuildError::Interrupted { status: None });
+            }
+            let maxjobs = if self.options.maxload > 0.0 && load.current() > self.options.maxload {
+                1
+            } else {
+                match self.options.jobs {
+                    JobLimit::Auto => 1,
+                    JobLimit::Unlimited => usize::MAX,
+                    JobLimit::Fixed(jobs) => jobs.get(),
                 }
-                let maxjobs =
-                    if self.options.maxload > 0.0 && status::queryload() > self.options.maxload {
-                        1
-                    } else {
-                        match self.options.jobs {
-                            JobLimit::Auto => 1,
-                            JobLimit::Unlimited => usize::MAX,
-                            JobLimit::Fixed(jobs) => jobs.get(),
-                        }
-                    };
-                while !console_running
-                    && processes.running_len() < maxjobs
-                    && failures < failure_limit
-                {
-                    let Some(edge) = self.plan.find_work(self.graph) else {
-                        break;
-                    };
-                    let is_phony = self
-                        .graph
-                        .edge(edge)
-                        .rule
-                        .is_some_and(|rule| self.graph.rule(rule).name == "phony");
-                    if is_phony {
-                        let result = Ok(self.finish_phony_edge(edge));
-                        if let Err(error) = self.settle_edge(edge, result) {
-                            failures += 1;
-                            last_error = Some(error);
-                        }
-                        continue;
+            };
+            while !console_running && processes.running_len() < maxjobs && failures < failure_limit
+            {
+                let Some(edge) = self.plan.find_work(self.graph) else {
+                    break;
+                };
+                let is_phony = self
+                    .graph
+                    .edge(edge)
+                    .rule
+                    .is_some_and(|rule| self.graph.rule(rule).name == "phony");
+                if is_phony {
+                    let result = Ok(self.finish_phony_edge(edge));
+                    if let Err(error) = self.settle_edge(edge, result) {
+                        failures += 1;
+                        last_error = Some(error);
                     }
-                    let use_console = self
-                        .graph
-                        .edge(edge)
-                        .pool
-                        .is_some_and(|pool| self.graph.pool(pool).name == "console");
-                    if use_console && processes.running_len() != 0 {
-                        self.plan.defer_work(self.graph, edge);
-                        break;
-                    }
-                    let slot = if let Some(client) = jobserver.as_mut() {
-                        if let Some(slot) = available_slot
-                            .take()
-                            .or_else(|| client.try_acquire_implicit())
-                        {
-                            Some(slot)
-                        } else {
-                            self.plan.defer_work(self.graph, edge);
-                            client.request_token();
-                            break;
-                        }
-                    } else {
-                        None
-                    };
-                    let prepared = self.prepare_edge(edge).and_then(|prepared| {
-                        self.command_started(edge, &prepared.command)?;
-                        Ok(prepared)
-                    });
-                    match prepared {
-                        Ok(prepared) => {
-                            let command = prepared.command.command.clone();
-                            let dryrun = self.options.dryrun;
-                            running[edge.index()] = Some(prepared);
-                            running_slots[edge.index()] = slot;
-                            console_running = use_console;
-                            processes.spawn(scope, edge, command, use_console, dryrun);
-                            if use_console {
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            if let Some(slot) = slot {
-                                slot.release();
-                            }
-                            self.plan.edge_finished(
-                                self.graph,
-                                &self.runtime,
-                                edge,
-                                EdgeResult::Failed,
-                            )?;
-                            failures += 1;
-                            last_error = Some(error);
-                        }
-                    }
+                    continue;
                 }
-
-                if processes.running_len() == 0 {
+                let use_console = self
+                    .graph
+                    .edge(edge)
+                    .pool
+                    .is_some_and(|pool| self.graph.pool(pool).name == "console");
+                if use_console && processes.running_len() != 0 {
+                    self.plan.defer_work(self.graph, edge);
                     break;
                 }
-                let timeout = Some(std::time::Duration::from_millis(10));
-                let Some(wake) = processes.wait(timeout)? else {
-                    continue;
-                };
-                let completion = match wake {
-                    SupervisorWake::Process(completion) => completion,
-                    SupervisorWake::External(result) => {
-                        let client = jobserver
-                            .as_mut()
-                            .expect("jobserver events require an active client");
-                        available_slot = Some(client.receive_token(result)?);
-                        continue;
+                let slot = if let Some(client) = jobserver.as_mut() {
+                    if let Some(slot) = available_slot
+                        .take()
+                        .or_else(|| client.try_acquire_implicit())
+                    {
+                        Some(slot)
+                    } else {
+                        self.plan.defer_work(self.graph, edge);
+                        client.request_token();
+                        break;
                     }
+                } else {
+                    None
                 };
-                let edge = completion.edge;
-                let prepared = running[edge.index()]
-                    .take()
-                    .expect("completed edges have running preparation state");
-                if let Some(slot) = running_slots[edge.index()].take() {
-                    slot.release();
-                }
-                if prepared.command.use_console {
-                    console_running = false;
-                }
-                let result = self.finish_edge(prepared, completion.result);
-                if let Err(error) = self.settle_edge(edge, result) {
-                    failures += 1;
-                    last_error = Some(error);
+                let prepared = self.prepare_edge(edge).and_then(|prepared| {
+                    self.command_started(edge, &prepared.command)?;
+                    Ok(prepared)
+                });
+                match prepared {
+                    Ok(prepared) => {
+                        let command = prepared.command.command.clone();
+                        let dryrun = self.options.dryrun;
+                        match processes.spawn(edge, command, use_console, dryrun) {
+                            Ok(()) => {
+                                running[edge.index()] = Some(prepared);
+                                running_slots[edge.index()] = slot;
+                                console_running = use_console;
+                                if use_console {
+                                    break;
+                                }
+                            }
+                            Err(error) => {
+                                if let Some(slot) = slot {
+                                    slot.release();
+                                }
+                                let result = self.finish_edge(prepared, Err(error));
+                                if let Err(error) = self.settle_edge(edge, result) {
+                                    failures += 1;
+                                    last_error = Some(error);
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(slot) = slot {
+                            slot.release();
+                        }
+                        self.plan.edge_finished(
+                            self.graph,
+                            &self.runtime,
+                            edge,
+                            EdgeResult::Failed,
+                        )?;
+                        failures += 1;
+                        last_error = Some(error);
+                    }
                 }
             }
-            Ok::<(), BuildError>(())
-        })?;
+
+            if processes.running_len() == 0 {
+                break;
+            }
+            let timeout = Some(std::time::Duration::from_millis(10));
+            let Some(wake) = processes.wait(timeout)? else {
+                continue;
+            };
+            let completion = match wake {
+                SupervisorWake::Process(completion) => completion,
+                SupervisorWake::External(result) => {
+                    let client = jobserver
+                        .as_mut()
+                        .expect("jobserver events require an active client");
+                    available_slot = Some(client.receive_token(result)?);
+                    continue;
+                }
+            };
+            let edge = completion.edge;
+            let prepared = running[edge.index()]
+                .take()
+                .expect("completed edges have running preparation state");
+            if let Some(slot) = running_slots[edge.index()].take() {
+                slot.release();
+            }
+            if prepared.command.use_console {
+                console_running = false;
+            }
+            let result = self.finish_edge(prepared, completion.result);
+            if let Err(error) = self.settle_edge(edge, result) {
+                failures += 1;
+                last_error = Some(error);
+            }
+        }
 
         if let Some(error) = last_error {
             Err(error)

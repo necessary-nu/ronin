@@ -27,6 +27,9 @@ bstr = { version = "1", default-features = false, features = ["std"] }
 jobserver = "0.1.35"
 tempfile = "3"
 
+[target.'cfg(unix)'.dependencies]
+polling = "3.11.0"
+
 [profile.release]
 lto = "fat"
 

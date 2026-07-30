@@ -836,10 +836,18 @@ pub(crate) enum JobserverOperation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ShellOperation {
     CreateOutputPipe,
+    ConfigureOutputPipe,
     DuplicateOutputPipe,
+    RegisterOutput,
     Spawn,
     ReadOutput,
     Wait,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum SupervisorOperation {
+    CreatePoller,
+    WaitForEvent,
 }
 
 #[allow(
@@ -862,6 +870,10 @@ pub(crate) enum ProcessError {
         edge: EdgeId,
         command: BString,
         operation: ShellOperation,
+        source: io::Error,
+    },
+    Supervisor {
+        operation: SupervisorOperation,
         source: io::Error,
     },
     ThreadPanicked {
@@ -889,7 +901,7 @@ impl fmt::Display for ProcessError {
                 };
                 write!(formatter, "{context}: {source}")
             }
-            Self::Shell { source, .. } => source.fmt(formatter),
+            Self::Shell { source, .. } | Self::Supervisor { source, .. } => source.fmt(formatter),
             Self::ThreadPanicked { .. } => formatter.write_str("subcommand thread panicked"),
             Self::CompletionChannelDisconnected => {
                 formatter.write_str("subcommand completion channel disconnected")
@@ -902,7 +914,9 @@ impl error::Error for ProcessError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::JobserverEnvironment { source } => Some(source),
-            Self::Jobserver { source, .. } | Self::Shell { source, .. } => Some(source),
+            Self::Jobserver { source, .. }
+            | Self::Shell { source, .. }
+            | Self::Supervisor { source, .. } => Some(source),
             _ => None,
         }
     }

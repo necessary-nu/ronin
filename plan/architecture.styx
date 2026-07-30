@@ -114,6 +114,7 @@ elements (
             [spec:samurai:req:compat.process-integration]
             [spec:samurai:req:compat.command-runtime]
             [spec:samurai:req:runtime.typed-runtime-state]
+            [spec:samurai:req:runtime.process-supervisor-scalability]
         )
         exposes (
             "src/build.rs"

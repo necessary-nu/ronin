@@ -175,4 +175,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule runtime.typed-runtime-state}
     )}
+    {id ronin-runtime-scalability, covered_rules (
+        runtime.process-supervisor-scalability
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.process-supervisor-scalability}
+    )}
 )

@@ -157,9 +157,6 @@ impl Builder<'_> {
             output.write_all(bytes).map_err(|source| {
                 BuildError::io(BuildOperation::WriteOutput, None, None, source)
             })?;
-            output.flush().map_err(|source| {
-                BuildError::io(BuildOperation::WriteOutput, None, None, source)
-            })?;
         }
         Ok(())
     }
@@ -171,16 +168,27 @@ impl Builder<'_> {
     }
 
     fn emit_diagnostic(&mut self, bytes: &[u8]) -> BuildResult<()> {
+        let Some(output) = self.diagnostic_sink.as_deref_mut() else {
+            return self.emit(bytes);
+        };
+        output
+            .write_all(bytes)
+            .map_err(|source| BuildError::io(BuildOperation::WriteDiagnostic, None, None, source))
+    }
+
+    // [spec:samurai:req:runtime.process-supervisor-scalability]
+    fn flush_sinks(&mut self) -> BuildResult<()> {
         if let Some(output) = self.diagnostic_sink.as_deref_mut() {
-            output.write_all(bytes).map_err(|source| {
-                BuildError::io(BuildOperation::WriteDiagnostic, None, None, source)
-            })?;
             output.flush().map_err(|source| {
                 BuildError::io(BuildOperation::WriteDiagnostic, None, None, source)
-            })
-        } else {
-            self.emit(bytes)
+            })?;
         }
+        if let Some(output) = self.output_sink.as_deref_mut() {
+            output.flush().map_err(|source| {
+                BuildError::io(BuildOperation::WriteOutput, None, None, source)
+            })?;
+        }
+        Ok(())
     }
 
     fn emit_explanations(&mut self, edge: EdgeId) -> BuildResult<()> {
@@ -242,6 +250,7 @@ impl Builder<'_> {
         self.progress.started += 1;
         if command.use_console {
             self.emit_status(edge, command)?;
+            self.flush_sinks()?;
         }
         Ok(())
     }
@@ -254,6 +263,7 @@ impl Builder<'_> {
         output: &[u8],
     ) -> BuildResult<()> {
         self.progress.finished += 1;
+        let wrote_batch = !command.use_console || failure_code.is_some() || !output.is_empty();
         if !command.use_console {
             self.emit_status(edge, command)?;
         }
@@ -268,7 +278,13 @@ impl Builder<'_> {
             failure.push(b'\n');
             self.emit(&failure)?;
         }
-        self.emit(output)
+        if !output.is_empty() {
+            self.emit(output)?;
+        }
+        if wrote_batch {
+            self.flush_sinks()?;
+        }
+        Ok(())
     }
 
     pub(super) fn exit_code(status: std::process::ExitStatus) -> i32 {

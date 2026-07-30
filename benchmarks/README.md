@@ -54,3 +54,9 @@ large regression from being hidden by an old, slower absolute baseline.
 The completed clean-revision comparison is recorded in
 [`performance-validation-2026-07-29.md`](performance-validation-2026-07-29.md),
 with the exact machine-readable output beside it.
+
+The process-supervision runtime comparison is recorded in
+[`runtime-scalability-2026-07-30.md`](runtime-scalability-2026-07-30.md).
+Its isolated thread-per-child, current-thread Tokio, busy-polling, and
+readiness-driven implementations live in `runtime-probe`, alongside the
+high-concurrency whole-tool A/B harness.
