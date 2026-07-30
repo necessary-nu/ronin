@@ -5,13 +5,27 @@ use crate::error::{ManifestError, ToolAvailability, ToolError, ToolOperation};
 use crate::graph::{nodeget, EdgeId, Graph, NodeId, PathStyle};
 use crate::source::Source;
 use crate::util::{BString, ByteSlice};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 #[cfg(test)]
 use std::fs;
 use std::io::{self, ErrorKind, Write as _};
 
 type ToolResult<T> = Result<T, ToolError>;
+
+// [spec:samurai:req:runtime.iterative-tool-traversals]
+#[derive(Default)]
+struct EdgeSet(Vec<bool>);
+
+impl EdgeSet {
+    fn new(edge_count: usize) -> Self {
+        Self(vec![false; edge_count])
+    }
+
+    fn insert(&mut self, edge: EdgeId) -> bool {
+        !std::mem::replace(&mut self.0[edge.index()], true)
+    }
+}
 
 mod compdb;
 mod input;
@@ -191,17 +205,18 @@ fn cleanpath_mode(
 struct Cleaner {
     dry_run: bool,
     disk: crate::os::RealDiskInterface,
-    seen_paths: BTreeSet<BString>,
-    visited_edges: BTreeSet<EdgeId>,
-    dyndep_files: BTreeMap<BString, Option<crate::dyndep::DyndepFile>>,
+    seen_paths: HashSet<BString>,
+    visited_edges: EdgeSet,
+    dyndep_files: HashMap<BString, Option<crate::dyndep::DyndepFile>>,
     removed: Vec<BString>,
 }
 
 impl Cleaner {
-    fn new(dry_run: bool, disk: crate::os::RealDiskInterface) -> Self {
+    fn new(dry_run: bool, disk: crate::os::RealDiskInterface, edge_count: usize) -> Self {
         Self {
             dry_run,
             disk,
+            visited_edges: EdgeSet::new(edge_count),
             ..Self::default()
         }
     }
@@ -242,30 +257,27 @@ impl Cleaner {
     // [spec:samurai:def:tool.cleantarget-fn]
     // [spec:samurai:sem:tool.cleantarget-fn]
     fn clean_target(&mut self, graph: &Graph, node: NodeId) -> ToolResult<()> {
-        let Some(edge) = graph.node(node).gen else {
-            return Ok(());
-        };
-        if !self.visited_edges.insert(edge) {
-            return Ok(());
-        }
-        if edge_name(graph, edge) == "phony" {
-            for input in graph.edge(edge).input.clone() {
-                self.clean_target(graph, input)?;
+        let mut work = vec![node];
+        while let Some(node) = work.pop() {
+            let Some(edge) = graph.node(node).gen else {
+                continue;
+            };
+            if !self.visited_edges.insert(edge) {
+                continue;
             }
-            return Ok(());
-        }
-        let dyndep_outputs = self.dyndep_outputs(graph, edge)?;
-        for output in graph.edge(edge).out.clone() {
-            self.remove(Some(&graph.node(output).path))?;
-        }
-        for output in dyndep_outputs {
-            self.remove(Some(&output))?;
-        }
-        for variable in ["rspfile", "depfile"] {
-            self.remove(edgevar(graph, edge, variable, PathStyle::Raw).as_ref())?;
-        }
-        for input in graph.edge(edge).input.clone() {
-            self.clean_target(graph, input)?;
+            if edge_name(graph, edge) != "phony" {
+                let dyndep_outputs = self.dyndep_outputs(graph, edge)?;
+                for output in graph.edge(edge).out.clone() {
+                    self.remove(Some(&graph.node(output).path))?;
+                }
+                for output in dyndep_outputs {
+                    self.remove(Some(&output))?;
+                }
+                for variable in ["rspfile", "depfile"] {
+                    self.remove(edgevar(graph, edge, variable, PathStyle::Raw).as_ref())?;
+                }
+            }
+            work.extend(graph.edge(edge).input.iter().rev().copied());
         }
         Ok(())
     }
@@ -357,7 +369,7 @@ pub(crate) fn clean_with_report_in(
     dry_run: bool,
     disk: crate::os::RealDiskInterface,
 ) -> ToolResult<Vec<BString>> {
-    let mut cleaner = Cleaner::new(dry_run, disk);
+    let mut cleaner = Cleaner::new(dry_run, disk, graph.edge_count());
     if !rules.is_empty() {
         for edge in graph
             .edge_ids()
@@ -416,7 +428,7 @@ pub(crate) fn clean_dead_with_report_in(
     dry_run: bool,
     disk: crate::os::RealDiskInterface,
 ) -> ToolResult<Vec<BString>> {
-    let mut cleaner = Cleaner::new(dry_run, disk);
+    let mut cleaner = Cleaner::new(dry_run, disk, graph.edge_count());
     for output in logged_outputs {
         if nodeget(graph, output.as_bytes()).is_some() {
             continue;
@@ -428,24 +440,46 @@ pub(crate) fn clean_dead_with_report_in(
 
 // [spec:samurai:def:tool.targetcommands-fn]
 // [spec:samurai:sem:tool.targetcommands-fn]
+enum CommandWork {
+    Visit(NodeId),
+    Emit(EdgeId),
+}
+
 fn collect_target_commands(
     graph: &Graph,
     node: NodeId,
     output: &mut Vec<BString>,
-    visited: &mut BTreeSet<EdgeId>,
+    visited: &mut EdgeSet,
+    work: &mut Vec<CommandWork>,
 ) {
-    let Some(edge) = graph.node(node).gen else {
-        return;
-    };
-    if !visited.insert(edge) {
-        return;
-    }
-    for input in graph.edge(edge).input.iter().copied() {
-        collect_target_commands(graph, input, output, visited);
-    }
-    if let Some(command) = edgevar(graph, edge, "command", PathStyle::ShellEscaped) {
-        if !command.is_empty() {
-            output.push(command);
+    work.push(CommandWork::Visit(node));
+    while let Some(item) = work.pop() {
+        match item {
+            CommandWork::Visit(node) => {
+                let Some(edge) = graph.node(node).gen else {
+                    continue;
+                };
+                if !visited.insert(edge) {
+                    continue;
+                }
+                work.push(CommandWork::Emit(edge));
+                work.extend(
+                    graph
+                        .edge(edge)
+                        .input
+                        .iter()
+                        .rev()
+                        .copied()
+                        .map(CommandWork::Visit),
+                );
+            }
+            CommandWork::Emit(edge) => {
+                if let Some(command) = edgevar(graph, edge, "command", PathStyle::ShellEscaped)
+                    .filter(|command| !command.is_empty())
+                {
+                    output.push(command);
+                }
+            }
         }
     }
 }
@@ -469,9 +503,10 @@ pub(crate) fn commands(graph: &Graph, targets: &[BString]) -> ToolResult<Vec<BSt
             .collect::<Result<Vec<_>, _>>()?
     };
     let mut output = Vec::new();
-    let mut visited = BTreeSet::new();
+    let mut visited = EdgeSet::new(graph.edge_count());
+    let mut work = Vec::new();
     for node in nodes {
-        collect_target_commands(graph, node, &mut output, &mut visited);
+        collect_target_commands(graph, node, &mut output, &mut visited, &mut work);
     }
     Ok(output)
 }
@@ -511,7 +546,7 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolRe
         return commands(graph, &targets).map(|commands| join_byte_strings(commands, b'\n'));
     }
     let mut output = Vec::new();
-    let mut seen = BTreeSet::new();
+    let mut seen = EdgeSet::new(graph.edge_count());
     for target in targets {
         let node = nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
             path: target.clone(),
@@ -553,25 +588,43 @@ pub(crate) fn printquoted(bytes: &[u8], join: bool) -> BString {
 
 // [spec:samurai:def:tool.graphnode-fn]
 // [spec:samurai:sem:tool.graphnode-fn]
-fn graphnode_inner(
-    graph: &Graph,
-    node: NodeId,
-    output: &mut Vec<u8>,
-    visited: &mut BTreeSet<EdgeId>,
-) {
-    let path = &graph.node(node).path;
-    let _ = write!(output, "\"n{}\" [label=\"", node.index());
-    output.extend_from_slice(printquoted(path.as_bytes(), false).as_bytes());
-    output.extend_from_slice(b"\"]\n");
-    let Some(edge) = graph.node(node).gen else {
-        return;
-    };
-    if !visited.insert(edge) {
-        return;
+fn graphnode_inner(graph: &Graph, node: NodeId, output: &mut Vec<u8>, visited: &mut EdgeSet) {
+    enum Work {
+        Visit(NodeId),
+        EmitEdge(EdgeId),
     }
-    for input in graph.edge(edge).input.iter().copied() {
-        graphnode_inner(graph, input, output, visited);
+
+    let mut work = vec![Work::Visit(node)];
+    while let Some(item) = work.pop() {
+        match item {
+            Work::Visit(node) => {
+                let path = &graph.node(node).path;
+                let _ = write!(output, "\"n{}\" [label=\"", node.index());
+                output.extend_from_slice(printquoted(path.as_bytes(), false).as_bytes());
+                output.extend_from_slice(b"\"]\n");
+                let Some(edge) = graph.node(node).gen else {
+                    continue;
+                };
+                if !visited.insert(edge) {
+                    continue;
+                }
+                work.push(Work::EmitEdge(edge));
+                work.extend(
+                    graph
+                        .edge(edge)
+                        .input
+                        .iter()
+                        .rev()
+                        .copied()
+                        .map(Work::Visit),
+                );
+            }
+            Work::EmitEdge(edge) => emit_graph_edge(graph, edge, output),
+        }
     }
+}
+
+fn emit_graph_edge(graph: &Graph, edge: EdgeId, output: &mut Vec<u8>) {
     let edge_borrow = graph.edge(edge);
     if edge_borrow.input.len() == 1 && edge_borrow.out.len() == 1 {
         let _ = writeln!(
@@ -631,7 +684,7 @@ pub(crate) fn graph(graph: &Graph, targets: &[BString]) -> ToolResult<BString> {
     let mut output = Vec::from(&b"digraph ninja {\nrankdir=\"LR\"\n"[..]);
     output.extend_from_slice(b"node [fontsize=10, shape=box, height=0.25]\n");
     output.extend_from_slice(b"edge [fontsize=10]\n");
-    let mut visited = BTreeSet::new();
+    let mut visited = EdgeSet::new(graph.edge_count());
     for node in nodes {
         graphnode_inner(graph, node, &mut output, &mut visited);
     }
@@ -711,27 +764,36 @@ pub(crate) fn targetsdepth(
     indent: usize,
     output: &mut String,
 ) {
-    output.push_str(&"  ".repeat(indent));
-    let node_borrow = graph.node(node);
-    if let Some(edge) = node_borrow.gen {
-        let _ = writeln!(
-            output,
-            "{}: {}",
-            String::from_utf8_lossy(node_borrow.path.as_bytes()),
-            edge_name(graph, edge)
-        );
-        if depth != 1 {
-            let next_depth = if depth == 0 { 0 } else { depth - 1 };
-            for input in graph.edge(edge).input.iter().copied() {
-                targetsdepth(graph, input, next_depth, indent + 1, output);
+    let mut work = vec![(node, depth, indent)];
+    while let Some((node, depth, indent)) = work.pop() {
+        output.push_str(&"  ".repeat(indent));
+        let node_borrow = graph.node(node);
+        if let Some(edge) = node_borrow.gen {
+            let _ = writeln!(
+                output,
+                "{}: {}",
+                String::from_utf8_lossy(node_borrow.path.as_bytes()),
+                edge_name(graph, edge)
+            );
+            if depth != 1 {
+                let next_depth = if depth == 0 { 0 } else { depth - 1 };
+                work.extend(
+                    graph
+                        .edge(edge)
+                        .input
+                        .iter()
+                        .rev()
+                        .copied()
+                        .map(|input| (input, next_depth, indent + 1)),
+                );
             }
+        } else {
+            let _ = writeln!(
+                output,
+                "{}",
+                String::from_utf8_lossy(node_borrow.path.as_bytes())
+            );
         }
-    } else {
-        let _ = writeln!(
-            output,
-            "{}",
-            String::from_utf8_lossy(node_borrow.path.as_bytes())
-        );
     }
 }
 
@@ -1002,6 +1064,65 @@ mod tests {
 
     fn ninja_path(path: &Path) -> String {
         path.to_string_lossy().replace(' ', "$ ")
+    }
+
+    // [spec:samurai:req:runtime.iterative-tool-traversals/test]
+    #[test]
+    fn deep_manifest_tools_use_bounded_call_stacks() {
+        const DEPTH: usize = 4_000;
+
+        let directory = TempDirectory::new("deep-tools");
+        let mut manifest = String::from("rule emit\n  command = echo $out\n");
+        let mut input = String::from("source");
+        for index in 0..DEPTH {
+            let output = format!("node{index}");
+            let _ = writeln!(manifest, "build {output}: emit {input}");
+            input = output;
+        }
+        let target = BString::from(input);
+        std::thread::Builder::new()
+            .name("deep-tool-traversals".into())
+            .stack_size(128 * 1024)
+            .spawn(move || {
+                let graph = parse_manifest(&directory, &manifest);
+
+                let commands = commands(&graph, std::slice::from_ref(&target)).unwrap();
+                assert_eq!(commands.len(), DEPTH);
+                assert_eq!(commands.first().unwrap().as_bytes(), b"echo node0");
+                assert_eq!(
+                    commands.last().unwrap().as_bytes(),
+                    format!("echo node{}", DEPTH - 1).as_bytes()
+                );
+
+                let graphviz = super::graph(&graph, std::slice::from_ref(&target)).unwrap();
+                assert!(graphviz.as_bytes().contains_str("label=\"source\""));
+                assert!(graphviz
+                    .as_bytes()
+                    .contains_str(format!("label=\"node{}\"", DEPTH - 1)));
+
+                let targets = targets_with_args(&graph, &["depth".into(), "0".into()]).unwrap();
+                assert_eq!(targets.lines().count(), DEPTH + 1);
+
+                let mut cleaner = Cleaner::new(
+                    true,
+                    crate::os::RealDiskInterface::default(),
+                    graph.edge_count(),
+                );
+                let target_node = nodeget(&graph, target.as_bytes()).unwrap();
+                cleaner.clean_target(&graph, target_node).unwrap();
+                assert_eq!(
+                    cleaner
+                        .visited_edges
+                        .0
+                        .iter()
+                        .filter(|visited| **visited)
+                        .count(),
+                    DEPTH
+                );
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 
     #[test]

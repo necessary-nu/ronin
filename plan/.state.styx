@@ -212,4 +212,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule runtime.explicit-invocation-boundary}
     )}
+    {id ronin-iterative-tools, covered_rules (
+        runtime.iterative-tool-traversals
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.iterative-tool-traversals}
+    )}
 )

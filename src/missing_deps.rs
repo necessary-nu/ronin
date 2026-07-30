@@ -26,6 +26,11 @@ pub(crate) struct MissingDependencyScanner {
     missing_dep_path_count: usize,
     reports: Vec<MissingDependency>,
     adjacency: HashMap<(EdgeId, EdgeId), bool>,
+    generated_edges: Vec<bool>,
+    missing_edges: Vec<bool>,
+    path_marks: Vec<u32>,
+    path_generation: u32,
+    path_work: Vec<EdgeId>,
 }
 
 // [spec:samurai:req:compat.graph-semantics]
@@ -83,21 +88,24 @@ impl MissingDependencyScanner {
         {
             return;
         }
-        let mut generated_edges = vec![false; graph.edge_count()];
+        self.generated_edges.resize(graph.edge_count(), false);
+        self.generated_edges.fill(false);
         for dependency in dependencies {
             if let Some(edge) = graph.node(*dependency).gen {
-                generated_edges[edge.index()] = true;
+                self.generated_edges[edge.index()] = true;
             }
         }
 
-        let mut missing_edges = vec![false; graph.edge_count()];
-        for (index, generated) in generated_edges.into_iter().enumerate() {
+        self.missing_edges.resize(graph.edge_count(), false);
+        self.missing_edges.fill(false);
+        for index in 0..graph.edge_count() {
+            let generated = self.generated_edges[index];
             let generator = EdgeId::from_index(index);
             if generated && !self.path_exists_between(graph, generator, consumer_edge) {
-                missing_edges[index] = true;
+                self.missing_edges[index] = true;
             }
         }
-        if !missing_edges.iter().any(|missing| *missing) {
+        if !self.missing_edges.iter().any(|missing| *missing) {
             return;
         }
 
@@ -106,7 +114,7 @@ impl MissingDependencyScanner {
             let Some(generator) = graph.node(*dependency).gen else {
                 continue;
             };
-            if !missing_edges[generator.index()] {
+            if !self.missing_edges[generator.index()] {
                 continue;
             }
             let rule_name = graph
@@ -143,13 +151,20 @@ impl MissingDependencyScanner {
         if let Some(found) = self.adjacency.get(&key) {
             return *found;
         }
-        let mut visited = vec![false; graph.edge_count()];
-        let mut work = vec![to];
+        self.path_marks.resize(graph.edge_count(), 0);
+        self.path_generation = self.path_generation.wrapping_add(1);
+        if self.path_generation == 0 {
+            self.path_marks.fill(0);
+            self.path_generation = 1;
+        }
+        self.path_work.clear();
+        self.path_work.push(to);
         let mut found = false;
-        while let Some(edge) = work.pop() {
-            if std::mem::replace(&mut visited[edge.index()], true) {
+        while let Some(edge) = self.path_work.pop() {
+            if self.path_marks[edge.index()] == self.path_generation {
                 continue;
             }
+            self.path_marks[edge.index()] = self.path_generation;
             for input in &graph.edge(edge).input {
                 let Some(generator) = graph.node(*input).gen else {
                     continue;
@@ -164,7 +179,7 @@ impl MissingDependencyScanner {
                     break;
                 }
                 if !self.adjacency.contains_key(&(from, generator)) {
-                    work.push(generator);
+                    self.path_work.push(generator);
                 }
             }
             if found {
@@ -356,6 +371,50 @@ mod tests {
         scanner.record_dependency(compiled, generated);
         process_all_nodes(&fixture.graph, &mut scanner).unwrap();
         assert!(!scanner.had_missing_dependencies());
+    }
+
+    #[test]
+    fn deep_dependency_queries_reuse_dense_scratch_storage() {
+        const DEPTH: usize = 20_000;
+
+        let mut fixture = Fixture::new();
+        let (generated, compiled) = fixture.create_initial_state();
+        let second_compiled = fixture.add_output("compiled_object_2", fixture.compile_rule);
+        let mut previous = generated;
+        for index in 0..DEPTH {
+            let intermediate =
+                fixture.add_output(&format!("intermediate_{index}"), fixture.generator_rule);
+            fixture.add_graph_dependency(intermediate, previous);
+            previous = intermediate;
+        }
+        fixture.add_graph_dependency(compiled, previous);
+        fixture.add_graph_dependency(second_compiled, previous);
+
+        let mut scanner = MissingDependencyScanner::default();
+        scanner.record_dependency(compiled, generated);
+        scanner.record_dependency(second_compiled, generated);
+        scanner.process_node(&fixture.graph, compiled);
+        assert!(!scanner.had_missing_dependencies());
+        let capacities = (
+            scanner.generated_edges.capacity(),
+            scanner.missing_edges.capacity(),
+            scanner.path_marks.capacity(),
+            scanner.path_work.capacity(),
+        );
+        let generation = scanner.path_generation;
+
+        scanner.process_node(&fixture.graph, second_compiled);
+        assert!(!scanner.had_missing_dependencies());
+        assert_eq!(
+            (
+                scanner.generated_edges.capacity(),
+                scanner.missing_edges.capacity(),
+                scanner.path_marks.capacity(),
+                scanner.path_work.capacity(),
+            ),
+            capacities
+        );
+        assert!(scanner.path_generation > generation);
     }
 
     #[test]

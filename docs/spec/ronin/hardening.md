@@ -151,3 +151,15 @@ second work item.
 > through an invocation context rather than hidden reads in parsing or build
 > orchestration. Argument acquisition, signal lifetime, standard-stream
 > selection, and process exit MUST remain owned by the executable boundary.
+
+## Iterative tool traversals
+
+> [spec:samurai:req:runtime.iterative-tool-traversals]
+> Tool modes MUST traverse dependency graphs with explicit worklists whose
+> memory usage is bounded by graph size rather than the native call stack.
+> Edge visitation MUST use dense `EdgeId`-indexed storage and reusable scratch
+> state instead of ordered sets or a fresh edge-sized allocation for each
+> target. Commands, Graphviz, target-depth, cleaner, and missing-dependency
+> output MUST preserve Ninja-compatible ordering and semantics. Every affected
+> tool mode MUST complete on a dependency chain deeper than the native stack
+> can safely recurse.

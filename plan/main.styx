@@ -939,6 +939,9 @@ children (
                 id ronin-iterative-tools
                 title "Make tool traversals iterative and dense-ID indexed"
                 priority 1
+                implements {
+                    target-impl ([spec:samurai:req:runtime.iterative-tool-traversals])
+                }
                 log (
                     {
                         at 2026-07-29T22:58:22.884233176Z
@@ -952,6 +955,20 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @decision
                         text "Place this work in P1 because it addresses tool-mode stack resilience and allocation efficiency after the P0 resource-safety, transactional-state, encoding-correctness, parser, and execution-boundary work. It has no dependency on those implementations, but it must not outrank the known jobserver and persistence failure paths."
+                    }
+
+                    {
+                        at 2026-07-30T03:22:25.618916339Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T03:33:07.553102938Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Replace recursive cleaner, command, Graphviz, and target-depth traversals with explicit LIFO work items that preserve each routine's Ninja-compatible preorder/postorder behavior. Use a dense Vec<bool>-backed EdgeSet for EdgeId membership, retain ordered collections only where output ordering requires them, and reuse generated/missing edge tables plus a generation-stamped reachability table and worklist in MissingDependencyScanner. Deep-chain tests exercise every affected tool on a 128 KiB thread stack and repeat 20,000-edge missing-dependency queries without scratch-capacity growth. All 359 library tests and auxiliary Rust targets, strict Clippy/rustdoc, 425 upstream Ninja tests, 10 differential cases, persistence round trips, musl all-target checking, and the 15-sample performance gate pass; scheduler-barrier median is 41.591 ms versus Ninja's 44.582 ms."
                     }
                 )
             }
