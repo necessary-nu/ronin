@@ -281,58 +281,47 @@ where
     }
 
     let edge_data = graph.edge(edge);
-    let input_dirty = edge_data
-        .non_order_only_inputs()
-        .iter()
-        .any(|input| runtime.node(*input).dirty());
-    let is_phony = graph.is_phony_rule(edge_data.rule);
+    let mut input_dirty = false;
+    let mut newest_input = FileTime::MISSING;
+    for input in edge_data.non_order_only_inputs() {
+        let input = runtime.node(*input);
+        input_dirty |= input.dirty();
+        newest_input = newest_input.max(input.mtime());
+    }
 
-    let dirty = if is_phony {
-        let missing_without_inputs = edge_data.input.is_empty()
-            && edge_data.validation.is_empty()
-            && edge_data
-                .out
-                .iter()
-                .any(|output| runtime.node(*output).mtime().is_missing());
-        let newest_input = edge_data
-            .non_order_only_inputs()
-            .iter()
-            .map(|input| runtime.node(*input).mtime())
-            .max()
-            .unwrap_or(FileTime::MISSING);
+    let dirty = if graph.is_phony_rule(edge_data.rule) {
+        let mut any_output_missing = false;
         for output in &edge_data.out {
             if runtime.node(*output).mtime().is_missing() {
+                any_output_missing = true;
                 runtime.node_mut(*output).set_mtime(newest_input);
             }
         }
+        let missing_without_inputs =
+            edge_data.input.is_empty() && edge_data.validation.is_empty() && any_output_missing;
         input_dirty || missing_without_inputs
     } else {
-        let oldest_output = edge_data
-            .out
-            .iter()
-            .map(|output| runtime.node(*output).mtime())
-            .min()
-            .unwrap_or(FileTime::MISSING);
-        let oldest_recorded_output = edge_data
-            .out
-            .iter()
-            .map(|output| runtime.node(*output).log_mtime())
-            .filter(|mtime| mtime.is_observed())
-            .min();
+        let mut oldest_output: Option<FileTime> = None;
+        let mut oldest_recorded_output: Option<FileTime> = None;
+        for output in &edge_data.out {
+            let output = runtime.node(*output);
+            oldest_output =
+                Some(oldest_output.map_or(output.mtime(), |oldest| oldest.min(output.mtime())));
+            if output.log_mtime().is_observed() {
+                oldest_recorded_output = Some(
+                    oldest_recorded_output
+                        .map_or(output.log_mtime(), |oldest| oldest.min(output.log_mtime())),
+                );
+            }
+        }
+        let oldest_output = oldest_output.unwrap_or(FileTime::MISSING);
+        let edge_state = runtime.edge(edge);
         oldest_output.is_missing()
-            || runtime.edge(edge).deps_missing()
-            || runtime.edge(edge).command_dirty()
+            || edge_state.deps_missing()
+            || edge_state.command_dirty()
             || input_dirty
-            || oldest_recorded_output.is_some_and(|output_mtime| {
-                edge_data
-                    .non_order_only_inputs()
-                    .iter()
-                    .any(|input| runtime.node(*input).mtime() > output_mtime)
-            })
-            || edge_data
-                .non_order_only_inputs()
-                .iter()
-                .any(|input| runtime.node(*input).mtime() > oldest_output)
+            || oldest_recorded_output.is_some_and(|output_mtime| newest_input > output_mtime)
+            || newest_input > oldest_output
     };
 
     for output in &graph.edge(edge).out {

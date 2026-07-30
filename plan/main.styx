@@ -1381,12 +1381,27 @@ children (
             {
                 id ronin-single-pass-dirty
                 title "Fold edge dirty recomputation into single passes"
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:12:10.438196748Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "recompute_edge_dirty_with (src/graph.rs:254-309) makes up to four passes over non-order-only inputs (any-dirty, newest-mtime, plus two more .any comparisons) and three over outputs (oldest mtime, oldest recorded log mtime, set-dirty). Fold into one pass over inputs computing (any_dirty, max_mtime) and one pass over outputs computing (min_mtime, min_observed_log_mtime), then evaluate the dirty predicate from the folded values. Pure restructuring; dirty semantics and the conformance oracle are unaffected."
+                    }
+
+                    {
+                        at 2026-07-30T09:35:14.54936371Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T09:35:49.060129345Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
