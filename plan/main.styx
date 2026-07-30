@@ -1333,12 +1333,34 @@ children (
                 id ronin-memchr-scanner
                 title "Scan manifests with memchr runs and lazy line accounting"
                 deps (ronin-alloc-metrics)
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:10:56.120155796Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "The lexer steps one byte at a time through current()/next() (src/scan.rs:134-136, 190-199), paying per byte: a bounds-checked get, an Option construction, a newline test, and line/column bookkeeping — samurai's getc-style scanner transliterated, minus the raw-pointer walk. Two changes: (1) drop per-byte line/column tracking — spans already carry byte offsets, so compute line/column lazily on error by counting newlines in the prefix; (2) skip literal runs with memchr-class scans (bstr already provides them) — in scanstring (scan.rs:424-455) the interesting byte set is tiny ($, :, |, space, tab, CR, LF), so jump to the next interesting byte instead of stepping. This is the moral equivalent of ninja's re2c lexer and drives the wide no-op (19.3 vs 9.1 ms) and path-canonicalization (10.4 vs 5.6 ms) rows in benchmarks/baseline-2026-07-29.md."
+                    }
+
+                    {
+                        at 2026-07-30T14:55:48.889901258Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T17:35:13.678568108Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Implemented, measured, and rejected. The node's premise was that byte-at-a-time lexing with per-byte line and column bookkeeping was a hot spot; profiling for ronin-path-scratch disproved it. Padding a manifest with comment bytes measures the scanner at roughly 500 MB/s, so the 222 KiB command manifest costs about 0.44 ms of an 11 ms parse — a 4% ceiling. The implementation replaced literal, identifier, and comment runs with bstr find_byteset and find_not_byteset searches and tracked column as index minus line_start instead of a per-byte counter. Interleaved minimum-of-30 comparisons on a quiet host gave 10.440/10.365/10.568 ms before against 10.703/10.781/10.376 ms after: no gain, marginally negative. The likely cause is that bstr builds a 256-bit lookup table per find_byteset call, which is not amortized by the short runs a manifest lexer sees — identifier runs are a handful of bytes. A correct rewrite would use memchr2/memchr3 for the small literal set and keep byte loops for identifiers, but its ceiling is still 4% and measurement resolution here is about 2%, so it is not worth a new dependency. Reverted; the scanner keeps its per-byte loops."
+                    }
+
+                    {
+                        at 2026-07-30T17:35:15.863439517Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

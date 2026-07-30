@@ -317,6 +317,38 @@ scanning, hashing, and index probing — not the allocator calls around it. That
 is consistent with `ronin-name-interning`, where the gain came from removing
 comparisons rather than allocations.
 
+### Run-skipping scanner, measured and rejected (`ronin-memchr-scanner`)
+
+The premise was that byte-at-a-time lexing with per-byte line and column
+bookkeeping was a hot spot. The profiling done for `ronin-path-scratch`
+disproved it: padding a manifest with comment bytes measures the scanner at
+roughly 500 MB/s, so the 222 KiB command manifest costs about 0.44 ms of an
+11 ms parse, a 4% ceiling.
+
+The change was implemented anyway to settle it — literal, identifier, and
+comment runs skipped with `bstr` byteset searches, and column tracked as a
+subtraction from the line start rather than a per-byte counter. Interleaved
+minimum-of-thirty comparisons on a quiet host:
+
+| Round | Before | After |
+| --- | ---: | ---: |
+| 1 | 10.440 ms | 10.703 ms |
+| 2 | 10.365 ms | 10.781 ms |
+| 3 | 10.568 ms | 10.376 ms |
+
+No gain, marginally negative, so it was reverted. `bstr` builds a 256-bit
+lookup table per `find_byteset` call, which the short runs a manifest lexer
+sees never amortize — identifier runs are a handful of bytes. A rewrite using
+`memchr2`/`memchr3` for the small literal set while keeping byte loops for
+identifiers would be the correct shape, but its ceiling is still 4% against a
+measurement resolution of about 2%, which does not justify a new dependency.
+
+Two process notes. Interleaving and taking a minimum, rather than a median of
+sequential samples, is what made this legible: an earlier non-interleaved run
+on a loaded host showed an apparent threefold regression that was entirely
+drift. And the profiling that set the 4% ceiling was worth more than the
+implementation it argued against.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release
