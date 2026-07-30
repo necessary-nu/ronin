@@ -15,13 +15,12 @@ const MAX_NINJA_RUNTIME_RATIO: f64 = 1.20;
 const MAX_NINJA_RSS_RATIO: f64 = 2.00;
 
 // [spec:samurai:req:performance.reproducible-baseline]
-const WORKLOAD_VERSION: u32 = 1;
-const COMMAND_EDGES: usize = 4_000;
-const DEEP_EDGES: usize = 2_000;
-const WIDE_EDGES: usize = 4_000;
-const CANONICAL_PATHS: usize = 4_000;
-const DEPENDENCY_EDGES: usize = 300;
-const SCHEDULER_EDGES: usize = 128;
+#[path = "support/workloads.rs"]
+mod workloads;
+use workloads::{
+    CANONICAL_PATHS, COMMAND_EDGES, DEEP_EDGES, DEPENDENCY_EDGES, SCHEDULER_EDGES, WIDE_EDGES,
+    WORKLOAD_VERSION,
+};
 
 #[derive(Clone)]
 struct Tool {
@@ -208,26 +207,8 @@ fn tool(name: &'static str, path: PathBuf) -> Result<Tool, String> {
     })
 }
 
-fn write_manifest(directory: &Path, manifest: &str) -> io::Result<()> {
-    fs::create_dir_all(directory)?;
-    fs::write(directory.join("build.ninja"), manifest)
-}
-
 fn command_evaluation(directory: &Path) -> io::Result<Workload> {
-    let mut manifest =
-        String::from("rule cc\n  command = cc -DINDEX=$index -Iinclude $in -o $out\n");
-    for index in 0..COMMAND_EDGES {
-        let _ = write!(
-            manifest,
-            "build out/{index}.o: cc src/{index}.c\n  index = {index}\n"
-        );
-    }
-    manifest.push_str("build all: phony");
-    for index in 0..COMMAND_EDGES {
-        let _ = write!(manifest, " out/{index}.o");
-    }
-    manifest.push_str("\ndefault all\n");
-    write_manifest(directory, &manifest)?;
+    workloads::command_evaluation(directory)?;
     Ok(Workload {
         name: "manifest-command-evaluation",
         directory: directory.to_owned(),
@@ -237,12 +218,7 @@ fn command_evaluation(directory: &Path) -> io::Result<Workload> {
 }
 
 fn deep_graph(directory: &Path) -> io::Result<Workload> {
-    let mut manifest = String::from("build node/0: phony\n");
-    for index in 1..DEEP_EDGES {
-        let _ = writeln!(manifest, "build node/{index}: phony node/{}", index - 1);
-    }
-    let _ = writeln!(manifest, "default node/{}", DEEP_EDGES - 1);
-    write_manifest(directory, &manifest)?;
+    workloads::deep_graph(directory)?;
     Ok(Workload {
         name: "deep-graph-evaluation",
         directory: directory.to_owned(),
@@ -252,16 +228,7 @@ fn deep_graph(directory: &Path) -> io::Result<Workload> {
 }
 
 fn wide_noop(directory: &Path) -> io::Result<Workload> {
-    let mut manifest = String::new();
-    for index in 0..WIDE_EDGES {
-        let _ = writeln!(manifest, "build leaf/{index}: phony");
-    }
-    manifest.push_str("build all: phony");
-    for index in 0..WIDE_EDGES {
-        let _ = write!(manifest, " leaf/{index}");
-    }
-    manifest.push_str("\ndefault all\n");
-    write_manifest(directory, &manifest)?;
+    workloads::wide_noop(directory)?;
     Ok(Workload {
         name: "wide-noop-build",
         directory: directory.to_owned(),
@@ -271,14 +238,7 @@ fn wide_noop(directory: &Path) -> io::Result<Workload> {
 }
 
 fn path_canonicalization(directory: &Path) -> io::Result<Workload> {
-    let mut manifest = String::new();
-    for index in 0..CANONICAL_PATHS {
-        let _ = writeln!(
-            manifest,
-            "build scratch/{index}/../canonical-{index}: phony"
-        );
-    }
-    write_manifest(directory, &manifest)?;
+    workloads::path_canonicalization(directory)?;
     Ok(Workload {
         name: "path-canonicalization",
         directory: directory.to_owned(),
@@ -288,27 +248,7 @@ fn path_canonicalization(directory: &Path) -> io::Result<Workload> {
 }
 
 fn dependency_log(directory: &Path, tool: &Tool) -> Result<Workload, String> {
-    fs::create_dir_all(directory.join("src")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(directory.join("out")).map_err(|error| error.to_string())?;
-    fs::create_dir_all(directory.join("include")).map_err(|error| error.to_string())?;
-    fs::write(directory.join("include/common.h"), b"/* baseline */\n")
-        .map_err(|error| error.to_string())?;
-
-    let mut manifest = String::from(
-        "rule compile\n  command = printf '$out: $in include/common.h\\n' > $out.d && touch $out\n  depfile = $out.d\n  deps = gcc\n",
-    );
-    for index in 0..DEPENDENCY_EDGES {
-        fs::write(directory.join(format!("src/{index}.c")), b"int baseline;\n")
-            .map_err(|error| error.to_string())?;
-        let _ = writeln!(manifest, "build out/{index}.o: compile src/{index}.c");
-    }
-    manifest.push_str("build all: phony");
-    for index in 0..DEPENDENCY_EDGES {
-        let _ = write!(manifest, " out/{index}.o");
-    }
-    manifest.push_str("\ndefault all\n");
-    write_manifest(directory, &manifest).map_err(|error| error.to_string())?;
-
+    workloads::dependency_log_sources(directory).map_err(|error| error.to_string())?;
     run_checked(tool, directory, &[])?;
     if !directory.join(".ninja_deps").is_file() {
         return Err(format!("{} did not create .ninja_deps", tool.name));
@@ -322,17 +262,7 @@ fn dependency_log(directory: &Path, tool: &Tool) -> Result<Workload, String> {
 }
 
 fn scheduler(directory: &Path) -> io::Result<Workload> {
-    fs::create_dir_all(directory.join("jobs"))?;
-    let mut manifest = String::from("rule step\n  command = touch $out\n");
-    for index in 0..SCHEDULER_EDGES {
-        let _ = writeln!(manifest, "build jobs/{index}: step");
-    }
-    manifest.push_str("build all: phony");
-    for index in 0..SCHEDULER_EDGES {
-        let _ = write!(manifest, " jobs/{index}");
-    }
-    manifest.push_str("\ndefault all\n");
-    write_manifest(directory, &manifest)?;
+    workloads::scheduler(directory)?;
     Ok(Workload {
         name: "scheduler-barrier",
         directory: directory.to_owned(),

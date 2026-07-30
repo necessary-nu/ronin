@@ -55,6 +55,23 @@ The completed clean-revision comparison is recorded in
 [`performance-validation-2026-07-29.md`](performance-validation-2026-07-29.md),
 with the exact machine-readable output beside it.
 
+The dependency-free `alloc_metrics` Cargo example measures deterministic
+in-process allocation requests and requested bytes for the same version-1
+workloads under a counting global allocator, reporting both per build
+statement. The recorded baseline lives in
+[`alloc-metrics-v1.csv`](alloc-metrics-v1.csv) with the initial analysis in
+[`alloc-metrics-2026-07-30.md`](alloc-metrics-2026-07-30.md). Validate a
+candidate against it with:
+
+```sh
+cargo build --release --example alloc_metrics
+./target/release/examples/alloc_metrics --check benchmarks/alloc-metrics-v1.csv
+```
+
+The check fails when any workload exceeds its recorded allocation requests or
+requested bytes by more than 10%; re-record with `--record` after an accepted
+improvement.
+
 The process-supervision runtime comparison is recorded in
 [`runtime-scalability-2026-07-30.md`](runtime-scalability-2026-07-30.md).
 Its isolated thread-per-child, current-thread Tokio, busy-polling, and

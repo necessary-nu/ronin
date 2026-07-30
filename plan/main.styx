@@ -1165,6 +1165,9 @@ children (
             {
                 id ronin-alloc-metrics
                 title "Track allocations-per-edge as a regression metric"
+                implements {
+                    target-impl ([spec:samurai:req:performance.allocation-accounting])
+                }
                 deps (ronin-mimalloc-tuning)
                 log (
                     {
@@ -1172,6 +1175,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Make allocations-per-edge the leading regression indicator for this whole tree; at 15-40 ms wall times it discriminates better than time. Generalize the jemalloc nrequests A/B from benchmarks/span-frontend-2026-07-30.md (LD_PRELOAD jemalloc, MALLOC_CONF=stats_print:true,tcache:false) into a checked-in harness that reports allocation requests and allocator-facing bytes per baseline workload, alongside perf stat page-fault counts. Baseline today is ~48 allocation requests per edge on the 4,000-edge manifest-command-evaluation workload; target is single digits. Every sibling node should land with a before/after from this harness."
+                    }
+
+                    {
+                        at 2026-07-30T09:01:28.381947796Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

@@ -1,0 +1,11 @@
+# schema=ronin-alloc-metrics-v1
+# workload_version=1
+# build_profile=release
+# platform=linux-x86_64
+workload,build_statements,allocation_requests,requested_bytes
+manifest-command-evaluation,4001,192172,16044639
+deep-graph-evaluation,2000,40152,4743715
+wide-noop-build,4001,64246,9552353
+path-canonicalization,4000,36103,5482982
+dependency-log-load,301,26378,1953788
+scheduler-barrier,129,8178,658634

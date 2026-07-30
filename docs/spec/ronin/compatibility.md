@@ -130,6 +130,15 @@ the supported CLI surface.
 > allocation count require an explanation and explicit acceptance before
 > release.
 
+> [spec:samurai:req:performance.allocation-accounting]
+> Allocation-sensitive optimization work is measured by a deterministic
+> in-process harness that counts allocator requests and requested bytes for
+> each versioned baseline workload and reports them per build statement.
+> Recorded allocation baselines are machine-readable, carry schema, workload
+> version, and build-profile provenance, and a check mode fails when a
+> measured workload exceeds its recorded values by more than an explicit
+> tolerance.
+
 > [spec:samurai:req:release.compatibility-gate]
 > A Ronin release requires formatting, Rust tests, port coverage, the classified
 > upstream Ninja conformance suite, and performance validation to pass for the
