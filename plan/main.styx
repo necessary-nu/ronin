@@ -1048,6 +1048,9 @@ children (
                 id ronin-process-boundary
                 title "Isolate cwd, environment, and stdio at the executable boundary"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.explicit-invocation-boundary])
+                }
                 deps (ronin-runtime-scalability ronin-signal-boundary ronin-semantic-errors)
                 log (
                     {
@@ -1055,6 +1058,20 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Make argument parsing free of process-global mutation. Model sequential -C semantics against an explicit base directory; pass environment values and output/diagnostic sinks through a Runner or invocation context; keep cwd mutation, signal installation, stdio selection, and process exit in the executable; ensure later parse failures cannot leak changed cwd into an embedding caller; and preserve the deliberately narrow public API contract."
+                    }
+
+                    {
+                        at 2026-07-30T02:58:42.768493586Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T03:21:05.192810806Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Introduce a small public Runner as the explicit library invocation context. Runner::new canonicalizes and validates a caller-supplied directory with environment integration disabled; Runner::from_process snapshots cwd, MAKEFLAGS, and NINJA_STATUS for the executable boundary. Resolve sequential -C transitions against the context without set_current_dir, preserve logical byte paths in the graph and diagnostics while resolving physical I/O through WorkingDirectory/RealDiskInterface, set child Command::current_dir explicitly, and move terminal acquisition to main via caller-supplied sinks. Keep free run/run_os as buffered convenience wrappers. The 357 library tests plus all other Rust targets, strict Clippy/rustdoc, 425-test Ninja oracle, 10 differential cases, persistence round trip, musl check, and 15-sample performance gate pass; scheduler-barrier median is 41.706 ms versus Ninja's 45.108 ms."
                     }
                 )
             }

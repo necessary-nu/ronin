@@ -31,6 +31,7 @@ pub(crate) struct ParseOptions {
 pub(crate) struct Parser {
     pub(crate) options: ParseOptions,
     pub(crate) defaults: Vec<NodeId>,
+    working_directory: crate::os::WorkingDirectory,
     #[allow(
         dead_code,
         reason = "successful parses retain exact source buffers for span-aware consumers"
@@ -39,9 +40,13 @@ pub(crate) struct Parser {
 }
 
 impl Parser {
-    pub(crate) fn with_options(options: ParseOptions) -> Self {
+    pub(crate) fn with_options_in(
+        options: ParseOptions,
+        working_directory: crate::os::WorkingDirectory,
+    ) -> Self {
         Self {
             options,
+            working_directory,
             ..Self::default()
         }
     }
@@ -477,7 +482,9 @@ pub(crate) fn parse(
     state: &mut EnvState,
 ) -> ManifestResult<()> {
     let path = name.as_ref().to_owned();
-    let source = Source::from_path(&path).map_err(|error| ManifestError::read(&path, error))?;
+    let input = std::fs::read(parser.working_directory.resolve(&path))
+        .map_err(|error| ManifestError::read(&path, error))?;
+    let source = Source::from_bytes(&path, input);
     parser.sources.push(Arc::clone(&source));
     let mut scanner = Scanner::new(&source);
     while let Some(token) = scankeyword(&mut scanner)? {

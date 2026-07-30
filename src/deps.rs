@@ -893,13 +893,14 @@ pub(crate) fn depsrecord(
     edge: EdgeId,
     graph: &mut Graph,
     runtime: &RuntimeState,
+    disk: &crate::os::RealDiskInterface,
 ) -> Result<(), PersistenceError> {
     let Some(depfile) = edgevar(graph, edge, "depfile", PathStyle::Raw) else {
         return Ok(());
     };
     let deps = depsparse(
         graph,
-        depfile.to_path().expect("byte paths are valid on Unix"),
+        &disk.resolve(depfile.to_path().expect("byte paths are valid on Unix")),
         true,
     )?;
     depsrecordnodes(log, graph, runtime, edge, &deps.nodes)

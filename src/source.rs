@@ -1,5 +1,6 @@
 //! Retained byte sources and compact source spans.
 
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,6 +22,7 @@ pub(crate) struct Source {
 }
 
 impl Source {
+    #[cfg(test)]
     pub(crate) fn from_path(path: impl AsRef<Path>) -> std::io::Result<Arc<Self>> {
         let path = path.as_ref();
         let input = fs::read(path)?;

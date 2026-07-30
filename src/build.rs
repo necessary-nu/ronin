@@ -11,7 +11,6 @@ use crate::subprocess::{status_interrupted, ProcessOutput, ProcessSupervisor, Su
 use crate::util::{BString, ByteSlice};
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
-use std::fs;
 use std::io::Write;
 use std::num::NonZeroUsize;
 use std::path::Path;
@@ -58,6 +57,7 @@ pub(crate) struct BuildOptions {
     pub(crate) status_from_cli: bool,
     pub(crate) maxload: f64,
     pub(crate) jobserver: Option<crate::jobserver::Transport>,
+    pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
 impl Default for BuildOptions {
@@ -76,6 +76,7 @@ impl Default for BuildOptions {
             status_from_cli: false,
             maxload: 0.0,
             jobserver: None,
+            working_directory: crate::os::WorkingDirectory::default(),
         }
     }
 }
@@ -498,6 +499,7 @@ pub(crate) struct Builder<'a> {
     graph: &'a mut Graph,
     runtime: RuntimeState,
     options: BuildOptions,
+    disk: RealDiskInterface,
     plan: Plan,
     build_log: Option<&'a mut crate::log::BuildLog>,
     deps_log: Option<&'a mut crate::deps::DepsLog>,
@@ -525,6 +527,7 @@ impl<'a> Builder<'a> {
         diagnostic_sink: Option<&'a mut dyn Write>,
     ) -> Self {
         let progress = BuildState::new(options.clone());
+        let disk = RealDiskInterface::new(options.working_directory.clone());
         let mut runtime = RuntimeState::new(graph);
         if let Some(log) = build_log.as_deref() {
             log.hydrate_runtime(graph, &mut runtime, 0..graph.node_ids().len());
@@ -536,6 +539,7 @@ impl<'a> Builder<'a> {
             graph,
             runtime,
             options,
+            disk,
             plan: Plan::default(),
             build_log,
             deps_log,
@@ -660,7 +664,7 @@ impl<'a> Builder<'a> {
             Refresh(EdgeId),
         }
 
-        let disk = RealDiskInterface;
+        let disk = self.disk.clone();
         let mut visited = vec![false; self.graph.edge_count()];
         let mut work = vec![Work::Enter(target)];
         while let Some(item) = work.pop() {
@@ -724,10 +728,14 @@ impl<'a> Builder<'a> {
                         if base_dirty {
                             let state = self.runtime.edge_mut(edge);
                             state.set_deps_loaded(true);
-                            state.set_deps_missing(!path.exists());
-                        } else if path.exists() {
+                            state.set_deps_missing(!disk.exists(path));
+                        } else if disk.exists(path) {
                             self.runtime.edge_mut(edge).set_deps_loaded(true);
-                            match crate::deps::depsparse_for_edge(self.graph, path, edge)? {
+                            match crate::deps::depsparse_for_edge(
+                                self.graph,
+                                &disk.resolve(path),
+                                edge,
+                            )? {
                                 Some(deps) => {
                                     self.replace_depfile_deps(edge, &deps.nodes);
                                     self.runtime.edge_mut(edge).set_deps_missing(false);
@@ -781,13 +789,12 @@ impl<'a> Builder<'a> {
             {
                 loaded_files.resize(loaded_files.len().max(dyndep.index() + 1), false);
                 let path = self.graph.node(dyndep).path.clone();
-                if path
-                    .to_path()
-                    .expect("byte paths are valid on Unix")
-                    .exists()
+                if self
+                    .disk
+                    .exists(path.to_path().expect("byte paths are valid on Unix"))
                     && !std::mem::replace(&mut loaded_files[dyndep.index()], true)
                 {
-                    crate::dyndep::load_dyndep(self.graph, &mut self.runtime, dyndep)?;
+                    crate::dyndep::load_dyndep(self.graph, &mut self.runtime, dyndep, &self.disk)?;
                     self.synchronize_runtime();
                 }
             }
@@ -877,7 +884,7 @@ impl<'a> Builder<'a> {
         if self.build_log.is_some() {
             self.prepare_build_log_for(node)?;
         }
-        let disk = RealDiskInterface;
+        let disk = self.disk.clone();
         let mut stat = |path: &Path| disk.stat(path);
         let validations =
             recompute_dirty_with_validations(self.graph, &mut self.runtime, node, &mut stat)?;
@@ -925,7 +932,7 @@ impl<'a> Builder<'a> {
 
         for output in &self.graph.edge(edge).out {
             let path = self.graph.node(*output).path.clone();
-            RealDiskInterface
+            self.disk
                 .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
                 .map_err(|source| {
                     BuildError::io(
@@ -938,33 +945,46 @@ impl<'a> Builder<'a> {
         }
 
         let response_file = command.rspfile.as_ref().map(|path| ResponseFile {
-            path: path.clone(),
+            path: self
+                .disk
+                .resolve(path.to_path().expect("byte paths are valid on Unix")),
             remove_on_drop: !self.options.keeprsp,
         });
-        if let Some(response_file) = &response_file {
-            let path = response_file.path.clone();
-            RealDiskInterface
-                .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
+        if response_file.is_some() {
+            let logical_path = command
+                .rspfile
+                .as_ref()
+                .expect("response file guard follows a response file")
+                .clone();
+            self.disk
+                .make_dirs(
+                    logical_path
+                        .to_path()
+                        .expect("byte paths are valid on Unix"),
+                )
                 .map_err(|source| {
                     BuildError::io(
                         BuildOperation::CreateOutputDirectory,
-                        Some(path.clone()),
+                        Some(logical_path.clone()),
                         Some(edge),
                         source,
                     )
                 })?;
-            fs::write(
-                path.to_path().expect("byte paths are valid on Unix"),
-                command.rspfile_content.as_bytes(),
-            )
-            .map_err(|source| {
-                BuildError::io(
-                    BuildOperation::WriteResponseFile,
-                    Some(path),
-                    Some(edge),
-                    source,
+            self.disk
+                .write(
+                    logical_path
+                        .to_path()
+                        .expect("byte paths are valid on Unix"),
+                    command.rspfile_content.as_bytes(),
                 )
-            })?;
+                .map_err(|source| {
+                    BuildError::io(
+                        BuildOperation::WriteResponseFile,
+                        Some(logical_path),
+                        Some(edge),
+                        source,
+                    )
+                })?;
         }
 
         let command_start_mtime = if self.options.dryrun {
@@ -1054,14 +1074,15 @@ impl<'a> Builder<'a> {
                             let path = command.depfile_path.as_ref().ok_or({
                                 BuildError::DependencyFileMissing { edge, path: None }
                             })?;
-                            if path
-                                .to_path()
-                                .expect("byte paths are valid on Unix")
-                                .exists()
+                            if self
+                                .disk
+                                .exists(path.to_path().expect("byte paths are valid on Unix"))
                             {
                                 let deps = crate::deps::depsparse(
                                     self.graph,
-                                    path.to_path().expect("byte paths are valid on Unix"),
+                                    &self.disk.resolve(
+                                        path.to_path().expect("byte paths are valid on Unix"),
+                                    ),
                                     false,
                                 )?;
                                 self.replace_depfile_deps(edge, &deps.nodes);
@@ -1097,7 +1118,7 @@ impl<'a> Builder<'a> {
             )?;
             if !status.success() {
                 if status_interrupted(status) {
-                    let disk = RealDiskInterface;
+                    let disk = self.disk.clone();
                     for (output, old_mtime) in self.graph.edge(edge).out.iter().zip(&old_mtimes) {
                         let path = self.graph.node(*output).path.clone();
                         if disk
@@ -1105,9 +1126,8 @@ impl<'a> Builder<'a> {
                             .ok()
                             != Some(*old_mtime)
                         {
-                            let _ = fs::remove_file(
-                                path.to_path().expect("byte paths are valid on Unix"),
-                            );
+                            let _ = disk
+                                .remove_file(path.to_path().expect("byte paths are valid on Unix"));
                         }
                     }
                 }
@@ -1126,7 +1146,7 @@ impl<'a> Builder<'a> {
             self.command_finished(edge, &command, None, &[])?;
         }
 
-        let disk = RealDiskInterface;
+        let disk = self.disk.clone();
         let mut new_mtimes = Vec::new();
         let output_ids = self.graph.edge(edge).out.clone();
         let edge_hash = edgehash(
@@ -1157,7 +1177,13 @@ impl<'a> Builder<'a> {
             match &command.deps_type {
                 DepsType::Gcc => {
                     if let Some(deps_log) = self.deps_log.as_deref_mut() {
-                        crate::deps::depsrecord(deps_log, edge, self.graph, &self.runtime)?;
+                        crate::deps::depsrecord(
+                            deps_log,
+                            edge,
+                            self.graph,
+                            &self.runtime,
+                            &self.disk,
+                        )?;
                     }
                 }
                 DepsType::Msvc => {
@@ -1180,7 +1206,9 @@ impl<'a> Builder<'a> {
         if command.deps_type == DepsType::Gcc {
             if let Some(path) = &command.depfile_path {
                 if !self.options.keepdepfile {
-                    let _ = fs::remove_file(path.to_path().expect("byte paths are valid on Unix"));
+                    let _ = self
+                        .disk
+                        .remove_file(path.to_path().expect("byte paths are valid on Unix"));
                 }
             }
         }
@@ -1195,7 +1223,7 @@ impl<'a> Builder<'a> {
                 .copied()
                 .collect::<Vec<_>>();
             for dyndep in generated_dyndeps {
-                crate::dyndep::load_dyndep(self.graph, &mut self.runtime, dyndep)?;
+                crate::dyndep::load_dyndep(self.graph, &mut self.runtime, dyndep, &self.disk)?;
                 self.synchronize_runtime();
                 loaded_dyndeps.push(dyndep);
             }
@@ -1245,7 +1273,7 @@ impl<'a> Builder<'a> {
             queue.extend(output.validation_uses.iter().copied());
         }
         let mut visited = vec![false; self.graph.edge_count()];
-        let disk = RealDiskInterface;
+        let disk = self.disk.clone();
         while let Some(dependent) = queue.pop() {
             if std::mem::replace(&mut visited[dependent.index()], true) {
                 continue;
@@ -1266,7 +1294,7 @@ impl<'a> Builder<'a> {
     }
 
     fn recompute_planned_after_dyndep(&mut self, loaded_dyndeps: &[NodeId]) -> BuildResult<()> {
-        let disk = RealDiskInterface;
+        let disk = self.disk.clone();
         self.plan
             .expanded_weight
             .fill(CriticalPathWeight::default());
@@ -1399,7 +1427,9 @@ impl<'a> Builder<'a> {
         let mut running_slots = Vec::new();
         running_slots.resize_with(self.graph.edge_count(), || None);
         let mut console_running = false;
-        let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::new()?;
+        let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::in_directory(
+            self.options.working_directory.as_path(),
+        )?;
         let mut jobserver = if self.options.dryrun {
             None
         } else {

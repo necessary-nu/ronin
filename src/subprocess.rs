@@ -6,6 +6,7 @@ use crate::signal::Signal;
 use crate::util::{BString, ByteSlice};
 use std::collections::{HashMap, VecDeque};
 use std::io;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(unix)]
@@ -113,10 +114,16 @@ pub(crate) struct ProcessSupervisor<External = ()> {
     #[cfg(not(unix))]
     children: HashMap<EdgeId, (u32, bool)>,
     interrupted: Option<Signal>,
+    working_directory: PathBuf,
 }
 
 impl<External> ProcessSupervisor<External> {
+    #[cfg(test)]
     pub(crate) fn new() -> ProcessResult<Self> {
+        Self::in_directory(Path::new(""))
+    }
+
+    pub(crate) fn in_directory(working_directory: &Path) -> ProcessResult<Self> {
         let (sender, receiver) = mpsc::channel();
         #[cfg(unix)]
         let poller =
@@ -161,6 +168,7 @@ impl<External> ProcessSupervisor<External> {
             reap_candidates: Vec::new(),
             children: HashMap::new(),
             interrupted: None,
+            working_directory: working_directory.to_owned(),
         })
     }
 
@@ -224,16 +232,23 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
         #[cfg(not(unix))]
         {
             let sender = self.sender.clone();
+            let working_directory = self.working_directory.clone();
             self.running += 1;
             std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    run_shell(&command, use_console, dryrun, |pid, process_group| {
-                        let _ = sender.send(ProcessEvent::Started {
-                            edge,
-                            pid,
-                            process_group,
-                        });
-                    })
+                    run_shell(
+                        &command,
+                        &working_directory,
+                        use_console,
+                        dryrun,
+                        |pid, process_group| {
+                            let _ = sender.send(ProcessEvent::Started {
+                                edge,
+                                pid,
+                                process_group,
+                            });
+                        },
+                    )
                     .map_err(|failure| ProcessError::Shell {
                         edge,
                         command: command.clone(),
@@ -355,7 +370,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             return Ok(());
         }
 
-        let mut shell = shell_command(&command);
+        let mut shell = shell_command(&command, &self.working_directory);
         if !use_console {
             shell.process_group(0);
         }
@@ -699,12 +714,15 @@ struct ShellFailure {
     source: io::Error,
 }
 
-fn shell_command(command: &BString) -> Command {
+fn shell_command(command: &BString, working_directory: &Path) -> Command {
     let mut shell = Command::new("/bin/sh");
     shell
         .arg("-c")
         .arg(command.to_os_str().expect("byte strings are valid on Unix"))
         .stdin(Stdio::null());
+    if !working_directory.as_os_str().is_empty() {
+        shell.current_dir(working_directory);
+    }
     shell
 }
 
@@ -754,6 +772,7 @@ fn configure_output(
 #[cfg(not(unix))]
 fn run_shell(
     command: &BString,
+    working_directory: &Path,
     use_console: bool,
     dryrun: bool,
     started: impl FnOnce(u32, bool),
@@ -761,7 +780,7 @@ fn run_shell(
     if dryrun {
         return Ok(None);
     }
-    let mut child = shell_command(command);
+    let mut child = shell_command(command, working_directory);
     if use_console {
         let mut child = child.spawn().map_err(|source| ShellFailure {
             operation: ShellOperation::Spawn,

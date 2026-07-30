@@ -55,6 +55,95 @@ impl RunResult {
     }
 }
 
+/// A reusable Ronin invocation context with an explicit working directory.
+///
+/// Constructing a runner snapshots the process values that affect Ninja
+/// integration, so executing it does not mutate or rediscover process-global
+/// state.
+// [spec:samurai:req:runtime.explicit-invocation-boundary]
+pub struct Runner {
+    working_directory: crate::os::WorkingDirectory,
+    makeflags: Option<String>,
+    status_format: Option<String>,
+    connect_jobserver: fn() -> Result<crate::jobserver::Transport, crate::error::ProcessError>,
+}
+
+impl Runner {
+    /// Creates an isolated runner rooted at `working_directory`.
+    ///
+    /// Environment-driven Ninja integration is disabled. Use
+    /// [`Runner::from_process`] for the command-line executable.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the directory does not exist or cannot be
+    /// canonicalized.
+    pub fn new(working_directory: impl AsRef<Path>) -> std::io::Result<Self> {
+        Ok(Self {
+            working_directory: crate::os::WorkingDirectory::new(working_directory)?,
+            makeflags: None,
+            status_format: None,
+            connect_jobserver: crate::jobserver::inherited_client,
+        })
+    }
+
+    /// Creates a runner rooted at the current directory with Ninja's relevant
+    /// environment values captured.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the process working directory cannot be read or
+    /// canonicalized.
+    pub fn from_process() -> std::io::Result<Self> {
+        let mut runner = Self::new(std::env::current_dir()?)?;
+        runner.makeflags = std::env::var("MAKEFLAGS").ok();
+        runner.status_format = std::env::var(NINJA_STATUS_ENV).ok();
+        Ok(runner)
+    }
+
+    /// Runs Ronin with UTF-8 arguments and returns buffered standard output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] when argument parsing or execution fails.
+    pub fn run(&self, arguments: &[String]) -> CliResult<String> {
+        let arguments = arguments
+            .iter()
+            .cloned()
+            .map(BString::from)
+            .collect::<Vec<_>>();
+        string_result(run_bytes(self, &arguments, None, None)?)
+    }
+
+    /// Runs Ronin with native operating-system arguments and buffers all output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] when argument conversion or execution fails.
+    pub fn run_os(&self, arguments: &[OsString]) -> CliResult<RunResult> {
+        let arguments = byte_arguments(arguments)?;
+        run_bytes(self, &arguments, None, None)
+    }
+
+    /// Runs Ronin while streaming build and diagnostic output to supplied sinks.
+    ///
+    /// Immediate command-line output remains in the returned [`RunResult`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] when argument conversion, output, or execution
+    /// fails.
+    pub fn run_os_with_sinks(
+        &self,
+        arguments: &[OsString],
+        output: &mut dyn std::io::Write,
+        diagnostics: &mut dyn std::io::Write,
+    ) -> CliResult<RunResult> {
+        let arguments = byte_arguments(arguments)?;
+        run_bytes(self, &arguments, Some(output), Some(diagnostics))
+    }
+}
+
 // [spec:samurai:def:samu.usage-fn]
 // [spec:samurai:sem:samu.usage-fn]
 pub(crate) fn usage(program: &str) -> String {
@@ -199,6 +288,7 @@ fn append_stats(output: &mut String, parse_count: usize, parse_elapsed: std::tim
 struct RunInvocation {
     build_options: BuildOptions,
     parse_options: ParseOptions,
+    working_directory: crate::os::WorkingDirectory,
     manifest: BString,
     targets: Vec<BString>,
     selected_tool: Option<crate::tool::Tool>,
@@ -308,11 +398,14 @@ fn expand_status_format(format: &str) -> CliResult<String> {
 // [spec:samurai:sem:os.oschdir-fn]
 // [spec:samurai:def:os-posix.oschdir-fn]
 // [spec:samurai:sem:os-posix.oschdir-fn]
-fn set_current_directory(directory: &BString) -> CliResult<()> {
+fn change_working_directory(
+    working_directory: &mut crate::os::WorkingDirectory,
+    directory: &BString,
+) -> CliResult<()> {
     let path = directory.to_path().map_err(|_| CliError::InvalidEncoding {
         context: EncodingContext::ChangeDirectory,
     })?;
-    std::env::set_current_dir(path).map_err(|source| {
+    working_directory.change_to(path).map_err(|source| {
         CliError::ChangeDirectory {
             path: directory.clone(),
             source,
@@ -368,10 +461,14 @@ fn invalid_option(arguments: &[BString], message: impl std::fmt::Display) -> Run
     clippy::too_many_lines,
     reason = "Ninja-compatible short-option parsing is one state machine with shared cursor semantics"
 )]
-fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
+fn parse_run_arguments(
+    arguments: &[BString],
+    working_directory: &crate::os::WorkingDirectory,
+) -> CliResult<RunAction> {
     let mut invocation = RunInvocation {
         build_options: BuildOptions::default(),
         parse_options: ParseOptions::default(),
+        working_directory: working_directory.clone(),
         manifest: DEFAULT_MANIFEST.into(),
         targets: Vec::new(),
         selected_tool: None,
@@ -473,7 +570,10 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
                             )?;
                             short = argument.len();
                             match option {
-                                b'C' => set_current_directory(&value)?,
+                                b'C' => change_working_directory(
+                                    &mut invocation.working_directory,
+                                    &value,
+                                )?,
                                 b'f' => invocation.manifest = value,
                                 b'j' => jobsflag(
                                     &mut invocation.build_options,
@@ -543,6 +643,8 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
                                     invocation
                                         .tool_arguments
                                         .extend_from_slice(&arguments[index + 1..]);
+                                    invocation.build_options.working_directory =
+                                        invocation.working_directory.clone();
                                     return Ok(RunAction::Execute(invocation));
                                 }
                                 _ => unreachable!(),
@@ -560,6 +662,7 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
         }
         index += 1;
     }
+    invocation.build_options.working_directory = invocation.working_directory.clone();
     Ok(RunAction::Execute(invocation))
 }
 
@@ -567,6 +670,7 @@ fn parse_run_arguments(arguments: &[BString]) -> CliResult<RunAction> {
 fn normalize_runtime_options(
     options: &mut BuildOptions,
     makeflags: Option<&str>,
+    status_format: Option<&str>,
     connect_jobserver: impl FnOnce() -> Result<crate::jobserver::Transport, crate::error::ProcessError>,
 ) -> CliResult<()> {
     if options.jobs == JobLimit::Auto {
@@ -583,8 +687,8 @@ fn normalize_runtime_options(
             options.jobs = JobLimit::fixed(jobs).expect("default job count is nonzero");
         }
     }
-    if let Ok(status) = std::env::var(NINJA_STATUS_ENV) {
-        options.statusfmt = status;
+    if let Some(status) = status_format {
+        status.clone_into(&mut options.statusfmt);
     }
     Ok(())
 }
@@ -616,6 +720,7 @@ fn run_clean_tool(
     dryrun: bool,
     verbose: bool,
     quiet: bool,
+    disk: crate::os::RealDiskInterface,
 ) -> CliResult<String> {
     let mut include_generators = false;
     let mut rule_mode = false;
@@ -664,7 +769,14 @@ fn run_clean_tool(
         (names.as_slice(), &[][..])
     };
     Ok(format_clean_report(
-        &crate::tool::clean_with_report(graph, targets, rules, include_generators, dryrun)?,
+        &crate::tool::clean_with_report_in(
+            graph,
+            targets,
+            rules,
+            include_generators,
+            dryrun,
+            disk,
+        )?,
         verbose,
         quiet,
     ))
@@ -689,7 +801,11 @@ fn format_clean_report(removed: &[BString], verbose: bool, quiet: bool) -> Strin
     output
 }
 
-fn run_compdb_tool(graph: &crate::graph::Graph, arguments: &[BString]) -> CliResult<BString> {
+fn run_compdb_tool(
+    graph: &crate::graph::Graph,
+    arguments: &[BString],
+    working_directory: &Path,
+) -> CliResult<BString> {
     let mut expand_rsp = false;
     let mut rules = Vec::new();
     for argument in arguments {
@@ -710,12 +826,18 @@ fn run_compdb_tool(graph: &crate::graph::Graph, arguments: &[BString]) -> CliRes
             ),
         }
     }
-    Ok(crate::tool::compdb(graph, &rules, expand_rsp)?)
+    Ok(crate::tool::compdb(
+        graph,
+        &rules,
+        expand_rsp,
+        working_directory,
+    ))
 }
 
 fn run_compdb_targets_tool(
     graph: &crate::graph::Graph,
     arguments: &[BString],
+    working_directory: &Path,
 ) -> CliResult<BString> {
     let mut expand_rsp = false;
     let mut targets = Vec::new();
@@ -739,7 +861,10 @@ fn run_compdb_targets_tool(
         }
     }
     Ok(crate::tool::compdb_for_targets(
-        graph, &targets, expand_rsp,
+        graph,
+        &targets,
+        expand_rsp,
+        working_directory,
     )?)
 }
 
@@ -821,18 +946,23 @@ const fn tool_help(tool: crate::tool::Tool) -> Option<&'static str> {
 }
 
 #[derive(Clone, Copy)]
-struct ToolRunOptions {
+struct ToolRunContext<'a> {
     dry_run: bool,
     verbose: bool,
     quiet: bool,
+    working_directory: &'a crate::os::WorkingDirectory,
 }
 
-impl From<&BuildOptions> for ToolRunOptions {
-    fn from(options: &BuildOptions) -> Self {
+impl<'a> ToolRunContext<'a> {
+    const fn new(
+        options: &BuildOptions,
+        working_directory: &'a crate::os::WorkingDirectory,
+    ) -> Self {
         Self {
             dry_run: options.dryrun,
             verbose: options.verbose,
             quiet: options.quiet,
+            working_directory,
         }
     }
 }
@@ -841,6 +971,7 @@ fn run_flag_tool(
     tool: crate::tool::Tool,
     arguments: &[BString],
     dryrun: bool,
+    working_directory: &crate::os::WorkingDirectory,
 ) -> CliResult<RunResult> {
     match tool {
         crate::tool::Tool::List => Ok(RunResult::stdout(crate::tool::tool_list())),
@@ -892,19 +1023,19 @@ fn run_flag_tool(
                     })
                 })
                 .transpose()?;
-            let directory = directory.as_deref();
-            let path = directory.map_or_else(
-                || PathBuf::from(".ninja_log"),
-                |directory| directory.join(".ninja_log"),
+            let directory = directory.map_or_else(
+                || working_directory.as_path().to_owned(),
+                |directory| working_directory.resolve(&directory),
             );
+            let path = directory.join(".ninja_log");
             if !path.exists() {
                 return Ok(RunResult::stdout([]));
             }
-            let mut log = crate::log::BuildLog::open(directory).map_err(|source| {
+            let mut log = crate::log::BuildLog::open(Some(&directory)).map_err(|source| {
                 PersistenceError::io(PersistenceOperation::LoadBuildLog, path.clone(), source)
             })?;
             if !dryrun {
-                let disk = crate::os::RealDiskInterface;
+                let disk = crate::os::RealDiskInterface::new(working_directory.clone());
                 crate::log::logrestat(&mut log, &filters, |path| disk.stat(path)).map_err(
                     |source| {
                         PersistenceError::io(
@@ -931,7 +1062,7 @@ fn run_manifest_tool(
     parser: &crate::parse::Parser,
     state: &crate::env::EnvState,
     arguments: &[BString],
-    options: ToolRunOptions,
+    options: ToolRunContext<'_>,
 ) -> CliResult<RunResult> {
     if arguments
         .iter()
@@ -973,18 +1104,27 @@ fn run_manifest_tool(
             options.dry_run,
             options.verbose,
             options.quiet,
+            crate::os::RealDiskInterface::new(options.working_directory.clone()),
         )
         .map(tool_result),
-        crate::tool::Tool::Compdb => run_compdb_tool(graph, arguments).map(tool_result),
+        crate::tool::Tool::Compdb => {
+            run_compdb_tool(graph, arguments, options.working_directory.as_path()).map(tool_result)
+        }
         crate::tool::Tool::CompdbTargets => {
-            run_compdb_targets_tool(graph, arguments).map(tool_result)
+            run_compdb_targets_tool(graph, arguments, options.working_directory.as_path())
+                .map(tool_result)
         }
         crate::tool::Tool::Commands
         | crate::tool::Tool::Graph
         | crate::tool::Tool::Inputs
         | crate::tool::Tool::MultiInputs
         | crate::tool::Tool::Targets
-        | crate::tool::Tool::Rules => Ok(tool_result(crate::tool::run(tool, graph, arguments)?)),
+        | crate::tool::Tool::Rules => Ok(tool_result(crate::tool::run(
+            tool,
+            graph,
+            arguments,
+            options.working_directory.as_path(),
+        )?)),
         _ => Err(ToolError::Availability(ToolAvailability::RequiresPersistentRuntimeState).into()),
     }
 }
@@ -996,10 +1136,15 @@ fn run_log_tool(
     build_log: &mut crate::log::BuildLog,
     deps_log: &mut crate::deps::DepsLog,
     arguments: &[BString],
-    options: ToolRunOptions,
+    options: ToolRunContext<'_>,
 ) -> CliResult<RunResult> {
     match tool {
-        crate::tool::Tool::Deps => Ok(tool_result(crate::tool::deps(graph, deps_log, arguments)?)),
+        crate::tool::Tool::Deps => Ok(tool_result(crate::tool::deps_in(
+            graph,
+            deps_log,
+            arguments,
+            &crate::os::RealDiskInterface::new(options.working_directory.clone()),
+        )?)),
         crate::tool::Tool::MissingDeps => {
             let target_names;
             let arguments = if arguments.is_empty() {
@@ -1025,7 +1170,12 @@ fn run_log_tool(
         crate::tool::Tool::CleanDead => {
             let logged = build_log.entries.keys().cloned().collect::<Vec<_>>();
             Ok(tool_result(format_clean_report(
-                &crate::tool::clean_dead_with_report(graph, &logged, options.dry_run)?,
+                &crate::tool::clean_dead_with_report_in(
+                    graph,
+                    &logged,
+                    options.dry_run,
+                    crate::os::RealDiskInterface::new(options.working_directory.clone()),
+                )?,
                 options.verbose,
                 options.quiet,
             )))
@@ -1071,45 +1221,38 @@ fn run_log_tool(
 /// Returns an [`Error`] when argument parsing, manifest loading, graph
 /// evaluation, a tool operation, or build execution fails.
 pub fn run(arguments: &[String]) -> CliResult<String> {
-    let arguments = arguments
-        .iter()
-        .cloned()
-        .map(BString::from)
-        .collect::<Vec<_>>();
-    let result = run_bytes(&arguments, None, None)?;
-    let mut stdout = String::from_utf8_lossy(&result.stdout).into_owned();
+    process_runner()?.run(arguments)
+}
+
+fn string_result(result: RunResult) -> CliResult<String> {
+    let RunResult {
+        stdout,
+        stderr,
+        exit_code,
+    } = result;
+    let mut stdout = String::from_utf8_lossy(&stdout).into_owned();
     if stdout.ends_with('\n') {
         stdout.pop();
     }
-    if result.exit_code == 0 {
+    if exit_code == 0 {
         Ok(stdout)
     } else {
-        let stderr = String::from_utf8_lossy(&result.stderr);
+        let stderr = String::from_utf8_lossy(&stderr);
         let diagnostic = if stderr.is_empty() {
             stdout
         } else {
             stderr.into_owned()
         };
         Err(CliError::InvocationFailed {
-            exit_code: result.exit_code,
+            exit_code,
             diagnostic,
         }
         .into())
     }
 }
 
-/// Runs Ronin with native operating-system arguments.
-///
-/// Build progress and child-process output are streamed to the process
-/// standard streams. The returned [`RunResult`] contains output generated by
-/// immediate CLI actions and the requested exit status.
-///
-/// # Errors
-///
-/// Returns an [`Error`] when argument conversion, invocation setup, manifest
-/// loading, graph evaluation, a tool operation, or build execution fails.
-pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
-    let arguments = arguments
+fn byte_arguments(arguments: &[OsString]) -> CliResult<Vec<BString>> {
+    arguments
         .iter()
         .cloned()
         .map(|argument| {
@@ -1119,12 +1262,27 @@ pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
                     context: EncodingContext::Argument,
                 })
         })
-        .collect::<Result<Vec<_>, _>>()?;
-    let stdout = std::io::stdout();
-    let mut output = stdout.lock();
-    let stderr = std::io::stderr();
-    let mut diagnostics = stderr.lock();
-    run_bytes(&arguments, Some(&mut output), Some(&mut diagnostics))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn process_runner() -> CliResult<Runner> {
+    Runner::from_process()
+        .map_err(|source| CliError::CurrentDirectory { source })
+        .map_err(Into::into)
+}
+
+/// Runs Ronin with native operating-system arguments.
+///
+/// Output is buffered in the returned [`RunResult`]. Use
+/// [`Runner::run_os_with_sinks`] when build output should be streamed.
+///
+/// # Errors
+///
+/// Returns an [`Error`] when argument conversion, invocation setup, manifest
+/// loading, graph evaluation, a tool operation, or build execution fails.
+pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
+    process_runner()?.run_os(arguments)
 }
 
 // [spec:samurai:def:samu.getbuilddir-fn]
@@ -1134,19 +1292,20 @@ pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
     reason = "manifest rebuild and reload is one bounded orchestration loop with ordered cleanup"
 )]
 fn run_bytes(
+    runner: &Runner,
     arguments: &[BString],
     mut build_output: Option<&mut dyn std::io::Write>,
     mut build_diagnostics: Option<&mut dyn std::io::Write>,
 ) -> CliResult<RunResult> {
-    let mut invocation = match parse_run_arguments(arguments)? {
+    let mut invocation = match parse_run_arguments(arguments, &runner.working_directory)? {
         RunAction::Immediate(result) => return Ok(result),
         RunAction::Execute(invocation) => invocation,
     };
-    let makeflags = std::env::var("MAKEFLAGS").ok();
     normalize_runtime_options(
         &mut invocation.build_options,
-        makeflags.as_deref(),
-        crate::jobserver::inherited_client,
+        runner.makeflags.as_deref(),
+        runner.status_format.as_deref(),
+        runner.connect_jobserver,
     )?;
     if let Some(tool) = invocation
         .selected_tool
@@ -1156,6 +1315,7 @@ fn run_bytes(
             tool,
             &invocation.tool_arguments,
             invocation.build_options.dryrun,
+            &invocation.working_directory,
         );
     }
 
@@ -1164,7 +1324,10 @@ fn run_bytes(
     let mut parse_elapsed = std::time::Duration::ZERO;
     for _ in 0..100 {
         let mut graph = crate::graph::Graph::default();
-        let mut parser = crate::parse::Parser::with_options(invocation.parse_options);
+        let mut parser = crate::parse::Parser::with_options_in(
+            invocation.parse_options,
+            invocation.working_directory.clone(),
+        );
         let mut state = crate::env::EnvState::new(&mut graph);
         let parse_started = std::time::Instant::now();
         crate::parse::parse(
@@ -1192,14 +1355,19 @@ fn run_bytes(
                 &parser,
                 &state,
                 &invocation.tool_arguments,
-                ToolRunOptions::from(&invocation.build_options),
+                ToolRunContext::new(&invocation.build_options, &invocation.working_directory),
             );
         }
 
-        let builddir = crate::env::envvar(&graph, state.root, "builddir")
+        let logical_builddir = crate::env::envvar(&graph, state.root, "builddir")
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
-        if let Some(directory) = &builddir {
+        let builddir = logical_builddir.as_deref().map_or_else(
+            || invocation.working_directory.as_path().to_owned(),
+            |directory| invocation.working_directory.resolve(directory),
+        );
+        if logical_builddir.is_some() {
+            let directory = &builddir;
             std::fs::create_dir_all(directory).map_err(|source| {
                 PersistenceError::io(
                     PersistenceOperation::CreateBuildDirectory,
@@ -1208,17 +1376,11 @@ fn run_bytes(
                 )
             })?;
         }
-        let build_log_path = builddir.as_ref().map_or_else(
-            || PathBuf::from(".ninja_log"),
-            |path| path.join(".ninja_log"),
-        );
-        let mut build_log = crate::log::BuildLog::open(builddir.as_deref()).map_err(|source| {
+        let build_log_path = builddir.join(".ninja_log");
+        let mut build_log = crate::log::BuildLog::open(Some(&builddir)).map_err(|source| {
             PersistenceError::io(PersistenceOperation::OpenBuildLog, build_log_path, source)
         })?;
-        let deps_path = builddir.as_ref().map_or_else(
-            || PathBuf::from(".ninja_deps"),
-            |path| path.join(".ninja_deps"),
-        );
+        let deps_path = builddir.join(".ninja_deps");
         let (mut deps_log, warning) =
             crate::deps::depsloadlog(&deps_path, &mut graph).map_err(|source| {
                 PersistenceError::io(PersistenceOperation::OpenDepsLog, deps_path.clone(), source)
@@ -1234,7 +1396,7 @@ fn run_bytes(
                 &mut build_log,
                 &mut deps_log,
                 &invocation.tool_arguments,
-                ToolRunOptions::from(&invocation.build_options),
+                ToolRunContext::new(&invocation.build_options, &invocation.working_directory),
             );
             let build_log_result = finish_build_log(build_log);
             let deps_log_result = finish_deps_log(deps_log);
@@ -1423,11 +1585,96 @@ mod tests {
             BString::from("graph"),
             BString::from(b"target-\xff"),
         ];
-        let result = run_bytes(&arguments, None, None).unwrap();
+        let runner = Runner::new(&directory).unwrap();
+        let result = run_bytes(&runner, &arguments, None, None).unwrap();
         assert!(result
             .stdout
             .windows(b"target-\xff".len())
             .any(|window| window == b"target-\xff"));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    // [spec:samurai:req:runtime.explicit-invocation-boundary/test]
+    #[test]
+    fn runner_resolves_sequential_changes_without_mutating_process_cwd() {
+        let original_directory = std::env::current_dir().unwrap();
+        let base = std::env::temp_dir().join(format!(
+            "ronin-runner-directory-{}-{}",
+            std::process::id(),
+            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
+        ));
+        let working_directory = base.join("first/second");
+        fs::create_dir_all(&working_directory).unwrap();
+        fs::write(
+            working_directory.join("rules.ninja"),
+            "rule copy\n  command = cp $in $out\n",
+        )
+        .unwrap();
+        fs::write(
+            working_directory.join("build.ninja"),
+            "include rules.ninja\nbuild output: copy input\ndefault output\n",
+        )
+        .unwrap();
+        fs::write(working_directory.join("input"), "explicit directory").unwrap();
+
+        let runner = Runner::new(&base).unwrap();
+        let result = runner
+            .run(&[
+                "ronin".into(),
+                "-C".into(),
+                "first".into(),
+                "-C".into(),
+                "second".into(),
+            ])
+            .unwrap();
+        assert!(result.contains("cp input output"));
+        assert_eq!(
+            fs::read_to_string(working_directory.join("output")).unwrap(),
+            "explicit directory"
+        );
+        assert!(working_directory.join(".ninja_log").exists());
+        assert!(working_directory.join(".ninja_deps").exists());
+        assert_eq!(std::env::current_dir().unwrap(), original_directory);
+
+        let error = runner
+            .run(&[
+                "ronin".into(),
+                "-C".into(),
+                "first".into(),
+                "-j".into(),
+                "not-a-number".into(),
+            ])
+            .unwrap_err();
+        assert_eq!(error.to_string(), "invalid -j parameter");
+        assert_eq!(std::env::current_dir().unwrap(), original_directory);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn runner_streams_only_to_explicit_sinks() {
+        let directory = std::env::temp_dir().join(format!(
+            "ronin-runner-sinks-{}-{}",
+            std::process::id(),
+            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("build.ninja"),
+            "rule emit\n  command = printf child-output\nbuild output: emit\n",
+        )
+        .unwrap();
+        let runner = Runner::new(&directory).unwrap();
+        let mut output = Vec::new();
+        let mut diagnostics = Vec::new();
+        let result = runner
+            .run_os_with_sinks(&[OsString::from("ronin")], &mut output, &mut diagnostics)
+            .unwrap();
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.is_empty());
+        assert!(output
+            .windows(b"child-output".len())
+            .any(|value| value == b"child-output"));
+        assert!(diagnostics.is_empty());
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1438,6 +1685,7 @@ mod tests {
         normalize_runtime_options(
             &mut options,
             Some("-j --jobserver-auth=fifo:/tmp/ronin-jobserver"),
+            None,
             || {
                 jobserver::Client::new(0).map_err(|source| crate::error::ProcessError::Jobserver {
                     operation: crate::error::JobserverOperation::StartHelper,
@@ -1456,6 +1704,7 @@ mod tests {
         normalize_runtime_options(
             &mut explicit,
             Some("-j --jobserver-auth=fifo:/tmp/ignored"),
+            None,
             || panic!("explicit -j must not connect to an inherited jobserver"),
         )
         .unwrap();

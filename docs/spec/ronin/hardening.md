@@ -135,3 +135,19 @@ second work item.
 > semantic process error. Ronin MUST re-raise the observed signal with its
 > default disposition so shells observe signal termination. Production and
 > test code MUST NOT duplicate raw signal numbers or handwritten signal FFI.
+
+## Explicit invocation boundary
+
+> [spec:samurai:req:runtime.explicit-invocation-boundary]
+> Ronin's library invocation path MUST NOT mutate the process working
+> directory or select process-global standard streams. Sequential `-C` options
+> MUST resolve against an explicit invocation directory, validate each
+> transition in order, and leave the caller's working directory unchanged on
+> success and on every later parse or execution failure. Manifest includes,
+> persistent state, build inputs and outputs, depfiles, dyndeps, response
+> files, tools, and child commands MUST all resolve relative paths against that
+> same directory without changing graph-visible path spelling. Relevant
+> environment values and optional output and diagnostic sinks MUST enter
+> through an invocation context rather than hidden reads in parsing or build
+> orchestration. Argument acquisition, signal lifetime, standard-stream
+> selection, and process exit MUST remain owned by the executable boundary.

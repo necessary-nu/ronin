@@ -1,5 +1,5 @@
 use crate::env::edgevar;
-use crate::error::{ToolError, ToolOperation};
+use crate::error::ToolError;
 use crate::graph::{nodeget, CommandCollector, EdgeId, Graph, PathStyle};
 use crate::util::{BString, ByteSlice};
 
@@ -79,19 +79,10 @@ fn render(
     edges: impl IntoIterator<Item = EdgeId>,
     expand_rsp: bool,
     skip_phony: bool,
-) -> Result<BString, ToolError> {
-    render_with_current_directory(graph, edges, expand_rsp, skip_phony, std::env::current_dir)
-}
-
-fn render_with_current_directory(
-    graph: &Graph,
-    edges: impl IntoIterator<Item = EdgeId>,
-    expand_rsp: bool,
-    skip_phony: bool,
-    current_directory: impl FnOnce() -> std::io::Result<std::path::PathBuf>,
-) -> Result<BString, ToolError> {
-    let directory = current_directory()
-        .map_err(|source| ToolError::io(ToolOperation::CurrentDirectory, None, source))?
+    working_directory: &std::path::Path,
+) -> BString {
+    let directory = working_directory
+        .to_owned()
         .into_os_string()
         .into_encoded_bytes();
     let mut output = Vec::from(&b"[\n"[..]);
@@ -127,7 +118,7 @@ fn render_with_current_directory(
         }
     }
     output.extend_from_slice(if first { b"]\n" } else { b"\n]\n" });
-    Ok(BString::from(output))
+    BString::from(output)
 }
 
 // [spec:samurai:def:tool.compdb-fn]
@@ -137,7 +128,8 @@ pub(crate) fn compdb(
     graph: &Graph,
     rules: &[String],
     expand_rsp: bool,
-) -> Result<BString, ToolError> {
+    working_directory: &std::path::Path,
+) -> BString {
     let edges = graph.edge_ids().filter(|edge| {
         rules.is_empty()
             || graph
@@ -145,13 +137,14 @@ pub(crate) fn compdb(
                 .rule
                 .is_some_and(|rule| rules.iter().any(|name| name == &graph.rule(rule).name))
     });
-    render(graph, edges, expand_rsp, false)
+    render(graph, edges, expand_rsp, false, working_directory)
 }
 
 pub(crate) fn compdb_for_targets(
     graph: &Graph,
     targets: &[BString],
     expand_rsp: bool,
+    working_directory: &std::path::Path,
 ) -> Result<BString, ToolError> {
     if targets.is_empty() {
         return Err(ToolError::MissingArgument {
@@ -170,7 +163,13 @@ pub(crate) fn compdb_for_targets(
         }
         collector.collect_from(graph, node);
     }
-    render(graph, collector.edges, expand_rsp, true)
+    Ok(render(
+        graph,
+        collector.edges,
+        expand_rsp,
+        true,
+        working_directory,
+    ))
 }
 
 #[cfg(test)]
@@ -191,22 +190,28 @@ mod tests {
                 "build all: phony object\n"
             ),
         );
-        let regular = compdb(&fixture.graph, &[], false).unwrap();
+        let regular = compdb(&fixture.graph, &[], false, &fixture.directory);
         assert!(regular
             .as_bytes()
             .contains_str("\"command\": \"cc @object.rsp -o object\""));
         assert!(regular.as_bytes().contains_str("\"file\": \"source\""));
         assert!(regular.as_bytes().contains_str("\"output\": \"object\""));
 
-        let expanded = compdb_for_targets(&fixture.graph, &["all".into()], true).unwrap();
+        let expanded =
+            compdb_for_targets(&fixture.graph, &["all".into()], true, &fixture.directory).unwrap();
         assert!(expanded
             .as_bytes()
             .contains_str("\"command\": \"cc -DVALUE source -o object\""));
         assert!(!expanded.as_bytes().contains_str("@object.rsp"));
         assert_eq!(
-            compdb_for_targets(&fixture.graph, &["source".into()], false)
-                .unwrap_err()
-                .to_string(),
+            compdb_for_targets(
+                &fixture.graph,
+                &["source".into()],
+                false,
+                &fixture.directory,
+            )
+            .unwrap_err()
+            .to_string(),
             "'source' is not a target (i.e. it is not an output of any `build` statement)"
         );
     }
@@ -217,16 +222,5 @@ mod tests {
         let mut encoded = Vec::new();
         push_json_string(&mut encoded, b"r\xc3\xa9sum\xc3\xa9-\xff-\n-\"");
         assert_eq!(encoded, b"r\xc3\xa9sum\xc3\xa9-\xff-\\n-\\\"");
-    }
-
-    #[test]
-    fn current_directory_errors_are_propagated() {
-        let fixture = Fixture::parse("compdb-cwd-error", "");
-        let error =
-            render_with_current_directory(&fixture.graph, std::iter::empty(), false, false, || {
-                Err(std::io::Error::other("cwd unavailable"))
-            })
-            .unwrap_err();
-        assert_eq!(error.to_string(), "cwd unavailable");
     }
 }

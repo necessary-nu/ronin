@@ -139,6 +139,7 @@ pub(crate) enum CliError {
     UnterminatedStatusVariable,
     MissingOptionValue { option: String },
     InvalidEncoding { context: EncodingContext },
+    CurrentDirectory { source: io::Error },
     ChangeDirectory { path: BString, source: io::Error },
     InvocationFailed { exit_code: i32, diagnostic: String },
     ManifestRetryLimit { path: BString, attempts: usize },
@@ -183,7 +184,9 @@ impl fmt::Display for CliError {
                 EncodingContext::WarningValue => "invalid -w parameter",
                 EncodingContext::ToolValue => "invalid -t parameter",
             }),
-            Self::ChangeDirectory { source, .. } => source.fmt(formatter),
+            Self::CurrentDirectory { source } | Self::ChangeDirectory { source, .. } => {
+                source.fmt(formatter)
+            }
             Self::InvocationFailed { diagnostic, .. } => formatter.write_str(diagnostic),
             Self::ManifestRetryLimit { path, attempts } => {
                 write!(formatter, "manifest '{path}' dirty after {attempts} tries")
@@ -195,7 +198,9 @@ impl fmt::Display for CliError {
 impl error::Error for CliError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
-            Self::ChangeDirectory { source, .. } => Some(source),
+            Self::CurrentDirectory { source } | Self::ChangeDirectory { source, .. } => {
+                Some(source)
+            }
             _ => None,
         }
     }
@@ -958,7 +963,6 @@ pub(crate) enum ToolAvailability {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ToolOperation {
-    CurrentDirectory,
     Clean,
     Stat,
 }

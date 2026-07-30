@@ -1,7 +1,7 @@
 //! MSVC show-includes parsing compatible with Ninja's clparser source.
 
 #[cfg(test)]
-use crate::error::{ToolError, ToolOperation};
+use crate::error::ToolError;
 use crate::util::{canonpath, BString};
 use std::collections::BTreeSet;
 
@@ -94,7 +94,11 @@ fn relative_parts(base: &[String], target: &[String]) -> String {
 }
 
 #[cfg(test)]
-pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<String, ToolError> {
+pub(crate) fn normalize_include_path(
+    path: &str,
+    relative_to: &str,
+    current_directory: &str,
+) -> Result<String, ToolError> {
     if path.len() > 260 || relative_to.len() > 260 {
         return Err(ToolError::PathTooLong);
     }
@@ -116,9 +120,7 @@ pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<St
         return Ok(result);
     }
 
-    let current_directory = std::env::current_dir()
-        .map_err(|source| ToolError::io(ToolOperation::CurrentDirectory, None, source))?;
-    let (_, _, mut cwd) = path_parts(&current_directory.to_string_lossy());
+    let (_, _, mut cwd) = path_parts(current_directory);
     if relative_absolute {
         cwd = relative_components;
     } else {
@@ -132,9 +134,7 @@ pub(crate) fn normalize_include_path(path: &str, relative_to: &str) -> Result<St
     }
     let base = cwd;
 
-    let current_directory = std::env::current_dir()
-        .map_err(|source| ToolError::io(ToolOperation::CurrentDirectory, None, source))?;
-    let (_, _, mut target) = path_parts(&current_directory.to_string_lossy());
+    let (_, _, mut target) = path_parts(current_directory);
     if path_absolute {
         target = path_components;
     } else {
@@ -287,29 +287,52 @@ mod tests {
     // Cases adapted from Ninja's src/includes_normalize_test.cc.
     #[test]
     fn ninja_include_normalization_cases() {
-        assert_eq!(normalize_include_path("a\\..\\b", ".").unwrap(), "b");
-        assert_eq!(normalize_include_path("a\\./b", ".").unwrap(), "a/b");
-        assert_eq!(normalize_include_path("a/b/c", "a/b").unwrap(), "c");
-        assert_eq!(normalize_include_path("a", "b/c").unwrap(), "../../a");
-        assert_eq!(normalize_include_path("a", "a").unwrap(), ".");
+        let current_directory = std::env::current_dir().unwrap();
+        let current_directory = current_directory.to_string_lossy();
         assert_eq!(
-            normalize_include_path("p:\\vs08\\stuff.h", "p:\\vs08").unwrap(),
+            normalize_include_path("a\\..\\b", ".", &current_directory).unwrap(),
+            "b"
+        );
+        assert_eq!(
+            normalize_include_path("a\\./b", ".", &current_directory).unwrap(),
+            "a/b"
+        );
+        assert_eq!(
+            normalize_include_path("a/b/c", "a/b", &current_directory).unwrap(),
+            "c"
+        );
+        assert_eq!(
+            normalize_include_path("a", "b/c", &current_directory).unwrap(),
+            "../../a"
+        );
+        assert_eq!(
+            normalize_include_path("a", "a", &current_directory).unwrap(),
+            "."
+        );
+        assert_eq!(
+            normalize_include_path("p:\\vs08\\stuff.h", "p:\\vs08", &current_directory).unwrap(),
             "stuff.h"
         );
         assert_eq!(
-            normalize_include_path("P:\\Vs08\\stuff.h", "p:\\vs08").unwrap(),
+            normalize_include_path("P:\\Vs08\\stuff.h", "p:\\vs08", &current_directory).unwrap(),
             "stuff.h"
         );
         assert_eq!(
-            normalize_include_path("P:/vs08\\stufF.h", "D:\\stuff/things").unwrap(),
+            normalize_include_path("P:/vs08\\stufF.h", "D:\\stuff/things", &current_directory,)
+                .unwrap(),
             "P:/vs08/stufF.h"
         );
         assert_eq!(
-            normalize_include_path("P:/vs08\\../wee\\stuff.h", "D:\\stuff/things").unwrap(),
+            normalize_include_path(
+                "P:/vs08\\../wee\\stuff.h",
+                "D:\\stuff/things",
+                &current_directory,
+            )
+            .unwrap(),
             "P:/wee/stuff.h"
         );
         assert_eq!(
-            normalize_include_path(&"a".repeat(261), ".")
+            normalize_include_path(&"a".repeat(261), ".", &current_directory)
                 .unwrap_err()
                 .to_string(),
             "path too long"

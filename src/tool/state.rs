@@ -6,7 +6,17 @@ use crate::os::RealDiskInterface;
 use crate::util::{BString, ByteSlice};
 use std::fmt::Write;
 
+#[cfg(test)]
 pub(crate) fn deps(graph: &Graph, log: &DepsLog, targets: &[BString]) -> Result<String, ToolError> {
+    deps_in(graph, log, targets, &RealDiskInterface::default())
+}
+
+pub(crate) fn deps_in(
+    graph: &Graph,
+    log: &DepsLog,
+    targets: &[BString],
+    disk: &RealDiskInterface,
+) -> Result<String, ToolError> {
     let nodes = if targets.is_empty() {
         depsnodes(log).collect::<Vec<_>>()
     } else {
@@ -19,7 +29,6 @@ pub(crate) fn deps(graph: &Graph, log: &DepsLog, targets: &[BString]) -> Result<
             })
             .collect::<Result<Vec<_>, _>>()?
     };
-    let disk = RealDiskInterface;
     let mut output = String::new();
     for node in nodes {
         let path = &graph.node(node).path;

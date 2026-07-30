@@ -207,4 +207,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule runtime.guarded-signal-boundary}
     )}
+    {id ronin-process-boundary, covered_rules (
+        runtime.explicit-invocation-boundary
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.explicit-invocation-boundary}
+    )}
 )

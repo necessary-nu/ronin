@@ -92,14 +92,14 @@ pub(super) struct PreparedEdge {
 }
 
 pub(super) struct ResponseFile {
-    pub(super) path: BString,
+    pub(super) path: std::path::PathBuf,
     pub(super) remove_on_drop: bool,
 }
 
 impl Drop for ResponseFile {
     fn drop(&mut self) {
         if self.remove_on_drop {
-            let _ = fs::remove_file(self.path.to_path().expect("byte paths are valid on Unix"));
+            let _ = fs::remove_file(&self.path);
         }
     }
 }

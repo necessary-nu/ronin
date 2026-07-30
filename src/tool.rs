@@ -7,6 +7,7 @@ use crate::source::Source;
 use crate::util::{BString, ByteSlice};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+#[cfg(test)]
 use std::fs;
 use std::io::{self, ErrorKind, Write as _};
 
@@ -23,7 +24,7 @@ pub(crate) use urtle::decode as urtle;
 
 pub(crate) use compdb::{compdb, compdb_for_targets};
 pub(crate) use input::{inputs, multi_inputs};
-pub(crate) use state::{deps, missing_deps};
+pub(crate) use state::{deps_in, missing_deps};
 
 // [spec:samurai:def:tool.tool]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -162,19 +163,24 @@ fn edge_name(graph: &Graph, edge: EdgeId) -> String {
 // [spec:samurai:sem:tool.cleanpath-fn]
 #[cfg(test)]
 pub(crate) fn cleanpath(path: Option<&BString>) -> io::Result<bool> {
-    cleanpath_mode(path, false)
+    cleanpath_mode(path, false, &crate::os::RealDiskInterface::default())
 }
 
-fn cleanpath_mode(path: Option<&BString>, dry_run: bool) -> io::Result<bool> {
+fn cleanpath_mode(
+    path: Option<&BString>,
+    dry_run: bool,
+    disk: &crate::os::RealDiskInterface,
+) -> io::Result<bool> {
     let Some(path) = path else { return Ok(false) };
+    let path = path.to_path().expect("byte paths are valid on Unix");
     if dry_run {
-        return match fs::symlink_metadata(path.to_path().expect("byte paths are valid on Unix")) {
+        return match disk.symlink_metadata(path) {
             Ok(_) => Ok(true),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
             Err(error) => Err(error),
         };
     }
-    match fs::remove_file(path.to_path().expect("byte paths are valid on Unix")) {
+    match disk.remove_file(path) {
         Ok(()) => Ok(true),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
@@ -184,6 +190,7 @@ fn cleanpath_mode(path: Option<&BString>, dry_run: bool) -> io::Result<bool> {
 #[derive(Default)]
 struct Cleaner {
     dry_run: bool,
+    disk: crate::os::RealDiskInterface,
     seen_paths: BTreeSet<BString>,
     visited_edges: BTreeSet<EdgeId>,
     dyndep_files: BTreeMap<BString, Option<crate::dyndep::DyndepFile>>,
@@ -191,9 +198,10 @@ struct Cleaner {
 }
 
 impl Cleaner {
-    fn new(dry_run: bool) -> Self {
+    fn new(dry_run: bool, disk: crate::os::RealDiskInterface) -> Self {
         Self {
             dry_run,
+            disk,
             ..Self::default()
         }
     }
@@ -201,7 +209,7 @@ impl Cleaner {
     fn remove(&mut self, path: Option<&BString>) -> ToolResult<()> {
         let Some(path) = path else { return Ok(()) };
         let removed = if self.seen_paths.insert(path.clone()) {
-            cleanpath_mode(Some(path), self.dry_run)
+            cleanpath_mode(Some(path), self.dry_run, &self.disk)
                 .map_err(|source| ToolError::io(ToolOperation::Clean, Some(path.clone()), source))?
         } else {
             false
@@ -268,18 +276,23 @@ impl Cleaner {
             return Ok(Vec::new());
         };
         if !self.dyndep_files.contains_key(&path) {
-            let source =
-                match Source::from_path(path.to_path().expect("byte paths are valid on Unix")) {
-                    Ok(source) => Some(source),
-                    Err(error) if error.kind() == ErrorKind::NotFound => None,
-                    Err(source) => {
-                        return Err(ManifestError::DyndepRead {
-                            path: path.clone(),
-                            source,
-                        }
-                        .into());
+            let source = match self
+                .disk
+                .read(path.to_path().expect("byte paths are valid on Unix"))
+            {
+                Ok(input) => Some(Source::from_bytes(
+                    path.to_path().expect("byte paths are valid on Unix"),
+                    input,
+                )),
+                Err(error) if error.kind() == ErrorKind::NotFound => None,
+                Err(source) => {
+                    return Err(ManifestError::DyndepRead {
+                        path: path.clone(),
+                        source,
                     }
-                };
+                    .into());
+                }
+            };
             let file = source
                 .map(|source| crate::dyndep::parse_dyndep_source(&source, graph))
                 .transpose()
@@ -326,7 +339,25 @@ pub(crate) fn clean_with_report(
     include_generators: bool,
     dry_run: bool,
 ) -> ToolResult<Vec<BString>> {
-    let mut cleaner = Cleaner::new(dry_run);
+    clean_with_report_in(
+        graph,
+        targets,
+        rules,
+        include_generators,
+        dry_run,
+        crate::os::RealDiskInterface::default(),
+    )
+}
+
+pub(crate) fn clean_with_report_in(
+    graph: &Graph,
+    targets: &[BString],
+    rules: &[String],
+    include_generators: bool,
+    dry_run: bool,
+    disk: crate::os::RealDiskInterface,
+) -> ToolResult<Vec<BString>> {
+    let mut cleaner = Cleaner::new(dry_run, disk);
     if !rules.is_empty() {
         for edge in graph
             .edge_ids()
@@ -365,12 +396,27 @@ pub(crate) fn clean_dead(
     clean_dead_with_report(graph, logged_outputs, dry_run).map(|removed| removed.len())
 }
 
+#[cfg(test)]
 pub(crate) fn clean_dead_with_report(
     graph: &Graph,
     logged_outputs: &[BString],
     dry_run: bool,
 ) -> ToolResult<Vec<BString>> {
-    let mut cleaner = Cleaner::new(dry_run);
+    clean_dead_with_report_in(
+        graph,
+        logged_outputs,
+        dry_run,
+        crate::os::RealDiskInterface::default(),
+    )
+}
+
+pub(crate) fn clean_dead_with_report_in(
+    graph: &Graph,
+    logged_outputs: &[BString],
+    dry_run: bool,
+    disk: crate::os::RealDiskInterface,
+) -> ToolResult<Vec<BString>> {
+    let mut cleaner = Cleaner::new(dry_run, disk);
     for output in logged_outputs {
         if nodeget(graph, output.as_bytes()).is_some() {
             continue;
@@ -821,7 +867,12 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
 
 // [spec:samurai:def:tool.tool.run-fn]
 // [spec:samurai:sem:tool.tool.run-fn]
-pub(crate) fn run(tool: Tool, graph: &Graph, args: &[BString]) -> ToolResult<BString> {
+pub(crate) fn run(
+    tool: Tool,
+    graph: &Graph,
+    args: &[BString],
+    working_directory: &std::path::Path,
+) -> ToolResult<BString> {
     let utf8_arguments = || {
         args.iter()
             .map(|argument| {
@@ -841,8 +892,8 @@ pub(crate) fn run(tool: Tool, graph: &Graph, args: &[BString]) -> ToolResult<BSt
     match tool {
         Tool::Clean => Ok(clean(graph, args, &[], false)?.to_string().into()),
         Tool::Commands => commands_with_args(graph, args),
-        Tool::Compdb => compdb(graph, &utf8_arguments()?, false),
-        Tool::CompdbTargets => compdb_for_targets(graph, args, false),
+        Tool::Compdb => Ok(compdb(graph, &utf8_arguments()?, false, working_directory)),
+        Tool::CompdbTargets => compdb_for_targets(graph, args, false, working_directory),
         Tool::Graph => self::graph(graph, args),
         Tool::Query => query(graph, args).map(BString::from),
         Tool::Targets => targets_with_args(graph, &utf8_arguments()?).map(BString::from),
@@ -1211,17 +1262,17 @@ mod tests {
                 input.display()
             ),
         );
-        let regular = compdb(&graph, &[], false).unwrap();
+        let regular = compdb(&graph, &[], false, &directory.0);
         let regular = regular.to_str().unwrap();
         assert!(regular.contains(&format!("@{}.rsp", output.display())));
         assert!(regular.contains("\"file\""));
-        let expanded = compdb(&graph, &[], true).unwrap();
+        let expanded = compdb(&graph, &[], true, &directory.0);
         let expanded = expanded.to_str().unwrap();
         assert!(!expanded.contains(&format!("@{}.rsp", output.display())));
         assert!(expanded.contains("-DVALUE"));
         assert!(expanded.contains(&input.to_string_lossy().into_owned()));
         assert_eq!(
-            compdb(&graph, &["other".into()], false).unwrap().as_bytes(),
+            compdb(&graph, &["other".into()], false, &directory.0).as_bytes(),
             b"[\n]\n"
         );
     }

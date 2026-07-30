@@ -2098,7 +2098,12 @@ fn ninja_build_log_detects_input_changed_during_command() {
         assert_eq!(builder.commands_ran.len(), 1);
     }
     let first_recorded_mtime = crate::log::logentry(&log, &target).unwrap().mtime;
-    assert!(RealDiskInterface.stat(&directory.join("in")).unwrap() > first_recorded_mtime);
+    assert!(
+        RealDiskInterface::default()
+            .stat(&directory.join("in"))
+            .unwrap()
+            > first_recorded_mtime
+    );
     log.finish().unwrap();
 
     let mut graph = parse_fixture(&directory);
@@ -2348,7 +2353,9 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
         assert_eq!(builder.commands_ran.len(), 1);
     }
     assert!(
-        RealDiskInterface.stat(&directory.join("header")).unwrap()
+        RealDiskInterface::default()
+            .stat(&directory.join("header"))
+            .unwrap()
             > crate::log::logentry(&build_log, &target).unwrap().mtime
     );
     build_log.finish().unwrap();

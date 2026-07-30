@@ -45,15 +45,20 @@ fn main() {
         let _ = write_diagnostic(format_args!("failed to install signal handlers: {error}"));
         std::process::exit(1);
     });
+    let runner = ronin::Runner::from_process().unwrap_or_else(|error| {
+        let _ = write_diagnostic(format_args!("reading the working directory: {error}"));
+        std::process::exit(1);
+    });
     let arguments = std::env::args_os().collect::<Vec<_>>();
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    let stderr = std::io::stderr();
+    let mut stderr = stderr.lock();
     // [spec:samurai:req:product.ronin-identity]
     // [spec:samurai:req:product.no-samuflags]
-    match ronin::run_os(&arguments) {
+    // [spec:samurai:req:runtime.explicit-invocation-boundary]
+    match runner.run_os_with_sinks(&arguments, &mut stdout, &mut stderr) {
         Ok(result) => {
-            let stdout = std::io::stdout();
-            let mut stdout = stdout.lock();
-            let stderr = std::io::stderr();
-            let mut stderr = stderr.lock();
             if let Err(error) = write_terminal(&result, &mut stdout, &mut stderr) {
                 if error.kind() != std::io::ErrorKind::BrokenPipe {
                     drop(stderr);
@@ -66,6 +71,8 @@ fn main() {
             }
         }
         Err(error) => {
+            drop(stdout);
+            drop(stderr);
             if is_broken_pipe(&error) {
                 return;
             }

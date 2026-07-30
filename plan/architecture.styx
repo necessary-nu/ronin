@@ -152,6 +152,7 @@ elements (
             [spec:samurai:req:compat.version-reporting]
             [spec:samurai:req:compat.ninja-owned-names]
             [spec:samurai:req:compat.cli-and-tools]
+            [spec:samurai:req:runtime.explicit-invocation-boundary]
         )
         exposes (
             "src/main.rs"

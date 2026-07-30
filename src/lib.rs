@@ -30,7 +30,7 @@ mod subprocess;
 mod tool;
 mod util;
 
-pub use cli::{run, run_os, RunResult, NINJA_COMPAT_VERSION, PRODUCT_NAME};
+pub use cli::{run, run_os, RunResult, Runner, NINJA_COMPAT_VERSION, PRODUCT_NAME};
 pub use error::{Error, ErrorKind};
 pub use signal::{install_signal_handlers, Signal, SignalHandlers};
 

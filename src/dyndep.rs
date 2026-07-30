@@ -589,14 +589,16 @@ pub(crate) fn load_dyndep(
     graph: &mut Graph,
     runtime: &mut RuntimeState,
     dyndep: NodeId,
+    disk: &crate::os::RealDiskInterface,
 ) -> Result<(), ManifestError> {
     let path = graph.node(dyndep).path.clone();
-    let source = Source::from_path(path.to_path().expect("byte paths are valid on Unix")).map_err(
-        |source| ManifestError::DyndepRead {
+    let input = disk
+        .read(path.to_path().expect("byte paths are valid on Unix"))
+        .map_err(|source| ManifestError::DyndepRead {
             path: path.clone(),
             source,
-        },
-    )?;
+        })?;
+    let source = Source::from_bytes(path.to_path().expect("byte paths are valid on Unix"), input);
     let file = parse_dyndep_source(&source, graph)?;
     validate_dyndep(graph, dyndep, &path, &file)?;
     commit_dyndep(graph, runtime, dyndep, file);
@@ -985,6 +987,19 @@ mod tests {
             .collect()
     }
 
+    fn load_test_dyndep(
+        graph: &mut Graph,
+        runtime: &mut RuntimeState,
+        dyndep: NodeId,
+    ) -> Result<(), ManifestError> {
+        load_dyndep(
+            graph,
+            runtime,
+            dyndep,
+            &crate::os::RealDiskInterface::default(),
+        )
+    }
+
     #[test]
     fn ninja_graph_dyndep_load_trivial() {
         let (mut graph, dyndep, directory) = load_fixture(
@@ -993,7 +1008,7 @@ mod tests {
         );
         let mut runtime = RuntimeState::new(&graph);
         assert!(runtime.node(dyndep).dyndep_pending());
-        load_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
+        load_test_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
         assert!(!runtime.node(dyndep).dyndep_pending());
         let edge = graph.node(nodeget(&graph, b"out").unwrap()).gen.unwrap();
         assert_eq!(node_paths(&graph, &graph.edge(edge).out), ["out"]);
@@ -1010,7 +1025,7 @@ mod tests {
             Some("ninja_dyndep_version = 1\nbuild out1: dyndep | out2\n"),
         );
         let mut runtime = RuntimeState::new(&graph);
-        load_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
+        load_test_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
         let edge = graph.node(nodeget(&graph, b"out1").unwrap()).gen.unwrap();
         let inputs = node_paths(&graph, &graph.edge(edge).input);
         assert_eq!(inputs[0..2], ["in", "out2"]);
@@ -1025,7 +1040,7 @@ mod tests {
         let (mut graph, dyndep, directory) =
             load_fixture("build out: r in || $dd\n  dyndep = $dd\n", None);
         let mut runtime = RuntimeState::new(&graph);
-        assert!(load_dyndep(&mut graph, &mut runtime, dyndep)
+        assert!(load_test_dyndep(&mut graph, &mut runtime, dyndep)
             .unwrap_err()
             .to_string()
             .contains("loading"));
@@ -1039,7 +1054,7 @@ mod tests {
             Some("ninja_dyndep_version = 1\n"),
         );
         let mut runtime = RuntimeState::new(&graph);
-        assert!(load_dyndep(&mut graph, &mut runtime, dyndep)
+        assert!(load_test_dyndep(&mut graph, &mut runtime, dyndep)
             .unwrap_err()
             .to_string()
             .contains("'out' not mentioned"));
@@ -1053,7 +1068,7 @@ mod tests {
             Some("ninja_dyndep_version = 1\nbuild out: dyndep\nbuild out2: dyndep\n"),
         );
         let mut runtime = RuntimeState::new(&graph);
-        assert!(load_dyndep(&mut graph, &mut runtime, dyndep)
+        assert!(load_test_dyndep(&mut graph, &mut runtime, dyndep)
             .unwrap_err()
             .to_string()
             .contains("does not have a dyndep binding"));
@@ -1068,7 +1083,7 @@ mod tests {
         );
         let mut runtime = RuntimeState::new(&graph);
         assert_eq!(
-            load_dyndep(&mut graph, &mut runtime, dyndep)
+            load_test_dyndep(&mut graph, &mut runtime, dyndep)
                 .unwrap_err()
                 .to_string(),
             "multiple rules generate shared"
@@ -1097,7 +1112,7 @@ mod tests {
         let mut runtime = RuntimeState::new(&graph);
 
         assert_eq!(
-            load_dyndep(&mut graph, &mut runtime, dyndep)
+            load_test_dyndep(&mut graph, &mut runtime, dyndep)
                 .unwrap_err()
                 .to_string(),
             "multiple rules generate shared"
@@ -1122,7 +1137,7 @@ mod tests {
             ),
         );
         let mut runtime = RuntimeState::new(&graph);
-        load_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
+        load_test_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
         let edge1 = graph.node(nodeget(&graph, b"out1").unwrap()).gen.unwrap();
         let edge2 = graph.node(nodeget(&graph, b"out2").unwrap()).gen.unwrap();
         assert_eq!(

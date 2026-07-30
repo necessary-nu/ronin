@@ -33,10 +33,15 @@ C build artifacts are not part of the Ronin product interface.
 
 Ronin's supported interface is the executable. The Rust library exists so the
 binary and integration tests can share implementation; its deliberately small
-embedding surface consists of `run`, `run_os`, `RunResult`, `Error`,
+embedding surface consists of `Runner`, `run`, `run_os`, `RunResult`, `Error`,
 `ErrorKind`, the product/version constants, and the three process-signal
 helpers re-exported at the crate root. Other modules are private and are not a
 supported `ronin_core` API.
+
+`Runner` isolates an invocation behind an explicit working directory and
+caller-provided output sinks. The free `run` and `run_os` functions are
+convenience wrappers that snapshot the process directory and Ninja environment
+values without changing the process working directory.
 
 Rust changes are checked with Clippy's `pedantic` and `nursery` groups in
 addition to `cargo fmt`. Unsafe code is confined to the POSIX signal and GNU
