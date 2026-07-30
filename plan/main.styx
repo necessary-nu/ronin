@@ -1127,4 +1127,281 @@ children (
             }
         )
     }
+
+    {
+        id ronin-mimalloc-tuning
+        title "Measure mimalloc and single-unit release tuning"
+        priority 1
+        deps (ronin-release-tuning ronin-iterative-tools)
+        sealed true
+        log (
+            {
+                at 2026-07-30T07:44:56.02532914Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-07-30T08:07:07.74090331Z
+                author "brendan@bbqsrc.net"
+                kind @decision
+                text "mimalloc measured slower than glibc malloc and is rejected. Root cause is workload shape, not the allocator: ronin is a short-lived (15-40 ms), single-threaded coordinator, so mimalloc's segment reservation and first-touch page faults are never amortized, and its contention advantages (sharded heaps, lock-free cross-thread free) never engage. The jemalloc A/B in benchmarks/span-frontend-2026-07-30.md shows ~193k allocation requests for a 4,000-edge workload (~48 per edge) — the problem is allocation count, not allocator speed. Keep glibc malloc; retain the measured codegen-units=1 single-unit release tuning. Allocator choice is revisited only after the ronin-allocation-discipline programme drops allocations-per-edge to single digits (see ronin-allocator-revisit)."
+            }
+
+            {
+                at 2026-07-30T08:12:55.838147547Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
+    }
+
+    {
+        id ronin-allocation-discipline
+        title "Eliminate hot-path allocation traffic to close the C-samurai gap"
+        children (
+            {
+                id ronin-alloc-metrics
+                title "Track allocations-per-edge as a regression metric"
+                deps (ronin-mimalloc-tuning)
+                log (
+                    {
+                        at 2026-07-30T08:09:47.060555252Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Make allocations-per-edge the leading regression indicator for this whole tree; at 15-40 ms wall times it discriminates better than time. Generalize the jemalloc nrequests A/B from benchmarks/span-frontend-2026-07-30.md (LD_PRELOAD jemalloc, MALLOC_CONF=stats_print:true,tcache:false) into a checked-in harness that reports allocation requests and allocator-facing bytes per baseline workload, alongside perf stat page-fault counts. Baseline today is ~48 allocation requests per edge on the 4,000-edge manifest-command-evaluation workload; target is single digits. Every sibling node should land with a before/after from this harness."
+                    }
+                )
+            }
+
+            {
+                id ronin-eval-scratch-buffers
+                title "Evaluate edge variables into reusable scratch buffers"
+                deps (ronin-alloc-metrics)
+                log (
+                    {
+                        at 2026-07-30T08:10:02.532771134Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "edgevar (src/env.rs:294-363) is the largest allocation source: rule bindings are deep-cloned per lookup (env.rs:348-349 clones the whole EvalString including every part), every literal part is cloned into a parts Vec (env.rs:315) then copied again by merge, $in/$out expansion clones a BString per node via nodepath (graph.rs:494-497) then copies through pathlist, and the cycle-guard allocates Vec<String> plus name.to_owned() per level (env.rs:356). Rewrite evaluation to append into one caller-owned byte buffer, holding &EvalString and &BStr references against &Graph instead of returning owned values — the clones are borrow-appeasement, not the samurai design (both C tools evaluate into an owned buffer). nodepath should return &BStr; shell-escaped paths append directly. Replace the recursion-guard stack with a small fixed-capacity buffer of borrowed names (depth in real manifests is 2-4). This is the main lever on the manifest-command-evaluation gap (36.9 ms ronin vs 9.7 ms C samurai in benchmarks/baseline-2026-07-29.md)."
+                    }
+                )
+            }
+
+            {
+                id ronin-edge-metadata-cache
+                title "Evaluate each edge's control bindings once and memoize"
+                deps (ronin-eval-scratch-buffers)
+                log (
+                    {
+                        at 2026-07-30T08:10:11.398169252Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "CommandSpec::evaluate (src/build/command.rs:42-83) runs the full edgevar machinery ten times per edge (command, description, rspfile, rspfile_content, deps, depfile, msvc_deps_prefix, restat, generator, pool), the depfile scan repeats deps and depfile per edge (build.rs:700-705), parseedge evaluates pool and dyndep per edge (parse.rs:280-287), and deps_entry_is_live re-evaluates deps per live log entry during recompaction (deps.rs:668-673). Resolve the fixed control-binding set in one pass per edge sharing one scratch buffer and one resolution stack, memoize the result per edge, and make all consumers read the cached metadata. Boolean bindings (restat, generator, deps presence) should short-circuit on non-empty-binding existence without materializing values."
+                    }
+                )
+            }
+
+            {
+                id ronin-name-interning
+                title "Intern binding and rule names as integer symbols"
+                deps (ronin-alloc-metrics)
+                log (
+                    {
+                        at 2026-07-30T08:10:19.408401317Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "All binding and rule lookups are String-keyed BTreeMaps: Environment.bindings/.rules and Rule.bindings (src/env.rs:46-56), Edge.bindings (src/graph.rs:67) — byte-wise string comparisons through pointer-chasing tree nodes, with a key allocation per insert. Intern names into a u32 symbol id at scan time (the scanner already yields &str borrowed from the source); binding tables become sorted Vec<(VarId, value)> — most hold 0-3 entries so linear scan over 8-byte pairs beats any tree and empty tables cost nothing. Reserve constant ids for in/in_newline/out so the special-var dispatch in edgevar_inner (env.rs:329-334) becomes an integer compare. Rule tables per environment get the same treatment."
+                    }
+                )
+            }
+
+            {
+                id ronin-phony-console-ids
+                title "Replace phony and console name comparisons with precomputed IDs"
+                log (
+                    {
+                        at 2026-07-30T08:10:28.809955759Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "rule.name == \"phony\" string compares sit on hot paths: recompute_edge_dirty_with (src/graph.rs:259-261), Plan::add_node (build.rs:260-262), the scheduler loop (build.rs:1470-1474), command_edge_count (build.rs:483-489), and both collectors (graph.rs:628-635, 688-694). pool.name == \"console\" likewise (build.rs:1483-1487, build/command.rs:67-70). The phony rule and console pool are created exactly once in EnvState::new (env.rs:82-96): store their RuleId/PoolId there (or an is_phony bit on Edge) and compare integers everywhere."
+                    }
+                )
+            }
+
+            {
+                id ronin-fast-hashing
+                title "Adopt rapidhash-keyed maps for paths and log entries"
+                log (
+                    {
+                        at 2026-07-30T08:10:36.547110155Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "node_by_path (src/graph.rs:97), BuildLog.entries (src/log.rs:27), and the depfile dedup maps (src/deps.rs:127-149) all pay SipHash via std RandomState. The comment at graph.rs:95 cites collision-attack protection, but the adversary would be the manifest ronin is about to execute arbitrary commands from — hashDoS is outside that threat model, and both ninja and C samurai use fixed hashes. Swap to the in-tree rapidhash (src/htab.rs) as a BuildHasher; if the hardening property is still wanted, seed rapidhash randomly, which keeps it at a fraction of SipHash cost."
+                    }
+                )
+            }
+
+            {
+                id ronin-memchr-scanner
+                title "Scan manifests with memchr runs and lazy line accounting"
+                deps (ronin-alloc-metrics)
+                log (
+                    {
+                        at 2026-07-30T08:10:56.120155796Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "The lexer steps one byte at a time through current()/next() (src/scan.rs:134-136, 190-199), paying per byte: a bounds-checked get, an Option construction, a newline test, and line/column bookkeeping — samurai's getc-style scanner transliterated, minus the raw-pointer walk. Two changes: (1) drop per-byte line/column tracking — spans already carry byte offsets, so compute line/column lazily on error by counting newlines in the prefix; (2) skip literal runs with memchr-class scans (bstr already provides them) — in scanstring (scan.rs:424-455) the interesting byte set is tiny ($, :, |, space, tab, CR, LF), so jump to the next interesting byte instead of stepping. This is the moral equivalent of ninja's re2c lexer and drives the wide no-op (19.3 vs 9.1 ms) and path-canonicalization (10.4 vs 5.6 ms) rows in benchmarks/baseline-2026-07-29.md."
+                    }
+                )
+            }
+
+            {
+                id ronin-path-scratch
+                title "Reuse path evaluation scratch and canonicalize in place"
+                deps (ronin-memchr-scanner)
+                log (
+                    {
+                        at 2026-07-30T08:11:05.054232878Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Every path occurrence in parseedge allocates at least twice even when the node already exists: evaluated_path builds a fresh BString (src/parse.rs:134-145), then canonpath allocates a new output Vec and a components Vec per call (src/util.rs:133-170), and only then does mknode hit the intern map. scanstring additionally allocates a Vec<ScannedEvalPart> per path and scanpaths collects a Vec of those Vecs (src/scan.rs:424-467) though most paths are a single literal part. Proposals: give ScannedEvalString an inline single-part fast path or evaluate each path immediately with a reused parts scratch; evaluate into a reusable scratch buffer; canonicalize in place with component offsets in a small stack array (as ninja and samurai both do). End state: an already-interned path reference costs zero allocations."
+                    }
+                )
+            }
+
+            {
+                id ronin-path-interning-arena
+                title "Store node paths once behind an interning table and byte arena"
+                deps (ronin-fast-hashing)
+                log (
+                    {
+                        at 2026-07-30T08:11:13.985885763Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Every node path is stored three times: Node.path, an eagerly computed Node.shellpath that copies even in the no-quote case covering ~99% of real paths (shell_escape_path, src/graph.rs:505 — C samurai shares the pointer there), and a third copy as the node_by_path HashMap key (graph.rs:193). Steps: make shellpath Option<BString> (None = same bytes as path) or lazy; eliminate the key copy with an interning table storing only NodeIds that hashes/compares against graph.nodes[id].path (hashbrown::HashTable expresses this directly; std HashMap's owned-key requirement is why the to_vec exists). Endgame: a single append-only byte arena for all path text with nodes holding (u32 offset, u32 len) spans — contiguous, cache-friendly, allocation-free per node, and it makes deps-log loading nearly free (see ronin-log-span-loading). This is the n2 interner design and composes with the span-frontend direction."
+                    }
+                )
+            }
+
+            {
+                id ronin-compact-graph-ids
+                title "Compact arena IDs to u32 with niche-packed options"
+                log (
+                    {
+                        at 2026-07-30T08:11:22.888975486Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "arena_id! wraps usize (src/graph.rs:15-31, src/env.rs:10-26), so every Vec<NodeId> input list, side table, worklist, and Option<EdgeId> (16 bytes) is double the needed size. Chromium-scale graphs are low-millions of nodes; u32 ids halve the working set of exactly the arrays traversals sweep. Use a niche (reserve u32::MAX) so Option<EdgeId> packs to 4 bytes. Mechanical change, pays in cache-hit rate across DirtyEvaluator, Plan, and the collectors."
+                    }
+                )
+            }
+
+            {
+                id ronin-edge-scope-inline
+                title "Store edge parent scopes without per-edge environments"
+                deps (ronin-name-interning)
+                log (
+                    {
+                        at 2026-07-30T08:11:36.872398394Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "mkedge (src/graph.rs:531-546) creates a fresh Environment per edge whose bindings and rules maps are never populated — edge let-bindings live in Edge.bindings, so the per-edge environment exists solely to hold a parent pointer. That is an arena entry per edge plus an extra hop on every variable-lookup chain. Store the parent EnvironmentId directly on the edge and delete the per-edge environment entirely."
+                    }
+                )
+            }
+
+            {
+                id ronin-log-span-loading
+                title "Load build and deps logs without duplicate path copies"
+                deps (ronin-path-interning-arena)
+                log (
+                    {
+                        at 2026-07-30T08:11:46.375223578Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "BuildLog stores every path twice — HashMap key and LogEntry.output both own it (src/log.rs:27, insertion at log.rs:52-54) — so a 100k-line .ninja_log costs ~200k allocations at startup, then hydrate_runtime re-hashes every graph node against it. Ninja keeps entries pointing into the loaded log buffer; do the same: retain the file bytes and store spans, or resolve entries directly to NodeId where the node exists and keep only the residue (entries needed for recompaction) referencing the raw buffer. DepsLog's node_from_path (src/deps.rs:516-520) does mkstr + copy, then mknode copies again for the map key and again for shellpath — 3-4 allocations per path record; with the path arena this collapses to one arena append per new path. Drives the dependency-log-load row (4.7 vs 2.7 ms). While here: finish_edge/logrecordedge clone output-id vectors and every output path per finished edge (build.rs:1151, log.rs:291-304)."
+                    }
+                )
+            }
+
+            {
+                id ronin-depfile-inplace
+                title "Tokenize depfiles in place over the file buffer"
+                log (
+                    {
+                        at 2026-07-30T08:11:54.694119097Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "parse_depfile (src/deps.rs:151-309) builds each logical line byte-by-byte into a Vec, each token byte-by-byte into another Vec, dedups through a SipHash HashMap<Vec<u8>, usize> (OrderedPaths, deps.rs:127-149), then reallocates in into_vec — and it runs per finished compile as well as during scans. The escape-free common case (nearly every real depfile line) can be tokenized as spans over the file buffer with memchr, copying only when an escape is actually present, with dedup via a small hash set over spans."
+                    }
+                )
+            }
+
+            {
+                id ronin-stat-no-alloc
+                title "Stat nodes without per-call path allocation"
+                log (
+                    {
+                        at 2026-07-30T08:12:02.566711013Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Every stat allocates twice: nodestat_with clones the node's path BString up front to satisfy the error path (src/graph.rs:224 — borrow for the syscall, clone only when constructing GraphError::Stat), and RealDiskInterface::stat allocates a PathBuf per call via resolve/to_owned even with an empty working directory (src/os.rs:62-71, resolve at os.rs:20-26). rustix is already a dependency: statx relative to a cached working-directory fd gives allocation-free, byte-exact stats and removes the Path/UTF-8 dance. On a 100k-node no-op build this removes 200k+ allocations from the critical scan. Same pattern applies to exists() and make_dirs resolution."
+                    }
+                )
+            }
+
+            {
+                id ronin-single-pass-dirty
+                title "Fold edge dirty recomputation into single passes"
+                log (
+                    {
+                        at 2026-07-30T08:12:10.438196748Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "recompute_edge_dirty_with (src/graph.rs:254-309) makes up to four passes over non-order-only inputs (any-dirty, newest-mtime, plus two more .any comparisons) and three over outputs (oldest mtime, oldest recorded log mtime, set-dirty). Fold into one pass over inputs computing (any_dirty, max_mtime) and one pass over outputs computing (min_mtime, min_observed_log_mtime), then evaluate the dirty predicate from the folded values. Pure restructuring; dirty semantics and the conformance oracle are unaffected."
+                    }
+                )
+            }
+
+            {
+                id ronin-traversal-scratch
+                title "Reuse generation-stamped traversal marks and CSR dependents"
+                log (
+                    {
+                        at 2026-07-30T08:12:29.376527704Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Per-call O(V+E) scratch allocations: recompute_dirty_with_validations allocates four graph-sized arrays per target (src/graph.rs:450-457), load_depfiles_for and prepare_build_log_for allocate vec![false; edges] per target (build.rs:668, 809), rebuild_frontier allocates dependency_marks per frontier rebuild (build.rs:322), and recompute_consumers_after_restat allocates vec![false; edges] per restat-pruned edge completion (build.rs:1275). Keep these as generation-stamped marks owned by Builder — the TraversalMark pattern already in build.rs:143-157 — cleared in O(1) by bumping an epoch. Additionally Plan.dependents is Vec<Vec<EdgeId>> (build.rs:185) rebuilt per frontier; a CSR layout (counts pass, prefix sum, fill) removes one heap allocation per edge with dependents."
+                    }
+                )
+            }
+
+            {
+                id ronin-allocator-revisit
+                title "Re-evaluate allocator choice after allocation reduction"
+                deps (
+                    ronin-eval-scratch-buffers
+                    ronin-edge-metadata-cache
+                    ronin-name-interning
+                    ronin-memchr-scanner
+                    ronin-path-scratch
+                    ronin-path-interning-arena
+                    ronin-log-span-loading
+                    ronin-depfile-inplace
+                    ronin-stat-no-alloc
+                )
+                log (
+                    {
+                        at 2026-07-30T08:12:46.358762104Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Once the reduction nodes land, the profile becomes: one arena for manifest/path/command bytes, dense u32 tables, reusable scratch, and transient spawn state — at which point allocator choice should be within noise, which is the correct end state for a 20 ms tool. Re-run the mimalloc/jemalloc/glibc comparison with the ronin-alloc-metrics harness plus perf stat page-fault counts and record the result either way. If the parse phase still shows allocator cost, prefer a bump arena ronin owns (a growable byte buffer with span handles, no new dependency) over any general-purpose malloc swap. Context: the original mimalloc regression is documented as a decision on ronin-mimalloc-tuning."
+                    }
+                )
+            }
+        )
+    }
 )
