@@ -1652,12 +1652,27 @@ children (
                     ronin-depfile-inplace
                     ronin-stat-no-alloc
                 )
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:12:46.358762104Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Once the reduction nodes land, the profile becomes: one arena for manifest/path/command bytes, dense u32 tables, reusable scratch, and transient spawn state — at which point allocator choice should be within noise, which is the correct end state for a 20 ms tool. Re-run the mimalloc/jemalloc/glibc comparison with the ronin-alloc-metrics harness plus perf stat page-fault counts and record the result either way. If the parse phase still shows allocator cost, prefer a bump arena ronin owns (a growable byte buffer with span handles, no new dependency) over any general-purpose malloc swap. Context: the original mimalloc regression is documented as a decision on ronin-mimalloc-tuning."
+                    }
+
+                    {
+                        at 2026-07-30T19:58:34.965485033Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T20:05:09.406115546Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

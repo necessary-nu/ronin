@@ -421,6 +421,35 @@ previously report "command line changed" for a phony edge, because an absent
 log entry made its empty command hash count as dirty. Phony edges have no
 command line, so they no longer report one.
 
+### Allocator re-tested and still rejected (`ronin-allocator-revisit`)
+
+The mimalloc measurement that opened this programme was taken at 48 allocation
+requests per build statement. The profile has changed completely since — 6.1
+on the wide no-op build, 20.0 on command evaluation — and callgrind puts the
+glibc allocator at 17% to 19% of instructions, the largest single cluster, so
+the question was worth reopening.
+
+mimalloc executes materially fewer instructions: 30,223,104 to 27,373,796 on
+the wide no-op build (−9.4%) and 55,784,522 to 45,570,500 on command
+evaluation (−18.3%). It also takes materially more page faults:
+
+| Workload | glibc minor faults | mimalloc minor faults | Change |
+| --- | ---: | ---: | ---: |
+| wide-noop-build | 897 | 1,149 | +28% |
+| manifest-command-evaluation | 1,106 | 1,558 | +41% |
+
+Roughly 250 to 450 extra faults per invocation, which at typical fault cost is
+about 0.7 ms — the same order as the instruction saving on a 10 ms run. Wall
+clock could not separate them on this host, and the mechanism explains why.
+This is the original finding with numbers attached rather than a new one:
+mimalloc front-loads cost that a short-lived, single-threaded coordinator never
+amortizes, and reducing allocation count has not changed that.
+
+The conclusion is not that allocation is cheap. It is that swapping the
+allocator cannot win here, so the remaining 17% to 19% has to come out by
+allocating less — which points at arena and inline storage for the small
+per-entity collections that dominate what is left, not at a different malloc.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release
