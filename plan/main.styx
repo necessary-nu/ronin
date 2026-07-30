@@ -1720,6 +1720,28 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-streamed-path-scanning
+                title "Stream manifest paths into nodes without per-path vectors"
+                priority 0
+                sealed true
+                log (
+                    {
+                        at 2026-07-30T20:23:54.999723857Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Implemented, measured, and rejected — and it invalidates the programme's leading indicator. DHAT attributed 49.4% of remaining allocations to two sites: a fragment vector per path in scanstring (8,000 blocks) and a collection vector per run of paths in scanpaths (4,012). Streaming each path into its interned node through one reusable fragment buffer, byte buffer, and staging vector removed exactly what was predicted: wide no-op requests 24,258 to 12,247 (−49.5%), requested bytes −23.7%, and comparable falls on every other workload. Every outcome metric refused to move. Callgrind, deterministic and reproducible to the instruction: wide no-op 29,895,642 to 30,228,063 (+1.1%) and command evaluation 55,119,624 to 55,784,474 (+1.2%), so the buffer management costs more instructions than the allocator calls it removes. Peak RSS identical at 11,532 KiB, minor faults identical at 896 versus 897, and wall time indistinguishable — seven interleaved minimum-of-25 rounds gave medians of 11.393 versus 11.187 ms but minimums converging at 11.058 versus 11.052, so the apparent 2% was drift. Reverted. The finding that matters is about method: allocations-per-build-statement was a good leading indicator while allocations dominated, and at 6.1 requests per statement it has saturated — the survivors are cheap tcache hits whose removal buys nothing. Node selection should now be driven by callgrind instruction counts and wall time, not by the allocation harness, and the harness should be retained as a regression guard rather than a target. This directly undercuts ronin-smallvec-collections, which targets a further 33% of the same saturated metric."
+                    }
+
+                    {
+                        at 2026-07-30T20:24:24.202402634Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
+            }
         )
     }
 

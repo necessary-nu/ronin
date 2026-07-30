@@ -450,6 +450,40 @@ allocator cannot win here, so the remaining 17% to 19% has to come out by
 allocating less — which points at arena and inline storage for the small
 per-entity collections that dominate what is left, not at a different malloc.
 
+### Streamed path scanning, measured and rejected (`ronin-streamed-path-scanning`)
+
+DHAT attributed 49.4% of remaining allocations to two sites: a fragment vector
+per path in `scanstring` (8,000 blocks) and a collection vector per run of
+paths in `scanpaths` (4,012). Streaming each path into its interned node
+through one reusable fragment buffer, byte buffer, and staging vector removed
+exactly what the attribution predicted.
+
+| Metric | Before | After | Change |
+| --- | ---: | ---: | ---: |
+| Allocation requests (wide no-op) | 24,258 | 12,247 | −49.5% |
+| Requested bytes (wide no-op) | 5,689,878 | 4,341,218 | −23.7% |
+| Instructions (wide no-op) | 29,895,642 | 30,228,063 | **+1.1%** |
+| Instructions (command evaluation) | 55,119,624 | 55,784,474 | **+1.2%** |
+| Peak RSS | 11,532 KiB | 11,532 KiB | — |
+| Minor faults | 896 | 897 | — |
+| Wall time | 11.058 ms | 11.052 ms | — |
+
+Every outcome metric refused to move, and instructions moved the wrong way:
+the buffer management costs more than the allocator calls it removes. Wall
+time deserves a note — seven interleaved minimum-of-25 rounds gave medians of
+11.393 against 11.187 ms, which looks like a 2% win, but the minimums converge
+at 11.058 against 11.052, so the median gap was the host settling. Reverted.
+
+The finding that matters is about method rather than about paths.
+Allocations per build statement was the right leading indicator while
+allocations dominated, and the early nodes in this programme moved wall time
+accordingly. At 6.1 requests per statement it has saturated: the survivors are
+cheap thread-cache hits, and removing half of them buys nothing. Node
+selection should now be driven by callgrind instruction counts and wall time,
+with this harness retained as a regression guard rather than used as a target.
+The same reasoning undercuts a planned SmallVec change, which would have
+targeted a further third of the same saturated metric.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release
