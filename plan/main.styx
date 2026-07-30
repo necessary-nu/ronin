@@ -1336,12 +1336,27 @@ children (
             {
                 id ronin-compact-graph-ids
                 title "Compact arena IDs to u32 with niche-packed options"
+                sealed true
                 log (
                     {
                         at 2026-07-30T08:11:22.888975486Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "arena_id! wraps usize (src/graph.rs:15-31, src/env.rs:10-26), so every Vec<NodeId> input list, side table, worklist, and Option<EdgeId> (16 bytes) is double the needed size. Chromium-scale graphs are low-millions of nodes; u32 ids halve the working set of exactly the arrays traversals sweep. Use a niche (reserve u32::MAX) so Option<EdgeId> packs to 4 bytes. Mechanical change, pays in cache-hit rate across DirtyEvaluator, Plan, and the collectors."
+                    }
+
+                    {
+                        at 2026-07-30T12:35:04.035807878Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T12:38:17.541702431Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

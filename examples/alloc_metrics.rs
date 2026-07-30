@@ -151,7 +151,7 @@ fn parse_arguments() -> Result<Config, String> {
     Ok(config)
 }
 
-fn build_profile() -> &'static str {
+const fn build_profile() -> &'static str {
     if cfg!(debug_assertions) {
         "debug"
     } else {

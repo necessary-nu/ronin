@@ -8,6 +8,43 @@ use std::io::Write;
 pub(crate) use bstr::{BStr, BString};
 pub(crate) use bstr::{ByteSlice, ByteVec};
 
+/// Defines a dense arena identifier backed by a niche-packed `u32`.
+///
+/// The index is stored as `index + 1` inside a `NonZeroU32`, so `Option<Id>`
+/// occupies four bytes rather than sixteen and every side table, adjacency
+/// list, and traversal worklist holding identifiers halves in size. The
+/// encoding is monotonic, so derived ordering still compares by index.
+macro_rules! arena_id {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        #[repr(transparent)]
+        pub(crate) struct $name(std::num::NonZeroU32);
+
+        impl $name {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "the assertion bounds the index below u32::MAX"
+            )]
+            pub(crate) const fn from_index(index: usize) -> Self {
+                assert!(
+                    index < u32::MAX as usize,
+                    "arena index exceeds the u32 identifier capacity"
+                );
+                match std::num::NonZeroU32::new(index as u32 + 1) {
+                    Some(raw) => Self(raw),
+                    None => panic!("the shifted arena index is nonzero"),
+                }
+            }
+
+            pub(crate) const fn index(self) -> usize {
+                self.0.get() as usize - 1
+            }
+        }
+    };
+}
+
+pub(crate) use arena_id;
+
 #[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct StringPiece<'a> {

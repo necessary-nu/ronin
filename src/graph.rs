@@ -6,29 +6,11 @@ use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
 use crate::htab::{rapidhashv1, RapidHashMap};
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
-use crate::util::{BStr, BString, ByteSlice};
+use crate::util::{arena_id, BStr, BString, ByteSlice};
 use edge::EdgePartitions;
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
-
-macro_rules! arena_id {
-    ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        #[repr(transparent)]
-        pub(crate) struct $name(usize);
-
-        impl $name {
-            pub(crate) const fn from_index(index: usize) -> Self {
-                Self(index)
-            }
-
-            pub(crate) const fn index(self) -> usize {
-                self.0
-            }
-        }
-    };
-}
 
 arena_id!(NodeId);
 arena_id!(EdgeId);
@@ -748,6 +730,29 @@ mod tests {
         .unwrap();
         fs::remove_file(path).unwrap();
         graph
+    }
+
+    #[test]
+    fn arena_identifiers_are_niche_packed_and_index_ordered() {
+        use std::mem::size_of;
+
+        assert_eq!(size_of::<NodeId>(), 4);
+        assert_eq!(size_of::<EdgeId>(), 4);
+        // The niche is what shrinks Node.gen, Edge.rule, Edge.pool, and
+        // Edge.dyndep from sixteen bytes to four.
+        assert_eq!(size_of::<Option<NodeId>>(), 4);
+        assert_eq!(size_of::<Option<EdgeId>>(), 4);
+
+        assert_eq!(NodeId::from_index(0).index(), 0);
+        assert_eq!(
+            NodeId::from_index(u32::MAX as usize - 1).index(),
+            u32::MAX as usize - 1
+        );
+
+        // The scheduler's ready heap orders edges by Reverse(EdgeId), so the
+        // shifted encoding must keep comparing by index.
+        let ids = (0..8).map(EdgeId::from_index).collect::<Vec<_>>();
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
     }
 
     #[test]

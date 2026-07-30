@@ -39,6 +39,32 @@ independently confirms the whole-binary jemalloc measurement of 192,838
 allocator requests in [`span-frontend-2026-07-30.md`](span-frontend-2026-07-30.md)
 for the same workload.
 
+## Landed improvements
+
+Each `ronin-allocation-discipline` node re-records
+[`alloc-metrics-v1.csv`](alloc-metrics-v1.csv) after an accepted improvement.
+The recorded file always holds the current values; this table preserves the
+history.
+
+### Niche-packed u32 arena identifiers (`ronin-compact-graph-ids`)
+
+Allocation requests were byte-identical before and after, as expected: packing
+identifiers shrinks allocations rather than removing them.
+
+| Workload | Bytes before | Bytes after | Change |
+| --- | ---: | ---: | ---: |
+| manifest-command-evaluation | 16,044,639 | 15,135,623 | −5.7% |
+| deep-graph-evaluation | 4,743,715 | 4,312,979 | −9.1% |
+| wide-noop-build | 9,552,353 | 8,539,849 | −10.6% |
+| path-canonicalization | 5,482,982 | 4,960,358 | −9.5% |
+| dependency-log-load | 1,953,788 | 1,788,245 | −8.5% |
+| scheduler-barrier | 658,634 | 603,519 | −8.4% |
+
+The three commits between the original recording and this one
+(`ronin-phony-console-ids`, `ronin-single-pass-dirty`, `ronin-fast-hashing`)
+changed comparison and hashing strategy without changing allocation shape, so
+the reduction is attributable to identifier packing.
+
 ## Interpretation
 
 ~48 allocation requests per build statement on the command-evaluation

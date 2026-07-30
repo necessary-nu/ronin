@@ -3,27 +3,9 @@
 use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
 use crate::scan::{ScannedEvalPart, ScannedEvalString};
-use crate::util::{BString, EvalPart, EvalString};
+use crate::util::{arena_id, BString, EvalPart, EvalString};
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
-
-macro_rules! arena_id {
-    ($name:ident) => {
-        #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-        #[repr(transparent)]
-        pub(crate) struct $name(usize);
-
-        impl $name {
-            pub(crate) const fn from_index(index: usize) -> Self {
-                Self(index)
-            }
-
-            pub(crate) const fn index(self) -> usize {
-                self.0
-            }
-        }
-    };
-}
 
 arena_id!(EnvironmentId);
 arena_id!(RuleId);
