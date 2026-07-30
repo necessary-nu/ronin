@@ -1770,6 +1770,34 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-smallvec-collections
+                title "Give small graph collections inline capacity"
+                priority 0
+                log (
+                    {
+                        at 2026-07-30T21:52:45.045973526Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Selected from callgrind rather than from the allocation harness, which the streamed-path-scanning result retired as a target. RawVec::grow_one is 15.52% of the 4,000-edge no-op build inclusive — 4,638,289 instructions across 20,115 growth events, itself larger than the 3,385,997-instruction total gap to C samurai. Growth is malloc plus memcpy plus free per event, a materially different cost from the fresh tcache-hit allocations whose removal bought nothing. The largest callers are scan::scanstring at 1,497,918 (5.01%, 8,002 calls), graph::nodeuse at 1,052,300 (3.52%, 4,000), parse::parse at 1,020,997 (3.42%, 4,002) and scan::scanpaths at 548,457 (1.83%, 4,013); mknode and mkedge account for only 1.51% across 22 calls and are the arena Vecs doubling, which is already amortization-optimal. Every one of the large callers is a first push onto an empty Vec — one output per build statement, one use per leaf node, one literal part per path — so inline capacity removes the allocation outright with none of the staging-buffer bookkeeping that made streamed scanning cost more than it saved. Sizing matters: with smallvec's union feature a SmallVec is 8 bytes plus max(inline array, 16), so for the 4-byte NonZeroU32 arena ids a [T; 4] inline array occupies 16 bytes and the whole value is 24 — byte-identical to the Vec it replaces, making inline capacity free for Node.uses, Node.validation_uses, Edge.out, Edge.input and Edge.validation. ScannedEvalPart is 24 bytes, so giving ScannedEvalString.parts inline capacity costs 8 bytes per string and is measured separately rather than assumed."
+                    }
+
+                    {
+                        at 2026-07-30T21:52:48.810235124Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T22:02:10.737129901Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Implemented and kept — the largest result in this programme, and a direct reversal of the inference recorded on ronin-streamed-path-scanning. Node.uses, Node.validation_uses, Edge.out, Edge.input and Edge.validation became IdVec<T> = SmallVec<[T; 4]>, and ScannedEvalString.parts became SmallVec<[ScannedEvalPart; 1]>. Sizing drove the design: under smallvec's union feature a value is eight bytes plus max(inline array, pointer/length pair), so four four-byte arena identifiers occupy exactly the twenty-four bytes a Vec already spends — inline capacity is free for every adjacency list, and util::tests::id_vec_matches_vec_footprint pins both the size equality and the fifth-element spill. ScannedEvalPart is 24 bytes so one inline slot widens ScannedEvalString from 24 to 32, which was measured on its own rather than assumed. Callgrind: wide no-op 29,226,333 to 26,547,330 for the graph vectors alone and to 24,102,023 with the scanner, −17.5% total; command evaluation 54,187,522 to 48,039,297 to 42,784,164, −21.0%. Allocation requests fell 24,258 to 8,254 on wide no-op, taking requests per build statement from 6.1 to 2.1 and reaching the single-digit end state the benchmark document set as the target; command evaluation fell 80,087 to 48,084. Peak RSS fell from 11,532 to 11,288 KiB because inline storage replaced heap blocks whose per-block allocator overhead is no longer paid. Wall time moved for the first time in this programme and unambiguously: interleaved minimum-of-30 rounds on a host at load average 8 gave command-evaluation −11.1, −11.8, −11.3 and −11.9 percent and wide-noop −5.5, −4.0, −5.2 and −4.2 percent, consistent in sign and magnitude across every round. Against C samurai the same protocol gives command-evaluation 0.894x, 0.938x and 0.928x — faster than the C reference, against 1.65x at the 2026-07-29 baseline — and wide-noop 1.031x, 1.055x and 1.066x. 366 tests pass, clippy clean, allocation baseline re-recorded so the guard cannot drift back. The methodological finding: ronin-streamed-path-scanning attacked scanstring and scanpaths, the same two sites, and cost 1.1%; inline capacity on those sites saves 9.2%. The target was never wrong, the mechanism was — reusable buffers pay staging, clearing and index bookkeeping on every path to avoid an allocation, while inline capacity pays nothing because the storage is already there. That entry's inference from \"removing allocations bought nothing\" to \"SmallVec will buy nothing\" was unsound: allocation count had saturated, but growth events, which cost malloc plus memcpy plus free apiece, had not."
+                    }
+                )
+            }
         )
     }
 

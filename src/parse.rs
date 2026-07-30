@@ -11,7 +11,7 @@ use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
     AllowedSeparators, ScannedEvalString, Scanner, Separator, Source, TokenKind,
 };
-use crate::util::{canonpath, BStr, BString, ByteSlice};
+use crate::util::{canonpath, BStr, BString, ByteSlice, IdVec};
 
 type ManifestResult<T> = Result<T, ManifestError>;
 
@@ -222,7 +222,7 @@ fn parseedge(
         bindings.push(parselet(scanner)?);
     }
 
-    let mut out = Vec::new();
+    let mut out = IdVec::new();
     let mut retained_explicit_output_count = 0;
     for (index, output) in output_paths.iter().enumerate() {
         let node = node_for(scanner, graph, output, environment, scratch)?;
@@ -253,11 +253,11 @@ fn parseedge(
     let input = input_paths
         .iter()
         .map(|path| node_for(scanner, graph, path, environment, scratch))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<IdVec<_>, _>>()?;
     let validation = validation_paths
         .iter()
         .map(|path| node_for(scanner, graph, path, environment, scratch))
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<IdVec<_>, _>>()?;
     let edge = mkedge(graph, environment);
     let edge_env = graph.edge(edge).env;
     for output in &out {

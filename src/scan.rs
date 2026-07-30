@@ -5,6 +5,7 @@ use crate::names::Names;
 pub(crate) use crate::source::Source;
 use crate::source::{SourceId, SourceSpan};
 use crate::util::{BStr, BString, EvalPart, EvalString};
+use smallvec::SmallVec;
 use std::sync::Arc;
 
 type ScanResult<T> = Result<T, ScanError>;
@@ -52,10 +53,17 @@ pub(crate) enum ScannedEvalPart<'source> {
     Variable(&'source BStr),
 }
 
+/// The fragments of one scanned evaluation string.
+///
+/// A manifest path is overwhelmingly one literal run, so a single inline slot
+/// removes the allocation in the common case. It widens the value from 24 to
+/// 32 bytes, which is less than the heap block the allocation cost anyway.
+pub(crate) type ScannedParts<'source> = SmallVec<[ScannedEvalPart<'source>; 1]>;
+
 /// An evaluation string whose source-backed fragments have not been interned.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct ScannedEvalString<'source> {
-    pub(crate) parts: Vec<ScannedEvalPart<'source>>,
+    pub(crate) parts: ScannedParts<'source>,
 }
 
 fn append_scanned_literal(part: ScannedEvalPart<'_>, literal: &mut Vec<u8>) {
@@ -348,7 +356,7 @@ pub(crate) fn scanname<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Le
 }
 
 fn push_literal<'source>(
-    parts: &mut Vec<ScannedEvalPart<'source>>,
+    parts: &mut ScannedParts<'source>,
     source: &'source Source,
     start: usize,
     end: usize,
@@ -364,7 +372,7 @@ fn push_literal<'source>(
 // [spec:samurai:sem:scan.escape-fn]
 fn escape<'source>(
     scanner: &mut Scanner<'source>,
-    parts: &mut Vec<ScannedEvalPart<'source>>,
+    parts: &mut ScannedParts<'source>,
 ) -> ScanResult<()> {
     let source = scanner.source;
     match scanner.current() {
@@ -425,7 +433,7 @@ pub(crate) fn scanstring<'source>(
     path: bool,
 ) -> ScanResult<Option<ScannedEvalString<'source>>> {
     let source = scanner.source;
-    let mut parts = Vec::new();
+    let mut parts = ScannedParts::new();
     let mut literal_start = scanner.index;
     loop {
         match scanner.current() {

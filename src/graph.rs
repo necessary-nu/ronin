@@ -9,7 +9,7 @@ use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
 use crate::htab::rapidhashv1;
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
-use crate::util::{arena_id, BStr, BString, ByteSlice};
+use crate::util::{arena_id, BStr, BString, ByteSlice, IdVec};
 use edge::EdgePartitions;
 use index::NodeIndex;
 pub(crate) use index::{mknode, mknode_bytes, nodeget};
@@ -42,8 +42,8 @@ pub(crate) struct Node {
     /// Shell-quoted form, present only when quoting actually changes the path.
     pub(crate) shellpath: Option<BString>,
     pub(crate) gen: Option<EdgeId>,
-    pub(crate) uses: Vec<EdgeId>,
-    pub(crate) validation_uses: Vec<EdgeId>,
+    pub(crate) uses: IdVec<EdgeId>,
+    pub(crate) validation_uses: IdVec<EdgeId>,
 }
 
 // [spec:samurai:def:graph.edge]
@@ -61,9 +61,9 @@ pub(crate) struct Edge {
     /// arena entry and one more link to walk on every lookup that missed.
     pub(crate) env: EnvironmentId,
     pub(crate) bindings: crate::names::Bindings<BString>,
-    pub(crate) out: Vec<NodeId>,
-    pub(crate) input: Vec<NodeId>,
-    pub(crate) validation: Vec<NodeId>,
+    pub(crate) out: IdVec<NodeId>,
+    pub(crate) input: IdVec<NodeId>,
+    pub(crate) validation: IdVec<NodeId>,
     pub(crate) dyndep: Option<NodeId>,
     partitions: EdgePartitions,
 }
@@ -496,9 +496,9 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         pool: None,
         env: scope,
         bindings: crate::names::Bindings::default(),
-        out: Vec::new(),
-        input: Vec::new(),
-        validation: Vec::new(),
+        out: IdVec::new(),
+        input: IdVec::new(),
+        validation: IdVec::new(),
         dyndep: None,
         partitions: EdgePartitions::default(),
     });

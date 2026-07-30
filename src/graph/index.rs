@@ -23,7 +23,7 @@
 // [spec:samurai:sem:htab.delhtab-fn]
 use super::{shell_escape_path, Graph, Node, NodeId};
 use crate::htab::rapidhashv1;
-use crate::util::{BString, ByteSlice};
+use crate::util::{BString, ByteSlice, IdVec};
 
 #[derive(Default)]
 pub(super) struct NodeIndex {
@@ -98,8 +98,8 @@ pub(crate) fn mknode(graph: &mut Graph, path: BString) -> NodeId {
         path,
         shellpath,
         gen: None,
-        uses: Vec::new(),
-        validation_uses: Vec::new(),
+        uses: IdVec::new(),
+        validation_uses: IdVec::new(),
     });
     graph.node_by_path.insert(&graph.nodes, node);
     node

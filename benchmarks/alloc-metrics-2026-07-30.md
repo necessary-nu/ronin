@@ -535,6 +535,71 @@ Against C samurai on the identical no-op fixture, both built for the same host
 (`cc -O2`), the instruction gap narrowed from 29,892,101/26,506,104 = 1.128× to
 29,226,333/26,506,104 = 1.103×.
 
+### Inline capacity for small collections — `ronin-smallvec-collections`
+
+The largest single result in this programme, and a direct reversal of the
+conclusion recorded two entries above.
+
+`RawVec::grow_one` was 15.52% of the no-op build inclusive across 20,115
+events. Every large caller turned out to be a *first* push onto an empty
+`Vec` — one output per build statement, one use per leaf node, one literal
+part per path — not repeated doubling. Inline capacity removes those outright.
+
+Sizing decided the design. Under smallvec's `union` layout a value costs eight
+bytes plus the larger of the inline array and a pointer/length pair, so four
+four-byte arena identifiers occupy exactly the twenty-four bytes a `Vec`
+already spends. `Node.uses`, `Node.validation_uses`, `Edge.out`, `Edge.input`
+and `Edge.validation` therefore gained four inline slots at zero footprint
+cost; `util::tests::id_vec_matches_vec_footprint` pins that, asserting both the
+size equality and that the fifth element is the one that spills.
+`ScannedEvalString.parts` is different — `ScannedEvalPart` is 24 bytes, so one
+inline slot widens the value from 24 to 32 — and was measured separately rather
+than assumed.
+
+| Workload | before | graph only | + scanner | total |
+| --- | ---: | ---: | ---: | ---: |
+| Instructions, wide no-op | 29,226,333 | 26,547,330 | 24,102,023 | **−17.5%** |
+| Instructions, command evaluation | 54,187,522 | 48,039,297 | 42,784,164 | **−21.0%** |
+| Requests, wide no-op | 24,258 | 16,256 | 8,254 | −66.0% |
+| Requests, command evaluation | 80,087 | 64,085 | 48,084 | −40.0% |
+| Peak RSS, wide no-op | 11,532 KiB | 11,264 KiB | 11,288 KiB | −2.1% |
+
+Requests per build statement on the no-op workload fell from 6.1 to 2.1,
+reaching the single-digit end state this document set as the target.
+Peak RSS fell rather than rose: inline storage replaced heap blocks whose
+per-block allocator overhead is no longer paid.
+
+Wall time moved, and unambiguously — the first node in this programme where it
+did. Interleaved minimum-of-30 rounds against the preceding commit, on a host
+at load average 8:
+
+| Workload | round 0 | round 1 | round 2 | round 3 |
+| --- | ---: | ---: | ---: | ---: |
+| command-evaluation | −11.1% | −11.8% | −11.3% | −11.9% |
+| wide-noop | −5.5% | −4.0% | −5.2% | −4.2% |
+
+Consistent sign, consistent magnitude, four rounds each — the pattern the
+rejected nodes never produced. Wide no-op gains less than its instruction count
+suggests because process startup and stat syscalls do not scale with
+instructions.
+
+Against C samurai, interleaved minimum-of-30 on the same fixtures:
+command-evaluation 0.894x, 0.938x, 0.928x — **faster than the C reference** —
+and wide-noop 1.031x, 1.055x, 1.066x. Command evaluation stood at 1.65x in
+[`baseline-2026-07-29.md`](baseline-2026-07-29.md).
+
+The methodological point is sharper than the numbers. `ronin-streamed-path-scanning`
+attacked `scanstring` and `scanpaths`, the same two sites, and *cost* 1.1%.
+Inline capacity on those same sites *saves* 9.2%. The target was never wrong;
+the mechanism was. Reusable buffers pay staging, clearing and index bookkeeping
+on every path to avoid an allocation, while inline capacity pays nothing at
+all — the storage is simply already there. A rejected node is evidence about a
+mechanism, not a verdict on a target, and the earlier entry's inference from
+"removing allocations bought nothing" to "SmallVec will buy nothing" was
+unsound: it treated allocation count as the mechanism when it was only ever a
+proxy. Allocation *count* had indeed saturated; allocation *growth events*,
+which cost malloc plus memcpy plus free apiece, had not.
+
 ### SIMD, and why the gap is not a vectorization gap
 
 The profile also settled the question that prompted it. C samurai contains one

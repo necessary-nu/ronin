@@ -8,6 +8,15 @@ use std::io::Write;
 pub(crate) use bstr::{BStr, BString};
 pub(crate) use bstr::{ByteSlice, ByteVec};
 
+/// An adjacency list of arena identifiers, stored inline while it is short.
+///
+/// Under smallvec's union layout the value is eight bytes plus the larger of
+/// the inline array and a pointer/length pair, so four four-byte identifiers
+/// occupy exactly the twenty-four bytes a `Vec` already spends on its pointer,
+/// length and capacity. Up to four elements therefore cost no allocation and
+/// no extra footprint; `id_vec_matches_vec_footprint` holds that guarantee.
+pub(crate) type IdVec<T> = smallvec::SmallVec<[T; 4]>;
+
 /// Defines a dense arena identifier backed by a niche-packed `u32`.
 ///
 /// The index is stored as `index + 1` inside a `NonZeroU32`, so `Option<Id>`
@@ -221,6 +230,31 @@ pub(crate) fn edit_distance(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Inline capacity for arena identifiers must stay free.
+    ///
+    /// The whole reason adjacency lists carry four inline slots is that the
+    /// value is no larger than the `Vec` it replaced. Raising the inline count
+    /// or widening an identifier would silently start charging every node and
+    /// edge for the privilege, so pin the guarantee rather than trusting it.
+    #[test]
+    fn id_vec_matches_vec_footprint() {
+        arena_id!(ProbeId);
+        assert_eq!(std::mem::size_of::<ProbeId>(), 4);
+        assert_eq!(
+            std::mem::size_of::<IdVec<ProbeId>>(),
+            std::mem::size_of::<Vec<ProbeId>>()
+        );
+
+        let mut probe = IdVec::new();
+        for index in 0..4 {
+            probe.push(ProbeId::from_index(index));
+        }
+        assert!(!probe.spilled(), "four identifiers must stay inline");
+        assert_eq!(probe[0].index(), 0);
+        probe.push(ProbeId::from_index(4));
+        assert!(probe.spilled(), "the fifth identifier reaches the heap");
+    }
 
     #[test]
     fn canonicalizes_relative_paths() {

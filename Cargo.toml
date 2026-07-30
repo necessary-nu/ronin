@@ -25,6 +25,7 @@ path = "src/lib.rs"
 [dependencies]
 bstr = { version = "1", default-features = false, features = ["std"] }
 jobserver = "0.1.35"
+smallvec = { version = "1.15.2", features = ["union"] }
 tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]

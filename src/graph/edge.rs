@@ -32,7 +32,7 @@ impl Edge {
         self.partitions.explicit_outputs
     }
 
-    pub(crate) const fn set_input_partitions(
+    pub(crate) fn set_input_partitions(
         &mut self,
         explicit_inputs: usize,
         non_order_only_inputs: usize,
@@ -43,7 +43,7 @@ impl Edge {
         self.partitions.non_order_only_inputs = non_order_only_inputs;
     }
 
-    pub(crate) const fn set_explicit_output_count(&mut self, count: usize) {
+    pub(crate) fn set_explicit_output_count(&mut self, count: usize) {
         debug_assert!(count <= self.out.len());
         self.partitions.explicit_outputs = count;
     }
@@ -67,7 +67,7 @@ impl Edge {
 
     pub(crate) fn insert_implicit_inputs(&mut self, deps: &[NodeId]) {
         let index = self.partitions.non_order_only_inputs;
-        self.input.splice(index..index, deps.iter().copied());
+        self.input.insert_many(index, deps.iter().copied());
         self.partitions.non_order_only_inputs += deps.len();
     }
 }
