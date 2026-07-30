@@ -824,7 +824,11 @@ impl<'a> Builder<'a> {
             if self.visited_edges.replace(edge.index()) {
                 continue;
             }
-            self.refresh_command_hash(edge)?;
+            // A phony edge has no command to evaluate, hash, or log, and the
+            // dirty rule never consults a phony edge's command hash.
+            if !self.graph.is_phony_rule(self.graph.edge(edge).rule) {
+                self.refresh_command_hash(edge)?;
+            }
             for input in self.graph.edge(edge).input.iter().rev() {
                 work.push(*input);
             }
@@ -1355,7 +1359,9 @@ impl<'a> Builder<'a> {
         }
         if self.build_log.is_some() {
             for edge in affected_edges {
-                self.refresh_command_hash(edge)?;
+                if !self.graph.is_phony_rule(self.graph.edge(edge).rule) {
+                    self.refresh_command_hash(edge)?;
+                }
             }
         }
         let mut visited = Vec::new();

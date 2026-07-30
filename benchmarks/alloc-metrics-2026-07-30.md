@@ -391,6 +391,36 @@ arena those environments occupied. Lookup results are unchanged: the removed
 scope held no bindings, so resolving through it always continued to its
 parent.
 
+### No command evaluation for phony edges (`ronin-skip-phony-commands`)
+
+Found by profiling the current build with callgrind rather than by the plan.
+On two manifests containing no commands at all, command evaluation was still
+about 9% of instructions: `prepare_build_log_for` hashed every edge, and
+hashing an edge forces the full ten-binding `CommandSpec::evaluate`. Ninja
+does not hash or log phony edges, and the dirty rule never consults a phony
+edge's command hash — it is read only on the non-phony branch — so the work
+was entirely discarded.
+
+Instruction counts are from callgrind, which is deterministic and immune to
+the host load that makes wall-clock comparisons unreliable here.
+
+| Workload | Instructions before | Instructions after | Change | Bytes change |
+| --- | ---: | ---: | ---: | ---: |
+| wide-noop-build | 36,147,441 | 31,045,789 | −14.1% | −11.0% |
+| deep-graph-evaluation | 20,563,620 | 18,008,271 | −12.4% | −10.9% |
+
+Larger than the 9% the profile suggested, because skipping the hash also
+skips the evaluation behind it and the command cache it would have populated:
+`append_variable` and `edgevar` leave the profile's top entries entirely.
+Allocation requests are unchanged, since the skipped lookups mostly resolved
+to nothing and never allocated; the bytes are the per-edge command cache no
+longer being built.
+
+One behavioural change, in the corrective direction: `--explain` could
+previously report "command line changed" for a phony edge, because an absent
+log entry made its empty command hash count as dirty. Phony edges have no
+command line, so they no longer report one.
+
 ### Wall-time confirmation
 
 Allocation counts are the leading indicator, not the goal, so the release

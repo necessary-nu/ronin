@@ -4,10 +4,10 @@
 # platform=linux-x86_64
 workload,build_statements,allocation_requests,requested_bytes
 manifest-command-evaluation,4001,80087,9518541
-deep-graph-evaluation,2000,20176,3238414
-wide-noop-build,4001,24259,6394054
+deep-graph-evaluation,2000,20175,2886414
+wide-noop-build,4001,24258,5689878
 path-canonicalization,4000,24125,3705730
-dependency-log-load,301,8382,1122946
+dependency-log-load,301,8382,1128589
 depfile-scan,101,14667,1674419
-multi-target-scan,200,26803,6874626
+multi-target-scan,200,26802,6170450
 scheduler-barrier,129,5504,455610
