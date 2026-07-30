@@ -115,6 +115,11 @@ impl ScannedEvalString<'_> {
 // [spec:samurai:def:scan.scanner]
 pub(crate) struct Scanner<'source> {
     source: &'source Arc<Source>,
+    /// The manifest bytes, resolved once.
+    ///
+    /// `Source` is immutable for `'source`, so holding the slice avoids
+    /// walking the `Arc` and the `Vec` behind it on every single byte read.
+    bytes: &'source [u8],
     index: usize,
     line: usize,
     column: usize,
@@ -128,9 +133,10 @@ impl<'source> Scanner<'source> {
     // [spec:samurai:sem:scan.scaninit-fn]
     // [spec:samurai:def:scan.scanclose-fn]
     // [spec:samurai:sem:scan.scanclose-fn]
-    pub(crate) const fn new(source: &'source Arc<Source>) -> Self {
+    pub(crate) fn new(source: &'source Arc<Source>) -> Self {
         Self {
             source,
+            bytes: source.bytes(),
             index: 0,
             line: 1,
             column: 1,
@@ -141,7 +147,7 @@ impl<'source> Scanner<'source> {
     }
 
     pub(crate) fn current(&self) -> Option<u8> {
-        self.source.bytes().get(self.index).copied()
+        self.bytes.get(self.index).copied()
     }
 
     pub(crate) const fn line(&self) -> usize {
@@ -196,7 +202,7 @@ pub(crate) fn scanerror(scanner: &Scanner<'_>, kind: ScanErrorKind) -> ScanError
 
 // [spec:samurai:def:scan.next-fn]
 // [spec:samurai:sem:scan.next-fn]
-fn next(scanner: &mut Scanner<'_>) -> Option<u8> {
+fn next(scanner: &mut Scanner<'_>) {
     if scanner.current() == Some(b'\n') {
         scanner.line += 1;
         scanner.column = 1;
@@ -204,7 +210,16 @@ fn next(scanner: &mut Scanner<'_>) -> Option<u8> {
         scanner.column += 1;
     }
     scanner.index += 1;
-    scanner.current()
+}
+
+/// Advance past a byte the caller has already established is not a newline.
+///
+/// The hot loops all match the newline case in an earlier arm, so the newline
+/// test inside `next` is dead work for them — as is re-reading a byte the
+/// caller is holding.
+const fn advance_within_line(scanner: &mut Scanner<'_>) {
+    scanner.column += 1;
+    scanner.index += 1;
 }
 
 // [spec:samurai:def:scan.issimplevar-fn]
@@ -247,7 +262,7 @@ fn newline(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
 fn singlespace(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     match scanner.current() {
         Some(b' ') => {
-            next(scanner);
+            advance_within_line(scanner);
             Ok(true)
         }
         Some(b'\t') => Err(scanerror(scanner, ScanErrorKind::TabsNotAllowed)),
@@ -300,7 +315,7 @@ fn name<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> 
     let line = scanner.line;
     let column = scanner.column;
     while scanner.current().is_some_and(isvar) {
-        next(scanner);
+        advance_within_line(scanner);
     }
     if scanner.index == start {
         return Err(scanerror(scanner, ScanErrorKind::ExpectedName));
@@ -450,7 +465,7 @@ pub(crate) fn scanstring<'source>(
             Some(b'\r' | b'\n') | None => break,
             Some(_) => {
                 scanner.continuation_at_eof = false;
-                next(scanner);
+                advance_within_line(scanner);
             }
         }
     }

@@ -630,6 +630,49 @@ optimizer was evidently hoisting on its own. Hoisting pays in proportion to how
 long the loop is, which the estimate failed to account for. Wall time was not
 measured — 0.81% is well inside the noise floor established above.
 
+### The scanner's byte primitive — `ronin-scanner-byte-primitive`
+
+Kept at 1.35%, against an estimate of 6–8%. The miss invalidates the model the
+estimate was built on, which matters more than the gain.
+
+`current()` resolved `&Arc<Source>` to `Vec<u8>` to slice on every byte read,
+and `next()` re-read the byte it was consuming in order to test it for a
+newline, then read *again* to return a value that all nineteen call sites
+discard. Three bounds-checked loads per byte where one suffices. Caching the
+byte slice in the `Scanner`, dropping `next`'s return type, and adding
+`advance_within_line` for the hot loops — all of which match the newline case
+in an earlier arm, making the test dead work — addresses every one.
+
+| Metric | before | after | change |
+| --- | ---: | ---: | ---: |
+| Instructions, wide no-op | 23,905,714 | 23,584,069 | −1.35% |
+| Instructions, command evaluation | 42,784,009 | 42,226,722 | −1.30% |
+| `scan::space` | 964,293 | 772,233 | −19.9% |
+| `scan::scanstring` | 2,376,959 | 2,273,389 | −4.4% |
+| `scan::name` | 1,128,453 | 1,152,462 | +2.1% |
+
+`space` gained most because it is almost entirely `singlespace` calling `next`.
+`name` went marginally the wrong way, which at 2% on one function is codegen
+noise from changed inlining rather than a real cost.
+
+The estimate assumed the lexer cost about 18 instructions per manifest byte and
+that removing two loads and a branch would roughly halve it. The arithmetic was
+right and the model was wrong. `scanstring` runs 16,005 times over a 129,809-byte
+manifest — **8.1 bytes per call** — so its 142 instructions per call are
+dominated by per-*call* overhead (allocating and returning the fragment list,
+`push_literal`, the `space` call on the path branch), not by the byte loop.
+Optimizing the byte loop could only ever reach a fraction of it.
+
+Two consequences. Deriving line and column lazily on error, the remaining half
+of the original proposal, is now rejected without being attempted: it would
+require stripping line and column from `ByteSpan` and recovering them in
+`source_span`, an invasive change across the error surface, to remove one
+increment from a loop that runs eight times per call — around 0.5% by the same
+arithmetic that just overestimated by five times. And the escape-free fast path
+becomes the priority, precisely because it attacks per-call cost: a path with no
+`$` needs no fragment list, no evaluation and no copy, and in this fixture that
+is every path.
+
 ### SIMD, and why the gap is not a vectorization gap
 
 The profile also settled the question that prompted it. C samurai contains one

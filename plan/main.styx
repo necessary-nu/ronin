@@ -1819,6 +1819,27 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-scanner-byte-primitive
+                title "Stop re-reading each manifest byte three times"
+                priority 0
+                log (
+                    {
+                        at 2026-07-30T22:29:17.315280052Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T22:32:31.181152424Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Kept at 1.35%, against an estimate of 6 to 8 percent, and the miss invalidates the model the estimate rested on. current() resolved &Arc<Source> to Vec<u8> to slice on every byte read; next() re-read the byte it was consuming to test it for a newline, then read again to return a value that all nineteen call sites discard — three bounds-checked loads per byte where one suffices. Caching the byte slice in the Scanner, changing next to return unit, and adding advance_within_line for the hot loops (all of which match the newline case in an earlier arm, so the test is provably dead there) fixes each. Wide no-op 23,905,714 to 23,584,069, −1.35%; command evaluation 42,784,009 to 42,226,722, −1.30%. scan::space fell 964,293 to 772,233 (−19.9%) because it is almost entirely singlespace calling next; scanstring fell 2,376,959 to 2,273,389 (−4.4%); scan::name rose 1,128,453 to 1,152,462, which at 2% on one function is codegen noise from changed inlining. The estimate assumed roughly 18 instructions per manifest byte and that removing two loads and a branch would halve it. The arithmetic held but the model did not: scanstring runs 16,005 times over a 129,809-byte manifest, 8.1 bytes per call, so its 142 instructions per call are dominated by per-call overhead — building and returning the fragment list, push_literal, the trailing space call on the path branch — rather than by the byte loop, which optimizing could only ever reach a fraction of. Two consequences follow. Deriving line and column lazily on error, the other half of the original proposal, is rejected without being attempted: it would mean stripping line and column from ByteSpan and recovering them in source_span, invasive across the whole error surface, to remove one increment from a loop running eight times per call — about 0.5% by the same arithmetic that just overestimated fivefold. And the escape-free fast path becomes the priority, because it attacks per-call cost directly: a path containing no dollar sign needs no fragment list, no evaluation and no copy, and in this fixture that is every path. 366 tests pass, clippy clean."
+                    }
+                )
+            }
         )
     }
 
