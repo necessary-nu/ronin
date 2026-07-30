@@ -847,6 +847,8 @@ pub(crate) enum ShellOperation {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SupervisorOperation {
     CreatePoller,
+    RegisterSignalWake,
+    ReadSignalWake,
     WaitForEvent,
 }
 
@@ -876,6 +878,12 @@ pub(crate) enum ProcessError {
         operation: SupervisorOperation,
         source: io::Error,
     },
+    SignalDelivery {
+        pid: u32,
+        process_group: bool,
+        signal: crate::signal::Signal,
+        source: io::Error,
+    },
     ThreadPanicked {
         edge: EdgeId,
     },
@@ -902,6 +910,22 @@ impl fmt::Display for ProcessError {
                 write!(formatter, "{context}: {source}")
             }
             Self::Shell { source, .. } | Self::Supervisor { source, .. } => source.fmt(formatter),
+            Self::SignalDelivery {
+                pid,
+                process_group,
+                signal,
+                source,
+            } => {
+                let target = if *process_group {
+                    "process group"
+                } else {
+                    "process"
+                };
+                write!(
+                    formatter,
+                    "failed to send {signal} to {target} {pid}: {source}"
+                )
+            }
             Self::ThreadPanicked { .. } => formatter.write_str("subcommand thread panicked"),
             Self::CompletionChannelDisconnected => {
                 formatter.write_str("subcommand completion channel disconnected")
@@ -916,7 +940,8 @@ impl error::Error for ProcessError {
             Self::JobserverEnvironment { source } => Some(source),
             Self::Jobserver { source, .. }
             | Self::Shell { source, .. }
-            | Self::Supervisor { source, .. } => Some(source),
+            | Self::Supervisor { source, .. }
+            | Self::SignalDelivery { source, .. } => Some(source),
             _ => None,
         }
     }

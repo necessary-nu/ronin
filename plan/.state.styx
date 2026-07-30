@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-29T23:40:58.261961432Z
+last_sync_at 2026-07-30T02:57:59.767982452Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -19,9 +19,16 @@ rule_versions (
     {id product.no-samuflags, version 0}
     {id product.ronin-identity, version 0}
     {id release.compatibility-gate, version 0}
+    {id runtime.borrowed-span-frontend, version 0}
+    {id runtime.dyndep-transaction, version 0}
+    {id runtime.guarded-signal-boundary, version 0}
     {id runtime.jobserver-resource-safety, version 0}
     {id runtime.msvc-byte-parsing, version 0}
     {id runtime.output-byte-boundaries, version 0}
+    {id runtime.persistence-transactions, version 0}
+    {id runtime.process-supervisor-scalability, version 0}
+    {id runtime.semantic-errors, version 0}
+    {id runtime.typed-runtime-state, version 0}
 )
 
 assertions (
@@ -64,6 +71,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id compat.persistent-state, version 0}
     )}
+    {id ronin-dyndep-transaction, covered_rules (
+        runtime.dyndep-transaction
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.dyndep-transaction}
+    ), rule_versions_seen (
+        {id runtime.dyndep-transaction, version 0}
+    )}
     {id ronin-event-scheduler, covered_rules (
         compat.scheduling
     ), covered_claims (
@@ -92,6 +106,16 @@ impl_evidence (
     ), rule_versions_seen (
         {id compat.upstream-conformance, version 0}
     )}
+    {id ronin-output-encoding, covered_rules (
+        runtime.msvc-byte-parsing
+        runtime.output-byte-boundaries
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.msvc-byte-parsing}
+        {impl_name target-impl, rule runtime.output-byte-boundaries}
+    ), rule_versions_seen (
+        {id runtime.msvc-byte-parsing, version 0}
+        {id runtime.output-byte-boundaries, version 0}
+    )}
     {id ronin-performance-baseline, covered_rules (
         performance.reproducible-baseline
     ), covered_claims (
@@ -105,6 +129,13 @@ impl_evidence (
         {impl_name target-impl, rule performance.no-unexplained-regression}
     ), rule_versions_seen (
         {id performance.no-unexplained-regression, version 0}
+    )}
+    {id ronin-persistence-transactions, covered_rules (
+        runtime.persistence-transactions
+    ), covered_claims (
+        {impl_name target-impl, rule runtime.persistence-transactions}
+    ), rule_versions_seen (
+        {id runtime.persistence-transactions, version 0}
     )}
     {id ronin-process-integration, covered_rules (
         compat.process-integration
@@ -143,41 +174,37 @@ impl_evidence (
     ), rule_versions_seen (
         {id compat.cli-and-tools, version 0}
     )}
-    {id ronin-output-encoding, covered_rules (
-        runtime.msvc-byte-parsing
-        runtime.output-byte-boundaries
+    {id ronin-runtime-scalability, covered_rules (
+        runtime.process-supervisor-scalability
     ), covered_claims (
-        {impl_name target-impl, rule runtime.msvc-byte-parsing}
-        {impl_name target-impl, rule runtime.output-byte-boundaries}
-    )}
-    {id ronin-persistence-transactions, covered_rules (
-        runtime.persistence-transactions
-    ), covered_claims (
-        {impl_name target-impl, rule runtime.persistence-transactions}
+        {impl_name target-impl, rule runtime.process-supervisor-scalability}
+    ), rule_versions_seen (
+        {id runtime.process-supervisor-scalability, version 0}
     )}
     {id ronin-semantic-errors, covered_rules (
         runtime.semantic-errors
     ), covered_claims (
         {impl_name target-impl, rule runtime.semantic-errors}
+    ), rule_versions_seen (
+        {id runtime.semantic-errors, version 0}
     )}
     {id ronin-span-frontend, covered_rules (
         runtime.borrowed-span-frontend
     ), covered_claims (
         {impl_name target-impl, rule runtime.borrowed-span-frontend}
-    )}
-    {id ronin-dyndep-transaction, covered_rules (
-        runtime.dyndep-transaction
-    ), covered_claims (
-        {impl_name target-impl, rule runtime.dyndep-transaction}
+    ), rule_versions_seen (
+        {id runtime.borrowed-span-frontend, version 0}
     )}
     {id ronin-typed-runtime-state, covered_rules (
         runtime.typed-runtime-state
     ), covered_claims (
         {impl_name target-impl, rule runtime.typed-runtime-state}
+    ), rule_versions_seen (
+        {id runtime.typed-runtime-state, version 0}
     )}
-    {id ronin-runtime-scalability, covered_rules (
-        runtime.process-supervisor-scalability
+    {id ronin-signal-boundary, covered_rules (
+        runtime.guarded-signal-boundary
     ), covered_claims (
-        {impl_name target-impl, rule runtime.process-supervisor-scalability}
+        {impl_name target-impl, rule runtime.guarded-signal-boundary}
     )}
 )

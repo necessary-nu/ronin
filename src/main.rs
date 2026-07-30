@@ -40,10 +40,11 @@ fn is_broken_pipe(mut error: &(dyn std::error::Error + 'static)) -> bool {
 
 fn main() {
     // [spec:samurai:req:compat.process-integration]
-    if let Err(error) = ronin::install_signal_handlers() {
+    // [spec:samurai:req:runtime.guarded-signal-boundary]
+    let signal_handlers = ronin::install_signal_handlers().unwrap_or_else(|error| {
         let _ = write_diagnostic(format_args!("failed to install signal handlers: {error}"));
         std::process::exit(1);
-    }
+    });
     let arguments = std::env::args_os().collect::<Vec<_>>();
     // [spec:samurai:req:product.ronin-identity]
     // [spec:samurai:req:product.no-samuflags]
@@ -73,8 +74,8 @@ fn main() {
                     std::process::exit(1);
                 }
             }
-            if let Some(signal) = ronin::interrupted_signal() {
-                ronin::reraise_signal(signal);
+            if let Some(signal) = signal_handlers.interrupted() {
+                signal.reraise();
             }
             std::process::exit(1);
         }

@@ -1016,6 +1016,9 @@ children (
                 id ronin-signal-boundary
                 title "Replace handwritten global signal handling with a guarded boundary"
                 priority 0
+                implements {
+                    target-impl ([spec:samurai:req:runtime.guarded-signal-boundary])
+                }
                 deps (ronin-runtime-scalability)
                 log (
                     {
@@ -1023,6 +1026,20 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Use the runtime decision to choose a focused signal abstraction with typed signal values and explicit ownership. Roll back partial installation, define restoration or executable-lifetime behavior, distinguish benign ESRCH from delivery failures, preserve process-group forwarding and shell-compatible re-raise semantics, avoid hard-coded signal numbers, and consolidate test-only signal FFI behind the same boundary."
+                    }
+
+                    {
+                        at 2026-07-30T02:43:08.690100452Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-30T02:57:22.278728069Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Adopt signal-hook 0.3.18 for safe flag plus self-pipe registration and rustix 1.1.4 for typed process/process-group delivery. Keep registrations for executable lifetime because signal-hook cannot restore an arbitrary previous disposition after its final action is unregistered; installation publishes only after all eight registrations succeed and rolls back every known partial action on failure. Feed the self-pipe into the selected polling reactor, removing the scheduler's periodic 10 ms signal check without adding Tokio. Treat ESRCH as an already-finished target, propagate every other forwarding error as a typed process failure, and use signal-hook's default-handler emulation for shell-visible re-raise semantics. The full 425-test Ninja oracle, 10 differential cases, persistence round trip, musl check, and 15-sample performance gate pass; scheduler-barrier median is 40.672 ms versus Ninja's 44.663 ms."
                     }
                 )
             }

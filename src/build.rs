@@ -1418,8 +1418,8 @@ impl<'a> Builder<'a> {
         let mut load = status::LoadSampler::default();
 
         loop {
-            if let Some(signal) = crate::subprocess::interrupted_signal() {
-                processes.interrupt(signal);
+            if let Some(signal) = crate::signal::interrupted() {
+                processes.interrupt(signal)?;
                 failures = failure_limit;
                 last_error = Some(BuildError::Interrupted { status: None });
             }
@@ -1521,8 +1521,7 @@ impl<'a> Builder<'a> {
             if processes.running_len() == 0 {
                 break;
             }
-            let timeout = Some(std::time::Duration::from_millis(10));
-            let Some(wake) = processes.wait(timeout)? else {
+            let Some(wake) = processes.wait(None)? else {
                 continue;
             };
             let completion = match wake {

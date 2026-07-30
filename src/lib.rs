@@ -24,6 +24,7 @@ mod parse;
 mod persistence;
 mod runtime;
 mod scan;
+mod signal;
 mod source;
 mod subprocess;
 mod tool;
@@ -31,7 +32,7 @@ mod util;
 
 pub use cli::{run, run_os, RunResult, NINJA_COMPAT_VERSION, PRODUCT_NAME};
 pub use error::{Error, ErrorKind};
-pub use subprocess::{install_signal_handlers, interrupted_signal, reraise_signal};
+pub use signal::{install_signal_handlers, Signal, SignalHandlers};
 
 #[cfg(test)]
 mod port_tests;

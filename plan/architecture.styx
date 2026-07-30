@@ -115,6 +115,7 @@ elements (
             [spec:samurai:req:compat.command-runtime]
             [spec:samurai:req:runtime.typed-runtime-state]
             [spec:samurai:req:runtime.process-supervisor-scalability]
+            [spec:samurai:req:runtime.guarded-signal-boundary]
         )
         exposes (
             "src/build.rs"

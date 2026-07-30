@@ -119,3 +119,19 @@ second work item.
 > measurements of throughput, startup, binary size, idle wakeups, peak thread
 > count, peak RSS, signal behavior, console ownership, output ordering,
 > cancellation, child reaping, and jobserver integration.
+
+## Guarded signal boundary
+
+> [spec:samurai:req:runtime.guarded-signal-boundary]
+> On Unix, Ronin MUST represent handled signals with a closed typed set and
+> install their handlers through one owned, process-global boundary before
+> worker threads start. The boundary and its registrations MUST have explicit
+> executable lifetime. Installation MUST publish the boundary only after every
+> flag and readiness-wake registration succeeds, and MUST unregister every
+> known partial registration on failure. Signal arrival MUST wake the existing
+> process supervisor rather than depend on a periodic scheduler timer.
+> Forwarding MUST target the intended child or process group, treat a vanished
+> target (`ESRCH`) as benign, and retain every other delivery failure as a
+> semantic process error. Ronin MUST re-raise the observed signal with its
+> default disposition so shells observe signal termination. Production and
+> test code MUST NOT duplicate raw signal numbers or handwritten signal FFI.

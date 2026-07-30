@@ -270,13 +270,8 @@ fn writes_explanations_to_stderr_and_status_to_stdout() {
 #[test]
 // [spec:samurai:req:runtime.process-supervisor-scalability/test]
 fn forwards_interrupts_and_removes_partial_outputs() {
-    use std::os::raw::c_int;
     use std::os::unix::process::ExitStatusExt;
     use std::time::Duration;
-
-    unsafe extern "C" {
-        fn kill(pid: c_int, signal: c_int) -> c_int;
-    }
 
     let directory = test_directory("interrupt-forwarding");
     fs::create_dir_all(&directory).unwrap();
@@ -296,12 +291,10 @@ fn forwards_interrupts_and_removes_partial_outputs() {
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(directory.join("started").exists());
-    let child_id = c_int::try_from(child.id()).expect("test child PID fits in c_int");
-    // SAFETY: `child_id` identifies the live child spawned above, and SIGINT
-    // is a valid POSIX signal number.
-    assert_eq!(unsafe { kill(child_id, 2) }, 0);
+    let child_id = rustix::process::Pid::from_child(&child);
+    rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
     let status = child.wait().unwrap();
-    assert_eq!(status.signal(), Some(2));
+    assert_eq!(status.signal(), Some(rustix::process::Signal::INT.as_raw()));
     assert!(!directory.join("output").exists());
     fs::remove_dir_all(directory).unwrap();
 }

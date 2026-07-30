@@ -2,6 +2,7 @@
 
 use crate::error::{ProcessError, ShellOperation};
 use crate::graph::EdgeId;
+use crate::signal::Signal;
 use crate::util::{BString, ByteSlice};
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -12,118 +13,15 @@ use std::sync::Arc;
 
 type ProcessResult<T> = Result<T, ProcessError>;
 
-#[cfg(unix)]
-mod signals {
-    use std::os::raw::c_int;
-    use std::sync::atomic::{AtomicI32, Ordering};
-
-    static INTERRUPTED: AtomicI32 = AtomicI32::new(0);
-    const SIGNALS: [c_int; 4] = [1, 2, 3, 15];
-    const SIG_DFL: usize = 0;
-    const SIG_ERR: usize = usize::MAX;
-
-    unsafe extern "C" {
-        fn signal(signal: c_int, handler: usize) -> usize;
-        fn raise(signal: c_int) -> c_int;
-        fn kill(pid: c_int, signal: c_int) -> c_int;
-    }
-
-    extern "C" fn record_interrupt(signal: c_int) {
-        INTERRUPTED.store(signal, Ordering::Relaxed);
-    }
-
-    pub(super) fn install() -> std::io::Result<()> {
-        INTERRUPTED.store(0, Ordering::Relaxed);
-        for signal_number in SIGNALS {
-            // SAFETY: `record_interrupt` has the C signal-handler ABI, and
-            // every number in `SIGNALS` is a POSIX signal accepted by signal.
-            if unsafe { signal(signal_number, record_interrupt as usize) } == SIG_ERR {
-                return Err(std::io::Error::last_os_error());
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn interrupted() -> Option<i32> {
-        match INTERRUPTED.load(Ordering::Relaxed) {
-            0 => None,
-            signal => Some(signal),
-        }
-    }
-
-    pub(super) fn send(pid: u32, process_group: bool, signal_number: i32) {
-        let pid = i32::try_from(pid).unwrap_or(i32::MAX);
-        let target = if process_group { -pid } else { pid };
-        // SAFETY: `target` is either a child PID or its process-group ID and
-        // `signal_number` is the signal previously received by Ronin.
-        unsafe {
-            kill(target, signal_number);
-        }
-    }
-
-    pub(super) fn reraise(signal_number: i32) -> ! {
-        // SAFETY: resetting the received POSIX signal to its default handler
-        // before raising it is the standard way to preserve shell semantics.
-        unsafe {
-            signal(signal_number, SIG_DFL);
-            raise(signal_number);
-        }
-        std::process::exit(128 + signal_number);
-    }
-}
-
-/// Installs Ronin's process-interruption handlers.
-///
-/// Call this once in an embedding executable before invoking [`crate::run_os`].
-///
-/// # Errors
-///
-/// Returns the operating-system error from installing a signal handler.
-pub fn install_signal_handlers() -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        signals::install()
-    }
-    #[cfg(not(unix))]
-    {
-        Ok(())
-    }
-}
-
-/// Returns the operating-system signal most recently observed by Ronin.
-#[must_use]
-pub fn interrupted_signal() -> Option<i32> {
-    #[cfg(unix)]
-    {
-        signals::interrupted()
-    }
-    #[cfg(not(unix))]
-    {
-        None
-    }
-}
-
-/// Restores the default handler and re-raises an observed signal.
-///
-/// This function does not return.
-pub fn reraise_signal(signal: i32) -> ! {
-    #[cfg(unix)]
-    {
-        signals::reraise(signal)
-    }
-    #[cfg(not(unix))]
-    {
-        std::process::exit(128 + signal);
-    }
-}
-
-fn signal_process(pid: u32, process_group: bool, signal: i32) {
-    #[cfg(unix)]
-    signals::send(pid, process_group, signal);
-    #[cfg(not(unix))]
-    {
-        let _ = (pid, process_group, signal);
-    }
+fn signal_process(pid: u32, process_group: bool, signal: Signal) -> ProcessResult<()> {
+    crate::signal::forward(pid, process_group, signal)
+        .map(|_| ())
+        .map_err(|source| ProcessError::SignalDelivery {
+            pid,
+            process_group,
+            signal,
+            source,
+        })
 }
 
 pub(crate) struct ProcessOutput {
@@ -179,12 +77,29 @@ struct RunningChild {
     registered: bool,
 }
 
+#[cfg(unix)]
+const SIGNAL_EVENT_KEY: usize = 0;
+
+#[cfg(unix)]
+const fn edge_event_key(edge: EdgeId) -> usize {
+    edge.index()
+        .checked_add(1)
+        .expect("edge event keys reserve zero for signals")
+}
+
+#[cfg(unix)]
+fn event_edge(key: usize) -> Option<EdgeId> {
+    key.checked_sub(1).map(EdgeId::from_index)
+}
+
 pub(crate) struct ProcessSupervisor<External = ()> {
     sender: Sender<ProcessEvent<External>>,
     receiver: Receiver<ProcessEvent<External>>,
     running: usize,
     #[cfg(unix)]
     poller: Arc<polling::Poller>,
+    #[cfg(unix)]
+    signal_wake: Option<std::os::unix::net::UnixStream>,
     #[cfg(unix)]
     events: polling::Events,
     #[cfg(unix)]
@@ -197,7 +112,7 @@ pub(crate) struct ProcessSupervisor<External = ()> {
     children: HashMap<EdgeId, RunningChild>,
     #[cfg(not(unix))]
     children: HashMap<EdgeId, (u32, bool)>,
-    interrupted: Option<i32>,
+    interrupted: Option<Signal>,
 }
 
 impl<External> ProcessSupervisor<External> {
@@ -211,12 +126,31 @@ impl<External> ProcessSupervisor<External> {
                     operation: crate::error::SupervisorOperation::CreatePoller,
                     source,
                 })?;
+        #[cfg(unix)]
+        let signal_wake =
+            crate::signal::wake_reader().map_err(|source| ProcessError::Supervisor {
+                operation: crate::error::SupervisorOperation::RegisterSignalWake,
+                source,
+            })?;
+        #[cfg(unix)]
+        if let Some(wake) = signal_wake.as_ref() {
+            // SAFETY: `signal_wake` is owned by the supervisor and explicitly
+            // removed from `poller` before either field is dropped.
+            unsafe { poller.add(wake, polling::Event::readable(SIGNAL_EVENT_KEY)) }.map_err(
+                |source| ProcessError::Supervisor {
+                    operation: crate::error::SupervisorOperation::RegisterSignalWake,
+                    source,
+                },
+            )?;
+        }
         Ok(Self {
             sender,
             receiver,
             running: 0,
             #[cfg(unix)]
             poller,
+            #[cfg(unix)]
+            signal_wake,
             #[cfg(unix)]
             events: polling::Events::new(),
             #[cfg(unix)]
@@ -262,7 +196,7 @@ impl<External> ProcessSupervisor<External> {
             }) => {
                 self.children.insert(edge, (pid, process_group));
                 if let Some(signal) = self.interrupted {
-                    signal_process(pid, process_group, signal);
+                    signal_process(pid, process_group, signal)?;
                 }
                 Ok(None)
             }
@@ -348,7 +282,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                     }) => {
                         self.children.insert(edge, (pid, process_group));
                         if let Some(signal) = self.interrupted {
-                            signal_process(pid, process_group, signal);
+                            signal_process(pid, process_group, signal)?;
                         }
                     }
                     Some(ProcessEvent::Finished(completion)) => {
@@ -376,18 +310,26 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
         self.running
     }
 
-    pub(crate) fn interrupt(&mut self, signal: i32) {
+    pub(crate) fn interrupt(&mut self, signal: Signal) -> ProcessResult<()> {
         if self.interrupted.replace(signal) == Some(signal) {
-            return;
+            return Ok(());
         }
+        let mut first_error = None;
         #[cfg(unix)]
         for child in self.children.values() {
-            signal_process(child.child.id(), child.process_group, signal);
+            let result = signal_process(child.child.id(), child.process_group, signal);
+            if first_error.is_none() {
+                first_error = result.err();
+            }
         }
         #[cfg(not(unix))]
         for (pid, process_group) in self.children.values().copied() {
-            signal_process(pid, process_group, signal);
+            let result = signal_process(pid, process_group, signal);
+            if first_error.is_none() {
+                first_error = result.err();
+            }
         }
+        first_error.map_or(Ok(()), Err)
     }
 }
 
@@ -425,20 +367,21 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             source,
         })?;
         let process_group = !use_console;
+        let mut child = RunningChild {
+            child,
+            command,
+            process_group,
+            output,
+            output_bytes: Vec::new(),
+            registered: false,
+        };
         if let Some(signal) = self.interrupted {
-            signal_process(child.id(), process_group, signal);
+            if let Err(error) = signal_process(child.child.id(), process_group, signal) {
+                terminate_and_reap(&mut child);
+                return Err(error);
+            }
         }
-        let previous = self.children.insert(
-            edge,
-            RunningChild {
-                child,
-                command,
-                process_group,
-                output,
-                output_bytes: Vec::new(),
-                registered: false,
-            },
-        );
+        let previous = self.children.insert(edge, child);
         debug_assert!(previous.is_none(), "an edge cannot run twice concurrently");
 
         if use_console {
@@ -451,7 +394,10 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                     .expect("captured children own an output pipe");
                 // SAFETY: `self.children` owns the stream until `delete` is
                 // called by completion, failure cleanup, or `Drop`.
-                unsafe { self.poller.add(output, Event::readable(edge.index())) }
+                unsafe {
+                    self.poller
+                        .add(output, Event::readable(edge_event_key(edge)))
+                }
             };
             if let Err(source) = registration {
                 let mut child = self
@@ -510,18 +456,25 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                 return Ok(Some(event));
             }
 
+            let signal_ready = self
+                .events
+                .iter()
+                .any(|event| event.key == SIGNAL_EVENT_KEY);
+            if signal_ready {
+                self.drain_signal_wake()?;
+            }
             self.event_edges.clear();
-            self.event_edges.extend(
-                self.events
-                    .iter()
-                    .map(|event| EdgeId::from_index(event.key)),
-            );
+            self.event_edges
+                .extend(self.events.iter().filter_map(|event| event_edge(event.key)));
             while let Some(edge) = self.event_edges.pop() {
                 if self.children.contains_key(&edge) {
                     self.drain_output(edge);
                 }
             }
             self.reap_without_output();
+            if signal_ready {
+                return Ok(None);
+            }
             if deadline.is_some_and(|deadline| std::time::Instant::now() >= deadline)
                 && self.ready.is_empty()
             {
@@ -567,7 +520,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                     let child = &self.children[&edge];
                     self.poller.modify(
                         child.output.as_ref().expect("captured child"),
-                        polling::Event::readable(edge.index()),
+                        polling::Event::readable(edge_event_key(edge)),
                     )
                 };
                 if let Err(source) = result {
@@ -596,6 +549,35 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                 self.fail_child(edge, ShellOperation::ReadOutput, source);
             }
         }
+    }
+
+    fn drain_signal_wake(&mut self) -> ProcessResult<()> {
+        use std::io::Read;
+
+        let wake = self
+            .signal_wake
+            .as_mut()
+            .expect("signal events require an installed wake stream");
+        let mut buffer = [0; 64];
+        loop {
+            match wake.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(_) => {}
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => break,
+                Err(source) => {
+                    return Err(ProcessError::Supervisor {
+                        operation: crate::error::SupervisorOperation::ReadSignalWake,
+                        source,
+                    });
+                }
+            }
+        }
+        self.poller
+            .modify(wake, polling::Event::readable(SIGNAL_EVENT_KEY))
+            .map_err(|source| ProcessError::Supervisor {
+                operation: crate::error::SupervisorOperation::RegisterSignalWake,
+                source,
+            })
     }
 
     fn reap_without_output(&mut self) {
@@ -667,6 +649,9 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
 #[cfg(unix)]
 impl<External> Drop for ProcessSupervisor<External> {
     fn drop(&mut self) {
+        if let Some(wake) = self.signal_wake.as_ref() {
+            let _ = self.poller.delete(wake);
+        }
         for child in self.children.values_mut() {
             if child.registered {
                 if let Some(output) = child.output.as_ref() {
@@ -680,10 +665,8 @@ impl<External> Drop for ProcessSupervisor<External> {
 
 #[cfg(unix)]
 fn terminate_and_reap(child: &mut RunningChild) {
-    const SIGKILL: i32 = 9;
-
     if child.process_group {
-        signal_process(child.child.id(), true, SIGKILL);
+        let _ = crate::signal::kill_process_group(child.child.id());
     }
     let _ = child.child.kill();
     let _ = child.child.wait();
@@ -693,7 +676,11 @@ pub(crate) fn status_interrupted(status: std::process::ExitStatus) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        matches!(status.signal(), Some(1 | 2 | 3 | 15))
+        status
+            .signal()
+            .and_then(|raw| usize::try_from(raw).ok())
+            .and_then(Signal::from_raw)
+            .is_some()
     }
     #[cfg(not(unix))]
     {
