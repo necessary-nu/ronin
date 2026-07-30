@@ -1681,12 +1681,20 @@ children (
                 id ronin-rapidhash-implementation
                 title "Remove overhead from the rapidhash implementation"
                 priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-30T19:48:44.232686757Z
                         author "brendan@bbqsrc.net"
                         kind @decision
                         text "Keep rapidhash; fix how it is written. Replacing the algorithm was considered and rejected: Ninja itself hashes build-log commands with rapidhash (src/build_log.cc HashCommand, src/hash_map.h), so the value written to .ninja_log is a cross-tool contract — any other hash makes every edge read as command-line-changed the first time a tree switches between ninja and ronin, causing a full spurious rebuild. The NodeIndex hash is internal and free to change, but rapidhash is already at the fast end for the 10-40 byte paths it sees, so xxhash buys nothing there and costs a dependency. Callgrind on the current build puts rapidhashv1 at 3.9% of the wide no-op build and 3.4% of deep-graph evaluation, roughly 116 instructions to hash a ten-byte path where 20-30 is achievable. Suspected causes: mum() converts both halves of the u128 product with fallible try_from().expect() on the hottest arithmetic in the function, and every 4- and 8-byte read goes through the RapidBytes trait's contiguous() returning Option plus a try_into().expect(), where the segmented implementation used for command hashing may be defeating specialisation for the contiguous case."
+                    }
+
+                    {
+                        at 2026-07-30T20:13:12.574430185Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
