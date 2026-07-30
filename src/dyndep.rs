@@ -217,8 +217,11 @@ macro_rules! scan {
 }
 
 fn evaluate_empty(value: ScannedEvalString<'_>) -> BString {
-    let capacity = value
-        .parts
+    let parts = match value {
+        ScannedEvalString::Plain(bytes) => return BString::from(bytes),
+        ScannedEvalString::Parts(parts) => parts,
+    };
+    let capacity = parts
         .iter()
         .map(|part| match part {
             ScannedEvalPart::Literal(value) => value.len(),
@@ -227,7 +230,7 @@ fn evaluate_empty(value: ScannedEvalString<'_>) -> BString {
         })
         .sum();
     let mut result = Vec::with_capacity(capacity);
-    for part in value.parts {
+    for part in parts {
         match part {
             ScannedEvalPart::Literal(value) => result.extend_from_slice(value),
             ScannedEvalPart::EscapedByte(byte) => result.push(byte),

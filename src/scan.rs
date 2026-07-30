@@ -5,7 +5,6 @@ use crate::names::Names;
 pub(crate) use crate::source::Source;
 use crate::source::{SourceId, SourceSpan};
 use crate::util::{BStr, BString, EvalPart, EvalString};
-use smallvec::SmallVec;
 use std::sync::Arc;
 
 type ScanResult<T> = Result<T, ScanError>;
@@ -53,17 +52,29 @@ pub(crate) enum ScannedEvalPart<'source> {
     Variable(&'source BStr),
 }
 
-/// The fragments of one scanned evaluation string.
+/// The fragments of one scanned evaluation string that needed expanding.
 ///
-/// A manifest path is overwhelmingly one literal run, so a single inline slot
-/// removes the allocation in the common case. It widens the value from 24 to
-/// 32 bytes, which is less than the heap block the allocation cost anyway.
-pub(crate) type ScannedParts<'source> = SmallVec<[ScannedEvalPart<'source>; 1]>;
+/// A single literal run — the overwhelmingly common shape — is `Plain` and
+/// never reaches here, so inline capacity would only widen the enum and every
+/// vector of them. Reaching this type at all means the value held a `$`.
+pub(crate) type ScannedParts<'source> = Vec<ScannedEvalPart<'source>>;
 
 /// An evaluation string whose source-backed fragments have not been interned.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(crate) struct ScannedEvalString<'source> {
-    pub(crate) parts: ScannedParts<'source>,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ScannedEvalString<'source> {
+    /// One unbroken run of manifest bytes.
+    ///
+    /// No `$` appeared, so there is nothing to expand: the bytes are the
+    /// value. Almost every path in a real manifest takes this shape, and it
+    /// lets interning skip evaluation and copying entirely.
+    Plain(&'source [u8]),
+    Parts(ScannedParts<'source>),
+}
+
+impl Default for ScannedEvalString<'_> {
+    fn default() -> Self {
+        Self::Plain(&[])
+    }
 }
 
 fn append_scanned_literal(part: ScannedEvalPart<'_>, literal: &mut Vec<u8>) {
@@ -85,7 +96,14 @@ const fn scanned_literal_len(part: ScannedEvalPart<'_>) -> usize {
 impl ScannedEvalString<'_> {
     /// Interns a parsed value at the graph-ownership boundary.
     pub(crate) fn into_owned(self, names: &mut Names) -> EvalString {
-        let mut scanned = self.parts.into_iter().peekable();
+        let parts = match self {
+            Self::Plain(b"") => return EvalString::from_parts(Vec::new()),
+            Self::Plain(bytes) => {
+                return EvalString::from_parts(vec![EvalPart::Literal(BString::from(bytes))])
+            }
+            Self::Parts(parts) => parts,
+        };
+        let mut scanned = parts.into_iter().peekable();
         let mut parts = Vec::new();
         while let Some(part) = scanned.next() {
             match part {
@@ -449,10 +467,13 @@ pub(crate) fn scanstring<'source>(
 ) -> ScanResult<Option<ScannedEvalString<'source>>> {
     let source = scanner.source;
     let mut parts = ScannedParts::new();
-    let mut literal_start = scanner.index;
+    let start = scanner.index;
+    let mut literal_start = start;
+    let mut escaped = false;
     loop {
         match scanner.current() {
             Some(b'$') => {
+                escaped = true;
                 push_literal(&mut parts, source, literal_start, scanner.index);
                 next(scanner);
                 escape(scanner, &mut parts)?;
@@ -469,11 +490,19 @@ pub(crate) fn scanstring<'source>(
             }
         }
     }
-    push_literal(&mut parts, source, literal_start, scanner.index);
+    let end = scanner.index;
+    if !escaped {
+        // Nothing was expanded, so the run of source bytes is the whole value.
+        if path {
+            space(scanner)?;
+        }
+        return Ok((start != end).then(|| ScannedEvalString::Plain(&source.bytes()[start..end])));
+    }
+    push_literal(&mut parts, source, literal_start, end);
     if path {
         space(scanner)?;
     }
-    Ok((!parts.is_empty()).then_some(ScannedEvalString { parts }))
+    Ok((!parts.is_empty()).then_some(ScannedEvalString::Parts(parts)))
 }
 
 // [spec:samurai:def:scan.scanpaths-fn]
@@ -639,7 +668,10 @@ mod tests {
             assert_eq!(scanname(&mut scanner).unwrap().text, "cc");
             scannewline(&mut scanner).unwrap();
             let value = scanstring(&mut scanner, false).unwrap().unwrap();
-            let ScannedEvalPart::Literal(literal) = value.parts[0] else {
+            let ScannedEvalString::Parts(parts) = &value else {
+                panic!("a value holding an expansion should scan as parts");
+            };
+            let ScannedEvalPart::Literal(literal) = parts[0] else {
                 panic!("first evaluation part was not a literal");
             };
             let source_range = source.bytes().as_ptr_range();

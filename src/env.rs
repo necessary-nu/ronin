@@ -192,8 +192,14 @@ pub(crate) fn enveval_into(
     string: &ScannedEvalString<'_>,
     output: &mut Vec<u8>,
 ) {
-    let capacity = string
-        .parts
+    let parts = match string {
+        ScannedEvalString::Plain(bytes) => {
+            output.extend_from_slice(bytes);
+            return;
+        }
+        ScannedEvalString::Parts(parts) => parts,
+    };
+    let capacity = parts
         .iter()
         .map(|part| match part {
             ScannedEvalPart::Literal(value) => value.len(),
@@ -204,7 +210,7 @@ pub(crate) fn enveval_into(
         })
         .sum();
     output.reserve(capacity);
-    for part in &string.parts {
+    for part in parts {
         match part {
             ScannedEvalPart::Literal(value) => output.extend_from_slice(value),
             ScannedEvalPart::EscapedByte(byte) => output.push(*byte),

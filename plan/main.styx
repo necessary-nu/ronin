@@ -1840,6 +1840,20 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-plain-path-fast-path
+                title "Intern escape-free paths straight from manifest bytes"
+                priority 0
+                log (
+                    {
+                        at 2026-07-30T23:27:30.527355364Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Implemented and kept, at 3.4% against an estimate of about 10%. ScannedEvalString became an enum: Plain(&'source [u8]) when no dollar sign ever appeared, Parts(...) when the value needs expanding. Almost every manifest path is Plain, and node_for can hash and probe a Plain path that is_canonical already accepts directly against the manifest bytes — no evaluation, no copy into scratch, no canonicalization pass, and no allocation at all unless the node is new. Wide no-op 23,584,069 to 22,776,535 (−3.42%), command evaluation 42,226,722 to 40,892,549 (−3.16%). canonpath vanishes from the profile, inlined into a node_for that no longer calls it on the common path; node_for plus canonpath together fell 1,790,554 to 1,078,356, which is −712,198 of the −807,534 total. The shortfall against estimate has a different cause from the previous two nodes: the mechanical part landed exactly as predicted, but mknode did not move at all, staying at 1,388,925, and the estimate had counted it as partly addressable. Hashing a path and probing the index is irreducible — interning requires it however the bytes arrive — so roughly half the estimate was assigned to work no fast path can remove. A first cut regressed requested bytes about 4% with request count flat, the signature of a widened value rather than a new allocation: the enum is max(16, 32) plus a discriminant, 40 bytes against the previous struct's 32, so every Vec<ScannedEvalString> grew and scanpaths builds one per run of paths. The fix was recognising that the inline slot in ScannedParts had become redundant — it existed to avoid an allocation for single-fragment values and Plain now takes exactly those — so reverting ScannedParts to a plain Vec returns the enum to 32 bytes and drops bytes below where the node started (wide no-op 4,987,636 to 4,794,044, command evaluation 8,176,630 to 7,726,990). Inline capacity is worth paying for only where it is load-bearing; a better representation had displaced it. One test caught a real error: the scanner's borrow assertion was rewritten to expect Plain, but its fixture value contains an expansion and is legitimately Parts. 366 tests pass, clippy clean, allocation baseline re-recorded."
+                    }
+                )
+            }
         )
     }
 

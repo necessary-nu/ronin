@@ -132,7 +132,7 @@ pub(crate) fn diagnostic(program: &str, message: impl fmt::Display) -> String {
 /// Almost every manifest path is already canonical, and checking costs one
 /// pass with no allocation, so the rewrite below runs only when it changes
 /// something.
-fn is_canonical(path: &[u8]) -> bool {
+pub(crate) fn is_canonical(path: &[u8]) -> bool {
     let body = path.strip_prefix(b"/").unwrap_or(path);
     !body.is_empty()
         && body

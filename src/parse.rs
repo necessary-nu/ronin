@@ -11,7 +11,7 @@ use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
     AllowedSeparators, ScannedEvalString, Scanner, Separator, Source, TokenKind,
 };
-use crate::util::{canonpath, BStr, BString, ByteSlice, IdVec};
+use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, IdVec};
 
 type ManifestResult<T> = Result<T, ManifestError>;
 
@@ -153,6 +153,15 @@ fn node_for(
     environment: EnvironmentId,
     scratch: &mut Vec<u8>,
 ) -> ManifestResult<NodeId> {
+    // A path that expands to nothing and is already canonical needs neither
+    // evaluation nor canonicalization, so it can be hashed and probed against
+    // the manifest bytes themselves — no copy, and no allocation at all unless
+    // the node turns out to be new.
+    if let ScannedEvalString::Plain(bytes) = path {
+        if is_canonical(bytes) {
+            return Ok(crate::graph::mknode_bytes(graph, bytes));
+        }
+    }
     scratch.clear();
     crate::env::enveval_into(graph, environment, path, scratch);
     if scratch.is_empty() {

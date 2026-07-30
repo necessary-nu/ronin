@@ -673,6 +673,46 @@ becomes the priority, precisely because it attacks per-call cost: a path with no
 `$` needs no fragment list, no evaluation and no copy, and in this fixture that
 is every path.
 
+### The escape-free path — `ronin-plain-path-fast-path`
+
+`ScannedEvalString` became an enum: `Plain(&'source [u8])` for a value in which
+no `$` ever appeared, `Parts(…)` for one that needs expanding. Almost every
+manifest path is `Plain`, and `node_for` can then hash and probe a `Plain` path
+that `is_canonical` already accepts **directly against the manifest bytes** —
+no evaluation, no copy into scratch, no canonicalization pass, and no
+allocation at all unless the node turns out to be new.
+
+| Metric | before | after | change |
+| --- | ---: | ---: | ---: |
+| Instructions, wide no-op | 23,584,069 | 22,776,535 | −3.42% |
+| Instructions, command evaluation | 42,226,722 | 40,892,549 | −3.16% |
+| `node_for` + `canonpath` | 1,790,554 | 1,078,356 | −39.8% |
+| Requested bytes, wide no-op | 4,987,636 | 4,794,044 | −3.9% |
+| Requested bytes, command evaluation | 8,176,630 | 7,726,990 | −5.5% |
+
+`canonpath` disappears from the profile entirely, inlined into a `node_for`
+that no longer calls it on the common path. The win is almost exactly that
+pair: −712,198 of the −807,534 total.
+
+The estimate was about 10% and the shortfall is instructive in a different way
+from the last two. The mechanical part landed as predicted — evaluation,
+copying and canonicalization for plain paths are simply gone. What did not move
+is `mknode`, unchanged at 1,388,925, which the estimate had counted as partly
+addressable. Hashing a path and probing the index is irreducible: interning
+requires it however the bytes arrive. Roughly half the estimate was assigned to
+work that no fast path can remove.
+
+A first cut of this change regressed requested bytes by about 4% while leaving
+the request count flat, which is the signature of a widened value rather than a
+new allocation. The enum is `max(16, 32)` plus a discriminant — 40 bytes against
+the previous struct's 32 — so every `Vec<ScannedEvalString>` grew, and
+`scanpaths` builds one per run of paths. The fix was to notice that the inline
+slot in `ScannedParts` had been made redundant: it existed to avoid an
+allocation for single-fragment values, and `Plain` now takes exactly those.
+Reverting `ScannedParts` to a plain `Vec` returns the enum to 32 bytes, and
+bytes then land *below* where the node started. Inline capacity is worth paying
+for only where it is load-bearing; here a better representation had displaced it.
+
 ### SIMD, and why the gap is not a vectorization gap
 
 The profile also settled the question that prompted it. C samurai contains one
