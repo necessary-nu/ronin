@@ -234,9 +234,16 @@ pub(crate) fn nodestat_with<F>(
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
-    let path = graph.node(node).path.clone();
-    let mtime = stat(path.to_path().expect("byte paths are valid on Unix"))
-        .map_err(|source| GraphError::Stat { node, path, source })?;
+    // Borrow the interned path for the syscall; only the error path needs an
+    // owned copy, and scans stat every node.
+    let path = &graph.node(node).path;
+    let mtime = stat(path.to_path().expect("byte paths are valid on Unix")).map_err(|source| {
+        GraphError::Stat {
+            node,
+            path: path.clone(),
+            source,
+        }
+    })?;
     runtime.node_mut(node).set_mtime(FileTime::observed(mtime));
     Ok(())
 }

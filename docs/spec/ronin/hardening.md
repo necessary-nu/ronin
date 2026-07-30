@@ -81,6 +81,14 @@ second work item.
 
 ## Transactional dynamic dependencies
 
+> [spec:samurai:req:runtime.allocation-free-stat]
+> Graph scans stat nodes without allocating per call. The disk interface holds
+> its working directory open and resolves manifest-relative paths through that
+> descriptor rather than materializing a joined path, and callers pass borrowed
+> interned paths, reserving owned copies for error reporting. Timestamps,
+> missing-path handling, symlink following, and byte-exact non-UTF-8 paths
+> remain observably identical to the resolved-path implementation.
+
 > [spec:samurai:req:runtime.dyndep-transaction]
 > Ronin MUST parse dynamic-dependency files into a source-aware staged
 > representation without interning paths or otherwise mutating graph state.

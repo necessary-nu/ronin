@@ -65,6 +65,30 @@ The three commits between the original recording and this one
 changed comparison and hashing strategy without changing allocation shape, so
 the reduction is attributable to identifier packing.
 
+### Allocation-free node stats (`ronin-stat-no-alloc`)
+
+Each stat previously allocated three times: an interned-path clone for the
+error path, a joined `PathBuf`, and the C string `std::fs` builds per call.
+Holding the working directory open and calling `statat` with the manifest's own
+relative path removes all three, since rustix converts short paths through a
+stack buffer.
+
+| Workload | Requests before | Requests after | Change | Bytes change |
+| --- | ---: | ---: | ---: | ---: |
+| manifest-command-evaluation | 192,172 | 192,172 | — | — |
+| deep-graph-evaluation | 40,152 | 34,153 | −14.9% | −9.2% |
+| wide-noop-build | 64,246 | 52,244 | −18.7% | −9.1% |
+| path-canonicalization | 36,103 | 36,103 | — | — |
+| dependency-log-load | 26,378 | 24,573 | −6.8% | −7.2% |
+| scheduler-barrier | 8,178 | 7,533 | −7.9% | −8.2% |
+
+The two unchanged workloads run `-t commands` and `-t targets`, which never
+stat. Requests per build statement fell from 20.1 to 17.1 on deep-graph
+evaluation and from 16.1 to 13.1 on the wide no-op build — the shape of the
+most common real invocation. The release binary also shrank slightly despite
+enabling rustix's `fs` feature, because the `std::fs::metadata` paths went
+away.
+
 ## Interpretation
 
 ~48 allocation requests per build statement on the command-evaluation

@@ -1405,12 +1405,22 @@ children (
             {
                 id ronin-stat-no-alloc
                 title "Stat nodes without per-call path allocation"
+                implements {
+                    target-impl ([spec:samurai:req:runtime.allocation-free-stat])
+                }
                 log (
                     {
                         at 2026-07-30T08:12:02.566711013Z
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Every stat allocates twice: nodestat_with clones the node's path BString up front to satisfy the error path (src/graph.rs:224 — borrow for the syscall, clone only when constructing GraphError::Stat), and RealDiskInterface::stat allocates a PathBuf per call via resolve/to_owned even with an empty working directory (src/os.rs:62-71, resolve at os.rs:20-26). rustix is already a dependency: statx relative to a cached working-directory fd gives allocation-free, byte-exact stats and removes the Path/UTF-8 dance. On a 100k-node no-op build this removes 200k+ allocations from the critical scan. Same pattern applies to exists() and make_dirs resolution."
+                    }
+
+                    {
+                        at 2026-07-30T12:39:49.618532345Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

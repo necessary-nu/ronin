@@ -4,8 +4,8 @@
 # platform=linux-x86_64
 workload,build_statements,allocation_requests,requested_bytes
 manifest-command-evaluation,4001,192172,15135623
-deep-graph-evaluation,2000,40152,4312979
-wide-noop-build,4001,64246,8539849
+deep-graph-evaluation,2000,34153,3918121
+wide-noop-build,4001,52244,7760802
 path-canonicalization,4000,36103,4960358
-dependency-log-load,301,26378,1788245
-scheduler-barrier,129,8178,603519
+dependency-log-load,301,24573,1660196
+scheduler-barrier,129,7533,554275

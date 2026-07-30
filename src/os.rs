@@ -2,6 +2,7 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(not(unix))]
 use std::time::UNIX_EPOCH;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -30,6 +31,35 @@ impl WorkingDirectory {
     }
 }
 
+/// Convert a stat's modification time to Ninja's nanosecond timestamp.
+///
+/// Zero is Ninja's missing-file sentinel, so a genuine zero timestamp reports
+/// one. Times before the epoch are unrepresentable, matching what
+/// `SystemTime::duration_since(UNIX_EPOCH)` rejected.
+#[cfg(unix)]
+#[allow(
+    clippy::useless_conversion,
+    reason = "stat time fields are i64 on some targets and C long on others"
+)]
+fn modification_nanoseconds(stat: rustix::fs::Stat) -> io::Result<i64> {
+    let unrepresentable = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "modification time is not representable as nanoseconds since the epoch",
+        )
+    };
+    let seconds = i64::try_from(stat.st_mtime).map_err(|_| unrepresentable())?;
+    let nanoseconds = i64::try_from(stat.st_mtime_nsec).map_err(|_| unrepresentable())?;
+    if seconds < 0 {
+        return Err(unrepresentable());
+    }
+    let timestamp = seconds
+        .checked_mul(1_000_000_000)
+        .and_then(|seconds| seconds.checked_add(nanoseconds))
+        .unwrap_or(i64::MAX);
+    Ok(if timestamp == 0 { 1 } else { timestamp })
+}
+
 fn canonical_directory(path: &Path) -> io::Result<PathBuf> {
     let path = std::fs::canonicalize(path)?;
     if std::fs::metadata(&path)?.is_dir() {
@@ -42,15 +72,61 @@ fn canonical_directory(path: &Path) -> io::Result<PathBuf> {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct RealDiskInterface {
     working_directory: WorkingDirectory,
+    /// The working directory held open so relative stats resolve through it.
+    ///
+    /// Opening once and sharing the descriptor across clones lets every stat
+    /// pass the manifest's own relative path to the kernel, which needs
+    /// neither a joined path buffer nor the C string `std::fs` allocates per
+    /// call. `None` means no working directory was configured, so paths are
+    /// already process-relative.
+    // [spec:samurai:req:runtime.allocation-free-stat]
+    #[cfg(unix)]
+    directory: std::sync::Arc<std::sync::OnceLock<Result<rustix::fd::OwnedFd, rustix::io::Errno>>>,
 }
 
 impl RealDiskInterface {
-    pub(crate) const fn new(working_directory: WorkingDirectory) -> Self {
-        Self { working_directory }
+    pub(crate) fn new(working_directory: WorkingDirectory) -> Self {
+        Self {
+            working_directory,
+            #[cfg(unix)]
+            directory: std::sync::Arc::default(),
+        }
     }
 
     pub(crate) fn resolve(&self, path: &Path) -> PathBuf {
         self.working_directory.resolve(path)
+    }
+
+    #[cfg(unix)]
+    fn directory_fd(&self) -> io::Result<Option<rustix::fd::BorrowedFd<'_>>> {
+        use rustix::fd::AsFd;
+
+        if self.working_directory.as_path().as_os_str().is_empty() {
+            return Ok(None);
+        }
+        let opened = self.directory.get_or_init(|| {
+            rustix::fs::open(
+                self.working_directory.as_path(),
+                rustix::fs::OFlags::RDONLY
+                    | rustix::fs::OFlags::DIRECTORY
+                    | rustix::fs::OFlags::CLOEXEC,
+                rustix::fs::Mode::empty(),
+            )
+        });
+        match opened {
+            Ok(directory) => Ok(Some(directory.as_fd())),
+            Err(errno) => Err(io::Error::from(*errno)),
+        }
+    }
+
+    /// Stat one path without allocating for path resolution.
+    ///
+    /// An absolute path makes the kernel ignore the directory descriptor,
+    /// which is exactly [`Self::resolve`]'s absolute-path passthrough.
+    #[cfg(unix)]
+    fn stat_at(&self, path: &Path) -> io::Result<rustix::fs::Stat> {
+        let directory = self.directory_fd()?.unwrap_or(rustix::fs::CWD);
+        rustix::fs::statat(directory, path, rustix::fs::AtFlags::empty()).map_err(io::Error::from)
     }
 
     // [spec:samurai:def:os.osmtime-fn]
@@ -60,15 +136,19 @@ impl RealDiskInterface {
     /// Return a nanosecond timestamp, zero for a missing path, and an error for
     /// failures other than a missing component.
     pub(crate) fn stat(&self, path: &Path) -> io::Result<i64> {
-        match std::fs::metadata(self.resolve(path)) {
-            Ok(metadata) => {
-                let duration = metadata
-                    .modified()?
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-                let timestamp = duration.as_nanos().try_into().unwrap_or(i64::MAX);
-                Ok(if timestamp == 0 { 1 } else { timestamp })
-            }
+        #[cfg(unix)]
+        let modified = self.stat_at(path).and_then(modification_nanoseconds);
+        #[cfg(not(unix))]
+        let modified = std::fs::metadata(self.resolve(path)).and_then(|metadata| {
+            let duration = metadata
+                .modified()?
+                .duration_since(UNIX_EPOCH)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+            let timestamp = duration.as_nanos().try_into().unwrap_or(i64::MAX);
+            Ok(if timestamp == 0 { 1 } else { timestamp })
+        });
+        match modified {
+            Ok(timestamp) => Ok(timestamp),
             Err(error)
                 if matches!(
                     error.kind(),
@@ -97,7 +177,14 @@ impl RealDiskInterface {
     }
 
     pub(crate) fn exists(&self, path: &Path) -> bool {
-        self.resolve(path).exists()
+        #[cfg(unix)]
+        {
+            self.stat_at(path).is_ok()
+        }
+        #[cfg(not(unix))]
+        {
+            self.resolve(path).exists()
+        }
     }
 
     pub(crate) fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
@@ -182,6 +269,58 @@ mod tests {
         );
         fs::write(directory.join("notadir"), "").unwrap();
         assert_eq!(disk.stat(&directory.join("notadir/nosuchfile")).unwrap(), 0);
+    }
+
+    // [spec:samurai:req:runtime.allocation-free-stat/test]
+    #[test]
+    fn working_directory_relative_stats_match_resolved_paths() {
+        let directory = TempDirectory::new("relative-stat");
+        let nested = directory.join("nested");
+        fs::create_dir(&nested).unwrap();
+        fs::write(nested.join("file"), b"contents").unwrap();
+
+        // A disk interface rooted at the temporary directory must agree with
+        // one that resolves the same file through an absolute path.
+        let rooted =
+            RealDiskInterface::new(WorkingDirectory::new(directory.join("nested")).unwrap());
+        let process = RealDiskInterface::default();
+        let relative = Path::new("file");
+        assert_eq!(
+            rooted.stat(relative).unwrap(),
+            process.stat(&nested.join("file")).unwrap()
+        );
+        assert!(rooted.exists(relative));
+        assert!(!rooted.exists(Path::new("missing")));
+        assert_eq!(rooted.stat(Path::new("missing")).unwrap(), 0);
+
+        // An absolute path ignores the configured directory, matching resolve.
+        assert_eq!(
+            rooted.stat(&nested.join("file")).unwrap(),
+            process.stat(&nested.join("file")).unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    // [spec:samurai:req:runtime.allocation-free-stat/test]
+    #[test]
+    fn relative_stats_preserve_non_utf8_paths() {
+        use crate::util::ByteSlice;
+
+        let directory = TempDirectory::new("relative-stat-bytes");
+        let mut name = b"file-".to_vec();
+        name.push(0xff);
+        let name = name.to_os_str().unwrap().to_owned();
+        let path = directory.join(&name);
+        fs::write(&path, b"contents").unwrap();
+
+        let rooted = RealDiskInterface::new(WorkingDirectory::new(directory.0.clone()).unwrap());
+        let relative = Path::new(&name);
+        assert!(rooted.exists(relative));
+        assert_eq!(
+            rooted.stat(relative).unwrap(),
+            RealDiskInterface::default().stat(&path).unwrap()
+        );
+        assert_eq!(rooted.stat(Path::new("file-\u{fffd}")).unwrap(), 0);
     }
 
     #[test]
