@@ -52,20 +52,6 @@ fn baseline_catalog_and_metadata_remain_complete() {
             1,
             "recorded baseline must contain {workload} exactly once"
         );
-    }
-    // The dated validation artifact predates `large-manifest-parse`, and also
-    // predates the 1.92.0 to 1.97.1 toolchain move; a sweep covering both
-    // lands in the following commit, generated from a clean tree so that
-    // `ronin_dirty=false` holds.
-    for workload in [
-        "manifest-command-evaluation",
-        "deep-graph-evaluation",
-        "wide-noop-build",
-        "path-canonicalization",
-        "dependency-log-load",
-        "clean-tree-noop",
-        "scheduler-barrier",
-    ] {
         assert!(
             VALIDATION.contains(&format!("ronin,1.9.0,{workload},")),
             "validation must contain Ronin's {workload} result"
