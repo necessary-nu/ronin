@@ -253,8 +253,7 @@ impl RealDiskInterface {
 // [spec:samurai:sem:os-posix.osnproc-fn]
 pub(crate) fn osnproc() -> i64 {
     std::thread::available_parallelism()
-        .map(|count| i64::try_from(count.get()).unwrap_or(i64::MAX))
-        .unwrap_or(1)
+        .map_or(1, |count| i64::try_from(count.get()).unwrap_or(i64::MAX))
 }
 
 #[cfg(test)]

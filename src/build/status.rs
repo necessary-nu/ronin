@@ -75,11 +75,7 @@ pub(crate) fn format_progress_status(state: &BuildState, template: &str) -> Stri
             'r' => output.push_str(&(state.started - state.finished).to_string()),
             'u' => output.push_str(&(state.total - state.started).to_string()),
             'p' | 'P' => {
-                let percentage = if state.total == 0 {
-                    0
-                } else {
-                    100 * state.finished / state.total
-                };
+                let percentage = (100 * state.finished).checked_div(state.total).unwrap_or(0);
                 let _ = write!(output, "{percentage:3}%");
             }
             'o' | 'c' => {

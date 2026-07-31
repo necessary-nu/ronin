@@ -49,7 +49,7 @@ use std::fs;
 // [spec:samurai:sem:os-posix.osspawn-fn/test]
 #[test]
 fn data_structure_and_platform_behaviour() {
-    let buffer: Vec<u8> = [b'x'].into();
+    let buffer: Vec<u8> = (*b"x").into();
     assert_eq!(buffer[0], b'x');
     let mut path = util::xasprintf(format_args!("a//b/../c"));
     util::canonpath(&mut path);
@@ -1050,7 +1050,7 @@ fn ninja_build_log_signature_and_clean_path() {
     let output = directory.join("output");
     fs::write(&output, "x").unwrap();
     let path = util::xasprintf(format_args!("{}", output.display()));
-    assert!(tool::cleanpath(Some(&path)).unwrap());
+    assert!(tool::cleanpath(Some(path.as_ref())).unwrap());
     assert!(!output.exists());
     let _ = fs::remove_dir_all(directory);
 }
