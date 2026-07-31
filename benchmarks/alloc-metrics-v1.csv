@@ -3,12 +3,13 @@
 # build_profile=release
 # platform=linux-x86_64
 workload,build_statements,allocation_requests,requested_bytes
-manifest-command-evaluation,4001,48081,7726990
-deep-graph-evaluation,2000,10175,2398836
-wide-noop-build,4001,8252,4778040
-path-canonicalization,4000,16125,3258171
-dependency-log-load,301,6274,1016132
-clean-tree-noop,2001,18259,4099789
-depfile-scan,101,13821,1646270
-multi-target-scan,200,10796,5258214
-scheduler-barrier,129,4601,442316
+manifest-command-evaluation,4001,40095,7387190
+deep-graph-evaluation,2000,8226,2414430
+wide-noop-build,4001,4307,4790755
+path-canonicalization,4000,12139,3220549
+dependency-log-load,301,5700,997952
+clean-tree-noop,2001,14312,4212024
+large-manifest-parse,100001,800232,261779494
+depfile-scan,101,13646,1644456
+multi-target-scan,200,7010,5093617
+scheduler-barrier,129,4498,435714

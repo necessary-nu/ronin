@@ -19,7 +19,7 @@ const MAX_NINJA_RSS_RATIO: f64 = 2.00;
 mod workloads;
 use workloads::{
     CANONICAL_PATHS, CLEAN_TREE_EDGES, COMMAND_EDGES, DEEP_EDGES, DEPENDENCY_EDGES,
-    SCHEDULER_EDGES, WIDE_EDGES, WORKLOAD_VERSION,
+    LARGE_MANIFEST_EDGES, SCHEDULER_EDGES, WIDE_EDGES, WORKLOAD_VERSION,
 };
 
 #[derive(Clone)]
@@ -279,6 +279,24 @@ fn clean_tree(directory: &Path, tool: &Tool) -> Result<Workload, String> {
     })
 }
 
+/// Parse and evaluate a manifest at real-project scale.
+///
+/// Runs through the commands tool so it measures parsing and evaluation with
+/// no stats and no execution. That matters beyond keeping the probe clean: a
+/// fixture whose sources are absent puts the two tools on wildly asymmetric
+/// error paths — samurai reports the missing input after three stat calls,
+/// Ronin after four hundred thousand — which once produced a confidently
+/// wrong result. A scaling probe has to use a path both tools complete.
+fn large_manifest(directory: &Path) -> io::Result<Workload> {
+    workloads::large_manifest(directory)?;
+    Ok(Workload {
+        name: "large-manifest-parse",
+        directory: directory.to_owned(),
+        arguments: vec!["-t".into(), "commands".into(), "all".into()],
+        reset: Reset::None,
+    })
+}
+
 fn scheduler(directory: &Path) -> io::Result<Workload> {
     workloads::scheduler(directory)?;
     Ok(Workload {
@@ -300,6 +318,7 @@ fn workload_catalog(root: &Path, tool: &Tool) -> Result<Vec<Workload>, String> {
             .map_err(|error| error.to_string())?,
         dependency_log(&tool_root.join("dependency-log"), tool)?,
         clean_tree(&tool_root.join("clean-tree"), tool)?,
+        large_manifest(&tool_root.join("large-manifest")).map_err(|error| error.to_string())?,
         scheduler(&tool_root.join("scheduler")).map_err(|error| error.to_string())?,
     ])
 }
@@ -510,7 +529,7 @@ fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
          # repetitions={}\n\
          # noise_control=interleaved tool samples; stdout/stderr discarded; {} warmup(s); median wall time; Linux peak RSS sampled from /proc every 100 us; no CPU pinning\n\
          # validation_thresholds=Ronin/Ninja runtime ratio <= {:.0}% of recorded v1 ratio and Ronin runtime <= {:.0}% of pinned Ninja; peak RSS <= {:.0}% of pinned Ninja\n\
-         # sizes=command:{COMMAND_EDGES},deep:{DEEP_EDGES},wide:{WIDE_EDGES},canonical:{CANONICAL_PATHS},deps:{DEPENDENCY_EDGES},clean:{CLEAN_TREE_EDGES},scheduler:{SCHEDULER_EDGES}\n",
+         # sizes=command:{COMMAND_EDGES},deep:{DEEP_EDGES},wide:{WIDE_EDGES},canonical:{CANONICAL_PATHS},deps:{DEPENDENCY_EDGES},clean:{CLEAN_TREE_EDGES},large:{LARGE_MANIFEST_EDGES},scheduler:{SCHEDULER_EDGES}\n",
         config.warmups,
         config.repetitions,
         config.warmups,

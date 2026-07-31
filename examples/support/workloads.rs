@@ -19,6 +19,7 @@ pub(crate) const CANONICAL_PATHS: usize = 4_000;
 pub(crate) const DEPENDENCY_EDGES: usize = 300;
 pub(crate) const SCHEDULER_EDGES: usize = 128;
 pub(crate) const CLEAN_TREE_EDGES: usize = 2_000;
+pub(crate) const LARGE_MANIFEST_EDGES: usize = 100_000;
 
 fn write_manifest(directory: &Path, manifest: &str) -> io::Result<()> {
     fs::create_dir_all(directory)?;
@@ -119,6 +120,43 @@ pub(crate) fn clean_tree_sources(directory: &Path) -> io::Result<()> {
     manifest.push_str("build all: phony");
     for index in 0..CLEAN_TREE_EDGES {
         let _ = write!(manifest, " out/{index}.o");
+    }
+    manifest.push_str("\ndefault all\n");
+    write_manifest(directory, &manifest)
+}
+
+/// Write a manifest at the scale a real project reaches.
+///
+/// Every other workload here is at most 4,001 build statements, which is where
+/// Ronin happens to look best: measured against C samurai on parse and
+/// evaluation, the ratio runs 0.83x at 4,000 statements and erodes steadily to
+/// 1.06x at 200,000, so the crossover sits inside the range real projects
+/// occupy. Path shape matters as much as count — these are roughly forty bytes
+/// and nested, against the ten-byte paths the other fixtures use, because
+/// hashing and comparison costs scale with length and the directory reuse
+/// gives the interner a realistic hit rate.
+pub(crate) fn large_manifest(directory: &Path) -> io::Result<()> {
+    // Enough distinct directories that paths do not collapse to a handful of
+    // prefixes, few enough that they recur as they do in a real tree.
+    const DIRECTORIES: usize = 512;
+
+    let mut manifest =
+        String::from("rule cxx\n  command = clang++ -MMD -MF $out.d -c $in -o $out\n");
+    for index in 0..LARGE_MANIFEST_EDGES {
+        let directory = index % DIRECTORIES;
+        let _ = writeln!(
+            manifest,
+            "build obj/components/mod{directory}/target_{index}.o: \
+             cxx ../../src/components/mod{directory}/source_{index}.cc"
+        );
+    }
+    manifest.push_str("build all: phony");
+    for index in 0..LARGE_MANIFEST_EDGES {
+        let _ = write!(
+            manifest,
+            " obj/components/mod{}/target_{index}.o",
+            index % DIRECTORIES
+        );
     }
     manifest.push_str("\ndefault all\n");
     write_manifest(directory, &manifest)

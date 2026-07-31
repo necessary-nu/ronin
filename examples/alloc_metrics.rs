@@ -22,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 mod workloads;
 use workloads::{
     CANONICAL_PATHS, CLEAN_TREE_EDGES, COMMAND_EDGES, DEEP_EDGES, DEPENDENCY_EDGES,
-    SCHEDULER_EDGES, WIDE_EDGES, WORKLOAD_VERSION,
+    LARGE_MANIFEST_EDGES, SCHEDULER_EDGES, WIDE_EDGES, WORKLOAD_VERSION,
 };
 
 const SCHEMA: &str = "ronin-alloc-metrics-v1";
@@ -337,6 +337,20 @@ fn clean_tree(directory: &Path) -> Result<Workload, String> {
     })
 }
 
+/// Parse and evaluate a manifest at real-project scale.
+///
+/// Allocation traffic per build statement is only known at fixture size, and
+/// the size axis is exactly where Ronin's standing against C samurai erodes.
+fn large_manifest(directory: &Path) -> io::Result<Workload> {
+    workloads::large_manifest(directory)?;
+    Ok(Workload {
+        name: "large-manifest-parse",
+        directory: directory.to_owned(),
+        arguments: vec!["-t".into(), "commands".into(), "all".into()],
+        build_statements: LARGE_MANIFEST_EDGES + 1,
+    })
+}
+
 fn scheduler(directory: &Path) -> io::Result<Workload> {
     workloads::scheduler(directory)?;
     Ok(Workload {
@@ -355,6 +369,7 @@ fn workload_catalog(root: &Path) -> Result<Vec<Workload>, String> {
         path_canonicalization(&root.join("canonicalization")).map_err(|error| error.to_string())?,
         dependency_log(&root.join("dependency-log"))?,
         clean_tree(&root.join("clean-tree"))?,
+        large_manifest(&root.join("large-manifest")).map_err(|error| error.to_string())?,
         depfile_scan(&root.join("depfile-scan"))?,
         multi_target_scan(&root.join("multi-target")).map_err(|error| error.to_string())?,
         scheduler(&root.join("scheduler")).map_err(|error| error.to_string())?,
@@ -621,6 +636,31 @@ mod tests {
         let parsed = parse_recorded(&encoded).unwrap();
         assert_eq!(parsed.build_profile, build_profile());
         assert_eq!(parsed.rows["wide-noop-build"], (5, 50));
+    }
+
+    /// The large-manifest generator must emit a parsable manifest.
+    ///
+    /// Its build lines are written with a string continuation, which strips
+    /// the newline *and* the following indentation — so a missing trailing
+    /// space silently welds the output onto the rule name and yields a
+    /// manifest that still parses but describes a different graph.
+    #[test]
+    fn large_manifest_statements_are_well_formed() {
+        let directory = std::env::temp_dir().join("ronin-alloc-large-manifest-shape");
+        let _ = std::fs::remove_dir_all(&directory);
+        workloads::large_manifest(&directory).unwrap();
+        let manifest = std::fs::read_to_string(directory.join("build.ninja")).unwrap();
+
+        assert!(manifest.contains(
+            "build obj/components/mod0/target_0.o: cxx ../../src/components/mod0/source_0.cc\n"
+        ));
+        assert_eq!(
+            manifest.matches(": cxx ").count(),
+            LARGE_MANIFEST_EDGES,
+            "every statement must name the rule with a separating space"
+        );
+        assert!(manifest.ends_with("\ndefault all\n"));
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     /// The clean-tree workload is only meaningful if the priming build can
