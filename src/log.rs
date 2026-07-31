@@ -7,7 +7,7 @@ use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{BStr, BString, ByteSlice};
 use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, BufWriter, Write};
+use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
 const MAX_LOG_LINE: usize = 256 << 10;
@@ -45,17 +45,30 @@ impl BuildLog {
         let mut valid = false;
         let mut entries = RapidHashMap::default();
         match read_file {
-            Ok(read_file) => {
-                let mut reader = BufReader::new(read_file);
-                let mut line = Vec::new();
-                valid = read_line(&mut reader, &mut line)?.is_some() && line == LOG_HEADER;
+            Ok(mut read_file) => {
+                // Read once and borrow each line out of the buffer. The
+                // incremental reader this replaces copied every line into a
+                // scratch `Vec` before parsing it, which is pure overhead once
+                // the whole file is in hand — and the file is bounded by the
+                // build's own output count.
+                let mut content = Vec::new();
+                read_file.read_to_end(&mut content)?;
+                let mut lines = content.split(|byte| *byte == b'\n').peekable();
+                // The header is compared verbatim, so a CRLF log is rejected
+                // here exactly as it was before.
+                valid = lines.next() == Some(LOG_HEADER);
                 if valid {
-                    while let Some(terminated) = read_line(&mut reader, &mut line)? {
-                        if terminated {
-                            let line = line.strip_suffix(b"\r").unwrap_or(&line);
-                            if let Some((output, entry)) = parse_entry(line) {
-                                entries.insert(output, entry);
-                            }
+                    while let Some(line) = lines.next() {
+                        // The final element is either the empty slice after a
+                        // trailing newline or a line no newline terminated —
+                        // a log truncated by a crash. Both were skipped
+                        // before and are skipped now.
+                        if lines.peek().is_none() {
+                            break;
+                        }
+                        let line = line.strip_suffix(b"\r").unwrap_or(line);
+                        if let Some((output, entry)) = parse_entry(line) {
+                            entries.insert(output, entry);
                         }
                     }
                 }
@@ -211,28 +224,6 @@ fn parse_entry(line: &[u8]) -> Option<(BString, LogEntry)> {
             command_hash,
         },
     ))
-}
-
-fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> io::Result<Option<bool>> {
-    line.clear();
-    loop {
-        let buffer = reader.fill_buf()?;
-        if buffer.is_empty() {
-            return Ok((!line.is_empty()).then_some(false));
-        }
-        let newline = buffer.iter().position(|byte| *byte == b'\n');
-        let consumed = newline.map_or(buffer.len(), |index| index + 1);
-        if line.len() <= MAX_LOG_LINE {
-            let keep = consumed
-                .saturating_sub(usize::from(newline.is_some()))
-                .min(MAX_LOG_LINE + 1 - line.len());
-            line.extend_from_slice(&buffer[..keep]);
-        }
-        reader.consume(consumed);
-        if newline.is_some() {
-            return Ok(Some(true));
-        }
-    }
 }
 
 fn write_entry(writer: &mut dyn Write, output: &BStr, entry: &LogEntry) -> io::Result<()> {

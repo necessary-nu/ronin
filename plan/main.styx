@@ -1387,12 +1387,27 @@ children (
                         kind @note
                         text "Proposed approach, and it splits the two files rather than treating them alike, because their risk profiles differ. Manifests: map them. Give Source a private backing enum of Owned(Vec<u8>) and Mapped(..), keep Source::bytes returning &[u8] unchanged, and every caller — including Scanner, which since ronin-scanner-byte-primitive already caches the slice, and the Plain(&'source [u8]) spans from ronin-plain-path-fast-path — is untouched. That is the whole trick: the borrowed-span frontend already did the hard part, so mapping is a change to one constructor. rustix is already a dependency and rustix::mm behind its \"mm\" feature avoids taking on memmap2, at the cost of writing the unsafe block ourselves; given the crate keeps only three unsafe blocks, both FFI-adjacent, either choice is defensible and the dependency is probably the smaller liability. Fall back to fs::read below a size threshold, since mapping a 4 KiB manifest is pure overhead, which also keeps every existing test on the owned path. The log: do not map it. Another ninja or ronin process may be rewriting .ninja_log while we read, and mapping turns a truncation that fs::read would have reported as a short buffer into a SIGBUS we cannot catch. Read it whole into one Vec instead and slice at newlines, which removes read_line's per-line copy — the 3.60% that ronin-log-byte-parsing deliberately left here — with none of the exposure. Preserve MAX_LOG_LINE truncation by capping each slice. The remaining manifest hazard is a generator rule regenerating build.ninja mid-build; ronin already re-reads after that, so the requirement is simply that the old mapping is dropped before the re-read rather than held across it. Measure on clean-tree-noop and manifest-command-evaluation, and expect close to nothing on both — the fixtures are a 222 KiB manifest and a 4,000-line log. This node needs a large-manifest fixture to be judged honestly, which is worth adding first rather than accepting a null result as evidence of nothing."
                     }
+
+                    {
+                        at 2026-07-31T01:01:41.816627097Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-31T01:06:13.401233579Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Split as the design proposed, and the two halves went opposite ways. Mapping manifests is rejected on measurement. The node warned that the existing fixtures are too small to judge it and that a null result there would prove nothing, so a 24.7 MiB manifest was generated first — 200,000 build statements with Chromium-shaped paths, which parses in 910.8 ms. Reading it with std::fs::read costs 6.00 ms, measured directly as a minimum of nine with the page cache warm: 0.66% of the run, and that is the ceiling rather than the saving, because a mapping still faults those pages in when the parser walks them. The premise that this would be material at the scale motivating the tool is simply wrong; parsing dominates so heavily that the read is noise, and the cost — a dependency or a hand-written unsafe block, plus SIGBUS exposure on truncation, plus the mapping-lifetime constraint against a generator rule regenerating the manifest mid-build — buys a fraction of 0.66%. Not worth it at any manifest size this tool will see. The log half was taken and stands on its own, having never depended on mapping: BuildLog::open now reads the file once and borrows each line out of that buffer with split, replacing an incremental reader that copied every line into a scratch Vec first. read_line is deleted. Clean-tree 27,605,504 to 27,125,604 instructions, −1.74%, measured against the immediately preceding commit rather than a stale baseline; read_line's 1,001,113 disappears and BuildLog::open absorbs 543,852 of it. Equivalence was worked through case by case rather than assumed: the header is still compared verbatim so a CRLF log is still rejected, the final split element is skipped because it is either the empty slice after a trailing newline or a line a crash left unterminated — both of which the incremental reader also skipped — and an over-long line is still rejected by parse_entry's MAX_LOG_LINE check. Conformance passes in full, including the log and deps persistence round trip, which is the test that would catch a recovery-semantics change."
+                    }
                 )
             }
 
             {
                 id ronin-arena-slot-access
                 title "Make arena identifiers carry their own validity"
+                sealed true
                 log (
                     {
                         at 2026-07-31T00:28:04.320525291Z
@@ -1420,6 +1435,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @decision
                         text "Step one done; step two deliberately not attempted, and the reason is a genuine soundness gap rather than a time constraint. arena_id! now takes a visibility for its minting constructor, defaulting to pub(crate) so the env and names arenas are unchanged, and NodeId and EdgeId narrow theirs to pub(in crate::graph). Every fabrication site outside the graph module is gone: grep for NodeId::from_index or EdgeId::from_index outside src/graph now returns nothing. The four external sites were converted as the design proposed. Plan::wanted_edges and Plan::command_edge_count walked side tables that run parallel to the edge arena and rebuilt identifiers from the enumeration index; both now zip the arena's own edge_ids alongside, which also removed an enumerate. BuildLog::hydrate_runtime took a Range<usize> and minted a NodeId per index; it now takes impl Iterator<Item = NodeId>, and the one partial-range caller — synchronize_runtime, hydrating only nodes the runtime just grew into — passes graph.node_ids().skip(nodes.start), so the identifiers come from the arena that grew. The event loop was the interesting case: it encodes an EdgeId into a poll key and decodes it back, which is a legitimate round-trip of an identifier the caller already held rather than an assertion that a slot exists, so EdgeId gained an explicit event_key and from_event_key pair defined in graph.rs beside the arena. Measured neutral to marginally better, wide no-op 23,809,505 to 23,647,251 instructions, as the node predicted; the value was always the invariant rather than the speed. Now the reason step two stops here: from_event_key is pub(crate) and will build an EdgeId from any integer, so it remains a fabrication route, and the supervisor decodes keys that come back from the polling layer rather than from a value it can prove it holds. That is fine while Graph::edge bounds-checks — a bogus identifier panics — but it is exactly the case that would become undefined behaviour under get_unchecked. Closing it properly means either validating the decoded key against the arena at the boundary, which the supervisor cannot do because it has no graph, or keeping the identifier in a side table the supervisor owns rather than round-tripping it through an integer. Until one of those lands, unchecked indexing is not justified, and the honest position is that this step narrowed the minting surface from crate-wide to the arena plus one documented round-trip without yet reaching a proof. 367 tests pass, clippy clean, conformance green."
+                    }
+
+                    {
+                        at 2026-07-31T01:01:39.576429995Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
