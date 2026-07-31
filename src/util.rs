@@ -23,8 +23,15 @@ pub(crate) type IdVec<T> = smallvec::SmallVec<[T; 4]>;
 /// occupies four bytes rather than sixteen and every side table, adjacency
 /// list, and traversal worklist holding identifiers halves in size. The
 /// encoding is monotonic, so derived ordering still compares by index.
+/// The minting constructor takes an optional visibility. Narrowing it to the
+/// module that owns the arena is what makes holding an identifier evidence
+/// that its slot exists, rather than merely a claim that it might; the default
+/// stays crate-visible for arenas that have not been closed yet.
 macro_rules! arena_id {
     ($name:ident) => {
+        arena_id!($name, pub(crate));
+    };
+    ($name:ident, $mint:vis) => {
         #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
         #[repr(transparent)]
         pub(crate) struct $name(std::num::NonZeroU32);
@@ -34,7 +41,7 @@ macro_rules! arena_id {
                 clippy::cast_possible_truncation,
                 reason = "the assertion bounds the index below u32::MAX"
             )]
-            pub(crate) const fn from_index(index: usize) -> Self {
+            $mint const fn from_index(index: usize) -> Self {
                 assert!(
                     index < u32::MAX as usize,
                     "arena index exceeds the u32 identifier capacity"

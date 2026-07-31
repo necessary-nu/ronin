@@ -886,7 +886,7 @@ fn ninja_build_log_write_and_read() {
     build_log.finish().unwrap();
     let build_log = log::BuildLog::open(Some(&directory)).unwrap();
     let mut runtime = crate::runtime::RuntimeState::new(&graph);
-    build_log.hydrate_runtime(&graph, &mut runtime, 0..graph.node_ids().len());
+    build_log.hydrate_runtime(&graph, &mut runtime, graph.node_ids());
     assert_eq!(runtime.node(output).log_mtime().raw(), 25);
     assert_eq!(runtime.node(output).logged_command_hash().raw(), 0xface);
     build_log.finish().unwrap();
@@ -927,7 +927,7 @@ fn ninja_build_log_loads_duplicate_and_spaced_records() {
     .unwrap();
     let build_log = log::BuildLog::open(Some(&directory)).unwrap();
     let mut runtime = crate::runtime::RuntimeState::new(&graph);
-    build_log.hydrate_runtime(&graph, &mut runtime, 0..graph.node_ids().len());
+    build_log.hydrate_runtime(&graph, &mut runtime, graph.node_ids());
     let out = graph::nodeget(&graph, b"out").unwrap();
     assert_eq!(runtime.node(out).log_mtime().raw(), 3);
     assert_eq!(runtime.node(out).logged_command_hash().raw(), 2);

@@ -1,6 +1,7 @@
 //! Dense graph arenas and dependency operations.
 
 mod edge;
+mod ids;
 mod index;
 mod marks;
 mod path;
@@ -20,8 +21,8 @@ use path::shell_escape_path;
 use std::io;
 use std::path::Path;
 
-arena_id!(NodeId);
-arena_id!(EdgeId);
+arena_id!(NodeId, pub(in crate::graph));
+arena_id!(EdgeId, pub(in crate::graph));
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum PathStyle {

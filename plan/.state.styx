@@ -95,7 +95,8 @@ assertions (
     {id ronin-deps-record-bounds, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T00:01:24.327132473Z}
     {id ronin-clean-tree-fixture, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T00:22:09.675904991Z}
     {id ronin-log-byte-parsing, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T00:41:11.82641504Z}
-    {id ronin-batched-stat, kind @doing, author "brendan@bbqsrc.net", at 2026-07-31T00:41:14.47068239Z}
+    {id ronin-batched-stat, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T00:54:01.898599892Z}
+    {id ronin-arena-slot-access, kind @doing, author "brendan@bbqsrc.net", at 2026-07-31T00:54:04.597964656Z}
 )
 
 impl_evidence (

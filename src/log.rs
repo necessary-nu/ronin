@@ -94,10 +94,9 @@ impl BuildLog {
         &self,
         graph: &Graph,
         runtime: &mut RuntimeState,
-        nodes: std::ops::Range<usize>,
+        nodes: impl Iterator<Item = NodeId>,
     ) {
-        for index in nodes {
-            let node = NodeId::from_index(index);
+        for node in nodes {
             let graph_node = graph.node(node);
             if graph_node.gen.is_none() {
                 continue;
@@ -670,11 +669,7 @@ mod tests {
         reloaded_graph.edge_mut(edge).out.push(output);
         let reloaded = BuildLog::open(Some(&temp.directory)).unwrap();
         let mut runtime = RuntimeState::new(&reloaded_graph);
-        reloaded.hydrate_runtime(
-            &reloaded_graph,
-            &mut runtime,
-            0..reloaded_graph.node_ids().len(),
-        );
+        reloaded.hydrate_runtime(&reloaded_graph, &mut runtime, reloaded_graph.node_ids());
         assert_eq!(logentry(&reloaded, b"out-\xff").unwrap().mtime, 17);
         assert_eq!(
             runtime.node(output).logged_command_hash(),

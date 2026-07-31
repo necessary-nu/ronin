@@ -364,11 +364,13 @@ impl Plan {
         Ok(())
     }
 
-    pub(crate) fn wanted_edges(&self) -> Vec<EdgeId> {
+    /// The side tables run parallel to the edge arena, so walking the arena
+    /// alongside them keeps identifiers coming from the graph that owns them.
+    pub(crate) fn wanted_edges(&self, graph: &Graph) -> Vec<EdgeId> {
         self.wanted
             .iter()
-            .enumerate()
-            .filter_map(|(index, wanted)| wanted.then_some(EdgeId::from_index(index)))
+            .zip(graph.edge_ids())
+            .filter_map(|(wanted, edge)| wanted.then_some(edge))
             .collect()
     }
 
@@ -466,9 +468,9 @@ impl Plan {
     pub(crate) fn command_edge_count(&self, graph: &Graph) -> usize {
         self.wanted
             .iter()
-            .enumerate()
-            .filter(|(index, wanted)| {
-                let rule = graph.edge(EdgeId::from_index(*index)).rule;
+            .zip(graph.edge_ids())
+            .filter(|(wanted, edge)| {
+                let rule = graph.edge(*edge).rule;
                 **wanted && rule.is_some() && !graph.is_phony_rule(rule)
             })
             .count()
@@ -520,7 +522,7 @@ impl<'a> Builder<'a> {
         let disk = RealDiskInterface::new(options.working_directory.clone());
         let mut runtime = RuntimeState::new(graph);
         if let Some(log) = build_log.as_deref() {
-            log.hydrate_runtime(graph, &mut runtime, 0..graph.node_ids().len());
+            log.hydrate_runtime(graph, &mut runtime, graph.node_ids());
         }
         let explanations = options
             .explain
@@ -629,9 +631,12 @@ impl<'a> Builder<'a> {
     }
 
     fn synchronize_runtime(&mut self) {
+        // `synchronize` reports the newly grown span as indices; take the
+        // identifiers for it from the arena that just grew.
         let nodes = self.runtime.synchronize(self.graph);
         if let Some(log) = self.build_log.as_deref() {
-            log.hydrate_runtime(self.graph, &mut self.runtime, nodes);
+            let added = self.graph.node_ids().skip(nodes.start);
+            log.hydrate_runtime(self.graph, &mut self.runtime, added);
         }
     }
 
@@ -829,7 +834,7 @@ impl<'a> Builder<'a> {
         };
         self.explanations_recorded
             .resize(self.graph.edge_count(), false);
-        for edge in self.plan.wanted_edges() {
+        for edge in self.plan.wanted_edges(self.graph) {
             if std::mem::replace(&mut self.explanations_recorded[edge.index()], true) {
                 continue;
             }
@@ -1366,7 +1371,7 @@ impl<'a> Builder<'a> {
         let mut nodes = self.targets.clone();
         nodes.extend(
             self.plan
-                .wanted_edges()
+                .wanted_edges(self.graph)
                 .into_iter()
                 .filter_map(|edge| self.graph.edge(edge).out.first().copied()),
         );

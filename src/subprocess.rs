@@ -81,18 +81,6 @@ struct RunningChild {
 #[cfg(unix)]
 const SIGNAL_EVENT_KEY: usize = 0;
 
-#[cfg(unix)]
-const fn edge_event_key(edge: EdgeId) -> usize {
-    edge.index()
-        .checked_add(1)
-        .expect("edge event keys reserve zero for signals")
-}
-
-#[cfg(unix)]
-fn event_edge(key: usize) -> Option<EdgeId> {
-    key.checked_sub(1).map(EdgeId::from_index)
-}
-
 pub(crate) struct ProcessSupervisor<External = ()> {
     sender: Sender<ProcessEvent<External>>,
     receiver: Receiver<ProcessEvent<External>>,
@@ -409,10 +397,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                     .expect("captured children own an output pipe");
                 // SAFETY: `self.children` owns the stream until `delete` is
                 // called by completion, failure cleanup, or `Drop`.
-                unsafe {
-                    self.poller
-                        .add(output, Event::readable(edge_event_key(edge)))
-                }
+                unsafe { self.poller.add(output, Event::readable(edge.event_key())) }
             };
             if let Err(source) = registration {
                 let mut child = self
@@ -479,8 +464,11 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                 self.drain_signal_wake()?;
             }
             self.event_edges.clear();
-            self.event_edges
-                .extend(self.events.iter().filter_map(|event| event_edge(event.key)));
+            self.event_edges.extend(
+                self.events
+                    .iter()
+                    .filter_map(|event| EdgeId::from_event_key(event.key)),
+            );
             while let Some(edge) = self.event_edges.pop() {
                 if self.children.contains_key(&edge) {
                     self.drain_output(edge);
@@ -535,7 +523,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                     let child = &self.children[&edge];
                     self.poller.modify(
                         child.output.as_ref().expect("captured child"),
-                        polling::Event::readable(edge_event_key(edge)),
+                        polling::Event::readable(edge.event_key()),
                     )
                 };
                 if let Err(source) = result {
@@ -842,7 +830,7 @@ mod tests {
         for index in 0..CHILDREN {
             supervisor
                 .spawn(
-                    EdgeId::from_index(index),
+                    EdgeId::from_event_key(index + 1).expect("test edge key is nonzero"),
                     BString::from("sleep 0.05; printf x"),
                     false,
                     false,
@@ -871,7 +859,7 @@ mod tests {
     #[test]
     // [spec:samurai:req:runtime.process-supervisor-scalability/test]
     fn dropping_the_supervisor_terminates_process_groups_and_reaps_children() {
-        let edge = EdgeId::from_index(11);
+        let edge = EdgeId::from_event_key(11 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::<()>::new().unwrap();
         supervisor
             .spawn(edge, BString::from("sleep 30 & wait"), false, false)
@@ -940,7 +928,7 @@ mod tests {
     // [spec:samurai:req:compat.process-integration/test]
     // [spec:samurai:req:runtime.process-supervisor-scalability/test]
     fn ronin_process_supervisor_reports_keyed_signal_completion() {
-        let edge = EdgeId::from_index(7);
+        let edge = EdgeId::from_event_key(7 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::new().unwrap();
         supervisor
             .spawn(edge, BString::from("kill -INT $$"), false, false)
@@ -964,7 +952,7 @@ mod tests {
     #[test]
     // [spec:samurai:req:runtime.process-supervisor-scalability/test]
     fn ronin_process_supervisor_preserves_stdout_stderr_order() {
-        let edge = EdgeId::from_index(9);
+        let edge = EdgeId::from_event_key(9 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::new().unwrap();
         supervisor
             .spawn(

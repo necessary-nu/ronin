@@ -1287,6 +1287,7 @@ children (
                     {
                         id ronin-batched-stat
                         title "Stop issuing one blocking stat per node"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T00:27:29.5972113Z
@@ -1314,6 +1315,13 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @decision
                                 text "Done, and it is the largest wall-clock result in this programme: clean-tree-noop −22.9, −27.0 and −25.8 percent across three interleaved minimum-of-30 rounds on a quiet 32-core host, taking the workload from 1.10x C samurai to 0.82x — faster than the C reference on the workload where Ronin was second-worst. The design landed as proposed: collect_stat_targets walks the graph structure with no syscalls, RealDiskInterface::stat_many fans the resulting paths across std::thread::scope, and the dirty scan runs unmodified because nodestat_with's is_unobserved guard turns into a hit. Failures are left unrecorded so the scan re-stats them serially and reports the identical GraphError::Stat at the identical point, which is why 425 upstream conformance tests, 10 differential cases and the persistence round trip all still pass. Two things were wrong in the first cut and both are worth recording. The placement was wrong: prefetch_mtimes was inserted immediately before recompute_dirty_with_validations, but add_target runs load_depfiles_for and prepare_build_log_for first, and load_depfiles_for already walks the whole graph stating every source it finds — so by the time the prefetch ran, every mtime was observed and the retain emptied the batch. It measured as exactly neutral and strace showed zero clone3 calls, which is what exposed it; instrumenting the count showed 4,001 collected and 0 surviving the retain. Moving the call to the top of add_target fixed it, and the underlying discovery is worth its own attention: add_target performs three full graph traversals before Plan::add_node makes a fourth. The thread count was also wrong. Splitting 4,001 stats across all 32 cores spends more on clone3 than it saves; scaling instead to one thread per 512 paths gives 7 threads and improves the result from −15/−17 percent to −23/−27. Finally, a measurement warning for whoever revisits this: neither of the instruments this programme has relied on works here. getrusage(RUSAGE_CHILDREN) sums CPU across threads, so it showed sys time rising from 6.402 to 7.750 ms while wall time fell by a quarter, and callgrind likewise counts every thread's instructions — wide-noop reads +4.6% while its wall time is neutral to slightly better. Only interleaved wall clock measures this change."
+                            }
+
+                            {
+                                at 2026-07-31T00:54:01.898599892Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -1398,6 +1406,20 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Proposed approach, in two separately measured steps, because only the first is a prerequisite for soundness and it has value on its own. Step one, close the minting. arena_id! generates a pub(crate) const from_index, and there are 42 call sites outside util.rs and the tests, so today any code in the crate can conjure an identifier for a slot that does not exist. Move the identifier types into a module that owns them and narrow the constructor to pub(in crate::graph), leaving index() crate-visible since side tables legitimately need it. Then audit each of the 42: most are inside the arenas and stay; the ones outside need a sanctioned route. The pattern for the two in build.rs — command_edge_count and the wanted-edge filter, both enumerating self.wanted, which is parallel to the edge arena — is graph.edge_ids().zip(&self.wanted), which drops from_index entirely and continues the direction ronin-edge-id-iteration already took. Expect this step to be instruction-neutral; its value is that it makes the invariant true rather than merely believed, and an audit of 42 sites has a fair chance of surfacing something. Step two, and only after step one lands: replace the indexing in Graph::node, node_mut, edge and edge_mut with get_unchecked behind a SAFETY comment that cites the closed constructor and the append-only arenas — the second half of the invariant is already true and needs no work, since growth never invalidates an existing identifier. Measure that step alone; mknode is 5.29% of the clean-tree workload and every traversal and side-table update goes through these four accessors, but bounds checks are also exactly what a branch predictor eats for breakfast, so treat the estimate as unknown. Considered and rejected: branding identifiers to a graph instance with a lifetime parameter, the generativity or GhostCell pattern. It is the stronger property and it would catch cross-graph misuse, which tests do construct, but it puts a lifetime on every identifier and every signature that touches one. The cost is not proportionate when closed minting plus append-only arenas already give the invariant that get_unchecked actually needs."
+                    }
+
+                    {
+                        at 2026-07-31T00:54:04.597964656Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-07-31T00:59:05.482092179Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Step one done; step two deliberately not attempted, and the reason is a genuine soundness gap rather than a time constraint. arena_id! now takes a visibility for its minting constructor, defaulting to pub(crate) so the env and names arenas are unchanged, and NodeId and EdgeId narrow theirs to pub(in crate::graph). Every fabrication site outside the graph module is gone: grep for NodeId::from_index or EdgeId::from_index outside src/graph now returns nothing. The four external sites were converted as the design proposed. Plan::wanted_edges and Plan::command_edge_count walked side tables that run parallel to the edge arena and rebuilt identifiers from the enumeration index; both now zip the arena's own edge_ids alongside, which also removed an enumerate. BuildLog::hydrate_runtime took a Range<usize> and minted a NodeId per index; it now takes impl Iterator<Item = NodeId>, and the one partial-range caller — synchronize_runtime, hydrating only nodes the runtime just grew into — passes graph.node_ids().skip(nodes.start), so the identifiers come from the arena that grew. The event loop was the interesting case: it encodes an EdgeId into a poll key and decodes it back, which is a legitimate round-trip of an identifier the caller already held rather than an assertion that a slot exists, so EdgeId gained an explicit event_key and from_event_key pair defined in graph.rs beside the arena. Measured neutral to marginally better, wide no-op 23,809,505 to 23,647,251 instructions, as the node predicted; the value was always the invariant rather than the speed. Now the reason step two stops here: from_event_key is pub(crate) and will build an EdgeId from any integer, so it remains a fabrication route, and the supervisor decodes keys that come back from the polling layer rather than from a value it can prove it holds. That is fine while Graph::edge bounds-checks — a bogus identifier panics — but it is exactly the case that would become undefined behaviour under get_unchecked. Closing it properly means either validating the decoded key against the arena at the boundary, which the supervisor cannot do because it has no graph, or keeping the identifier in a side table the supervisor owns rather than round-tripping it through an integer. Until one of those lands, unchecked indexing is not justified, and the honest position is that this step narrowed the minting surface from crate-wide to the arena plus one documented round-trip without yet reaching a proof. 367 tests pass, clippy clean, conformance green."
                     }
                 )
             }
