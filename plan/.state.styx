@@ -91,7 +91,8 @@ assertions (
     {id ronin-prune-clean-subtrees, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:51:20.10319646Z}
     {id ronin-stale-bool-suppression, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:52:43.832510735Z}
     {id ronin-traversal-mark-option, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:56:15.170788734Z}
-    {id ronin-edge-id-iteration, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T23:56:17.268308934Z}
+    {id ronin-edge-id-iteration, kind @complete, author "brendan@bbqsrc.net", at 2026-07-30T23:58:44.528094719Z}
+    {id ronin-deps-record-bounds, kind @doing, author "brendan@bbqsrc.net", at 2026-07-30T23:58:48.23201281Z}
 )
 
 impl_evidence (

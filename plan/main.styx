@@ -1160,6 +1160,7 @@ children (
                     {
                         id ronin-edge-id-iteration
                         title "Iterate edge identifiers instead of reconstructing them from indices"
+                        sealed true
                         log (
                             {
                                 at 2026-07-30T23:48:11.820489019Z
@@ -1180,6 +1181,13 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @decision
                                 text "Done, and confirmed neutral as the node predicted. Six sites converted from the C form — for index in 0..graph.edge_count() followed by EdgeId::from_index(index) — to iterating Graph::edge_ids(): build.rs rebuild_frontier's dependency-counting and ready-heap loops, expand_wanted, the dyndep-affected scan, and missing_deps.rs's missing-edge scan and root_nodes. Four of them still need the raw index to reach side tables, which EdgeId::index() supplies as a const accessor over the NonZeroU32; the dyndep scan needed no index at all and lost the binding entirely. edge_ids() returns impl ExactSizeIterator<Item = EdgeId> capturing no lifetime, since it is (0..len).map(EdgeId::from_index), so iterating it holds no borrow on the graph and none of the conversions fought the borrow checker. Two EdgeId::from_index calls remain and are correct: build.rs:371 and build.rs:481 both enumerate the wanted side table rather than the graph, so reconstructing the identifier from that table's index is the right direction of travel. log.rs:99 was also left alone — its for index in nodes walks a caller-supplied Range<usize> of newly added nodes, which is a genuine partial-range API rather than the 0..count idiom. Measured wide no-op 22,744,529 to 22,752,528 instructions, +0.035%, which is inlining noise either side of neutral; the node stated in advance that no change was expected and that measurement served only to confirm neutrality rather than to justify the work. Value is readability and internal consistency. 366 tests pass, clippy clean, format clean."
+                            }
+
+                            {
+                                at 2026-07-30T23:58:44.528094719Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -1228,6 +1236,20 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @note
                                 text "Four sites in the dependency-log reader encode a failed conversion as an out-of-range value and rely on a later bounds check to reject it: src/deps.rs:387 computes size as usize::try_from(encoded_size & 0x7fff_ffff).unwrap_or(usize::MAX), and lines 399, 402 and 436 do the same for output_id, the dependency_ids iterator and the trailing record identifier, each caught downstream by a comparison against nodes.len() or MAX_RECORD_SIZE. This is the C idiom of returning a sentinel and letting the caller's range test sort it out. On every target this crate supports, u32 to usize is infallible, so the fallback is unreachable defensive code for an impossible case, and expressing it as usize::MAX means a genuine future failure would be indistinguishable from a corrupt record whose index merely happens to be large. Make the impossibility explicit instead — the conversion is widening on all supported targets — while preserving the existing validation behaviour exactly: a corrupt log must still be detected and must still trigger the same recovery path, since .ninja_deps parsing is part of the Ninja compatibility surface [spec:samurai:req:compat.ninja-owned-names] and the persistence round trip is covered by the pinned conformance oracle. Purely an expression change; no measurement expected or needed, but the conformance suite must be run because this touches log recovery."
+                            }
+
+                            {
+                                at 2026-07-30T23:58:48.23201281Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-31T00:00:58.915426892Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done. The four sites in depsloadlog that wrote usize::try_from(u32).unwrap_or(usize::MAX) — the record size at deps.rs:387, the output identifier at 399, the dependency identifiers at 402 and the trailing expected identifier at 436 — now use .expect(RECORD_FIELD_FITS) against a named constant declared beside MAX_RECORD_SIZE whose doc comment states the invariant: every record field is a u32, usize is at least 32 bits on all supported targets, so widening cannot lose information, while the field's value remains untrusted and is still rejected by the surrounding bounds checks against MAX_RECORD_SIZE and nodes.len(). This preserves behaviour exactly, because the fallback was unreachable on any target the crate builds for, and because usize::MAX was in every case immediately rejected by the same comparison that now never sees it. It also removes a genuine ambiguity: encoding an impossible conversion failure as a huge index made it indistinguishable from a corrupt record whose identifier merely happened to be large. The .expect form matches existing practice in the codebase — graph/index.rs:41 already writes usize::try_from(...).expect(\"mask keeps the index in range\"). Because this touches .ninja_deps recovery, which is part of the Ninja compatibility surface, the pinned conformance suite was run and passed in full: 425 upstream tests across 33 suites, 10 differential CLI and tool cases, and the Ninja to Ronin to Ninja log and deps persistence round trip. 366 unit tests pass, clippy clean, format clean. No measurement taken or needed — this is an expression change on a cold parsing path."
                             }
                         )
                     }
