@@ -487,6 +487,8 @@ pub(crate) struct Builder<'a> {
     disk: RealDiskInterface,
     plan: Plan,
     scratch: TraversalScratch,
+    /// Nodes awaiting an mtime, reused across targets by `prefetch_mtimes`.
+    stat_targets: Vec<NodeId>,
     visited_edges: crate::graph::MarkSet,
     build_log: Option<&'a mut crate::log::BuildLog>,
     deps_log: Option<&'a mut crate::deps::DepsLog>,
@@ -530,6 +532,7 @@ impl<'a> Builder<'a> {
             disk,
             plan: Plan::default(),
             scratch: TraversalScratch::default(),
+            stat_targets: Vec::new(),
             visited_edges: crate::graph::MarkSet::default(),
             build_log,
             deps_log,
@@ -876,6 +879,10 @@ impl<'a> Builder<'a> {
         if !self.targets.contains(&node) {
             self.targets.push(node);
         }
+        // Ahead of every traversal below, not just the dirty scan: all three
+        // of `load_depfiles_for`, `prepare_build_log_for` and the scan itself
+        // walk this graph and stat what they find.
+        self.prefetch_mtimes(node);
         self.load_depfiles_for(node)?;
         self.load_ready_dyndeps_for(node, &mut Vec::new(), &mut Vec::new())?;
         if self.build_log.is_some() {
@@ -908,6 +915,57 @@ impl<'a> Builder<'a> {
         }
         self.record_dirty_explanations();
         Ok(())
+    }
+
+    /// Warm every mtime the coming scan will ask for, in parallel.
+    ///
+    /// The scan reads mtimes in dependency order but the reads themselves are
+    /// independent, so issuing them one at a time leaves the process blocked
+    /// in the kernel for most of an up-to-date build. Filling them first turns
+    /// `nodestat_with`'s `is_unobserved` guard into a hit and leaves the scan
+    /// itself untouched.
+    ///
+    /// Nodes already observed are skipped, so a second target costs only the
+    /// paths the first did not cover, and a failed stat is simply not recorded
+    /// — the scan then takes its usual serial path and reports the usual error.
+    fn prefetch_mtimes(&mut self, target: NodeId) {
+        crate::graph::collect_stat_targets(
+            self.graph,
+            &mut self.scratch,
+            target,
+            &mut self.stat_targets,
+        );
+        self.stat_targets
+            .retain(|node| self.runtime.node(*node).mtime().is_unobserved());
+        if self.stat_targets.len() < 2 {
+            return;
+        }
+
+        // These borrow from the graph, so they cannot outlive the call and
+        // cannot be reused buffers; two allocations amortize over thousands
+        // of syscalls.
+        let graph = &*self.graph;
+        let paths = self
+            .stat_targets
+            .iter()
+            .map(|node| {
+                graph
+                    .node(*node)
+                    .path
+                    .to_path()
+                    .expect("byte paths are valid on Unix")
+            })
+            .collect::<Vec<_>>();
+        let mut results = vec![None; paths.len()];
+        self.disk.stat_many(&paths, &mut results);
+
+        for (node, mtime) in self.stat_targets.iter().zip(&results) {
+            if let Some(mtime) = *mtime {
+                self.runtime
+                    .node_mut(*node)
+                    .set_mtime(FileTime::observed(mtime));
+            }
+        }
     }
 
     pub(crate) const fn already_up_to_date(&self) -> bool {

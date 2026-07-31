@@ -129,6 +129,49 @@ impl RealDiskInterface {
         rustix::fs::statat(directory, path, rustix::fs::AtFlags::empty()).map_err(io::Error::from)
     }
 
+    /// Stat many paths at once, recording only the ones that succeed.
+    ///
+    /// A dirty scan issues one blocking `stat` per node and does nothing else
+    /// while each is in flight, which on an up-to-date tree is the majority of
+    /// the run. The syscalls do not depend on each other — only the evaluation
+    /// that consumes them is ordered — so they can all go at once.
+    ///
+    /// Failures are deliberately left as `None` rather than reported. The
+    /// caller re-stats those paths on the serial path, which reproduces the
+    /// original error at the original point in the traversal. Diagnostics are
+    /// part of the Ninja compatibility surface, so preserving *where* an error
+    /// surfaces is worth one redundant syscall on a cold path. Note that a
+    /// missing file is not a failure: [`Self::stat`] reports it as `Ok(0)`.
+    pub(crate) fn stat_many(&self, paths: &[&Path], out: &mut [Option<i64>]) {
+        // Spawning a thread costs far more than a cached `stat`, so give each
+        // one enough work to be worth starting rather than splitting across
+        // every core available. Below one chunk, stay on this thread.
+        const PER_THREAD: usize = 512;
+
+        debug_assert_eq!(paths.len(), out.len());
+        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
+        let threads = cores.min(paths.len() / PER_THREAD);
+        if threads < 2 {
+            for (path, slot) in paths.iter().zip(out.iter_mut()) {
+                *slot = self.stat(path).ok();
+            }
+            return;
+        }
+        // Open the shared directory descriptor before fanning out, so the
+        // workers contend on a `OnceLock` that is already initialized.
+        let _ = self.directory_fd();
+        let chunk = paths.len().div_ceil(threads);
+        std::thread::scope(|scope| {
+            for (paths, out) in paths.chunks(chunk).zip(out.chunks_mut(chunk)) {
+                scope.spawn(move || {
+                    for (path, slot) in paths.iter().zip(out.iter_mut()) {
+                        *slot = self.stat(path).ok();
+                    }
+                });
+            }
+        });
+    }
+
     // [spec:samurai:def:os.osmtime-fn]
     // [spec:samurai:sem:os.osmtime-fn]
     // [spec:samurai:def:os-posix.osmtime-fn]

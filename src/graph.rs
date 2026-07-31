@@ -223,6 +223,42 @@ where
     Ok(())
 }
 
+/// Collect the nodes a dirty scan from `target` is going to want to stat.
+///
+/// Correctness does not depend on this set being exact, which is what makes it
+/// safe to use a plain walk rather than shadowing [`DirtyEvaluator`]'s state
+/// machine: a node collected but never reached costs one wasted `stat`, and a
+/// node reached but never collected is stat'ed by the scan itself, because
+/// `nodestat_with` is still guarded by `is_unobserved`. The scan's behaviour
+/// is unchanged either way — this only decides which syscalls happen early.
+pub(crate) fn collect_stat_targets(
+    graph: &Graph,
+    scratch: &mut TraversalScratch,
+    target: NodeId,
+    out: &mut Vec<NodeId>,
+) {
+    out.clear();
+    scratch.seen_nodes.begin(graph.nodes.len());
+    scratch.seen_edges.begin(graph.edges.len());
+    let mut work = vec![target];
+    while let Some(node) = work.pop() {
+        if scratch.seen_nodes.replace(node.index()) {
+            continue;
+        }
+        out.push(node);
+        let Some(edge) = graph.node(node).gen else {
+            continue;
+        };
+        if scratch.seen_edges.replace(edge.index()) {
+            continue;
+        }
+        let edge = graph.edge(edge);
+        work.extend(edge.out.iter().copied());
+        work.extend(edge.input.iter().copied());
+        work.extend(edge.validation.iter().copied());
+    }
+}
+
 /// Recompute one edge after all of its inputs have already been evaluated.
 pub(crate) fn recompute_edge_dirty_with<F>(
     graph: &Graph,

@@ -1301,12 +1301,27 @@ children (
                                 kind @note
                                 text "Proposed approach: split discovery from stat from evaluation, exploiting an invariant the code already encodes. A stat is a pure function of a path — nothing about it depends on traversal order — while only the dirty evaluation is ordered. And nodestat_with is already guarded by mtime().is_unobserved(), so an evaluation that finds every mtime already recorded performs no syscalls at all. That makes phase three literally today's code, unmodified. Phase one, discovery: walk the graph structure from the target with the existing worklist shape but no stats, collecting the reachable NodeId set into a reused scratch buffer. This is pointer-chasing over the arenas with no syscalls, and because it discovers exactly the reachable set it answers the narrow-target objection recorded above — nothing is stat'ed that the serial version would not have stat'ed. Phase two, batch: add stat_many to the disk interface taking the discovered slice and filling mtimes. Implementation needs no new dependency: std::thread::scope over chunks, sized by std::thread::available_parallelism, each thread calling the existing statat path. RealDiskInterface is already built for this — its doc comment describes sharing the working-directory descriptor across clones, and a raw fd is just a syscall argument, so concurrent statat against it is fine. Phase three: run DirtyEvaluator::evaluate unchanged. Error semantics are the delicate part and there is a clean answer: have the batch record only successful mtimes and leave a failing node unobserved, so phase three stats it again serially and produces the identical GraphError::Stat at the identical point in the traversal. That costs one redundant syscall on a cold path and preserves error ordering exactly, which matters because the conformance oracle compares diagnostics. Gate the whole thing on a node-count threshold — a few hundred — and fall back to the serial path below it, since thread setup would dominate a small graph. Nothing in the dirty logic changes, which is what keeps this reviewable."
                             }
+
+                            {
+                                at 2026-07-31T00:41:14.47068239Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-31T00:53:34.49446722Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done, and it is the largest wall-clock result in this programme: clean-tree-noop −22.9, −27.0 and −25.8 percent across three interleaved minimum-of-30 rounds on a quiet 32-core host, taking the workload from 1.10x C samurai to 0.82x — faster than the C reference on the workload where Ronin was second-worst. The design landed as proposed: collect_stat_targets walks the graph structure with no syscalls, RealDiskInterface::stat_many fans the resulting paths across std::thread::scope, and the dirty scan runs unmodified because nodestat_with's is_unobserved guard turns into a hit. Failures are left unrecorded so the scan re-stats them serially and reports the identical GraphError::Stat at the identical point, which is why 425 upstream conformance tests, 10 differential cases and the persistence round trip all still pass. Two things were wrong in the first cut and both are worth recording. The placement was wrong: prefetch_mtimes was inserted immediately before recompute_dirty_with_validations, but add_target runs load_depfiles_for and prepare_build_log_for first, and load_depfiles_for already walks the whole graph stating every source it finds — so by the time the prefetch ran, every mtime was observed and the retain emptied the batch. It measured as exactly neutral and strace showed zero clone3 calls, which is what exposed it; instrumenting the count showed 4,001 collected and 0 surviving the retain. Moving the call to the top of add_target fixed it, and the underlying discovery is worth its own attention: add_target performs three full graph traversals before Plan::add_node makes a fourth. The thread count was also wrong. Splitting 4,001 stats across all 32 cores spends more on clone3 than it saves; scaling instead to one thread per 512 paths gives 7 threads and improves the result from −15/−17 percent to −23/−27. Finally, a measurement warning for whoever revisits this: neither of the instruments this programme has relied on works here. getrusage(RUSAGE_CHILDREN) sums CPU across threads, so it showed sys time rising from 6.402 to 7.750 ms while wall time fell by a quarter, and callgrind likewise counts every thread's instructions — wide-noop reads +4.6% while its wall time is neutral to slightly better. Only interleaved wall clock measures this change."
+                            }
                         )
                     }
 
                     {
                         id ronin-log-byte-parsing
                         title "Parse build-log fields from bytes without validating UTF-8"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T00:27:37.782646029Z
@@ -1334,6 +1349,13 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @decision
                                 text "Done, at 3.34% of the clean-tree workload. parse_decimal and parse_hex read the log's numeric fields straight from bytes, folding with checked_mul, checked_sub and checked_add, and parse_entry now calls them instead of routing four fields through std::str::from_utf8 and str::parse. The two i32 fields go through i32::try_from on the i64 result, which reproduces str::parse::<i32>'s range rejection exactly. Negatives accumulate downwards rather than negating at the end so i64::MIN round-trips, which str::parse also manages and a naive implementation does not. Clean-tree 27,830,485 to 26,902,245 instructions, −3.34%; core::str::converts::from_utf8 is gone from the profile entirely. The named parsers cost 1,022,114 between them, which is more than the 772,813 from_utf8 alone had cost, but the str parsing they replace was previously inlined into BuildLog::open and elsewhere — open itself fell 424,137 to 358,136 — so the net is the measured −928,240. Wide-noop is unchanged at 22,754,715 against 22,752,528, as expected since that fixture has no log to read. The differential test is the substance of this node: byte_parsers_match_the_str_implementations compares both parsers against the standard-library functions they replace across 34 inputs covering valid, signed, zero-padded, boundary, overflowing, empty, sign-only and non-numeric cases, and both agree on every one. That matters because a malformed field returns None, which makes parse_entry skip the line and the reader recover, so a parser that is merely nearly right would silently drop or invent log entries rather than fail. Conformance passed in full: 425 upstream tests, 10 differential cases, log and deps persistence round trip. read_line's per-line copy, 3.72% here, was deliberately left for ronin-mmap-inputs where the buffer question is decided."
+                            }
+
+                            {
+                                at 2026-07-31T00:41:11.82641504Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
