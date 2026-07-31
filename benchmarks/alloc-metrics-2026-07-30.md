@@ -762,6 +762,62 @@ selected against parse-and-plan-dominated fixtures. A clean-tree fixture, with
 real files on disk and current mtimes, would measure a different part of the
 program, and is a prerequisite for judging this node rather than a nicety.
 
+### What the instruments in this document do not measure
+
+Three limits, each found the hard way, each after a measurement had already
+been believed.
+
+**Callgrind does not count kernel instructions.** It is a user-space simulator,
+so every syscall is a black box. On a 200,000-edge manifest it reports Ronin at
+3,074,971,466 against C samurai's 2,729,279,505 — a ratio of 1.13 — while `perf`
+reports 5,331,534,241 against 2,939,783,556, a ratio of 1.81. The whole
+difference is kernel work Ronin does and samurai does not. Every instruction
+count in this document is therefore a *user-space* count, and any conclusion
+about syscall-adjacent behaviour drawn from one is unsound.
+
+**Neither callgrind nor `getrusage` measures threaded work.** Both sum across
+threads, so parallelism reads as a regression in each: the batched-stat change
+showed system time rising from 6.402 to 7.750 ms under `getrusage` and +4.6%
+instructions under callgrind on `wide-noop`, while its wall time fell by a
+quarter. Only interleaved wall clock measures latency.
+
+**Wall clock alone hides what a change costs to get it.** The same node was
+accepted on wall-clock rounds and only later measured at 3,091 ms of task-clock
+across 2.858 CPUs, against 1,395 ms across 0.990 before — 2.2 times the CPU for
+23% of the wall time. Record task-clock alongside wall time for anything that
+spawns threads.
+
+Using `perf` at all needed `kernel.perf_event_paranoid` lowered from Debian's
+default of 3 to 1, plus `kernel.kptr_restrict=0` for kernel symbols.
+
+### Scale is the second blind spot
+
+`ronin-clean-tree-fixture` found that every workload here left the graph dirty.
+The same class of gap remains in size: every workload is at most 4,001 build
+statements, and Ronin's standing against C samurai is not constant across that
+axis. Measured on parse-and-evaluate:
+
+| statements | Ronin | samurai | ratio | Ronin µs/edge | samurai µs/edge |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 4,000 | 7.8 ms | 9.4 ms | 0.83× | 1.95 | 2.35 |
+| 25,000 | 61.1 | 68.7 | 0.89× | 2.44 | 2.75 |
+| 50,000 | 133.3 | 141.5 | 0.94× | 2.67 | 2.83 |
+| 100,000 | 296.0 | 298.5 | 0.99× | 2.96 | 2.99 |
+| 200,000 | 630.3 | 593.1 | 1.06× | 3.15 | 2.97 |
+
+Ronin's per-edge cost rises 62% across that range against samurai's 26%, so a
+17% lead at fixture size becomes a 6% deficit at 200,000 — and the crossover
+falls inside the range real projects occupy. Every claim in this document about
+beating the C reference holds at the size the fixtures happen to be.
+
+One warning about measuring this, recorded because it already cost a wrong
+conclusion. A first attempt used a fixture whose 200,000 declared sources did
+not exist, which makes both tools take an error path they handle completely
+differently: samurai reports the missing input after 3 `stat` calls, Ronin after
+400,001. That measured one tool short-circuiting against the other doing full
+work and produced a confidently reported — and entirely false — constant 1.7×
+gap. Scaling probes must use a path both tools complete.
+
 ### SIMD, and why the gap is not a vectorization gap
 
 The profile also settled the question that prompted it. C samurai contains one

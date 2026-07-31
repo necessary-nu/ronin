@@ -1453,6 +1453,73 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-large-manifest-gap
+                title "Act on what the 25k-to-200k edge measurements exposed"
+                children (
+                    {
+                        id ronin-eager-stat-storm
+                        title "Stop stating the whole graph before reporting a missing input"
+                        log (
+                            {
+                                at 2026-07-31T11:27:48.990692754Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "A real defect, found while investigating something else. On a 200,000-edge manifest whose sources are absent, ronin issues 400,001 newfstatat calls — every one returning ENOENT — before reporting that the first source is missing; samurai issues 3 and reports the same error. Both then exit. It predates the batched-stat work: ronin-prestat, the binary from before that change, makes the identical 400,001 calls, so this is not something the prefetch introduced. The cause is ordering. Builder::add_target runs load_depfiles_for first, which walks the whole reachable graph and stats every generator-less node at build.rs:670 to set its dirty bit, and only afterwards does Plan::add_node discover that one of those nodes is both dirty and ungenerated and raise BuildError::MissingInput. Samurai instead stats as it plans and aborts on the first failure. Note carefully what this does and does not cost: on a build that succeeds every one of those stats is needed anyway, so there is no waste in the common case. The cost is confined to the error path, where a user with one missing source waits for a full stat sweep — measured at roughly 400 ms of the 1.08 s run on this fixture — before being told. Proposed approach: load_depfiles_for already computes dirty as mtime().is_missing() for exactly these nodes at build.rs:672, so the detection can happen there rather than a traversal later. The obstacle is not detection but diagnostics. BuildError::MissingInput carries a needed_by field that names the consuming node, which load_depfiles_for's traversal does not track, and the message text and the order in which competing errors surface are part of the Ninja compatibility surface that the pinned conformance suite compares. So the work is: thread the consumer through that traversal, then verify against the oracle that the first-reported missing input is the same node as before. Measure the error path specifically, since no existing workload exercises it, and do not expect any change on a successful build."
+                            }
+                        )
+                    }
+
+                    {
+                        id ronin-stat-batch-cpu-cost
+                        title "Spend fewer cores for the batched stat's wall-clock win"
+                        log (
+                            {
+                                at 2026-07-31T11:27:58.956212616Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "The batched stat landed in a35c91d buys real wall time but at a CPU cost that was never measured, because wall clock was the only instrument used and it hides this entirely. On the 200,000-edge fixture perf reports the current binary at 3,091 ms task-clock across 2.858 CPUs, against ronin-prestat at 1,395 ms across 0.990 — so 23% of wall time (1.409 s to 1.082 s) costs 2.2 times the CPU and 2.0 times the cycles (11.08 G against 5.46 G), with instructions per cycle collapsing from 0.98 to 0.44. Nothing about that is visible in the wall-clock rounds the node was accepted on. The IPC collapse points at contention rather than useful work: 32 threads issuing failing path lookups against the same directory descriptor serialize in the kernel on shared dentry and inode state, so past some width the threads mostly wait for each other. This matters beyond tidiness. A build tool spends its cores on compilation, and under -j the prefetch is taking cores the user wants elsewhere; on a shared or containerised machine it is simply rude. Proposed approach: measure the width curve rather than guess it. PER_THREAD is currently 512, which on 400,001 paths yields the full 32 threads; sweep it so that width lands at 2, 4, 8, 16 and 32 and record both wall time and task-clock at each, then choose the knee rather than the minimum wall time. Expect the knee to be low, since the first measurement of this change used all 32 cores and scored −15 to −17 percent while 7 threads scored −23 to −27 percent — more threads were already worse, and the curve was never followed further down. Add task-clock to whatever the harness records for this workload, because a change that halves wall time while quadrupling CPU should not be able to pass unremarked again."
+                            }
+                        )
+                    }
+
+                    {
+                        id ronin-large-manifest-fixture
+                        title "Benchmark a manifest larger than four thousand statements"
+                        log (
+                            {
+                                at 2026-07-31T11:28:14.769352618Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "Every workload in the suite is at most 4,001 build statements, so scale is a blind spot in exactly the way dirtiness was before ronin-clean-tree-fixture. That matters because ronin's advantage over C samurai is not constant across size: measured on parse-and-evaluate, 0.83x at 4,000 edges, 0.89x at 25,000, 0.94x at 50,000, 0.99x at 100,000 and 1.06x at 200,000. Every claim this programme has made about beating the C reference is therefore true only at the size the fixtures happen to be, and the crossover sits inside the range real projects occupy — Chromium's manifest is far past 200,000 statements. Proposed approach: add a workload at 100,000 statements, which is 12 MiB of manifest and about 300 ms per tool, rather than the 200,000 used for the ad-hoc measurement, since the harness generates a fresh copy per tool and generation plus three runs at 200,000 costs several seconds per repetition. Give it Chromium-shaped paths — roughly forty characters, nested a few directories deep, with a bounded number of distinct directories so the interner sees realistic reuse — because path length is a live hypothesis for the erosion and the existing fixtures use ten-character paths. Run it through the commands tool so it measures parsing and evaluation without stats or execution, which keeps it a clean scaling probe and avoids the trap that invalidated the ad-hoc fixture, where absent sources made both tools take an error path they handle very differently. Record it as an addition rather than a version bump, as clean-tree-noop was: existing shapes stay byte-identical and the CSVs key on workload name. Watch the harness runtime; if generating three 12 MiB manifests per invocation proves too slow for the release gate, the fixture belongs in a separate scaling report rather than the default catalog."
+                            }
+                        )
+                    }
+
+                    {
+                        id ronin-node-locality-at-scale
+                        title "Find why per-edge cost grows faster than samurai's"
+                        deps (ronin-large-manifest-fixture)
+                        log (
+                            {
+                                at 2026-07-31T11:28:24.724439063Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "Ronin's per-edge cost grows with graph size faster than samurai's. Measured on parse-and-evaluate: ronin goes 1.95, 2.44, 2.67, 2.96 and 3.15 microseconds per edge at 4,000, 25,000, 50,000, 100,000 and 200,000 statements, a rise of 62%, while samurai goes 2.35, 2.75, 2.83, 2.99 and 2.97, a rise of 26% that is essentially flat past 50,000. Both tools grow, which is expected once working sets exceed cache, but ronin grows more than twice as fast, and that is what turns a 17% lead at fixture size into a 6% deficit at 200,000. Instruction counts do not explain it — the shape is characteristic of locality — so this needs measuring as a memory problem rather than an instruction-count one. Proposed approach: with perf now available, start with cache-references, cache-misses, dTLB-load-misses and instructions-per-cycle across the size sweep for both tools, and see whether ronin's miss rate diverges where the per-edge curves do. If it does, the first suspect is node path storage. ronin-path-interning-arena is marked Done but its own description set an endgame of a single append-only byte arena with nodes holding u32 offset and length spans, and Node::path is still a BString — an individually heap-allocated buffer per node — so what landed was the shellpath and duplicate-key parts, not the arena. Four hundred thousand separate allocations walked in traversal order is exactly the shape that degrades with size while a contiguous arena would not, so confirm that reading of what shipped before proposing work, then judge the arena against measured miss rates rather than against the assumption. Depends on ronin-large-manifest-fixture: without a suite workload at this size there is nothing to hold the result against, and the ad-hoc fixtures used here are not reproducible."
+                            }
+                        )
+                    }
+                )
+                log (
+                    {
+                        at 2026-07-31T11:27:33.1385048Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Findings from measuring 25,000 to 200,000-edge manifests on 2026-07-31, and one methodology correction that matters more than any of them. Callgrind has been the primary instrument for this whole programme and it is a user-space simulator that does not count kernel instructions. On a 200,000-edge fixture it reported ronin 3,074,971,466 against samurai 2,729,279,505, a ratio of 1.13, while perf reported 5,331,534,241 against 2,939,783,556, a ratio of 1.81 — the entire difference being kernel instructions ronin executes and samurai does not. Any conclusion this programme drew from callgrind about syscall-adjacent work is unsound, and the batched-stat node already recorded that callgrind and getrusage both mislead on threaded work. Use perf for anything touching syscalls, callgrind only for pure user-space comparisons, and interleaved wall clock as the arbiter. Getting perf working needed kernel.perf_event_paranoid lowered from Debian's default of 3 to 1, which also wants kernel.kptr_restrict at 0 for kernel symbols. A retraction belongs here too: an earlier claim that ronin runs 1.7x slower than C samurai at every realistic project size was wrong, and wrong because of a fixture defect of my own making. That fixture declared 200,000 sources that did not exist on disk, so both tools error out — but samurai discovers the missing input during its plan walk and bails after 3 stat calls while ronin stats 400,001 first, so the comparison measured one tool short-circuiting against the other doing full work. Re-measured on parse-and-evaluate through the commands tool, which both tools complete, the real curve is 0.83x at 4,000 edges, 0.89x at 25,000, 0.94x at 50,000, 0.99x at 100,000 and 1.06x at 200,000 — a genuine but gentle erosion from seventeen percent faster to six percent slower across a fifty-fold size range, not a constant 1.7x. Disk-side caching of the parsed graph was considered and dropped without a node: profiling the large run puts the genuinely cacheable work — scanstring, canonpath, append_variable and parse — at about 27%, while mknode, wide_hash, node_for and the allocator, which together are more, would simply become deserialization. A load-free mapped arena format could do better, but at that point a resident daemon dominates it, which is what Bazel and Buck2 do."
+                    }
+                )
+            }
         )
         log (
             {
@@ -2213,12 +2280,20 @@ children (
                 id ronin-plain-path-fast-path
                 title "Intern escape-free paths straight from manifest bytes"
                 priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-30T23:27:30.527355364Z
                         author "brendan@bbqsrc.net"
                         kind @decision
                         text "Implemented and kept, at 3.4% against an estimate of about 10%. ScannedEvalString became an enum: Plain(&'source [u8]) when no dollar sign ever appeared, Parts(...) when the value needs expanding. Almost every manifest path is Plain, and node_for can hash and probe a Plain path that is_canonical already accepts directly against the manifest bytes — no evaluation, no copy into scratch, no canonicalization pass, and no allocation at all unless the node is new. Wide no-op 23,584,069 to 22,776,535 (−3.42%), command evaluation 42,226,722 to 40,892,549 (−3.16%). canonpath vanishes from the profile, inlined into a node_for that no longer calls it on the common path; node_for plus canonpath together fell 1,790,554 to 1,078,356, which is −712,198 of the −807,534 total. The shortfall against estimate has a different cause from the previous two nodes: the mechanical part landed exactly as predicted, but mknode did not move at all, staying at 1,388,925, and the estimate had counted it as partly addressable. Hashing a path and probing the index is irreducible — interning requires it however the bytes arrive — so roughly half the estimate was assigned to work no fast path can remove. A first cut regressed requested bytes about 4% with request count flat, the signature of a widened value rather than a new allocation: the enum is max(16, 32) plus a discriminant, 40 bytes against the previous struct's 32, so every Vec<ScannedEvalString> grew and scanpaths builds one per run of paths. The fix was recognising that the inline slot in ScannedParts had become redundant — it existed to avoid an allocation for single-fragment values and Plain now takes exactly those — so reverting ScannedParts to a plain Vec returns the enum to 32 bytes and drops bytes below where the node started (wide no-op 4,987,636 to 4,794,044, command evaluation 8,176,630 to 7,726,990). Inline capacity is worth paying for only where it is load-bearing; a better representation had displaced it. One test caught a real error: the scanner's borrow assertion was rewritten to expect Plain, but its fixture value contains an expansion and is legitimately Parts. 366 tests pass, clippy clean, allocation baseline re-recorded."
+                    }
+
+                    {
+                        at 2026-07-31T11:26:50.580472655Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
