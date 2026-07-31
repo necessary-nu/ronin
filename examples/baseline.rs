@@ -700,11 +700,20 @@ mod tests {
             .contains("ratio regressed"));
 
         let mut ninja_regression = passing_records();
-        let workload = ninja_regression
-            .iter()
-            .find(|record| record.tool == "ronin")
+        // This case exercises the absolute Ronin-versus-Ninja check, which
+        // `validate` reaches only after the recorded-ratio check passes. Both
+        // can only hold at once for a workload whose recorded ratio exceeds
+        // one, so pick the loosest rather than whichever happens to sort
+        // first — otherwise adding a workload to the catalog silently
+        // retargets this assertion at the other check.
+        let workload = recorded_baseline()
             .unwrap()
-            .workload;
+            .into_iter()
+            .max_by(|(_, left), (_, right)| {
+                (left.ronin_ms / left.ninja_ms).total_cmp(&(right.ronin_ms / right.ninja_ms))
+            })
+            .unwrap()
+            .0;
         let ninja_ms = ninja_regression
             .iter()
             .find(|candidate| candidate.tool == "ninja" && candidate.workload == workload)

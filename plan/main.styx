@@ -1321,6 +1321,13 @@ children (
                                 kind @note
                                 text "Proposed approach: two small byte parsers, and scope the line reader out of this node. Replace the four str round trips with parse_decimal(&[u8]) -> Option<i64> and parse_hex(&[u8]) -> Option<u64>, each folding over the bytes with checked_mul and checked_add and returning None on any non-digit or on overflow. Both are about ten lines. The behavioural requirement is that a malformed field still yields None so the line is skipped and recovery proceeds exactly as now, which means matching what str::parse accepts at the edges: an optional leading '-' or '+' on the decimal fields, and rejecting an empty field. Ninja writes mtimes that can legitimately be negative, so the sign handling is not hypothetical. Test the parsers directly against the str implementations they replace over a table of valid, empty, signed, overflowing and non-numeric inputs, rather than only through the log reader, because the recovery path is what makes a wrong answer here silent. Deliberately out of scope: read_line's per-line copy, at 3.60%. Removing it means reading the whole log once and slicing it at newlines, taking min(len, MAX_LOG_LINE) per line to preserve the existing truncation, and that belongs with ronin-mmap-inputs where the buffer question is being decided. Doing it here would tangle the two measurements. Expect this node alone to be worth around the 2.78% from_utf8 costs, less whatever the byte parsers themselves cost, so a fraction of that — measure on clean-tree-noop, which is the only fixture that reads a log, and re-record the allocation baseline since this workload sits at 9.1 requests per build statement and the log reader is the suspect."
                             }
+
+                            {
+                                at 2026-07-31T00:35:56.549697753Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
                         )
                     }
                 )
@@ -2196,6 +2203,14 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-07-31T00:40:16.884860281Z
+                        author "brendan@bbqsrc.net"
+                        kind @errata
+                        text "d596481 shipped a broken example test and two gaps let it through. examples/baseline.rs's validation_rejects_runtime_and_memory_regressions has three cases; the second raises Ronin to 1.21x Ninja and asserts the absolute runtime check fires, which validate() only reaches after the recorded-ratio check passes. Both can hold at once only for a workload whose recorded ronin-to-ninja ratio exceeds one. The test selected its subject as \"the first ronin record\", which is the first key of a BTreeMap and therefore alphabetical, and adding clean-tree-noop moved that from deep-graph-evaluation — recorded ratio 16.47, comfortably loose — to clean-tree-noop at 0.37, so the assertion silently retargeted onto the ratio check and failed. Fixed by selecting the workload with the loosest recorded ratio explicitly, with a comment recording why, so a future catalog addition cannot retarget it again. On how it escaped: the nplan commit for d596481 returned an empty checks array, meaning the platform checks were witness-cached from an earlier run and never re-executed against the staged delta, so the gate did not see the failure. And every test summary in that session was read through grep 'test result: ok. 3|FAILED' piped to head -2, which matched the lib total and a literal \"FAILED: [code=130] output\" line inside a cli test's captured stdout, then truncated before the example target's genuine \"test result: FAILED\" line. The lesson is the reading, not the tooling: check the exit status of the whole run rather than pattern-matching a prefix of its output."
+                        after_done true
                     }
                 )
             }
