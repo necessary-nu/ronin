@@ -1634,6 +1634,27 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-index-probe-locality
+                        title "Reject index probes without dereferencing the graph"
+                        priority 0
+                        log (
+                            {
+                                at 2026-07-31T13:37:54.396324853Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-31T13:40:33.384544569Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done, and it is the change the path arena was expected to be. Each index slot now carries a 32-bit fingerprint alongside its identifier, drawn from the high half of the path hash — bits the slot index does not use, since an index-derived fingerprint would agree across a whole probe run and filter nothing. A probe compares the fingerprint before touching the graph, so a slot that merely collided is rejected from the slot array alone. Correctness is unaffected: the fingerprint is a filter, never a decision, and a match still confirms by comparing the bytes. Measured at 100,000 statements against the immediately preceding commit: cycles 1,242,059,039 to 1,150,207,117 (−7.4%), cache misses 7,163,992 to 5,206,230 (−27.3%), dTLB load misses 1,567,400 to 890,950 (−43.2%), instructions −0.6%. Wall clock, interleaved minimum-of-12 over three rounds, −11.9, −12.4 and −10.2 percent, and against C samurai 0.84x, 0.82x and 0.82x. Ronin now spends fewer cycles than samurai as well as fewer instructions — 1.150 billion against 1.201 — where before the arena it spent more of both metrics' worth of stalling. Relative to samurai the miss gap closed from 1.76x to 1.28x on cache misses and from 2.24x to 1.27x on TLB misses. The contrast with the arena is the lesson worth keeping. The arena made the path bytes contiguous and moved misses by a tenth, because storage layout was never the problem; the probe still dereferenced nodes and then paths for every colliding slot, which is two dependent random reads per rejection at a three-quarters load factor where most probe steps are rejections. The fingerprint does not make any single access more local — it removes the accesses. Locality work should target the number of dependent random reads on the hot path, not the arrangement of what they land on. Remaining knobs if this is revisited: the load factor is still three-quarters, and dropping it to one-half would shorten probe runs further at the cost of doubling the slot array, which is now eight bytes per slot rather than four. 368 tests pass, clippy clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
+                            }
+                        )
+                    }
                 )
                 log (
                     {

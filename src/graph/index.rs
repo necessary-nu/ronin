@@ -25,9 +25,36 @@ use super::{shell_escape_path, Graph, Node, NodeId};
 use crate::htab::rapidhashv1;
 use crate::util::{ByteSlice, IdVec};
 
+/// One table slot: an identifier, and a fingerprint of its path's hash.
+///
+/// The fingerprint is what keeps a probe run local. Without it, rejecting a
+/// slot that merely collided costs two dependent random reads before the
+/// comparison can even begin — into `nodes` for the span, then into `paths`
+/// for the bytes — and at a three-quarters load factor most probe steps are
+/// exactly that rejection. With it, "not this one" is answered from the slot
+/// array alone, so the run reads contiguous slots and touches the graph once:
+/// when it has actually found the path.
+#[derive(Clone, Copy, Default)]
+struct Slot {
+    node: Option<NodeId>,
+    fingerprint: u32,
+}
+
+/// Bits of the hash the slot index does not already use.
+///
+/// The index takes the low bits, so a fingerprint drawn from them would agree
+/// on every slot in a probe run and filter nothing.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "a fingerprint is deliberately a lossy digest of the high half"
+)]
+const fn fingerprint(hash: u64) -> u32 {
+    (hash >> 32) as u32
+}
+
 #[derive(Default)]
 pub(super) struct NodeIndex {
-    slots: Vec<Option<NodeId>>,
+    slots: Vec<Slot>,
     occupied: usize,
 }
 
@@ -36,17 +63,14 @@ impl NodeIndex {
 
     /// Locate `path`'s slot, which holds either its node or the vacancy where
     /// it belongs. `slots` is always a non-empty power of two here.
-    fn probe(
-        slots: &[Option<NodeId>],
-        paths: &[u8],
-        nodes: &[Node],
-        path: &[u8],
-        hash: u64,
-    ) -> usize {
+    fn probe(slots: &[Slot], paths: &[u8], nodes: &[Node], path: &[u8], hash: u64) -> usize {
         let mask = slots.len() - 1;
+        let fingerprint = fingerprint(hash);
         let mut index = usize::try_from(hash & mask as u64).expect("mask keeps the index in range");
-        while let Some(candidate) = slots[index] {
-            if node_bytes(paths, nodes, candidate) == path {
+        while let Some(candidate) = slots[index].node {
+            if slots[index].fingerprint == fingerprint
+                && node_bytes(paths, nodes, candidate) == path
+            {
                 break;
             }
             index = (index + 1) & mask;
@@ -58,7 +82,7 @@ impl NodeIndex {
         if self.slots.is_empty() {
             return None;
         }
-        self.slots[Self::probe(&self.slots, paths, nodes, path, rapidhashv1(path))]
+        self.slots[Self::probe(&self.slots, paths, nodes, path, rapidhashv1(path))].node
     }
 
     /// Record `node`, whose path must already be stored in the arena.
@@ -68,11 +92,15 @@ impl NodeIndex {
             self.grow(paths, nodes);
         }
         let path = node_bytes(paths, nodes, node);
-        let index = Self::probe(&self.slots, paths, nodes, path, rapidhashv1(path));
-        if self.slots[index].is_none() {
+        let hash = rapidhashv1(path);
+        let index = Self::probe(&self.slots, paths, nodes, path, hash);
+        if self.slots[index].node.is_none() {
             self.occupied += 1;
         }
-        self.slots[index] = Some(node);
+        self.slots[index] = Slot {
+            node: Some(node),
+            fingerprint: fingerprint(hash),
+        };
     }
 
     fn grow(&mut self, paths: &[u8], nodes: &[Node]) {
@@ -81,11 +109,12 @@ impl NodeIndex {
         } else {
             self.slots.len() * 2
         };
-        let previous = std::mem::replace(&mut self.slots, vec![None; capacity]);
-        for node in previous.into_iter().flatten() {
+        let previous = std::mem::replace(&mut self.slots, vec![Slot::default(); capacity]);
+        for slot in previous {
+            let Some(node) = slot.node else { continue };
             let path = node_bytes(paths, nodes, node);
             let index = Self::probe(&self.slots, paths, nodes, path, rapidhashv1(path));
-            self.slots[index] = Some(node);
+            self.slots[index] = slot;
         }
     }
 }
