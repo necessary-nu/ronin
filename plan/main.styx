@@ -1461,6 +1461,7 @@ children (
                     {
                         id ronin-eager-stat-storm
                         title "Stop stating the whole graph before reporting a missing input"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T11:27:48.990692754Z
@@ -1481,6 +1482,13 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @decision
                                 text "Rejected on measurement, and the node's premise was an artifact of the same unrepresentative fixture that has misled twice today. The claim was that ronin issues 400,001 stat calls where samurai issues 3 before reporting the same missing input, making a broken build pay a full stat sweep before it is told. That observation came from a 200,000-edge fixture in which no source existed at all, so samurai bailed on the very first node it examined. Measured instead on a realistic broken build — 25,000 edges with every source present except one, which is what a typo or a deleted file actually looks like — both tools issue exactly 50,001 stats and ronin is faster: 89.9 ms against samurai's 119.3, a minimum of nine with the cache warm. There is nothing to fix. Samurai has no early-exit advantage in general; it has one only when the missing input happens to be among the first nodes its walk reaches, which requires most of the tree to be absent. The asymmetry is therefore confined to the case where a large fraction of sources are missing at once — a fresh checkout with unpopulated submodules, say — where ronin took 1.082 s against samurai's 0.545 s on the 200,000-edge fixture. Even there the error reported is correct and the user's next action is to fix the tree, so the value is a faster failure on an already-failing build. Against that: the fix would have to abort load_depfiles_for's traversal at the first dirty generator-less node, and which node that is depends on the traversal order, which differs from Plan::add_node's; reporting a different missing input than before would change a diagnostic the pinned conformance oracle compares. Real compatibility risk for a bounded win in a rare case that is already correct. Left as it is. The methodological point is the one worth keeping: this node was written confidently from a single fixture whose shape determined the answer, and the correction cost one measurement."
+                            }
+
+                            {
+                                at 2026-07-31T13:32:19.720862391Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
