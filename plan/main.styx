@@ -1373,6 +1373,7 @@ children (
             {
                 id ronin-mmap-inputs
                 title "Map manifests and logs instead of copying them into buffers"
+                sealed true
                 log (
                     {
                         at 2026-07-31T00:27:57.164722292Z
@@ -1400,6 +1401,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @decision
                         text "Split as the design proposed, and the two halves went opposite ways. Mapping manifests is rejected on measurement. The node warned that the existing fixtures are too small to judge it and that a null result there would prove nothing, so a 24.7 MiB manifest was generated first — 200,000 build statements with Chromium-shaped paths, which parses in 910.8 ms. Reading it with std::fs::read costs 6.00 ms, measured directly as a minimum of nine with the page cache warm: 0.66% of the run, and that is the ceiling rather than the saving, because a mapping still faults those pages in when the parser walks them. The premise that this would be material at the scale motivating the tool is simply wrong; parsing dominates so heavily that the read is noise, and the cost — a dependency or a hand-written unsafe block, plus SIGBUS exposure on truncation, plus the mapping-lifetime constraint against a generator rule regenerating the manifest mid-build — buys a fraction of 0.66%. Not worth it at any manifest size this tool will see. The log half was taken and stands on its own, having never depended on mapping: BuildLog::open now reads the file once and borrows each line out of that buffer with split, replacing an incremental reader that copied every line into a scratch Vec first. read_line is deleted. Clean-tree 27,605,504 to 27,125,604 instructions, −1.74%, measured against the immediately preceding commit rather than a stale baseline; read_line's 1,001,113 disappears and BuildLog::open absorbs 543,852 of it. Equivalence was worked through case by case rather than assumed: the header is still compared verbatim so a CRLF log is still rejected, the final split element is skipped because it is either the empty slice after a trailing newline or a line a crash left unterminated — both of which the incremental reader also skipped — and an over-long line is still rejected by parse_entry's MAX_LOG_LINE check. Conformance passes in full, including the log and deps persistence round trip, which is the test that would catch a recovery-semantics change."
+                    }
+
+                    {
+                        at 2026-07-31T01:06:37.027466073Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
