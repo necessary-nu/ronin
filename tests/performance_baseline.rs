@@ -1,6 +1,6 @@
 const HARNESS: &str = include_str!("../examples/baseline.rs");
 const RECORDED_BASELINE: &str = include_str!("../benchmarks/baseline-v1.csv");
-const VALIDATION: &str = include_str!("../benchmarks/performance-validation-2026-07-29.csv");
+const VALIDATION: &str = include_str!("../benchmarks/performance-validation-2026-07-31.csv");
 
 // [spec:samurai:req:performance.reproducible-baseline/test]
 #[test]
@@ -50,18 +50,6 @@ fn baseline_catalog_and_metadata_remain_complete() {
             1,
             "recorded baseline must contain {workload} exactly once"
         );
-    }
-    // The dated validation artifact predates `clean-tree-noop`; a refreshed
-    // sweep covering it lands in the following commit, which is generated from
-    // a clean tree so that `ronin_dirty=false` holds.
-    for workload in [
-        "manifest-command-evaluation",
-        "deep-graph-evaluation",
-        "wide-noop-build",
-        "path-canonicalization",
-        "dependency-log-load",
-        "scheduler-barrier",
-    ] {
         assert!(
             VALIDATION.contains(&format!("ronin,1.9.0,{workload},")),
             "validation must contain Ronin's {workload} result"
