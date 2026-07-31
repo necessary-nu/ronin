@@ -1279,6 +1279,64 @@ children (
                     }
                 )
             }
+
+            {
+                id ronin-clean-tree-gap
+                title "Close the up-to-date-tree gap the new fixture exposed"
+                children (
+                    {
+                        id ronin-batched-stat
+                        title "Stop issuing one blocking stat per node"
+                        log (
+                            {
+                                at 2026-07-31T00:27:29.5972113Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "The largest single finding from ronin-clean-tree-fixture and the only one that reaches the majority of the workload. On the up-to-date tree the no-op is 62% system time — user 3.953 ms against sys 6.402 ms per run — and strace attributes 4,001 of the calls to newfstatat, exactly one per node. Every optimisation in this programme so far moved user-space instructions, which is the other 38%. Stats are issued one at a time and synchronously: RealDiskInterface::stat (src/os.rs:138) calls rustix::fs::statat through a cached directory fd, wrapped in a |path: &Path| disk.stat(path) closure that is threaded as &mut F: FnMut through six call sites in build.rs (666, 686, 756, 885, 1285, 1356) and invoked from nodestat_with (graph.rs:203) in the middle of DirtyEvaluator::evaluate's traversal. Both C samurai and Ninja are serial here too, so this is the one place in the programme where the goal is to beat the reference rather than match it. The restructuring is real: today the traversal decides which node to stat as it walks, and only stats a node whose mtime is_unobserved, so it never pays for a node it does not reach. Batching means collecting the reachable node set first and issuing the stats together — a thread pool, or io_uring on Linux — which trades possibly-wasted stats for parallelism. On a default target covering the whole graph nothing is wasted, which is the common case, but a narrow target would regress unless the batch is seeded from the traversal frontier rather than the whole arena. Everything downstream of the mtimes is already a pure function of them, so once the stats are in hand the existing evaluation is unchanged. Measure against clean-tree-noop specifically; no other fixture will show anything, and note that callgrind understates this entirely because valgrind does not slow syscalls in proportion to instructions — wall time and the user/sys split are the instruments here."
+                            }
+                        )
+                    }
+
+                    {
+                        id ronin-log-byte-parsing
+                        title "Parse build-log fields from bytes without validating UTF-8"
+                        log (
+                            {
+                                at 2026-07-31T00:27:37.782646029Z
+                                author "brendan@bbqsrc.net"
+                                kind @note
+                                text "Found by ronin-clean-tree-fixture, invisible before it because no other workload has a .ninja_log. core::str::converts::from_utf8 costs 772,813 instructions, 2.78% of the clean-tree no-op, across 8,000 calls from log::BuildLog::open — the same idiom removed from the scanner under ronin-byte-keyed-names, still alive in the build-log reader. The four sites are src/log.rs:142, 146, 150 and 156: each takes a field from nextfield, validates it as UTF-8, and then parses an integer from it — start_time and end_time as i32-ish values, mtime, and the command hash through u64::from_str_radix(.., 16). All four fields are ASCII digits or hex by construction of the log format, so the validation is redundant exactly as it was in scan::name, and the fix is to parse the integer directly from the bytes rather than to go through str. The wider log path is worth the same visit while it is open: read_line (src/log.rs:168) is 3.60% and copies every line out of a BufRead into a reusable Vec via extend_from_slice, nextfield is 2.71%, BuildLog::open itself 1.52% and hydrate_runtime 0.60%, so the subsystem is around 11% of this workload and has never been measured or optimised at all. The per-line copy in read_line becomes unnecessary if the log is mapped rather than streamed, which is why this composes with ronin-mmap-inputs — sequence them together if both are taken, and attribute the measurement carefully if they land in one change. Allocation traffic on this workload is 9.1 requests per build statement against wide-noop's 2.1, and the log reader is the obvious suspect, so re-record the allocation baseline after."
+                            }
+                        )
+                    }
+                )
+            }
+
+            {
+                id ronin-mmap-inputs
+                title "Map manifests and logs instead of copying them into buffers"
+                log (
+                    {
+                        at 2026-07-31T00:27:57.164722292Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Endorsed directly by Brendan on 2026-07-31 — \"mmap is always a delicious idea where a read is concerned\". Two sites read whole files into owned buffers that are then only ever borrowed from. parse.rs:501 does std::fs::read on each manifest and hands the Vec to Source, and since ronin-plain-path-fast-path every escape-free path is a Plain(&'source [u8]) borrowed straight out of that buffer — so with a mapping the path bytes would never be copied at all, from disk to interned node. log.rs:168's read_line copies every log line out of a BufRead into a reusable Vec, costing 3.60% of the clean-tree workload, and a mapped log can be split into line slices with no copy whatsoever. The gain is negligible on the current fixtures — a 222 KiB manifest and a 4,000-line log — and material at the scale that motivates the tool: a Chromium build.ninja and its includes run to tens of megabytes, where fs::read is a full copy plus the page faults to touch it. Constraints to respect: Source currently owns its bytes and hands out &'source slices with a lifetime tied to an Arc<Source>, so the mapping must live at least as long as every span derived from it, which the existing Arc already models; a manifest regenerated by its own generator rule mid-build must not be mapped across the regeneration; and mapping introduces SIGBUS on truncation where a read would have returned a short buffer, which matters for a log another process may be rewriting. Prefer a dependency with a maintained safe wrapper over hand-rolled mmap given the crate keeps only three unsafe blocks, all FFI-adjacent. Measure on clean-tree-noop and manifest-command-evaluation, and consider adding a large-manifest fixture, since neither existing shape is big enough to show the win."
+                    }
+                )
+            }
+
+            {
+                id ronin-arena-slot-access
+                title "Make arena identifiers carry their own validity"
+                log (
+                    {
+                        at 2026-07-31T00:28:04.320525291Z
+                        author "brendan@bbqsrc.net"
+                        kind @note
+                        text "Endorsed by Brendan on 2026-07-31, with the soundness condition supplied in the same breath: unchecked arena access is defensible only if the identifiers are minted by the graph, so that holding one is itself proof of a valid slot. Today Graph::node, Graph::node_mut, Graph::edge and Graph::edge_mut (src/graph.rs:91-105) index Vec with id.index() and bounds-check every access, and they are the hottest accessors in the program — mknode alone is 5.29% of the clean-tree workload and every traversal, evaluation and side-table update goes through them. The identifiers cannot currently carry that proof: arena_id! exposes a public const from_index(index: usize), so any code can mint a NodeId for a slot that does not exist, and the type says nothing about which Graph it belongs to. Making the guarantee real means narrowing minting to the arenas themselves — from_index becomes private to the graph module, or is replaced by a push that returns the identifier it just created — and, if the stronger property is wanted, branding the identifier to a particular graph instance so an identifier from one arena cannot index another, which is the generativity or GhostCell pattern. Only once minting is closed does get_unchecked stop being a hope. Note what is already true and load-bearing: the arenas are append-only, so an identifier is never invalidated by later growth, and that half of the invariant needs no work. Order matters — close the minting first and measure that alone, since narrowing from_index is a pure refactor with a real chance of catching a latent bug, and only then consider the unchecked access as a separate, separately measured step. Two callers legitimately reconstruct identifiers from side-table indices (build.rs, in command_edge_count and the wanted-edge filter) and will need a sanctioned route rather than the general constructor."
+                    }
+                )
+            }
         )
         log (
             {
