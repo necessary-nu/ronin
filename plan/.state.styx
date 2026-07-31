@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-07-31T14:22:45.175148057Z
+last_sync_at 2026-07-31T14:51:35.215199716Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -43,6 +43,7 @@ derived_priorities (
     {id ronin-compact-graph-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-depfile-inplace, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-deps-record-bounds, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
+    {id ronin-dispatch-syscall-cost, priority 0, derived_at 2026-07-31T14:51:35.215199716Z}
     {id ronin-drop-port-scaffolding, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-eager-stat-storm, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-edge-id-iteration, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
@@ -63,6 +64,7 @@ derived_priorities (
     {id ronin-phony-console-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-single-pass-dirty, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-stale-bool-suppression, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
+    {id ronin-startup-floor, priority 0, derived_at 2026-07-31T14:51:35.215199716Z}
     {id ronin-stat-batch-cpu-cost, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-stat-directory-contention, priority 0, derived_at 2026-07-31T14:22:45.175148057Z}
     {id ronin-stat-no-alloc, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
