@@ -159,7 +159,7 @@ fn node_for(
     // the node turns out to be new.
     if let ScannedEvalString::Plain(bytes) = path {
         if is_canonical(bytes) {
-            return Ok(crate::graph::mknode_bytes(graph, bytes));
+            return Ok(crate::graph::mknode(graph, bytes));
         }
     }
     scratch.clear();
@@ -168,7 +168,7 @@ fn node_for(
         return Err(manifest_error(scanner, ManifestProblem::EmptyPath));
     }
     canonpath(scratch);
-    Ok(crate::graph::mknode_bytes(graph, scratch))
+    Ok(crate::graph::mknode(graph, scratch))
 }
 
 // [spec:samurai:def:parse.parseedge-fn]
@@ -240,7 +240,7 @@ fn parseedge(
                 return Err(manifest_error(
                     scanner,
                     ManifestProblem::DuplicateOutput {
-                        path: graph.node(node).path.clone(),
+                        path: graph.node_path(node).to_owned(),
                     },
                 ));
             }
@@ -628,7 +628,7 @@ mod ninja_manifest_tests {
         let (graph, _, _) = parse_source(source).unwrap();
         let edge = output_edge(&graph, b"result");
         let dyndep = graph.edge(edge).dyndep.unwrap();
-        assert_eq!(graph.node(dyndep).path.as_bytes(), expected);
+        assert_eq!(graph.node_path(dyndep).as_bytes(), expected);
         let runtime = crate::runtime::RuntimeState::new(&graph);
         assert!(runtime.node(dyndep).dyndep_pending());
     }
@@ -642,7 +642,7 @@ mod ninja_manifest_tests {
         assert_eq!(graph.edge(edge).input.len(), 1);
         assert_eq!(graph.edge(edge).validation.len(), 1);
         assert_eq!(
-            graph.node(graph.edge(edge).validation[0]).path.as_bytes(),
+            graph.node_path(graph.edge(edge).validation[0]).as_bytes(),
             b"baz"
         );
         assert_eq!(
@@ -1043,7 +1043,7 @@ mod ninja_manifest_tests {
         .unwrap();
         let defaults = defaultnodes(&parser, &graph);
         assert_eq!(defaults.len(), 1);
-        assert_eq!(graph.node(defaults[0]).path.as_bytes(), b"foo bar");
+        assert_eq!(graph.node_path(defaults[0]).as_bytes(), b"foo bar");
     }
 
     #[test]
@@ -1053,6 +1053,6 @@ mod ninja_manifest_tests {
         )
         .unwrap();
         let node = crate::graph::nodeget(&graph, b"foo %2F bar?baz&x=1").unwrap();
-        assert_eq!(graph.node(node).path.as_bytes(), b"foo %2F bar?baz&x=1");
+        assert_eq!(graph.node_path(node).as_bytes(), b"foo %2F bar?baz&x=1");
     }
 }

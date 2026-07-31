@@ -99,6 +99,8 @@ assertions (
     {id ronin-arena-slot-access, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T01:01:39.576429995Z}
     {id ronin-mmap-inputs, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T01:06:37.027466073Z}
     {id ronin-plain-path-fast-path, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T11:26:50.580472655Z}
+    {id ronin-node-locality-at-scale, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T12:31:38.434727113Z}
+    {id ronin-path-byte-arena, kind @doing, author "brendan@bbqsrc.net", at 2026-07-31T12:32:14.357892466Z}
 )
 
 impl_evidence (

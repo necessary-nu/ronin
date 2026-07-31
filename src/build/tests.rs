@@ -45,7 +45,7 @@ fn mark_dirty(graph: &Graph, paths: &[&str]) -> RuntimeState {
 
 fn output_path(graph: &Graph, edge: EdgeId) -> String {
     let output = graph.edge(edge).out[0];
-    String::from_utf8_lossy(graph.node(output).path.as_bytes()).into_owned()
+    String::from_utf8_lossy(graph.node_path(output).as_bytes()).into_owned()
 }
 
 fn add_plan_target(plan: &mut Plan, graph: &Graph, runtime: &RuntimeState, path: &[u8]) {
@@ -130,7 +130,7 @@ fn assert_multi_output_deps_log(label: &str, depfile: &str) {
                 .deps
                 .nodes
                 .iter()
-                .map(|node| graph.node(*node).path.clone())
+                .map(|node| graph.node_path(*node).to_owned())
                 .collect::<Vec<_>>(),
             expected
         );
@@ -2524,7 +2524,7 @@ fn ninja_build_deps_log_msvc_records_all_outputs() {
         let entry = crate::deps::depsentry(&deps_log, output).unwrap();
         assert_eq!(entry.deps.nodes.len(), 1);
         assert_eq!(
-            graph.node(entry.deps.nodes[0]).path,
+            graph.node_path(entry.deps.nodes[0]),
             directory.join("in").to_string_lossy().as_ref()
         );
     }

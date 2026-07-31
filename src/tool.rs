@@ -5,7 +5,7 @@ use crate::error::{ManifestError, ToolAvailability, ToolError, ToolOperation};
 use crate::graph::{nodeget, EdgeId, Graph, NodeId, PathStyle};
 use crate::names::Names;
 use crate::source::Source;
-use crate::util::{BString, ByteSlice};
+use crate::util::{BStr, BString, ByteSlice};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 #[cfg(test)]
@@ -177,12 +177,12 @@ fn edge_name(graph: &Graph, edge: EdgeId) -> String {
 // [spec:samurai:def:tool.cleanpath-fn]
 // [spec:samurai:sem:tool.cleanpath-fn]
 #[cfg(test)]
-pub(crate) fn cleanpath(path: Option<&BString>) -> io::Result<bool> {
+pub(crate) fn cleanpath(path: Option<&BStr>) -> io::Result<bool> {
     cleanpath_mode(path, false, &crate::os::RealDiskInterface::default())
 }
 
 fn cleanpath_mode(
-    path: Option<&BString>,
+    path: Option<&BStr>,
     dry_run: bool,
     disk: &crate::os::RealDiskInterface,
 ) -> io::Result<bool> {
@@ -222,16 +222,17 @@ impl Cleaner {
         }
     }
 
-    fn remove(&mut self, path: Option<&BString>) -> ToolResult<()> {
+    fn remove(&mut self, path: Option<&BStr>) -> ToolResult<()> {
         let Some(path) = path else { return Ok(()) };
-        let removed = if self.seen_paths.insert(path.clone()) {
-            cleanpath_mode(Some(path), self.dry_run, &self.disk)
-                .map_err(|source| ToolError::io(ToolOperation::Clean, Some(path.clone()), source))?
+        let removed = if self.seen_paths.insert(path.to_owned()) {
+            cleanpath_mode(Some(path), self.dry_run, &self.disk).map_err(|source| {
+                ToolError::io(ToolOperation::Clean, Some(path.to_owned()), source)
+            })?
         } else {
             false
         };
         if removed {
-            self.removed.push(path.clone());
+            self.removed.push(path.to_owned());
         }
         Ok(())
     }
@@ -244,13 +245,17 @@ impl Cleaner {
         }
         let dyndep_outputs = self.dyndep_outputs(graph, edge)?;
         for output in graph.edge(edge).out.clone() {
-            self.remove(Some(&graph.node(output).path))?;
+            self.remove(Some(graph.node_path(output)))?;
         }
         for output in dyndep_outputs {
-            self.remove(Some(&output))?;
+            self.remove(Some(output.as_ref()))?;
         }
         for variable in [Names::RSPFILE, Names::DEPFILE] {
-            self.remove(edgevar(graph, edge, variable, PathStyle::Raw).as_ref())?;
+            self.remove(
+                edgevar(graph, edge, variable, PathStyle::Raw)
+                    .as_deref()
+                    .map(BStr::new),
+            )?;
         }
         Ok(())
     }
@@ -271,13 +276,17 @@ impl Cleaner {
             if rule.is_some() && !graph.is_phony_rule(rule) {
                 let dyndep_outputs = self.dyndep_outputs(graph, edge)?;
                 for output in graph.edge(edge).out.clone() {
-                    self.remove(Some(&graph.node(output).path))?;
+                    self.remove(Some(graph.node_path(output)))?;
                 }
                 for output in dyndep_outputs {
-                    self.remove(Some(&output))?;
+                    self.remove(Some(output.as_ref()))?;
                 }
                 for variable in [Names::RSPFILE, Names::DEPFILE] {
-                    self.remove(edgevar(graph, edge, variable, PathStyle::Raw).as_ref())?;
+                    self.remove(
+                        edgevar(graph, edge, variable, PathStyle::Raw)
+                            .as_deref()
+                            .map(BStr::new),
+                    )?;
                 }
             }
             work.extend(graph.edge(edge).input.iter().rev().copied());
@@ -440,7 +449,7 @@ pub(crate) fn clean_dead_with_report_in(
         if nodeget(graph, output.as_bytes()).is_some() {
             continue;
         }
-        cleaner.remove(Some(output))?;
+        cleaner.remove(Some(output.as_ref()))?;
     }
     Ok(cleaner.removed)
 }
@@ -605,7 +614,7 @@ fn graphnode_inner(graph: &Graph, node: NodeId, output: &mut Vec<u8>, visited: &
     while let Some(item) = work.pop() {
         match item {
             Work::Visit(node) => {
-                let path = &graph.node(node).path;
+                let path = &graph.node_path(node);
                 let _ = write!(output, "\"n{}\" [label=\"", node.index());
                 output.extend_from_slice(printquoted(path.as_bytes(), false).as_bytes());
                 output.extend_from_slice(b"\"]\n");
@@ -717,7 +726,7 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
         if let Some(edge) = node_borrow.gen {
             let _ = writeln!(output, "  input: {}", edge_name(graph, edge));
             for (index, input) in graph.edge(edge).input.iter().enumerate() {
-                let input = graph.node(*input);
+                let input_path = graph.node_path(*input);
                 let label = if index >= graph.edge(edge).non_order_only_input_count() {
                     "|| "
                 } else if index >= graph.edge(edge).explicit_input_count() {
@@ -728,7 +737,7 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
                 let _ = writeln!(
                     output,
                     "    {label}{}",
-                    String::from_utf8_lossy(input.path.as_bytes())
+                    String::from_utf8_lossy(input_path.as_bytes())
                 );
             }
             if !graph.edge(edge).validation.is_empty() {
@@ -737,7 +746,7 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
                     let _ = writeln!(
                         output,
                         "    {}",
-                        String::from_utf8_lossy(graph.node(*validation).path.as_bytes())
+                        String::from_utf8_lossy(graph.node_path(*validation).as_bytes())
                     );
                 }
             }
@@ -745,7 +754,7 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
         output.push_str("  outputs:\n");
         for edge in &node_borrow.uses {
             for output_node in &graph.edge(*edge).out {
-                let path = &graph.node(*output_node).path;
+                let path = &graph.node_path(*output_node);
                 let _ = writeln!(output, "    {}", String::from_utf8_lossy(path.as_bytes()));
             }
         }
@@ -753,7 +762,7 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
             output.push_str("  validation for:\n");
             for edge in &node_borrow.validation_uses {
                 for output_node in &graph.edge(*edge).out {
-                    let path = &graph.node(*output_node).path;
+                    let path = &graph.node_path(*output_node);
                     let _ = writeln!(output, "    {}", String::from_utf8_lossy(path.as_bytes()));
                 }
             }
@@ -779,7 +788,7 @@ pub(crate) fn targetsdepth(
             let _ = writeln!(
                 output,
                 "{}: {}",
-                String::from_utf8_lossy(node_borrow.path.as_bytes()),
+                String::from_utf8_lossy(graph.node_path(node).as_bytes()),
                 edge_name(graph, edge)
             );
             if depth != 1 {
@@ -798,7 +807,7 @@ pub(crate) fn targetsdepth(
             let _ = writeln!(
                 output,
                 "{}",
-                String::from_utf8_lossy(node_borrow.path.as_bytes())
+                String::from_utf8_lossy(graph.node_path(node).as_bytes())
             );
         }
     }
@@ -842,10 +851,7 @@ pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<St
                     .edge_ids()
                     .filter(|edge| edge_name(graph, *edge) == *rule)
                     .flat_map(|edge| graph.edge(edge).out.clone())
-                    .map(|node| {
-                        let node = graph.node(node);
-                        String::from_utf8_lossy(node.path.as_bytes()).into_owned()
-                    })
+                    .map(|node| graph.node_path(node).to_str_lossy().into_owned())
                     .collect::<std::collections::BTreeSet<_>>();
                 for path in outputs {
                     let _ = writeln!(output, "{path}");
@@ -854,11 +860,11 @@ pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<St
                 for edge in graph.edge_ids() {
                     for input in &graph.edge(edge).input {
                         if graph.node(*input).gen.is_none() {
-                            let input = graph.node(*input);
+                            let input_path = graph.node_path(*input);
                             let _ = writeln!(
                                 output,
                                 "{}",
-                                String::from_utf8_lossy(input.path.as_bytes())
+                                String::from_utf8_lossy(input_path.as_bytes())
                             );
                         }
                     }
@@ -870,11 +876,10 @@ pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<St
             let mut output = String::new();
             for edge in graph.edge_ids() {
                 for node in &graph.edge(edge).out {
-                    let node = graph.node(*node);
                     let _ = writeln!(
                         output,
                         "{}: {}",
-                        String::from_utf8_lossy(node.path.as_bytes()),
+                        String::from_utf8_lossy(graph.node_path(*node).as_bytes()),
                         edge_name(graph, edge)
                     );
                 }

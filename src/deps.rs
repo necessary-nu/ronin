@@ -181,7 +181,7 @@ fn stage_record_id(
         return Ok(false);
     }
     let id = plan.next_id;
-    let path = graph.node(node).path.as_bytes();
+    let path = graph.node_path(node).as_bytes();
     let padding = (4 - path.len() % 4) % 4;
     let size = path.len() + padding + 4;
     if size > MAX_RECORD_SIZE {
@@ -646,14 +646,14 @@ pub(crate) fn depsparse_for_edge(
     let first = parsed_outputs.next().expect("outputs were checked above");
     let matches_first = outputs
         .first()
-        .is_some_and(|output| graph.node(*output).path == first);
+        .is_some_and(|output| graph.node_path(*output) == first);
     if !matches_first {
         return Ok(None);
     }
     for output in std::iter::once(first).chain(parsed_outputs) {
         if !outputs
             .iter()
-            .any(|expected| graph.node(*expected).path == output)
+            .any(|expected| graph.node_path(*expected) == output)
         {
             return Err(PersistenceError::depfile_at(
                 display_path,
@@ -820,7 +820,7 @@ mod ninja_depfile_tests {
     fn paths(graph: &Graph, nodes: &[NodeId]) -> Vec<String> {
         nodes
             .iter()
-            .map(|node| String::from_utf8(graph.node(*node).path.as_bytes().to_vec()).unwrap())
+            .map(|node| String::from_utf8(graph.node_path(*node).as_bytes().to_vec()).unwrap())
             .collect()
     }
 

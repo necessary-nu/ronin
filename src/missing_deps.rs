@@ -85,7 +85,7 @@ impl MissingDependencyScanner {
     ) {
         if dependencies
             .iter()
-            .any(|dependency| graph.node(*dependency).path == b"build.ninja")
+            .any(|dependency| graph.node_path(*dependency) == b"build.ninja")
         {
             return;
         }
@@ -133,8 +133,8 @@ impl MissingDependencyScanner {
             }
             self.generator_rules.insert(rule_name.clone());
             self.reports.push(MissingDependency {
-                consumer: String::from_utf8_lossy(graph.node(node).path.as_bytes()).into_owned(),
-                generated: String::from_utf8_lossy(graph.node(*dependency).path.as_bytes())
+                consumer: String::from_utf8_lossy(graph.node_path(node).as_bytes()).into_owned(),
+                generated: String::from_utf8_lossy(graph.node_path(*dependency).as_bytes())
                     .into_owned(),
                 generator_rule: rule_name,
             });

@@ -114,7 +114,7 @@ impl BuildLog {
             if graph_node.gen.is_none() {
                 continue;
             }
-            if let Some(entry) = self.entries.get(&graph_node.path) {
+            if let Some(entry) = self.entries.get(graph.node_path(node)) {
                 let state = runtime.node_mut(node);
                 state.set_log_mtime(FileTime::observed(entry.mtime));
                 state.set_logged_command_hash(CommandHash::from_raw(entry.command_hash));
@@ -312,10 +312,9 @@ pub(crate) fn logrecord(
     node: NodeId,
 ) -> io::Result<()> {
     let state = runtime.node(node);
-    let node = graph.node(node);
     record_entry(
         log,
-        node.path.clone(),
+        graph.node_path(node).to_owned(),
         LogEntry {
             start_time: 0,
             end_time: 0,
@@ -339,7 +338,7 @@ pub(crate) fn logrecordedge(
         .into_iter()
         .map(|output| {
             (
-                graph.node(output).path.clone(),
+                graph.node_path(output).to_owned(),
                 LogEntry {
                     start_time,
                     end_time,

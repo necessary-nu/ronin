@@ -107,10 +107,10 @@ fn render(
             output.extend_from_slice(b"\",\n    \"command\": \"");
             push_json_string(&mut output, &command);
             output.extend_from_slice(b"\",\n    \"file\": \"");
-            push_json_string(&mut output, graph.node(*input).path.as_bytes());
+            push_json_string(&mut output, graph.node_path(*input).as_bytes());
             output.extend_from_slice(b"\",\n    \"output\": \"");
             if let Some(output_node) = edge_ref.out.first() {
-                push_json_string(&mut output, graph.node(*output_node).path.as_bytes());
+                push_json_string(&mut output, graph.node_path(*output_node).as_bytes());
             }
             output.extend_from_slice(b"\"\n  }");
         }

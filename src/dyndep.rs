@@ -506,7 +506,7 @@ fn edge_output(graph: &Graph, edge: EdgeId) -> BString {
         .edge(edge)
         .out
         .first()
-        .map(|output| graph.node(*output).path.clone())
+        .map(|output| graph.node_path(*output).to_owned())
         .unwrap_or_default()
 }
 
@@ -595,7 +595,7 @@ pub(crate) fn load_dyndep(
     dyndep: NodeId,
     disk: &crate::os::RealDiskInterface,
 ) -> Result<(), ManifestError> {
-    let path = graph.node(dyndep).path.clone();
+    let path = graph.node_path(dyndep).to_owned();
     let input = disk
         .read(path.to_path().expect("byte paths are valid on Unix"))
         .map_err(|source| ManifestError::DyndepRead {
@@ -984,10 +984,7 @@ mod tests {
     fn node_paths(graph: &Graph, nodes: &[NodeId]) -> Vec<String> {
         nodes
             .iter()
-            .map(|node| {
-                let node = graph.node(*node);
-                String::from_utf8_lossy(node.path.as_bytes()).into_owned()
-            })
+            .map(|node| graph.node_path(*node).to_str_lossy().into_owned())
             .collect()
     }
 

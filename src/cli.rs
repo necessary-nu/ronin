@@ -699,7 +699,7 @@ fn default_target_names(
 ) -> Vec<BString> {
     crate::parse::defaultnodes(parser, graph)
         .into_iter()
-        .map(|node| graph.node(node).path.clone())
+        .map(|node| graph.node_path(node).to_owned())
         .collect()
 }
 
@@ -709,7 +709,7 @@ fn default_target_paths(
 ) -> Vec<BString> {
     crate::parse::defaultnodes(parser, graph)
         .into_iter()
-        .map(|node| graph.node(node).path.clone())
+        .map(|node| graph.node_path(node).to_owned())
         .collect()
 }
 

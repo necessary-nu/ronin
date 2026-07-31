@@ -13,7 +13,7 @@ use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{arena_id, BStr, BString, ByteSlice, IdVec};
 use edge::EdgePartitions;
 use index::NodeIndex;
-pub(crate) use index::{mknode, mknode_bytes, nodeget};
+pub(crate) use index::{mknode, nodeget};
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 pub(crate) use path::nodepath_bytes;
@@ -37,11 +37,24 @@ impl PathStyle {
     }
 }
 
+/// A run of bytes in the graph's path arena.
+///
+/// Interning a path hashes its bytes, probes the index, follows a `NodeId`
+/// into the node arena and compares — four steps that each dereferenced a
+/// separately allocated buffer at an unrelated address. Holding an offset
+/// instead puts every path in one sequential region, which is what those
+/// four steps walk.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PathSpan {
+    offset: u32,
+    len: u32,
+}
+
 // [spec:samurai:def:graph.node]
 pub(crate) struct Node {
-    pub(crate) path: BString,
+    pub(crate) path: PathSpan,
     /// Shell-quoted form, present only when quoting actually changes the path.
-    pub(crate) shellpath: Option<BString>,
+    pub(crate) shellpath: Option<PathSpan>,
     pub(crate) gen: Option<EdgeId>,
     pub(crate) uses: IdVec<EdgeId>,
     pub(crate) validation_uses: IdVec<EdgeId>,
@@ -74,6 +87,8 @@ pub(crate) struct Graph {
     // hardening buys nothing here. Observable graph order comes from the
     // arenas, never index iteration.
     node_by_path: NodeIndex,
+    /// Every node path and shell-quoted path, appended and never moved.
+    paths: Vec<u8>,
     nodes: Vec<Node>,
     edges: Vec<Edge>,
     environments: Vec<Environment>,
@@ -212,11 +227,11 @@ where
 {
     // Borrow the interned path for the syscall; only the error path needs an
     // owned copy, and scans stat every node.
-    let path = &graph.node(node).path;
+    let path = graph.node_path(node);
     let mtime = stat(path.to_path().expect("byte paths are valid on Unix")).map_err(|source| {
         GraphError::Stat {
             node,
-            path: path.clone(),
+            path: path.to_owned(),
             source,
         }
     })?;
@@ -780,13 +795,13 @@ mod tests {
         let quoted = mknode(&mut graph, xasprintf(format_args!("src/a b.c")));
 
         // The common case renders identically in both styles from one buffer.
-        assert!(graph.node(plain).shellpath.is_none());
+        assert_eq!(graph.node_shellpath(plain), graph.node_path(plain));
         assert_eq!(nodepath_bytes(&graph, plain, PathStyle::Raw), b"src/main.c");
         assert_eq!(
             nodepath_bytes(&graph, plain, PathStyle::ShellEscaped),
             b"src/main.c"
         );
-        assert!(graph.node(quoted).shellpath.is_some());
+        assert_ne!(graph.node_shellpath(quoted), graph.node_path(quoted));
         assert_eq!(
             nodepath_bytes(&graph, quoted, PathStyle::ShellEscaped),
             b"'src/a b.c'"
@@ -1011,7 +1026,7 @@ mod tests {
         assert_eq!(roots.len(), 4);
         assert!(roots
             .iter()
-            .all(|node| graph.node(*node).path.as_bytes().starts_with(b"out")));
+            .all(|node| graph.node_path(*node).as_bytes().starts_with(b"out")));
     }
 
     #[test]
@@ -1282,6 +1297,6 @@ mod tests {
         .unwrap();
         assert!(!runtime.node(nodeget(&graph, b"out").unwrap()).dirty());
         assert_eq!(validations.len(), 1);
-        assert_eq!(graph.node(validations[0]).path.as_bytes(), b"valid");
+        assert_eq!(graph.node_path(validations[0]).as_bytes(), b"valid");
     }
 }

@@ -283,7 +283,7 @@ impl Builder<'_> {
         if let Some(exit_code) = failure_code {
             let mut failure = format!("FAILED: [code={exit_code}] ").into_bytes();
             for output in &self.graph.edge(edge).out {
-                failure.extend_from_slice(self.graph.node(*output).path.as_bytes());
+                failure.extend_from_slice(self.graph.node_path(*output).as_bytes());
                 failure.push(b' ');
             }
             failure.push(b'\n');

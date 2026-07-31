@@ -231,9 +231,9 @@ impl Plan {
         while let Some((node, weight, needed_by)) = work.pop() {
             let Some(edge) = graph.node(node).gen else {
                 if runtime.node(node).dirty() {
-                    let path = graph.node(node).path.clone();
-                    let needed_by =
-                        needed_by.map(|needed_by| (needed_by, graph.node(needed_by).path.clone()));
+                    let path = graph.node_path(node).to_owned();
+                    let needed_by = needed_by
+                        .map(|needed_by| (needed_by, graph.node_path(needed_by).to_owned()));
                     return Err(BuildError::MissingInput {
                         node,
                         path,
@@ -789,7 +789,7 @@ impl<'a> Builder<'a> {
                 dyndep.filter(|dyndep| self.runtime.node(*dyndep).dyndep_pending())
             {
                 loaded_files.resize(loaded_files.len().max(dyndep.index() + 1), false);
-                let path = self.graph.node(dyndep).path.clone();
+                let path = self.graph.node_path(dyndep).to_owned();
                 if self
                     .disk
                     .exists(path.to_path().expect("byte paths are valid on Unix"))
@@ -845,12 +845,11 @@ impl<'a> Builder<'a> {
                 .max_by_key(|input| self.runtime.node(**input).mtime())
                 .copied();
             for output in &self.graph.edge(edge).out {
-                let output_node = self.graph.node(*output);
                 let output_state = self.runtime.node(*output);
                 if !output_state.dirty() {
                     continue;
                 }
-                let path = output_node.path.to_str_lossy();
+                let path = self.graph.node_path(*output).to_str_lossy();
                 let message = if output_state.mtime().is_missing() {
                     format!("output {path} doesn't exist")
                 } else if self.runtime.edge(edge).command_dirty() {
@@ -862,7 +861,7 @@ impl<'a> Builder<'a> {
                 {
                     format!(
                         "output {path} older than most recent input {} ({} vs {})",
-                        self.graph.node(input).path.to_str_lossy(),
+                        self.graph.node_path(input).to_str_lossy(),
                         output_state.mtime().raw(),
                         self.runtime.node(input).mtime().raw()
                     )
@@ -955,8 +954,7 @@ impl<'a> Builder<'a> {
             .iter()
             .map(|node| {
                 graph
-                    .node(*node)
-                    .path
+                    .node_path(*node)
                     .to_path()
                     .expect("byte paths are valid on Unix")
             })
@@ -996,7 +994,7 @@ impl<'a> Builder<'a> {
             .collect::<Vec<_>>();
 
         for output in &self.graph.edge(edge).out {
-            let path = self.graph.node(*output).path.clone();
+            let path = self.graph.node_path(*output).to_owned();
             self.disk
                 .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
                 .map_err(|source| {
@@ -1185,7 +1183,7 @@ impl<'a> Builder<'a> {
                 if status_interrupted(status) {
                     let disk = self.disk.clone();
                     for (output, old_mtime) in self.graph.edge(edge).out.iter().zip(&old_mtimes) {
-                        let path = self.graph.node(*output).path.clone();
+                        let path = self.graph.node_path(*output).to_owned();
                         if disk
                             .stat(path.to_path().expect("byte paths are valid on Unix"))
                             .ok()
@@ -1221,7 +1219,7 @@ impl<'a> Builder<'a> {
             (!command.rspfile_content.is_empty()).then_some(command.rspfile_content.as_bstr()),
         );
         for output in output_ids {
-            let path = self.graph.node(output).path.clone();
+            let path = self.graph.node_path(output).to_owned();
             let mtime = disk
                 .stat(path.to_path().expect("byte paths are valid on Unix"))
                 .map_err(|source| {

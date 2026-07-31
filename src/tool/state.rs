@@ -31,14 +31,14 @@ pub(crate) fn deps_in(
     };
     let mut output = String::new();
     for node in nodes {
-        let path = &graph.node(node).path;
+        let path = graph.node_path(node);
         let Some(entry) = depsentry(log, node) else {
             let _ = writeln!(output, "{path}: deps not found");
             continue;
         };
         let mtime = disk
             .stat(path.to_path().expect("byte paths are valid on Unix"))
-            .map_err(|source| ToolError::io(ToolOperation::Stat, Some(path.clone()), source))?;
+            .map_err(|source| ToolError::io(ToolOperation::Stat, Some(path.to_owned()), source))?;
         let state = if mtime == 0 || mtime > entry.mtime {
             "STALE"
         } else {
@@ -51,7 +51,7 @@ pub(crate) fn deps_in(
             entry.mtime
         );
         for dependency in &entry.deps.nodes {
-            let _ = writeln!(output, "    {}", graph.node(*dependency).path);
+            let _ = writeln!(output, "    {}", graph.node_path(*dependency));
         }
         output.push('\n');
     }
