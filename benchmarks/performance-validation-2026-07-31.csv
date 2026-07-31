@@ -1,5 +1,5 @@
 # workload_version=1
-# ronin_revision=63005794748edd2a3740e4b4429582c4d28cecad
+# ronin_revision=a66025010e82054fa6857960198c0c3a964b63b2
 # ronin_dirty=false
 # ninja_revision=b51a1e37c2fb89bbefa600bd155e1ce13983f09d
 # build_profile=release
@@ -11,27 +11,27 @@
 # validation_thresholds=Ronin/Ninja runtime ratio <= 120% of recorded v1 ratio and Ronin runtime <= 120% of pinned Ninja; peak RSS <= 200% of pinned Ninja
 # sizes=command:4000,deep:2000,wide:4000,canonical:4000,deps:300,clean:2000,large:100000,scheduler:128
 tool,tool_version,workload,median_ms,min_ms,max_ms,median_peak_rss_kib,min_peak_rss_kib,max_peak_rss_kib
-ronin,1.9.0,manifest-command-evaluation,7.538,6.841,8.656,5528,5388,5628
-ninja,1.14.0.git,manifest-command-evaluation,45.470,42.444,46.437,7924,7864,8168
-samurai-c,1.9.0,manifest-command-evaluation,9.369,9.089,10.845,5156,5072,5172
-ronin,1.9.0,deep-graph-evaluation,7.091,6.808,7.551,4388,4356,4472
-ninja,1.14.0.git,deep-graph-evaluation,19.456,17.809,19.549,6192,6180,6304
-samurai-c,1.9.0,deep-graph-evaluation,5.512,4.984,6.009,2760,2656,2852
-ronin,1.9.0,wide-noop-build,11.247,9.981,11.982,5420,5336,5652
-ninja,1.14.0.git,wide-noop-build,30.217,29.719,32.571,6000,5980,6264
-samurai-c,1.9.0,wide-noop-build,9.659,9.652,10.594,3716,3612,3756
-ronin,1.9.0,path-canonicalization,4.917,4.664,5.720,4016,3908,4136
-ninja,1.14.0.git,path-canonicalization,17.575,16.626,18.855,5784,5760,6060
-samurai-c,1.9.0,path-canonicalization,5.992,5.666,6.607,3380,3336,3452
-ronin,1.9.0,dependency-log-load,3.247,3.022,3.335,3412,3108,3464
-ninja,1.14.0.git,dependency-log-load,7.316,6.848,10.378,4620,4604,4936
-samurai-c,1.9.0,dependency-log-load,3.205,2.847,3.533,2132,2032,2180
-ronin,1.9.0,clean-tree-noop,8.668,7.572,9.503,5232,5128,5380
-ninja,1.14.0.git,clean-tree-noop,31.081,29.463,35.473,5988,5916,6184
-samurai-c,1.9.0,clean-tree-noop,10.317,9.592,11.538,3272,3156,3312
-ronin,1.9.0,large-manifest-parse,206.499,193.175,226.119,89380,89348,89420
-ninja,1.14.0.git,large-manifest-parse,1002.651,983.492,1023.767,100568,100568,100572
-samurai-c,1.9.0,large-manifest-parse,312.894,296.381,331.610,100764,100720,100776
-ronin,1.9.0,scheduler-barrier,40.291,39.591,41.004,3072,3048,3128
-ninja,1.14.0.git,scheduler-barrier,43.465,42.797,44.473,4416,4412,4680
-samurai-c,1.9.0,scheduler-barrier,36.131,34.956,36.698,1940,1932,2000
+ronin,1.9.0,manifest-command-evaluation,7.117,6.926,7.439,5592,5380,5624
+ninja,1.14.0.git,manifest-command-evaluation,42.076,41.295,46.953,8000,7932,8232
+samurai-c,1.9.0,manifest-command-evaluation,9.077,8.900,11.188,5152,5148,5212
+ronin,1.9.0,deep-graph-evaluation,5.396,5.166,5.807,4144,4024,4252
+ninja,1.14.0.git,deep-graph-evaluation,17.751,16.844,24.148,6200,6060,6312
+samurai-c,1.9.0,deep-graph-evaluation,5.020,4.544,5.120,2756,2644,2768
+ronin,1.9.0,wide-noop-build,9.885,8.845,15.720,5320,5140,5360
+ninja,1.14.0.git,wide-noop-build,30.093,28.958,33.081,6132,6004,6320
+samurai-c,1.9.0,wide-noop-build,9.422,8.953,11.476,3736,3716,3748
+ronin,1.9.0,path-canonicalization,4.949,4.539,5.798,3932,3852,4120
+ninja,1.14.0.git,path-canonicalization,17.979,16.883,21.388,5788,5768,6136
+samurai-c,1.9.0,path-canonicalization,6.178,5.468,6.654,3452,3344,3472
+ronin,1.9.0,dependency-log-load,3.222,2.828,3.447,3296,3208,3400
+ninja,1.14.0.git,dependency-log-load,7.389,7.026,7.465,4632,4616,4864
+samurai-c,1.9.0,dependency-log-load,2.753,2.611,2.835,2112,2016,2168
+ronin,1.9.0,clean-tree-noop,7.445,7.127,8.205,5212,5092,5300
+ninja,1.14.0.git,clean-tree-noop,29.082,28.276,29.993,6072,5928,6320
+samurai-c,1.9.0,clean-tree-noop,9.381,9.137,9.667,3244,3160,3316
+ronin,1.9.0,large-manifest-parse,199.662,193.829,203.630,89372,89144,89520
+ninja,1.14.0.git,large-manifest-parse,1018.200,1007.005,1074.724,100580,100576,100596
+samurai-c,1.9.0,large-manifest-parse,309.694,303.523,312.639,100780,100736,100784
+ronin,1.9.0,scheduler-barrier,38.069,37.996,41.443,3084,2988,3148
+ninja,1.14.0.git,scheduler-barrier,43.221,42.613,43.777,4496,4420,4820
+samurai-c,1.9.0,scheduler-barrier,35.786,34.355,36.865,1908,1848,2032
