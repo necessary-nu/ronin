@@ -101,7 +101,8 @@ assertions (
     {id ronin-plain-path-fast-path, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T11:26:50.580472655Z}
     {id ronin-node-locality-at-scale, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T12:31:38.434727113Z}
     {id ronin-path-byte-arena, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T12:53:40.114685347Z}
-    {id ronin-large-manifest-fixture, kind @doing, author "brendan@bbqsrc.net", at 2026-07-31T13:18:51.347264246Z}
+    {id ronin-large-manifest-fixture, kind @complete, author "brendan@bbqsrc.net", at 2026-07-31T13:25:15.273766593Z}
+    {id ronin-stat-batch-cpu-cost, kind @doing, author "brendan@bbqsrc.net", at 2026-07-31T13:25:17.498392298Z}
 )
 
 impl_evidence (

@@ -1481,12 +1481,27 @@ children (
                                 kind @note
                                 text "The batched stat landed in a35c91d buys real wall time but at a CPU cost that was never measured, because wall clock was the only instrument used and it hides this entirely. On the 200,000-edge fixture perf reports the current binary at 3,091 ms task-clock across 2.858 CPUs, against ronin-prestat at 1,395 ms across 0.990 — so 23% of wall time (1.409 s to 1.082 s) costs 2.2 times the CPU and 2.0 times the cycles (11.08 G against 5.46 G), with instructions per cycle collapsing from 0.98 to 0.44. Nothing about that is visible in the wall-clock rounds the node was accepted on. The IPC collapse points at contention rather than useful work: 32 threads issuing failing path lookups against the same directory descriptor serialize in the kernel on shared dentry and inode state, so past some width the threads mostly wait for each other. This matters beyond tidiness. A build tool spends its cores on compilation, and under -j the prefetch is taking cores the user wants elsewhere; on a shared or containerised machine it is simply rude. Proposed approach: measure the width curve rather than guess it. PER_THREAD is currently 512, which on 400,001 paths yields the full 32 threads; sweep it so that width lands at 2, 4, 8, 16 and 32 and record both wall time and task-clock at each, then choose the knee rather than the minimum wall time. Expect the knee to be low, since the first measurement of this change used all 32 cores and scored −15 to −17 percent while 7 threads scored −23 to −27 percent — more threads were already worse, and the curve was never followed further down. Add task-clock to whatever the harness records for this workload, because a change that halves wall time while quadrupling CPU should not be able to pass unremarked again."
                             }
+
+                            {
+                                at 2026-07-31T13:25:17.498392298Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-31T13:29:56.429452272Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Fan-out capped at four threads, chosen from a measured width curve rather than an argument. Six binaries were built with PER_THREAD set so the 4,001-path clean-tree scan splits across 1, 2, 4, 8, 16 and 32 threads, and each was measured for wall time (minimum of 20) and task-clock (perf, five runs). Wall: 10.123, 8.238, 7.101, 6.949, 7.175, 7.809 ms. Task-clock: 10.50, 10.90, 11.07, 12.18, 14.03, 17.51 ms. CPUs utilised: 0.900, 1.173, 1.407, 1.591, 1.738, 1.888. The curve has a real minimum and then reverses — 32 threads is both slower than 8 and 58% more CPU — which is the kernel serializing on shared directory and dentry state faster than extra threads can help. Against serial, width 4 is −29.8% wall for +5.4% CPU while width 8 is −31.4% for +16.0%: four takes 95% of the available win for roughly a fifth of the cost. Four is therefore the knee, and the right trade for a tool whose cores belong to the compiler it is about to run. The shipped configuration was width 7, since PER_THREAD of 512 over 4,001 paths yields seven; adding a MAX_THREADS cap of 4 leaves PER_THREAD to keep small graphs serial and bounds the top end. Measured after the change: clone3 calls drop from 7 to 4, CPUs utilised from 1.888 to 1.406, and wall rises 1.5 to 2.3 percent across three interleaved rounds — 7.075 to 7.286 ms against C samurai's 9.26 to 9.34, so still well ahead. One honest caveat: the post-change task-clock spot check read 12.32 ms with a reported ±5.21% spread, which does not on its own confirm the sweep's 11.07 for width 4; the sweep is the better evidence, having measured every width in one sitting. A second caveat worth recording for whoever revisits: the curve was measured at 4,001 paths on a 32-core host, and the cap may want re-deriving at much larger path counts, where per-thread work is far greater relative to spawn cost even though the kernel contention that causes the reversal is unlikely to change. 368 tests pass, clippy clean, conformance green."
+                            }
                         )
                     }
 
                     {
                         id ronin-large-manifest-fixture
                         title "Benchmark a manifest larger than four thousand statements"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T11:28:14.769352618Z
@@ -1514,6 +1529,13 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @note
                                 text "Validation sweep regenerated on the current toolchain and covering all eight workloads; the gate test now checks the artifact for every one, and scripts/check-performance.sh exits 0. Regeneration was necessary for two independent reasons, not one: the artifact predated large-manifest-parse, and it also predated the stable toolchain moving from 1.92.0 to 1.97.1 mid-session, which makes every number recorded before it incomparable regardless of workload. The refreshed file records rustc 1.97.1 and ronin_dirty=false. Ronin against C samurai across the catalog, medians in milliseconds: command evaluation 7.550 against 9.695, deep graph 7.008 against 5.232, wide no-op 8.837 against 9.084, path canonicalization 4.940 against 5.595, dependency-log load 2.870 against 2.630, clean-tree no-op 9.026 against 9.777, large-manifest parse 305.351 against 323.829, scheduler barrier 39.779 against 35.903. Ronin is ahead on five of eight including the two that this programme added because they were unrepresented — the up-to-date tree and the large manifest — and behind on deep-graph evaluation, dependency-log load and the scheduler barrier. Those three are now the honest remaining gaps and none has been investigated with the cycle-and-miss instrumentation that proved decisive for the size question; the deep-graph shape in particular is a 2,000-edge chain, which is a pointer-chasing pattern quite unlike anything else in the catalog."
+                            }
+
+                            {
+                                at 2026-07-31T13:25:15.273766593Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
