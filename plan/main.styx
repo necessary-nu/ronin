@@ -1468,12 +1468,27 @@ children (
                                 kind @note
                                 text "A real defect, found while investigating something else. On a 200,000-edge manifest whose sources are absent, ronin issues 400,001 newfstatat calls — every one returning ENOENT — before reporting that the first source is missing; samurai issues 3 and reports the same error. Both then exit. It predates the batched-stat work: ronin-prestat, the binary from before that change, makes the identical 400,001 calls, so this is not something the prefetch introduced. The cause is ordering. Builder::add_target runs load_depfiles_for first, which walks the whole reachable graph and stats every generator-less node at build.rs:670 to set its dirty bit, and only afterwards does Plan::add_node discover that one of those nodes is both dirty and ungenerated and raise BuildError::MissingInput. Samurai instead stats as it plans and aborts on the first failure. Note carefully what this does and does not cost: on a build that succeeds every one of those stats is needed anyway, so there is no waste in the common case. The cost is confined to the error path, where a user with one missing source waits for a full stat sweep — measured at roughly 400 ms of the 1.08 s run on this fixture — before being told. Proposed approach: load_depfiles_for already computes dirty as mtime().is_missing() for exactly these nodes at build.rs:672, so the detection can happen there rather than a traversal later. The obstacle is not detection but diagnostics. BuildError::MissingInput carries a needed_by field that names the consuming node, which load_depfiles_for's traversal does not track, and the message text and the order in which competing errors surface are part of the Ninja compatibility surface that the pinned conformance suite compares. So the work is: thread the consumer through that traversal, then verify against the oracle that the first-reported missing input is the same node as before. Measure the error path specifically, since no existing workload exercises it, and do not expect any change on a successful build."
                             }
+
+                            {
+                                at 2026-07-31T13:30:29.104033608Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-31T13:31:58.217610972Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Rejected on measurement, and the node's premise was an artifact of the same unrepresentative fixture that has misled twice today. The claim was that ronin issues 400,001 stat calls where samurai issues 3 before reporting the same missing input, making a broken build pay a full stat sweep before it is told. That observation came from a 200,000-edge fixture in which no source existed at all, so samurai bailed on the very first node it examined. Measured instead on a realistic broken build — 25,000 edges with every source present except one, which is what a typo or a deleted file actually looks like — both tools issue exactly 50,001 stats and ronin is faster: 89.9 ms against samurai's 119.3, a minimum of nine with the cache warm. There is nothing to fix. Samurai has no early-exit advantage in general; it has one only when the missing input happens to be among the first nodes its walk reaches, which requires most of the tree to be absent. The asymmetry is therefore confined to the case where a large fraction of sources are missing at once — a fresh checkout with unpopulated submodules, say — where ronin took 1.082 s against samurai's 0.545 s on the 200,000-edge fixture. Even there the error reported is correct and the user's next action is to fix the tree, so the value is a faster failure on an already-failing build. Against that: the fix would have to abort load_depfiles_for's traversal at the first dirty generator-less node, and which node that is depends on the traversal order, which differs from Plan::add_node's; reporting a different missing input than before would change a diagnostic the pinned conformance oracle compares. Real compatibility risk for a bounded win in a rare case that is already correct. Left as it is. The methodological point is the one worth keeping: this node was written confidently from a single fixture whose shape determined the answer, and the correction cost one measurement."
+                            }
                         )
                     }
 
                     {
                         id ronin-stat-batch-cpu-cost
                         title "Spend fewer cores for the batched stat's wall-clock win"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T11:27:58.956212616Z
@@ -1494,6 +1509,13 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @decision
                                 text "Fan-out capped at four threads, chosen from a measured width curve rather than an argument. Six binaries were built with PER_THREAD set so the 4,001-path clean-tree scan splits across 1, 2, 4, 8, 16 and 32 threads, and each was measured for wall time (minimum of 20) and task-clock (perf, five runs). Wall: 10.123, 8.238, 7.101, 6.949, 7.175, 7.809 ms. Task-clock: 10.50, 10.90, 11.07, 12.18, 14.03, 17.51 ms. CPUs utilised: 0.900, 1.173, 1.407, 1.591, 1.738, 1.888. The curve has a real minimum and then reverses — 32 threads is both slower than 8 and 58% more CPU — which is the kernel serializing on shared directory and dentry state faster than extra threads can help. Against serial, width 4 is −29.8% wall for +5.4% CPU while width 8 is −31.4% for +16.0%: four takes 95% of the available win for roughly a fifth of the cost. Four is therefore the knee, and the right trade for a tool whose cores belong to the compiler it is about to run. The shipped configuration was width 7, since PER_THREAD of 512 over 4,001 paths yields seven; adding a MAX_THREADS cap of 4 leaves PER_THREAD to keep small graphs serial and bounds the top end. Measured after the change: clone3 calls drop from 7 to 4, CPUs utilised from 1.888 to 1.406, and wall rises 1.5 to 2.3 percent across three interleaved rounds — 7.075 to 7.286 ms against C samurai's 9.26 to 9.34, so still well ahead. One honest caveat: the post-change task-clock spot check read 12.32 ms with a reported ±5.21% spread, which does not on its own confirm the sweep's 11.07 for width 4; the sweep is the better evidence, having measured every width in one sitting. A second caveat worth recording for whoever revisits: the curve was measured at 4,001 paths on a 32-core host, and the cap may want re-deriving at much larger path counts, where per-thread work is far greater relative to spawn cost even though the kernel contention that causes the reversal is unlikely to change. 368 tests pass, clippy clean, conformance green."
+                            }
+
+                            {
+                                at 2026-07-31T13:30:27.157828828Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
