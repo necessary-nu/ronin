@@ -1683,6 +1683,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-stat-directory-contention
+                        title "Split stat chunks on directory boundaries"
+                        log (
+                            {
+                                at 2026-07-31T14:21:43.302893344Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-31T14:22:10.180376639Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done. This is the first of the three remaining workloads where ronin trailed C samurai, and the cause turned out to be a regression this programme introduced two nodes ago rather than anything inherited from the port.\n\ndeep-graph-evaluation is a chain of phony edges — `build node/i: phony node/i-1` — so every path lives in one directory and none of them exists on disk. Profiled at 50,000 links, ronin burned 967,749,907 cycles against samurai's 473,366,676 while executing *fewer* instructions, 563,005,026 against 584,084,925. Instructions per cycle 0.58 against 1.23. Cache misses were only 84% higher and branch misses were identical to three digits, so neither accounts for a doubling of cycles. The symbol profile did: 45.53% of the run in `__pv_queued_spin_lock_slowpath`, plus another 9.5% across `__raw_callee_save___pv_queued_spin_unlock` and `_raw_spin_lock`. Half the run was kernel spinlock contention, and the contending threads were ours — the batched stat fan-out from ronin-stat-batch-cpu-cost.\n\nThe mechanism is negative dentry instantiation. A lookup that finds a file can be served from the dentry cache under RCU with no exclusive lock. A lookup that finds nothing has to record that absence in the parent directory, which takes that directory's lock. Four threads looking up absent names in the *same* directory therefore serialize on one lock and pay the contention on top. Isolated cleanly by taking the identical 50,000-path single-directory fixture and touching every file so the paths exist: with the files present, fanning out to four costs 148.49 ms of task-clock against 108.85 serial, +36%, the ordinary price of parallelism; with the same paths absent it costs 270.14 against 115.07, +135%, and cycles go 1,052,470,227 against 451,937,109. Same paths, same directory, same thread count — presence alone is worth a factor of two.\n\nThat case is not exotic. Every output of a build that has not run yet is an absent path, so this is the first build of any tree, and the clean-tree fixture that motivated the fan-out never showed it because its files all exist by construction. Both fixtures were needed to see the shape; either alone gives the wrong answer, which is the same lesson the clean-tree node recorded from the other direction.\n\nThe fix keeps the fan-out and removes the sharing: chunk boundaries now slide forward from the ideal split to the next point where the parent directory changes, so one directory is one worker's business. Cost is one pass comparing adjacent parents as raw `OsStr` bytes rather than as `Path` components, which is nothing against a syscall each. A graph spread over many directories still fans out; a graph confined to one produces no split at all and runs on the calling thread, which is where it belongs. The remainder chunk deliberately runs inline rather than spawning, so the single-directory case starts no threads whatsoever.\n\nMeasured at 50,000 links: task-clock 269.94 to 111.01 ms against a serial build's 111.28 and samurai's 114.01 — contention gone, not reduced, and now marginally ahead of the C reference on CPU. Wall median 124.162 to 118.932 against samurai's 113.606. At the suite's 2,000 links, wall median 6.706 to 5.992 against samurai's 5.601, so the gap closes from 1.20x to 1.07x. Crucially the clean-tree win is untouched, because alternating `out/` and `src/` paths mean a directory change at nearly every index and the split still lands where it used to: at 20,000 edges, 57.793 to 57.502 ms median against samurai's 91.472, and at the suite's 2,000, 7.712 to 7.451 against 9.550.\n\nWhat remains on this workload is roughly 7% at suite size and 5% at 50,000, which at 2.2 microseconds per stat is the syscall itself rather than anything above it. 370 tests pass including a new one asserting a chunk never splits a directory, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
