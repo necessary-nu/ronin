@@ -188,12 +188,15 @@ impl RealDiskInterface {
         const MAX_THREADS: usize = 4;
 
         debug_assert_eq!(paths.len(), out.len());
-        let cores = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-        let threads = cores.min(paths.len() / PER_THREAD).min(MAX_THREADS);
+        // Decide from the work before asking about the machine: `cores` is not
+        // free, and a scan too small to split does not care how wide the host
+        // is.
+        let threads = (paths.len() / PER_THREAD).min(MAX_THREADS);
         if threads < 2 {
             self.stat_into(paths, out);
             return;
         }
+        let threads = threads.min(cores());
         // Open the shared directory descriptor before fanning out, so the
         // workers contend on a `OnceLock` that is already initialized.
         let _ = self.directory_fd();
@@ -299,13 +302,25 @@ impl RealDiskInterface {
     }
 }
 
+/// How many threads this process may usefully run, resolved once.
+///
+/// The standard library does not cache this. On Linux each call re-reads
+/// `/proc/self/cgroup` and then walks `cpu.max` up the cgroup hierarchy —
+/// five file opens here, 51 to 101 microseconds measured — which is real money
+/// against a no-op build that finishes in under three milliseconds. The value
+/// cannot change usefully within one run, so read it once and keep it.
+fn cores() -> usize {
+    static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CORES
+        .get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))
+}
+
 // [spec:samurai:def:os.osnproc-fn]
 // [spec:samurai:sem:os.osnproc-fn]
 // [spec:samurai:def:os-posix.osnproc-fn]
 // [spec:samurai:sem:os-posix.osnproc-fn]
 pub(crate) fn osnproc() -> i64 {
-    std::thread::available_parallelism()
-        .map_or(1, |count| i64::try_from(count.get()).unwrap_or(i64::MAX))
+    i64::try_from(cores()).unwrap_or(i64::MAX)
 }
 
 #[cfg(test)]
