@@ -1230,6 +1230,7 @@ children (
                     {
                         id ronin-deps-record-bounds
                         title "Stop encoding conversion failure as an out-of-range index"
+                        sealed true
                         log (
                             {
                                 at 2026-07-30T23:48:28.759141087Z
@@ -1250,6 +1251,21 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @decision
                                 text "Done. The four sites in depsloadlog that wrote usize::try_from(u32).unwrap_or(usize::MAX) — the record size at deps.rs:387, the output identifier at 399, the dependency identifiers at 402 and the trailing expected identifier at 436 — now use .expect(RECORD_FIELD_FITS) against a named constant declared beside MAX_RECORD_SIZE whose doc comment states the invariant: every record field is a u32, usize is at least 32 bits on all supported targets, so widening cannot lose information, while the field's value remains untrusted and is still rejected by the surrounding bounds checks against MAX_RECORD_SIZE and nodes.len(). This preserves behaviour exactly, because the fallback was unreachable on any target the crate builds for, and because usize::MAX was in every case immediately rejected by the same comparison that now never sees it. It also removes a genuine ambiguity: encoding an impossible conversion failure as a huge index made it indistinguishable from a corrupt record whose identifier merely happened to be large. The .expect form matches existing practice in the codebase — graph/index.rs:41 already writes usize::try_from(...).expect(\"mask keeps the index in range\"). Because this touches .ninja_deps recovery, which is part of the Ninja compatibility surface, the pinned conformance suite was run and passed in full: 425 upstream tests across 33 suites, 10 differential CLI and tool cases, and the Ninja to Ronin to Ninja log and deps persistence round trip. 366 unit tests pass, clippy clean, format clean. No measurement taken or needed — this is an expression change on a cold parsing path."
+                            }
+
+                            {
+                                at 2026-07-31T00:01:24.327132473Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
+
+                            {
+                                at 2026-07-31T00:04:01.515726019Z
+                                author "brendan@bbqsrc.net"
+                                kind @errata
+                                text "The form shipped in bf53c0f was wrong and is corrected here. Replacing usize::try_from(u32).unwrap_or(usize::MAX) with .expect(RECORD_FIELD_FITS) against a shared constant traded one awkward idiom for another: RECORD_FIELD_FITS is a &str holding a panic message but reads as a boolean predicate, so expect(RECORD_FIELD_FITS) at the call site conveys nothing about what it is or why it holds, and the explanation of the widening invariant was bolted onto a message literal rather than sitting where the conversion happens. The conversion is a lossless widening on every target this crate supports, so the honest expression is a plain cast: (encoded_size & 0x7fff_ffff) as usize, native_u32(&record[..4]) as usize, and so on at all four sites. Clippy reports zero diagnostics under the crate's nursery and pedantic configuration, so no suppression is required either — the cast_possible_truncation lint does not fire on u32 to usize. The constant and its doc comment are deleted. Note the distinction from the surrounding write path, where u32::try_from(size).expect(\"bounded dependency record\") and its siblings are narrowing conversions whose expect genuinely asserts something checked above; widening does not warrant the same ceremony. One precedence hazard was verified rather than assumed: !native_u32(..) as usize parses as (!x) as usize, since unary ! binds tighter than as, preserving the 32-bit complement the record format requires — confirmed by direct probe (4294967290, not 18446744073709551610). Conformance re-run in full on the corrected code and passed: 425 upstream tests, 10 differential cases, log and deps persistence round trip."
+                                after_done true
                             }
                         )
                     }

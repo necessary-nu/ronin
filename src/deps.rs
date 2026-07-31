@@ -348,12 +348,6 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
     const SIGNATURE: &[u8] = b"# ninjadeps\n";
     const HEADER_LEN: usize = SIGNATURE.len() + 4;
     const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
-    /// Every record field is a `u32`, and `usize` is at least 32 bits on all
-    /// targets this crate supports, so widening one cannot lose information.
-    /// A field's *value* is still untrusted: the bounds checks below reject
-    /// out-of-range sizes and node identifiers, which is where corrupt logs
-    /// are caught.
-    const RECORD_FIELD_FITS: &str = "a deps-log record field fits in usize";
 
     let content = match fs::read(path) {
         Ok(content) => content,
@@ -390,7 +384,7 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
         let encoded_size = native_u32(&content[offset..offset + 4]);
         offset += 4;
         let is_deps = encoded_size & 0x8000_0000 != 0;
-        let size = usize::try_from(encoded_size & 0x7fff_ffff).expect(RECORD_FIELD_FITS);
+        let size = (encoded_size & 0x7fff_ffff) as usize;
         if size > MAX_RECORD_SIZE || content.len() - offset < size {
             offset = record_offset;
             recovery = true;
@@ -402,10 +396,10 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
             if size < 12 || !size.is_multiple_of(4) {
                 false
             } else {
-                let output_id = usize::try_from(native_u32(&record[..4])).expect(RECORD_FIELD_FITS);
+                let output_id = native_u32(&record[..4]) as usize;
                 let dependency_ids = record[12..]
                     .chunks_exact(4)
-                    .map(|bytes| usize::try_from(native_u32(bytes)).expect(RECORD_FIELD_FITS));
+                    .map(|bytes| native_u32(bytes) as usize);
                 if output_id >= nodes.len() || dependency_ids.clone().any(|id| id >= nodes.len()) {
                     false
                 } else {
@@ -438,8 +432,7 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
             if path_size == 0 {
                 false
             } else {
-                let expected_id =
-                    usize::try_from(!native_u32(&record[size - 4..])).expect(RECORD_FIELD_FITS);
+                let expected_id = !native_u32(&record[size - 4..]) as usize;
                 let node = node_from_path(graph, &record[..path_size]);
                 match i32::try_from(expected_id) {
                     Ok(_) if expected_id == nodes.len() && seen_nodes.insert(node) => {
