@@ -25,31 +25,38 @@ use super::{shell_escape_path, Graph, Node, NodeId};
 use crate::htab::rapidhashv1;
 use crate::util::{ByteSlice, IdVec};
 
-/// One table slot: an identifier, and a fingerprint of its path's hash.
+/// One table slot: an identifier, and the low half of its path's hash.
 ///
-/// The fingerprint is what keeps a probe run local. Without it, rejecting a
-/// slot that merely collided costs two dependent random reads before the
-/// comparison can even begin — into `nodes` for the span, then into `paths`
-/// for the bytes — and at a three-quarters load factor most probe steps are
-/// exactly that rejection. With it, "not this one" is answered from the slot
-/// array alone, so the run reads contiguous slots and touches the graph once:
-/// when it has actually found the path.
+/// Keeping the hash beside the identifier is what keeps a probe run local.
+/// Without it, rejecting a slot that merely collided costs two dependent
+/// random reads before the comparison can even begin — into `nodes` for the
+/// span, then into `paths` for the bytes — and at a three-quarters load factor
+/// most probe steps are exactly that rejection. With it, "not this one" is
+/// answered from the slot array alone, so the run reads contiguous slots and
+/// touches the graph once: when it has actually found the path.
+///
+/// The low half is the half worth keeping, because the slot index is drawn
+/// from it. A stored high half would filter marginally better but would leave
+/// [`NodeIndex::grow`] unable to place an entry without hashing its path
+/// again, and rehashing is where this table spent most of its misses: the
+/// doubling series rehashes about twice as many entries as the table finally
+/// holds, each one a random read into `nodes`, a random read into `paths`, and
+/// a hash of the bytes. Storing the bits the index needs turns that into a
+/// mask of a value already in cache. What filtering the shared bits cost is
+/// small — the index consumes the low `log2(slots)` of the thirty-two, and the
+/// remainder still rejects all but one collision in several thousand.
 #[derive(Clone, Copy, Default)]
 struct Slot {
     node: Option<NodeId>,
-    fingerprint: u32,
+    hash: u32,
 }
 
-/// Bits of the hash the slot index does not already use.
-///
-/// The index takes the low bits, so a fingerprint drawn from them would agree
-/// on every slot in a probe run and filter nothing.
 #[allow(
     clippy::cast_possible_truncation,
-    reason = "a fingerprint is deliberately a lossy digest of the high half"
+    reason = "the low half is deliberately all a slot keeps"
 )]
-const fn fingerprint(hash: u64) -> u32 {
-    (hash >> 32) as u32
+const fn low_half(hash: u64) -> u32 {
+    hash as u32
 }
 
 #[derive(Default)]
@@ -63,14 +70,11 @@ impl NodeIndex {
 
     /// Locate `path`'s slot, which holds either its node or the vacancy where
     /// it belongs. `slots` is always a non-empty power of two here.
-    fn probe(slots: &[Slot], paths: &[u8], nodes: &[Node], path: &[u8], hash: u64) -> usize {
+    fn probe(slots: &[Slot], paths: &[u8], nodes: &[Node], path: &[u8], hash: u32) -> usize {
         let mask = slots.len() - 1;
-        let fingerprint = fingerprint(hash);
-        let mut index = usize::try_from(hash & mask as u64).expect("mask keeps the index in range");
+        let mut index = hash as usize & mask;
         while let Some(candidate) = slots[index].node {
-            if slots[index].fingerprint == fingerprint
-                && node_bytes(paths, nodes, candidate) == path
-            {
+            if slots[index].hash == hash && node_bytes(paths, nodes, candidate) == path {
                 break;
             }
             index = (index + 1) & mask;
@@ -82,38 +86,50 @@ impl NodeIndex {
         if self.slots.is_empty() {
             return None;
         }
-        self.slots[Self::probe(&self.slots, paths, nodes, path, rapidhashv1(path))].node
+        let hash = low_half(rapidhashv1(path));
+        self.slots[Self::probe(&self.slots, paths, nodes, path, hash)].node
     }
 
     /// Record `node`, whose path must already be stored in the arena.
     pub(super) fn insert(&mut self, paths: &[u8], nodes: &[Node], node: NodeId) {
         // Grow past a three-quarters load factor to keep probe runs short.
         if (self.occupied + 1) * 4 > self.slots.len() * 3 {
-            self.grow(paths, nodes);
+            self.grow();
         }
         let path = node_bytes(paths, nodes, node);
-        let hash = rapidhashv1(path);
+        let hash = low_half(rapidhashv1(path));
         let index = Self::probe(&self.slots, paths, nodes, path, hash);
         if self.slots[index].node.is_none() {
             self.occupied += 1;
         }
         self.slots[index] = Slot {
             node: Some(node),
-            fingerprint: fingerprint(hash),
+            hash,
         };
     }
 
-    fn grow(&mut self, paths: &[u8], nodes: &[Node]) {
+    /// Rebuild at twice the size without consulting the graph.
+    ///
+    /// A slot already carries the bits the new index is drawn from, so an
+    /// entry moves by masking a value the loop just read. Placement order does
+    /// not matter: every entry still lands in the first vacancy at or after
+    /// its home slot, which is exactly the invariant linear probing needs.
+    fn grow(&mut self) {
         let capacity = if self.slots.is_empty() {
             Self::INITIAL_SLOTS
         } else {
             self.slots.len() * 2
         };
+        let mask = capacity - 1;
         let previous = std::mem::replace(&mut self.slots, vec![Slot::default(); capacity]);
         for slot in previous {
-            let Some(node) = slot.node else { continue };
-            let path = node_bytes(paths, nodes, node);
-            let index = Self::probe(&self.slots, paths, nodes, path, rapidhashv1(path));
+            if slot.node.is_none() {
+                continue;
+            }
+            let mut index = slot.hash as usize & mask;
+            while self.slots[index].node.is_some() {
+                index = (index + 1) & mask;
+            }
             self.slots[index] = slot;
         }
     }
