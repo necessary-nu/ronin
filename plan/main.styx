@@ -1537,6 +1537,7 @@ children (
                         id ronin-path-byte-arena
                         title "Store every node path in one contiguous arena"
                         priority 0
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T12:32:14.357892466Z
@@ -1550,6 +1551,13 @@ children (
                                 author "brendan@bbqsrc.net"
                                 kind @decision
                                 text "Implemented and kept. Node::path and Node::shellpath are now PathSpan, a u32 offset and length into Graph::paths, a single append-only byte arena; Graph::node_path and node_shellpath resolve them, NodeIndex probes compare against arena bytes, and mknode_bytes appends directly so interning a new node allocates nothing at all rather than building a BString per path. node_shellpath now returns the plain path when quoting changes nothing, which removed the Option from every caller. Measured at 100,000 statements with both binaries built on the same compiler: cycles 1,350,421,418 to 1,318,211,555 (−2.4%), cache misses 8,124,375 to 7,303,211 (−10.1%), dTLB load misses 1,740,942 to 1,591,786 (−8.6%), instructions −4.8%. Wall clock, interleaved minimum-of-15 over four rounds, −14.4, −13.3, −5.8 and −13.9 percent, and against C samurai 0.91x, 0.96x, 0.96x and 0.90x — so at 100,000 edges ronin is now faster than the C reference, where the pre-arena binary sat at roughly parity. The wall gain exceeds what the counters alone predict and the host was not fully quiet (load 5 to 8), so treat 12% as the honest figure and the counters as the reliable direction. The prediction was wrong in size and the reason is worth keeping. This node was justified on the finding that four functions carry 80% of cache and TLB misses, and the expectation was that making their storage contiguous would remove most of that; it removed a tenth. Contiguous storage is not the same as local access. Interning probes in hash order, which is random with respect to arena order, so after the change the hash still reads a scattered offset, the probe still walks a random slot chain, and nodes is still indexed randomly — the arena removed one pointer indirection per path and the per-node allocation, but left the access pattern exactly as random as it was over a working set that still exceeds cache. Closing the remaining gap to samurai's 4.26M misses and 0.72M TLB misses is a different problem: it needs the probe sequence itself to become local, not the bytes it lands on. 368 tests pass, clippy clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
+                            }
+
+                            {
+                                at 2026-07-31T12:53:40.114685347Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
