@@ -1328,6 +1328,13 @@ children (
                                 kind @status
                                 text "Todo → Doing (nplan start)"
                             }
+
+                            {
+                                at 2026-07-31T00:40:49.375842744Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done, at 3.34% of the clean-tree workload. parse_decimal and parse_hex read the log's numeric fields straight from bytes, folding with checked_mul, checked_sub and checked_add, and parse_entry now calls them instead of routing four fields through std::str::from_utf8 and str::parse. The two i32 fields go through i32::try_from on the i64 result, which reproduces str::parse::<i32>'s range rejection exactly. Negatives accumulate downwards rather than negating at the end so i64::MIN round-trips, which str::parse also manages and a naive implementation does not. Clean-tree 27,830,485 to 26,902,245 instructions, −3.34%; core::str::converts::from_utf8 is gone from the profile entirely. The named parsers cost 1,022,114 between them, which is more than the 772,813 from_utf8 alone had cost, but the str parsing they replace was previously inlined into BuildLog::open and elsewhere — open itself fell 424,137 to 358,136 — so the net is the measured −928,240. Wide-noop is unchanged at 22,754,715 against 22,752,528, as expected since that fixture has no log to read. The differential test is the substance of this node: byte_parsers_match_the_str_implementations compares both parsers against the standard-library functions they replace across 34 inputs covering valid, signed, zero-padded, boundary, overflowing, empty, sign-only and non-numeric cases, and both agree on every one. That matters because a malformed field returns None, which makes parse_entry skip the line and the reader recover, so a parser that is merely nearly right would silently drop or invent log entries rather than fail. Conformance passed in full: 425 upstream tests, 10 differential cases, log and deps persistence round trip. read_line's per-line copy, 3.72% here, was deliberately left for ronin-mmap-inputs where the buffer question is decided."
+                            }
                         )
                     }
                 )

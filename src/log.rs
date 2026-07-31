@@ -134,26 +134,75 @@ fn open_log(path: &Path) -> io::Result<File> {
         .open(path)
 }
 
+/// Read a signed decimal field straight from its bytes.
+///
+/// A log field is ASCII by construction, so validating it as UTF-8 only to
+/// walk the same bytes again is wasted work. This accepts exactly what
+/// `str::parse::<i64>` accepts, so a corrupt field still yields `None` and the
+/// line is still skipped — `byte_parsers_match_the_str_implementations`
+/// holds that equivalence.
+fn parse_decimal(field: &[u8]) -> Option<i64> {
+    let (negative, digits) = match field.split_first() {
+        Some((b'-', rest)) => (true, rest),
+        Some((b'+', rest)) => (false, rest),
+        _ => (false, field),
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: i64 = 0;
+    for &byte in digits {
+        let digit = byte.wrapping_sub(b'0');
+        if digit > 9 {
+            return None;
+        }
+        let digit = i64::from(digit);
+        value = value.checked_mul(10)?;
+        // Accumulate downwards for negatives so `i64::MIN` round-trips.
+        value = if negative {
+            value.checked_sub(digit)?
+        } else {
+            value.checked_add(digit)?
+        };
+    }
+    Some(value)
+}
+
+/// Read a hexadecimal field straight from its bytes.
+///
+/// Matches `u64::from_str_radix(.., 16)`, which accepts a leading `+` and
+/// rejects a leading `-` because the target is unsigned.
+fn parse_hex(field: &[u8]) -> Option<u64> {
+    let digits = match field.split_first() {
+        Some((b'+', rest)) => rest,
+        _ => field,
+    };
+    if digits.is_empty() {
+        return None;
+    }
+    let mut value: u64 = 0;
+    for &byte in digits {
+        let digit = match byte {
+            b'0'..=b'9' => byte - b'0',
+            b'a'..=b'f' => byte - b'a' + 10,
+            b'A'..=b'F' => byte - b'A' + 10,
+            _ => return None,
+        };
+        value = value.checked_mul(16)?.checked_add(u64::from(digit))?;
+    }
+    Some(value)
+}
+
 fn parse_entry(line: &[u8]) -> Option<(BString, LogEntry)> {
     if line.len() > MAX_LOG_LINE || line == LOG_HEADER {
         return None;
     }
     let mut rest = line;
-    let start_time = std::str::from_utf8(nextfield(&mut rest)?)
-        .ok()?
-        .parse()
-        .ok()?;
-    let end_time = std::str::from_utf8(nextfield(&mut rest)?)
-        .ok()?
-        .parse()
-        .ok()?;
-    let mtime = std::str::from_utf8(nextfield(&mut rest)?)
-        .ok()?
-        .parse()
-        .ok()?;
+    let start_time = i32::try_from(parse_decimal(nextfield(&mut rest)?)?).ok()?;
+    let end_time = i32::try_from(parse_decimal(nextfield(&mut rest)?)?).ok()?;
+    let mtime = parse_decimal(nextfield(&mut rest)?)?;
     let output = BString::from(nextfield(&mut rest)?);
-    let command_hash =
-        u64::from_str_radix(std::str::from_utf8(nextfield(&mut rest)?).ok()?, 16).ok()?;
+    let command_hash = parse_hex(nextfield(&mut rest)?)?;
     Some((
         output,
         LogEntry {
@@ -360,6 +409,68 @@ mod tests {
     use crate::graph::{mkedge, mknode};
     use crate::util::xasprintf;
     use std::fmt::Write as _;
+
+    /// The byte parsers must agree with the `str` ones they replaced.
+    ///
+    /// A malformed field returns `None`, which makes `parse_entry` skip the
+    /// line and the reader recover — so a parser that is merely *nearly* right
+    /// does not fail loudly, it silently drops or invents log entries. Compare
+    /// against the standard-library implementations directly rather than only
+    /// through the reader.
+    #[test]
+    fn byte_parsers_match_the_str_implementations() {
+        for case in [
+            "0",
+            "1",
+            "-1",
+            "+1",
+            "007",
+            "-0",
+            "2147483647",
+            "-2147483648",
+            "2147483648",
+            "9223372036854775807",
+            "-9223372036854775808",
+            "9223372036854775808",
+            "",
+            "-",
+            "+",
+            "abc",
+            "1a",
+            " 1",
+            "1 ",
+            "1-1",
+        ] {
+            assert_eq!(
+                parse_decimal(case.as_bytes()),
+                case.parse::<i64>().ok(),
+                "decimal {case:?}"
+            );
+        }
+
+        for case in [
+            "0",
+            "ff",
+            "FF",
+            "+ff",
+            "-ff",
+            "ffffffffffffffff",
+            "10000000000000000",
+            "",
+            "+",
+            "-",
+            "g",
+            "0x1",
+            " f",
+            "f ",
+        ] {
+            assert_eq!(
+                parse_hex(case.as_bytes()),
+                u64::from_str_radix(case, 16).ok(),
+                "hex {case:?}"
+            );
+        }
+    }
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
