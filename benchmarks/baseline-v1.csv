@@ -5,3 +5,4 @@ wide-noop-build,19.252,28.703
 path-canonicalization,10.413,16.787
 dependency-log-load,4.704,7.299
 scheduler-barrier,48.075,47.900
+clean-tree-noop,10.870,29.729

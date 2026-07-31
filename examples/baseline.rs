@@ -18,8 +18,8 @@ const MAX_NINJA_RSS_RATIO: f64 = 2.00;
 #[path = "support/workloads.rs"]
 mod workloads;
 use workloads::{
-    CANONICAL_PATHS, COMMAND_EDGES, DEEP_EDGES, DEPENDENCY_EDGES, SCHEDULER_EDGES, WIDE_EDGES,
-    WORKLOAD_VERSION,
+    CANONICAL_PATHS, CLEAN_TREE_EDGES, COMMAND_EDGES, DEEP_EDGES, DEPENDENCY_EDGES,
+    SCHEDULER_EDGES, WIDE_EDGES, WORKLOAD_VERSION,
 };
 
 #[derive(Clone)]
@@ -261,6 +261,24 @@ fn dependency_log(directory: &Path, tool: &Tool) -> Result<Workload, String> {
     })
 }
 
+/// Re-scan a tree that is already up to date.
+///
+/// Every other workload leaves the graph dirty, so this is the only one that
+/// reaches the build-log reader or evaluates a clean edge.
+fn clean_tree(directory: &Path, tool: &Tool) -> Result<Workload, String> {
+    workloads::clean_tree_sources(directory).map_err(|error| error.to_string())?;
+    run_checked(tool, directory, &[])?;
+    if !directory.join(".ninja_log").is_file() {
+        return Err(format!("{} did not create .ninja_log", tool.name));
+    }
+    Ok(Workload {
+        name: "clean-tree-noop",
+        directory: directory.to_owned(),
+        arguments: Vec::new(),
+        reset: Reset::None,
+    })
+}
+
 fn scheduler(directory: &Path) -> io::Result<Workload> {
     workloads::scheduler(directory)?;
     Ok(Workload {
@@ -281,6 +299,7 @@ fn workload_catalog(root: &Path, tool: &Tool) -> Result<Vec<Workload>, String> {
         path_canonicalization(&tool_root.join("canonicalization"))
             .map_err(|error| error.to_string())?,
         dependency_log(&tool_root.join("dependency-log"), tool)?,
+        clean_tree(&tool_root.join("clean-tree"), tool)?,
         scheduler(&tool_root.join("scheduler")).map_err(|error| error.to_string())?,
     ])
 }
@@ -491,7 +510,7 @@ fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
          # repetitions={}\n\
          # noise_control=interleaved tool samples; stdout/stderr discarded; {} warmup(s); median wall time; Linux peak RSS sampled from /proc every 100 us; no CPU pinning\n\
          # validation_thresholds=Ronin/Ninja runtime ratio <= {:.0}% of recorded v1 ratio and Ronin runtime <= {:.0}% of pinned Ninja; peak RSS <= {:.0}% of pinned Ninja\n\
-         # sizes=command:{COMMAND_EDGES},deep:{DEEP_EDGES},wide:{WIDE_EDGES},canonical:{CANONICAL_PATHS},deps:{DEPENDENCY_EDGES},scheduler:{SCHEDULER_EDGES}\n",
+         # sizes=command:{COMMAND_EDGES},deep:{DEEP_EDGES},wide:{WIDE_EDGES},canonical:{CANONICAL_PATHS},deps:{DEPENDENCY_EDGES},clean:{CLEAN_TREE_EDGES},scheduler:{SCHEDULER_EDGES}\n",
         config.warmups,
         config.repetitions,
         config.warmups,

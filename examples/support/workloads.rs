@@ -18,6 +18,7 @@ pub(crate) const WIDE_EDGES: usize = 4_000;
 pub(crate) const CANONICAL_PATHS: usize = 4_000;
 pub(crate) const DEPENDENCY_EDGES: usize = 300;
 pub(crate) const SCHEDULER_EDGES: usize = 128;
+pub(crate) const CLEAN_TREE_EDGES: usize = 2_000;
 
 fn write_manifest(directory: &Path, manifest: &str) -> io::Result<()> {
     fs::create_dir_all(directory)?;
@@ -91,6 +92,32 @@ pub(crate) fn dependency_log_sources(directory: &Path) -> io::Result<()> {
     }
     manifest.push_str("build all: phony");
     for index in 0..DEPENDENCY_EDGES {
+        let _ = write!(manifest, " out/{index}.o");
+    }
+    manifest.push_str("\ndefault all\n");
+    write_manifest(directory, &manifest)
+}
+
+/// Write the sources for an up-to-date tree. The caller primes the outputs and
+/// `.ninja_log` by running one real build with the tool under measurement.
+///
+/// Every other workload leaves the graph fully dirty — the phony fixtures name
+/// outputs that never exist, so `missing_without_inputs` holds for all of them
+/// — which measures parsing and planning but never the shape a build tool
+/// actually spends most of its life in. Here every output exists and is newer
+/// than its input, and a real `.ninja_log` records each command, so the whole
+/// graph evaluates clean. That reaches two things nothing else does: the
+/// build-log reader, and one `stat` per node with no work behind it.
+pub(crate) fn clean_tree_sources(directory: &Path) -> io::Result<()> {
+    fs::create_dir_all(directory.join("src"))?;
+    fs::create_dir_all(directory.join("out"))?;
+    let mut manifest = String::from("rule copy\n  command = cp $in $out\n");
+    for index in 0..CLEAN_TREE_EDGES {
+        fs::write(directory.join(format!("src/{index}.c")), b"int baseline;\n")?;
+        let _ = writeln!(manifest, "build out/{index}.o: copy src/{index}.c");
+    }
+    manifest.push_str("build all: phony");
+    for index in 0..CLEAN_TREE_EDGES {
         let _ = write!(manifest, " out/{index}.o");
     }
     manifest.push_str("\ndefault all\n");

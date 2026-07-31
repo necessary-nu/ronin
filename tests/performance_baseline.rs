@@ -11,6 +11,7 @@ fn baseline_catalog_and_metadata_remain_complete() {
         "wide-noop-build",
         "path-canonicalization",
         "dependency-log-load",
+        "clean-tree-noop",
         "scheduler-barrier",
     ] {
         assert!(HARNESS.contains(workload), "missing workload {workload}");
@@ -32,13 +33,14 @@ fn baseline_catalog_and_metadata_remain_complete() {
     assert!(HARNESS.contains("--validate"));
 
     let rows = RECORDED_BASELINE.lines().skip(1).collect::<Vec<_>>();
-    assert_eq!(rows.len(), 6);
+    assert_eq!(rows.len(), 7);
     for workload in [
         "manifest-command-evaluation",
         "deep-graph-evaluation",
         "wide-noop-build",
         "path-canonicalization",
         "dependency-log-load",
+        "clean-tree-noop",
         "scheduler-barrier",
     ] {
         assert_eq!(
@@ -48,6 +50,18 @@ fn baseline_catalog_and_metadata_remain_complete() {
             1,
             "recorded baseline must contain {workload} exactly once"
         );
+    }
+    // The dated validation artifact predates `clean-tree-noop`; a refreshed
+    // sweep covering it lands in the following commit, which is generated from
+    // a clean tree so that `ronin_dirty=false` holds.
+    for workload in [
+        "manifest-command-evaluation",
+        "deep-graph-evaluation",
+        "wide-noop-build",
+        "path-canonicalization",
+        "dependency-log-load",
+        "scheduler-barrier",
+    ] {
         assert!(
             VALIDATION.contains(&format!("ronin,1.9.0,{workload},")),
             "validation must contain Ronin's {workload} result"

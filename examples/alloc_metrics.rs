@@ -21,8 +21,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[path = "support/workloads.rs"]
 mod workloads;
 use workloads::{
-    CANONICAL_PATHS, COMMAND_EDGES, DEEP_EDGES, DEPENDENCY_EDGES, SCHEDULER_EDGES, WIDE_EDGES,
-    WORKLOAD_VERSION,
+    CANONICAL_PATHS, CLEAN_TREE_EDGES, COMMAND_EDGES, DEEP_EDGES, DEPENDENCY_EDGES,
+    SCHEDULER_EDGES, WIDE_EDGES, WORKLOAD_VERSION,
 };
 
 const SCHEMA: &str = "ronin-alloc-metrics-v1";
@@ -319,6 +319,24 @@ fn depfile_scan(directory: &Path) -> Result<Workload, String> {
     })
 }
 
+/// Re-scan a tree that is already up to date.
+///
+/// Every other workload leaves the graph dirty, so this is the only one that
+/// reaches the build-log reader or evaluates a clean edge.
+fn clean_tree(directory: &Path) -> Result<Workload, String> {
+    workloads::clean_tree_sources(directory).map_err(|error| error.to_string())?;
+    run_ronin(directory, &[])?;
+    if !directory.join(".ninja_log").is_file() {
+        return Err("priming build did not create .ninja_log".to_owned());
+    }
+    Ok(Workload {
+        name: "clean-tree-noop",
+        directory: directory.to_owned(),
+        arguments: Vec::new(),
+        build_statements: CLEAN_TREE_EDGES + 1,
+    })
+}
+
 fn scheduler(directory: &Path) -> io::Result<Workload> {
     workloads::scheduler(directory)?;
     Ok(Workload {
@@ -336,6 +354,7 @@ fn workload_catalog(root: &Path) -> Result<Vec<Workload>, String> {
         wide_noop(&root.join("wide-noop")).map_err(|error| error.to_string())?,
         path_canonicalization(&root.join("canonicalization")).map_err(|error| error.to_string())?,
         dependency_log(&root.join("dependency-log"))?,
+        clean_tree(&root.join("clean-tree"))?,
         depfile_scan(&root.join("depfile-scan"))?,
         multi_target_scan(&root.join("multi-target")).map_err(|error| error.to_string())?,
         scheduler(&root.join("scheduler")).map_err(|error| error.to_string())?,
@@ -602,5 +621,41 @@ mod tests {
         let parsed = parse_recorded(&encoded).unwrap();
         assert_eq!(parsed.build_profile, build_profile());
         assert_eq!(parsed.rows["wide-noop-build"], (5, 50));
+    }
+
+    /// The clean-tree workload is only meaningful if the priming build can
+    /// actually make every output up to date.
+    ///
+    /// Its whole purpose is to be the one fixture whose graph evaluates clean,
+    /// so a generator that emitted an output with no input, or omitted a
+    /// source file, would silently turn it back into the dirty scan every
+    /// other workload already measures.
+    #[test]
+    fn clean_tree_sources_are_buildable_and_complete() {
+        let directory = std::env::temp_dir().join("ronin-alloc-clean-tree-shape");
+        let _ = std::fs::remove_dir_all(&directory);
+        workloads::clean_tree_sources(&directory).unwrap();
+
+        let manifest = std::fs::read_to_string(directory.join("build.ninja")).unwrap();
+        assert_eq!(
+            manifest.matches("build out/").count(),
+            CLEAN_TREE_EDGES,
+            "every edge must produce one output"
+        );
+        for index in [0, CLEAN_TREE_EDGES / 2, CLEAN_TREE_EDGES - 1] {
+            assert!(
+                directory.join(format!("src/{index}.c")).is_file(),
+                "input src/{index}.c must exist before the priming build"
+            );
+            assert!(
+                manifest.contains(&format!("build out/{index}.o: copy src/{index}.c\n")),
+                "edge {index} must name its input so the output can be newer than it"
+            );
+        }
+        assert!(
+            manifest.contains("\ndefault all\n"),
+            "the aggregate target must be the default"
+        );
+        let _ = std::fs::remove_dir_all(&directory);
     }
 }
