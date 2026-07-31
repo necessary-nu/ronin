@@ -2082,6 +2082,7 @@ children (
                 id ronin-clean-tree-fixture
                 title "Benchmark the up-to-date tree the suite never measured"
                 priority 0
+                sealed true
                 log (
                     {
                         at 2026-07-31T00:13:51.213615417Z
@@ -2102,6 +2103,13 @@ children (
                         author "brendan@bbqsrc.net"
                         kind @note
                         text "Validation artifact refreshed as benchmarks/performance-validation-2026-07-31.csv, generated from the committed tree so ronin_dirty=false holds, and the gate test now points at it and covers all seven workloads including clean-tree-noop. Appending to the 2026-07-29 artifact was rejected: it would have dated a measurement taken today as having been taken then. The refreshed sweep also corrects numbers that had gone badly stale — command evaluation reads 8.280 ms against the 36.954 ms recorded in baseline-v1.csv. The recorded baseline rows themselves are left untouched, since validate() compares the current Ronin-to-Ninja ratio against the recorded one and improvement shows as headroom; only the clean-tree-noop row is appended. Second measurement of the new workload on a quieter host: ronin 10.338 ms, samurai 9.753 ms, ninja 30.143 ms, so 1.06x rather than the 1.16x first observed — the ratio is host-sensitive and should be read as \"roughly at parity with C samurai, and clearly worse than the 0.87x we reach on the workloads this programme optimised\". scripts/check-performance.sh exits 0 with the new workload in the catalog. A test was added for the generator rather than bypassing the test-footprint code-quality gate, which fired because the change added harness code with no coverage: clean_tree_sources_are_buildable_and_complete pins the property the fixture depends on, namely that every edge names an input and produces one output, so a generator regression cannot silently turn the clean scan back into the dirty scan every other workload already measures."
+                    }
+
+                    {
+                        at 2026-07-31T00:22:09.675904991Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
