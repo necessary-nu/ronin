@@ -101,6 +101,14 @@ pub(crate) struct RealDiskInterface {
     // [spec:samurai:req:runtime.allocation-free-stat]
     #[cfg(unix)]
     directory: std::sync::Arc<std::sync::OnceLock<Result<rustix::fd::OwnedFd, rustix::io::Errno>>>,
+    /// Directories [`Self::make_dirs`] has already ensured exist.
+    ///
+    /// `create_dir_all` on a directory that is already there still costs a
+    /// failing `mkdir` and a `statx` to confirm what failed, and a build calls
+    /// it once per output — so on a tree whose outputs share a directory,
+    /// which is every tree, that is two wasted syscalls on the dispatch loop's
+    /// critical path for every job it starts.
+    created: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>>,
 }
 
 impl RealDiskInterface {
@@ -109,6 +117,7 @@ impl RealDiskInterface {
             working_directory,
             #[cfg(unix)]
             directory: std::sync::Arc::default(),
+            created: std::sync::Arc::default(),
         }
     }
 
@@ -268,10 +277,22 @@ impl RealDiskInterface {
         let path = self.resolve(path);
         let directory = path.parent().unwrap_or_else(|| Path::new(""));
         if directory.as_os_str().is_empty() {
-            Ok(())
-        } else {
-            std::fs::create_dir_all(directory)
+            return Ok(());
         }
+        if self
+            .created
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(directory)
+        {
+            return Ok(());
+        }
+        std::fs::create_dir_all(directory)?;
+        self.created
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(directory.to_owned());
+        Ok(())
     }
 
     pub(crate) fn exists(&self, path: &Path) -> bool {

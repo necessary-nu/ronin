@@ -702,12 +702,33 @@ struct ShellFailure {
     source: io::Error,
 }
 
+/// `/dev/null` for a child's standard input, opened once for the process.
+///
+/// `Stdio::null()` opens it afresh for every spawn, which puts a path
+/// resolution on the dispatch loop between one job finishing and the next
+/// starting. Duplicating a descriptor already held is the same result for a
+/// fraction of the work. Falling back to `Stdio::null()` costs only the open
+/// this exists to avoid, so a failure here is not worth reporting.
+#[cfg(unix)]
+fn null_stdin() -> Stdio {
+    use std::os::fd::OwnedFd;
+
+    static NULL: std::sync::OnceLock<Option<OwnedFd>> = std::sync::OnceLock::new();
+    NULL.get_or_init(|| std::fs::File::open("/dev/null").ok().map(OwnedFd::from))
+        .as_ref()
+        .and_then(|null| null.try_clone().ok())
+        .map_or_else(Stdio::null, Stdio::from)
+}
+
 fn shell_command(command: &BString, working_directory: &Path) -> Command {
     let mut shell = Command::new("/bin/sh");
     shell
         .arg("-c")
-        .arg(command.to_os_str().expect("byte strings are valid on Unix"))
-        .stdin(Stdio::null());
+        .arg(command.to_os_str().expect("byte strings are valid on Unix"));
+    #[cfg(unix)]
+    shell.stdin(null_stdin());
+    #[cfg(not(unix))]
+    shell.stdin(Stdio::null());
     if !working_directory.as_os_str().is_empty() {
         shell.current_dir(working_directory);
     }

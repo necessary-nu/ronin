@@ -1723,6 +1723,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-dispatch-syscall-cost
+                        title "Cut avoidable syscalls off the job dispatch loop"
+                        log (
+                            {
+                                at 2026-07-31T14:48:11.699444839Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-07-31T14:48:38.0144385Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Partly closed, and precisely diagnosed where the rest sits. This is the third and last of the workloads behind C samurai.\n\nscheduler-barrier runs 128 `touch` edges at -j 8, so it measures dispatch and nothing else. CPU is not the difference: over five reset runs each, ronin averages 291 million instructions and 713 million cycles against samurai's 285 million and 697 million, and task-clock 291 ms against 287. Identical work. A cycle profile of the parent finds nothing above 2.1%, all of it kernel. The deficit is latency, not computation, and it showed up as occupancy: reconstructing in-flight children from the parent's own clone3 and wait4 timestamps, ronin averages 5.71 concurrent jobs against a target of 8 while samurai averages 6.12, and ronin sits at four in flight for 14.5% of the run where samurai does so for 1.7%. It is not keeping the pipe full, because each refill costs more.\n\nTracing one full job cycle in the parent, from spawn to the next spawn, gave the itemised bill: ronin issues 33 syscalls where samurai issues 23. Two of the extras were pure waste and are now gone.\n\nThe first was `create_dir_all` per output. On a directory that already exists it still costs a failing `mkdir` plus a `statx` to find out what failed, and a build calls it once for every output of every edge — so on any tree whose outputs share a directory, which is every tree, that is two syscalls between one job finishing and the next starting, repeated for the whole build. The disk interface now remembers which directories it has ensured. The cache is per-interface and behind a mutex because the type is shared and must stay `Sync`, though in practice only the single-threaded dispatch loop touches it; the same caveat Ninja's equivalent cache carries applies here, namely that a directory deleted mid-build will not be recreated.\n\nThe second was `Stdio::null()`, which opens `/dev/null` afresh for every spawn and so puts a path resolution on the dispatch loop once per job. `/dev/null` is now opened once for the process and duplicated per child, which is a `dup` instead of an `openat`, with a fallback to `Stdio::null()` if anything goes wrong — a failure there costs exactly the open this exists to avoid, so it is not worth reporting.\n\nMeasured, minimum-of-many with the output tree and log reset before every run: at 128 jobs, median 40.951 to 39.510 ms against samurai's 35.890, and at 1,024 jobs, 308.391 to 298.426 against 274.268. So 3.2 to 3.5 percent, and the ratio moves from 1.14x to 1.09x. Confirming the mechanism rather than just the number, the window from a child's SIGCHLD to the next clone3 now measures 1.501 ms median against samurai's 1.654 under identical tracing, where before the change ronin was the slower of the two. The dispatch path itself is no longer behind.\n\nWhat remains is seven extra parent syscalls per job, and five of them belong to the `polling` crate rather than to us: it re-arms with `EPOLLONESHOT`, so every `wait` costs a `timerfd_settime` to disarm the timeout plus two `epoll_ctl` re-arms of the timer and the notifier, on top of the `epoll_ctl` add and delete that each child genuinely needs. Samurai uses a bare `poll` over its pipe set and registers nothing. Closing that means driving epoll directly — level-triggered, no oneshot, no timerfd, passing the timeout to `epoll_wait` itself — which would remove three syscalls per job and two file descriptors at startup, worth perhaps four percent here. It is deliberately not done in this node: the evented supervisor is recent, its poller is entangled with signal wake-up and interrupt delivery, and that is conformance-visible surface. The remaining two extras are an `ioctl(FIONBIO)` to make only the read end of the output socketpair non-blocking, which cannot be folded into the `socketpair` call without also making the child's stdout non-blocking, and one extra `prlimit64` inside glibc's `posix_spawn`. Neither is ours to remove.\n\n370 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
