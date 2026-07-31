@@ -818,6 +818,42 @@ differently: samurai reports the missing input after 3 `stat` calls, Ronin after
 work and produced a confidently reported — and entirely false — constant 1.7×
 gap. Scaling probes must use a path both tools complete.
 
+### Where the cycles actually go, at scale
+
+Every profile above this section is an instruction profile at fixture scale.
+Measured instead by cycles and by misses at 100,000 statements, the picture is
+not the same one — and the difference is not noise, it is the answer.
+
+| function | % instructions | % cycles | % cache misses | % dTLB misses |
+| --- | ---: | ---: | ---: | ---: |
+| `htab::wide_hash` | 7.4 | 15.2 | **30.7** | **29.8** |
+| `graph::index::mknode` | 9.8 | 15.9 | 19.7 | 16.1 |
+| `graph::index::mknode_bytes` | — | 18.3 | 15.4 | 16.9 |
+| `__memcmp_avx2_movbe` | — | 7.5 | 14.3 | 18.1 |
+| `scan::scanstring` | 12.8 | 12.0 | **1.3** | **1.3** |
+| `env::Evaluator::append_variable` | 7.2 | 2.2 | — | — |
+| `util::canonpath` | 4.1 | 1.8 | — | — |
+
+Those first four are path interning, and together they are **57% of cycles and
+80% of both cache and TLB misses**. The mechanism reads straight off the table:
+interning a path hashes its bytes, probes the open-addressed index, follows a
+`NodeId` into the node arena, and `memcmp`s against that node's path — and every
+one of those steps dereferences a separately heap-allocated `BString` at an
+unrelated address. The hash reads scattered memory, the comparison reads
+scattered memory, and the probe chases pointers between them. That is why
+`wide_hash` sits mid-table by instructions and tops the miss profile.
+
+The arbiter this document has used throughout gets two of these backwards.
+`append_variable` and `canonpath` look three times more important by
+instructions than by cycles; `wide_hash` looks half as important as it is.
+
+It also settles the two nodes rejected on the scanner. `scanstring` is 12% of
+cycles but **1.3%** of misses — compute-bound, not stall-bound. Both
+`ronin-memchr-scanner` and `ronin-streamed-path-scanning` were rejected against
+an unreliable arbiter, but re-implementing them is still not warranted: the
+scanner is not where the memory problem is. Left rejected, now for a measured
+reason rather than an accidental one.
+
 ### SIMD, and why the gap is not a vectorization gap
 
 The profile also settled the question that prompted it. C samurai contains one
