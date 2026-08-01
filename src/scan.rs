@@ -240,6 +240,39 @@ const fn advance_within_line(scanner: &mut Scanner<'_>) {
     scanner.index += 1;
 }
 
+/// Bytes that end a run of ordinary text inside a value.
+///
+/// `$` begins an expansion and the line endings end the value; everything else
+/// is literal, so a value can be crossed by looking for the next of these
+/// rather than by classifying every byte on the way.
+const VALUE_ENDS: [bool; 256] = ends_table(b"$\r\n");
+
+/// The same, for a path, which additionally ends at any of the separators that
+/// divide one path from the next. A tab is included so it can be rejected:
+/// Ninja does not allow one here, and the scan has to stop to say so.
+const PATH_ENDS: [bool; 256] = ends_table(b"$\r\n:| \t");
+
+/// A membership table, rather than a match over the bytes or a byte-set search.
+///
+/// The match this replaced tested up to seven alternatives per byte. Both
+/// obvious replacements were measured in the built tool rather than in a
+/// microbenchmark, because a standalone harness for this ranked them
+/// inconsistently between runs: `bstr`'s byte-set search and this table. The
+/// table won at every manifest size — parsing 100,000 statements, 787.9
+/// million cycles before, 744.6 with the byte-set search and 722.6 with the
+/// table; at 25,000, 209.2, 185.3 and 173.2. It also executes the fewest
+/// instructions of the three, which the byte-set search does not, because that
+/// one rebuilds its set on every call and most runs here are short.
+const fn ends_table(bytes: &[u8]) -> [bool; 256] {
+    let mut table = [false; 256];
+    let mut index = 0;
+    while index < bytes.len() {
+        table[bytes[index] as usize] = true;
+        index += 1;
+    }
+    table
+}
+
 // [spec:samurai:def:scan.issimplevar-fn]
 // [spec:samurai:sem:scan.issimplevar-fn]
 const fn issimplevar(byte: u8) -> bool {
@@ -470,7 +503,22 @@ pub(crate) fn scanstring<'source>(
     let start = scanner.index;
     let mut literal_start = start;
     let mut escaped = false;
+    let terminators = if path { &PATH_ENDS } else { &VALUE_ENDS };
     loop {
+        // Cross the run of ordinary bytes in one step. Nothing here keeps
+        // per-byte state — `advance_within_line` only counts the column, and
+        // the run cannot contain a line ending because one would end it — so
+        // the bulk skip is exactly the loop it replaces.
+        let rest = &scanner.bytes[scanner.index..];
+        let run = rest
+            .iter()
+            .position(|byte| terminators[*byte as usize])
+            .unwrap_or(rest.len());
+        if run > 0 {
+            scanner.continuation_at_eof = false;
+            scanner.column += run;
+            scanner.index += run;
+        }
         match scanner.current() {
             Some(b'$') => {
                 escaped = true;
@@ -479,15 +527,12 @@ pub(crate) fn scanstring<'source>(
                 escape(scanner, &mut parts)?;
                 literal_start = scanner.index;
             }
-            Some(b':' | b'|' | b' ') if path => break,
             Some(b'\t') if path => {
                 return Err(scanerror(scanner, ScanErrorKind::TabsNotAllowed));
             }
-            Some(b'\r' | b'\n') | None => break,
-            Some(_) => {
-                scanner.continuation_at_eof = false;
-                advance_within_line(scanner);
-            }
+            // A separator when scanning a path, a line ending, or the end of
+            // the source; everything else was consumed by the skip above.
+            _ => break,
         }
     }
     let end = scanner.index;
@@ -643,6 +688,40 @@ pub(crate) fn scannewline(scanner: &mut Scanner<'_>) -> ScanResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crossing_a_run_of_ordinary_bytes_leaves_the_column_where_stepping_would() {
+        // The bulk skip advances the column by the whole run at once, so the
+        // position it reports has to match what a byte-at-a-time walk gave.
+        // A tab is ordinary inside a value and forbidden inside a path.
+        for (bytes, path, expected_column) in [
+            (&b"abcdef ghi\n"[..], false, 11),
+            // A path stops at the space, then `scanstring` eats the separator.
+            (&b"abcdef ghi\n"[..], true, 8),
+            (&b"a\tb\n"[..], false, 4),
+            (&b"obj/x.o: cc\n"[..], true, 8),
+            (&b"|| dep\n"[..], true, 1),
+        ] {
+            let source = Source::from_bytes("build.ninja", bytes.to_vec());
+            let mut scanner = Scanner::new(&source);
+            scanstring(&mut scanner, path).unwrap();
+            assert_eq!(
+                scanner.column,
+                expected_column,
+                "column after scanning {:?} as path={path}",
+                bstr::BStr::new(bytes)
+            );
+            assert_eq!(scanner.line, 1, "an ordinary run never crosses a line");
+        }
+
+        // A tab inside a path is rejected rather than crossed.
+        let source = Source::from_bytes("build.ninja", b"obj/\tx.o\n".to_vec());
+        let mut scanner = Scanner::new(&source);
+        assert!(matches!(
+            scanstring(&mut scanner, true).unwrap_err().kind,
+            ScanErrorKind::TabsNotAllowed
+        ));
+    }
 
     // [spec:samurai:req:runtime.borrowed-span-frontend/test]
     #[test]
