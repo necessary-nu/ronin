@@ -255,6 +255,23 @@ impl Builder<'_> {
         result
     }
 
+    /// Let the reporter close out a build that finished without failing.
+    pub(super) fn emit_summary(&mut self) -> BuildResult<()> {
+        if self.options.quiet {
+            return Ok(());
+        }
+        let mut line = std::mem::take(&mut self.status_scratch);
+        line.clear();
+        self.reporter.finish(&mut line, &self.progress);
+        let result = if line.is_empty() {
+            Ok(())
+        } else {
+            self.emit(&line).and_then(|()| self.flush_sinks())
+        };
+        self.status_scratch = line;
+        result
+    }
+
     fn emit_status(&mut self, edge: EdgeId, command: &CommandSpec) -> BuildResult<()> {
         self.emit_explanations(edge)?;
         if self.options.quiet {

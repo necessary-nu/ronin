@@ -18,7 +18,8 @@ use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use self::command::{CommandSpec, DepsType, PreparedEdge, ResponseFile};
-use self::reporter::{NinjaReporter, Reporter};
+use self::reporter::Reporter;
+pub(crate) use self::reporter::{ColorChoice, OutputStyle, TerminalContext};
 
 type BuildResult<T> = Result<T, BuildError>;
 
@@ -57,6 +58,9 @@ pub(crate) struct BuildOptions {
     pub(crate) quiet: bool,
     pub(crate) statusfmt: String,
     pub(crate) status_from_cli: bool,
+    pub(crate) style: OutputStyle,
+    pub(crate) color: ColorChoice,
+    pub(crate) terminal: TerminalContext,
     pub(crate) maxload: f64,
     pub(crate) jobserver: Option<crate::jobserver::Transport>,
     pub(crate) working_directory: crate::os::WorkingDirectory,
@@ -76,6 +80,9 @@ impl Default for BuildOptions {
             quiet: false,
             statusfmt: "[%f/%t] ".into(),
             status_from_cli: false,
+            style: OutputStyle::Ninja,
+            color: ColorChoice::Auto,
+            terminal: TerminalContext::default(),
             maxload: 0.0,
             jobserver: None,
             working_directory: crate::os::WorkingDirectory::default(),
@@ -500,7 +507,7 @@ pub(crate) struct Builder<'a> {
     command_cache: Vec<Option<CommandSpec>>,
     command_scratch: Vec<u8>,
     progress: BuildState,
-    reporter: Box<dyn Reporter>,
+    reporter: Reporter,
     /// Buffer every rendered line is built in, reused for the whole build.
     ///
     /// Rendering used to allocate a `String` for the status template and then
@@ -528,6 +535,8 @@ impl<'a> Builder<'a> {
         diagnostic_sink: Option<&'a mut dyn Write>,
     ) -> Self {
         let progress = BuildState::new(options.clone());
+        let options_style = options.style;
+        let options_color = options.color.resolve(options.terminal);
         let disk = RealDiskInterface::new(options.working_directory.clone());
         let mut runtime = RuntimeState::new(graph);
         if let Some(log) = build_log.as_deref() {
@@ -552,7 +561,7 @@ impl<'a> Builder<'a> {
             command_cache: Vec::new(),
             command_scratch: Vec::new(),
             progress,
-            reporter: Box::new(NinjaReporter),
+            reporter: Reporter::new(options_style, options_color),
             status_scratch: Vec::new(),
             output_sink,
             diagnostic_sink,
@@ -1657,6 +1666,7 @@ impl<'a> Builder<'a> {
         } else if self.plan.more_to_do() {
             Err(BuildError::DependenciesBlocked)
         } else {
+            self.emit_summary()?;
             Ok(())
         }
     }

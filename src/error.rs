@@ -135,6 +135,7 @@ pub(crate) enum CliError {
     InvalidParameter { option: &'static str },
     KeepGoingNotNumeric,
     UnknownStatusVariable { name: String },
+    UnknownOptionValue { option: &'static str, value: String },
     InvalidStatusEscape,
     UnterminatedStatusVariable,
     MissingOptionValue { option: String },
@@ -158,6 +159,9 @@ impl fmt::Display for CliError {
             }
             Self::UnknownStatusVariable { name } => {
                 write!(formatter, "unknown variable '{name}' in --status format")
+            }
+            Self::UnknownOptionValue { option, value } => {
+                write!(formatter, "invalid {option} value '{value}'")
             }
             Self::InvalidStatusEscape => formatter
                 .write_str("invalid --status: bad $-escape (literal $ must be written as $$)"),

@@ -3437,3 +3437,58 @@ fn ninja_build_dyndep_discovers_dependency_cycle() {
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }
+
+// [spec:samurai:req:product.output-style/test]
+#[test]
+fn cargo_style_renders_a_whole_build_in_the_verb_column() {
+    let (mut graph, directory) = build_fixture(
+        "cargo-style-build",
+        "rule cc\n  command = touch $out\n  description = Building $out\nbuild $dir/out: cc $dir/in\n",
+    );
+    fs::write(directory.join("in"), "source").unwrap();
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let options = BuildOptions {
+        style: crate::build::OutputStyle::Cargo,
+        ..BuildOptions::default()
+    };
+    let mut builder = Builder::new(&mut graph, options);
+    builder.add_target(&target).unwrap();
+    builder.build().unwrap();
+    let output = String::from_utf8_lossy(&builder.build_output).into_owned();
+    let expected = format!("    Building {}\n", directory.join("out").display());
+    assert!(output.starts_with(&expected), "{output:?}");
+    assert!(
+        output.contains("\n    Finished 1 command in "),
+        "{output:?}"
+    );
+    assert!(!output.contains("[1/1]"), "{output:?}");
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:samurai:req:product.output-style/test]
+#[test]
+fn cargo_style_names_the_failed_output_and_shows_its_command() {
+    let (mut graph, directory) = build_fixture(
+        "cargo-style-failure",
+        "rule cc\n  command = false\n  description = Building $out\nbuild $dir/out: cc\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let options = BuildOptions {
+        style: crate::build::OutputStyle::Cargo,
+        ..BuildOptions::default()
+    };
+    let mut builder = Builder::new(&mut graph, options);
+    builder.add_target(&target).unwrap();
+    assert!(builder.build().is_err());
+    let output = String::from_utf8_lossy(&builder.build_output).into_owned();
+    let failure = format!(
+        "      Failed {} (exit 1)\n",
+        directory.join("out").display()
+    );
+    assert!(output.contains(&failure), "{output:?}");
+    assert!(output.contains("\n             false\n"), "{output:?}");
+    assert!(!output.contains("FAILED:"), "{output:?}");
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}

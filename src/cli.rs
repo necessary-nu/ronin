@@ -1,6 +1,6 @@
 //! Ronin command-line parsing and runtime orchestration.
 
-use crate::build::{BuildOptions, JobLimit};
+use crate::build::{BuildOptions, ColorChoice, JobLimit, OutputStyle};
 use crate::error::{
     BuildError, CliError, EncodingContext, PersistenceError, PersistenceOperation,
     ToolAvailability, ToolError,
@@ -25,6 +25,8 @@ pub const NINJA_COMPAT_VERSION: &str = "1.9.0";
 // [spec:samurai:req:compat.ninja-owned-names]
 const DEFAULT_MANIFEST: &str = "build.ninja";
 const NINJA_STATUS_ENV: &str = "NINJA_STATUS";
+/// The cross-tool convention for suppressing colour; see <https://no-color.org>.
+const NO_COLOR_ENV: &str = "NO_COLOR";
 
 /// Buffered output and process status produced by one Ronin invocation.
 #[derive(Debug, Eq, PartialEq)]
@@ -65,6 +67,7 @@ pub struct Runner {
     working_directory: crate::os::WorkingDirectory,
     makeflags: Option<String>,
     status_format: Option<String>,
+    terminal: crate::build::TerminalContext,
     connect_jobserver: fn() -> Result<crate::jobserver::Transport, crate::error::ProcessError>,
 }
 
@@ -83,6 +86,7 @@ impl Runner {
             working_directory: crate::os::WorkingDirectory::new(working_directory)?,
             makeflags: None,
             status_format: None,
+            terminal: crate::build::TerminalContext::default(),
             connect_jobserver: crate::jobserver::inherited_client,
         })
     }
@@ -98,6 +102,12 @@ impl Runner {
         let mut runner = Self::new(std::env::current_dir()?)?;
         runner.makeflags = std::env::var("MAKEFLAGS").ok();
         runner.status_format = std::env::var(NINJA_STATUS_ENV).ok();
+        // Asked once, of the real descriptor, because the build writes through
+        // a sink that cannot be asked what it is.
+        runner.terminal = crate::build::TerminalContext {
+            is_terminal: std::io::IsTerminal::is_terminal(&std::io::stdout()),
+            no_color: std::env::var_os(NO_COLOR_ENV).is_some_and(|value| !value.is_empty()),
+        };
         Ok(runner)
     }
 
@@ -164,6 +174,8 @@ pub(crate) fn usage(program: &str) -> String {
             "  --quiet        don't show progress status, just command output\n",
             "  --status FMT   progress status format using Ninja-style $vars\n",
             "                 (e.g. --status '[$finished/$total] ')\n",
+            "  --output STYLE build output style: ninja, cargo [default=ninja]\n",
+            "  --color WHEN   colorize output: auto, always, never [default=auto]\n",
             "\n",
             "  -C DIR   change to DIR before doing anything else\n",
             "  -f FILE  specify input build file [default={}]\n",
@@ -336,6 +348,18 @@ fn status_placeholder(name: &str) -> CliResult<&'static str> {
         }
         .into()),
     }
+}
+
+/// Name the option in the error when an enumerated value is not one of them.
+// [spec:samurai:req:product.output-style]
+fn require_value<T>(option: &'static str, value: &[u8], parsed: Option<T>) -> CliResult<T> {
+    parsed.ok_or_else(|| {
+        CliError::UnknownOptionValue {
+            option,
+            value: value.to_str_lossy().into_owned(),
+        }
+        .into()
+    })
 }
 
 // [spec:samurai:req:runtime.output-byte-boundaries]
@@ -533,6 +557,36 @@ fn parse_run_arguments(
                 invocation.build_options.statusfmt = expand_status_format(format)?;
                 invocation.build_options.status_from_cli = true;
             }
+            b"--output" => {
+                index += 1;
+                let value = arguments
+                    .get(index)
+                    .ok_or_else(|| CliError::MissingOptionValue {
+                        option: "--output".to_owned(),
+                    })?;
+                invocation.build_options.style =
+                    require_value("--output", value, OutputStyle::parse(value))?;
+            }
+            option if option.starts_with(b"--output=") => {
+                let value = &option[b"--output=".len()..];
+                invocation.build_options.style =
+                    require_value("--output", value, OutputStyle::parse(value))?;
+            }
+            b"--color" => {
+                index += 1;
+                let value = arguments
+                    .get(index)
+                    .ok_or_else(|| CliError::MissingOptionValue {
+                        option: "--color".to_owned(),
+                    })?;
+                invocation.build_options.color =
+                    require_value("--color", value, ColorChoice::parse(value))?;
+            }
+            option if option.starts_with(b"--color=") => {
+                let value = &option[b"--color=".len()..];
+                invocation.build_options.color =
+                    require_value("--color", value, ColorChoice::parse(value))?;
+            }
             option if option.starts_with(b"--") => {
                 return Ok(invalid_option(
                     arguments,
@@ -671,6 +725,7 @@ fn normalize_runtime_options(
     options: &mut BuildOptions,
     makeflags: Option<&str>,
     status_format: Option<&str>,
+    terminal: crate::build::TerminalContext,
     connect_jobserver: impl FnOnce() -> Result<crate::jobserver::Transport, crate::error::ProcessError>,
 ) -> CliResult<()> {
     if options.jobs == JobLimit::Auto {
@@ -690,6 +745,7 @@ fn normalize_runtime_options(
     if let Some(status) = status_format {
         status.clone_into(&mut options.statusfmt);
     }
+    options.terminal = terminal;
     Ok(())
 }
 
@@ -1305,6 +1361,7 @@ fn run_bytes(
         &mut invocation.build_options,
         runner.makeflags.as_deref(),
         runner.status_format.as_deref(),
+        runner.terminal,
         runner.connect_jobserver,
     )?;
     if let Some(tool) = invocation
@@ -1550,6 +1607,65 @@ mod tests {
 
     static NEXT_RUN: AtomicUsize = AtomicUsize::new(0);
 
+    fn parse_options(arguments: &[&str]) -> CliResult<BuildOptions> {
+        let arguments = arguments
+            .iter()
+            .map(|argument| BString::from(*argument))
+            .collect::<Vec<_>>();
+        let working_directory = crate::os::WorkingDirectory::new(".").unwrap();
+        match parse_run_arguments(&arguments, &working_directory)? {
+            RunAction::Execute(invocation) => Ok(invocation.build_options),
+            RunAction::Immediate(_) => panic!("these arguments describe a build"),
+        }
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn a_rendering_and_a_colour_choice_are_named_on_the_command_line() {
+        let separate = parse_options(&["ronin", "--output", "cargo", "--color", "never"]).unwrap();
+        assert_eq!(separate.style, OutputStyle::Cargo);
+        assert_eq!(separate.color, ColorChoice::Never);
+        let joined = parse_options(&["ronin", "--output=cargo", "--color=always"]).unwrap();
+        assert_eq!(joined.style, OutputStyle::Cargo);
+        assert_eq!(joined.color, ColorChoice::Always);
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn ninja_rendering_is_what_an_unadorned_invocation_gets() {
+        let options = parse_options(&["ronin"]).unwrap();
+        assert_eq!(options.style, OutputStyle::Ninja);
+        assert_eq!(options.color, ColorChoice::Auto);
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn an_unknown_rendering_or_colour_choice_is_rejected_by_name() {
+        let style = parse_options(&["ronin", "--output=fancy"])
+            .err()
+            .expect("an unknown style is rejected");
+        assert!(
+            style.to_string().contains("invalid --output value 'fancy'"),
+            "{style}"
+        );
+        let color = parse_options(&["ronin", "--color", "sometimes"])
+            .err()
+            .expect("an unknown colour choice is rejected");
+        assert!(
+            color
+                .to_string()
+                .contains("invalid --color value 'sometimes'"),
+            "{color}"
+        );
+        let missing = parse_options(&["ronin", "--output"])
+            .err()
+            .expect("a style option needs a value");
+        assert!(
+            missing.to_string().contains("missing --output value"),
+            "{missing}"
+        );
+    }
+
     // [spec:samurai:req:runtime.output-byte-boundaries/test]
     #[test]
     fn status_expansion_preserves_unicode_slices_and_escapes() {
@@ -1686,6 +1802,7 @@ mod tests {
             &mut options,
             Some("-j --jobserver-auth=fifo:/tmp/ronin-jobserver"),
             None,
+            crate::build::TerminalContext::default(),
             || {
                 jobserver::Client::new(0).map_err(|source| crate::error::ProcessError::Jobserver {
                     operation: crate::error::JobserverOperation::StartHelper,
@@ -1705,6 +1822,7 @@ mod tests {
             &mut explicit,
             Some("-j --jobserver-auth=fifo:/tmp/ignored"),
             None,
+            crate::build::TerminalContext::default(),
             || panic!("explicit -j must not connect to an inherited jobserver"),
         )
         .unwrap();

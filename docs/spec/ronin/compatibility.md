@@ -46,6 +46,15 @@ the supported CLI surface.
 > `SAMUFLAGS` has no effect on Ronin's options, selected targets, output, or
 > exit status, and no legacy alias is required.
 
+> [spec:samurai:req:product.output-style]
+> Ronin's build output is Ninja's unless another rendering is named by an
+> explicit command-line option. Terminal detection, `NINJA_STATUS`, and other
+> environment inspection never change which rendering is selected, so a
+> consumer that parses Ronin's output sees the same bytes whether or not it is
+> attached to a terminal. Colour is a separate decision from rendering: it is
+> emitted only when the destination is a terminal, suppressed when `NO_COLOR`
+> is set to a non-empty value, and forced on or off by `--color`.
+
 > [spec:samurai:req:compat.version-reporting]
 > `ronin --version` emits one Ninja-compatible version token beginning with
 > `MAJOR.MINOR` and exits successfully. The token reports the claimed Ninja
