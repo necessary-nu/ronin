@@ -97,8 +97,17 @@ pub(crate) struct ProcessSupervisor<External = ()> {
     ready: VecDeque<ProcessCompletion>,
     #[cfg(unix)]
     reap_candidates: Vec<EdgeId>,
+    /// Scratch for draining child output, kept rather than declared per read.
     #[cfg(unix)]
-    children: HashMap<EdgeId, RunningChild>,
+    read_buffer: Vec<u8>,
+    /// Live children, keyed by edge.
+    ///
+    /// Rapid-hashed rather than `SipHash`ed: the key is a four-byte identifier
+    /// looked up six or so times per job — on spawn, on each readiness, on
+    /// drain, and on reap — and the default hasher's collision resistance buys
+    /// nothing against keys this process mints itself.
+    #[cfg(unix)]
+    children: crate::htab::RapidHashMap<EdgeId, RunningChild>,
     #[cfg(not(unix))]
     children: HashMap<EdgeId, (u32, bool)>,
     interrupted: Option<Signal>,
@@ -154,7 +163,9 @@ impl<External> ProcessSupervisor<External> {
             ready: VecDeque::new(),
             #[cfg(unix)]
             reap_candidates: Vec::new(),
-            children: HashMap::new(),
+            #[cfg(unix)]
+            read_buffer: vec![0; 16 * 1024],
+            children: HashMap::default(),
             interrupted: None,
             working_directory: directory_to_impose(working_directory),
         })
@@ -495,6 +506,13 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             Failed(io::Error),
         }
 
+        // Borrowed out and put back so the read buffer, which belongs to the
+        // supervisor rather than to any one child, can be reused across jobs.
+        // It used to be a sixteen-kilobyte array declared here, which the
+        // compiler must zero on entry — two megabytes of pointless writes over
+        // a thousand-job build, and the largest single entry in this process's
+        // own profile before it was moved.
+        let mut buffer = std::mem::take(&mut self.read_buffer);
         let drain = {
             let child = self
                 .children
@@ -504,7 +522,6 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                 .output
                 .as_mut()
                 .expect("only captured output is registered");
-            let mut buffer = [0; 16 * 1024];
             loop {
                 match output.read(&mut buffer) {
                     Ok(0) => break Drain::Eof,
@@ -516,6 +533,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                 }
             }
         };
+        self.read_buffer = buffer;
 
         match drain {
             Drain::Rearm => {

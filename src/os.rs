@@ -108,7 +108,7 @@ pub(crate) struct RealDiskInterface {
     /// it once per output — so on a tree whose outputs share a directory,
     /// which is every tree, that is two wasted syscalls on the dispatch loop's
     /// critical path for every job it starts.
-    created: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>>,
+    created: std::sync::Arc<std::sync::Mutex<crate::htab::RapidHashSet<PathBuf>>>,
 }
 
 impl RealDiskInterface {

@@ -204,6 +204,7 @@ pub(crate) struct RapidHasher(u64);
 
 type RapidBuildHasher = std::hash::BuildHasherDefault<RapidHasher>;
 pub(crate) type RapidHashMap<K, V> = std::collections::HashMap<K, V, RapidBuildHasher>;
+pub(crate) type RapidHashSet<K> = std::collections::HashSet<K, RapidBuildHasher>;
 
 impl std::hash::Hasher for RapidHasher {
     fn finish(&self) -> u64 {

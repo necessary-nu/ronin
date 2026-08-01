@@ -1897,6 +1897,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-supervisor-bookkeeping
+                        title "Stop zeroing a buffer and SipHashing edge ids per job"
+                        log (
+                            {
+                                at 2026-08-01T20:44:14.515650388Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T20:44:39.614940186Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done. ronin-output-pipe-not-socketpair ended by localising the remaining dispatch gap to the supervising process's own code and naming `finish_edge` as the place to start. Profiling that code properly found three things, none of them where the pointer said, and all three plainly wrong rather than merely suboptimal.\n\nSizing first, because it justifies looking at all. Measuring the parent alone over 128 jobs and summing every non-kernel symbol: 18.2% of ronin's parent profile is our own code against 9.1% of samurai's, which on 21.2 and 18.9 milliseconds of parent CPU is 3.86 milliseconds against 1.72 — our supervisor costs 2.24 times what the C one does, about 30 microseconds a job against 13. That is a real target rather than a rounding error.\n\nThe first and largest was a sixteen-kilobyte buffer declared inside the output drain, so the compiler zeroed it on every call — once per job, two megabytes of pointless writes over a thousand-job build, and `__memset_avx2_unaligned_erms` was the largest single user-space entry in the profile at 1.06%. It is now a `Vec` owned by the supervisor, taken and put back around the borrow of the child it reads into.\n\nThe second was the live-children map, a `std::collections::HashMap` with the default hasher. The key is a four-byte edge identifier, looked up six or so times per job across spawn, readiness, drain and reap, and this codebase already interns and indexes everything else with rapidhash precisely because manifests are trusted input. SipHashing an integer we mint ourselves buys nothing; `std::hash::random::DefaultHasher::write` was 0.33% of the parent profile and is now absent.\n\nThe third was the same mistake in the directory cache added by ronin-stat-directory-contention: a `HashSet<PathBuf>` on the default hasher, hashing a whole path once per output per job. Now rapid-hashed, which needed a `RapidHashSet` alias next to the existing `RapidHashMap`. Related, `std::path::Components::next_back` — `Path::parent` re-parsing components — was 0.32% and is down to 0.09%.\n\nMeasured on the parent alone over 128 jobs, three runs each: instructions 17,222,188 median to 16,441,578, down 4.5%, and 6.1% below where the socket pair change started at 17,511,983. Against samurai's 14,769,757 the parent instruction gap narrows from 18.6% to 11.3%, so roughly two-fifths of it is closed. Both targeted symbols are gone from the profile entirely.\n\nAn honest gap in the evidence: wall clock could not be measured. An external clang and rustc build took the host to a load average of 45 during this work and inflated every timing by roughly a factor of five — the 128-job fixture read 208 ms where it reads 39 on a quiet machine. The instruction counts are load-independent and were taken three times per build, so the change rests on those; the wall figure should be re-taken on a quiet host before this is quoted as a speedup. Correctness is unaffected by load and was verified: 372 tests, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip.\n\nThe pattern worth carrying is that all three were found by reading a profile of the supervising process in isolation, with children excluded. Every earlier profile in this programme mixed the parent with the hundreds of shells and `touch` processes it spawns, which buried a sixteen-kilobyte memset per job under the kernel's fork path. When one process orchestrates many, profile it alone before concluding anything about it."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
