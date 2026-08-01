@@ -2011,6 +2011,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-real-project-validation
+                        title "Validate against real cmake-generated projects"
+                        log (
+                            {
+                                at 2026-08-01T23:06:33.426419063Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T23:06:58.837038825Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Every measurement this programme has made was against a fixture this programme wrote. Brendan asked whether a real repository was needed to know how any of it goes, which was the right question, and the answer turned out to be yes for one reason and no for another.\n\nTwo real manifests were generated with CMake's Ninja generator and built to completion with ronin so their dependency logs held real header sets: the Ninja project itself, 224 build statements and a 120,211-byte manifest, and abseil-cpp, 917 statements and a 484,429-byte manifest. Then ronin, C samurai and a Release-built Ninja were compared on the three things a build tool actually does between compiles, interleaved in randomised order, minimum of fifteen, on a quiet host.\n\nNinja project, 224 statements: no-op rebuild 4.121 ms against samurai's 4.728 and Ninja's 5.235; `-t commands all` 1.761 against 2.211 and 3.039; a dry run after touching a widely included header 4.578 against 4.844 and 6.112. abseil, 917 statements: no-op 8.907 against 10.785 and 10.232; commands 3.817 against 6.652 and 6.077; touched-header dry run 7.508 against 11.552 and 9.729. Ronin leads all three tools on all six measurements.\n\nThe reason the question was worth asking is that the margin is scale-dependent and the small project hides it. Against samurai, the command-evaluation ratio goes 0.80x at 224 statements, 0.57x at 917, and 0.52x on the synthetic hundred-thousand-statement fixture; the touched-header dry run goes 0.95x to 0.65x. At 224 statements a run is four milliseconds and ronin's own startup floor is about one of them, so a quarter of the measurement is process creation and the real difference is compressed. Anyone judging this work on a small project would conclude the margin is a few percent. It is not — but they would be right about their project.\n\nThe reason the answer is also no is that the synthetic fixtures turn out not to be flattering. The trend across 224, 917 and 100,000 statements is monotonic and smooth, so the large fixture is the natural endpoint of a curve visible in real code rather than an artifact of how it was generated. That is a stronger justification for the large-manifest workload than it had before, which was an argument about Chromium-shaped paths.\n\nOne specific worry was refuted. The suite's dependency-log fixture uses 300 edges with a single header each, and I had flagged it as unrepresentative of real dependency loading and suspected it might be hiding a weakness — particularly since ronin's node use-lists are appended to once per recorded dependency. Real fan-in is two orders of magnitude larger: the Ninja project records a median of 276 headers per edge across 20,383 entries, abseil a median of 300 across 44,687. On those, ronin's no-op rebuild — which loads the whole dependency log and stats every node — is 0.83x samurai and 0.87x Ninja. The fixture was hiding a strength, not a weakness, and the `SmallVec` use-lists that ronin-uses-compaction declined to replace hold up under real fan-in.\n\nLimits worth stating. 917 statements is still small; abseil is largely header-only, so only 159 of its edges carry dependencies at all. Nothing here reaches the ten-thousand-statement range where a Chromium or LLVM tree sits, and the only evidence at that scale remains synthetic. The two projects are also both CMake output, so nothing here says anything about GN, Meson or hand-written manifests, which differ in rule count, variable depth and how much work `subninja` does. Reproducing this needs CMake and a network fetch, so it is not suitable for the gate; it is a periodic check rather than a regression test.\n\nNo code changed. The artifacts live at /tmp/ninja-real and /tmp/absl-build and will not survive a reboot, which is the same tmpfs problem ronin-ninja-reference-unpinned records for the reference binaries."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
