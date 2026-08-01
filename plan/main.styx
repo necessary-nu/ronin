@@ -1991,6 +1991,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-uses-compaction
+                        title "Reject compacting the node use lists"
+                        log (
+                            {
+                                at 2026-08-01T22:53:39.808920801Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T22:54:02.281034586Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Rejected after reading the mutation sites. ronin-node-validation-side-table left `uses` as the last fat field in `Node` — twenty-four bytes of forty-eight, mostly holding zero or one entry — and named a compressed layout as the way to take the struct to thirty-two. That plan does not survive contact with how `uses` is actually written.\n\nThe sketch assumed `uses` is appended during parse and thereafter effectively read-only, so a flat edge vector plus an eight-byte span per node would work, with the rare late addition going to a small overflow map. Two things falsify it.\n\nFirst, most entries do not arrive during parse at all. `nodeuse` is reached from `edgeadddeps`, and `edgeadddeps` is called from `deps.rs` when the dependency log is read, from `build.rs` when a depfile is read, and from `dyndep.rs`. The first two are the ordinary path of any C or C++ build: a source with two hundred headers contributes roughly two hundred `nodeuse` calls at build time against about two at parse time. The overflow map would therefore hold the majority of the adjacency, not its tail, and the \"compacted\" representation would be a small prefix in front of a hash map — worse than what it replaced.\n\nSecond, `uses` supports removal. `parse.rs` retains against an edge when a later build statement redefines an output and the earlier edge's self-input has to be undone. A compressed row layout does not support removal without either tombstones or a rebuild.\n\nSo the structure is a genuinely mutable adjacency list with random-access insertion at two separate phases and occasional deletion, which is what `SmallVec` is already a reasonable answer to.\n\nWhat remains possible, recorded so the option is not lost. `IdVec` is `SmallVec<[T; 4]>`, whose capacity field is a `usize`, which makes it eight-aligned and twenty-four bytes. A hand-written inline vector storing a `u32` length and three inline identifiers, spilling to an index into a side arena rather than to a pointer, would be sixteen bytes and four-aligned. `Node` would fall from forty-eight to forty; and only then would packing `PathSpan` into a `NonZeroU64` pay, because the struct would no longer be padded to an eight-byte boundary — taking it to thirty-six, a further twenty-five percent off the node arena.\n\nThat is not being done now, and the reason is proportion rather than difficulty. The measured return on the previous thirty-three percent reduction of `Node` was 2.7% at 100,000 statements and 3.4% at 200,000, so a further twenty-five percent is worth perhaps two. Against that it means writing a custom container with its own spill arena, and putting it on a path that is mutated during both parse and build and that the dependency-log and depfile readers hammer — replacing a well-tested `SmallVec` on exactly the code where a subtle bug would corrupt the build graph rather than merely slow it. The trade is poor at this point and should only be revisited if the node arena is again shown to be the binding constraint.\n\nA correction to my own earlier note while here: ronin-node-validation-side-table says the `uses` compaction is blocked because \"dyndep adds inputs to edges at build time\". That understates it — dyndep is the rare case; the dependency log and depfiles are the common one, and they are what makes the overflow design unworkable."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
