@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-01T19:11:49.911241827Z
+last_sync_at 2026-08-01T19:23:06.979851655Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -40,6 +40,7 @@ derived_priorities (
     {id ronin-allocator-revisit, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-arena-slot-access, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-batched-stat, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
+    {id ronin-byte-class-tables, priority 0, derived_at 2026-08-01T19:23:06.979851655Z}
     {id ronin-compact-graph-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-depfile-inplace, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-deps-record-bounds, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
