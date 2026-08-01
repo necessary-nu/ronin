@@ -66,8 +66,7 @@ fn validation_only(graph: &Graph, edge: EdgeId) -> bool {
     let outputs = &graph.edge(edge).out;
     !outputs.is_empty()
         && outputs.iter().all(|output| {
-            let output = graph.node(*output);
-            output.uses.is_empty() && !output.validation_uses.is_empty()
+            graph.node(*output).uses.is_empty() && !graph.node_validation_uses(*output).is_empty()
         })
 }
 

@@ -1331,9 +1331,8 @@ impl<'a> Builder<'a> {
     fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> BuildResult<()> {
         let mut queue = Vec::new();
         for output in &self.graph.edge(edge).out {
-            let output = self.graph.node(*output);
-            queue.extend(output.uses.iter().copied());
-            queue.extend(output.validation_uses.iter().copied());
+            queue.extend(self.graph.node(*output).uses.iter().copied());
+            queue.extend(self.graph.node_validation_uses(*output).iter().copied());
         }
         self.visited_edges.begin(self.graph.edge_count());
         let disk = self.disk.clone();
@@ -1353,9 +1352,8 @@ impl<'a> Builder<'a> {
                 )?;
             }
             for &output in outputs {
-                let output = self.graph.node(output);
-                queue.extend(output.uses.iter().copied());
-                queue.extend(output.validation_uses.iter().copied());
+                queue.extend(self.graph.node(output).uses.iter().copied());
+                queue.extend(self.graph.node_validation_uses(output).iter().copied());
             }
         }
         Ok(())

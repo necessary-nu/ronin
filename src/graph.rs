@@ -5,6 +5,7 @@ mod ids;
 mod index;
 mod marks;
 mod path;
+mod validation;
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
@@ -57,7 +58,6 @@ pub(crate) struct Node {
     pub(crate) shellpath: Option<PathSpan>,
     pub(crate) gen: Option<EdgeId>,
     pub(crate) uses: IdVec<EdgeId>,
-    pub(crate) validation_uses: IdVec<EdgeId>,
 }
 
 // [spec:samurai:def:graph.edge]
@@ -94,6 +94,14 @@ pub(crate) struct Graph {
     environments: Vec<Environment>,
     rules: Vec<Rule>,
     pools: Vec<Pool>,
+    /// Edges that name a node as a validation, kept aside from the node.
+    ///
+    /// Ninja's `|@` validations are rare — no node in a typical manifest has
+    /// one — but an inline list cost every node twenty-four bytes whether it
+    /// used the feature or not, a third of `Node`, and the node arena is the
+    /// largest structure a large manifest builds. Holding them aside keeps the
+    /// feature exactly and charges only the nodes that use it.
+    validation_uses: crate::htab::RapidHashMap<NodeId, IdVec<EdgeId>>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
     names: crate::names::Names,

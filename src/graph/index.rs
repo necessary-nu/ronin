@@ -202,7 +202,6 @@ pub(crate) fn mknode(graph: &mut Graph, path: impl AsRef<[u8]>) -> NodeId {
         shellpath,
         gen: None,
         uses: IdVec::new(),
-        validation_uses: IdVec::new(),
     });
     graph
         .node_by_path

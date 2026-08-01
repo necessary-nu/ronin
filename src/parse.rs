@@ -276,7 +276,7 @@ fn parseedge(
         nodeuse(graph, *input_node, edge);
     }
     for validation_node in &validation {
-        graph.node_mut(*validation_node).validation_uses.push(edge);
+        graph.add_validation_use(*validation_node, edge);
     }
     {
         let edge_mut = graph.edge_mut(edge);
@@ -647,8 +647,7 @@ mod ninja_manifest_tests {
         );
         assert_eq!(
             graph
-                .node(crate::graph::nodeget(&graph, b"baz").unwrap())
-                .validation_uses
+                .node_validation_uses(crate::graph::nodeget(&graph, b"baz").unwrap())
                 .len(),
             1
         );

@@ -1971,6 +1971,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-node-validation-side-table
+                        title "Charge validation lists only to the nodes that use them"
+                        log (
+                            {
+                                at 2026-08-01T22:28:32.825215899Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T22:28:56.602484917Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done, and it follows directly from the scaling measurement in ronin-intern-single-probe: last-level misses run at a flat 21.7 per statement across an eightfold size range, which is the signature of compulsory misses. Compulsory misses are proportional to bytes touched, so the way to reduce them is to touch fewer bytes, and the largest structure a big manifest builds is the node arena — 14.4 MB of a 26.6 MB working set at 100,000 statements.\n\n`Node` was 72 bytes: an eight-byte path span, a twelve-byte optional shell-quoted span, a four-byte optional generating edge, and two twenty-four-byte inline lists — `uses` and `validation_uses`. A third of every node was `validation_uses`, holding the edges that name it in a Ninja `|@` validation clause. Validations are a 1.11-era feature that almost nothing uses; no node in the 100,000-statement fixture has one, and the field was costing 4.8 MB of arena there to store nothing at all.\n\nIt now lives in a rapid-hashed side map on the graph, keyed by node, reached through `node_validation_uses` — which returns an empty slice for the nodes that have none — and `add_validation_use`. The feature is unchanged: six call sites across parse, build, the graph tool and compdb moved from field access to accessor, and the validation conformance tests pass untouched. `Node` is 48 bytes, down a third, and the node arena falls from 14.4 to 9.6 MB at 100,000 statements.\n\nMeasured, on a quiet host. At 100,000 statements: cycles 693,714,726 to 674,798,024 (−2.7%), cache misses 2,085,913 to 1,942,504 (−6.9%), instructions −0.6%, wall minimum-of-21 162.014 to 154.156 ms. At 200,000: cycles 1,369,836,966 to 1,323,037,612 (−3.4%), cache misses 4,064,116 to 3,863,720 (−4.9%), wall minimum-of-11 335.893 to 324.476 ms. The gain growing with size — 2.7% at 100,000 against 3.4% at 200,000 — is what a footprint change should do and is the best evidence that the mechanism is the one claimed. On the suite, large-manifest-parse 163.652 ms against C samurai's 314.060.\n\nTwo things deliberately not done, with reasons, so nobody re-derives them.\n\n`shellpath` is `Option<PathSpan>` at twelve bytes, where `PathSpan` is two plain `u32`s with no niche. Storing the path's own span instead of `None` would make it eight and remove a branch from `node_shellpath`. On its own it saves nothing: with `uses` still twenty-four bytes and eight-aligned, the struct pads straight back to 48. Worth doing only alongside a smaller `uses`.\n\n`uses` is the other twenty-four-byte list and most nodes hold zero or one entry, so a compressed layout — one flat edge vector plus an eight-byte span per node — would take `Node` to roughly 28 bytes. It is rejected for now because `uses` is not write-once: `nodeuse` appends during parse, and dyndep adds inputs to edges at build time, after any post-parse compaction would have run. Making that safe needs either a fallback for late additions or a rebuild step, and neither is worth it before the cheaper wins above are exhausted.\n\n372 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0 with no regression."
+                            }
+                        )
+                    }
                 )
                 log (
                     {

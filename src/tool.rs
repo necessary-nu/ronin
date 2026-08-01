@@ -758,9 +758,9 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
                 let _ = writeln!(output, "    {}", String::from_utf8_lossy(path.as_bytes()));
             }
         }
-        if !node_borrow.validation_uses.is_empty() {
+        if !graph.node_validation_uses(node).is_empty() {
             output.push_str("  validation for:\n");
-            for edge in &node_borrow.validation_uses {
+            for edge in graph.node_validation_uses(node) {
                 for output_node in &graph.edge(*edge).out {
                     let path = &graph.node_path(*output_node);
                     let _ = writeln!(output, "    {}", String::from_utf8_lossy(path.as_bytes()));
