@@ -1770,6 +1770,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-musl-static-build
+                        title "Measure a static musl build against static glibc"
+                        log (
+                            {
+                                at 2026-08-01T14:25:15.810716904Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T14:25:37.396937561Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Rejected on measurement. musl wins the thing ronin-static-startup was chasing and loses everything else by more.\n\nBuilt for x86_64-unknown-linux-musl, which is static by default so the crt-static flag in .cargo/config.toml does not apply to it. The binary is 1,555,000 bytes against static glibc's 2,462,792, a 37% saving, and it spawns correctly: musl's `posix_spawn` issues `clone` with CLONE_VM and CLONE_VFORK rather than glibc's `clone3`, which is the same address-space-sharing behaviour and not the page-table-copying fork that the weak-symbol fallback produced, at 56 microseconds a call against static glibc's 46.\n\nOn startup it is the best of the three. Empty manifest, minimum-of-51 interleaved: musl 0.676 ms minimum and 0.997 median, static glibc 0.777 and 1.085, C samurai 0.678 and 0.998. So musl lands exactly on samurai's floor and takes another 8% off what static glibc achieved.\n\nThen it gives all of that back many times over on anything that does work. Instruction counts settle it independently of machine load, which matters because a large external rustc build pushed load average to 31 during this session and inflated every wall figure taken here. Parsing and evaluating 100,000 statements: musl 1,429,671,885 instructions against static glibc's 1,205,457,312, up 18.6%, and 1,120,134,608 cycles against 862,228,746, up 29.9%. Wall ratios reproduced consistently across two very different load levels — deep-graph +31% and +32%, the 25,000-statement parse +24% and +21% — so the ordering is not a load artifact even though the absolute milliseconds are.\n\nThe symbol profile names both causes. musl spends 5.12% of the run in `__libc_malloc_impl` and 3.13% in `__libc_free`, so 8.25% in the allocator; on static glibc neither appears above the 2% reporting threshold at all. And musl spends 7.86% in `memcpy` plus 6.88% in `memmove`, 14.74% together, where static glibc spends 3.96% in `__memmove_avx_unaligned_erms` — glibc keeps its IFUNC dispatch to AVX2 and ERMS string routines even when statically linked, and musl's portable implementations are roughly 3.7 times the share of the run. A workload built on path interning, arena appends and string building moves a great many bytes, so that difference is not incidental to it.\n\nNet: musl buys about 0.09 ms of startup and costs 11 to 31 percent of everything above it. Wrong trade, and not a close one. Static glibc stays.\n\nTwo things worth keeping from this. First, the glibc allocator is not a bottleneck here — it does not register in the profile — so the recurring temptation to swap in mimalloc or jemalloc has no evidence behind it on this workload and should not be attempted without some. Second, the reason musl loses is largely IFUNC-dispatched string routines, which is a good reminder that \"statically linked\" does not mean \"loses the optimised libc\": static glibc keeps them, and that is a large part of why the ronin-static-startup change was free rather than a compromise.\n\nNo repository change: the musl target was installed for the experiment and nothing in the tree depends on it."
+                            }
+                        )
+                    }
                 )
                 log (
                     {

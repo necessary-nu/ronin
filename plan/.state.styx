@@ -128,6 +128,7 @@ assertions (
     {id ronin-startup-floor, kind @doing, author "brendan@bbqsrc.net", at 2026-07-31T14:35:39.247658116Z}
     {id ronin-dispatch-syscall-cost, kind @doing, author "brendan@bbqsrc.net", at 2026-07-31T14:48:11.699444839Z}
     {id ronin-static-startup, kind @doing, author "brendan@bbqsrc.net", at 2026-08-01T14:16:56.048668119Z}
+    {id ronin-musl-static-build, kind @doing, author "brendan@bbqsrc.net", at 2026-08-01T14:25:15.810716904Z}
 )
 
 impl_evidence (
