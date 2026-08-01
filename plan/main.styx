@@ -1877,6 +1877,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-output-pipe-not-socketpair
+                        title "Give each child a pipe rather than a socket pair"
+                        log (
+                            {
+                                at 2026-08-01T20:23:15.859046379Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T20:23:41.728011095Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done, and it exists because ronin-dispatch-residual-gap stopped one step too early. That node itemised the dispatch gap as syscalls and concluded every one was load-bearing. The itemisation was right and the conclusion was wrong, because it costed syscalls by count rather than by what they do.\n\nThe arithmetic that exposed it: at -j 1 the per-job difference against C samurai is about 37 microseconds, and the 5.4 extra syscalls per job explain nowhere near that. Measured directly, a bare syscall on this host costs 85 nanoseconds — mitigations are on, but retpolines and the rest do not make a syscall expensive in these terms — so 5.4 of them is under half a microsecond. The gap had to be somewhere else.\n\nMeasuring the supervising process alone, with children excluded, found it. Over 128 jobs ronin's parent executed 17.5 million instructions against samurai's 14.5 — about 23,400 more per job, which is real work rather than syscall entry overhead. The parent's profile pointed at kernel object allocation, `memset_orig` and `__memcg_slab_post_alloc_hook` prominent, and the difference in what the two tools allocate per job is exactly one thing: ronin created a socket pair for the child's output where samurai creates a pipe.\n\nThat was never needed. Output travels one way, so the second direction of a `UnixStream::pair` was dead from the start, and two `AF_UNIX` sockets carry far more kernel state than a pipe's single buffer. Measured in isolation, creating and closing a non-blocking socket pair costs about 4.9 microseconds against 2.3 for a pipe and the duplicate its writer needs. Switched to `std::io::pipe`, which is stable well below the toolchain in use and needs no dependency. Only the read end is made non-blocking, through `rustix::fs::fcntl_setfl`, because the drain loop reads until it would block while the child's end must stay blocking — a command writing faster than this process reads has to wait rather than fail with `EAGAIN`, which is why the flag cannot go to `pipe2`, since that sets it on both ends.\n\nMeasured over 128 jobs: parent instructions 17,511,983 to 16,796,921, down 4.2%, and the per-job socket pair is gone from the trace — 129 `socketpair` calls become 1, that one being signal-hook's wake pipe at startup. Wall clock is a smaller and noisier story, median 42.005 to 41.515 ms against samurai's 39.896, so about a percent; the change is worth taking on the instruction count and on being the right structure, not on the wall figure alone.\n\nIt also relocates the rest of the gap, which is the more useful result. With the socket pair gone the two parent profiles are dominated by the same kernel symbols in the same proportions — `sched_balance_find_dst_group`, `memset_orig`, `__memcg_slab_post_alloc_hook`, `clear_page_rep`, `kmem_cache_alloc_noprof`, `copy_process` — which is the process-spawn path, and identical work for both tools. The only ronin-specific entries left are our own: `Builder::build` at 2.77% and `Builder::finish_edge` at 1.59%. So the remaining roughly 17,000 instructions per job are dispatch bookkeeping in the build loop, not the poller, not the event registration, and not the syscalls that the previous node concluded were load-bearing. Whoever picks this up should start at `finish_edge`.\n\nThe correction worth carrying: costing a difference by syscall count assumes syscalls are the unit of cost, and here they were not — an 85-nanosecond syscall and a 5-microsecond one look identical in a `strace -c` tally. Count what the kernel allocates, not how often it is entered.\n\n372 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
