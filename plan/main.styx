@@ -1790,6 +1790,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-mimalloc-allocator
+                        title "Measure mimalloc against the system allocator on both libcs"
+                        log (
+                            {
+                                at 2026-08-01T18:12:29.990935447Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T18:12:57.603226938Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Rejected, but the hypothesis behind it was right and the previous node's dismissal of it was too broad. ronin-musl-static-build recorded that \"the recurring temptation to swap in mimalloc or jemalloc has no evidence behind it on this workload\" — that was true of glibc, where the allocator does not register in the profile, and false of musl, where it was 8.25%. Measuring both was the correct response.\n\nmimalloc was wired in as `#[global_allocator]` in the binary only, so the library keeps the system allocator for its consumers and the allocation-accounting harness, which wraps `System` in its own counting allocator in a separate example binary, is unaffected. Four builds were compared: glibc and musl, each with and without mimalloc. An external rustc build held load average between 30 and 40 for this entire measurement, so wall clock is corroborative only and the conclusion rests on instruction counts and page faults, which are load-independent.\n\nOn musl mimalloc does exactly what was predicted. `__libc_malloc_impl` and `__libc_free` disappear from the profile completely — they were 5.12% and 3.13% — and no mimalloc symbol replaces them above the reporting threshold. Instructions fall at every size above trivial: deps300 11,684,172 to 9,461,016 (−19%), deep-graph 32,610,559 to 25,266,902 (−22%), clean-tree 49,082,576 to 43,915,760 (−11%), 25,000-statement parse 360,354,050 to 310,185,705 (−14%), 100,000-statement parse 1,438,341,278 to 1,193,193,091 (−17%). That takes musl from 18 to 33 percent worse than glibc to roughly level with it, and at 100,000 statements slightly ahead — 1,193,193,091 against glibc's 1,218,753,578.\n\nIt still does not win, for two reasons that are not the allocator. First, musl's string routines remain untouched: memcpy plus memmove are 16.46% of the musl+mimalloc profile against 8.87% for glibc+mimalloc's IFUNC-dispatched `__memmove_avx_unaligned_erms` and `__memmove_avx_unaligned`. Second, mimalloc trades instructions for pages, and pages are not free. Page faults on the 25,000-statement parse go 7,526 to 10,293 on musl and 7,691 to 10,311 on glibc, about +35% in both cases, and that shows up in wall clock even where instructions fell: musl+mimalloc parses 25,000 statements in 117.485 ms minimum against plain musl's 110.933, despite executing 14% fewer instructions.\n\nThe page cost lands hardest exactly where this programme has spent the day trying to win. On an empty manifest mimalloc adds 61% to glibc's instruction count (1,117,251 to 1,797,816) and 42% to musl's (1,089,850 to 1,547,638), and roughly 130% to page faults in both — 68 to 156, and 57 to 137. Wall minimum on that fixture, under load: glibc 1.952 ms, glibc+mimalloc 2.560, musl 1.845, musl+mimalloc 2.152, samurai 1.868. mimalloc gives back a large fraction of what ronin-static-startup just bought, on every invocation, and a build tool's most common invocation is the one with nothing to do.\n\nOn glibc it is a straightforward loss. Instructions move +0.6% to +6.8% at every size except the 100,000-statement parse, where they fall 4.2%; page faults rise 35%; and two new symbols appear in the profile, `mi_free` at 2.77% and `__pv_queued_spin_lock_slowpath` at 2.67%, the latter suggesting mimalloc's arena management is contending in the kernel. Wall under load agrees at every size measured: deep-graph 8.349 ms minimum against 10.294, the 25,000-statement parse 88.562 against 102.611.\n\nReverted; the tree is byte-identical to before the experiment. glibc with the system allocator remains the shipped configuration, and it is the best of the four at every size measured except the 100,000-statement instruction count.\n\nTwo things worth keeping. First, musl+mimalloc is now a *viable* configuration rather than a bad one — roughly glibc parity on instructions, in a binary of 1,721,696 bytes against glibc+mimalloc's 2,625,840 — so if full-static portability or binary size ever becomes the goal, that combination is the one to reach for and this node is the measurement. Second, the general lesson: an allocator that reduces instruction count can still lose on wall clock by faulting in more pages, so allocator swaps must be judged on page faults and wall clock, never on instructions or allocation counts alone."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
