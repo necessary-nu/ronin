@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-01T21:31:59.083938862Z
+last_sync_at 2026-08-01T21:55:31.351742377Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -54,6 +54,7 @@ derived_priorities (
     {id ronin-eval-scratch-buffers, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-fast-hashing, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-index-growth-rehash, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
+    {id ronin-intern-single-probe, priority 0, derived_at 2026-08-01T21:55:31.351742377Z}
     {id ronin-large-manifest-fixture, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-log-byte-parsing, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-log-span-loading, priority 2, derived_at 2026-07-30T09:13:15.704782991Z}
