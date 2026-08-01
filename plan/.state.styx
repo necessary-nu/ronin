@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-01T19:23:06.979851655Z
+last_sync_at 2026-08-01T20:00:43.762607713Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -44,6 +44,7 @@ derived_priorities (
     {id ronin-compact-graph-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-depfile-inplace, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-deps-record-bounds, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
+    {id ronin-dispatch-residual-gap, priority 0, derived_at 2026-08-01T20:00:43.762607713Z}
     {id ronin-dispatch-syscall-cost, priority 0, derived_at 2026-07-31T14:51:35.215199716Z}
     {id ronin-drop-port-scaffolding, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-eager-stat-storm, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
