@@ -1837,6 +1837,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-byte-class-tables
+                        title "Classify path bytes by table, and reject arena presizing"
+                        log (
+                            {
+                                at 2026-08-01T19:22:22.208283217Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T19:22:46.138821636Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "This node was opened to presize the graph arenas and that idea is dead on measurement. What shipped instead is the byte-class technique from ronin-scanner-bulk-runs applied where the profile said it still paid.\n\nThe presizing premise was that growing by doubling touches about twice the memory it keeps, since each doubling allocates afresh — the kernel zeroing every new page — and copies everything so far. `clear_page_rep` was 8.4% of the run, so it looked like a target. A reservation derived from the manifest size was added for nodes, edges and the path arena, sized to cover the 100,000-statement fixture exactly. It did nothing: cycles 775.1 million to 784.6, instructions 1,130.2 million to 1,128.7, page faults 29,927 to 29,903.\n\nThe reason is `mremap`. glibc's `realloc` extends a large mapping in place, or moves it without copying pages, so a `Vec` past a few hundred kilobytes grows for the cost of one syscall and no page traffic at all. Counted directly, the unreserved build issues 19 `mremap` calls over the run and the reserved one issues 2 — the doubling was already nearly free, and had been all along. The premise was simply false for allocations this size, and reverted.\n\nTwo further things were checked before abandoning the direction, both already done. The adjacency lists are not a source of allocation: `IdVec` has been `SmallVec<[T; 4]>` since earlier in this programme, so up to four identifiers cost no allocation and no extra footprint, and `Node` is 72 bytes and `Edge` 136. And the remaining 800,227 allocation requests at 100,000 statements — 8.0 per build statement — are parse-time temporaries rather than graph structure, with `malloc` and `free` together under 3% of the profile. So `clear_page_rep` is first-touch of memory the tool genuinely writes to, and the only way to reduce it is to want less memory, not to ask for it more cleverly.\n\nWhat did pay was `shell_escape_path`, which every interned path passes through to decide whether quoting would change it. The test was `!byte.is_ascii_alphanumeric() && !b\"_+-./\".contains(byte)` — three range checks and then a *linear search of a five-byte string*, per byte, over every path in the manifest. Replaced with a 256-entry membership table, exactly as the scanner's terminator sets. Measured at 100,000 statements: cycles 773,298,348 to 751,588,888 (−2.8%), instructions 1,125,703,750 to 1,077,457,353 (−4.3%). The function has dropped out of the profile entirely, from 5.13% to below the 1.8% reporting threshold.\n\nThe profile that remains at 100,000 statements, for whoever picks this up: `NodeIndex::probe` 10.43%, `clear_page_rep` 9.53%, `scanstring` 7.98%, `node_for` 5.27%, page faults 3.44%, `memmove` 3.36%, `parse` 3.26%, `wide_hash` 3.13%, `canonpath` 3.03%, `append_variable` 3.02%, `list_del` 2.35%, `scan::space` 2.14%. The memory system is now the largest category at roughly 15% and is, per the above, not addressable by allocation strategy. `canonpath` and `scan::space` are the two remaining per-byte loops and are worth perhaps two percent between them.\n\n372 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0."
+                            }
+                        )
+                    }
                 )
                 log (
                     {

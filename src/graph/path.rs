@@ -19,14 +19,35 @@ pub(crate) fn nodepath_bytes(graph: &Graph, node: NodeId, style: PathStyle) -> &
     }
 }
 
+/// Bytes a path may contain and still need no shell quoting.
+///
+/// Every path interned is tested byte by byte against this, and the test it
+/// replaces was three range checks followed by a linear search of a five-byte
+/// string — call it eight comparisons a byte, against one indexed load.
+static SHELL_SAFE: [bool; 256] = shell_safe_table();
+
+const fn shell_safe_table() -> [bool; 256] {
+    let mut table = [false; 256];
+    let mut byte = 0;
+    while byte < 256 {
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "the loop covers exactly the byte range"
+        )]
+        let value = byte as u8;
+        table[byte] =
+            value.is_ascii_alphanumeric() || matches!(value, b'_' | b'+' | b'-' | b'.' | b'/');
+        byte += 1;
+    }
+    table
+}
+
 /// Shell-quote `source`, or report that quoting would not change it.
 ///
 /// Almost every real path needs no quoting, so the unquoted case must not
 /// copy: the node keeps only its plain path and renders that for both styles.
 pub(super) fn shell_escape_path(source: &[u8]) -> Option<BString> {
-    let quote = source
-        .iter()
-        .any(|byte| !byte.is_ascii_alphanumeric() && !b"_+-./".contains(byte));
+    let quote = source.iter().any(|byte| !SHELL_SAFE[*byte as usize]);
     if !quote {
         return None;
     }
