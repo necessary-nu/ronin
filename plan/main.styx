@@ -1944,6 +1944,26 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id ronin-intern-single-probe
+                        title "Intern a new path with one probe rather than two"
+                        log (
+                            {
+                                at 2026-08-01T21:54:44.785221608Z
+                                author "brendan@bbqsrc.net"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-01T21:55:09.12128762Z
+                                author "brendan@bbqsrc.net"
+                                kind @decision
+                                text "Done. `NodeIndex::probe` had been the largest symbol in the profile of the largest workload since the scanner work displaced `scanstring`, and nothing had attacked it since the fingerprint change. Rather than guess at it — this programme has been wrong three times today by reasoning ahead of measurement — the function was instrumented with counters and the manifest parsed to see what it actually does.\n\nParsing 100,000 statements, which interns 200,001 distinct paths: 500,003 probe calls, 1,204,229 slot examinations, 100,020 slots where the stored hash matched, 100,002 where the bytes then matched.\n\nTwo things fell out. The first is a confirmation worth recording, because it settles that the fingerprint has no headroom left: eighteen false positives across 1,204,229 steps. The expensive part of a probe — following a node identifier into `nodes` for a span and then into `paths` for the bytes, two dependent random reads — happens 100,020 times rather than 1.2 million. There is nothing further to win by filtering better.\n\nThe second is the actual defect. Five hundred thousand probes for two hundred thousand paths, and the arithmetic says where the excess is: `mknode` asked `get` whether the path was present, and on the answer \"no\" called `insert`, which walked the very same run a second time to find the very same vacancy. Worse, `insert` took only a node identifier, so before it could probe it had to read the path back out of the arena — a random read into `nodes` and another into `paths` — and re-hash those bytes. Two fifths of all probes, each over a run averaging 2.41 slots, plus 200,000 redundant hashes of forty-byte paths and 400,000 redundant random reads, all to rediscover something the first probe had already found.\n\n`get` is now a thin wrapper over `locate`, which returns both the node it found and a `Vacancy` carrying the slot index and the hash. `mknode` hands that vacancy to `fill`, which writes straight into it. The one case where the vacancy cannot be trusted is a table that grew between the two, and `fill` handles it by re-probing after `grow` — about eighteen insertions in a hundred-thousand-statement manifest pay the old cost so every other one does not. A `debug_assert` holds that a located vacancy is still vacant, which is the invariant the whole change rests on.\n\nMeasured at 100,000 statements: cycles 691,856,377 to 641,622,646 (−7.3%), instructions 1,080,296,799 to 1,046,249,875 (−3.2%), cache misses 2,120,696 to 2,047,212 (−3.5%). Wall, interleaved minimum-of-21, 162.518 to 155.507 ms and median 171.372 to 165.219, against C samurai's 294.319 and 310.546 — so 0.53x. On the suite, large-manifest-parse 173.630 ms against samurai's 322.834, and every workload in the catalog now at or ahead of samurai in that run, scheduler-barrier included at 36.101 against 36.854.\n\nWhat this does not do is make `probe` cheaper. Its share of the profile is essentially unchanged at 10.45%, because the probes removed were the cheap ones — the second walk of a pair, over slots the first had just pulled into cache. What remains is one genuinely cold read into a four-megabyte slot array per interned path, and shortening the call count cannot touch that. Anyone continuing here should target the miss rather than the count: the paths of one build statement are known together, since `parseedge` collects outputs and inputs into vectors before interning any of them, so their slots could be hashed and prefetched as a batch before the first probe. The `build all: phony ...` line, which names every output in the manifest, is the extreme case and the one most likely to show whether that pays.\n\n372 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0 with no regression."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
