@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-01T22:31:11.051420975Z
+last_sync_at 2026-08-01T22:54:27.099665015Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -81,6 +81,7 @@ derived_priorities (
     {id ronin-supervisor-bookkeeping, priority 0, derived_at 2026-08-01T20:45:10.449008006Z}
     {id ronin-traversal-mark-option, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-traversal-scratch, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-uses-compaction, priority 0, derived_at 2026-08-01T22:54:27.099665015Z}
 )
 
 assertions (
