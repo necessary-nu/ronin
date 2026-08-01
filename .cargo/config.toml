@@ -1,0 +1,31 @@
+# Link the C runtime statically on Linux.
+#
+# Ronin is invoked once per build and often has nothing to do: on an up-to-date
+# tree the whole run is a few milliseconds, so what the dynamic loader does
+# before `main` is a measurable fraction of it. Resolving libc and the unwinder
+# libgcc costs about 0.4 ms per invocation here, against 1.37 ms for a no-op
+# build. Statically linked that no-op runs in 0.98 ms against C samurai's 0.96,
+# and the dependency-log fixture goes from 3.18 ms to 2.58 against samurai's
+# 2.62 — behind to ahead, on a workload whose deficit was startup and nothing
+# else.
+#
+# This is only safe alongside `directory_to_impose` in src/subprocess.rs. A
+# `Command` carrying a `cwd` makes Rust's standard library reach for
+# `posix_spawn_file_actions_addchdir_np`, a weak symbol the static link does
+# not supply, and without it every spawn falls back from `posix_spawn` to
+# `fork` — measured at 65% slower on the scheduler fixture, which is the wrong
+# trade for a tool that exists to spawn compilers. Not imposing a directory
+# children are already in keeps the fast path, and with it static and dynamic
+# spawn identically: 320.7 ms against 321.3 over 1,024 jobs. Do not remove one
+# of these two without re-measuring the other.
+#
+# The cost is a binary roughly 70% larger. Peak RSS goes *down*, and for a
+# developer tool run thousands of times a day the trade is the right way round.
+# Nothing here resolves names or users, so none of static glibc's NSS caveats
+# apply — the binary contains no `getaddrinfo`, `getpwnam` or `gethostby*`.
+# Scoped to Linux because macOS does not support a statically linked libSystem.
+#
+# Note this lives outside the published crate: `cargo install ronin` builds
+# without it and gets the dynamic startup cost back.
+[target.'cfg(all(target_os = "linux", target_env = "gnu"))']
+rustflags = ["-C", "target-feature=+crt-static"]

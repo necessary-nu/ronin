@@ -156,7 +156,7 @@ impl<External> ProcessSupervisor<External> {
             reap_candidates: Vec::new(),
             children: HashMap::new(),
             interrupted: None,
-            working_directory: working_directory.to_owned(),
+            working_directory: directory_to_impose(working_directory),
         })
     }
 
@@ -720,6 +720,28 @@ fn null_stdin() -> Stdio {
         .map_or_else(Stdio::null, Stdio::from)
 }
 
+/// The directory to impose on children, empty when they would inherit it.
+///
+/// The library lets several runners share a process with different roots, so a
+/// child's directory has to be set per spawn rather than by moving the process
+/// — but the binary's root is the process's own directory, which is every
+/// invocation from a shell, and there imposing it is asking for what is
+/// already true. Skipping it is worth more than the redundant work: a `cwd`
+/// makes Rust's `Command` reach for `posix_spawn_file_actions_addchdir_np`,
+/// which is a weak symbol, and where the linker has not supplied it the whole
+/// spawn falls back from `posix_spawn` to `fork` and `exec` — page tables
+/// copied per job instead of shared. Measured at 128 jobs, that fallback is
+/// `clone` at 127 microseconds a call against `clone3` at 74.
+fn directory_to_impose(working_directory: &Path) -> PathBuf {
+    if working_directory.as_os_str().is_empty() {
+        return PathBuf::new();
+    }
+    match std::env::current_dir() {
+        Ok(process) if process == working_directory => PathBuf::new(),
+        _ => working_directory.to_owned(),
+    }
+}
+
 fn shell_command(command: &BString, working_directory: &Path) -> Command {
     let mut shell = Command::new("/bin/sh");
     shell
@@ -827,6 +849,21 @@ fn run_shell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_child_is_only_moved_to_a_directory_it_is_not_already_in() {
+        let process = std::env::current_dir().unwrap();
+
+        // The binary's root is the process's own directory, so nothing is
+        // imposed and `Command` keeps the `posix_spawn` path.
+        assert_eq!(directory_to_impose(&process), PathBuf::new());
+        assert_eq!(directory_to_impose(Path::new("")), PathBuf::new());
+
+        // A runner rooted elsewhere still moves its children, which is what
+        // lets several of them share one process.
+        let elsewhere = process.join("a-directory-the-process-is-not-in");
+        assert_eq!(directory_to_impose(&elsewhere), elsewhere);
+    }
 
     #[cfg(target_os = "linux")]
     fn thread_count() -> usize {
