@@ -2929,4 +2929,42 @@ children (
             }
         )
     }
+
+    {
+        id ronin-output-styles
+        title "Make build output rendering selectable"
+        children (
+            {
+                id ronin-reporter-seam
+                title "Route build status and failures through a reporter"
+                log (
+                    {
+                        at 2026-08-01T23:34:45.361975176Z
+                        author "brendan@bbqsrc.net"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-01T23:40:29.402926708Z
+                        author "brendan@bbqsrc.net"
+                        kind @decision
+                        text "Done. Every byte a build writes about itself now goes through one trait rather than being assembled inline in the supervisor.\n\nBefore this, `emit_status` built the status line by hand — pick description or command, expand the template into a `String`, splice the description into it if the format came from `--status`, append a newline — and `command_finished` separately assembled the `FAILED:` block from a `format!` and a loop over the edge's outputs. Two places, both writing Ninja-shaped bytes, neither nameable from outside. A second rendering could not be added without either a second branch at each site or a copy of both.\n\nThe seam is `Reporter`, with `status` and `failure`, both appending into a caller-owned `Vec<u8>` and returning nothing. That shape is deliberate in three ways. Renderers cannot fail, so error handling stays where the writing is and the supervisor keeps its existing `emit`/`flush_sinks` path untouched — including the branch that buffers into `build_output` when there is no sink, which the library API depends on. Renderers do not own the sink, so nothing about streaming, flushing or console-pool ordering moves. And rendering appends rather than returning, so the buffer can be reused.\n\nIt is reused: `emit_rendered` moves the scratch buffer out of the builder, renders, writes, and puts it back. Moving rather than borrowing is what lets a renderer hold `&self.progress`, `&self.options` and `&*self.graph` while the bytes accumulate. The status path previously allocated a `String` for the template and then grew a fresh `Vec` per command as the description and newline were appended; with `--status` it allocated a third buffer to splice the description into. Now one warm buffer absorbs all of that and the template `String` is the only allocation left. `format_progress_status` returning `String` is what keeps it there, and an `_into` variant would remove it, but that function carries the ported `formatstatus` spec annotations and is not worth disturbing for this.\n\nNo performance claim is being made and none was measured. The change adds one indirect call per finished command to a path that already performs a `write(2)` and a flush per command, which is not a ratio worth instrumenting, and the buffer reuse it introduces is a reduction in allocator traffic rather than a claimed speedup. The measurement worth taking is on the renderer that comes next, not on this.\n\nWhat the change has to prove instead is that nothing moved, and that is what was checked. `NinjaReporter` reproduces the previous bytes exactly, including the description-or-command rule, the `0x1f` marker expansion for CLI-supplied formats, and the `FAILED: [code=N] ` block with its trailing space after each output path. 376 tests pass, four of them new and pinning the rendering directly — counter and description, a command with no description standing for itself, `--verbose` preferring the command, and a CLI format placing the description at every marker. Clippy clean, fmt clean, and the conformance suite green at 425 upstream Ninja tests, 10 differential CLI cases and the persistence round trip. The upstream suite is the real evidence here: it parses Ronin's build output, so a single byte out of place in the status line or the failure block fails it.\n\nOne thing this deliberately does not do is choose a rendering. There is one implementation and no way to select another, which is unused generality until the Cargo renderer lands on top of it. That is the intended order — the seam is the reviewable part and the renderer is the visible one, and separating them means the commit that changes no output can be verified against the oracle on its own."
+                    }
+                )
+            }
+
+            {
+                id ronin-cargo-output-style
+                title "Render build status in Cargo's verb-column style"
+                deps (ronin-reporter-seam)
+            }
+
+            {
+                id ronin-progress-bar
+                title "Pin a throttled progress bar to the terminal"
+                deps (ronin-cargo-output-style)
+            }
+        )
+    }
 )

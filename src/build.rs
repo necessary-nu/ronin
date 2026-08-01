@@ -18,6 +18,7 @@ use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use self::command::{CommandSpec, DepsType, PreparedEdge, ResponseFile};
+use self::reporter::{NinjaReporter, Reporter};
 
 type BuildResult<T> = Result<T, BuildError>;
 
@@ -499,6 +500,14 @@ pub(crate) struct Builder<'a> {
     command_cache: Vec<Option<CommandSpec>>,
     command_scratch: Vec<u8>,
     progress: BuildState,
+    reporter: Box<dyn Reporter>,
+    /// Buffer every rendered line is built in, reused for the whole build.
+    ///
+    /// Rendering used to allocate a `String` for the status template and then
+    /// a second `Vec` to splice the description into it, once per finished
+    /// command. One reused buffer removes the second of those and makes the
+    /// first the only allocation left on the path.
+    status_scratch: Vec<u8>,
     output_sink: Option<&'a mut dyn Write>,
     diagnostic_sink: Option<&'a mut dyn Write>,
     explanations: Option<crate::explanations::Explanations>,
@@ -543,6 +552,8 @@ impl<'a> Builder<'a> {
             command_cache: Vec::new(),
             command_scratch: Vec::new(),
             progress,
+            reporter: Box::new(NinjaReporter),
+            status_scratch: Vec::new(),
             output_sink,
             diagnostic_sink,
             explanations,
@@ -1652,6 +1663,7 @@ impl<'a> Builder<'a> {
 }
 
 mod command;
+mod reporter;
 mod status;
 #[cfg(test)]
 pub(crate) use status::format_progress_status;

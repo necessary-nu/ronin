@@ -1,4 +1,5 @@
-use super::{status, Builder};
+use super::reporter::Rendering;
+use super::Builder;
 use crate::error::{BuildError, BuildOperation};
 use crate::graph::{edgehash, EdgeId, Graph, PathStyle};
 use crate::names::Names;
@@ -227,32 +228,39 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// Render one thing the reporter knows how to say, and write it.
+    ///
+    /// The buffer is moved out of `self` for the duration so that rendering
+    /// can borrow the graph, the progress counters and the options while the
+    /// bytes accumulate, then put back for the next command to reuse.
+    fn emit_rendered(&mut self, rendering: Rendering<'_>) -> BuildResult<()> {
+        let mut line = std::mem::take(&mut self.status_scratch);
+        line.clear();
+        match rendering {
+            Rendering::Status(command) => {
+                self.reporter
+                    .status(&mut line, &self.progress, &self.options, command);
+            }
+            Rendering::Failure {
+                edge,
+                exit_code,
+                command,
+            } => {
+                self.reporter
+                    .failure(&mut line, self.graph, edge, exit_code, command);
+            }
+        }
+        let result = self.emit(&line);
+        self.status_scratch = line;
+        result
+    }
+
     fn emit_status(&mut self, edge: EdgeId, command: &CommandSpec) -> BuildResult<()> {
         self.emit_explanations(edge)?;
         if self.options.quiet {
             return Ok(());
         }
-        let description = if self.options.verbose || command.description.is_empty() {
-            command.command.as_bytes()
-        } else {
-            command.description.as_bytes()
-        };
-        let mut line =
-            status::format_progress_status(&self.progress, &self.options.statusfmt).into_bytes();
-        if self.options.status_from_cli {
-            let mut rendered = Vec::with_capacity(line.len() + description.len());
-            for (index, part) in line.split(|byte| *byte == 0x1f).enumerate() {
-                if index != 0 {
-                    rendered.extend_from_slice(description);
-                }
-                rendered.extend_from_slice(part);
-            }
-            line = rendered;
-        } else {
-            line.extend_from_slice(description);
-        }
-        line.push(b'\n');
-        self.emit(&line)
+        self.emit_rendered(Rendering::Status(command))
     }
 
     pub(super) fn command_started(
@@ -281,15 +289,11 @@ impl Builder<'_> {
             self.emit_status(edge, command)?;
         }
         if let Some(exit_code) = failure_code {
-            let mut failure = format!("FAILED: [code={exit_code}] ").into_bytes();
-            for output in &self.graph.edge(edge).out {
-                failure.extend_from_slice(self.graph.node_path(*output).as_bytes());
-                failure.push(b' ');
-            }
-            failure.push(b'\n');
-            failure.extend_from_slice(command.command.as_bytes());
-            failure.push(b'\n');
-            self.emit(&failure)?;
+            self.emit_rendered(Rendering::Failure {
+                edge,
+                exit_code,
+                command,
+            })?;
         }
         if !output.is_empty() {
             self.emit(output)?;
