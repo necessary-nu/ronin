@@ -20,6 +20,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use self::command::{CommandSpec, DepsType, PreparedEdge, ResponseFile};
 use self::reporter::Reporter;
 pub(crate) use self::reporter::{ColorChoice, OutputStyle, TerminalContext};
+pub(crate) use self::status::BuildState;
 
 type BuildResult<T> = Result<T, BuildError>;
 
@@ -86,24 +87,6 @@ impl Default for BuildOptions {
             maxload: 0.0,
             jobserver: None,
             working_directory: crate::os::WorkingDirectory::default(),
-        }
-    }
-}
-
-pub(crate) struct BuildState {
-    pub(crate) started: usize,
-    pub(crate) finished: usize,
-    pub(crate) total: usize,
-    pub(crate) start: Instant,
-}
-
-impl BuildState {
-    pub(crate) fn new(_options: BuildOptions) -> Self {
-        Self {
-            started: 0,
-            finished: 0,
-            total: 0,
-            start: Instant::now(),
         }
     }
 }
@@ -474,6 +457,14 @@ impl Plan {
     }
 
     pub(crate) fn command_edge_count(&self, graph: &Graph) -> usize {
+        self.command_edges(graph).count()
+    }
+
+    /// Every planned edge that will actually run a command.
+    pub(crate) fn command_edges<'a>(
+        &'a self,
+        graph: &'a Graph,
+    ) -> impl Iterator<Item = EdgeId> + 'a {
         self.wanted
             .iter()
             .zip(graph.edge_ids())
@@ -481,7 +472,7 @@ impl Plan {
                 let rule = graph.edge(*edge).rule;
                 **wanted && rule.is_some() && !graph.is_phony_rule(rule)
             })
-            .count()
+            .map(|(_, edge)| edge)
     }
 
     pub(crate) const fn is_empty(&self) -> bool {
@@ -1089,6 +1080,7 @@ impl<'a> Builder<'a> {
             old_mtimes,
             command,
             command_start_mtime,
+            start_millis: self.progress.offset_millis(),
             _response_file: response_file,
         })
     }
@@ -1115,8 +1107,18 @@ impl<'a> Builder<'a> {
             old_mtimes,
             command,
             command_start_mtime,
+            start_millis,
             _response_file,
         } = prepared;
+        // Account for the edge before anything reports progress: the status
+        // line about to be printed is the one that has to show it as done.
+        // Reading the previous duration has to happen here too, before this
+        // run's own entry replaces last run's in the log.
+        let end_millis = self.progress.offset_millis();
+        let previous_duration =
+            status::previous_duration(self.graph, self.build_log.as_deref(), edge);
+        self.progress
+            .retire_edge(i64::from(end_millis - start_millis), previous_duration);
         let result = match result {
             Ok(result) => result,
             Err(error) => {
@@ -1346,8 +1348,8 @@ impl<'a> Builder<'a> {
                     self.graph,
                     edge,
                     edge_hash,
-                    0,
-                    0,
+                    start_millis,
+                    end_millis,
                     record_mtime,
                 )?;
             }
@@ -1523,6 +1525,12 @@ impl<'a> Builder<'a> {
         self.progress.finished = 0;
         self.progress.total = self.plan.command_edge_count(self.graph);
         self.progress.start = Instant::now();
+        status::seed_prediction(
+            &mut self.progress,
+            &self.plan,
+            self.graph,
+            self.build_log.as_deref(),
+        );
         let mut failures = 0;
         let mut last_error = None;
         let failure_limit = self.options.maxfail.max(1);

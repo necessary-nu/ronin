@@ -3,7 +3,7 @@
 Ronin is a fast Ninja-compatible build tool implemented in Rust.
 
 The current compatibility baseline is the Ninja build language through version
-1.9. Ronin preserves Ninja-owned interfaces such as `build.ninja`,
+1.14. Ronin preserves Ninja-owned interfaces such as `build.ninja`,
 `NINJA_STATUS`, `.ninja_log`, `.ninja_deps`, depfiles, dyndeps, pools, and
 Ninja tool-mode names. `SAMUFLAGS` is intentionally unsupported; pass options
 on the command line.

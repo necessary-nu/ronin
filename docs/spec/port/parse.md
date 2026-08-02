@@ -11,9 +11,9 @@
 > a major-only prefix is accepted with minor zero, and trailing text after a
 > successful conversion is ignored.
 >
-> Compare the parsed pair lexicographically with the supported pair 1.9. If
-> the major is greater than 1, or it is 1 and the minor is greater than 9,
-> terminate with the fatal `ninja_required_version ... is newer than 1.9`
+> Compare the parsed pair lexicographically with the supported pair 1.14. If
+> the major is greater than 1, or it is 1 and the minor is greater than 14,
+> terminate with the fatal `ninja_required_version ... is newer than 1.14`
 > diagnostic. All other parsed values, including negative values, return
 > successfully and do not mutate parser state.
 

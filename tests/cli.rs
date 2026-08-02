@@ -36,7 +36,10 @@ fn binary_is_ronin_and_ignores_samuflags() {
         .unwrap();
 
     assert!(output.status.success());
-    assert_eq!(output.stdout, b"1.9.0\n");
+    assert_eq!(
+        output.stdout,
+        format!("{}\n", ronin::NINJA_COMPAT_VERSION).into_bytes()
+    );
     assert!(output.stderr.is_empty());
 
     let error = Command::new(binary)

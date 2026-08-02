@@ -1,5 +1,5 @@
 use super::reporter::Rendering;
-use super::Builder;
+use super::{status, Builder};
 use crate::error::{BuildError, BuildOperation};
 use crate::graph::{edgehash, EdgeId, Graph, PathStyle};
 use crate::names::Names;
@@ -98,6 +98,14 @@ pub(super) struct PreparedEdge {
     pub(super) old_mtimes: Vec<i64>,
     pub(super) command: CommandSpec,
     pub(super) command_start_mtime: i64,
+    /// Milliseconds from the start of the build to this command's launch.
+    ///
+    /// Ninja records this and the matching end offset in `.ninja_log`, and
+    /// reads them back on the next build to weight its progress prediction by
+    /// how long each edge actually took. Recording zeroes, as this did before,
+    /// costs both tools that prediction: ours has nothing to weight with, and
+    /// Ninja reading a log we wrote silently falls back to counting edges.
+    pub(super) start_millis: i32,
     pub(super) _response_file: Option<ResponseFile>,
 }
 
@@ -329,6 +337,8 @@ impl Builder<'_> {
         output: &[u8],
     ) -> BuildResult<()> {
         self.progress.finished += 1;
+        // The prediction has to be refreshed before the line that reports it.
+        status::recalculate_prediction(&mut self.progress);
         self.reporter.ended();
         let wrote_batch = !command.use_console || failure_code.is_some() || !output.is_empty();
         if !command.use_console {

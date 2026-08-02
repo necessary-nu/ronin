@@ -356,7 +356,9 @@ impl fmt::Display for ManifestProblem {
             Self::RequiredVersionTooNew { version } => {
                 write!(
                     formatter,
-                    "ninja_required_version {version} is newer than 1.9"
+                    "ninja_required_version {version} is newer than {}.{}",
+                    crate::cli::NINJA_COMPAT_MAJOR,
+                    crate::cli::NINJA_COMPAT_MINOR
                 )
             }
         }

@@ -387,7 +387,6 @@ where
     rewrite(log, entries)
 }
 
-#[cfg(test)]
 pub(crate) fn logentry(log: &BuildLog, output: impl AsRef<[u8]>) -> Option<&LogEntry> {
     log.entries.get(output.as_ref())
 }

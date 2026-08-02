@@ -20,7 +20,19 @@ pub const PRODUCT_NAME: &str = "ronin";
 
 // [spec:ronin:req:compat.version-reporting]
 /// The Ninja language compatibility version reported by `--version`.
-pub const NINJA_COMPAT_VERSION: &str = "1.9.0";
+pub const NINJA_COMPAT_VERSION: &str = "1.14.0";
+
+/// The compatibility level as a comparable pair, for `ninja_required_version`.
+///
+/// This and [`NINJA_COMPAT_VERSION`] must agree; a test asserts they do. They
+/// are separate because the reported token is Ninja-shaped text and the gate
+/// needs numbers, and keeping the gate's numbers here rather than spelled out
+/// in the parser is what stopped them drifting apart the first time: the
+/// parser refused everything past 1.9 while the implementation had grown
+/// through 1.14, so features Ronin had were unreachable behind a version
+/// check that predated them.
+pub(crate) const NINJA_COMPAT_MAJOR: i32 = 1;
+pub(crate) const NINJA_COMPAT_MINOR: i32 = 14;
 
 // [spec:ronin:req:compat.ninja-owned-names]
 const DEFAULT_MANIFEST: &str = "build.ninja";
@@ -1617,6 +1629,20 @@ mod tests {
             RunAction::Execute(invocation) => Ok(invocation.build_options),
             RunAction::Immediate(_) => panic!("these arguments describe a build"),
         }
+    }
+
+    // [spec:ronin:req:compat.version-reporting/test]
+    #[test]
+    fn the_reported_token_and_the_manifest_gate_agree() {
+        assert_eq!(
+            NINJA_COMPAT_VERSION
+                .split('.')
+                .take(2)
+                .collect::<Vec<_>>()
+                .join("."),
+            format!("{NINJA_COMPAT_MAJOR}.{NINJA_COMPAT_MINOR}"),
+            "the advertised version and the ninja_required_version gate must not drift"
+        );
     }
 
     // [spec:ronin:req:product.output-style/test]

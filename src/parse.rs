@@ -475,7 +475,9 @@ fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i
                 .map_err(|_| manifest_error(scanner, ManifestProblem::InvalidRequiredVersion))?;
         }
     }
-    if major > 1 || major == 1 && minor > 9 {
+    if major > crate::cli::NINJA_COMPAT_MAJOR
+        || major == crate::cli::NINJA_COMPAT_MAJOR && minor > crate::cli::NINJA_COMPAT_MINOR
+    {
         Err(manifest_error(
             scanner,
             ManifestProblem::RequiredVersionTooNew {
