@@ -3455,7 +3455,7 @@ fn cargo_style_renders_a_whole_build_in_the_verb_column() {
     builder.add_target(&target).unwrap();
     builder.build().unwrap();
     let output = String::from_utf8_lossy(&builder.build_output).into_owned();
-    let expected = format!("    Building {}\n", directory.join("out").display());
+    let expected = format!("    Building {} (1/1)\n", directory.join("out").display());
     assert!(output.starts_with(&expected), "{output:?}");
     assert!(
         output.contains("\n    Finished 1 command in "),

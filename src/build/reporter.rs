@@ -104,6 +104,7 @@ impl ColorChoice {
 pub(crate) struct Palette {
     work: &'static [u8],
     failure: &'static [u8],
+    counter: &'static [u8],
     reset: &'static [u8],
 }
 
@@ -111,11 +112,13 @@ impl Palette {
     const PLAIN: Self = Self {
         work: b"",
         failure: b"",
+        counter: b"",
         reset: b"",
     };
     const COLOURED: Self = Self {
         work: b"\x1b[1;32m",
         failure: b"\x1b[1;31m",
+        counter: b"\x1b[2m",
         reset: b"\x1b[0m",
     };
 
@@ -175,7 +178,7 @@ impl Reporter {
     ) {
         match self {
             Self::Ninja => ninja_status(out, progress, options, command),
-            Self::Cargo(palette) => cargo_status(out, *palette, options, command),
+            Self::Cargo(palette) => cargo_status(out, *palette, progress, options, command),
         }
     }
 
@@ -248,19 +251,26 @@ fn ninja_failure(
     out.push(b'\n');
 }
 
-/// Render `    Building CXX object src/main.cc.o`.
+/// Render `    Building CXX object src/main.cc.o (12/83)`.
 ///
 /// The verb is the description's first word, which costs nothing and works
 /// because generators already write descriptions that begin with one: both
 /// `CMake` and Meson emit `Building …`, `Linking …`, `Generating …`. A
-/// description
-/// without a space becomes the whole verb and no subject, and a command shown
-/// in place of a description gets `Running`, since splitting `/usr/bin/c++`
-/// off the front of a command line would name a path, not an action.
+/// description without a space becomes the whole verb and no subject, and a
+/// command shown in place of a description gets `Running`, since splitting
+/// `/usr/bin/c++` off the front of a command line would name a path rather
+/// than an action.
+///
+/// The counter closes the line rather than opening it. The verb column is the
+/// thing being read down a long build, and a count in front of it is as wide
+/// as the numbers currently in it, so the column would shift as the build
+/// passed 9, 99 and 999 finished commands. Dimmed and trailing, the count is
+/// there when looked for and out of the way when not.
 // [spec:samurai:req:product.output-style]
 fn cargo_status(
     out: &mut Vec<u8>,
     palette: Palette,
+    progress: &BuildState,
     options: &BuildOptions,
     command: &CommandSpec,
 ) {
@@ -279,6 +289,9 @@ fn cargo_status(
             out.extend_from_slice(text);
         }
     }
+    out.extend_from_slice(palette.counter);
+    let _ = write!(out, " ({}/{})", progress.finished, progress.total);
+    out.extend_from_slice(palette.reset);
     out.push(b'\n');
 }
 
@@ -467,7 +480,7 @@ mod tests {
         let options = BuildOptions::default();
         assert_eq!(
             cargo(&options, &spec("c++ -c a.cc", "Building CXX object a.cc.o")),
-            "    Building CXX object a.cc.o\n"
+            "    Building CXX object a.cc.o (3/7)\n"
         );
     }
 
@@ -477,7 +490,7 @@ mod tests {
         let options = BuildOptions::default();
         assert_eq!(
             cargo(&options, &spec("x", "Regenerating build.ninja")),
-            "Regenerating build.ninja\n"
+            "Regenerating build.ninja (3/7)\n"
         );
     }
 
@@ -485,7 +498,10 @@ mod tests {
     #[test]
     fn a_description_of_one_word_is_all_verb() {
         let options = BuildOptions::default();
-        assert_eq!(cargo(&options, &spec("x", "Linking")), "     Linking\n");
+        assert_eq!(
+            cargo(&options, &spec("x", "Linking")),
+            "     Linking (3/7)\n"
+        );
     }
 
     // [spec:samurai:req:product.output-style/test]
@@ -494,7 +510,7 @@ mod tests {
         let options = BuildOptions::default();
         assert_eq!(
             cargo(&options, &spec("/usr/bin/c++ -c a.cc", "")),
-            "     Running /usr/bin/c++ -c a.cc\n"
+            "     Running /usr/bin/c++ -c a.cc (3/7)\n"
         );
     }
 
@@ -508,7 +524,7 @@ mod tests {
         Reporter::new(OutputStyle::Cargo, true).status(&mut out, &progress, &options, &command);
         assert_eq!(
             String::from_utf8(out).expect("the fixture renders as text"),
-            "    \u{1b}[1;32mBuilding\u{1b}[0m a.cc.o\n"
+            "    \u{1b}[1;32mBuilding\u{1b}[0m a.cc.o\u{1b}[2m (0/0)\u{1b}[0m\n"
         );
     }
 
