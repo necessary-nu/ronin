@@ -31,6 +31,12 @@ pub(crate) struct ParseOptions {
 pub(crate) struct Parser {
     pub(crate) options: ParseOptions,
     pub(crate) defaults: Vec<NodeId>,
+    /// Diagnostics that do not stop the parse, in the order they were raised.
+    ///
+    /// The parser cannot write them itself: a manifest may be read through a
+    /// library caller's sink, or through no sink at all, so where a warning
+    /// goes is the invocation's decision rather than the parser's.
+    pub(crate) warnings: Vec<String>,
     working_directory: crate::os::WorkingDirectory,
 }
 
@@ -533,6 +539,17 @@ pub(crate) fn parse(
                 let value = enveval(graph, environment, &value);
                 if name == "ninja_required_version" {
                     let (major, minor) = checkversion(&scanner, BStr::new(value.as_bytes()))?;
+                    // Ninja accepts a manifest written for an older major but
+                    // says so, because the language it was written against is
+                    // not the one about to interpret it.
+                    if crate::cli::NINJA_COMPAT_MAJOR > major {
+                        parser.warnings.push(format!(
+                            "ninja executable version ({}) greater than build file \
+                             ninja_required_version ({}); versions may be incompatible.",
+                            crate::cli::NINJA_COMPAT_VERSION,
+                            value.as_bstr()
+                        ));
+                    }
                     scanner.set_manifest_version(major, minor);
                 }
                 let name = graph.names_mut().intern(name);

@@ -362,6 +362,35 @@ fn status_placeholder(name: &str) -> CliResult<&'static str> {
     }
 }
 
+/// Send any warnings the parse raised to stderr, as Ninja does.
+///
+/// Streamed to the diagnostic sink when the invocation has one, so a warning
+/// appears while the build runs rather than after it; buffered into the result
+/// otherwise, for callers that collect output instead of streaming it.
+// [spec:ronin:req:compat.manifest-semantics]
+fn emit_parser_warnings(
+    parser: &mut crate::parse::Parser,
+    diagnostics: Option<&mut (dyn std::io::Write + '_)>,
+    buffered: &mut Vec<u8>,
+) -> CliResult<()> {
+    if parser.warnings.is_empty() {
+        return Ok(());
+    }
+    let mut rendered = Vec::new();
+    for warning in parser.warnings.drain(..) {
+        rendered.extend_from_slice(format!("{PRODUCT_NAME}: warning: {warning}\n").as_bytes());
+    }
+    match diagnostics {
+        Some(sink) => {
+            sink.write_all(&rendered)
+                .and_then(|()| sink.flush())
+                .map_err(|source| CliError::CurrentDirectory { source })?;
+        }
+        None => buffered.extend_from_slice(&rendered),
+    }
+    Ok(())
+}
+
 /// Name the option in the error when an enumerated value is not one of them.
 // [spec:ronin:req:product.output-style]
 fn require_value<T>(option: &'static str, value: &[u8], parsed: Option<T>) -> CliResult<T> {
@@ -937,11 +966,15 @@ fn run_compdb_targets_tool(
 }
 
 fn tool_result(output: impl AsRef<[u8]>) -> RunResult {
+    tool_result_with(output, Vec::new())
+}
+
+fn tool_result_with(output: impl AsRef<[u8]>, stderr: Vec<u8>) -> RunResult {
     let mut output = output.as_ref().to_vec();
     if !output.is_empty() && !matches!(output.last(), Some(b'\n' | b'\0')) {
         output.push(b'\n');
     }
-    RunResult::stdout(output)
+    RunResult::exit(output, stderr, 0)
 }
 
 fn finish_build_log(log: crate::log::BuildLog) -> Result<(), PersistenceError> {
@@ -1389,6 +1422,9 @@ fn run_bytes(
     }
 
     let mut output = String::new();
+    // Warnings raised while parsing, kept here only when the invocation has no
+    // diagnostic sink to stream them to.
+    let mut warnings = Vec::new();
     let mut parse_count = 0;
     let mut parse_elapsed = std::time::Duration::ZERO;
     for _ in 0..100 {
@@ -1413,6 +1449,7 @@ fn run_bytes(
         )?;
         parse_count += 1;
         parse_elapsed += parse_started.elapsed();
+        emit_parser_warnings(&mut parser, build_diagnostics.as_deref_mut(), &mut warnings)?;
 
         if let Some(tool) = invocation
             .selected_tool
@@ -1536,7 +1573,7 @@ fn run_bytes(
             finish_build_log(build_log)?;
             finish_deps_log(deps_log)?;
             if invocation.build_options.dryrun {
-                return Ok(tool_result(output));
+                return Ok(tool_result_with(output, std::mem::take(&mut warnings)));
             }
             continue;
         }
@@ -1602,7 +1639,7 @@ fn run_bytes(
         if invocation.build_options.stats {
             append_stats(&mut output, parse_count, parse_elapsed);
         }
-        return Ok(tool_result(output));
+        return Ok(tool_result_with(output, std::mem::take(&mut warnings)));
     }
     Err(CliError::ManifestRetryLimit {
         path: invocation.manifest,

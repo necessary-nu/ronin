@@ -301,3 +301,55 @@ fn forwards_interrupts_and_removes_partial_outputs() {
     assert!(!directory.join("output").exists());
     fs::remove_dir_all(directory).unwrap();
 }
+
+// [spec:ronin:req:compat.manifest-semantics/test]
+#[test]
+fn a_too_new_required_version_is_refused_in_ninjas_words() {
+    let directory = test_directory("required-version-too-new");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "ninja_required_version = 1.99\nrule t\n  command = touch $out\nbuild o: t\n",
+    )
+    .unwrap();
+    let error = ronin::Runner::new(&directory)
+        .unwrap()
+        .run(&["ronin".into(), "-n".into()])
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        format!(
+            "fatal: ninja version ({}) incompatible with build file \
+             ninja_required_version version (1.99).",
+            ronin::NINJA_COMPAT_VERSION
+        )
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:compat.manifest-semantics/test]
+#[test]
+fn an_older_required_major_is_accepted_with_ninjas_warning() {
+    let directory = test_directory("required-version-older-major");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "ninja_required_version = 0.9\nrule t\n  command = touch $out\nbuild o: t\n",
+    )
+    .unwrap();
+    let result = ronin::Runner::new(&directory)
+        .unwrap()
+        .run_os(&["ronin".into(), "-n".into()])
+        .unwrap();
+    let stderr = String::from_utf8(result.stderr).unwrap();
+    assert_eq!(
+        stderr,
+        format!(
+            "ronin: warning: ninja executable version ({}) greater than build file \
+             ninja_required_version (0.9); versions may be incompatible.\n",
+            ronin::NINJA_COMPAT_VERSION
+        )
+    );
+    assert_eq!(result.exit_code, 0);
+    fs::remove_dir_all(directory).unwrap();
+}

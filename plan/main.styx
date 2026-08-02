@@ -3121,4 +3121,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-version-diagnostics
+        title "Match Ninja's wording for the version-check diagnostics"
+        log (
+            {
+                at 2026-08-02T17:09:47.062827392Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-02T17:10:08.184039176Z
+                author "brendan@bbqsrc.net"
+                kind @decision
+                text "Done. The `ninja_required_version` diagnostics are Ninja's, word for word, and the check has the branch it was missing.\n\nThe wording was samurai's: `ninja_required_version 1.15 is newer than 1.14`, where Ninja says `ninja version (1.14.0.git) incompatible with build file ninja_required_version version (1.15).` A manifest asking for too new a Ninja is something generators and CI logs read about, so inheriting the port's phrasing was a compatibility gap rather than a stylistic one. Both now match apart from the product name and the version token, which are Ronin-owned under `[dec:ronin:product-boundary]` — `ronin: fatal: ninja version (1.14.0) incompatible …` against `ninja: fatal: ninja version (1.14.0.git) incompatible …`.\n\nReading Ninja's `CheckNinjaVersion` to get the wording right turned up a branch Ronin did not implement at all. Ninja has three outcomes, not two: fatal when the manifest wants a newer version, silence when the versions are compatible, and a *warning* when the supported major is greater than the requested one — `ninja executable version (…) greater than build file ninja_required_version (0.9); versions may be incompatible.` A manifest written for Ninja 0.x builds, and says so. Ronin accepted those in silence.\n\nImplementing that needed something Ronin did not have: any way to emit a warning. There is no warning channel in the codebase — `-w dupbuild=warn` suppresses an error rather than raising a warning, and `-w phonycycle=warn` is parsed and then ignored entirely. So this adds one, shaped by where the constraint actually is. The parser cannot write warnings itself, because a manifest may be read through a library caller's sink or through no sink at all; where a diagnostic goes is the invocation's decision. So the parser collects them and the CLI drains them, streaming to the diagnostic sink when the invocation has one — so a warning appears while the build runs, as Ninja's does — and buffering into the result's stderr when it does not.\n\nThat channel is the reusable part of this change. The two accepted-and-ignored warning flags now have somewhere to report to, and neither is wired up here; they are separate behaviour with their own upstream semantics and should be done deliberately rather than smuggled in behind a version-check fix.\n\nVerified against Ninja on all three branches: `0.9` warns and builds in both, `1.5` is silent in both, `1.15` and `2.0` are fatal in both with matching text. Two tests pin it end to end through the public `Runner`, one asserting the fatal message and one asserting the warning reaches stderr with a zero exit code. The requirement text in docs/spec/port/parse.md now describes all three branches rather than the two the port had.\n\n399 tests plus 9 CLI tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
+            }
+        )
+    }
 )

@@ -13,8 +13,12 @@
 >
 > Compare the parsed pair lexicographically with the supported pair 1.14. If
 > the major is greater than 1, or it is 1 and the minor is greater than 14,
-> terminate with the fatal `ninja_required_version ... is newer than 1.14`
-> diagnostic. All other parsed values, including negative values, return
+> terminate with Ninja's fatal diagnostic, `fatal: ninja version (VERSION)
+> incompatible with build file ninja_required_version version (REQUESTED).`
+> If the supported major is greater than the requested major, the manifest is
+> accepted but raises Ninja's warning, `ninja executable version (VERSION)
+> greater than build file ninja_required_version (REQUESTED); versions may be
+> incompatible.` All other parsed values, including negative values, return
 > successfully and do not mutate parser state.
 
 > [spec:ronin:def:parse.defaultnodes-fn]

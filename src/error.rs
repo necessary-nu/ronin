@@ -353,12 +353,15 @@ impl fmt::Display for ManifestProblem {
             }
             Self::PoolWithoutDepth => formatter.write_str("pool has no depth"),
             Self::InvalidRequiredVersion => formatter.write_str("invalid ninja_required_version"),
+            // Ninja's own wording, because a manifest that asks for too new a
+            // Ninja is a thing generators and CI logs read about, and the
+            // samurai phrasing this used to carry is not what they expect.
             Self::RequiredVersionTooNew { version } => {
                 write!(
                     formatter,
-                    "ninja_required_version {version} is newer than {}.{}",
-                    crate::cli::NINJA_COMPAT_MAJOR,
-                    crate::cli::NINJA_COMPAT_MINOR
+                    "fatal: ninja version ({}) incompatible with build file \
+                     ninja_required_version version ({version}).",
+                    crate::cli::NINJA_COMPAT_VERSION
                 )
             }
         }
