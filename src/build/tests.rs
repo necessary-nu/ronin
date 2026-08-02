@@ -413,7 +413,7 @@ fn ninja_plan_pools_with_depth_two() {
 }
 
 #[test]
-// [spec:samurai:req:runtime.typed-runtime-state/test]
+// [spec:ronin:req:runtime.typed-runtime-state/test]
 fn ninja_plan_pool_with_failing_edge() {
     let graph = plan_graph(
             "pool foobar\n  depth = 1\nrule poolcat\n  command = cat\n  pool = foobar\nbuild out1: poolcat in\nbuild out2: poolcat in\n",
@@ -759,7 +759,7 @@ fn ninja_build_failure_is_reported() {
 }
 
 #[test]
-// [spec:samurai:req:compat.command-runtime/test]
+// [spec:ronin:req:compat.command-runtime/test]
 fn ronin_build_streams_description_status_and_buffered_output_in_order() {
     let (mut graph, directory) = build_fixture(
         "streamed-output",
@@ -800,7 +800,7 @@ impl std::io::Write for FlushCountingWriter {
 }
 
 #[test]
-// [spec:samurai:req:runtime.process-supervisor-scalability/test]
+// [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn ronin_build_flushes_each_completed_output_batch_once() {
     let (mut graph, directory) = build_fixture(
         "batched-output-flush",
@@ -821,7 +821,7 @@ fn ronin_build_flushes_each_completed_output_batch_once() {
 
 #[cfg(unix)]
 #[test]
-// [spec:samurai:req:runtime.process-supervisor-scalability/test]
+// [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn ronin_console_build_flushes_its_status_batch_once() {
     let (mut graph, directory) = build_fixture(
         "console-output-flush",
@@ -1460,7 +1460,7 @@ fn ninja_build_runs_independent_edges_in_parallel() {
 
 #[cfg(unix)]
 #[test]
-// [spec:samurai:req:runtime.process-supervisor-scalability/test]
+// [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn ronin_build_acquires_and_releases_jobserver_tokens() {
     let (mut graph, directory) = build_fixture(
         "jobserver-tokens",
@@ -1488,7 +1488,7 @@ fn ronin_build_acquires_and_releases_jobserver_tokens() {
 }
 
 #[test]
-// [spec:samurai:req:compat.scheduling/test]
+// [spec:ronin:req:compat.scheduling/test]
 fn ronin_scheduler_releases_dependents_on_each_completion() {
     let (mut graph, directory) = build_fixture(
         "completion-driven",
@@ -1535,7 +1535,7 @@ fn ninja_build_pool_depth_serializes_parallel_commands() {
 }
 
 #[test]
-// [spec:samurai:req:runtime.process-supervisor-scalability/test]
+// [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn ninja_build_console_pool_is_exclusive() {
     let (mut graph, directory) = build_fixture(
             "parallel-console-exclusive",
@@ -3438,7 +3438,7 @@ fn ninja_build_dyndep_discovers_dependency_cycle() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:samurai:req:product.output-style/test]
+// [spec:ronin:req:product.output-style/test]
 #[test]
 fn cargo_style_renders_a_whole_build_in_the_verb_column() {
     let (mut graph, directory) = build_fixture(
@@ -3466,7 +3466,7 @@ fn cargo_style_renders_a_whole_build_in_the_verb_column() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:samurai:req:product.output-style/test]
+// [spec:ronin:req:product.output-style/test]
 #[test]
 fn cargo_style_names_the_failed_output_and_shows_its_command() {
     let (mut graph, directory) = build_fixture(
@@ -3493,7 +3493,7 @@ fn cargo_style_names_the_failed_output_and_shows_its_command() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:samurai:req:product.output-style/test]
+// [spec:ronin:req:product.output-style/test]
 #[test]
 fn a_styled_build_gives_the_bars_line_back_when_it_ends() {
     let (mut graph, directory) = build_fixture(
@@ -3530,7 +3530,7 @@ fn a_styled_build_gives_the_bars_line_back_when_it_ends() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:samurai:req:compat.persistent-state/test]
+// [spec:ronin:req:compat.persistent-state/test]
 #[test]
 fn ninja_dry_run_records_nothing_in_the_build_log() {
     let (mut graph, directory) = build_fixture(

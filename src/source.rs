@@ -13,7 +13,7 @@ static NEXT_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct SourceId(u64);
 
 /// Immutable source bytes retained by parsers and diagnostics.
-// [spec:samurai:req:runtime.borrowed-span-frontend]
+// [spec:ronin:req:runtime.borrowed-span-frontend]
 #[derive(Debug, Eq, PartialEq)]
 pub(crate) struct Source {
     id: SourceId,

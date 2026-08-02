@@ -107,7 +107,7 @@ impl SignalHandlers {
 /// Returns an operating-system error if the readiness channel or any signal
 /// registration cannot be installed. Known partial registrations are removed
 /// before the error is returned.
-// [spec:samurai:req:runtime.guarded-signal-boundary]
+// [spec:ronin:req:runtime.guarded-signal-boundary]
 pub fn install_signal_handlers() -> io::Result<SignalHandlers> {
     #[cfg(unix)]
     {
@@ -289,7 +289,7 @@ mod tests {
     use super::*;
 
     #[cfg(unix)]
-    // [spec:samurai:req:runtime.guarded-signal-boundary/test]
+    // [spec:ronin:req:runtime.guarded-signal-boundary/test]
     #[test]
     fn supported_signals_round_trip_through_platform_constants() {
         for signal in Signal::ALL {
@@ -299,7 +299,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    // [spec:samurai:req:runtime.guarded-signal-boundary/test]
+    // [spec:ronin:req:runtime.guarded-signal-boundary/test]
     #[test]
     fn vanished_process_is_a_benign_delivery_outcome() {
         assert_eq!(

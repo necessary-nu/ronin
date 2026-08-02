@@ -52,7 +52,7 @@ const CONTINUATION: [u8; VERB_WIDTH + 1] = [b' '; VERB_WIDTH + 1];
 /// and editors parse, so switching on terminal detection alone would change
 /// what Ronin emits for consumers that never asked for anything. Selecting
 /// another is a Ronin-owned decision made explicitly on the command line.
-// [spec:samurai:req:product.output-style]
+// [spec:ronin:req:product.output-style]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum OutputStyle {
     #[default]
@@ -61,7 +61,7 @@ pub(crate) enum OutputStyle {
 }
 
 /// When to emit terminal colour.
-// [spec:samurai:req:product.output-style]
+// [spec:ronin:req:product.output-style]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum ColorChoice {
     #[default]
@@ -344,7 +344,7 @@ impl Reporter {
 /// Everything is cut to the terminal's width, because a bar that wraps stops
 /// being one: the erase sequence takes back one line, so a wrapped bar leaves
 /// its own first half on screen for the rest of the build.
-// [spec:samurai:req:product.output-style]
+// [spec:ronin:req:product.output-style]
 fn paint_bar(out: &mut Vec<u8>, palette: Palette, bar: &Bar, progress: &BuildState) {
     let width = terminal_width();
     write_verb(out, b"Building", palette.work, palette.reset);
@@ -417,8 +417,8 @@ fn terminal_width() -> usize {
     }
 }
 
-// [spec:samurai:def:build.printstatus-fn]
-// [spec:samurai:sem:build.printstatus-fn]
+// [spec:ronin:def:build.printstatus-fn]
+// [spec:ronin:sem:build.printstatus-fn]
 fn ninja_status(
     out: &mut Vec<u8>,
     progress: &BuildState,
@@ -475,7 +475,7 @@ fn ninja_failure(
 /// as the numbers currently in it, so the column would shift as the build
 /// passed 9, 99 and 999 finished commands. Dimmed and trailing, the count is
 /// there when looked for and out of the way when not.
-// [spec:samurai:req:product.output-style]
+// [spec:ronin:req:product.output-style]
 fn cargo_status(
     out: &mut Vec<u8>,
     palette: Palette,
@@ -506,7 +506,7 @@ fn cargo_status(
 
 /// Render the failure as a verb line plus the command, indented to line up
 /// under the outputs it did not produce.
-// [spec:samurai:req:product.output-style]
+// [spec:ronin:req:product.output-style]
 fn cargo_failure(
     out: &mut Vec<u8>,
     palette: Palette,
@@ -526,7 +526,7 @@ fn cargo_failure(
     out.push(b'\n');
 }
 
-// [spec:samurai:req:product.output-style]
+// [spec:ronin:req:product.output-style]
 #[allow(
     clippy::cast_precision_loss,
     reason = "an elapsed-time summary is deliberately approximate"
@@ -639,7 +639,7 @@ mod tests {
         render(OutputStyle::Cargo, options, command)
     }
 
-    // [spec:samurai:req:compat.command-runtime/test]
+    // [spec:ronin:req:compat.command-runtime/test]
     #[test]
     fn the_default_reporter_emits_ninjas_counter_and_description() {
         let options = BuildOptions::default();
@@ -649,14 +649,14 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:compat.command-runtime/test]
+    // [spec:ronin:req:compat.command-runtime/test]
     #[test]
     fn a_command_without_a_description_stands_for_itself() {
         let options = BuildOptions::default();
         assert_eq!(ninja(&options, &spec("cc -c a.c", "")), "[3/7] cc -c a.c\n");
     }
 
-    // [spec:samurai:req:compat.command-runtime/test]
+    // [spec:ronin:req:compat.command-runtime/test]
     #[test]
     fn verbose_prefers_the_command_over_the_description() {
         let options = BuildOptions {
@@ -669,7 +669,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:compat.command-runtime/test]
+    // [spec:ronin:req:compat.command-runtime/test]
     #[test]
     fn a_cli_format_places_the_description_at_every_marker() {
         let options = BuildOptions {
@@ -683,7 +683,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn cargo_style_right_aligns_the_descriptions_first_word() {
         let options = BuildOptions::default();
@@ -693,7 +693,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_verb_at_or_past_the_column_is_not_truncated() {
         let options = BuildOptions::default();
@@ -703,7 +703,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_description_of_one_word_is_all_verb() {
         let options = BuildOptions::default();
@@ -713,7 +713,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_command_shown_in_place_of_a_description_is_running() {
         let options = BuildOptions::default();
@@ -723,7 +723,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn colour_surrounds_the_verb_without_shifting_the_column() {
         let options = BuildOptions::default();
@@ -737,7 +737,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_summary_closes_a_cargo_style_build_and_nothing_closes_ninjas() {
         let mut progress = BuildState::new(BuildOptions::default());
@@ -754,7 +754,7 @@ mod tests {
         assert!(out.is_empty());
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_build_that_ran_nothing_is_not_summarised() {
         let options = BuildOptions::default();
@@ -764,7 +764,7 @@ mod tests {
         assert!(out.is_empty());
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn no_color_suppresses_auto_colour_but_not_a_request_for_it() {
         let piped = TerminalContext::default();
@@ -799,7 +799,7 @@ mod tests {
         String::from_utf8(out).expect("the bar renders as text")
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_rendering_that_is_not_being_styled_paints_no_bar() {
         let mut plain = Reporter::new(OutputStyle::Cargo, false);
@@ -808,7 +808,7 @@ mod tests {
         assert_eq!(painted(&mut ninja, 1, 4), "");
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn the_gauge_fills_as_the_build_advances() {
         let mut reporter = Reporter::new(OutputStyle::Cargo, true);
@@ -836,7 +836,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_painted_bar_is_taken_back_before_anything_displaces_it() {
         let mut reporter = Reporter::new(OutputStyle::Cargo, true);
@@ -850,7 +850,7 @@ mod tests {
         assert!(again.is_empty());
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn repainting_inside_the_budget_is_refused() {
         let mut reporter = Reporter::new(OutputStyle::Cargo, true);
@@ -868,7 +868,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn finishing_gives_back_the_bars_line_whatever_the_outcome() {
         let mut progress = BuildState::new(BuildOptions::default());
@@ -885,7 +885,7 @@ mod tests {
         }
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_subject_is_cut_without_splitting_a_character() {
         assert_eq!(truncated(b"short", 40), b"short");
@@ -898,7 +898,7 @@ mod tests {
         assert_eq!(truncated(&[0xff, 0xfe, 0xfd], 2), &[0xff, 0xfe]);
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn styles_and_colour_choices_are_named_on_the_command_line() {
         assert_eq!(OutputStyle::parse(b"ninja"), Some(OutputStyle::Ninja));

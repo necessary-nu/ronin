@@ -14,15 +14,15 @@ use std::path::{Path, PathBuf};
 
 type CliResult<T> = Result<T, Error>;
 
-// [spec:samurai:req:product.ronin-identity]
+// [spec:ronin:req:product.ronin-identity]
 /// The product name used in Ronin diagnostics and executable metadata.
 pub const PRODUCT_NAME: &str = "ronin";
 
-// [spec:samurai:req:compat.version-reporting]
+// [spec:ronin:req:compat.version-reporting]
 /// The Ninja language compatibility version reported by `--version`.
 pub const NINJA_COMPAT_VERSION: &str = "1.9.0";
 
-// [spec:samurai:req:compat.ninja-owned-names]
+// [spec:ronin:req:compat.ninja-owned-names]
 const DEFAULT_MANIFEST: &str = "build.ninja";
 const NINJA_STATUS_ENV: &str = "NINJA_STATUS";
 /// The cross-tool convention for suppressing colour; see <https://no-color.org>.
@@ -62,7 +62,7 @@ impl RunResult {
 /// Constructing a runner snapshots the process values that affect Ninja
 /// integration, so executing it does not mutate or rediscover process-global
 /// state.
-// [spec:samurai:req:runtime.explicit-invocation-boundary]
+// [spec:ronin:req:runtime.explicit-invocation-boundary]
 pub struct Runner {
     working_directory: crate::os::WorkingDirectory,
     makeflags: Option<String>,
@@ -154,8 +154,8 @@ impl Runner {
     }
 }
 
-// [spec:samurai:def:samu.usage-fn]
-// [spec:samurai:sem:samu.usage-fn]
+// [spec:ronin:def:samu.usage-fn]
+// [spec:ronin:sem:samu.usage-fn]
 pub(crate) fn usage(program: &str) -> String {
     let default_jobs = match crate::os::osnproc() {
         i64::MIN..=1 => 2,
@@ -194,8 +194,8 @@ pub(crate) fn usage(program: &str) -> String {
     )
 }
 
-// [spec:samurai:def:samu.debugflag-fn]
-// [spec:samurai:sem:samu.debugflag-fn]
+// [spec:ronin:def:samu.debugflag-fn]
+// [spec:ronin:sem:samu.debugflag-fn]
 pub(crate) fn debugflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> {
     match flag {
         "stats" => options.stats = true,
@@ -212,8 +212,8 @@ pub(crate) fn debugflag(options: &mut BuildOptions, flag: &str) -> CliResult<()>
     Ok(())
 }
 
-// [spec:samurai:def:samu.loadflag-fn]
-// [spec:samurai:sem:samu.loadflag-fn]
+// [spec:ronin:def:samu.loadflag-fn]
+// [spec:ronin:sem:samu.loadflag-fn]
 pub(crate) fn loadflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> {
     let value: f64 = flag
         .parse()
@@ -222,8 +222,8 @@ pub(crate) fn loadflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> 
     Ok(())
 }
 
-// [spec:samurai:def:samu.warnflag-fn]
-// [spec:samurai:sem:samu.warnflag-fn]
+// [spec:ronin:def:samu.warnflag-fn]
+// [spec:ronin:sem:samu.warnflag-fn]
 pub(crate) fn warnflag(options: &mut ParseOptions, flag: &str) -> CliResult<()> {
     match flag {
         "dupbuild=err" => options.dupbuildwarn = false,
@@ -238,8 +238,8 @@ pub(crate) fn warnflag(options: &mut ParseOptions, flag: &str) -> CliResult<()> 
     Ok(())
 }
 
-// [spec:samurai:def:samu.jobsflag-fn]
-// [spec:samurai:sem:samu.jobsflag-fn]
+// [spec:ronin:def:samu.jobsflag-fn]
+// [spec:ronin:sem:samu.jobsflag-fn]
 pub(crate) fn jobsflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> {
     let value: i64 = flag
         .parse()
@@ -257,8 +257,8 @@ pub(crate) fn jobsflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> 
     Ok(())
 }
 
-// [spec:samurai:def:samu.progname-fn]
-// [spec:samurai:sem:samu.progname-fn]
+// [spec:ronin:def:samu.progname-fn]
+// [spec:ronin:sem:samu.progname-fn]
 pub(crate) fn progname(argument: Option<&str>, default: &str) -> String {
     argument
         .and_then(|argument| argument.rsplit('/').next())
@@ -351,7 +351,7 @@ fn status_placeholder(name: &str) -> CliResult<&'static str> {
 }
 
 /// Name the option in the error when an enumerated value is not one of them.
-// [spec:samurai:req:product.output-style]
+// [spec:ronin:req:product.output-style]
 fn require_value<T>(option: &'static str, value: &[u8], parsed: Option<T>) -> CliResult<T> {
     parsed.ok_or_else(|| {
         CliError::UnknownOptionValue {
@@ -362,7 +362,7 @@ fn require_value<T>(option: &'static str, value: &[u8], parsed: Option<T>) -> Cl
     })
 }
 
-// [spec:samurai:req:runtime.output-byte-boundaries]
+// [spec:ronin:req:runtime.output-byte-boundaries]
 fn expand_status_format(format: &str) -> CliResult<String> {
     let bytes = format.as_bytes();
     let mut output = String::new();
@@ -418,10 +418,10 @@ fn expand_status_format(format: &str) -> CliResult<String> {
     Ok(output)
 }
 
-// [spec:samurai:def:os.oschdir-fn]
-// [spec:samurai:sem:os.oschdir-fn]
-// [spec:samurai:def:os-posix.oschdir-fn]
-// [spec:samurai:sem:os-posix.oschdir-fn]
+// [spec:ronin:def:os.oschdir-fn]
+// [spec:ronin:sem:os.oschdir-fn]
+// [spec:ronin:def:os-posix.oschdir-fn]
+// [spec:ronin:sem:os-posix.oschdir-fn]
 fn change_working_directory(
     working_directory: &mut crate::os::WorkingDirectory,
     directory: &BString,
@@ -475,12 +475,12 @@ fn invalid_option(arguments: &[BString], message: impl std::fmt::Display) -> Run
     ))
 }
 
-// [spec:samurai:def:samu.parseenvargs-fn+1]
-// [spec:samurai:sem:samu.parseenvargs-fn+1]
-// [spec:samurai:def:samu.main-fn+1]
-// [spec:samurai:sem:samu.main-fn+1]
-// [spec:samurai:req:product.no-samuflags]
-// [spec:samurai:req:compat.cli-and-tools]
+// [spec:ronin:def:samu.parseenvargs-fn+1]
+// [spec:ronin:sem:samu.parseenvargs-fn+1]
+// [spec:ronin:def:samu.main-fn+1]
+// [spec:ronin:sem:samu.main-fn+1]
+// [spec:ronin:req:product.no-samuflags]
+// [spec:ronin:req:compat.cli-and-tools]
 #[allow(
     clippy::too_many_lines,
     reason = "Ninja-compatible short-option parsing is one state machine with shared cursor semantics"
@@ -720,7 +720,7 @@ fn parse_run_arguments(
     Ok(RunAction::Execute(invocation))
 }
 
-// [spec:samurai:req:compat.process-integration]
+// [spec:ronin:req:compat.process-integration]
 fn normalize_runtime_options(
     options: &mut BuildOptions,
     makeflags: Option<&str>,
@@ -1341,8 +1341,8 @@ pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
     process_runner()?.run_os(arguments)
 }
 
-// [spec:samurai:def:samu.getbuilddir-fn]
-// [spec:samurai:sem:samu.getbuilddir-fn]
+// [spec:ronin:def:samu.getbuilddir-fn]
+// [spec:ronin:sem:samu.getbuilddir-fn]
 #[allow(
     clippy::too_many_lines,
     reason = "manifest rebuild and reload is one bounded orchestration loop with ordered cleanup"
@@ -1619,7 +1619,7 @@ mod tests {
         }
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_rendering_and_a_colour_choice_are_named_on_the_command_line() {
         let separate = parse_options(&["ronin", "--output", "cargo", "--color", "never"]).unwrap();
@@ -1630,7 +1630,7 @@ mod tests {
         assert_eq!(joined.color, ColorChoice::Always);
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn ninja_rendering_is_what_an_unadorned_invocation_gets() {
         let options = parse_options(&["ronin"]).unwrap();
@@ -1638,7 +1638,7 @@ mod tests {
         assert_eq!(options.color, ColorChoice::Auto);
     }
 
-    // [spec:samurai:req:product.output-style/test]
+    // [spec:ronin:req:product.output-style/test]
     #[test]
     fn an_unknown_rendering_or_colour_choice_is_rejected_by_name() {
         let style = parse_options(&["ronin", "--output=fancy"])
@@ -1666,7 +1666,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:runtime.output-byte-boundaries/test]
+    // [spec:ronin:req:runtime.output-byte-boundaries/test]
     #[test]
     fn status_expansion_preserves_unicode_slices_and_escapes() {
         assert_eq!(
@@ -1679,7 +1679,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:runtime.output-byte-boundaries/test]
+    // [spec:ronin:req:runtime.output-byte-boundaries/test]
     #[cfg(unix)]
     #[test]
     fn tool_targets_and_graph_output_preserve_native_bytes() {
@@ -1710,7 +1710,7 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
-    // [spec:samurai:req:runtime.explicit-invocation-boundary/test]
+    // [spec:ronin:req:runtime.explicit-invocation-boundary/test]
     #[test]
     fn runner_resolves_sequential_changes_without_mutating_process_cwd() {
         let original_directory = std::env::current_dir().unwrap();

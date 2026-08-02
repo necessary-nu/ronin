@@ -1,7 +1,7 @@
 const HARNESS: &str = include_str!("../examples/alloc_metrics.rs");
 const RECORDED_BASELINE: &str = include_str!("../benchmarks/alloc-metrics-v1.csv");
 
-// [spec:samurai:req:performance.allocation-accounting/test]
+// [spec:ronin:req:performance.allocation-accounting/test]
 #[test]
 fn allocation_harness_and_recorded_baseline_remain_complete() {
     for workload in [

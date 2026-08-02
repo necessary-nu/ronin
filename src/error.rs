@@ -32,7 +32,7 @@ pub enum ErrorKind {
 /// `Display` remains the Ninja-compatible diagnostic boundary. [`Error::kind`]
 /// is derived from the underlying semantic variant, and [`error::Error::source`]
 /// exposes the typed subsystem error and its retained source chain.
-// [spec:samurai:req:runtime.semantic-errors]
+// [spec:ronin:req:runtime.semantic-errors]
 #[derive(Debug)]
 pub struct Error(ErrorRepr);
 

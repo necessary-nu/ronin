@@ -33,9 +33,9 @@ pub(crate) struct BuildLog {
 }
 
 impl BuildLog {
-    // [spec:samurai:def:log.loginit-fn]
-    // [spec:samurai:sem:log.loginit-fn]
-    // [spec:samurai:req:compat.persistent-state]
+    // [spec:ronin:def:log.loginit-fn]
+    // [spec:ronin:sem:log.loginit-fn]
+    // [spec:ronin:req:compat.persistent-state]
     pub(crate) fn open(builddir: Option<&Path>) -> io::Result<Self> {
         let path = builddir.map_or_else(
             || PathBuf::from(".ninja_log"),
@@ -91,8 +91,8 @@ impl BuildLog {
         })
     }
 
-    // [spec:samurai:def:log.logclose-fn]
-    // [spec:samurai:sem:log.logclose-fn]
+    // [spec:ronin:def:log.logclose-fn]
+    // [spec:ronin:sem:log.logclose-fn]
     pub(crate) fn finish(mut self) -> io::Result<()> {
         self.writer
             .take()
@@ -123,8 +123,8 @@ impl BuildLog {
     }
 }
 
-// [spec:samurai:def:log.nextfield-fn]
-// [spec:samurai:sem:log.nextfield-fn]
+// [spec:ronin:def:log.nextfield-fn]
+// [spec:ronin:sem:log.nextfield-fn]
 fn nextfield<'a>(line: &mut &'a [u8]) -> Option<&'a [u8]> {
     if line.is_empty() {
         return None;
@@ -302,8 +302,8 @@ fn record_entry(log: &mut BuildLog, output: BString, entry: LogEntry) -> io::Res
     record_entries(log, vec![(output, entry)])
 }
 
-// [spec:samurai:def:log.logrecord-fn]
-// [spec:samurai:sem:log.logrecord-fn]
+// [spec:ronin:def:log.logrecord-fn]
+// [spec:ronin:sem:log.logrecord-fn]
 #[cfg(test)]
 pub(crate) fn logrecord(
     log: &mut BuildLog,
@@ -505,7 +505,7 @@ mod tests {
         assert_eq!(nextfield(&mut line), None);
     }
 
-    // [spec:samurai:req:compat.persistent-state/test]
+    // [spec:ronin:req:compat.persistent-state/test]
     #[test]
     fn ninja_build_log_tolerates_every_truncation() {
         let temp = TempLog::new("truncate");
@@ -536,7 +536,7 @@ mod tests {
         log.finish().unwrap();
     }
 
-    // [spec:samurai:req:runtime.persistence-transactions/test]
+    // [spec:ronin:req:runtime.persistence-transactions/test]
     #[test]
     fn build_log_rewrite_failures_preserve_state_and_writer() {
         for stage in crate::persistence::RewriteStage::ALL {

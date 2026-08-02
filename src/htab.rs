@@ -1,7 +1,7 @@
 //! Literal translation of `htab.c`'s open-addressed hash table.
 
-// [spec:samurai:def:htab.getle32-fn]
-// [spec:samurai:sem:htab.getle32-fn]
+// [spec:ronin:def:htab.getle32-fn]
+// [spec:ronin:sem:htab.getle32-fn]
 fn getle32(bytes: &[u8], index: usize) -> u32 {
     u32::from_le_bytes(
         bytes[index..index + 4]
@@ -10,8 +10,8 @@ fn getle32(bytes: &[u8], index: usize) -> u32 {
     )
 }
 
-// [spec:samurai:def:htab.getle64-fn]
-// [spec:samurai:sem:htab.getle64-fn]
+// [spec:ronin:def:htab.getle64-fn]
+// [spec:ronin:sem:htab.getle64-fn]
 fn getle64(bytes: &[u8], index: usize) -> u64 {
     u64::from_le_bytes(
         bytes[index..index + 8]
@@ -20,8 +20,8 @@ fn getle64(bytes: &[u8], index: usize) -> u64 {
     )
 }
 
-// [spec:samurai:def:htab.mum-fn]
-// [spec:samurai:sem:htab.mum-fn]
+// [spec:ronin:def:htab.mum-fn]
+// [spec:ronin:sem:htab.mum-fn]
 #[allow(
     clippy::cast_possible_truncation,
     reason = "each cast keeps exactly the half of the 128-bit product it names"
@@ -31,8 +31,8 @@ fn mum(a: u64, b: u64) -> (u64, u64) {
     (product as u64, (product >> 64) as u64)
 }
 
-// [spec:samurai:def:htab.mix-fn]
-// [spec:samurai:sem:htab.mix-fn]
+// [spec:ronin:def:htab.mix-fn]
+// [spec:ronin:sem:htab.mix-fn]
 fn mix(a: u64, b: u64) -> u64 {
     let (low, high) = mum(a, b);
     low ^ high
@@ -161,8 +161,8 @@ fn wide_hash(bytes: &(impl RapidBytes + ?Sized), len: usize, seed0: u64) -> u64 
     finish(seed, len)
 }
 
-// [spec:samurai:def:htab.rapidhashv1-fn]
-// [spec:samurai:sem:htab.rapidhashv1-fn]
+// [spec:ronin:def:htab.rapidhashv1-fn]
+// [spec:ronin:sem:htab.rapidhashv1-fn]
 /// Hash a logical byte sequence supplied contiguously or as segments.
 pub(crate) fn rapidhashv1(bytes: &(impl RapidBytes + ?Sized)) -> u64 {
     let len = bytes.len();

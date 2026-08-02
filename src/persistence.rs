@@ -82,7 +82,7 @@ fn atomic_rewrite_inner(
     Ok(replacement)
 }
 
-// [spec:samurai:req:runtime.persistence-transactions]
+// [spec:ronin:req:runtime.persistence-transactions]
 pub(crate) fn atomic_rewrite(
     path: &Path,
     write_contents: impl FnOnce(&mut dyn Write) -> io::Result<()>,

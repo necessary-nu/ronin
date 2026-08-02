@@ -2,7 +2,7 @@ const HARNESS: &str = include_str!("../examples/baseline.rs");
 const RECORDED_BASELINE: &str = include_str!("../benchmarks/baseline-v1.csv");
 const VALIDATION: &str = include_str!("../benchmarks/performance-validation-2026-07-31.csv");
 
-// [spec:samurai:req:performance.reproducible-baseline/test]
+// [spec:ronin:req:performance.reproducible-baseline/test]
 #[test]
 fn baseline_catalog_and_metadata_remain_complete() {
     for workload in [

@@ -1,9 +1,9 @@
 # htab.c, htab.h
 
-> [spec:samurai:def:htab.delhtab-fn]
+> [spec:ronin:def:htab.delhtab-fn]
 > void delhtab(struct hashtable *h, void del(void *))
 
-> [spec:samurai:sem:htab.delhtab-fn]
+> [spec:ronin:sem:htab.delhtab-fn]
 > If h is null, do nothing. Otherwise, if del is non-null, visit the slot
 > arrays in increasing index order from 0 through h.cap - 1. For every slot
 > whose key.str is non-null, call del once with that slot's value, including
@@ -16,10 +16,10 @@
 > both arrays are still valid, but must not rely on them after this function
 > returns.
 
-> [spec:samurai:def:htab.getle32-fn]
+> [spec:ronin:def:htab.getle32-fn]
 > static inline uint_least32_t getle32(const void *p)
 
-> [spec:samurai:sem:htab.getle32-fn]
+> [spec:ronin:sem:htab.getle32-fn]
 > Read exactly four bytes beginning at p, without requiring any particular
 > alignment or host byte order. Interpret the first byte as bits 0 through 7,
 > the second as bits 8 through 15, the third as bits 16 through 23, and the
@@ -27,34 +27,34 @@
 > 32-bit value. The input must make all four bytes readable; the function
 > neither writes memory nor reports an error.
 
-> [spec:samurai:def:htab.getle64-fn]
+> [spec:ronin:def:htab.getle64-fn]
 > static inline uint_least64_t getle64(const void *p)
 
-> [spec:samurai:sem:htab.getle64-fn]
+> [spec:ronin:sem:htab.getle64-fn]
 > Read exactly eight bytes beginning at p, without requiring any particular
 > alignment or host byte order. Interpret byte j as the unsigned value shifted
 > left by 8*j bits, for j from 0 through 7, and return the bitwise union as an
 > unsigned 64-bit value. The input must make all eight bytes readable; the
 > function does not mutate memory or signal failure.
 
-> [spec:samurai:def:htab.hashtable]
+> [spec:ronin:def:htab.hashtable]
 > struct hashtable {
 >   size_t len, cap;
 >   struct hashtablekey *keys;
 >   void **vals;
 > }
 
-> [spec:samurai:def:htab.hashtablekey]
+> [spec:ronin:def:htab.hashtablekey]
 > struct hashtablekey {
 >   uint64_t hash;
 >   const char *str;
 >   size_t len;
 > }
 
-> [spec:samurai:def:htab.htabget-fn]
+> [spec:ronin:def:htab.htabget-fn]
 > void * htabget(struct hashtable *h, struct hashtablekey *k)
 
-> [spec:samurai:sem:htab.htabget-fn]
+> [spec:ronin:sem:htab.htabget-fn]
 > Locate the probe position for k with keyindex. If that position is vacant
 > (its stored key.str is null), return null. Otherwise the position contains
 > the equal key, so return its stored value unchanged. The lookup creates no
@@ -66,10 +66,10 @@
 > needs at least one vacant slot; probing a completely full table for an absent
 > key does not terminate in the source algorithm.
 
-> [spec:samurai:def:htab.htabkey-fn]
+> [spec:ronin:def:htab.htabkey-fn]
 > void htabkey(struct hashtablekey *k, const char *s, size_t n)
 
-> [spec:samurai:sem:htab.htabkey-fn]
+> [spec:ronin:sem:htab.htabkey-fn]
 > Set k.str to s and k.len to n without copying, terminating, or normalizing
 > the byte sequence. Compute k.hash as rapidhashv1 over exactly the n bytes
 > beginning at s, then store that result in k.hash.
@@ -79,10 +79,10 @@
 > for the duration of every later comparison; inserting it does not transfer
 > ownership of either the descriptor or the byte storage.
 
-> [spec:samurai:def:htab.htabput-fn]
+> [spec:ronin:def:htab.htabput-fn]
 > void ** htabput(struct hashtable *h, struct hashtablekey *k)
 
-> [spec:samurai:sem:htab.htabput-fn]
+> [spec:ronin:sem:htab.htabput-fn]
 > Before looking up k, grow the table when integer-dividing cap by two yields a
 > value strictly less than len. Growing doubles cap, allocates fresh key and
 > value arrays, marks every new key slot vacant, and then scans the old slots
@@ -104,20 +104,20 @@
 > and the caller is responsible for their lifetime. The probe rules require a
 > usable nonzero power-of-two capacity and a terminating vacant slot.
 
-> [spec:samurai:def:htab.keyequal-fn]
+> [spec:ronin:def:htab.keyequal-fn]
 > static bool keyequal(struct hashtablekey *k1, struct hashtablekey *k2)
 
-> [spec:samurai:sem:htab.keyequal-fn]
+> [spec:ronin:sem:htab.keyequal-fn]
 > First compare the two 64-bit hashes and then the two lengths. If either
 > differs, return false without examining key bytes. Only when both match,
 > compare exactly len bytes at the two stored string pointers and return true
 > exactly when every byte matches. NUL termination and pointer identity play no
 > part in equality, and the function does not modify either descriptor.
 
-> [spec:samurai:def:htab.keyindex-fn]
+> [spec:ronin:def:htab.keyindex-fn]
 > static size_t keyindex(struct hashtable *h, struct hashtablekey *k)
 
-> [spec:samurai:sem:htab.keyindex-fn]
+> [spec:ronin:sem:htab.keyindex-fn]
 > Let mask be h.cap - 1 and start at k.hash bitwise-anded with mask. Treat a
 > slot as occupied exactly when its key.str is non-null. While the current slot
 > is occupied and its key is not equal to k, advance to (index + 1)
@@ -128,20 +128,20 @@
 > It relies on cap being a nonzero power of two. If every slot is occupied and
 > no equal key exists, the loop wraps forever rather than returning an error.
 
-> [spec:samurai:def:htab.mix-fn]
+> [spec:ronin:def:htab.mix-fn]
 > static inline uint64_t mix(uint64_t a, uint64_t b)
 
-> [spec:samurai:sem:htab.mix-fn]
+> [spec:ronin:sem:htab.mix-fn]
 > Copy a and b into local words, pass those locals to mum, and return the
 > bitwise exclusive-or of the resulting low and high halves. Equivalently,
 > form the full unsigned 128-bit product of the two inputs and return its low
 > 64 bits XORed with its high 64 bits. The caller's input values are not
 > mutated.
 
-> [spec:samurai:def:htab.mkhtab-fn]
+> [spec:ronin:def:htab.mkhtab-fn]
 > struct hashtable * mkhtab(size_t cap)
 
-> [spec:samurai:sem:htab.mkhtab-fn]
+> [spec:ronin:sem:htab.mkhtab-fn]
 > Require cap to be a usable nonzero power of two: the source asserts the
 > bit-test cap & (cap - 1) is zero before allocating, although that raw test
 > also admits zero and zero gives no valid probe space. Allocate the table
@@ -155,10 +155,10 @@
 > arrays and must later be passed to delhtab; it owns neither future key bytes
 > nor stored values.
 
-> [spec:samurai:def:htab.mum-fn]
+> [spec:ronin:def:htab.mum-fn]
 > static inline void mum(uint64_t *a, uint64_t *b)
 
-> [spec:samurai:sem:htab.mum-fn]
+> [spec:ronin:sem:htab.mum-fn]
 > Read the two input words before writing either output, form their complete
 > unsigned 64-by-64-bit product, store the low 64 bits through a, and store the
 > high 64 bits through b. The result is independent of whether a native
@@ -166,10 +166,10 @@
 > alias, the second store overwrites the first, leaving the high half in the
 > shared location.
 
-> [spec:samurai:def:htab.rapidhashv1-fn]
+> [spec:ronin:def:htab.rapidhashv1-fn]
 > uint64_t rapidhashv1(const void *ptr, size_t len)
 
-> [spec:samurai:sem:htab.rapidhashv1-fn]
+> [spec:ronin:sem:htab.rapidhashv1-fn]
 > Hash the exact len input bytes with unsigned 64-bit operations. Let the
 > three constants S0, S1, and S2 be, respectively,
 > 0x2d358dccaa6c78a5, 0x8bb84b93962eacc9, and

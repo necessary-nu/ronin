@@ -190,7 +190,7 @@ impl Builder<'_> {
             .map_err(|source| BuildError::io(BuildOperation::WriteDiagnostic, None, None, source))
     }
 
-    // [spec:samurai:req:runtime.process-supervisor-scalability]
+    // [spec:ronin:req:runtime.process-supervisor-scalability]
     fn flush_sinks(&mut self) -> BuildResult<()> {
         if let Some(output) = self.diagnostic_sink.as_deref_mut() {
             output.flush().map_err(|source| {

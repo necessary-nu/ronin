@@ -34,7 +34,7 @@ pub(crate) struct MissingDependencyScanner {
     path_work: Vec<EdgeId>,
 }
 
-// [spec:samurai:req:compat.graph-semantics]
+// [spec:ronin:req:compat.graph-semantics]
 impl MissingDependencyScanner {
     pub(crate) fn record_dependency(&mut self, from: NodeId, to: NodeId) {
         self.dependency_log.resize_with(from.index() + 1, Vec::new);

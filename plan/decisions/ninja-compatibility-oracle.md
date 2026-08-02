@@ -6,10 +6,10 @@ category @executive
 scope {
     elements ([arch:ronin:verification])
     rules (
-        [spec:samurai:req:compat.upstream-conformance]
-        [spec:samurai:req:performance.reproducible-baseline]
-        [spec:samurai:req:performance.no-unexplained-regression]
-        [spec:samurai:req:release.compatibility-gate]
+        [spec:ronin:req:compat.upstream-conformance]
+        [spec:ronin:req:performance.reproducible-baseline]
+        [spec:ronin:req:performance.no-unexplained-regression]
+        [spec:ronin:req:release.compatibility-gate]
     )
 }
 author "brendan@bbqsrc.net"
@@ -45,10 +45,10 @@ edges {
     )
 }
 codifies (
-    [spec:samurai:req:compat.upstream-conformance]
-    [spec:samurai:req:performance.reproducible-baseline]
-    [spec:samurai:req:performance.no-unexplained-regression]
-    [spec:samurai:req:release.compatibility-gate]
+    [spec:ronin:req:compat.upstream-conformance]
+    [spec:ronin:req:performance.reproducible-baseline]
+    [spec:ronin:req:performance.no-unexplained-regression]
+    [spec:ronin:req:release.compatibility-gate]
 )
 establishes ([arch:ronin:verification])
 ---

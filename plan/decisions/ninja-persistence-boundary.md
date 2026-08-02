@@ -5,7 +5,7 @@ state @approved
 category @property
 scope {
     elements ([arch:ronin:persistence])
-    rules ([spec:samurai:req:compat.persistent-state])
+    rules ([spec:ronin:req:compat.persistent-state])
 }
 author "brendan@bbqsrc.net"
 alternatives (
@@ -34,7 +34,7 @@ edges {
         [dec:ronin:typed-graph-arenas]
     )
 }
-codifies ([spec:samurai:req:compat.persistent-state])
+codifies ([spec:ronin:req:compat.persistent-state])
 establishes ([arch:ronin:persistence])
 ---
 

@@ -39,8 +39,8 @@ fn is_broken_pipe(mut error: &(dyn std::error::Error + 'static)) -> bool {
 }
 
 fn main() {
-    // [spec:samurai:req:compat.process-integration]
-    // [spec:samurai:req:runtime.guarded-signal-boundary]
+    // [spec:ronin:req:compat.process-integration]
+    // [spec:ronin:req:runtime.guarded-signal-boundary]
     let signal_handlers = ronin::install_signal_handlers().unwrap_or_else(|error| {
         let _ = write_diagnostic(format_args!("failed to install signal handlers: {error}"));
         std::process::exit(1);
@@ -54,9 +54,9 @@ fn main() {
     let mut stdout = stdout.lock();
     let stderr = std::io::stderr();
     let mut stderr = stderr.lock();
-    // [spec:samurai:req:product.ronin-identity]
-    // [spec:samurai:req:product.no-samuflags]
-    // [spec:samurai:req:runtime.explicit-invocation-boundary]
+    // [spec:ronin:req:product.ronin-identity]
+    // [spec:ronin:req:product.no-samuflags]
+    // [spec:ronin:req:runtime.explicit-invocation-boundary]
     match runner.run_os_with_sinks(&arguments, &mut stdout, &mut stderr) {
         Ok(result) => {
             if let Err(error) = write_terminal(&result, &mut stdout, &mut stderr) {
@@ -105,7 +105,7 @@ mod tests {
         }
     }
 
-    // [spec:samurai:req:runtime.semantic-errors/test]
+    // [spec:ronin:req:runtime.semantic-errors/test]
     #[test]
     fn terminal_writes_expose_broken_pipe_for_deliberate_handling() {
         let result = ronin::RunResult {

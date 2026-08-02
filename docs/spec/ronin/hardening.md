@@ -7,7 +7,7 @@ second work item.
 
 ## Jobserver resource safety
 
-> [spec:samurai:req:runtime.jobserver-resource-safety]
+> [spec:ronin:req:runtime.jobserver-resource-safety]
 > Ronin MUST preserve the inherited GNU Make jobserver's open-file-description
 > flags, model its implicit and explicit slots as single-owner guards, and
 > return every acquired token exactly once on normal return or unwinding.
@@ -20,7 +20,7 @@ second work item.
 
 ## Output byte boundaries
 
-> [spec:samurai:req:runtime.output-byte-boundaries]
+> [spec:ronin:req:runtime.output-byte-boundaries]
 > Ronin MUST preserve untouched valid UTF-8 slices when expanding status
 > formats and MUST NOT widen individual UTF-8 bytes into Unicode scalar
 > values. Ninja-compatible tool serializers MUST preserve path and command
@@ -33,14 +33,14 @@ second work item.
 
 ## MSVC include byte parsing
 
-> [spec:samurai:req:runtime.msvc-byte-parsing]
+> [spec:ronin:req:runtime.msvc-byte-parsing]
 > Ronin MUST filter MSVC `/showIncludes` output as bytes, preserve non-UTF-8
 > include paths and visible compiler output, and perform only explicitly
 > ASCII-insensitive filename-extension and system-directory comparisons.
 
 ## Transactional persistent state
 
-> [spec:samurai:req:runtime.persistence-transactions]
+> [spec:ronin:req:runtime.persistence-transactions]
 > Ronin MUST stage build-log entries, dependency-log entries, and dependency
 > node IDs without mutating live state. A log rewrite MUST use a unique
 > temporary file in the destination directory, completely write and flush it,
@@ -53,7 +53,7 @@ second work item.
 
 ## Semantic error boundaries
 
-> [spec:samurai:req:runtime.semantic-errors]
+> [spec:ronin:req:runtime.semantic-errors]
 > Ronin MUST represent CLI, manifest, graph, build, persistence, process, and
 > tool failures with semantic variants rather than unrestricted diagnostic
 > strings. Variants MUST retain applicable byte-exact paths, source locations,
@@ -68,7 +68,7 @@ second work item.
 
 ## Borrowed manifest frontend
 
-> [spec:samurai:req:runtime.borrowed-span-frontend]
+> [spec:ronin:req:runtime.borrowed-span-frontend]
 > Ronin MUST retain each manifest source as exact bytes with stable source
 > identity, and every returned lexical token MUST identify its byte span.
 > Lexemes and evaluation fragments MUST borrow from retained sources until a
@@ -81,7 +81,7 @@ second work item.
 
 ## Transactional dynamic dependencies
 
-> [spec:samurai:req:runtime.allocation-free-stat]
+> [spec:ronin:req:runtime.allocation-free-stat]
 > Graph scans stat nodes without allocating per call. The disk interface holds
 > its working directory open and resolves manifest-relative paths through that
 > descriptor rather than materializing a joined path, and callers pass borrowed
@@ -89,7 +89,7 @@ second work item.
 > missing-path handling, symlink following, and byte-exact non-UTF-8 paths
 > remain observably identical to the resolved-path implementation.
 
-> [spec:samurai:req:runtime.dyndep-transaction]
+> [spec:ronin:req:runtime.dyndep-transaction]
 > Ronin MUST parse dynamic-dependency files into a source-aware staged
 > representation without interning paths or otherwise mutating graph state.
 > It MUST validate expected entries, edge ownership, duplicate outputs,
@@ -101,7 +101,7 @@ second work item.
 
 ## Typed runtime state
 
-> [spec:samurai:req:runtime.typed-runtime-state]
+> [spec:ronin:req:runtime.typed-runtime-state]
 > Ronin MUST keep manifest graph entities free of per-build node observation,
 > log comparison, dependency-loading, command-dirtiness, restat, pool
 > occupancy, and critical-path scheduling state. Those facts MUST live in
@@ -113,7 +113,7 @@ second work item.
 
 ## Scalable process supervision
 
-> [spec:samurai:req:runtime.process-supervisor-scalability]
+> [spec:ronin:req:runtime.process-supervisor-scalability]
 > On Unix, Ronin MUST supervise captured child output and external jobserver
 > notifications with one readiness-driven event loop rather than one thread
 > per child, periodic descriptor polling, or a general asynchronous runtime.
@@ -130,7 +130,7 @@ second work item.
 
 ## Guarded signal boundary
 
-> [spec:samurai:req:runtime.guarded-signal-boundary]
+> [spec:ronin:req:runtime.guarded-signal-boundary]
 > On Unix, Ronin MUST represent handled signals with a closed typed set and
 > install their handlers through one owned, process-global boundary before
 > worker threads start. The boundary and its registrations MUST have explicit
@@ -146,7 +146,7 @@ second work item.
 
 ## Explicit invocation boundary
 
-> [spec:samurai:req:runtime.explicit-invocation-boundary]
+> [spec:ronin:req:runtime.explicit-invocation-boundary]
 > Ronin's library invocation path MUST NOT mutate the process working
 > directory or select process-global standard streams. Sequential `-C` options
 > MUST resolve against an explicit invocation directory, validate each
@@ -162,7 +162,7 @@ second work item.
 
 ## Iterative tool traversals
 
-> [spec:samurai:req:runtime.iterative-tool-traversals]
+> [spec:ronin:req:runtime.iterative-tool-traversals]
 > Tool modes MUST traverse dependency graphs with explicit worklists whose
 > memory usage is bounded by graph size rather than the native call stack.
 > Edge visitation MUST use dense `EdgeId`-indexed storage and reusable scratch

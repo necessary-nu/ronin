@@ -70,10 +70,10 @@ fn validation_only(graph: &Graph, edge: EdgeId) -> bool {
         })
 }
 
-// [spec:samurai:def:os.osgetcwd-fn]
-// [spec:samurai:sem:os.osgetcwd-fn]
-// [spec:samurai:def:os-posix.osgetcwd-fn]
-// [spec:samurai:sem:os-posix.osgetcwd-fn]
+// [spec:ronin:def:os.osgetcwd-fn]
+// [spec:ronin:sem:os.osgetcwd-fn]
+// [spec:ronin:def:os-posix.osgetcwd-fn]
+// [spec:ronin:sem:os-posix.osgetcwd-fn]
 fn render(
     graph: &Graph,
     edges: impl IntoIterator<Item = EdgeId>,
@@ -118,9 +118,9 @@ fn render(
     BString::from(output)
 }
 
-// [spec:samurai:def:tool.compdb-fn]
-// [spec:samurai:sem:tool.compdb-fn]
-// [spec:samurai:req:runtime.output-byte-boundaries]
+// [spec:ronin:def:tool.compdb-fn]
+// [spec:ronin:sem:tool.compdb-fn]
+// [spec:ronin:req:runtime.output-byte-boundaries]
 pub(crate) fn compdb(
     graph: &Graph,
     rules: &[String],
@@ -213,7 +213,7 @@ mod tests {
         );
     }
 
-    // [spec:samurai:req:runtime.output-byte-boundaries/test]
+    // [spec:ronin:req:runtime.output-byte-boundaries/test]
     #[test]
     fn json_encoding_preserves_utf8_and_non_utf8_bytes() {
         let mut encoded = Vec::new();

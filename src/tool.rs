@@ -14,7 +14,7 @@ use std::io::{self, ErrorKind, Write as _};
 
 type ToolResult<T> = Result<T, ToolError>;
 
-// [spec:samurai:req:runtime.iterative-tool-traversals]
+// [spec:ronin:req:runtime.iterative-tool-traversals]
 #[derive(Default)]
 struct EdgeSet(Vec<bool>);
 
@@ -41,7 +41,7 @@ pub(crate) use compdb::{compdb, compdb_for_targets};
 pub(crate) use input::{inputs, multi_inputs};
 pub(crate) use state::{deps_in, missing_deps};
 
-// [spec:samurai:def:tool.tool]
+// [spec:ronin:def:tool.tool]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Tool {
     Browse,
@@ -174,8 +174,8 @@ fn edge_name(graph: &Graph, edge: EdgeId) -> String {
     )
 }
 
-// [spec:samurai:def:tool.cleanpath-fn]
-// [spec:samurai:sem:tool.cleanpath-fn]
+// [spec:ronin:def:tool.cleanpath-fn]
+// [spec:ronin:sem:tool.cleanpath-fn]
 #[cfg(test)]
 pub(crate) fn cleanpath(path: Option<&BStr>) -> io::Result<bool> {
     cleanpath_mode(path, false, &crate::os::RealDiskInterface::default())
@@ -237,8 +237,8 @@ impl Cleaner {
         Ok(())
     }
 
-    // [spec:samurai:def:tool.cleanedge-fn]
-    // [spec:samurai:sem:tool.cleanedge-fn]
+    // [spec:ronin:def:tool.cleanedge-fn]
+    // [spec:ronin:sem:tool.cleanedge-fn]
     fn clean_edge(&mut self, graph: &Graph, edge: EdgeId) -> ToolResult<()> {
         if !self.visited_edges.insert(edge) {
             return Ok(());
@@ -260,8 +260,8 @@ impl Cleaner {
         Ok(())
     }
 
-    // [spec:samurai:def:tool.cleantarget-fn]
-    // [spec:samurai:sem:tool.cleantarget-fn]
+    // [spec:ronin:def:tool.cleantarget-fn]
+    // [spec:ronin:sem:tool.cleantarget-fn]
     fn clean_target(&mut self, graph: &Graph, node: NodeId) -> ToolResult<()> {
         let mut work = vec![node];
         while let Some(node) = work.pop() {
@@ -294,7 +294,7 @@ impl Cleaner {
         Ok(())
     }
 
-    // [spec:samurai:req:runtime.dyndep-transaction]
+    // [spec:ronin:req:runtime.dyndep-transaction]
     fn dyndep_outputs(&mut self, graph: &Graph, edge: EdgeId) -> ToolResult<Vec<BString>> {
         let Some(path) = edgevar(graph, edge, Names::DYNDEP, PathStyle::Raw) else {
             return Ok(Vec::new());
@@ -334,8 +334,8 @@ impl Cleaner {
     }
 }
 
-// [spec:samurai:def:tool.clean-fn]
-// [spec:samurai:sem:tool.clean-fn]
+// [spec:ronin:def:tool.clean-fn]
+// [spec:ronin:sem:tool.clean-fn]
 pub(crate) fn clean(
     graph: &Graph,
     targets: &[BString],
@@ -454,8 +454,8 @@ pub(crate) fn clean_dead_with_report_in(
     Ok(cleaner.removed)
 }
 
-// [spec:samurai:def:tool.targetcommands-fn]
-// [spec:samurai:sem:tool.targetcommands-fn]
+// [spec:ronin:def:tool.targetcommands-fn]
+// [spec:ronin:sem:tool.targetcommands-fn]
 enum CommandWork {
     Visit(NodeId),
     Emit(EdgeId),
@@ -500,8 +500,8 @@ fn collect_target_commands(
     }
 }
 
-// [spec:samurai:def:tool.commands-fn]
-// [spec:samurai:sem:tool.commands-fn]
+// [spec:ronin:def:tool.commands-fn]
+// [spec:ronin:sem:tool.commands-fn]
 pub(crate) fn commands(graph: &Graph, targets: &[BString]) -> ToolResult<Vec<BString>> {
     let nodes = if targets.is_empty() {
         graph
@@ -582,9 +582,9 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolRe
     Ok(join_byte_strings(output, b'\n'))
 }
 
-// [spec:samurai:def:tool.printquoted-fn]
-// [spec:samurai:sem:tool.printquoted-fn]
-// [spec:samurai:req:runtime.output-byte-boundaries]
+// [spec:ronin:def:tool.printquoted-fn]
+// [spec:ronin:sem:tool.printquoted-fn]
+// [spec:ronin:req:runtime.output-byte-boundaries]
 pub(crate) fn printquoted(bytes: &[u8], join: bool) -> BString {
     let mut output = Vec::with_capacity(bytes.len());
     for byte in bytes {
@@ -602,8 +602,8 @@ pub(crate) fn printquoted(bytes: &[u8], join: bool) -> BString {
     BString::from(output)
 }
 
-// [spec:samurai:def:tool.graphnode-fn]
-// [spec:samurai:sem:tool.graphnode-fn]
+// [spec:ronin:def:tool.graphnode-fn]
+// [spec:ronin:sem:tool.graphnode-fn]
 fn graphnode_inner(graph: &Graph, node: NodeId, output: &mut Vec<u8>, visited: &mut EdgeSet) {
     enum Work {
         Visit(NodeId),
@@ -682,8 +682,8 @@ fn emit_graph_edge(graph: &Graph, edge: EdgeId, output: &mut Vec<u8>) {
     }
 }
 
-// [spec:samurai:def:tool.graph-fn]
-// [spec:samurai:sem:tool.graph-fn]
+// [spec:ronin:def:tool.graph-fn]
+// [spec:ronin:sem:tool.graph-fn]
 pub(crate) fn graph(graph: &Graph, targets: &[BString]) -> ToolResult<BString> {
     let nodes = if targets.is_empty() {
         crate::graph::rootnodes(graph)?
@@ -708,8 +708,8 @@ pub(crate) fn graph(graph: &Graph, targets: &[BString]) -> ToolResult<BString> {
     Ok(BString::from(output))
 }
 
-// [spec:samurai:def:tool.query-fn]
-// [spec:samurai:sem:tool.query-fn]
+// [spec:ronin:def:tool.query-fn]
+// [spec:ronin:sem:tool.query-fn]
 pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
     if targets.is_empty() {
         return Err(ToolError::MissingArgument {
@@ -771,8 +771,8 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
     Ok(output)
 }
 
-// [spec:samurai:def:tool.targetsdepth-fn]
-// [spec:samurai:sem:tool.targetsdepth-fn]
+// [spec:ronin:def:tool.targetsdepth-fn]
+// [spec:ronin:sem:tool.targetsdepth-fn]
 pub(crate) fn targetsdepth(
     graph: &Graph,
     node: NodeId,
@@ -813,14 +813,14 @@ pub(crate) fn targetsdepth(
     }
 }
 
-// [spec:samurai:def:tool.targetsusage-fn]
-// [spec:samurai:sem:tool.targetsusage-fn]
+// [spec:ronin:def:tool.targetsusage-fn]
+// [spec:ronin:sem:tool.targetsusage-fn]
 pub(crate) const fn targetsusage() -> &'static str {
     "targets [depth [maxdepth]] | rule [rulename] | all"
 }
 
-// [spec:samurai:def:tool.targets-fn]
-// [spec:samurai:sem:tool.targets-fn]
+// [spec:ronin:def:tool.targets-fn]
+// [spec:ronin:sem:tool.targets-fn]
 pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<String> {
     if args.len() > 2 {
         return Err(ToolError::Usage {
@@ -939,8 +939,8 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
     Ok(output)
 }
 
-// [spec:samurai:def:tool.tool.run-fn]
-// [spec:samurai:sem:tool.tool.run-fn]
+// [spec:ronin:def:tool.tool.run-fn]
+// [spec:ronin:sem:tool.tool.run-fn]
 pub(crate) fn run(
     tool: Tool,
     graph: &Graph,
@@ -987,8 +987,8 @@ pub(crate) fn run(
     }
 }
 
-// [spec:samurai:def:tool.toolget-fn]
-// [spec:samurai:sem:tool.toolget-fn]
+// [spec:ronin:def:tool.toolget-fn]
+// [spec:ronin:sem:tool.toolget-fn]
 pub(crate) fn toolget(name: &str) -> ToolResult<Tool> {
     if name == "list" {
         return Ok(Tool::List);
@@ -1078,7 +1078,7 @@ mod tests {
         path.to_string_lossy().replace(' ', "$ ")
     }
 
-    // [spec:samurai:req:runtime.iterative-tool-traversals/test]
+    // [spec:ronin:req:runtime.iterative-tool-traversals/test]
     #[test]
     fn deep_manifest_tools_use_bounded_call_stacks() {
         const DEPTH: usize = 4_000;
@@ -1223,7 +1223,7 @@ mod tests {
         assert!(!output.exists() && implicit.exists());
     }
 
-    // [spec:samurai:req:runtime.dyndep-transaction/test]
+    // [spec:ronin:req:runtime.dyndep-transaction/test]
     #[test]
     fn ronin_clean_propagates_dyndep_parse_failures_before_removing_outputs() {
         let directory = TempDirectory::new("dyndep-error");

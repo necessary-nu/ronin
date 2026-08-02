@@ -98,7 +98,7 @@ pub(crate) struct RealDiskInterface {
     /// neither a joined path buffer nor the C string `std::fs` allocates per
     /// call. `None` means no working directory was configured, so paths are
     /// already process-relative.
-    // [spec:samurai:req:runtime.allocation-free-stat]
+    // [spec:ronin:req:runtime.allocation-free-stat]
     #[cfg(unix)]
     directory: std::sync::Arc<std::sync::OnceLock<Result<rustix::fd::OwnedFd, rustix::io::Errno>>>,
     /// Directories [`Self::make_dirs`] has already ensured exist.
@@ -236,10 +236,10 @@ impl RealDiskInterface {
         }
     }
 
-    // [spec:samurai:def:os.osmtime-fn]
-    // [spec:samurai:sem:os.osmtime-fn]
-    // [spec:samurai:def:os-posix.osmtime-fn]
-    // [spec:samurai:sem:os-posix.osmtime-fn]
+    // [spec:ronin:def:os.osmtime-fn]
+    // [spec:ronin:sem:os.osmtime-fn]
+    // [spec:ronin:def:os-posix.osmtime-fn]
+    // [spec:ronin:sem:os-posix.osmtime-fn]
     /// Return a nanosecond timestamp, zero for a missing path, and an error for
     /// failures other than a missing component.
     pub(crate) fn stat(&self, path: &Path) -> io::Result<i64> {
@@ -269,10 +269,10 @@ impl RealDiskInterface {
     }
 
     /// Create every parent directory needed for a file path.
-    // [spec:samurai:def:os.osmkdirs-fn]
-    // [spec:samurai:sem:os.osmkdirs-fn]
-    // [spec:samurai:def:os-posix.osmkdirs-fn]
-    // [spec:samurai:sem:os-posix.osmkdirs-fn]
+    // [spec:ronin:def:os.osmkdirs-fn]
+    // [spec:ronin:sem:os.osmkdirs-fn]
+    // [spec:ronin:def:os-posix.osmkdirs-fn]
+    // [spec:ronin:sem:os-posix.osmkdirs-fn]
     pub(crate) fn make_dirs(&self, path: &Path) -> io::Result<()> {
         let path = self.resolve(path);
         let directory = path.parent().unwrap_or_else(|| Path::new(""));
@@ -336,10 +336,10 @@ fn cores() -> usize {
         .get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))
 }
 
-// [spec:samurai:def:os.osnproc-fn]
-// [spec:samurai:sem:os.osnproc-fn]
-// [spec:samurai:def:os-posix.osnproc-fn]
-// [spec:samurai:sem:os-posix.osnproc-fn]
+// [spec:ronin:def:os.osnproc-fn]
+// [spec:ronin:sem:os.osnproc-fn]
+// [spec:ronin:def:os-posix.osnproc-fn]
+// [spec:ronin:sem:os-posix.osnproc-fn]
 pub(crate) fn osnproc() -> i64 {
     i64::try_from(cores()).unwrap_or(i64::MAX)
 }
@@ -401,7 +401,7 @@ mod tests {
         assert_eq!(disk.stat(&directory.join("notadir/nosuchfile")).unwrap(), 0);
     }
 
-    // [spec:samurai:req:runtime.allocation-free-stat/test]
+    // [spec:ronin:req:runtime.allocation-free-stat/test]
     #[test]
     fn working_directory_relative_stats_match_resolved_paths() {
         let directory = TempDirectory::new("relative-stat");
@@ -431,7 +431,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    // [spec:samurai:req:runtime.allocation-free-stat/test]
+    // [spec:ronin:req:runtime.allocation-free-stat/test]
     #[test]
     fn relative_stats_preserve_non_utf8_paths() {
         use crate::util::ByteSlice;

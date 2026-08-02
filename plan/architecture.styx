@@ -4,7 +4,7 @@ elements (
         name "Byte-exact core data"
         kind @capability
         lifecycle @active
-        owns ([spec:samurai:req:compat.byte-inputs])
+        owns ([spec:ronin:req:compat.byte-inputs])
         exposes (
             "src/util.rs"
             "src/env.rs"
@@ -28,7 +28,7 @@ elements (
         name "Graph storage and evaluation"
         kind @subsystem
         lifecycle @active
-        owns ([spec:samurai:req:compat.graph-semantics])
+        owns ([spec:ronin:req:compat.graph-semantics])
         exposes (
             "src/graph.rs"
             "src/graph/**"
@@ -56,7 +56,7 @@ elements (
         name "Ninja manifest frontend"
         kind @subsystem
         lifecycle @active
-        owns ([spec:samurai:req:compat.manifest-semantics])
+        owns ([spec:ronin:req:compat.manifest-semantics])
         exposes (
             "src/scan.rs"
             "src/source.rs"
@@ -83,7 +83,7 @@ elements (
         name "Ninja-compatible persistent state"
         kind @boundary
         lifecycle @active
-        owns ([spec:samurai:req:compat.persistent-state])
+        owns ([spec:ronin:req:compat.persistent-state])
         exposes (
             "src/deps.rs"
             "src/log.rs"
@@ -110,12 +110,12 @@ elements (
         kind @subsystem
         lifecycle @active
         owns (
-            [spec:samurai:req:compat.scheduling]
-            [spec:samurai:req:compat.process-integration]
-            [spec:samurai:req:compat.command-runtime]
-            [spec:samurai:req:runtime.typed-runtime-state]
-            [spec:samurai:req:runtime.process-supervisor-scalability]
-            [spec:samurai:req:runtime.guarded-signal-boundary]
+            [spec:ronin:req:compat.scheduling]
+            [spec:ronin:req:compat.process-integration]
+            [spec:ronin:req:compat.command-runtime]
+            [spec:ronin:req:runtime.typed-runtime-state]
+            [spec:ronin:req:runtime.process-supervisor-scalability]
+            [spec:ronin:req:runtime.guarded-signal-boundary]
         )
         exposes (
             "src/build.rs"
@@ -147,13 +147,13 @@ elements (
         kind @boundary
         lifecycle @active
         owns (
-            [spec:samurai:req:product.ronin-identity]
-            [spec:samurai:req:product.no-samuflags]
-            [spec:samurai:req:compat.version-reporting]
-            [spec:samurai:req:compat.ninja-owned-names]
-            [spec:samurai:req:compat.cli-and-tools]
-            [spec:samurai:req:runtime.explicit-invocation-boundary]
-            [spec:samurai:req:runtime.iterative-tool-traversals]
+            [spec:ronin:req:product.ronin-identity]
+            [spec:ronin:req:product.no-samuflags]
+            [spec:ronin:req:compat.version-reporting]
+            [spec:ronin:req:compat.ninja-owned-names]
+            [spec:ronin:req:compat.cli-and-tools]
+            [spec:ronin:req:runtime.explicit-invocation-boundary]
+            [spec:ronin:req:runtime.iterative-tool-traversals]
         )
         exposes (
             "src/main.rs"
@@ -183,10 +183,10 @@ elements (
         kind @capability
         lifecycle @active
         owns (
-            [spec:samurai:req:compat.upstream-conformance]
-            [spec:samurai:req:performance.reproducible-baseline]
-            [spec:samurai:req:performance.no-unexplained-regression]
-            [spec:samurai:req:release.compatibility-gate]
+            [spec:ronin:req:compat.upstream-conformance]
+            [spec:ronin:req:performance.reproducible-baseline]
+            [spec:ronin:req:performance.no-unexplained-regression]
+            [spec:ronin:req:release.compatibility-gate]
         )
         exposes (
             "tests/**"

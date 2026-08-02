@@ -4,7 +4,7 @@
 // Rust impl requires both an implementation and a verification site for each
 // rule.
 specs ({
-    name samurai,
+    name ronin,
     include (docs/spec/**/*.md),
     impls (
         {name target-impl, languages (@rust), include (src/** crates/** tests/** examples/**), exclude (target/**), mode @both}

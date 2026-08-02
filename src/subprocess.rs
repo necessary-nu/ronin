@@ -215,7 +215,7 @@ impl<External> ProcessSupervisor<External> {
     }
 }
 
-// [spec:samurai:req:compat.process-integration]
+// [spec:ronin:req:compat.process-integration]
 impl<External: Send + 'static> ProcessSupervisor<External> {
     pub(crate) fn spawn(
         &mut self,
@@ -347,7 +347,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
     }
 }
 
-// [spec:samurai:req:runtime.process-supervisor-scalability]
+// [spec:ronin:req:runtime.process-supervisor-scalability]
 #[cfg(unix)]
 impl<External: Send + 'static> ProcessSupervisor<External> {
     fn spawn_evented(
@@ -710,10 +710,10 @@ pub(crate) fn status_interrupted(status: std::process::ExitStatus) -> bool {
     }
 }
 
-// [spec:samurai:def:os.osspawn-fn]
-// [spec:samurai:sem:os.osspawn-fn]
-// [spec:samurai:def:os-posix.osspawn-fn]
-// [spec:samurai:sem:os-posix.osspawn-fn]
+// [spec:ronin:def:os.osspawn-fn]
+// [spec:ronin:sem:os.osspawn-fn]
+// [spec:ronin:def:os-posix.osspawn-fn]
+// [spec:ronin:sem:os-posix.osspawn-fn]
 #[cfg(not(unix))]
 struct ShellFailure {
     operation: ShellOperation,
@@ -911,7 +911,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    // [spec:samurai:req:runtime.process-supervisor-scalability/test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
     fn evented_supervisor_scales_without_a_thread_per_child() {
         const CHILDREN: usize = 64;
 
@@ -947,7 +947,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    // [spec:samurai:req:runtime.process-supervisor-scalability/test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
     fn dropping_the_supervisor_terminates_process_groups_and_reaps_children() {
         let edge = EdgeId::from_event_key(11 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::<()>::new().unwrap();
@@ -993,7 +993,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:samurai:req:runtime.process-supervisor-scalability/test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
     fn external_events_wake_the_blocked_supervisor() {
         let mut supervisor = ProcessSupervisor::<usize>::new().unwrap();
         let sender = supervisor.external_sender();
@@ -1015,8 +1015,8 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:samurai:req:compat.process-integration/test]
-    // [spec:samurai:req:runtime.process-supervisor-scalability/test]
+    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
     fn ronin_process_supervisor_reports_keyed_signal_completion() {
         let edge = EdgeId::from_event_key(7 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::new().unwrap();
@@ -1040,7 +1040,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:samurai:req:runtime.process-supervisor-scalability/test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
     fn ronin_process_supervisor_preserves_stdout_stderr_order() {
         let edge = EdgeId::from_event_key(9 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::new().unwrap();

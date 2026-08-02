@@ -1,7 +1,7 @@
-// [spec:samurai:req:release.compatibility-gate]
+// [spec:ronin:req:release.compatibility-gate]
 const RELEASE_GATE: &str = include_str!("../scripts/check-release.sh");
 
-// [spec:samurai:req:release.compatibility-gate/test]
+// [spec:ronin:req:release.compatibility-gate/test]
 #[test]
 fn release_gate_wires_every_candidate_check() {
     for command in [

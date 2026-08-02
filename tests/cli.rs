@@ -13,12 +13,12 @@ fn test_directory(label: &str) -> PathBuf {
     ))
 }
 
-// [spec:samurai:req:product.ronin-identity/test]
-// [spec:samurai:req:product.no-samuflags/test]
-// [spec:samurai:req:compat.version-reporting/test]
-// [spec:samurai:req:compat.cli-and-tools/test]
-// [spec:samurai:sem:samu.main-fn+1/test]
-// [spec:samurai:sem:samu.parseenvargs-fn+1/test]
+// [spec:ronin:req:product.ronin-identity/test]
+// [spec:ronin:req:product.no-samuflags/test]
+// [spec:ronin:req:compat.version-reporting/test]
+// [spec:ronin:req:compat.cli-and-tools/test]
+// [spec:ronin:sem:samu.main-fn+1/test]
+// [spec:ronin:sem:samu.parseenvargs-fn+1/test]
 #[test]
 fn binary_is_ronin_and_ignores_samuflags() {
     let binary = env!("CARGO_BIN_EXE_ronin");
@@ -47,7 +47,7 @@ fn binary_is_ronin_and_ignores_samuflags() {
     assert!(String::from_utf8_lossy(&error.stderr).starts_with("ronin: "));
 }
 
-// [spec:samurai:req:compat.ninja-owned-names/test]
+// [spec:ronin:req:compat.ninja-owned-names/test]
 #[test]
 fn default_manifest_and_state_files_keep_ninja_names() {
     let directory = test_directory("ninja-names");
@@ -77,7 +77,7 @@ fn default_manifest_and_state_files_keep_ninja_names() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:samurai:req:compat.cli-and-tools/test]
+// [spec:ronin:req:compat.cli-and-tools/test]
 #[test]
 fn ninja_compatible_options_tools_streams_and_statuses_are_connected() {
     let directory = test_directory("cli-tools");
@@ -180,7 +180,7 @@ fn ninja_compatible_options_tools_streams_and_statuses_are_connected() {
 }
 
 #[cfg(unix)]
-// [spec:samurai:req:compat.byte-inputs/test]
+// [spec:ronin:req:compat.byte-inputs/test]
 #[test]
 fn accepts_a_non_utf8_manifest_argument() {
     use std::os::unix::ffi::OsStringExt;
@@ -266,9 +266,9 @@ fn writes_explanations_to_stderr_and_status_to_stdout() {
 }
 
 #[cfg(unix)]
-// [spec:samurai:req:compat.process-integration/test]
+// [spec:ronin:req:compat.process-integration/test]
 #[test]
-// [spec:samurai:req:runtime.process-supervisor-scalability/test]
+// [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn forwards_interrupts_and_removes_partial_outputs() {
     use std::os::unix::process::ExitStatusExt;
     use std::time::Duration;

@@ -37,7 +37,7 @@ pub(crate) enum TokenKind {
     Variable,
 }
 
-// [spec:samurai:def:scan.token]
+// [spec:ronin:def:scan.token]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct Token<'source> {
     pub(crate) kind: TokenKind,
@@ -130,7 +130,7 @@ impl ScannedEvalString<'_> {
     }
 }
 
-// [spec:samurai:def:scan.scanner]
+// [spec:ronin:def:scan.scanner]
 pub(crate) struct Scanner<'source> {
     source: &'source Arc<Source>,
     /// The manifest bytes, resolved once.
@@ -147,10 +147,10 @@ pub(crate) struct Scanner<'source> {
 }
 
 impl<'source> Scanner<'source> {
-    // [spec:samurai:def:scan.scaninit-fn]
-    // [spec:samurai:sem:scan.scaninit-fn]
-    // [spec:samurai:def:scan.scanclose-fn]
-    // [spec:samurai:sem:scan.scanclose-fn]
+    // [spec:ronin:def:scan.scaninit-fn]
+    // [spec:ronin:sem:scan.scaninit-fn]
+    // [spec:ronin:def:scan.scanclose-fn]
+    // [spec:ronin:sem:scan.scanclose-fn]
     pub(crate) fn new(source: &'source Arc<Source>) -> Self {
         Self {
             source,
@@ -209,8 +209,8 @@ impl<'source> Scanner<'source> {
     }
 }
 
-// [spec:samurai:def:scan.scanerror-fn]
-// [spec:samurai:sem:scan.scanerror-fn]
+// [spec:ronin:def:scan.scanerror-fn]
+// [spec:ronin:sem:scan.scanerror-fn]
 pub(crate) fn scanerror(scanner: &Scanner<'_>, kind: ScanErrorKind) -> ScanError {
     ScanError {
         span: scanner.source_span(scanner.position()),
@@ -218,8 +218,8 @@ pub(crate) fn scanerror(scanner: &Scanner<'_>, kind: ScanErrorKind) -> ScanError
     }
 }
 
-// [spec:samurai:def:scan.next-fn]
-// [spec:samurai:sem:scan.next-fn]
+// [spec:ronin:def:scan.next-fn]
+// [spec:ronin:sem:scan.next-fn]
 fn next(scanner: &mut Scanner<'_>) {
     if scanner.current() == Some(b'\n') {
         scanner.line += 1;
@@ -273,20 +273,20 @@ const fn ends_table(bytes: &[u8]) -> [bool; 256] {
     table
 }
 
-// [spec:samurai:def:scan.issimplevar-fn]
-// [spec:samurai:sem:scan.issimplevar-fn]
+// [spec:ronin:def:scan.issimplevar-fn]
+// [spec:ronin:sem:scan.issimplevar-fn]
 const fn issimplevar(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
 }
 
-// [spec:samurai:def:scan.isvar-fn]
-// [spec:samurai:sem:scan.isvar-fn]
+// [spec:ronin:def:scan.isvar-fn]
+// [spec:ronin:sem:scan.isvar-fn]
 const fn isvar(byte: u8) -> bool {
     issimplevar(byte) || byte == b'.'
 }
 
-// [spec:samurai:def:scan.newline-fn]
-// [spec:samurai:sem:scan.newline-fn]
+// [spec:ronin:def:scan.newline-fn]
+// [spec:ronin:sem:scan.newline-fn]
 fn newline(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     match scanner.current() {
         Some(b'\r') => {
@@ -308,8 +308,8 @@ fn newline(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     }
 }
 
-// [spec:samurai:def:scan.singlespace-fn]
-// [spec:samurai:sem:scan.singlespace-fn]
+// [spec:ronin:def:scan.singlespace-fn]
+// [spec:ronin:sem:scan.singlespace-fn]
 fn singlespace(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     match scanner.current() {
         Some(b' ') => {
@@ -336,8 +336,8 @@ fn singlespace(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     }
 }
 
-// [spec:samurai:def:scan.space-fn]
-// [spec:samurai:sem:scan.space-fn]
+// [spec:ronin:def:scan.space-fn]
+// [spec:ronin:sem:scan.space-fn]
 fn space(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     let mut found = false;
     while singlespace(scanner)? {
@@ -346,8 +346,8 @@ fn space(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     Ok(found)
 }
 
-// [spec:samurai:def:scan.comment-fn]
-// [spec:samurai:sem:scan.comment-fn]
+// [spec:ronin:def:scan.comment-fn]
+// [spec:ronin:sem:scan.comment-fn]
 fn comment(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     if scanner.current() != Some(b'#') {
         return Ok(false);
@@ -358,8 +358,8 @@ fn comment(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     Ok(true)
 }
 
-// [spec:samurai:def:scan.name-fn]
-// [spec:samurai:sem:scan.name-fn]
+// [spec:ronin:def:scan.name-fn]
+// [spec:ronin:sem:scan.name-fn]
 fn name<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> {
     let source = scanner.source;
     let start = scanner.index;
@@ -378,8 +378,8 @@ fn name<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> 
     Ok(Lexeme { text, span })
 }
 
-// [spec:samurai:def:scan.scankeyword-fn]
-// [spec:samurai:sem:scan.scankeyword-fn]
+// [spec:ronin:def:scan.scankeyword-fn]
+// [spec:ronin:sem:scan.scankeyword-fn]
 pub(crate) fn scankeyword<'source>(
     scanner: &mut Scanner<'source>,
 ) -> ScanResult<Option<Token<'source>>> {
@@ -415,8 +415,8 @@ pub(crate) fn scankeyword<'source>(
     }
 }
 
-// [spec:samurai:def:scan.scanname-fn]
-// [spec:samurai:sem:scan.scanname-fn]
+// [spec:ronin:def:scan.scanname-fn]
+// [spec:ronin:sem:scan.scanname-fn]
 pub(crate) fn scanname<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> {
     name(scanner)
 }
@@ -432,10 +432,10 @@ fn push_literal<'source>(
     }
 }
 
-// [spec:samurai:def:scan.addstringpart-fn]
-// [spec:samurai:sem:scan.addstringpart-fn]
-// [spec:samurai:def:scan.escape-fn]
-// [spec:samurai:sem:scan.escape-fn]
+// [spec:ronin:def:scan.addstringpart-fn]
+// [spec:ronin:sem:scan.addstringpart-fn]
+// [spec:ronin:def:scan.escape-fn]
+// [spec:ronin:sem:scan.escape-fn]
 fn escape<'source>(
     scanner: &mut Scanner<'source>,
     parts: &mut ScannedParts<'source>,
@@ -492,8 +492,8 @@ fn escape<'source>(
     Ok(())
 }
 
-// [spec:samurai:def:scan.scanstring-fn]
-// [spec:samurai:sem:scan.scanstring-fn]
+// [spec:ronin:def:scan.scanstring-fn]
+// [spec:ronin:sem:scan.scanstring-fn]
 pub(crate) fn scanstring<'source>(
     scanner: &mut Scanner<'source>,
     path: bool,
@@ -550,8 +550,8 @@ pub(crate) fn scanstring<'source>(
     Ok((!parts.is_empty()).then_some(ScannedEvalString::Parts(parts)))
 }
 
-// [spec:samurai:def:scan.scanpaths-fn]
-// [spec:samurai:sem:scan.scanpaths-fn]
+// [spec:ronin:def:scan.scanpaths-fn]
+// [spec:ronin:sem:scan.scanpaths-fn]
 pub(crate) fn scanpaths<'source>(
     scanner: &mut Scanner<'source>,
 ) -> ScanResult<Vec<ScannedEvalString<'source>>> {
@@ -562,8 +562,8 @@ pub(crate) fn scanpaths<'source>(
     Ok(paths)
 }
 
-// [spec:samurai:def:scan.scanchar-fn]
-// [spec:samurai:sem:scan.scanchar-fn]
+// [spec:ronin:def:scan.scanchar-fn]
+// [spec:ronin:sem:scan.scanchar-fn]
 pub(crate) fn scanchar(scanner: &mut Scanner<'_>, expected: char) -> ScanResult<()> {
     let expected = u8::try_from(expected)
         .map_err(|_| scanerror(scanner, ScanErrorKind::ExpectedAsciiToken))?;
@@ -616,8 +616,8 @@ impl AllowedSeparators {
     }
 }
 
-// [spec:samurai:def:scan.scanpipe-fn]
-// [spec:samurai:sem:scan.scanpipe-fn]
+// [spec:ronin:def:scan.scanpipe-fn]
+// [spec:ronin:sem:scan.scanpipe-fn]
 pub(crate) fn scanpipe(
     scanner: &mut Scanner<'_>,
     allowed: AllowedSeparators,
@@ -647,8 +647,8 @@ pub(crate) fn scanpipe(
     Ok(Some(separator))
 }
 
-// [spec:samurai:def:scan.scanindent-fn]
-// [spec:samurai:sem:scan.scanindent-fn]
+// [spec:ronin:def:scan.scanindent-fn]
+// [spec:ronin:sem:scan.scanindent-fn]
 pub(crate) fn scanindent(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     loop {
         let indent = space(scanner)?;
@@ -658,8 +658,8 @@ pub(crate) fn scanindent(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     }
 }
 
-// [spec:samurai:def:scan.scannewline-fn]
-// [spec:samurai:sem:scan.scannewline-fn]
+// [spec:ronin:def:scan.scannewline-fn]
+// [spec:ronin:sem:scan.scannewline-fn]
 pub(crate) fn scannewline(scanner: &mut Scanner<'_>) -> ScanResult<()> {
     if newline(scanner)? {
         scanner.continuation_at_eof = false;
@@ -723,7 +723,7 @@ mod tests {
         ));
     }
 
-    // [spec:samurai:req:runtime.borrowed-span-frontend/test]
+    // [spec:ronin:req:runtime.borrowed-span-frontend/test]
     #[test]
     fn tokens_and_evaluation_parts_borrow_retained_source_spans() {
         let source = Source::from_bytes("build.ninja", b"rule cc\nvalue $name\n".to_vec());

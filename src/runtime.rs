@@ -228,7 +228,7 @@ impl EdgeRuntime {
     }
 }
 
-// [spec:samurai:req:runtime.typed-runtime-state]
+// [spec:ronin:req:runtime.typed-runtime-state]
 #[derive(Default)]
 pub(crate) struct RuntimeState {
     nodes: Vec<NodeRuntime>,
@@ -295,7 +295,7 @@ mod tests {
     use crate::graph::{mkedge, mknode};
     use crate::util::BString;
 
-    // [spec:samurai:req:runtime.typed-runtime-state/test]
+    // [spec:ronin:req:runtime.typed-runtime-state/test]
     #[test]
     fn runtime_reset_clears_transient_state_without_mutating_the_graph() {
         let mut graph = Graph::default();

@@ -1,16 +1,16 @@
 # deps.c
 
-> [spec:samurai:def:deps.depsclose-fn]
+> [spec:ronin:def:deps.depsclose-fn]
 > void depsclose(void)
 
-> [spec:samurai:sem:deps.depsclose-fn]
+> [spec:ronin:sem:deps.depsclose-fn]
 > Flushes the open dependency log, treating a stream error as fatal, then closes
 > the stream.
 
-> [spec:samurai:def:deps.depsinit-fn]
+> [spec:ronin:def:deps.depsinit-fn]
 > void depsinit(const char *builddir)
 
-> [spec:samurai:sem:deps.depsinit-fn]
+> [spec:ronin:sem:deps.depsinit-fn]
 > Opens `<builddir>/.ninja_deps` (or the root name), discards the previous
 > stream state, and reads its header, version, and binary node/dependency
 > records. It validates sizes, checksums, IDs, ordering, and referenced nodes;
@@ -21,10 +21,10 @@
 > dependencies, assigning fresh IDs to outputs and their dependencies. I/O or
 > rename failures during this recovery are fatal.
 
-> [spec:samurai:def:deps.depsload-fn]
+> [spec:ronin:def:deps.depsload-fn]
 > void depsload(struct edge *e)
 
-> [spec:samurai:sem:deps.depsload-fn]
+> [spec:ronin:sem:deps.depsload-fn]
 > Runs at most once per edge and marks that fact. For an edge with `deps`, it
 > uses the first output's recorded dependency list only when its stored mtime is
 > at least the output mtime; otherwise it optionally explains the stale record.
@@ -32,10 +32,10 @@
 > inserted as implicit inputs; an absent or invalid required list marks the
 > first output and edge's outputs dirty.
 
-> [spec:samurai:def:deps.depsparse-fn]
+> [spec:ronin:def:deps.depsparse-fn]
 > static struct nodearray * depsparse(const char *name, bool allowmissing)
 
-> [spec:samurai:sem:deps.depsparse-fn]
+> [spec:ronin:sem:deps.depsparse-fn]
 > Parses a make-style dependency file into a reusable node array. A missing file
 > returns an empty list only when `allowmissing` is true; other open failures
 > return null. It accepts one logical output followed by colon-separated input
@@ -45,10 +45,10 @@
 > path is interned as a node. Success returns the static array; failure returns
 > null after closing the file.
 
-> [spec:samurai:def:deps.depsrecord-fn]
+> [spec:ronin:def:deps.depsrecord-fn]
 > void depsrecord(struct edge *e)
 
-> [spec:samurai:sem:deps.depsrecord-fn]
+> [spec:ronin:sem:deps.depsrecord-fn]
 > Does nothing unless the edge requests a nonempty `gcc` dependency mode and a
 > nonempty depfile; unsupported modes or a missing depfile warn and return. It
 > parses the depfile allowing absence, removes it unless preservation is set,
@@ -57,39 +57,39 @@
 > when anything changed, appends a binary dependency record and flushes it,
 > treating flush failure as fatal.
 
-> [spec:samurai:def:deps.depswrite-fn]
+> [spec:ronin:def:deps.depswrite-fn]
 > static void depswrite(const void *p, size_t n, size_t m)
 
-> [spec:samurai:sem:deps.depswrite-fn]
+> [spec:ronin:sem:deps.depswrite-fn]
 > Writes exactly `m` elements of `n` bytes to the dependency-log stream and
 > terminates fatally if the complete write does not occur.
 
-> [spec:samurai:def:deps.entry]
+> [spec:ronin:def:deps.entry]
 > struct entry {
 >   struct node *node;
 >   struct nodearray deps;
 >   int64_t mtime;
 > }
 
-> [spec:samurai:def:deps.nodearray]
+> [spec:ronin:def:deps.nodearray]
 > struct nodearray {
 >   struct node **node;
 >   size_t len;
 > }
 
-> [spec:samurai:def:deps.recorddeps-fn]
+> [spec:ronin:def:deps.recorddeps-fn]
 > static void recorddeps(struct node *out, struct nodearray *deps, int64_t mtime)
 
-> [spec:samurai:sem:deps.recorddeps-fn]
+> [spec:ronin:sem:deps.recorddeps-fn]
 > Appends one high-bit-marked binary dependency record for `out`: the record
 > contains its byte size, output ID, low and high 32-bit halves of `mtime`, and
 > each dependency ID in order. A record reaching the configured maximum size is
 > fatal.
 
-> [spec:samurai:def:deps.recordid-fn]
+> [spec:ronin:def:deps.recordid-fn]
 > static bool recordid(struct node *n)
 
-> [spec:samurai:sem:deps.recordid-fn]
+> [spec:ronin:sem:deps.recordid-fn]
 > Returns false when the node already has an ID. Otherwise assigns the next
 > sequential ID (failing at the 32-bit limit), writes a padded node record whose
 > payload is the path and whose final word is the bitwise-complement checksum of

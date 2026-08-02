@@ -6,7 +6,7 @@
 //! measurement, allocation counts are deterministic, so a single run per
 //! workload suffices and recorded baselines gate material increases.
 
-// [spec:samurai:req:performance.allocation-accounting]
+// [spec:ronin:req:performance.allocation-accounting]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::collections::BTreeMap;

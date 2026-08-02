@@ -14,7 +14,7 @@ const MAX_RECORDED_RUNTIME_RATIO: f64 = 1.20;
 const MAX_NINJA_RUNTIME_RATIO: f64 = 1.20;
 const MAX_NINJA_RSS_RATIO: f64 = 2.00;
 
-// [spec:samurai:req:performance.reproducible-baseline]
+// [spec:ronin:req:performance.reproducible-baseline]
 #[path = "support/workloads.rs"]
 mod workloads;
 use workloads::{
@@ -452,7 +452,7 @@ fn recorded_baseline() -> Result<BTreeMap<&'static str, Baseline>, String> {
     Ok(baseline)
 }
 
-// [spec:samurai:req:performance.no-unexplained-regression]
+// [spec:ronin:req:performance.no-unexplained-regression]
 #[allow(
     clippy::cast_precision_loss,
     reason = "RSS regression thresholds are deliberately approximate ratios"
@@ -690,7 +690,7 @@ mod tests {
             .collect()
     }
 
-    // [spec:samurai:req:performance.no-unexplained-regression/test]
+    // [spec:ronin:req:performance.no-unexplained-regression/test]
     #[test]
     fn validation_rejects_runtime_and_memory_regressions() {
         let records = passing_records();

@@ -3,8 +3,8 @@
 use std::fmt;
 use std::io::Write;
 
-// [spec:samurai:def:util.string]
-// [spec:samurai:req:compat.byte-inputs]
+// [spec:ronin:def:util.string]
+// [spec:ronin:req:compat.byte-inputs]
 pub(crate) use bstr::{BStr, BString};
 pub(crate) use bstr::{ByteSlice, ByteVec};
 
@@ -63,20 +63,20 @@ pub(crate) use arena_id;
 
 // Rust containers and ownership replace the source's manual allocation,
 // buffer-growth, and destruction helpers.
-// [spec:samurai:def:util.buffer]
-// [spec:samurai:def:util.evalstring]
-// [spec:samurai:def:util.xmalloc-fn]
-// [spec:samurai:sem:util.xmalloc-fn]
-// [spec:samurai:def:util.reallocarray-fn]
-// [spec:samurai:sem:util.reallocarray-fn]
-// [spec:samurai:def:util.xreallocarray-fn]
-// [spec:samurai:sem:util.xreallocarray-fn]
-// [spec:samurai:def:util.xmemdup-fn]
-// [spec:samurai:sem:util.xmemdup-fn]
-// [spec:samurai:def:util.bufadd-fn]
-// [spec:samurai:sem:util.bufadd-fn]
-// [spec:samurai:def:util.delevalstr-fn]
-// [spec:samurai:sem:util.delevalstr-fn]
+// [spec:ronin:def:util.buffer]
+// [spec:ronin:def:util.evalstring]
+// [spec:ronin:def:util.xmalloc-fn]
+// [spec:ronin:sem:util.xmalloc-fn]
+// [spec:ronin:def:util.reallocarray-fn]
+// [spec:ronin:sem:util.reallocarray-fn]
+// [spec:ronin:def:util.xreallocarray-fn]
+// [spec:ronin:sem:util.xreallocarray-fn]
+// [spec:ronin:def:util.xmemdup-fn]
+// [spec:ronin:sem:util.xmemdup-fn]
+// [spec:ronin:def:util.bufadd-fn]
+// [spec:ronin:sem:util.bufadd-fn]
+// [spec:ronin:def:util.delevalstr-fn]
+// [spec:ronin:sem:util.delevalstr-fn]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum EvalPart {
     Literal(BString),
@@ -108,10 +108,10 @@ impl EvalString {
     }
 }
 
-// [spec:samurai:def:util.xasprintf-fn]
-// [spec:samurai:sem:util.xasprintf-fn]
-// [spec:samurai:def:util.writefile-fn]
-// [spec:samurai:sem:util.writefile-fn]
+// [spec:ronin:def:util.xasprintf-fn]
+// [spec:ronin:sem:util.xasprintf-fn]
+// [spec:ronin:def:util.writefile-fn]
+// [spec:ronin:sem:util.writefile-fn]
 pub(crate) fn xasprintf(args: fmt::Arguments<'_>) -> BString {
     let mut output = Vec::new();
     output
@@ -122,18 +122,18 @@ pub(crate) fn xasprintf(args: fmt::Arguments<'_>) -> BString {
 
 // Formatting diagnostics into owned values replaces global printing and exit
 // helpers; the binary decides which stream and exit status to use.
-// [spec:samurai:def:util.vwarn-fn]
-// [spec:samurai:sem:util.vwarn-fn]
-// [spec:samurai:def:util.warn-fn]
-// [spec:samurai:sem:util.warn-fn]
-// [spec:samurai:def:util.fatal-fn]
-// [spec:samurai:sem:util.fatal-fn]
+// [spec:ronin:def:util.vwarn-fn]
+// [spec:ronin:sem:util.vwarn-fn]
+// [spec:ronin:def:util.warn-fn]
+// [spec:ronin:sem:util.warn-fn]
+// [spec:ronin:def:util.fatal-fn]
+// [spec:ronin:sem:util.fatal-fn]
 pub(crate) fn diagnostic(program: &str, message: impl fmt::Display) -> String {
     format!("{program}: {message}")
 }
 
-// [spec:samurai:def:util.canonpath-fn]
-// [spec:samurai:sem:util.canonpath-fn]
+// [spec:ronin:def:util.canonpath-fn]
+// [spec:ronin:sem:util.canonpath-fn]
 /// Whether a path already has the form `canonpath` would produce.
 ///
 /// Almost every manifest path is already canonical, and checking costs one
@@ -285,7 +285,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:samurai:req:compat.byte-inputs/test]
+    // [spec:ronin:req:compat.byte-inputs/test]
     fn byte_strings_round_trip_non_utf8_unix_paths() {
         let mut name = format!("ronin-bstr-{}-", std::process::id()).into_bytes();
         name.push(0xff);

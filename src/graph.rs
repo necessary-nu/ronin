@@ -51,7 +51,7 @@ pub(crate) struct PathSpan {
     len: u32,
 }
 
-// [spec:samurai:def:graph.node]
+// [spec:ronin:def:graph.node]
 pub(crate) struct Node {
     pub(crate) path: PathSpan,
     /// Shell-quoted form, present only when quoting actually changes the path.
@@ -60,7 +60,7 @@ pub(crate) struct Node {
     pub(crate) uses: IdVec<EdgeId>,
 }
 
-// [spec:samurai:def:graph.edge]
+// [spec:ronin:def:graph.edge]
 pub(crate) struct Edge {
     pub(crate) rule: Option<RuleId>,
     pub(crate) pool: Option<PoolId>,
@@ -78,8 +78,8 @@ pub(crate) struct Edge {
     partitions: EdgePartitions,
 }
 
-// [spec:samurai:def:graph.graphinit-fn]
-// [spec:samurai:sem:graph.graphinit-fn]
+// [spec:ronin:def:graph.graphinit-fn]
+// [spec:ronin:sem:graph.graphinit-fn]
 #[derive(Default)]
 pub(crate) struct Graph {
     // Fixed-seed rapidhash follows Ninja and C samurai: manifests are trusted
@@ -222,8 +222,8 @@ impl Graph {
     }
 }
 
-// [spec:samurai:def:graph.nodestat-fn]
-// [spec:samurai:sem:graph.nodestat-fn]
+// [spec:ronin:def:graph.nodestat-fn]
+// [spec:ronin:sem:graph.nodestat-fn]
 pub(crate) fn nodestat_with<F>(
     graph: &Graph,
     runtime: &mut RuntimeState,
@@ -463,7 +463,7 @@ impl DirtyEvaluator {
 }
 
 /// Stat a dependency graph in one iterative pass and update each node's dirty bit.
-// [spec:samurai:req:compat.graph-semantics]
+// [spec:ronin:req:compat.graph-semantics]
 #[cfg(test)]
 pub(crate) fn recompute_dirty_with<F>(
     graph: &Graph,
@@ -535,16 +535,16 @@ where
     Ok(validations)
 }
 
-// [spec:samurai:def:graph.nodeuse-fn]
-// [spec:samurai:sem:graph.nodeuse-fn]
+// [spec:ronin:def:graph.nodeuse-fn]
+// [spec:ronin:sem:graph.nodeuse-fn]
 pub(crate) fn nodeuse(graph: &mut Graph, node: NodeId, edge: EdgeId) {
     graph.node_mut(node).uses.push(edge);
 }
 
-// [spec:samurai:def:graph.mkedge-fn]
-// [spec:samurai:sem:graph.mkedge-fn]
-// [spec:samurai:def:graph.mkphony-fn]
-// [spec:samurai:sem:graph.mkphony-fn]
+// [spec:ronin:def:graph.mkedge-fn]
+// [spec:ronin:sem:graph.mkedge-fn]
+// [spec:ronin:def:graph.mkphony-fn]
+// [spec:ronin:sem:graph.mkphony-fn]
 pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
     let id = EdgeId::from_index(graph.edges.len());
     graph.edges.push(Edge {
@@ -561,8 +561,8 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
     id
 }
 
-// [spec:samurai:def:graph.edgehash-fn]
-// [spec:samurai:sem:graph.edgehash-fn]
+// [spec:ronin:def:graph.edgehash-fn]
+// [spec:ronin:sem:graph.edgehash-fn]
 pub(crate) fn edgehash(
     runtime: &mut RuntimeState,
     edge: EdgeId,
@@ -581,8 +581,8 @@ pub(crate) fn edgehash(
     hash
 }
 
-// [spec:samurai:def:graph.edgeadddeps-fn]
-// [spec:samurai:sem:graph.edgeadddeps-fn]
+// [spec:ronin:def:graph.edgeadddeps-fn]
+// [spec:ronin:sem:graph.edgeadddeps-fn]
 pub(crate) fn edgeadddeps(graph: &mut Graph, edge: EdgeId, deps: &[NodeId]) {
     for node in deps {
         nodeuse(graph, *node, edge);
@@ -925,7 +925,7 @@ mod tests {
     }
 
     #[test]
-    // [spec:samurai:req:compat.graph-semantics/test]
+    // [spec:ronin:req:compat.graph-semantics/test]
     fn ronin_deep_graph_evaluation_uses_an_iterative_worklist() {
         const DEPTH: usize = 20_000;
 

@@ -6,9 +6,9 @@ category @executive
 scope {
     elements ([arch:ronin:execution])
     rules (
-        [spec:samurai:req:compat.scheduling]
-        [spec:samurai:req:compat.process-integration]
-        [spec:samurai:req:compat.command-runtime]
+        [spec:ronin:req:compat.scheduling]
+        [spec:ronin:req:compat.process-integration]
+        [spec:ronin:req:compat.command-runtime]
     )
 }
 author "brendan@bbqsrc.net"
@@ -41,9 +41,9 @@ edges {
     )
 }
 codifies (
-    [spec:samurai:req:compat.scheduling]
-    [spec:samurai:req:compat.process-integration]
-    [spec:samurai:req:compat.command-runtime]
+    [spec:ronin:req:compat.scheduling]
+    [spec:ronin:req:compat.process-integration]
+    [spec:ronin:req:compat.command-runtime]
 )
 establishes ([arch:ronin:execution])
 ---

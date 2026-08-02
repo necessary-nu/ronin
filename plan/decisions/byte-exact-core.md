@@ -5,7 +5,7 @@ state @approved
 category @property
 scope {
     elements ([arch:ronin:core-data])
-    rules ([spec:samurai:req:compat.byte-inputs])
+    rules ([spec:ronin:req:compat.byte-inputs])
 }
 author "brendan@bbqsrc.net"
 alternatives (
@@ -31,7 +31,7 @@ consequences {
 edges {
     requires ()
 }
-codifies ([spec:samurai:req:compat.byte-inputs])
+codifies ([spec:ronin:req:compat.byte-inputs])
 establishes ([arch:ronin:core-data])
 ---
 

@@ -19,14 +19,14 @@ fn manifest_error(scanner: &Scanner<'_>, problem: ManifestProblem) -> ManifestEr
     ManifestError::at(scanner.source_span(scanner.position()), problem)
 }
 
-// [spec:samurai:def:parse.parseoptions]
+// [spec:ronin:def:parse.parseoptions]
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ParseOptions {
     pub(crate) dupbuildwarn: bool,
 }
 
-// [spec:samurai:def:parse.parseinit-fn]
-// [spec:samurai:sem:parse.parseinit-fn]
+// [spec:ronin:def:parse.parseinit-fn]
+// [spec:ronin:sem:parse.parseinit-fn]
 #[derive(Default)]
 pub(crate) struct Parser {
     pub(crate) options: ParseOptions,
@@ -47,8 +47,8 @@ impl Parser {
     }
 }
 
-// [spec:samurai:def:parse.parselet-fn]
-// [spec:samurai:sem:parse.parselet-fn]
+// [spec:ronin:def:parse.parselet-fn]
+// [spec:ronin:sem:parse.parselet-fn]
 fn parselet<'source>(
     scanner: &mut Scanner<'source>,
 ) -> ManifestResult<(&'source BStr, ScannedEvalString<'source>)> {
@@ -66,8 +66,8 @@ fn parse_assignment<'source>(
     Ok(value)
 }
 
-// [spec:samurai:def:parse.parserule-fn]
-// [spec:samurai:sem:parse.parserule-fn]
+// [spec:ronin:def:parse.parserule-fn]
+// [spec:ronin:sem:parse.parserule-fn]
 fn parserule(
     scanner: &mut Scanner<'_>,
     graph: &mut Graph,
@@ -171,8 +171,8 @@ fn node_for(
     Ok(crate::graph::mknode(graph, scratch))
 }
 
-// [spec:samurai:def:parse.parseedge-fn]
-// [spec:samurai:sem:parse.parseedge-fn]
+// [spec:ronin:def:parse.parseedge-fn]
+// [spec:ronin:sem:parse.parseedge-fn]
 #[allow(
     clippy::too_many_lines,
     reason = "a complete Ninja build production shares scanner state and duplicate-output handling"
@@ -343,8 +343,8 @@ fn parseedge(
     Ok(())
 }
 
-// [spec:samurai:def:parse.parseinclude-fn]
-// [spec:samurai:sem:parse.parseinclude-fn]
+// [spec:ronin:def:parse.parseinclude-fn]
+// [spec:ronin:sem:parse.parseinclude-fn]
 fn parseinclude(
     scanner: &mut Scanner<'_>,
     graph: &mut Graph,
@@ -371,8 +371,8 @@ fn parseinclude(
     )
 }
 
-// [spec:samurai:def:parse.parsedefault-fn]
-// [spec:samurai:sem:parse.parsedefault-fn]
+// [spec:ronin:def:parse.parsedefault-fn]
+// [spec:ronin:sem:parse.parsedefault-fn]
 fn parsedefault(
     scanner: &mut Scanner<'_>,
     graph: &Graph,
@@ -401,8 +401,8 @@ fn parsedefault(
     Ok(())
 }
 
-// [spec:samurai:def:parse.parsepool-fn]
-// [spec:samurai:sem:parse.parsepool-fn]
+// [spec:ronin:def:parse.parsepool-fn]
+// [spec:ronin:sem:parse.parsepool-fn]
 fn parsepool(
     scanner: &mut Scanner<'_>,
     graph: &mut Graph,
@@ -443,8 +443,8 @@ fn parsepool(
     Ok(())
 }
 
-// [spec:samurai:def:parse.checkversion-fn]
-// [spec:samurai:sem:parse.checkversion-fn]
+// [spec:ronin:def:parse.checkversion-fn]
+// [spec:ronin:sem:parse.checkversion-fn]
 fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i32)> {
     let bytes = version.as_bytes();
     let major_end = bytes
@@ -487,9 +487,9 @@ fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i
     }
 }
 
-// [spec:samurai:def:parse.parse-fn]
-// [spec:samurai:sem:parse.parse-fn]
-// [spec:samurai:req:compat.manifest-semantics]
+// [spec:ronin:def:parse.parse-fn]
+// [spec:ronin:sem:parse.parse-fn]
+// [spec:ronin:req:compat.manifest-semantics]
 pub(crate) fn parse(
     name: impl AsRef<std::path::Path>,
     graph: &mut Graph,
@@ -541,8 +541,8 @@ pub(crate) fn parse(
     Ok(())
 }
 
-// [spec:samurai:def:parse.defaultnodes-fn]
-// [spec:samurai:sem:parse.defaultnodes-fn]
+// [spec:ronin:def:parse.defaultnodes-fn]
+// [spec:ronin:sem:parse.defaultnodes-fn]
 pub(crate) fn defaultnodes(parser: &Parser, graph: &Graph) -> Vec<NodeId> {
     if parser.defaults.is_empty() {
         graph
@@ -808,7 +808,7 @@ mod ninja_manifest_tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:samurai:req:compat.manifest-semantics/test]
+    // [spec:ronin:req:compat.manifest-semantics/test]
     fn ninja_manifest_parser_preserves_non_utf8_paths() {
         let directory = temporary_directory("non-utf8");
         let path = directory.join("build.ninja");

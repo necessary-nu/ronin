@@ -1,45 +1,45 @@
 # samu.c
 
-> [spec:samurai:def:samu.debugflag-fn]
+> [spec:ronin:def:samu.debugflag-fn]
 > static void debugflag(const char *flag)
 
-> [spec:samurai:sem:samu.debugflag-fn]
+> [spec:ronin:sem:samu.debugflag-fn]
 > Compares `flag` with the supported debug switches. `explain` enables
 > build-explanation output, `keepdepfile` preserves depfiles, and `keeprsp`
 > preserves response files. Any other value is a fatal configuration error.
 
-> [spec:samurai:def:samu.getbuilddir-fn]
+> [spec:ronin:def:samu.getbuilddir-fn]
 > static char * getbuilddir(void)
 
-> [spec:samurai:sem:samu.getbuilddir-fn]
+> [spec:ronin:sem:samu.getbuilddir-fn]
 > Looks up `builddir` in the root build environment. If it is absent, returns
 > null. Otherwise creates that directory hierarchy without treating an
 > existing directory as an error; exits unsuccessfully if that operation
 > fails, and returns the environment string's stored path without copying it.
 
-> [spec:samurai:def:samu.jobsflag-fn]
+> [spec:ronin:def:samu.jobsflag-fn]
 > static void jobsflag(const char *flag)
 
-> [spec:samurai:sem:samu.jobsflag-fn]
+> [spec:ronin:sem:samu.jobsflag-fn]
 > Parses the complete argument as a base-10 signed integer. A trailing
 > non-numeric character or a negative value is fatal. A positive value becomes
 > the maximum job count; zero selects the sentinel `-1` meaning unlimited
 > jobs.
 
-> [spec:samurai:def:samu.loadflag-fn]
+> [spec:ronin:def:samu.loadflag-fn]
 > static void loadflag(const char *flag)
 
-> [spec:samurai:sem:samu.loadflag-fn]
+> [spec:ronin:sem:samu.loadflag-fn]
 > On platforms with load-average support, parses the entire argument as a
 > non-negative floating-point value and stores it as the scheduler's maximum
 > load. Conversion errors, trailing characters, and negative values are
 > fatal. On other platforms it leaves scheduling unchanged and emits a warning
 > that the option is unsupported.
 
-> [spec:samurai:def:samu.main-fn+1]
+> [spec:ronin:def:samu.main-fn+1]
 > int main(int argc, char *argv[])
 
-> [spec:samurai:sem:samu.main-fn+1]
+> [spec:ronin:sem:samu.main-fn+1]
 > Derives the Ronin program name and parses command-line options for directory,
 > manifest, limits, debug and warning switches, verbosity, dry-run mode,
 > version output, and a selected Ninja tool. It deliberately does not read
@@ -56,34 +56,34 @@
 > each requested target (failing for an unknown target), or all declared
 > default targets, performs the build, closes both logs, and returns success.
 
-> [spec:samurai:def:samu.parseenvargs-fn+1]
+> [spec:ronin:def:samu.parseenvargs-fn+1]
 > Ronin has no environment-option parsing helper; its CLI parser accepts only
 > the process argument vector.
 
-> [spec:samurai:sem:samu.parseenvargs-fn+1]
+> [spec:ronin:sem:samu.parseenvargs-fn+1]
 > Ronin does not read or interpret `SAMUFLAGS` and exposes no replacement
 > environment-option parser. All supported CLI options come from the process
 > argument vector.
 
-> [spec:samurai:def:samu.progname-fn]
+> [spec:ronin:def:samu.progname-fn]
 > static const char * progname(const char *arg, const char *def)
 
-> [spec:samurai:sem:samu.progname-fn]
+> [spec:ronin:sem:samu.progname-fn]
 > Returns `def` when `arg` is null; otherwise returns the substring following
 > the final `/` in `arg`, or `arg` itself when no slash is present. It returns a
 > borrowed pointer rather than allocating a new name.
 
-> [spec:samurai:def:samu.usage-fn]
+> [spec:ronin:def:samu.usage-fn]
 > static void usage(void)
 
-> [spec:samurai:sem:samu.usage-fn]
+> [spec:ronin:sem:samu.usage-fn]
 > Writes the supported command synopsis, using the global program name, to
 > standard error and terminates the process with exit status 2.
 
-> [spec:samurai:def:samu.warnflag-fn]
+> [spec:ronin:def:samu.warnflag-fn]
 > static void warnflag(const char *flag)
 
-> [spec:samurai:sem:samu.warnflag-fn]
+> [spec:ronin:sem:samu.warnflag-fn]
 > Recognizes only duplicate-build diagnostics: `dupbuild=err` disables the
 > duplicate-build warning mode, while `dupbuild=warn` enables it. Any other
 > warning switch is fatal.

@@ -40,7 +40,7 @@ stale=$(nplan spec stale --prefix samurai --color never)
 printf '%s\n' "$stale"
 stale_rules=$(printf '%s\n' "$stale" | sed -n 's/^  \([^:]*\):.*/\1/p' | sort -u)
 for rule in $stale_rules; do
-    if rg -q "\[spec:samurai:req:${rule}(\+[0-9]+)?\]" docs/spec; then
+    if rg -q "\[spec:ronin:req:${rule}(\+[0-9]+)?\]" docs/spec; then
         echo "release gate: stale requirement annotation for $rule" >&2
         exit 1
     fi

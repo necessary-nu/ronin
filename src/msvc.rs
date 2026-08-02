@@ -155,7 +155,7 @@ pub(crate) fn escape_for_depfile(path: &str) -> String {
 }
 
 impl ClParser {
-    // [spec:samurai:req:runtime.msvc-byte-parsing]
+    // [spec:ronin:req:runtime.msvc-byte-parsing]
     pub(crate) fn parse(&mut self, input: &[u8], prefix: &[u8]) -> BString {
         let mut output = Vec::new();
         let mut saw_include = false;
@@ -216,7 +216,7 @@ mod tests {
         ));
     }
 
-    // [spec:samurai:req:runtime.msvc-byte-parsing/test]
+    // [spec:ronin:req:runtime.msvc-byte-parsing/test]
     #[test]
     fn ninja_clparser_parse_and_deduplicate_includes() {
         let mut parser = ClParser::default();

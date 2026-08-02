@@ -40,7 +40,7 @@ impl JobLimit {
     }
 }
 
-// [spec:samurai:def:build.buildoptions]
+// [spec:ronin:def:build.buildoptions]
 #[derive(Clone)]
 #[allow(
     clippy::struct_excessive_bools,
@@ -190,7 +190,7 @@ pub(crate) struct Plan {
     failures: usize,
 }
 
-// [spec:samurai:req:compat.graph-semantics]
+// [spec:ronin:req:compat.graph-semantics]
 impl Plan {
     fn synchronize_arenas(&mut self, graph: &Graph) {
         let edge_count = graph.edge_count();
@@ -208,16 +208,16 @@ impl Plan {
         self.dependency_marks.resize(edge_count, None);
     }
 
-    // [spec:samurai:def:build.buildreset-fn]
-    // [spec:samurai:sem:build.buildreset-fn]
-    // [spec:samurai:def:build.isnewer-fn]
-    // [spec:samurai:sem:build.isnewer-fn]
-    // [spec:samurai:def:build.isdirty-fn]
-    // [spec:samurai:sem:build.isdirty-fn]
-    // [spec:samurai:def:build.queue-fn]
-    // [spec:samurai:sem:build.queue-fn]
-    // [spec:samurai:def:build.buildadd-fn]
-    // [spec:samurai:sem:build.buildadd-fn]
+    // [spec:ronin:def:build.buildreset-fn]
+    // [spec:ronin:sem:build.buildreset-fn]
+    // [spec:ronin:def:build.isnewer-fn]
+    // [spec:ronin:sem:build.isnewer-fn]
+    // [spec:ronin:def:build.isdirty-fn]
+    // [spec:ronin:sem:build.isdirty-fn]
+    // [spec:ronin:def:build.queue-fn]
+    // [spec:ronin:sem:build.queue-fn]
+    // [spec:ronin:def:build.buildadd-fn]
+    // [spec:ronin:sem:build.buildadd-fn]
     pub(crate) fn add_target(
         &mut self,
         graph: &Graph,
@@ -489,7 +489,7 @@ impl Plan {
     }
 }
 
-// [spec:samurai:def:build.job]
+// [spec:ronin:def:build.job]
 pub(crate) struct Builder<'a> {
     graph: &'a mut Graph,
     runtime: RuntimeState,
@@ -1093,14 +1093,14 @@ impl<'a> Builder<'a> {
         })
     }
 
-    // [spec:samurai:def:build.nodedone-fn]
-    // [spec:samurai:sem:build.nodedone-fn]
-    // [spec:samurai:def:build.shouldprune-fn]
-    // [spec:samurai:sem:build.shouldprune-fn]
-    // [spec:samurai:def:build.edgedone-fn]
-    // [spec:samurai:sem:build.edgedone-fn]
-    // [spec:samurai:def:build.jobdone-fn]
-    // [spec:samurai:sem:build.jobdone-fn]
+    // [spec:ronin:def:build.nodedone-fn]
+    // [spec:ronin:sem:build.nodedone-fn]
+    // [spec:ronin:def:build.shouldprune-fn]
+    // [spec:ronin:sem:build.shouldprune-fn]
+    // [spec:ronin:def:build.edgedone-fn]
+    // [spec:ronin:sem:build.edgedone-fn]
+    // [spec:ronin:def:build.jobdone-fn]
+    // [spec:ronin:sem:build.jobdone-fn]
     #[allow(
         clippy::too_many_lines,
         reason = "edge completion is one ordered transaction whose cleanup and log updates must stay together"
@@ -1496,23 +1496,23 @@ impl<'a> Builder<'a> {
         }
     }
 
-    // [spec:samurai:req:compat.scheduling]
-    // [spec:samurai:req:compat.process-integration]
-    // [spec:samurai:def:build.catchsig-fn]
-    // [spec:samurai:sem:build.catchsig-fn]
-    // [spec:samurai:def:build.build-fn]
-    // [spec:samurai:sem:build.build-fn]
-    // [spec:samurai:req:compat.command-runtime]
-    // [spec:samurai:def:build.formatstatus-fn]
-    // [spec:samurai:sem:build.formatstatus-fn]
-    // [spec:samurai:def:build.printstatus-fn]
-    // [spec:samurai:sem:build.printstatus-fn]
-    // [spec:samurai:def:build.jobstart-fn]
-    // [spec:samurai:sem:build.jobstart-fn]
-    // [spec:samurai:def:build.jobwork-fn]
-    // [spec:samurai:sem:build.jobwork-fn]
-    // [spec:samurai:def:build.queryload-fn]
-    // [spec:samurai:sem:build.queryload-fn]
+    // [spec:ronin:req:compat.scheduling]
+    // [spec:ronin:req:compat.process-integration]
+    // [spec:ronin:def:build.catchsig-fn]
+    // [spec:ronin:sem:build.catchsig-fn]
+    // [spec:ronin:def:build.build-fn]
+    // [spec:ronin:sem:build.build-fn]
+    // [spec:ronin:req:compat.command-runtime]
+    // [spec:ronin:def:build.formatstatus-fn]
+    // [spec:ronin:sem:build.formatstatus-fn]
+    // [spec:ronin:def:build.printstatus-fn]
+    // [spec:ronin:sem:build.printstatus-fn]
+    // [spec:ronin:def:build.jobstart-fn]
+    // [spec:ronin:sem:build.jobstart-fn]
+    // [spec:ronin:def:build.jobwork-fn]
+    // [spec:ronin:sem:build.jobwork-fn]
+    // [spec:ronin:def:build.queryload-fn]
+    // [spec:ronin:sem:build.queryload-fn]
     #[allow(
         clippy::too_many_lines,
         reason = "the completion-driven scheduler loop is clearer as one explicit state machine"

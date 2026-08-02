@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 const INVENTORY: &str = include_str!("ninja_suite_inventory.tsv");
 const PINNED_REVISION: &str = "b51a1e37c2fb89bbefa600bd155e1ce13983f09d";
 
-// [spec:samurai:req:compat.upstream-conformance/test]
+// [spec:ronin:req:compat.upstream-conformance/test]
 #[test]
 fn pinned_ninja_inventory_is_complete_and_has_no_silent_exclusions() {
     assert!(INVENTORY

@@ -5,22 +5,22 @@
 //! arena already owns. This is the layout `htab.c` uses, and with niche-packed
 //! identifiers a slot costs four bytes.
 
-// [spec:samurai:def:htab.hashtablekey]
-// [spec:samurai:def:htab.hashtable]
-// [spec:samurai:def:htab.htabkey-fn]
-// [spec:samurai:sem:htab.htabkey-fn]
-// [spec:samurai:def:htab.mkhtab-fn]
-// [spec:samurai:sem:htab.mkhtab-fn]
-// [spec:samurai:def:htab.keyequal-fn]
-// [spec:samurai:sem:htab.keyequal-fn]
-// [spec:samurai:def:htab.keyindex-fn]
-// [spec:samurai:sem:htab.keyindex-fn]
-// [spec:samurai:def:htab.htabput-fn]
-// [spec:samurai:sem:htab.htabput-fn]
-// [spec:samurai:def:htab.htabget-fn]
-// [spec:samurai:sem:htab.htabget-fn]
-// [spec:samurai:def:htab.delhtab-fn]
-// [spec:samurai:sem:htab.delhtab-fn]
+// [spec:ronin:def:htab.hashtablekey]
+// [spec:ronin:def:htab.hashtable]
+// [spec:ronin:def:htab.htabkey-fn]
+// [spec:ronin:sem:htab.htabkey-fn]
+// [spec:ronin:def:htab.mkhtab-fn]
+// [spec:ronin:sem:htab.mkhtab-fn]
+// [spec:ronin:def:htab.keyequal-fn]
+// [spec:ronin:sem:htab.keyequal-fn]
+// [spec:ronin:def:htab.keyindex-fn]
+// [spec:ronin:sem:htab.keyindex-fn]
+// [spec:ronin:def:htab.htabput-fn]
+// [spec:ronin:sem:htab.htabput-fn]
+// [spec:ronin:def:htab.htabget-fn]
+// [spec:ronin:sem:htab.htabget-fn]
+// [spec:ronin:def:htab.delhtab-fn]
+// [spec:ronin:sem:htab.delhtab-fn]
 use super::{shell_escape_path, Graph, Node, NodeId};
 use crate::htab::rapidhashv1;
 use crate::util::{ByteSlice, IdVec};
@@ -179,10 +179,10 @@ fn node_bytes<'arena>(paths: &'arena [u8], nodes: &[Node], node: NodeId) -> &'ar
     &paths[span.offset as usize..][..span.len as usize]
 }
 
-// [spec:samurai:def:graph.mknode-fn]
-// [spec:samurai:sem:graph.mknode-fn]
-// [spec:samurai:def:graph.delnode-fn]
-// [spec:samurai:sem:graph.delnode-fn]
+// [spec:ronin:def:graph.mknode-fn]
+// [spec:ronin:sem:graph.mknode-fn]
+// [spec:ronin:def:graph.delnode-fn]
+// [spec:ronin:sem:graph.delnode-fn]
 /// Intern a path, allocating nothing when the node already exists.
 ///
 /// A new node appends into the arena rather than taking ownership of a
@@ -209,8 +209,8 @@ pub(crate) fn mknode(graph: &mut Graph, path: impl AsRef<[u8]>) -> NodeId {
     node
 }
 
-// [spec:samurai:def:graph.nodeget-fn]
-// [spec:samurai:sem:graph.nodeget-fn]
+// [spec:ronin:def:graph.nodeget-fn]
+// [spec:ronin:sem:graph.nodeget-fn]
 pub(crate) fn nodeget(graph: &Graph, path: &[u8]) -> Option<NodeId> {
     graph.node_by_path.get(&graph.paths, &graph.nodes, path)
 }

@@ -160,6 +160,7 @@ assertions (
     {id ronin-progress-bar, kind @doing, author "brendan@bbqsrc.net", at 2026-08-02T00:18:24.987937513Z}
     {id ronin-dryrun-log-divergence, kind @doing, author "brendan@bbqsrc.net", at 2026-08-02T00:48:27.969301808Z}
     {id ronin-retire-c-corpus, kind @doing, author "brendan@bbqsrc.net", at 2026-08-02T00:57:11.953556275Z}
+    {id ronin-spec-namespace, kind @doing, author "brendan@bbqsrc.net", at 2026-08-02T11:15:44.663345192Z}
 )
 
 impl_evidence (

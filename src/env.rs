@@ -12,33 +12,33 @@ arena_id!(EnvironmentId);
 arena_id!(RuleId);
 arena_id!(PoolId);
 
-// [spec:samurai:def:tree.treenode]
-// [spec:samurai:def:tree.deltree-fn]
-// [spec:samurai:sem:tree.deltree-fn]
-// [spec:samurai:def:tree.height-fn]
-// [spec:samurai:sem:tree.height-fn]
-// [spec:samurai:def:tree.rot-fn]
-// [spec:samurai:sem:tree.rot-fn]
-// [spec:samurai:def:tree.balance-fn]
-// [spec:samurai:sem:tree.balance-fn]
-// [spec:samurai:def:tree.treefind-fn]
-// [spec:samurai:sem:tree.treefind-fn]
-// [spec:samurai:def:tree.treeinsert-fn]
-// [spec:samurai:sem:tree.treeinsert-fn]
-// [spec:samurai:def:env.environment]
+// [spec:ronin:def:tree.treenode]
+// [spec:ronin:def:tree.deltree-fn]
+// [spec:ronin:sem:tree.deltree-fn]
+// [spec:ronin:def:tree.height-fn]
+// [spec:ronin:sem:tree.height-fn]
+// [spec:ronin:def:tree.rot-fn]
+// [spec:ronin:sem:tree.rot-fn]
+// [spec:ronin:def:tree.balance-fn]
+// [spec:ronin:sem:tree.balance-fn]
+// [spec:ronin:def:tree.treefind-fn]
+// [spec:ronin:sem:tree.treefind-fn]
+// [spec:ronin:def:tree.treeinsert-fn]
+// [spec:ronin:sem:tree.treeinsert-fn]
+// [spec:ronin:def:env.environment]
 pub(crate) struct Environment {
     pub(crate) parent: Option<EnvironmentId>,
     pub(crate) bindings: Bindings<BString>,
     pub(crate) rules: BTreeMap<BString, RuleId>,
 }
 
-// [spec:samurai:def:env.rule]
+// [spec:ronin:def:env.rule]
 pub(crate) struct Rule {
     pub(crate) name: BString,
     pub(crate) bindings: Bindings<EvalString>,
 }
 
-// [spec:samurai:def:env.pool]
+// [spec:ronin:def:env.pool]
 pub(crate) struct Pool {
     pub(crate) name: BString,
     depth: Option<NonZeroUsize>,
@@ -60,8 +60,8 @@ pub(crate) struct EnvState {
 }
 
 impl EnvState {
-    // [spec:samurai:def:env.envinit-fn]
-    // [spec:samurai:sem:env.envinit-fn]
+    // [spec:ronin:def:env.envinit-fn]
+    // [spec:ronin:sem:env.envinit-fn]
     pub(crate) fn new(graph: &mut Graph) -> Self {
         let root = mkenv(graph, None);
         let phony = mkrule(graph, "phony".into());
@@ -81,8 +81,8 @@ impl EnvState {
     }
 }
 
-// [spec:samurai:def:env.mkenv-fn]
-// [spec:samurai:sem:env.mkenv-fn]
+// [spec:ronin:def:env.mkenv-fn]
+// [spec:ronin:sem:env.mkenv-fn]
 pub(crate) fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> EnvironmentId {
     graph.push_environment(Environment {
         parent,
@@ -91,10 +91,10 @@ pub(crate) fn mkenv(graph: &mut Graph, parent: Option<EnvironmentId>) -> Environ
     })
 }
 
-// [spec:samurai:def:env.mkrule-fn]
-// [spec:samurai:sem:env.mkrule-fn]
-// [spec:samurai:def:env.delrule-fn]
-// [spec:samurai:sem:env.delrule-fn]
+// [spec:ronin:def:env.mkrule-fn]
+// [spec:ronin:sem:env.mkrule-fn]
+// [spec:ronin:def:env.delrule-fn]
+// [spec:ronin:sem:env.delrule-fn]
 pub(crate) fn mkrule(graph: &mut Graph, name: BString) -> RuleId {
     graph.push_rule(Rule {
         name,
@@ -102,8 +102,8 @@ pub(crate) fn mkrule(graph: &mut Graph, name: BString) -> RuleId {
     })
 }
 
-// [spec:samurai:def:env.envaddrule-fn]
-// [spec:samurai:sem:env.envaddrule-fn]
+// [spec:ronin:def:env.envaddrule-fn]
+// [spec:ronin:sem:env.envaddrule-fn]
 pub(crate) fn envaddrule(
     graph: &mut Graph,
     environment: EnvironmentId,
@@ -118,8 +118,8 @@ pub(crate) fn envaddrule(
     Ok(())
 }
 
-// [spec:samurai:def:env.addpool-fn]
-// [spec:samurai:sem:env.addpool-fn]
+// [spec:ronin:def:env.addpool-fn]
+// [spec:ronin:sem:env.addpool-fn]
 fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), GraphError> {
     let name = graph.pool(pool).name.clone();
     if state.pools.contains_key(&name) {
@@ -129,8 +129,8 @@ fn addpool(graph: &Graph, state: &mut EnvState, pool: PoolId) -> Result<(), Grap
     Ok(())
 }
 
-// [spec:samurai:def:env.envvar-fn]
-// [spec:samurai:sem:env.envvar-fn]
+// [spec:ronin:def:env.envvar-fn]
+// [spec:ronin:sem:env.envvar-fn]
 pub(crate) fn envvar(graph: &Graph, environment: EnvironmentId, name: VarId) -> Option<&BString> {
     let mut current = Some(environment);
     while let Some(scope) = current {
@@ -155,8 +155,8 @@ pub(crate) fn envvar_named<'graph>(
     envvar(graph, environment, graph.names().lookup(name)?)
 }
 
-// [spec:samurai:def:env.envaddvar-fn]
-// [spec:samurai:sem:env.envaddvar-fn]
+// [spec:ronin:def:env.envaddvar-fn]
+// [spec:ronin:sem:env.envaddvar-fn]
 pub(crate) fn envaddvar(
     graph: &mut Graph,
     environment: EnvironmentId,
@@ -169,8 +169,8 @@ pub(crate) fn envaddvar(
         .insert(name, value);
 }
 
-// [spec:samurai:def:env.enveval-fn]
-// [spec:samurai:sem:env.enveval-fn]
+// [spec:ronin:def:env.enveval-fn]
+// [spec:ronin:sem:env.enveval-fn]
 pub(crate) fn enveval(
     graph: &Graph,
     environment: EnvironmentId,
@@ -223,8 +223,8 @@ pub(crate) fn enveval_into(
     }
 }
 
-// [spec:samurai:def:env.envrule-fn]
-// [spec:samurai:sem:env.envrule-fn]
+// [spec:ronin:def:env.envrule-fn]
+// [spec:ronin:sem:env.envrule-fn]
 pub(crate) fn envrule(graph: &Graph, environment: EnvironmentId, name: &BStr) -> Option<RuleId> {
     let mut current = Some(environment);
     while let Some(scope) = current {
@@ -237,16 +237,16 @@ pub(crate) fn envrule(graph: &Graph, environment: EnvironmentId, name: &BStr) ->
     None
 }
 
-// [spec:samurai:def:env.ruleaddvar-fn]
-// [spec:samurai:sem:env.ruleaddvar-fn]
+// [spec:ronin:def:env.ruleaddvar-fn]
+// [spec:ronin:sem:env.ruleaddvar-fn]
 pub(crate) fn ruleaddvar(graph: &mut Graph, rule: RuleId, name: VarId, value: EvalString) {
     graph.rule_mut(rule).bindings.insert(name, value);
 }
 
-// [spec:samurai:def:env.mkpool-fn]
-// [spec:samurai:sem:env.mkpool-fn]
-// [spec:samurai:def:env.delpool-fn]
-// [spec:samurai:sem:env.delpool-fn]
+// [spec:ronin:def:env.mkpool-fn]
+// [spec:ronin:sem:env.mkpool-fn]
+// [spec:ronin:def:env.delpool-fn]
+// [spec:ronin:sem:env.delpool-fn]
 pub(crate) fn mkpool(
     graph: &mut Graph,
     state: &mut EnvState,
@@ -257,8 +257,8 @@ pub(crate) fn mkpool(
     Ok(pool)
 }
 
-// [spec:samurai:def:env.poolget-fn]
-// [spec:samurai:sem:env.poolget-fn]
+// [spec:ronin:def:env.poolget-fn]
+// [spec:ronin:sem:env.poolget-fn]
 pub(crate) fn poolget(state: &EnvState, name: &BStr) -> Result<PoolId, GraphError> {
     state
         .pools
@@ -269,8 +269,8 @@ pub(crate) fn poolget(state: &EnvState, name: &BStr) -> Result<PoolId, GraphErro
         })
 }
 
-// [spec:samurai:def:env.edgevar-fn]
-// [spec:samurai:sem:env.edgevar-fn]
+// [spec:ronin:def:env.edgevar-fn]
+// [spec:ronin:sem:env.edgevar-fn]
 pub(crate) fn edgevar(
     graph: &Graph,
     edge: EdgeId,

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 const LOAD_SAMPLE_INTERVAL: Duration = Duration::from_millis(100);
 
-// [spec:samurai:req:runtime.process-supervisor-scalability]
+// [spec:ronin:req:runtime.process-supervisor-scalability]
 pub(super) struct LoadSampler {
     sampled_at: Option<Instant>,
     value: f64,
@@ -125,7 +125,7 @@ mod tests {
     use std::cell::Cell;
 
     #[test]
-    // [spec:samurai:req:runtime.process-supervisor-scalability/test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
     fn load_sampler_reuses_recent_observations() {
         let mut sampler = LoadSampler::default();
         let reads = Cell::new(0);

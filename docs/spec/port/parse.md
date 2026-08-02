@@ -1,9 +1,9 @@
 # parse.c, parse.h
 
-> [spec:samurai:def:parse.checkversion-fn]
+> [spec:ronin:def:parse.checkversion-fn]
 > static void checkversion(const char *ver)
 
-> [spec:samurai:sem:parse.checkversion-fn]
+> [spec:ronin:sem:parse.checkversion-fn]
 > Parse `ver` with the `"%d.%d"` conversion, initializing the minor
 > component to zero before parsing. At least the major conversion MUST
 > succeed; otherwise report `invalid ninja_required_version` as a fatal
@@ -17,10 +17,10 @@
 > diagnostic. All other parsed values, including negative values, return
 > successfully and do not mutate parser state.
 
-> [spec:samurai:def:parse.defaultnodes-fn]
+> [spec:ronin:def:parse.defaultnodes-fn]
 > void defaultnodes(void fn(struct node *))
 
-> [spec:samurai:sem:parse.defaultnodes-fn]
+> [spec:ronin:sem:parse.defaultnodes-fn]
 > If one or more explicit `default` declarations have been parsed, invoke
 > `fn` once for each stored node, in declaration order. Do not deduplicate
 > repeated declarations and do not alter the stored default-target list.
@@ -32,10 +32,10 @@
 > function neither filters phony edges nor records that a callback has run;
 > the callback is responsible for any such policy.
 
-> [spec:samurai:def:parse.parse-fn]
+> [spec:ronin:def:parse.parse-fn]
 > void parse(const char *name, struct environment *env)
 
-> [spec:samurai:sem:parse.parse-fn]
+> [spec:ronin:sem:parse.parse-fn]
 > Initialize a scanner over the file named by `name`, then repeatedly obtain
 > the next top-level token. Dispatch `rule`, `build`, `include`, `subninja`,
 > `default`, and `pool` tokens to `parserule`, `parseedge`, `parseinclude`
@@ -56,10 +56,10 @@
 > not reset global parser state, so nested includes and successive calls
 > share the caller-selected environment and accumulated graph/default state.
 
-> [spec:samurai:def:parse.parsedefault-fn]
+> [spec:ronin:def:parse.parsedefault-fn]
 > static void parsedefault(struct scanner *s, struct environment *env)
 
-> [spec:samurai:sem:parse.parsedefault-fn]
+> [spec:ronin:sem:parse.parsedefault-fn]
 > Scan zero or more path expressions from the current position into the
 > shared `paths` array, then grow the persistent default-node array by that
 > many slots. For each path in scanner order, evaluate it in `env` (which
@@ -72,10 +72,10 @@
 > Require and consume the terminating newline, then set the shared `npaths`
 > count to zero. The backing `paths` allocation is retained for reuse.
 
-> [spec:samurai:def:parse.parseedge-fn]
+> [spec:ronin:def:parse.parseedge-fn]
 > static void parseedge(struct scanner *s, struct environment *env)
 
-> [spec:samurai:sem:parse.parseedge-fn]
+> [spec:ronin:sem:parse.parseedge-fn]
 > Create an edge with a new child environment of `env`; edge creation also
 > links it into the global edge list. Scan output paths. Record the count
 > before an optional single `|` as `outimpidx`, scan paths after that `|` as
@@ -113,10 +113,10 @@
 > null pool assigned at edge creation. Parsed path expressions are consumed
 > by evaluation; the reusable `paths` backing array itself remains allocated.
 
-> [spec:samurai:def:parse.parseinclude-fn]
+> [spec:ronin:def:parse.parseinclude-fn]
 > static void parseinclude(struct scanner *s, struct environment *env, bool newscope)
 
-> [spec:samurai:sem:parse.parseinclude-fn]
+> [spec:ronin:sem:parse.parseinclude-fn]
 > Scan exactly one path-mode string. An empty result is a scanner error
 > `expected include path`. Require its terminating newline, then evaluate
 > the path in the supplied environment; evaluation consumes the parsed
@@ -131,20 +131,20 @@
 > immediately after that call returns. Any recursive parse error terminates
 > the whole operation.
 
-> [spec:samurai:def:parse.parseinit-fn]
+> [spec:ronin:def:parse.parseinit-fn]
 > void parseinit(void)
 
-> [spec:samurai:sem:parse.parseinit-fn]
+> [spec:ronin:sem:parse.parseinit-fn]
 > Release only the dynamically allocated array that stores explicit default
 > node pointers, then set its pointer to null and its count to zero. The
 > nodes themselves are borrowed graph objects and are not freed here. This
 > function does not reset parse options, environments, graph state, or the
 > scanner's shared path storage.
 
-> [spec:samurai:def:parse.parselet-fn]
+> [spec:ronin:def:parse.parselet-fn]
 > static void parselet(struct scanner *s, struct evalstring **val)
 
-> [spec:samurai:sem:parse.parselet-fn]
+> [spec:ronin:sem:parse.parselet-fn]
 > Require and consume `=` (including any following scanner whitespace), scan
 > a non-path string from the remainder of the logical line, store its
 > possibly-null `evalstring` head through `val`, and require/consume the
@@ -153,15 +153,15 @@
 > caller to evaluate or retain. This helper does not evaluate or free the
 > expression it stores.
 
-> [spec:samurai:def:parse.parseoptions]
+> [spec:ronin:def:parse.parseoptions]
 > struct parseoptions {
 >   _Bool dupbuildwarn;
 > }
 
-> [spec:samurai:def:parse.parsepool-fn]
+> [spec:ronin:def:parse.parsepool-fn]
 > static void parsepool(struct scanner *s, struct environment *env)
 
-> [spec:samurai:sem:parse.parsepool-fn]
+> [spec:ronin:sem:parse.parsepool-fn]
 > Create and register a pool using the scanned name; pool creation takes the
 > name and rejects a duplicate pool. Require the declaration newline, then
 > process each indented binding. Only a binding named `depth` is accepted.
@@ -177,10 +177,10 @@
 > whereas negative nonzero values pass this check. The per-line variable-name
 > copy is used only for the comparison and is not retained by the pool.
 
-> [spec:samurai:def:parse.parserule-fn]
+> [spec:ronin:def:parse.parserule-fn]
 > static void parserule(struct scanner *s, struct environment *env)
 
-> [spec:samurai:sem:parse.parserule-fn]
+> [spec:ronin:sem:parse.parserule-fn]
 > Create a rule from the scanned name (transferring ownership of that name to
 > the rule), require the declaration newline, then process every indented
 > binding line. For each line, scan its name and unevaluated right-hand-side

@@ -5,7 +5,7 @@ state @approved
 category @executive
 scope {
     elements ([arch:ronin:manifest-frontend])
-    rules ([spec:samurai:req:compat.manifest-semantics])
+    rules ([spec:ronin:req:compat.manifest-semantics])
 }
 author "brendan@bbqsrc.net"
 alternatives (
@@ -34,7 +34,7 @@ edges {
         [dec:ronin:typed-graph-arenas]
     )
 }
-codifies ([spec:samurai:req:compat.manifest-semantics])
+codifies ([spec:ronin:req:compat.manifest-semantics])
 establishes ([arch:ronin:manifest-frontend])
 ---
 

@@ -6,11 +6,11 @@ category @executive
 scope {
     elements ([arch:ronin:cli])
     rules (
-        [spec:samurai:req:product.ronin-identity]
-        [spec:samurai:req:product.no-samuflags]
-        [spec:samurai:req:compat.version-reporting]
-        [spec:samurai:req:compat.ninja-owned-names]
-        [spec:samurai:req:compat.cli-and-tools]
+        [spec:ronin:req:product.ronin-identity]
+        [spec:ronin:req:product.no-samuflags]
+        [spec:ronin:req:compat.version-reporting]
+        [spec:ronin:req:compat.ninja-owned-names]
+        [spec:ronin:req:compat.cli-and-tools]
     )
 }
 author "brendan@bbqsrc.net"
@@ -37,11 +37,11 @@ edges {
     requires ()
 }
 codifies (
-    [spec:samurai:req:product.ronin-identity]
-    [spec:samurai:req:product.no-samuflags]
-    [spec:samurai:req:compat.version-reporting]
-    [spec:samurai:req:compat.ninja-owned-names]
-    [spec:samurai:req:compat.cli-and-tools]
+    [spec:ronin:req:product.ronin-identity]
+    [spec:ronin:req:product.no-samuflags]
+    [spec:ronin:req:compat.version-reporting]
+    [spec:ronin:req:compat.ninja-owned-names]
+    [spec:ronin:req:compat.cli-and-tools]
 )
 establishes ([arch:ronin:cli])
 ---

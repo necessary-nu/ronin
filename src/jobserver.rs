@@ -193,7 +193,7 @@ pub(crate) struct JobserverClient {
     request_pending: bool,
 }
 
-// [spec:samurai:req:runtime.jobserver-resource-safety]
+// [spec:ronin:req:runtime.jobserver-resource-safety]
 impl JobserverClient {
     pub(crate) fn new(
         client: jobserver::Client,
@@ -347,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    // [spec:samurai:req:runtime.jobserver-resource-safety/test]
+    // [spec:ronin:req:runtime.jobserver-resource-safety/test]
     fn ronin_jobserver_slots_release_on_drop() {
         let transport = jobserver::Client::new(1).unwrap();
         let probe = transport.clone();
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    // [spec:samurai:req:runtime.jobserver-resource-safety/test]
+    // [spec:ronin:req:runtime.jobserver-resource-safety/test]
     fn ronin_jobserver_acquisition_is_event_driven_and_fallible() {
         let transport = jobserver::Client::new(0).unwrap();
         let producer = transport.clone();
@@ -406,7 +406,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:samurai:req:runtime.jobserver-resource-safety/test]
+    // [spec:ronin:req:runtime.jobserver-resource-safety/test]
     fn ronin_jobserver_preserves_inherited_descriptor_flags() {
         const CHILD_MARKER: &str = "RONIN_JOBSERVER_FLAG_TEST_CHILD";
         const READY_PATH: &str = "RONIN_JOBSERVER_FLAG_TEST_READY";

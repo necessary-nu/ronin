@@ -14,13 +14,13 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
-// [spec:samurai:def:deps.nodearray]
+// [spec:ronin:def:deps.nodearray]
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct NodeArray {
     pub(crate) nodes: Vec<NodeId>,
 }
 
-// [spec:samurai:def:deps.entry]
+// [spec:ronin:def:deps.entry]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct Entry {
     pub(crate) node: NodeId,
@@ -59,8 +59,8 @@ impl DependencyId {
 }
 
 impl DepsLog {
-    // [spec:samurai:def:deps.depsinit-fn]
-    // [spec:samurai:sem:deps.depsinit-fn]
+    // [spec:ronin:def:deps.depsinit-fn]
+    // [spec:ronin:sem:deps.depsinit-fn]
     #[cfg(test)]
     pub(crate) fn open(builddir: Option<&Path>) -> io::Result<Self> {
         let path = builddir.map_or_else(
@@ -70,8 +70,8 @@ impl DepsLog {
         depsinit_path(path)
     }
 
-    // [spec:samurai:def:deps.depsclose-fn]
-    // [spec:samurai:sem:deps.depsclose-fn]
+    // [spec:ronin:def:deps.depsclose-fn]
+    // [spec:ronin:sem:deps.depsclose-fn]
     pub(crate) fn finish(mut self) -> io::Result<()> {
         self.writer.flush()
     }
@@ -164,10 +164,10 @@ impl IdPlan {
 
 // `std::io::Write::write_all` replaces the source's `depswrite` forwarding
 // wrapper while this staged encoder retains its record semantics.
-// [spec:samurai:def:deps.depswrite-fn]
-// [spec:samurai:sem:deps.depswrite-fn]
-// [spec:samurai:def:deps.recordid-fn]
-// [spec:samurai:sem:deps.recordid-fn]
+// [spec:ronin:def:deps.depswrite-fn]
+// [spec:ronin:sem:deps.depswrite-fn]
+// [spec:ronin:def:deps.recordid-fn]
+// [spec:ronin:sem:deps.recordid-fn]
 fn stage_record_id(
     writer: &mut dyn Write,
     plan: &mut IdPlan,
@@ -208,8 +208,8 @@ fn stage_record_id(
     Ok(true)
 }
 
-// [spec:samurai:def:deps.recorddeps-fn]
-// [spec:samurai:sem:deps.recorddeps-fn]
+// [spec:ronin:def:deps.recorddeps-fn]
+// [spec:ronin:sem:deps.recorddeps-fn]
 #[derive(Clone, Copy)]
 enum EntryPolicy<'a> {
     SkipUnchanged(&'a EntryMap),
@@ -339,7 +339,7 @@ fn native_u32(bytes: &[u8]) -> u32 {
 ///
 /// The returned warning is non-fatal: just like Ninja, the valid prefix stays
 /// usable and the invalid suffix is discarded before future records append.
-// [spec:samurai:req:compat.persistent-state]
+// [spec:ronin:req:compat.persistent-state]
 #[allow(
     clippy::too_many_lines,
     reason = "the byte-exact Ninja deps-log decoder is one record-validation state machine"
@@ -564,8 +564,8 @@ fn depsrecompact_with_fault(
     depsrecompact_inner(log, graph, Some(stage))
 }
 
-// [spec:samurai:def:deps.depsparse-fn]
-// [spec:samurai:sem:deps.depsparse-fn]
+// [spec:ronin:def:deps.depsparse-fn]
+// [spec:ronin:sem:deps.depsparse-fn]
 pub(crate) fn depsparse(
     graph: &mut Graph,
     path: &Path,
@@ -668,8 +668,8 @@ pub(crate) fn depsparse_for_edge(
     Ok(Some(NodeArray { nodes }))
 }
 
-// [spec:samurai:def:deps.depsload-fn]
-// [spec:samurai:sem:deps.depsload-fn]
+// [spec:ronin:def:deps.depsload-fn]
+// [spec:ronin:sem:deps.depsload-fn]
 pub(crate) fn depsload(graph: &mut Graph, edge: EdgeId, log: &DepsLog) {
     let output = graph.edge(edge).out.first().copied();
     let Some(output) = output else { return };
@@ -697,8 +697,8 @@ pub(crate) fn visit_dependencies(log: &DepsLog, mut visit: impl FnMut(NodeId, No
     }
 }
 
-// [spec:samurai:def:deps.depsrecord-fn]
-// [spec:samurai:sem:deps.depsrecord-fn]
+// [spec:ronin:def:deps.depsrecord-fn]
+// [spec:ronin:sem:deps.depsrecord-fn]
 pub(crate) fn depsrecord(
     log: &mut DepsLog,
     edge: EdgeId,
@@ -839,7 +839,7 @@ mod ninja_depfile_tests {
         graph.node_mut(output).gen = Some(edge);
     }
 
-    // [spec:samurai:req:compat.persistent-state/test]
+    // [spec:ronin:req:compat.persistent-state/test]
     #[test]
     fn ninja_deps_log_write_read() {
         let (directory, path) = test_log_path("write-read");
@@ -968,7 +968,7 @@ mod ninja_depfile_tests {
         remove_test_log(directory);
     }
 
-    // [spec:samurai:req:runtime.persistence-transactions/test]
+    // [spec:ronin:req:runtime.persistence-transactions/test]
     #[test]
     fn deps_log_rewrite_failures_preserve_ids_state_and_writer() {
         for stage in crate::persistence::RewriteStage::ALL {

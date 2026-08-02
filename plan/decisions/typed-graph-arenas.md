@@ -5,7 +5,7 @@ state @approved
 category @property
 scope {
     elements ([arch:ronin:graph-engine])
-    rules ([spec:samurai:req:compat.graph-semantics])
+    rules ([spec:ronin:req:compat.graph-semantics])
 }
 author "brendan@bbqsrc.net"
 alternatives (
@@ -31,7 +31,7 @@ consequences {
 edges {
     requires ([dec:ronin:byte-exact-core])
 }
-codifies ([spec:samurai:req:compat.graph-semantics])
+codifies ([spec:ronin:req:compat.graph-semantics])
 establishes ([arch:ronin:graph-engine])
 ---
 

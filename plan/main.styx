@@ -1,4 +1,4 @@
-name samurai
+name ronin
 
 source {
     url "git@github.com:necessary-nu/ronin.git"
@@ -105,10 +105,10 @@ children (
                 priority 0
                 implements {
                     target-impl (
-                        [spec:samurai:req:product.ronin-identity]
-                        [spec:samurai:req:product.no-samuflags]
-                        [spec:samurai:req:compat.version-reporting]
-                        [spec:samurai:req:compat.ninja-owned-names]
+                        [spec:ronin:req:product.ronin-identity]
+                        [spec:ronin:req:product.no-samuflags]
+                        [spec:ronin:req:compat.version-reporting]
+                        [spec:ronin:req:compat.ninja-owned-names]
                     )
                 }
                 deps (ronin-compatibility-contract)
@@ -186,7 +186,7 @@ children (
                 title "Establish Ninja differential and performance baselines"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:performance.reproducible-baseline])
+                    target-impl ([spec:ronin:req:performance.reproducible-baseline])
                 }
                 deps (ronin-product-identity)
                 sealed true
@@ -227,7 +227,7 @@ children (
                 title "Adopt byte-exact strings, paths, and evaluation parts"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.byte-inputs])
+                    target-impl ([spec:ronin:req:compat.byte-inputs])
                 }
                 deps (ronin-architecture-decisions ronin-performance-baseline)
                 sealed true
@@ -290,7 +290,7 @@ children (
                 title "Make graph evaluation iterative, memoized, and ID-indexed"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.graph-semantics])
+                    target-impl ([spec:ronin:req:compat.graph-semantics])
                 }
                 deps (ronin-graph-arenas)
                 sealed true
@@ -323,7 +323,7 @@ children (
                 title "Unify manifest scanning and parsing over bytes and spans"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.manifest-semantics])
+                    target-impl ([spec:ronin:req:compat.manifest-semantics])
                 }
                 deps (ronin-graph-arenas)
                 sealed true
@@ -356,7 +356,7 @@ children (
                 title "Linearize depfile, dyndep, and Ninja log processing"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.persistent-state])
+                    target-impl ([spec:ronin:req:compat.persistent-state])
                 }
                 deps (ronin-graph-arenas)
                 sealed true
@@ -389,7 +389,7 @@ children (
                 title "Replace batch barriers with completion-driven scheduling"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.scheduling])
+                    target-impl ([spec:ronin:req:compat.scheduling])
                 }
                 deps (ronin-graph-evaluation)
                 sealed true
@@ -422,7 +422,7 @@ children (
                 title "Integrate subprocess, pools, jobserver, signals, and console execution"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.process-integration])
+                    target-impl ([spec:ronin:req:compat.process-integration])
                 }
                 deps (ronin-event-scheduler)
                 sealed true
@@ -455,7 +455,7 @@ children (
                 title "Cache command evaluation and stream build output"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.command-runtime])
+                    target-impl ([spec:ronin:req:compat.command-runtime])
                 }
                 deps (ronin-byte-parser ronin-dependency-io ronin-process-integration)
                 sealed true
@@ -488,7 +488,7 @@ children (
                 title "Retire duplicate compatibility paths and connect supported Ninja tools"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.cli-and-tools])
+                    target-impl ([spec:ronin:req:compat.cli-and-tools])
                 }
                 deps (ronin-command-runtime)
                 sealed true
@@ -528,7 +528,7 @@ children (
                 title "Pass Ninja differential, upstream, and on-disk compatibility gates"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:compat.upstream-conformance])
+                    target-impl ([spec:ronin:req:compat.upstream-conformance])
                 }
                 deps (ronin-runtime-consolidation)
                 sealed true
@@ -568,7 +568,7 @@ children (
                 title "Measure and close performance regressions against baselines"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:performance.no-unexplained-regression])
+                    target-impl ([spec:ronin:req:performance.no-unexplained-regression])
                 }
                 deps (ronin-ninja-conformance)
                 sealed true
@@ -727,7 +727,7 @@ children (
                 title "Run final Ninja compatibility, performance, packaging, and nplan gates"
                 priority 1
                 implements {
-                    target-impl ([spec:samurai:req:release.compatibility-gate])
+                    target-impl ([spec:ronin:req:release.compatibility-gate])
                 }
                 deps (ronin-release-tuning)
                 sealed true
@@ -813,7 +813,7 @@ children (
                 title "Make GNU Make jobserver transport RAII-safe"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.jobserver-resource-safety])
+                    target-impl ([spec:ronin:req:runtime.jobserver-resource-safety])
                 }
                 log (
                     {
@@ -844,7 +844,7 @@ children (
                 title "Make Ninja log rewrites transactionally error-safe"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.persistence-transactions])
+                    target-impl ([spec:ronin:req:runtime.persistence-transactions])
                 }
                 log (
                     {
@@ -868,7 +868,7 @@ children (
                 title "Replace stringly subsystem errors with semantic variants"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.semantic-errors])
+                    target-impl ([spec:ronin:req:runtime.semantic-errors])
                 }
                 log (
                     {
@@ -892,7 +892,7 @@ children (
                 title "Complete the borrowed byte-span manifest frontend"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.borrowed-span-frontend])
+                    target-impl ([spec:ronin:req:runtime.borrowed-span-frontend])
                 }
                 log (
                     {
@@ -916,7 +916,7 @@ children (
                 title "Make status and tool rendering byte and Unicode correct"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.output-byte-boundaries] [spec:samurai:req:runtime.msvc-byte-parsing])
+                    target-impl ([spec:ronin:req:runtime.output-byte-boundaries] [spec:ronin:req:runtime.msvc-byte-parsing])
                 }
                 log (
                     {
@@ -940,7 +940,7 @@ children (
                 title "Make tool traversals iterative and dense-ID indexed"
                 priority 1
                 implements {
-                    target-impl ([spec:samurai:req:runtime.iterative-tool-traversals])
+                    target-impl ([spec:ronin:req:runtime.iterative-tool-traversals])
                 }
                 log (
                     {
@@ -978,7 +978,7 @@ children (
                 title "Encapsulate graph sentinels and separate runtime state"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.typed-runtime-state])
+                    target-impl ([spec:ronin:req:runtime.typed-runtime-state])
                 }
                 log (
                     {
@@ -1002,7 +1002,7 @@ children (
                 title "Select and implement the process-supervision runtime"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.process-supervisor-scalability])
+                    target-impl ([spec:ronin:req:runtime.process-supervisor-scalability])
                 }
                 deps (ronin-jobserver-raii ronin-typed-runtime-state)
                 log (
@@ -1034,7 +1034,7 @@ children (
                 title "Replace handwritten global signal handling with a guarded boundary"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.guarded-signal-boundary])
+                    target-impl ([spec:ronin:req:runtime.guarded-signal-boundary])
                 }
                 deps (ronin-runtime-scalability)
                 log (
@@ -1066,7 +1066,7 @@ children (
                 title "Isolate cwd, environment, and stdio at the executable boundary"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.explicit-invocation-boundary])
+                    target-impl ([spec:ronin:req:runtime.explicit-invocation-boundary])
                 }
                 deps (ronin-runtime-scalability ronin-signal-boundary ronin-semantic-errors)
                 log (
@@ -1098,7 +1098,7 @@ children (
                 title "Validate dyndep state before graph mutation"
                 priority 0
                 implements {
-                    target-impl ([spec:samurai:req:runtime.dyndep-transaction])
+                    target-impl ([spec:ronin:req:runtime.dyndep-transaction])
                 }
                 deps (ronin-persistence-transactions ronin-semantic-errors ronin-span-frontend)
                 log (
@@ -1236,7 +1236,7 @@ children (
                                 at 2026-07-30T23:48:28.759141087Z
                                 author "brendan@bbqsrc.net"
                                 kind @note
-                                text "Four sites in the dependency-log reader encode a failed conversion as an out-of-range value and rely on a later bounds check to reject it: src/deps.rs:387 computes size as usize::try_from(encoded_size & 0x7fff_ffff).unwrap_or(usize::MAX), and lines 399, 402 and 436 do the same for output_id, the dependency_ids iterator and the trailing record identifier, each caught downstream by a comparison against nodes.len() or MAX_RECORD_SIZE. This is the C idiom of returning a sentinel and letting the caller's range test sort it out. On every target this crate supports, u32 to usize is infallible, so the fallback is unreachable defensive code for an impossible case, and expressing it as usize::MAX means a genuine future failure would be indistinguishable from a corrupt record whose index merely happens to be large. Make the impossibility explicit instead — the conversion is widening on all supported targets — while preserving the existing validation behaviour exactly: a corrupt log must still be detected and must still trigger the same recovery path, since .ninja_deps parsing is part of the Ninja compatibility surface [spec:samurai:req:compat.ninja-owned-names] and the persistence round trip is covered by the pinned conformance oracle. Purely an expression change; no measurement expected or needed, but the conformance suite must be run because this touches log recovery."
+                                text "Four sites in the dependency-log reader encode a failed conversion as an out-of-range value and rely on a later bounds check to reject it: src/deps.rs:387 computes size as usize::try_from(encoded_size & 0x7fff_ffff).unwrap_or(usize::MAX), and lines 399, 402 and 436 do the same for output_id, the dependency_ids iterator and the trailing record identifier, each caught downstream by a comparison against nodes.len() or MAX_RECORD_SIZE. This is the C idiom of returning a sentinel and letting the caller's range test sort it out. On every target this crate supports, u32 to usize is infallible, so the fallback is unreachable defensive code for an impossible case, and expressing it as usize::MAX means a genuine future failure would be indistinguishable from a corrupt record whose index merely happens to be large. Make the impossibility explicit instead — the conversion is widening on all supported targets — while preserving the existing validation behaviour exactly: a corrupt log must still be detected and must still trigger the same recovery path, since .ninja_deps parsing is part of the Ninja compatibility surface [spec:ronin:req:compat.ninja-owned-names] and the persistence round trip is covered by the pinned conformance oracle. Purely an expression change; no measurement expected or needed, but the conformance suite must be run because this touches log recovery."
                             }
 
                             {
@@ -2090,7 +2090,7 @@ children (
                 id ronin-alloc-metrics
                 title "Track allocations-per-edge as a regression metric"
                 implements {
-                    target-impl ([spec:samurai:req:performance.allocation-accounting])
+                    target-impl ([spec:ronin:req:performance.allocation-accounting])
                 }
                 deps (ronin-mimalloc-tuning)
                 log (
@@ -2495,7 +2495,7 @@ children (
                 id ronin-stat-no-alloc
                 title "Stat nodes without per-call path allocation"
                 implements {
-                    target-impl ([spec:samurai:req:runtime.allocation-free-stat])
+                    target-impl ([spec:ronin:req:runtime.allocation-free-stat])
                 }
                 log (
                     {
@@ -2685,7 +2685,7 @@ children (
                         at 2026-07-30T21:14:07.489411065Z
                         author "brendan@bbqsrc.net"
                         kind @note
-                        text "Scanner names are already ASCII by construction — isvar (src/scan.rs:210) accepts only ascii_alphanumeric, underscore, hyphen and dot, and issimplevar (scan.rs:204) the same minus dot — yet three sites re-validate the slice with std::str::from_utf8().expect (scan.rs:301, 385, 415) purely so Lexeme.text can be &str and Names::intern can take &str. The manifest buffer itself cannot be &str because Ninja manifests may hold non-UTF-8 paths [spec:samurai:req:compat.byte-inputs], so the names are an ASCII subset of a buffer that is not valid UTF-8 as a whole, and safe Rust has no zero-cost way to reinterpret that subslice. Callgrind on a 4,000-edge no-op fixture puts core::str::converts::from_utf8 at 614,479 instructions, 2.06% of the program, across 8,003 calls from scan::name alone — roughly 77 instructions to validate a five-byte keyword, because std's usize-chunked ASCII fast path does not engage below eight bytes. The fix is to use the byte-string type the crate already re-exports at src/util.rs:8 rather than to add unsafe: Lexeme.text and ScannedEvalPart::Variable become &BStr, Names keys on BString with borrowed &BStr probes, and env::envrule and env::poolget take &BStr. Verified that HashMap<BString, _> supports allocation-free &BStr lookup with agreeing hashes, and that BStr provides Display and Debug, which was the only thing &str was buying for diagnostics. Blast radius is 14 .text use sites. The crate has exactly three unsafe blocks, both files FFI-adjacent, so from_utf8_unchecked was rejected as out of character for a 2% win."
+                        text "Scanner names are already ASCII by construction — isvar (src/scan.rs:210) accepts only ascii_alphanumeric, underscore, hyphen and dot, and issimplevar (scan.rs:204) the same minus dot — yet three sites re-validate the slice with std::str::from_utf8().expect (scan.rs:301, 385, 415) purely so Lexeme.text can be &str and Names::intern can take &str. The manifest buffer itself cannot be &str because Ninja manifests may hold non-UTF-8 paths [spec:ronin:req:compat.byte-inputs], so the names are an ASCII subset of a buffer that is not valid UTF-8 as a whole, and safe Rust has no zero-cost way to reinterpret that subslice. Callgrind on a 4,000-edge no-op fixture puts core::str::converts::from_utf8 at 614,479 instructions, 2.06% of the program, across 8,003 calls from scan::name alone — roughly 77 instructions to validate a five-byte keyword, because std's usize-chunked ASCII fast path does not engage below eight bytes. The fix is to use the byte-string type the crate already re-exports at src/util.rs:8 rather than to add unsafe: Lexeme.text and ScannedEvalPart::Variable become &BStr, Names keys on BString with borrowed &BStr probes, and env::envrule and env::poolget take &BStr. Verified that HashMap<BString, _> supports allocation-free &BStr lookup with agreeing hashes, and that BStr provides Display and Debug, which was the only thing &str was buying for diagnostics. Blast radius is 14 .text use sites. The crate has exactly three unsafe blocks, both files FFI-adjacent, so from_utf8_unchecked was rejected as out of character for a 2% win."
                     }
 
                     {
@@ -2979,7 +2979,7 @@ children (
                         at 2026-08-01T23:55:30.881085239Z
                         author "brendan@bbqsrc.net"
                         kind @decision
-                        text "Done. Ronin can now render a build the way Cargo does — a right-aligned verb, then what was acted on — selected by `--output cargo`, with `--color auto|always|never` deciding escapes.\n\nThe verb comes from the description's first word. That sounds like a guess and is instead the observation that generators already write descriptions in exactly that shape: CMake and Meson emit `Building CXX object …`, `Linking CXX executable …`, `Generating …`, so `Building CXX object CMakeFiles/demo.dir/a.cc.o` splits into a verb and a subject with no manifest changes, no new bindings, and nothing for a generator to opt into. Two cases fall outside it and are handled rather than approximated. A description of one word becomes all verb and no subject. A command shown in place of a description — no description at all, or `-v` — gets the verb `Running` and the whole command as subject, because splitting the first word off `/usr/bin/c++ -c a.cc` would put a path in the verb column, which is where an action belongs.\n\nColour is a separate decision from rendering, and both are explicit. `[dec:ronin:product-boundary]` is what settles this: Ninja owns the compatibility vocabulary, so Ninja's rendering stays the default and nothing about a terminal changes which rendering is used. A tool that parses Ronin's output sees identical bytes on a pipe and on a tty. Colour is the one thing terminal detection does decide, and only within `--color auto`: escapes are emitted when stdout is a terminal, suppressed when `NO_COLOR` is set to a non-empty value, and forced either way by `always` or `never` — `always` deliberately overrides `NO_COLOR`, on the convention that the variable overrides a default rather than an instruction. That is recorded as a new requirement, `product.output-style`, alongside the existing product-boundary rules.\n\nWhere terminal detection happens is a design point rather than an implementation detail. A build writes through a `dyn Write` that may be a terminal, a pipe, or a buffer a library caller owns, and none of those can be asked which it is. So the question is asked once at the process boundary, of the real descriptor, and carried in as a `TerminalContext` on the `Runner` — which is where `[spec:samurai:req:runtime.explicit-invocation-boundary]` already says process-global values get snapshotted. `Runner::new` leaves it false, so an embedded caller gets no escapes unless it asks for them.\n\nBrendan caught the dispatch choice, and he was right. The first cut stored the renderer as `Box<dyn Reporter>`, which was reflex rather than reasoning — I had written the word \"trait\" when proposing the seam and then implemented the word. Static dispatch is better here, but not by the obvious route: a type parameter on `Builder` would monomorphise the entire build loop, dirty evaluation and dependency ingestion once per rendering, to devirtualise a call that happens once per finished command directly next to a `write` and a flush. An enum gets the same direct, inlinable call for a branch on a value fixed before the first command starts, with no vtable, no allocation, and no duplicated caller. `Reporter` is now `enum { Ninja, Cargo(Palette) }`.\n\nThe palette is resolved escapes rather than a flag, so a colourless build appends three empty slices instead of testing three branches, and both paths read the same.\n\nWhat is deliberately absent: progress counters. Cargo shows progress in its bar, not on each line, and the bar is ronin-progress-bar, which is the node after this one. Until then `--output cargo` trades `[3/7]` for the verb column, and `--output ninja` — the default — still has counters for anyone who wants them today. The `Finished N commands in T` summary partly covers the loss, and prints only when at least one command ran and the build did not fail.\n\nTwo limits worth stating. Verb alignment is by character count where the description is UTF-8 and by byte count where it is not; neither is a true display width, so a wide or combining character in a verb sits a column out. That is alignment, not correctness, and every generator's verbs are short ASCII words. And `ronin: no work to do.` and `ronin: subcommand failed:` are still emitted in their existing form under `--output cargo`; they are Ronin-owned CLI diagnostics rather than build output, and restyling them was not in scope.\n\nMeasured only as far as it should be at this stage: nothing. This adds a branch per command on a path that already syscalls per command, and the honest measurement is of the bar, which is the part with an actual redraw budget. 390 tests pass — 15 new, covering the verb split, a verb at or past the column, a one-word description, a command standing in for a description, colour not shifting the column, the summary and its absence for Ninja and for an empty build, `NO_COLOR` resolution across all three choices, option parsing in both `--opt value` and `--opt=value` forms, rejection of unknown values by name, and two end-to-end builds asserting a whole run's bytes in Cargo style, including the failure block. Clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip — which is the evidence that the default rendering did not move, since the upstream suite parses Ronin's build output."
+                        text "Done. Ronin can now render a build the way Cargo does — a right-aligned verb, then what was acted on — selected by `--output cargo`, with `--color auto|always|never` deciding escapes.\n\nThe verb comes from the description's first word. That sounds like a guess and is instead the observation that generators already write descriptions in exactly that shape: CMake and Meson emit `Building CXX object …`, `Linking CXX executable …`, `Generating …`, so `Building CXX object CMakeFiles/demo.dir/a.cc.o` splits into a verb and a subject with no manifest changes, no new bindings, and nothing for a generator to opt into. Two cases fall outside it and are handled rather than approximated. A description of one word becomes all verb and no subject. A command shown in place of a description — no description at all, or `-v` — gets the verb `Running` and the whole command as subject, because splitting the first word off `/usr/bin/c++ -c a.cc` would put a path in the verb column, which is where an action belongs.\n\nColour is a separate decision from rendering, and both are explicit. `[dec:ronin:product-boundary]` is what settles this: Ninja owns the compatibility vocabulary, so Ninja's rendering stays the default and nothing about a terminal changes which rendering is used. A tool that parses Ronin's output sees identical bytes on a pipe and on a tty. Colour is the one thing terminal detection does decide, and only within `--color auto`: escapes are emitted when stdout is a terminal, suppressed when `NO_COLOR` is set to a non-empty value, and forced either way by `always` or `never` — `always` deliberately overrides `NO_COLOR`, on the convention that the variable overrides a default rather than an instruction. That is recorded as a new requirement, `product.output-style`, alongside the existing product-boundary rules.\n\nWhere terminal detection happens is a design point rather than an implementation detail. A build writes through a `dyn Write` that may be a terminal, a pipe, or a buffer a library caller owns, and none of those can be asked which it is. So the question is asked once at the process boundary, of the real descriptor, and carried in as a `TerminalContext` on the `Runner` — which is where `[spec:ronin:req:runtime.explicit-invocation-boundary]` already says process-global values get snapshotted. `Runner::new` leaves it false, so an embedded caller gets no escapes unless it asks for them.\n\nBrendan caught the dispatch choice, and he was right. The first cut stored the renderer as `Box<dyn Reporter>`, which was reflex rather than reasoning — I had written the word \"trait\" when proposing the seam and then implemented the word. Static dispatch is better here, but not by the obvious route: a type parameter on `Builder` would monomorphise the entire build loop, dirty evaluation and dependency ingestion once per rendering, to devirtualise a call that happens once per finished command directly next to a `write` and a flush. An enum gets the same direct, inlinable call for a branch on a value fixed before the first command starts, with no vtable, no allocation, and no duplicated caller. `Reporter` is now `enum { Ninja, Cargo(Palette) }`.\n\nThe palette is resolved escapes rather than a flag, so a colourless build appends three empty slices instead of testing three branches, and both paths read the same.\n\nWhat is deliberately absent: progress counters. Cargo shows progress in its bar, not on each line, and the bar is ronin-progress-bar, which is the node after this one. Until then `--output cargo` trades `[3/7]` for the verb column, and `--output ninja` — the default — still has counters for anyone who wants them today. The `Finished N commands in T` summary partly covers the loss, and prints only when at least one command ran and the build did not fail.\n\nTwo limits worth stating. Verb alignment is by character count where the description is UTF-8 and by byte count where it is not; neither is a true display width, so a wide or combining character in a verb sits a column out. That is alignment, not correctness, and every generator's verbs are short ASCII words. And `ronin: no work to do.` and `ronin: subcommand failed:` are still emitted in their existing form under `--output cargo`; they are Ronin-owned CLI diagnostics rather than build output, and restyling them was not in scope.\n\nMeasured only as far as it should be at this stage: nothing. This adds a branch per command on a path that already syscalls per command, and the honest measurement is of the bar, which is the part with an actual redraw budget. 390 tests pass — 15 new, covering the verb split, a verb at or past the column, a one-word description, a command standing in for a description, colour not shifting the column, the summary and its absence for Ninja and for an empty build, `NO_COLOR` resolution across all three choices, option parsing in both `--opt value` and `--opt=value` forms, rejection of unknown values by name, and two end-to-end builds asserting a whole run's bytes in Cargo style, including the failure block. Clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip — which is the evidence that the default rendering did not move, since the upstream suite parses Ronin's build output."
                     }
 
                     {
@@ -3077,7 +3077,27 @@ children (
                 at 2026-08-02T00:58:58.196952927Z
                 author "brendan@bbqsrc.net"
                 kind @decision
-                text "Done. The 4,637 lines of C that Ronin was ported from are out of the repository — twenty-six sources and headers, the Makefile, and the `samu.1` manual page.\n\nThe interesting part is what it did to spec coverage, which improved rather than degraded. The nspec configuration carried two impls: `source-impl`, tracking the original C symbols across `**/*.c **/*.h` in `@impl-only` mode, and `target-impl` for the Rust in `@both` mode. Deleting the C would have orphaned 331 `[spec:samurai:def:…]` and `[spec:samurai:sem:…]` annotations, so `source-impl` went with it. Coverage moved from 201 of 205 rules covered with 2 stale to 201 of 201 covered with none stale, and the two long-standing unplanned symbols, `samu.main-fn` and `samu.parseenvargs-fn`, are gone. Those four rules described the C entry point and its environment parsing, which Ronin deliberately does not implement — `product.no-samuflags` is the requirement that says so. They were only ever covered because the C that satisfied them was sitting in the tree.\n\nSo the requirement text is still the specification and the Rust still has to implement and verify every rule; what has been dropped is a second implementation of the same spec that nobody was going to change again.\n\nTwo things had to move with it. The performance harness built its C samurai reference from these sources, so `benchmarks/README.md` now clones upstream samurai instead; `examples/baseline.rs` needed no change, since it only looks for the binary at `/tmp/ronin-samu-reference` and already omits the `samurai-c` rows when it is absent — which is a silent degradation the harness has been warned about before and still has. And `src/port_tests.rs` stays: despite the name it is pure Rust behaviour tests carrying the `/test` annotations for a large share of the spec, with no build-time dependency on the C at all.\n\nThe LICENSE keeps every notice it had. Ronin is a translation of samurai rather than an independent implementation, and htab and tree descend further back through Myrddin and musl, so the ISC, Apache-2.0 and both MIT grants still govern the Rust sources whether or not the C is distributed beside them. A copyright line for the Rust work was added above them, and a sentence saying explicitly why the rest is retained, so that the next person to look does not read the removal of the C as licence to prune the notices.\n\n398 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip — the last of which matters most here, because it proves compatibility is still being demonstrated against the pinned Ninja oracle rather than against the C corpus that just left."
+                text "Done. The 4,637 lines of C that Ronin was ported from are out of the repository — twenty-six sources and headers, the Makefile, and the `samu.1` manual page.\n\nThe interesting part is what it did to spec coverage, which improved rather than degraded. The nspec configuration carried two impls: `source-impl`, tracking the original C symbols across `**/*.c **/*.h` in `@impl-only` mode, and `target-impl` for the Rust in `@both` mode. Deleting the C would have orphaned 331 `[spec:ronin:def:…]` and `[spec:ronin:sem:…]` annotations, so `source-impl` went with it. Coverage moved from 201 of 205 rules covered with 2 stale to 201 of 201 covered with none stale, and the two long-standing unplanned symbols, `samu.main-fn` and `samu.parseenvargs-fn`, are gone. Those four rules described the C entry point and its environment parsing, which Ronin deliberately does not implement — `product.no-samuflags` is the requirement that says so. They were only ever covered because the C that satisfied them was sitting in the tree.\n\nSo the requirement text is still the specification and the Rust still has to implement and verify every rule; what has been dropped is a second implementation of the same spec that nobody was going to change again.\n\nTwo things had to move with it. The performance harness built its C samurai reference from these sources, so `benchmarks/README.md` now clones upstream samurai instead; `examples/baseline.rs` needed no change, since it only looks for the binary at `/tmp/ronin-samu-reference` and already omits the `samurai-c` rows when it is absent — which is a silent degradation the harness has been warned about before and still has. And `src/port_tests.rs` stays: despite the name it is pure Rust behaviour tests carrying the `/test` annotations for a large share of the spec, with no build-time dependency on the C at all.\n\nThe LICENSE keeps every notice it had. Ronin is a translation of samurai rather than an independent implementation, and htab and tree descend further back through Myrddin and musl, so the ISC, Apache-2.0 and both MIT grants still govern the Rust sources whether or not the C is distributed beside them. A copyright line for the Rust work was added above them, and a sentence saying explicitly why the rest is retained, so that the next person to look does not read the removal of the C as licence to prune the notices.\n\n398 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip — the last of which matters most here, because it proves compatibility is still being demonstrated against the pinned Ninja oracle rather than against the C corpus that just left."
+            }
+        )
+    }
+
+    {
+        id ronin-spec-namespace
+        title "Rename the spec namespace from samurai to ronin"
+        log (
+            {
+                at 2026-08-02T11:15:44.663345192Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-02T11:18:20.431706742Z
+                author "brendan@bbqsrc.net"
+                kind @decision
+                text "Done. The spec namespace is `ronin`, so rules read `[spec:ronin:req:compat.scheduling]` rather than `[spec:samurai:req:…]`. 1,063 annotations across 65 files, plus the nspec spec name and the plan name.\n\nMechanical, but with one judgement call in it. The rewrite matched the exact token `spec:samurai:` rather than the word `samurai`, because the two are different things now: the namespace was the last place the port's origin leaked into the product's own vocabulary, while every prose mention of samurai in the benchmark records refers to the actual C tool that Ronin is still compared against. Those are untouched and must stay — `benchmarks/README.md`, the alloc-metrics and baseline records, and the two performance-validation CSVs all name samurai as a measured competitor, not as an ancestor.\n\nNode logs were rewritten along with everything else. A historical note referring to `[spec:samurai:req:x]` refers to the rule that is now `[spec:ronin:req:x]` — same rule, renamed — so leaving the old spelling would have left dangling references in the record rather than preserving anything true.\n\nOne non-obvious site: `scripts/check-release.sh` greps `docs/spec` for stale requirement annotations with a literal pattern, which the rewrite caught because it contained the same token. Had it been spelled differently the release gate would have silently stopped finding anything and passed for the wrong reason.\n\nVerified rather than assumed: coverage is unchanged at 201 of 201 rules covered, 182 tested, none stale; `nplan_audit` reports no orphan references, and shipping is back `on_ref` now that the plan's ref follows the branch rename to `main`. 398 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
             }
         )
     }

@@ -35,7 +35,7 @@ pub(crate) struct DyndepEntry {
     dyndeps: Dyndeps,
 }
 
-// [spec:samurai:req:runtime.dyndep-transaction]
+// [spec:ronin:req:runtime.dyndep-transaction]
 #[derive(Default)]
 pub(crate) struct DyndepFile {
     slots: Vec<Option<DyndepEntry>>,
@@ -1092,7 +1092,7 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
-    // [spec:samurai:req:runtime.dyndep-transaction/test]
+    // [spec:ronin:req:runtime.dyndep-transaction/test]
     #[test]
     fn ronin_graph_dyndep_late_validation_failure_rolls_back_every_change() {
         let (mut graph, dyndep, directory) = load_fixture(

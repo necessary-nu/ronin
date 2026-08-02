@@ -302,7 +302,7 @@ fn verify_state_signatures(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
-// [spec:samurai:req:compat.upstream-conformance]
+// [spec:ronin:req:compat.upstream-conformance]
 fn run(config: &Config) -> Result<(), String> {
     let revision = pinned_revision(&config.ninja_source)?;
     if revision != PINNED_REVISION {
