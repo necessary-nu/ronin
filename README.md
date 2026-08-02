@@ -27,9 +27,30 @@ ronin -C build
 ronin -t targets
 ```
 
-The original C samurai sources, Makefile, and manual page remain in the
-repository as the source-port corpus. Cargo builds and tests Ronin; the legacy
-C build artifacts are not part of the Ronin product interface.
+## Output
+
+Ronin's build output is Ninja's by default, so anything that parses it — an
+editor, a wrapper script, a CI log scraper — sees exactly what it would see
+from Ninja, on a terminal and through a pipe alike.
+
+`--output cargo` selects a Cargo-style rendering instead: a right-aligned verb
+taken from the rule's description, what it acted on, and a dimmed counter.
+
+```
+    Building CXX object CMakeFiles/libninja.dir/src/graph.cc.o (12/83)
+     Linking CXX executable ninja (83/83)
+    Finished 83 commands in 12.41s
+```
+
+On a terminal it also pins a progress bar to the bottom of the screen while
+the build scrolls above it. Repainting is capped at thirty times a second, so
+a build of very fast commands costs a handful of extra writes rather than one
+per command.
+
+`--color auto|always|never` controls escapes, and with them the bar: `auto`
+emits them when stdout is a terminal and honours `NO_COLOR`, while `always`
+forces them out even through a pipe. The rendering itself is never chosen by
+terminal detection — only by `--output`.
 
 Ronin's supported interface is the executable. The Rust library exists so the
 binary and integration tests can share implementation; its deliberately small

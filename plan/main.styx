@@ -1,8 +1,8 @@
 name samurai
 
 source {
-    url "git@github.com:necessary-nu/samurai.git"
-    ref master
+    url "git@github.com:necessary-nu/ronin.git"
+    ref main
 }
 
 children (
@@ -3058,6 +3058,26 @@ children (
                 author "brendan@bbqsrc.net"
                 kind @decision
                 text "Fixed. The dry run no longer writes to `.ninja_log`, and now matches Ninja byte for byte on a recompacted log: abseil's stays at 20,225 bytes through `ronin -n` where it previously grew to 40,315.\n\nThe write was one unguarded call in `finish_edge`. The deps-log writes immediately above it were already inside `if !self.options.dryrun`, and the build-log write simply was not — so this is the guard the surrounding code already establishes, applied to the one site that missed it. The in-memory mtime and dirty-state updates are deliberately left outside the guard, because the rest of the dry run's planning depends on them: an edge the run pretends to have built has to make its dependents plan correctly.\n\nWhat this does not change is worth stating, because it bounds how much the bug mattered. A dry run never produced a wrong build. The failure mode to worry about was a dry run recording the new command hash for an edge, so that a later real build compared the manifest against a log that already agreed and skipped the work — that was tested directly before the fix, by building an output, changing the rule's command, dry running, then building for real, and the rebuild happened. What the bug actually cost was unbounded log growth: one entry per planned edge, every time, so any workflow that dry-runs often inflated the log without limit and every subsequent invocation of any tool paid to load it. That is not hypothetical — repeated dry runs during this session took abseil's log from 20 KB to 6.7 MB, which doubled its dry-run time and invalidated two rounds of measurement before the cause was found.\n\nC samurai has the same behaviour, so the port inherited it rather than introducing it. The oracle is Ninja, so it is still a divergence.\n\nThe open question from the original report is answered and the answer is unwelcome: all 425 upstream tests passed both before and after, so the pinned suite does not cover this. The differential harness is the right place for a case, and it is not added here — this commit is the fix, and the harness gap is a separate piece of work. A regression test is in place at the unit level: a dry run leaves no log entry and produces no output file, and a real build immediately after still runs the command and does record it.\n\n398 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
+            }
+        )
+    }
+
+    {
+        id ronin-retire-c-corpus
+        title "Retire the C samurai corpus from the repository"
+        log (
+            {
+                at 2026-08-02T00:57:11.953556275Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-02T00:58:58.196952927Z
+                author "brendan@bbqsrc.net"
+                kind @decision
+                text "Done. The 4,637 lines of C that Ronin was ported from are out of the repository — twenty-six sources and headers, the Makefile, and the `samu.1` manual page.\n\nThe interesting part is what it did to spec coverage, which improved rather than degraded. The nspec configuration carried two impls: `source-impl`, tracking the original C symbols across `**/*.c **/*.h` in `@impl-only` mode, and `target-impl` for the Rust in `@both` mode. Deleting the C would have orphaned 331 `[spec:samurai:def:…]` and `[spec:samurai:sem:…]` annotations, so `source-impl` went with it. Coverage moved from 201 of 205 rules covered with 2 stale to 201 of 201 covered with none stale, and the two long-standing unplanned symbols, `samu.main-fn` and `samu.parseenvargs-fn`, are gone. Those four rules described the C entry point and its environment parsing, which Ronin deliberately does not implement — `product.no-samuflags` is the requirement that says so. They were only ever covered because the C that satisfied them was sitting in the tree.\n\nSo the requirement text is still the specification and the Rust still has to implement and verify every rule; what has been dropped is a second implementation of the same spec that nobody was going to change again.\n\nTwo things had to move with it. The performance harness built its C samurai reference from these sources, so `benchmarks/README.md` now clones upstream samurai instead; `examples/baseline.rs` needed no change, since it only looks for the binary at `/tmp/ronin-samu-reference` and already omits the `samurai-c` rows when it is absent — which is a silent degradation the harness has been warned about before and still has. And `src/port_tests.rs` stays: despite the name it is pure Rust behaviour tests carrying the `/test` annotations for a large share of the spec, with no build-time dependency on the C at all.\n\nThe LICENSE keeps every notice it had. Ronin is a translation of samurai rather than an independent implementation, and htab and tree descend further back through Myrddin and musl, so the ISC, Apache-2.0 and both MIT grants still govern the Rust sources whether or not the C is distributed beside them. A copyright line for the Rust work was added above them, and a sentence saying explicitly why the rest is retained, so that the next person to look does not read the removal of the C as licence to prune the notices.\n\n398 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip — the last of which matters most here, because it proves compatibility is still being demonstrated against the pinned Ninja oracle rather than against the C corpus that just left."
             }
         )
     }

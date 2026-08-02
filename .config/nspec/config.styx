@@ -1,10 +1,12 @@
-// The source impl tracks the original C symbols. The target impl
-// requires corresponding Rust implementation and verification sites.
+// Ronin is the implementation. The C corpus it was ported from has been
+// retired from this repository, so the source impl that tracked those symbols
+// is gone with it; the requirement text remains the specification, and the
+// Rust impl requires both an implementation and a verification site for each
+// rule.
 specs ({
     name samurai,
     include (docs/spec/**/*.md),
     impls (
-        {name source-impl, languages (@c), include (**/*.c **/*.h), mode @impl-only}
         {name target-impl, languages (@rust), include (src/** crates/** tests/** examples/**), exclude (target/**), mode @both}
     )
 })

@@ -13,11 +13,16 @@ reference. It generates deterministic version-1 workloads for:
 
 Build the three binaries, then run:
 
+The C samurai reference is built from an upstream checkout; this repository no
+longer carries the C sources it was ported from. The comparison is optional —
+`baseline` omits the `samurai-c` rows when the binary is absent, so check for
+them in the output if you meant to include it.
+
 ```sh
 cargo build --release
+git clone https://git.sr.ht/~mcf/samurai /tmp/samurai-upstream
 cc -O2 -std=c99 -o /tmp/ronin-samu-reference \
-  build.c deps.c env.c graph.c htab.c log.c os-posix.c parse.c samu.c \
-  scan.c tool.c tree.c util.c -lrt
+  /tmp/samurai-upstream/*.c -lrt
 cargo run --release --example baseline -- \
   --ninja /tmp/ninja-build/ninja \
   --ninja-source /tmp/ninja \

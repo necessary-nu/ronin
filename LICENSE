@@ -1,4 +1,10 @@
+Copyright © 2026 Brendan Molloy
 Copyright © 2017-2026 Michael Forney
+
+Ronin is a Rust implementation derived from samurai. The notices below are
+retained because the Rust sources are a translation of the C ones and remain
+subject to the same terms, whether or not the original C sources are still
+distributed alongside them.
 
 Permission to use, copy, modify, and/or distribute this software for any purpose
 with or without fee is hereby granted, provided that the above copyright notice
