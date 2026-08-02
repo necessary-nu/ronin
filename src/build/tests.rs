@@ -3529,3 +3529,40 @@ fn a_styled_build_gives_the_bars_line_back_when_it_ends() {
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }
+
+// [spec:samurai:req:compat.persistent-state/test]
+#[test]
+fn ninja_dry_run_records_nothing_in_the_build_log() {
+    let (mut graph, directory) = build_fixture(
+        "dry-run-log",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in\n",
+    );
+    fs::write(directory.join("in"), "hello").unwrap();
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut log = crate::log::BuildLog::open(Some(&directory)).unwrap();
+    let options = BuildOptions {
+        dryrun: true,
+        ..BuildOptions::default()
+    };
+    {
+        let mut builder = Builder::with_build_log(&mut graph, options, &mut log);
+        builder.add_target(&target).unwrap();
+        builder.build().unwrap();
+        // A dry run still reports the command it would have run.
+        assert_eq!(builder.commands_ran.len(), 1);
+    }
+    // Ninja records a command it did not run nowhere; neither does ronin, so a
+    // repeated dry run cannot grow the log and a later real build still runs.
+    assert!(crate::log::logentry(&log, &target).is_none());
+    assert!(!directory.join("out").exists());
+
+    {
+        let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
+        builder.add_target(&target).unwrap();
+        builder.build().unwrap();
+        assert_eq!(builder.commands_ran.len(), 1);
+    }
+    assert!(crate::log::logentry(&log, &target).is_some());
+    log.finish().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}

@@ -1333,8 +1333,24 @@ impl<'a> Builder<'a> {
                 .node_mut(output)
                 .set_log_mtime(FileTime::observed(record_mtime));
         }
-        if let Some(build_log) = self.build_log.as_deref_mut() {
-            crate::log::logrecordedge(build_log, self.graph, edge, edge_hash, 0, 0, record_mtime)?;
+        // A dry run must leave the log alone. Ninja records nothing for a
+        // command it did not run, and recording one entry per planned edge
+        // grows the log without bound under any workflow that dry-runs often,
+        // which every later invocation of any tool then pays to load. The
+        // in-memory mtime above is still set, because the rest of this run's
+        // planning depends on it; only the persistent write is skipped.
+        if !self.options.dryrun {
+            if let Some(build_log) = self.build_log.as_deref_mut() {
+                crate::log::logrecordedge(
+                    build_log,
+                    self.graph,
+                    edge,
+                    edge_hash,
+                    0,
+                    0,
+                    record_mtime,
+                )?;
+            }
         }
         self.runtime.edge_mut(edge).set_restat_clean(all_pruned);
         Ok((pruned, loaded_dyndeps))
