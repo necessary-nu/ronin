@@ -19,9 +19,29 @@ use super::{status, BuildOptions, BuildState};
 use crate::graph::{EdgeId, Graph};
 use crate::util::ByteSlice;
 use std::io::Write as _;
+use std::time::{Duration, Instant};
 
 /// Column the subject of a Cargo-style line starts in, counting the space.
 const VERB_WIDTH: usize = 12;
+
+/// How often the pinned bar may be repainted.
+///
+/// This is the whole cost control. Clearing the bar is free — it rides along
+/// in the same buffer as the line that displaces it — but repainting is a
+/// separate write, and a build of trivial commands finishes them faster than
+/// any terminal can usefully show. Refusing to repaint more than thirty times
+/// a second bounds the bar's cost at thirty writes per second no matter how
+/// fast the build runs, rather than at one per command.
+const REPAINT_INTERVAL: Duration = Duration::from_millis(33);
+
+/// Terminal width assumed when the real one cannot be read.
+const ASSUMED_WIDTH: usize = 80;
+
+/// How wide the drawn portion of the bar is, between its brackets.
+const GAUGE_WIDTH: usize = 24;
+
+/// Return to the start of the line and erase to its end.
+const ERASE_LINE: &[u8] = b"\r\x1b[K";
 
 /// Indent that lines a continuation up under the subject.
 const CONTINUATION: [u8; VERB_WIDTH + 1] = [b' '; VERB_WIDTH + 1];
@@ -147,6 +167,46 @@ pub(super) enum Rendering<'a> {
     },
 }
 
+/// A line held at the bottom of the terminal while the build scrolls above it.
+///
+/// The bar owns no sink and performs no writes of its own; like every other
+/// rendering here it appends bytes and lets the supervisor decide when they
+/// go out. What it does own is the knowledge of whether it is currently on
+/// screen, because a line printed over a drawn bar has to displace it first.
+pub(crate) struct Bar {
+    /// Whether a painted bar is currently occupying the cursor's line.
+    drawn: bool,
+    painted_at: Option<Instant>,
+    running: usize,
+    /// The most recently started command's subject, reused rather than
+    /// reallocated, so tracking what to show costs no allocation per command.
+    subject: Vec<u8>,
+}
+
+impl Bar {
+    const fn new() -> Self {
+        Self {
+            drawn: false,
+            painted_at: None,
+            running: 0,
+            subject: Vec::new(),
+        }
+    }
+
+    /// Whether enough time has passed to justify painting again.
+    fn may_paint(&self, now: Instant) -> bool {
+        self.painted_at
+            .is_none_or(|painted_at| now.duration_since(painted_at) >= REPAINT_INTERVAL)
+    }
+}
+
+/// Everything the Cargo rendering carries between commands.
+pub(crate) struct CargoStyle {
+    palette: Palette,
+    /// Present when the output is being styled for a terminal.
+    bar: Option<Bar>,
+}
+
 /// How a build narrates itself.
 pub(crate) enum Reporter {
     /// Ninja's own output, which is what Ronin emits unless asked otherwise.
@@ -157,15 +217,80 @@ pub(crate) enum Reporter {
     /// bytes are fixed by the oracle rather than by taste.
     Ninja,
     /// Cargo's shape: a right-aligned verb, then what it acted on.
-    Cargo(Palette),
+    Cargo(CargoStyle),
 }
 
 impl Reporter {
     pub(crate) const fn new(style: OutputStyle, color: bool) -> Self {
         match style {
             OutputStyle::Ninja => Self::Ninja,
-            OutputStyle::Cargo => Self::Cargo(Palette::select(color)),
+            OutputStyle::Cargo => Self::Cargo(CargoStyle {
+                palette: Palette::select(color),
+                // The bar rides with colour rather than with terminal
+                // detection directly: both answer "is this being styled for
+                // someone to look at", and tying them together means
+                // `--color=always` forces the bar out for a recording or a
+                // measurement exactly as it forces escapes out.
+                bar: if color { Some(Bar::new()) } else { None },
+            }),
         }
+    }
+
+    /// Take back the line the bar is holding, if it is holding one.
+    ///
+    /// Idempotent, and free when no bar is drawn. Every path that writes
+    /// anything calls this first, so the erase rides in the same buffer as
+    /// whatever displaces it and costs no additional write.
+    pub(super) fn clear(&mut self, out: &mut Vec<u8>) {
+        if let Self::Cargo(style) = self {
+            if let Some(bar) = style.bar.as_mut() {
+                if std::mem::replace(&mut bar.drawn, false) {
+                    out.extend_from_slice(ERASE_LINE);
+                }
+            }
+        }
+    }
+
+    /// Note that a command has begun, so the bar can name it.
+    pub(super) fn started(&mut self, options: &BuildOptions, command: &CommandSpec) {
+        if let Self::Cargo(style) = self {
+            if let Some(bar) = style.bar.as_mut() {
+                bar.running += 1;
+                bar.subject.clear();
+                bar.subject
+                    .extend_from_slice(describe(options, command).text());
+            }
+        }
+    }
+
+    /// Note that a command has ended.
+    pub(super) const fn ended(&mut self) {
+        if let Self::Cargo(style) = self {
+            if let Some(bar) = style.bar.as_mut() {
+                bar.running = bar.running.saturating_sub(1);
+            }
+        }
+    }
+
+    /// Paint the bar again, unless it was painted too recently.
+    ///
+    /// Appends nothing when the repaint is skipped, which lets the caller
+    /// avoid the write entirely rather than write zero bytes.
+    pub(super) fn paint(&mut self, out: &mut Vec<u8>, progress: &BuildState) {
+        let Self::Cargo(style) = self else {
+            return;
+        };
+        let palette = style.palette;
+        let Some(bar) = style.bar.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        if !bar.may_paint(now) {
+            return;
+        }
+        bar.painted_at = Some(now);
+        bar.drawn = true;
+        paint_bar(out, palette, bar, progress);
     }
 
     /// Announce that a command has started or finished.
@@ -178,7 +303,7 @@ impl Reporter {
     ) {
         match self {
             Self::Ninja => ninja_status(out, progress, options, command),
-            Self::Cargo(palette) => cargo_status(out, *palette, progress, options, command),
+            Self::Cargo(style) => cargo_status(out, style.palette, progress, options, command),
         }
     }
 
@@ -193,18 +318,102 @@ impl Reporter {
     ) {
         match self {
             Self::Ninja => ninja_failure(out, graph, edge, exit_code, command),
-            Self::Cargo(palette) => cargo_failure(out, *palette, graph, edge, exit_code, command),
+            Self::Cargo(style) => {
+                cargo_failure(out, style.palette, graph, edge, exit_code, command);
+            }
         }
     }
 
-    /// Close out a build that ran to completion without failing.
+    /// Close out the build, whatever became of it.
     ///
-    /// Ninja says nothing at the end of a build, so nothing is what it says.
-    pub(super) fn finish(&mut self, out: &mut Vec<u8>, progress: &BuildState) {
-        match self {
-            Self::Ninja => {}
-            Self::Cargo(palette) => cargo_finish(out, *palette, progress),
+    /// Always called, including when the build failed or was interrupted,
+    /// because the bar must not be left holding a line the shell is about to
+    /// print a prompt on. Ninja says nothing at the end of a build either way.
+    pub(super) fn finish(&mut self, out: &mut Vec<u8>, progress: &BuildState, succeeded: bool) {
+        self.clear(out);
+        if let Self::Cargo(style) = self {
+            if succeeded {
+                cargo_finish(out, style.palette, progress);
+            }
         }
+    }
+}
+
+/// Render `    Building [=========>       ] 24/83: Building src/graph.cc.o`.
+///
+/// Everything is cut to the terminal's width, because a bar that wraps stops
+/// being one: the erase sequence takes back one line, so a wrapped bar leaves
+/// its own first half on screen for the rest of the build.
+// [spec:samurai:req:product.output-style]
+fn paint_bar(out: &mut Vec<u8>, palette: Palette, bar: &Bar, progress: &BuildState) {
+    let width = terminal_width();
+    write_verb(out, b"Building", palette.work, palette.reset);
+    out.extend_from_slice(b" [");
+    let filled = (GAUGE_WIDTH * progress.finished)
+        .checked_div(progress.total)
+        .unwrap_or(0);
+    for column in 0..GAUGE_WIDTH {
+        out.push(match column.cmp(&filled) {
+            std::cmp::Ordering::Less => b'=',
+            std::cmp::Ordering::Equal => b'>',
+            std::cmp::Ordering::Greater => b' ',
+        });
+    }
+    let _ = write!(out, "] {}/{}", progress.finished, progress.total);
+    // Whatever the fixed part came to, the subject gets the rest of the line.
+    let fixed =
+        VERB_WIDTH + 2 + GAUGE_WIDTH + 2 + digits(progress.finished) + digits(progress.total);
+    let room = width.saturating_sub(fixed + 2);
+    if room > 0 && !bar.subject.is_empty() {
+        out.extend_from_slice(b": ");
+        out.extend_from_slice(truncated(&bar.subject, room));
+    }
+}
+
+const fn digits(value: usize) -> usize {
+    let mut digits = 1;
+    let mut value = value;
+    while value >= 10 {
+        digits += 1;
+        value /= 10;
+    }
+    digits
+}
+
+/// Cut `text` to at most `columns`, without splitting a character.
+fn truncated(text: &[u8], columns: usize) -> &[u8] {
+    if text.len() <= columns {
+        return text;
+    }
+    std::str::from_utf8(text).map_or(&text[..columns], |text| {
+        let end = text
+            .char_indices()
+            .take(columns)
+            .last()
+            .map_or(0, |(index, character)| index + character.len_utf8());
+        &text.as_bytes()[..end]
+    })
+}
+
+/// How wide the terminal is, or a conventional guess.
+///
+/// Read afresh on each repaint rather than captured at startup, because it is
+/// the one process fact here that changes while a build runs — a window is
+/// resized mid-build often enough to matter, and a stale width is exactly the
+/// wrapped bar the truncation above exists to prevent. Repaints are already
+/// capped at thirty a second, which caps this too.
+fn terminal_width() -> usize {
+    #[cfg(unix)]
+    {
+        rustix::termios::tcgetwinsize(std::io::stdout())
+            .ok()
+            .map(|size| size.ws_col as usize)
+            .filter(|columns| *columns > 0)
+            .unwrap_or(ASSUMED_WIDTH)
+    }
+    #[cfg(not(unix))]
+    {
+        ASSUMED_WIDTH
     }
 }
 
@@ -534,14 +743,14 @@ mod tests {
         let mut progress = BuildState::new(BuildOptions::default());
         progress.finished = 1;
         let mut out = Vec::new();
-        Reporter::new(OutputStyle::Cargo, false).finish(&mut out, &progress);
+        Reporter::new(OutputStyle::Cargo, false).finish(&mut out, &progress, true);
         let summary = String::from_utf8(out).expect("the summary renders as text");
         assert!(
             summary.starts_with("    Finished 1 command in "),
             "unexpected summary: {summary:?}"
         );
         let mut out = Vec::new();
-        Reporter::new(OutputStyle::Ninja, false).finish(&mut out, &progress);
+        Reporter::new(OutputStyle::Ninja, false).finish(&mut out, &progress, true);
         assert!(out.is_empty());
     }
 
@@ -551,7 +760,7 @@ mod tests {
         let options = BuildOptions::default();
         let progress = BuildState::new(options);
         let mut out = Vec::new();
-        Reporter::new(OutputStyle::Cargo, false).finish(&mut out, &progress);
+        Reporter::new(OutputStyle::Cargo, false).finish(&mut out, &progress, true);
         assert!(out.is_empty());
     }
 
@@ -572,6 +781,121 @@ mod tests {
         assert!(!ColorChoice::Auto.resolve(suppressed));
         assert!(ColorChoice::Always.resolve(suppressed));
         assert!(!ColorChoice::Never.resolve(terminal));
+    }
+
+    fn bar_state(reporter: &mut Reporter) -> &mut Bar {
+        match reporter {
+            Reporter::Cargo(style) => style.bar.as_mut().expect("this rendering has a bar"),
+            Reporter::Ninja => panic!("Ninja has no bar"),
+        }
+    }
+
+    fn painted(reporter: &mut Reporter, finished: usize, total: usize) -> String {
+        let mut progress = BuildState::new(BuildOptions::default());
+        progress.finished = finished;
+        progress.total = total;
+        let mut out = Vec::new();
+        reporter.paint(&mut out, &progress);
+        String::from_utf8(out).expect("the bar renders as text")
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn a_rendering_that_is_not_being_styled_paints_no_bar() {
+        let mut plain = Reporter::new(OutputStyle::Cargo, false);
+        assert_eq!(painted(&mut plain, 1, 4), "");
+        let mut ninja = Reporter::new(OutputStyle::Ninja, true);
+        assert_eq!(painted(&mut ninja, 1, 4), "");
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn the_gauge_fills_as_the_build_advances() {
+        let mut reporter = Reporter::new(OutputStyle::Cargo, true);
+        let bar = bar_state(&mut reporter);
+        bar.subject.extend_from_slice(b"Building src/graph.cc.o");
+        let mut show = |finished: usize| {
+            bar_state(&mut reporter).painted_at = None;
+            let text = painted(&mut reporter, finished, 24);
+            text.replace('\u{1b}', "").replace("[0m", "")
+        };
+        assert!(
+            show(0).contains("[>                       ] 0/24"),
+            "{:?}",
+            show(0)
+        );
+        assert!(
+            show(12).contains("[============>           ] 12/24"),
+            "{:?}",
+            show(12)
+        );
+        assert!(
+            show(24).contains("[========================] 24/24"),
+            "{:?}",
+            show(24)
+        );
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn a_painted_bar_is_taken_back_before_anything_displaces_it() {
+        let mut reporter = Reporter::new(OutputStyle::Cargo, true);
+        assert!(!painted(&mut reporter, 1, 4).is_empty());
+        let mut out = Vec::new();
+        reporter.clear(&mut out);
+        assert_eq!(out, b"\r\x1b[K");
+        // Clearing twice must not emit a second erase: the line is already back.
+        let mut again = Vec::new();
+        reporter.clear(&mut again);
+        assert!(again.is_empty());
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn repainting_inside_the_budget_is_refused() {
+        let mut reporter = Reporter::new(OutputStyle::Cargo, true);
+        assert!(!painted(&mut reporter, 1, 4).is_empty());
+        assert_eq!(
+            painted(&mut reporter, 2, 4),
+            "",
+            "a repaint this soon is skipped"
+        );
+        bar_state(&mut reporter).painted_at =
+            Instant::now().checked_sub(REPAINT_INTERVAL + Duration::from_millis(1));
+        assert!(
+            !painted(&mut reporter, 3, 4).is_empty(),
+            "the budget refills"
+        );
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn finishing_gives_back_the_bars_line_whatever_the_outcome() {
+        let mut progress = BuildState::new(BuildOptions::default());
+        progress.finished = 2;
+        progress.total = 4;
+        for succeeded in [true, false] {
+            let mut reporter = Reporter::new(OutputStyle::Cargo, true);
+            assert!(!painted(&mut reporter, 2, 4).is_empty());
+            let mut out = Vec::new();
+            reporter.finish(&mut out, &progress, succeeded);
+            let text = String::from_utf8(out).expect("the closing bytes render as text");
+            assert!(text.starts_with("\r\u{1b}[K"), "{text:?}");
+            assert_eq!(text.contains("Finished"), succeeded, "{text:?}");
+        }
+    }
+
+    // [spec:samurai:req:product.output-style/test]
+    #[test]
+    fn a_subject_is_cut_without_splitting_a_character() {
+        assert_eq!(truncated(b"short", 40), b"short");
+        assert_eq!(truncated(b"abcdef", 3), b"abc");
+        // Three two-byte characters: two columns must yield four bytes, not two.
+        assert_eq!(
+            truncated("\u{e9}\u{e9}\u{e9}".as_bytes(), 2),
+            "\u{e9}\u{e9}".as_bytes()
+        );
+        assert_eq!(truncated(&[0xff, 0xfe, 0xfd], 2), &[0xff, 0xfe]);
     }
 
     // [spec:samurai:req:product.output-style/test]

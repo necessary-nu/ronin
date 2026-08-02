@@ -3492,3 +3492,40 @@ fn cargo_style_names_the_failed_output_and_shows_its_command() {
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }
+
+// [spec:samurai:req:product.output-style/test]
+#[test]
+fn a_styled_build_gives_the_bars_line_back_when_it_ends() {
+    let (mut graph, directory) = build_fixture(
+        "cargo-style-bar",
+        "rule cc\n  command = touch $out\n  description = Building $out\nbuild $dir/out: cc $dir/in\n",
+    );
+    fs::write(directory.join("in"), "source").unwrap();
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let options = BuildOptions {
+        style: crate::build::OutputStyle::Cargo,
+        color: crate::build::ColorChoice::Always,
+        ..BuildOptions::default()
+    };
+    let mut builder = Builder::new(&mut graph, options);
+    builder.add_target(&target).unwrap();
+    builder.build().unwrap();
+    let output = String::from_utf8_lossy(&builder.build_output).into_owned();
+    // The gauge's leading marker identifies a painted bar; the verb before it
+    // is separated from the bracket by a reset escape, so match on the gauge.
+    assert!(output.contains("[>"), "no bar was painted: {output:?}");
+    let (_, tail) = output
+        .rsplit_once("\r\u{1b}[K")
+        .expect("the bar is taken back");
+    // A reset escape sits between the verb and its text when colour is on.
+    assert!(
+        tail.contains("Finished") && tail.contains(" 1 command in "),
+        "{tail:?}"
+    );
+    assert!(
+        !tail.contains("[>") && !tail.contains("[="),
+        "a bar was left on screen: {tail:?}"
+    );
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}

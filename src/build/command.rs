@@ -236,6 +236,7 @@ impl Builder<'_> {
     fn emit_rendered(&mut self, rendering: Rendering<'_>) -> BuildResult<()> {
         let mut line = std::mem::take(&mut self.status_scratch);
         line.clear();
+        self.reporter.clear(&mut line);
         match rendering {
             Rendering::Status(command) => {
                 self.reporter
@@ -255,14 +256,15 @@ impl Builder<'_> {
         result
     }
 
-    /// Let the reporter close out a build that finished without failing.
-    pub(super) fn emit_summary(&mut self) -> BuildResult<()> {
-        if self.options.quiet {
-            return Ok(());
-        }
+    /// Let the reporter close out the build and give back the bar's line.
+    ///
+    /// Runs whatever the outcome, so an interrupted or failed build does not
+    /// leave a painted bar for the shell prompt to land on.
+    pub(super) fn emit_summary(&mut self, succeeded: bool) -> BuildResult<()> {
         let mut line = std::mem::take(&mut self.status_scratch);
         line.clear();
-        self.reporter.finish(&mut line, &self.progress);
+        self.reporter
+            .finish(&mut line, &self.progress, succeeded && !self.options.quiet);
         let result = if line.is_empty() {
             Ok(())
         } else {
@@ -270,6 +272,27 @@ impl Builder<'_> {
         };
         self.status_scratch = line;
         result
+    }
+
+    /// Put the bar back after a command's output has been written.
+    ///
+    /// Skipped entirely when the repaint budget says no, so this is a write
+    /// at most thirty times a second rather than once per command.
+    ///
+    /// Reports whether anything was written, because the flush that follows a
+    /// batch is counted: a rendering that paints nothing must not turn into an
+    /// extra flush per command.
+    fn repaint(&mut self) -> BuildResult<bool> {
+        if self.options.quiet {
+            return Ok(false);
+        }
+        let mut line = std::mem::take(&mut self.status_scratch);
+        line.clear();
+        self.reporter.paint(&mut line, &self.progress);
+        let painted = !line.is_empty();
+        let result = if painted { self.emit(&line) } else { Ok(()) };
+        self.status_scratch = line;
+        result.map(|()| painted)
     }
 
     fn emit_status(&mut self, edge: EdgeId, command: &CommandSpec) -> BuildResult<()> {
@@ -286,8 +309,13 @@ impl Builder<'_> {
         command: &CommandSpec,
     ) -> BuildResult<()> {
         self.progress.started += 1;
+        self.reporter.started(&self.options, command);
         if command.use_console {
             self.emit_status(edge, command)?;
+            self.flush_sinks()?;
+            return Ok(());
+        }
+        if self.repaint()? {
             self.flush_sinks()?;
         }
         Ok(())
@@ -301,6 +329,7 @@ impl Builder<'_> {
         output: &[u8],
     ) -> BuildResult<()> {
         self.progress.finished += 1;
+        self.reporter.ended();
         let wrote_batch = !command.use_console || failure_code.is_some() || !output.is_empty();
         if !command.use_console {
             self.emit_status(edge, command)?;
@@ -313,12 +342,31 @@ impl Builder<'_> {
             })?;
         }
         if !output.is_empty() {
-            self.emit(output)?;
+            self.emit_below_bar(output)?;
         }
-        if wrote_batch {
+        let repainted = self.repaint()?;
+        if wrote_batch || repainted {
             self.flush_sinks()?;
         }
         Ok(())
+    }
+
+    /// Write bytes the reporter did not render, displacing the bar first.
+    ///
+    /// A command's own output goes out verbatim, but it still has to take the
+    /// bar's line before it does, or the first line of a compiler diagnostic
+    /// lands on top of the bar.
+    fn emit_below_bar(&mut self, bytes: &[u8]) -> BuildResult<()> {
+        let mut line = std::mem::take(&mut self.status_scratch);
+        line.clear();
+        self.reporter.clear(&mut line);
+        let result = if line.is_empty() {
+            Ok(())
+        } else {
+            self.emit(&line)
+        };
+        self.status_scratch = line;
+        result.and_then(|()| self.emit(bytes))
     }
 
     pub(super) fn exit_code(status: std::process::ExitStatus) -> i32 {

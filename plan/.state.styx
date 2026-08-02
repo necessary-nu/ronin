@@ -156,7 +156,8 @@ assertions (
     {id ronin-uses-compaction, kind @doing, author "brendan@bbqsrc.net", at 2026-08-01T22:53:39.808920801Z}
     {id ronin-real-project-validation, kind @doing, author "brendan@bbqsrc.net", at 2026-08-01T23:06:33.426419063Z}
     {id ronin-reporter-seam, kind @complete, author "brendan@bbqsrc.net", at 2026-08-01T23:41:56.712692557Z}
-    {id ronin-cargo-output-style, kind @doing, author "brendan@bbqsrc.net", at 2026-08-01T23:42:01.665731539Z}
+    {id ronin-cargo-output-style, kind @complete, author "brendan@bbqsrc.net", at 2026-08-02T00:18:19.511218405Z}
+    {id ronin-progress-bar, kind @doing, author "brendan@bbqsrc.net", at 2026-08-02T00:18:24.987937513Z}
 )
 
 impl_evidence (

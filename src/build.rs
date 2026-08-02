@@ -1661,13 +1661,20 @@ impl<'a> Builder<'a> {
             }
         }
 
-        if let Some(error) = last_error {
+        let outcome = if let Some(error) = last_error {
             Err(error)
         } else if self.plan.more_to_do() {
             Err(BuildError::DependenciesBlocked)
         } else {
-            self.emit_summary()?;
             Ok(())
+        };
+        // The bar has to be given back whatever happened, so this runs on the
+        // failure path too — and the build's own error outranks any trouble
+        // writing the closing line.
+        let closing = self.emit_summary(outcome.is_ok());
+        match outcome {
+            Err(error) => Err(error),
+            Ok(()) => closing,
         }
     }
 }
