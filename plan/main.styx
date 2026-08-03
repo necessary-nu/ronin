@@ -3281,4 +3281,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-diagnostic-anchor
+        title "Point a manifest diagnostic at the token it is about"
+        log (
+            {
+                at 2026-08-03T23:05:33.927661259Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-03T23:05:59.849232553Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Done. A manifest diagnostic now names the line the reader has to go and fix.\n\nThe recorded symptom was a caret in the wrong column. Checking it showed the line number was wrong too, and that it was wrong in the way that matters most: an unexpected binding inside a rule was reported against line 4 when the offending line was 3, because by the time the parser rejected the binding the scanner had already read the `build` keyword on the next line. Being told the wrong line is worse than being told no line, since it sends the reader somewhere that looks fine.\n\nOne cause. Ninja's lexer keeps `last_token_`, the start of the token it is reading, and every diagnostic is computed from it — line, column, and whether any source context is shown at all. Ronin computed all three from the current scan position, which by the time an error is raised has usually moved past the token and often onto the next line. `Scanner` now keeps the same mark, set where each token begins, and both error constructors read it instead of the position.\n\nThat one change fixed three symptoms at once, which is the sign it was the right level to fix it at. The line number, because the mark is on the token rather than past it. The caret column, likewise. And *whether there is any context at all* — Ninja emits the source line and caret only when the column is greater than zero, so `unexpected indent`, whose token starts at column zero, has never had a caret in Ninja. Ronin printed one. The rendering code already implemented that rule correctly, including the 72-column truncation; it was being handed a position that made the rule produce the wrong answer. Ronin now also prints none, and the initial mark sits at offset zero so a diagnostic raised before any token behaves the same way.\n\nOne case needed reading Ninja rather than reasoning about it. A complaint about a rule binding lands on the character that *ended* the value, not on the value: `nonsense = x` puts the caret one past the `x`. That is not a designed choice, it falls out of `ReadEvalString` marking each chunk as it consumes it, so after a value the mark sits on the newline that stopped it. I had anchored at the value's start, which is more defensible and does not match. The scanner now marks again at the end of a value scan, before trailing whitespace is eaten, with a comment saying why so it does not read as a mistake.\n\nVerified against Ninja on the unexpected rule binding, the unexpected pool binding, an unknown build rule, a missing colon, and an unexpected indent: every location, caret column and presence-of-context now agrees. A binary-level test pins the anchoring without needing Ninja present.\n\nNot fixed here, and now the only remaining difference on every one of those cases: the message wording. Ronin says `unexpected rule variable` where Ninja says `unexpected variable`, `undefined rule` for `unknown build rule`, and `expected ':'` for `expected ':', got newline ($ also escapes ':')`. Worse, `duplicate rule` carries no location at all, because it is raised as a graph error rather than a manifest one and never reaches the located renderer. That is the next node, and it is the reason no manifest-diagnostic cases were added to the conformance corpus yet: they would compare wording that is still known to differ.\n\n408 unit tests, 17 integration tests, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases, 22 build-outcome cases, the persistence round trip and the log-content checks."
+            }
+        )
+    }
 )

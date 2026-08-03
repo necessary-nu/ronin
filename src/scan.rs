@@ -141,6 +141,12 @@ pub(crate) struct Scanner<'source> {
     index: usize,
     line: usize,
     column: usize,
+    /// Where the token being read started.
+    ///
+    /// Ninja's `last_token_`: every diagnostic is reported against this rather
+    /// than against the scan position, which by the time an error is raised has
+    /// usually moved on to the following token.
+    last_token: ByteSpan,
     continuation_at_eof: bool,
     manifest_version_major: i32,
     manifest_version_minor: i32,
@@ -158,6 +164,13 @@ impl<'source> Scanner<'source> {
             index: 0,
             line: 1,
             column: 1,
+            last_token: ByteSpan {
+                source_id: source.id(),
+                byte_start: 0,
+                byte_end: 0,
+                line: 1,
+                column: 1,
+            },
             continuation_at_eof: false,
             manifest_version_major: 1,
             manifest_version_minor: 9,
@@ -187,6 +200,23 @@ impl<'source> Scanner<'source> {
         }
     }
 
+    /// Records that a token starts here.
+    ///
+    /// Ninja reports every diagnostic against the token it was reading, not
+    /// against wherever scanning had got to — which is usually the *next*
+    /// token, on the next line. Marking the start is what makes an error name
+    /// the line the reader has to go and fix, and puts the caret under the
+    /// word rather than past the end of it.
+    // [spec:ronin:req:compat.manifest-semantics]
+    pub(crate) fn begin_token(&mut self) {
+        self.last_token = self.position();
+    }
+
+    /// Where the token being read started, for a diagnostic to point at.
+    pub(crate) const fn last_token(&self) -> ByteSpan {
+        self.last_token
+    }
+
     pub(crate) fn source_span(&self, span: ByteSpan) -> SourceSpan {
         debug_assert_eq!(span.source_id, self.source.id());
         SourceSpan::new(
@@ -213,7 +243,7 @@ impl<'source> Scanner<'source> {
 // [spec:ronin:sem:scan.scanerror-fn]
 pub(crate) fn scanerror(scanner: &Scanner<'_>, kind: ScanErrorKind) -> ScanError {
     ScanError {
-        span: scanner.source_span(scanner.position()),
+        span: scanner.source_span(scanner.last_token()),
         kind,
     }
 }
@@ -362,6 +392,7 @@ fn comment(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
 // [spec:ronin:sem:scan.name-fn]
 fn name<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> {
     let source = scanner.source;
+    scanner.begin_token();
     let start = scanner.index;
     let line = scanner.line;
     let column = scanner.column;
@@ -499,6 +530,7 @@ pub(crate) fn scanstring<'source>(
     path: bool,
 ) -> ScanResult<Option<ScannedEvalString<'source>>> {
     let source = scanner.source;
+    scanner.begin_token();
     let mut parts = ScannedParts::new();
     let start = scanner.index;
     let mut literal_start = start;
@@ -536,6 +568,12 @@ pub(crate) fn scanstring<'source>(
         }
     }
     let end = scanner.index;
+    // Ninja reads an evaluation string in chunks and marks each one, so once
+    // the value is read its mark sits on whatever ended it — the newline, or
+    // the separator after a path. A diagnostic the *caller* then raises about
+    // the binding points there rather than at the value, and this is where
+    // that difference is reproduced.
+    scanner.begin_token();
     if !escaped {
         // Nothing was expanded, so the run of source bytes is the whole value.
         if path {
@@ -565,6 +603,7 @@ pub(crate) fn scanpaths<'source>(
 // [spec:ronin:def:scan.scanchar-fn]
 // [spec:ronin:sem:scan.scanchar-fn]
 pub(crate) fn scanchar(scanner: &mut Scanner<'_>, expected: char) -> ScanResult<()> {
+    scanner.begin_token();
     let expected = u8::try_from(expected)
         .map_err(|_| scanerror(scanner, ScanErrorKind::ExpectedAsciiToken))?;
     if scanner.current() != Some(expected) {

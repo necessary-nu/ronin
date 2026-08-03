@@ -629,3 +629,49 @@ fn a_dependency_cycle_is_named_by_the_path_around_it() {
 
     fs::remove_dir_all(directory).unwrap();
 }
+
+// [spec:ronin:req:compat.manifest-semantics/test]
+#[test]
+fn a_manifest_diagnostic_points_at_the_token_it_is_about() {
+    let directory = test_directory("diagnostic-anchor");
+    fs::create_dir_all(&directory).unwrap();
+    let run = |manifest: &str| {
+        fs::write(directory.join("build.ninja"), manifest).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
+            .current_dir(&directory)
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    // Scanning has already reached `build` on line 4 by the time the binding
+    // is rejected; the reader has to go to line 3.
+    let rule_variable = run("rule cc\n  command = gcc\n  nonsense = x\nbuild a: cc\n");
+    assert!(
+        rule_variable.contains("build.ninja:3:"),
+        "reported {rule_variable:?}"
+    );
+    // Ninja marks each chunk of a value as it reads it, so a complaint about
+    // the binding lands on what ended the value rather than on the value.
+    assert!(
+        rule_variable.ends_with("  nonsense = x\n              ^ near here\n"),
+        "reported {rule_variable:?}"
+    );
+
+    // A name is marked where it starts, so the caret sits under the word and
+    // not past the end of it.
+    let unknown_rule = run("build a: nosuchrule\n");
+    assert!(
+        unknown_rule.ends_with("build a: nosuchrule\n         ^ near here\n"),
+        "reported {unknown_rule:?}"
+    );
+
+    // Column zero carries no context in Ninja, so neither does this.
+    let indented = run("  command = x\n");
+    assert!(
+        indented.ends_with("unexpected indent\n"),
+        "reported {indented:?}"
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}

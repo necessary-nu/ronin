@@ -16,7 +16,7 @@ use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, IdVec};
 type ManifestResult<T> = Result<T, ManifestError>;
 
 fn manifest_error(scanner: &Scanner<'_>, problem: ManifestProblem) -> ManifestError {
-    ManifestError::at(scanner.source_span(scanner.position()), problem)
+    ManifestError::at(scanner.source_span(scanner.last_token()), problem)
 }
 
 // [spec:ronin:def:parse.parseoptions]
