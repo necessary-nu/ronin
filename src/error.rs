@@ -288,16 +288,9 @@ impl ScanError {
 impl fmt::Display for ScanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         if matches!(self.kind, ScanErrorKind::UnexpectedEof { .. }) {
-            self.kind.fmt(formatter)
+            write!(formatter, "error: {}", self.kind)
         } else {
-            write!(
-                formatter,
-                "{}:{}:{}: {}",
-                self.span.path().display(),
-                self.span.line,
-                self.span.column,
-                self.kind
-            )
+            write_located(formatter, &self.span, &self.kind)
         }
     }
 }
@@ -428,12 +421,70 @@ impl ManifestError {
     }
 }
 
+/// Render a manifest diagnostic in Ninja's shape.
+///
+/// Ninja prints a located header, then the offending source line, then a caret
+/// under the column — the caret is most of what makes a parse error legible,
+/// and its rules are Ninja's own: the header carries the line but not the
+/// column, the context is dropped entirely when the column is at the start of
+/// the line or past the truncation point, and a line longer than that point is
+/// cut with an ellipsis.
+fn write_located(
+    formatter: &mut fmt::Formatter<'_>,
+    span: &SourceSpan,
+    message: &dyn fmt::Display,
+) -> fmt::Result {
+    const TRUNCATE_COLUMN: usize = 72;
+    write!(
+        formatter,
+        "error: {}:{}: {message}",
+        span.path().display(),
+        span.line
+    )?;
+    // Ninja counts this column from zero, and from the start of the line.
+    let column = span.column.saturating_sub(1);
+    if column == 0 || column >= TRUNCATE_COLUMN {
+        return Ok(());
+    }
+    let bytes = span.source_bytes();
+    let Some(line_start) = span.byte_start.checked_sub(column) else {
+        return Ok(());
+    };
+    let line = &bytes[line_start.min(bytes.len())..];
+    let mut length = 0;
+    let mut truncated = true;
+    while length < TRUNCATE_COLUMN {
+        match line.get(length) {
+            None | Some(b'\n') => {
+                truncated = false;
+                break;
+            }
+            Some(_) => length += 1,
+        }
+    }
+    write!(formatter, "\n{}", String::from_utf8_lossy(&line[..length]))?;
+    if truncated {
+        formatter.write_str("...")?;
+    }
+    write!(formatter, "\n{:column$}^ near here", "")
+}
+
 impl fmt::Display for ManifestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Read { source, .. } => source.fmt(formatter),
             Self::Scan(error) => error.fmt(formatter),
-            Self::Problem { problem, .. } => problem.fmt(formatter),
+            // Ninja reports a too-new required version through `Fatal`, not
+            // through the lexer, so it carries no file or line and no caret.
+            Self::Problem {
+                problem: problem @ ManifestProblem::RequiredVersionTooNew { .. },
+                ..
+            } => problem.fmt(formatter),
+            Self::Problem {
+                span: Some(span),
+                problem,
+            } => write_located(formatter, span, problem),
+            Self::Problem { span: None, problem } => write!(formatter, "error: {problem}"),
             Self::Graph(error) => error.fmt(formatter),
             Self::Dyndep(error) => error.fmt(formatter),
             Self::DyndepRead { path, source } => write!(formatter, "loading '{path}': {source}"),
@@ -1173,7 +1224,7 @@ mod tests {
                 after_continuation: false,
             },
         };
-        assert_eq!(error.to_string(), "unexpected EOF");
+        assert_eq!(error.to_string(), "error: unexpected EOF");
         assert_eq!(error.span.path(), std::path::Path::new("build.ninja"));
         assert_eq!((error.span.line, error.span.column), (7, 3));
     }

@@ -760,7 +760,10 @@ mod ninja_manifest_tests {
         let error = parse_error(
             "rule touch\n  command = touch $out\nbuild result: touch\n  dyndep = notin\n",
         );
-        assert_eq!(error, "dyndep 'notin' is not an input");
+        assert!(
+            error.contains(": dyndep 'notin' is not an input"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -825,7 +828,10 @@ mod ninja_manifest_tests {
     #[test]
     fn ninja_manifest_parser_rejects_unknown_rule_binding() {
         let error = parse_error("rule cc\n  command = foo\n  othervar = bar\n");
-        assert_eq!(error, "unexpected rule variable 'othervar'");
+        assert!(
+            error.contains(": unexpected rule variable 'othervar'"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1062,11 +1068,14 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_rejects_unterminated_lines() {
-        assert_eq!(parse_error("x = 3"), "unexpected EOF");
-        assert_eq!(parse_error("x = $\n"), "unexpected EOF after continuation");
+        assert_eq!(parse_error("x = 3"), "error: unexpected EOF");
+        assert_eq!(
+            parse_error("x = $\n"),
+            "error: unexpected EOF after continuation"
+        );
         assert_eq!(
             parse_error("x = a$\n b$\n $\n"),
-            "unexpected EOF after continuation"
+            "error: unexpected EOF after continuation"
         );
     }
 

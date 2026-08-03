@@ -3161,4 +3161,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-manifest-diagnostic-shape
+        title "Render manifest diagnostics in Ninja's located shape"
+        log (
+            {
+                at 2026-08-03T11:48:05.315557083Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-03T11:48:26.362520915Z
+                author "brendan@bbqsrc.net"
+                kind @decision
+                text "Manifest diagnostics now have Ninja's shape: a located header, the offending source line, and a caret beneath it.\n\nBefore, a scan error read `build.ninja:2:24: invalid $ escape` and a parse problem read `undefined rule 'nosuchrule'` with no location at all — even though the span was right there in the error, unused, because `ManifestError`'s `Display` matched `Self::Problem { problem, .. }` and threw the span away. Both now read as Ninja does:\n\n    error: build.ninja:3: undefined rule 'nosuchrule'\n    build o: nosuchrule\n             ^ near here\n\nThe rules came from `Lexer::Error` rather than from taste, and several are non-obvious enough to be worth writing down: the header carries the line but not the column; the context block is omitted entirely when the column is zero or at least seventy-two; a line longer than seventy-two characters is cut there and marked with an ellipsis; and the caret sits under a column counted from zero, where Ronin counts from one.\n\nOne diagnostic is deliberately exempt. A too-new `ninja_required_version` goes through Ninja's `Fatal` rather than through the lexer, so it carries no file, line or caret — it reads `fatal: ninja version (1.14.0) incompatible with build file …` and nothing else. The first cut routed it through the located renderer and produced `error: build.ninja:2: fatal: …`, which is two severities and a location Ninja does not print; the CLI test written for that message caught it.\n\nTwo parity gaps remain open, and both are larger than they look.\n\nThe anchor is wrong. Ninja positions a diagnostic at `last_token_`, the start of the most recently read token; Ronin positions it at the scanner's current index. For `build o: nosuchrule` that puts our caret past the end of the token instead of under its first character, and for a rule variable it reports the line after the one at fault, because the trailing newline has already been consumed and the line counter has moved on. That inaccuracy is not new — the spans were always computed at that point — but it was invisible until the location started being printed, and printing a wrong line number is worse than printing none. Fixing it means the scanner recording the start of each token, which is three stores per token across every scan entry point, on code this programme has optimised twice. Cheap in principle, invasive in practice, and it wants measuring rather than assuming.\n\nThe wording is also not Ninja's. `undefined rule` against `unknown build rule`; `unexpected rule variable` against `unexpected variable`; `build has no outputs` against `expected path`; `multiple rules generate 'o'` against the same without quotes. That is roughly twenty `ManifestProblem` variants plus the `ScanError` kinds, each needing its Ninja counterpart found and verified rather than guessed. It is a bounded piece of work and a tedious one, and it belongs with the anchor because the same test would cover both.\n\nFour of Ronin's own tests pinned the old un-located text and were updated; where the located header now embeds a temporary directory, they assert the message tail rather than the whole string. 399 tests plus 11 CLI tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
+            }
+        )
+    }
 )

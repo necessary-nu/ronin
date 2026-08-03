@@ -86,7 +86,6 @@ impl SourceSpan {
         self.source.id()
     }
 
-    #[cfg(test)]
     pub(crate) fn source_bytes(&self) -> &[u8] {
         self.source.bytes()
     }
