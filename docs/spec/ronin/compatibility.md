@@ -66,6 +66,21 @@ the supported CLI surface.
 > them. `--compat` spawns a shell for every command, as Ninja does, and
 > `--shell` selects which shell that is.
 
+> [spec:ronin:req:product.build-outcome]
+> A build that does not finish reports why on stdout, after the build's own
+> output, and leaves with the exit status of the last command that failed — the
+> command's own status, not a generic failure, so a caller can tell a compile
+> error from a kill. An interrupt leaves with Ninja's 130 rather than re-raising
+> the signal, so the status does not depend on how far the build had got; C
+> samurai re-raised here, and Ninja is the contract. Two departures from Ninja
+> are deliberate. A plan that can make no progress without having recorded a
+> failure — which Ninja calls a bug in itself — leaves with a failure rather
+> than Ninja's success, because a build that did not finish must not report that
+> it did. Ninja's arithmetic for a child killed by a signal it does not treat as
+> an interrupt adds 128 to the raw wait status rather than to the signal number,
+> which is reproduced, including the resulting `FAILED: [code=259]` for a
+> dumping `SIGQUIT`, because that line is part of the observable output.
+
 > [spec:ronin:req:compat.version-reporting]
 > `ronin --version` emits one Ninja-compatible version token beginning with
 > `MAJOR.MINOR` and exits successfully. The token reports the claimed Ninja

@@ -378,19 +378,4 @@ impl Builder<'_> {
         self.status_scratch = line;
         result.and_then(|()| self.emit(bytes))
     }
-
-    pub(super) fn exit_code(status: std::process::ExitStatus) -> i32 {
-        if let Some(code) = status.code() {
-            return code;
-        }
-        #[cfg(unix)]
-        {
-            use std::os::unix::process::ExitStatusExt;
-            status.signal().map_or(1, |signal| 128 + signal)
-        }
-        #[cfg(not(unix))]
-        {
-            1
-        }
-    }
 }

@@ -239,7 +239,12 @@ fn streams_failure_context_and_buffered_output_before_the_final_diagnostic() {
     let command = stdout.find("printf child; false\n").unwrap();
     let child = stdout.rfind("child").unwrap();
     assert!(status < failure && failure < command && command < child);
-    assert!(String::from_utf8_lossy(&result.stderr).contains("ronin: subcommand failed"));
+    // Ninja reports the stop on stdout, after the build's own output, and
+    // leaves stderr for diagnostics.
+    assert!(stdout.ends_with("ronin: build stopped: subcommand failed.\n"));
+    assert!(child < stdout.find("build stopped").unwrap());
+    assert!(result.stderr.is_empty());
+    assert_eq!(result.status.code(), Some(1));
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -270,6 +275,7 @@ fn writes_explanations_to_stderr_and_status_to_stdout() {
 
 #[cfg(unix)]
 // [spec:ronin:req:compat.process-integration/test]
+// [spec:ronin:req:product.build-outcome/test]
 #[test]
 // [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn forwards_interrupts_and_removes_partial_outputs() {
@@ -297,7 +303,11 @@ fn forwards_interrupts_and_removes_partial_outputs() {
     let child_id = rustix::process::Pid::from_child(&child);
     rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
     let status = child.wait().unwrap();
-    assert_eq!(status.signal(), Some(rustix::process::Signal::INT.as_raw()));
+    // Ninja exits with 130 rather than dying by the signal it caught. C samurai
+    // re-raised, and Ronin followed it here until the exit-status surface was
+    // measured against Ninja; the contract is Ninja's.
+    assert_eq!(status.signal(), None);
+    assert_eq!(status.code(), Some(ronin::INTERRUPTED_EXIT_CODE));
     assert!(!directory.join("output").exists());
     fs::remove_dir_all(directory).unwrap();
 }
@@ -465,14 +475,107 @@ fn a_missing_program_still_gets_the_shells_diagnostic() {
     .unwrap();
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    let error = ronin::Runner::new(&directory)
+    let result = ronin::Runner::new(&directory)
         .unwrap()
         .run_os_with_sinks(&["ronin".into(), "out".into()], &mut stdout, &mut stderr)
-        .unwrap_err();
+        .unwrap();
     let seen = String::from_utf8_lossy(&stdout).into_owned();
     assert!(
         seen.contains("ronin-no-such-program-exists: not found"),
-        "stdout was {seen:?}, error {error}"
+        "stdout was {seen:?}"
     );
+    // The shell's own status for a command it could not find, carried out.
+    assert_eq!(result.exit_code, 127);
     fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:compat.cli-and-tools/test]
+// [spec:ronin:req:product.build-outcome/test]
+#[test]
+fn a_failing_command_carries_its_own_status_out_of_the_process() {
+    // The number a CI reads: it distinguishes a compile error from an OOM kill,
+    // and Ronin reported 1 for both until this was measured against Ninja.
+    let directory = test_directory("exit-status-propagation");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule f\n  command = exit 7\nrule g\n  command = exit 5\n\
+         build a: f\nbuild b: g\ndefault a b\n",
+    )
+    .unwrap();
+
+    let run = |arguments: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_ronin"))
+            .args(arguments)
+            .current_dir(&directory)
+            .output()
+            .unwrap()
+    };
+
+    let stopped = run(&["-j", "1", "a"]);
+    assert_eq!(stopped.status.code(), Some(7));
+    assert!(String::from_utf8_lossy(&stopped.stdout)
+        .ends_with("ronin: build stopped: subcommand failed.\n"));
+
+    // Under keep-going the last failure wins, and the reason changes because
+    // the allowance was never used up.
+    let kept_going = run(&["-k", "0", "-j", "1", "a", "b"]);
+    assert_eq!(kept_going.status.code(), Some(5));
+    assert!(String::from_utf8_lossy(&kept_going.stdout)
+        .ends_with("ronin: build stopped: cannot make progress due to previous errors.\n"));
+
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:compat.cli-and-tools/test]
+#[test]
+fn entering_a_directory_is_announced_unless_output_is_being_parsed() {
+    let base = test_directory("entering-directory");
+    let work = base.join("work");
+    fs::create_dir_all(&work).unwrap();
+    fs::write(
+        work.join("build.ninja"),
+        "rule cp\n  command = cp $in $out\nbuild a: cp source\ndefault a\n",
+    )
+    .unwrap();
+    fs::write(work.join("source"), "source\n").unwrap();
+
+    let run = |arguments: &[&str]| {
+        let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
+            .args(arguments)
+            .current_dir(&base)
+            .output()
+            .unwrap();
+        (
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+            String::from_utf8_lossy(&output.stderr).into_owned(),
+            output.status.code(),
+        )
+    };
+
+    // The line leads stdout, quoted the way Emacs and the compiler-error
+    // parsers that copied GNU Make expect, so relative paths resolve.
+    let (stdout, _, code) = run(&["-C", "work"]);
+    assert!(stdout.starts_with("ronin: Entering directory `work'\n"));
+    assert_eq!(code, Some(0));
+    fs::remove_file(work.join("a")).unwrap();
+
+    // Tool output is routinely piped into a file, and --quiet asked for none.
+    let (tool_stdout, _, _) = run(&["-C", "work", "-t", "targets"]);
+    assert!(!tool_stdout.contains("Entering directory"));
+    let (quiet_stdout, _, _) = run(&["-C", "work", "--quiet"]);
+    assert!(!quiet_stdout.contains("Entering directory"));
+    fs::remove_file(work.join("a")).unwrap();
+
+    // Announced before the move is attempted, so a directory that cannot be
+    // entered is still named.
+    let (missing_stdout, missing_stderr, missing_code) = run(&["-C", "nope"]);
+    assert_eq!(missing_stdout, "ronin: Entering directory `nope'\n");
+    assert_eq!(
+        missing_stderr,
+        "ronin: fatal: chdir to 'nope' - No such file or directory\n"
+    );
+    assert_eq!(missing_code, Some(1));
+
+    fs::remove_dir_all(base).unwrap();
 }

@@ -130,20 +130,50 @@ pub(crate) enum EncodingContext {
 )]
 #[derive(Debug)]
 pub(crate) enum CliError {
-    UnknownDebugFlag { flag: String },
-    UnknownWarningFlag { flag: String },
-    InvalidParameter { option: &'static str },
+    UnknownDebugFlag {
+        flag: String,
+    },
+    UnknownWarningFlag {
+        flag: String,
+    },
+    InvalidParameter {
+        option: &'static str,
+    },
     KeepGoingNotNumeric,
-    UnknownStatusVariable { name: String },
-    UnknownOptionValue { option: &'static str, value: String },
+    UnknownStatusVariable {
+        name: String,
+    },
+    UnknownOptionValue {
+        option: &'static str,
+        value: String,
+    },
     InvalidStatusEscape,
     UnterminatedStatusVariable,
-    MissingOptionValue { option: String },
-    InvalidEncoding { context: EncodingContext },
-    CurrentDirectory { source: io::Error },
-    ChangeDirectory { path: BString, source: io::Error },
-    InvocationFailed { exit_code: i32, diagnostic: String },
-    ManifestRetryLimit { path: BString, attempts: usize },
+    MissingOptionValue {
+        option: String,
+    },
+    InvalidEncoding {
+        context: EncodingContext,
+    },
+    CurrentDirectory {
+        source: io::Error,
+    },
+    ChangeDirectory {
+        path: BString,
+        source: io::Error,
+    },
+    /// Writing to a caller-supplied output or diagnostic sink failed.
+    WriteOutput {
+        source: io::Error,
+    },
+    InvocationFailed {
+        exit_code: i32,
+        diagnostic: String,
+    },
+    ManifestRetryLimit {
+        path: BString,
+        attempts: usize,
+    },
 }
 
 impl fmt::Display for CliError {
@@ -188,9 +218,17 @@ impl fmt::Display for CliError {
                 EncodingContext::WarningValue => "invalid -w parameter",
                 EncodingContext::ToolValue => "invalid -t parameter",
             }),
-            Self::CurrentDirectory { source } | Self::ChangeDirectory { source, .. } => {
+            Self::CurrentDirectory { source } | Self::WriteOutput { source } => {
                 source.fmt(formatter)
             }
+            // Ninja reports this one through `Fatal`, quoting the directory it
+            // was asked for and the system's own message for why it could not
+            // be entered.
+            Self::ChangeDirectory { path, source } => write!(
+                formatter,
+                "fatal: chdir to '{path}' - {}",
+                system_message(source)
+            ),
             Self::InvocationFailed { diagnostic, .. } => formatter.write_str(diagnostic),
             Self::ManifestRetryLimit { path, attempts } => {
                 write!(formatter, "manifest '{path}' dirty after {attempts} tries")
@@ -202,11 +240,34 @@ impl fmt::Display for CliError {
 impl error::Error for CliError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
-            Self::CurrentDirectory { source } | Self::ChangeDirectory { source, .. } => {
-                Some(source)
-            }
+            Self::CurrentDirectory { source }
+            | Self::ChangeDirectory { source, .. }
+            | Self::WriteOutput { source } => Some(source),
             _ => None,
         }
+    }
+}
+
+impl CliError {
+    pub(crate) const fn write_output(source: io::Error) -> Self {
+        Self::WriteOutput { source }
+    }
+}
+
+/// Renders a system error the way `strerror` does.
+///
+/// Ninja quotes `strerror(errno)` directly. Rust's `io::Error` prints the same
+/// text with ` (os error N)` appended, which no Ninja diagnostic carries, so the
+/// suffix it added is removed again rather than the message being rebuilt from
+/// the raw code.
+fn system_message(error: &io::Error) -> String {
+    let rendered = error.to_string();
+    if error.raw_os_error().is_none() || !rendered.ends_with(')') {
+        return rendered;
+    }
+    match rendered.rfind(" (os error ") {
+        Some(cut) => rendered[..cut].to_owned(),
+        None => rendered,
     }
 }
 
@@ -634,7 +695,20 @@ pub(crate) enum BuildError {
         command: BString,
         status: ExitStatus,
     },
-    DependenciesBlocked,
+    /// The build ended without completing. Ninja reports why on stdout and
+    /// exits with the status of the last command that failed, so the reason and
+    /// the status travel together.
+    Stopped {
+        reason: BuildStop,
+        status: i32,
+    },
+    /// A build that was regenerating the manifest stopped. Ninja reports this
+    /// one as an error against the manifest rather than as a build outcome, and
+    /// does not carry the command's status out.
+    ManifestRebuild {
+        path: BString,
+        reason: BuildStop,
+    },
     Io {
         operation: BuildOperation,
         path: Option<BString>,
@@ -654,7 +728,86 @@ pub(crate) enum BuildError {
     Tool(ToolError),
 }
 
+/// Why a build stopped, in Ninja's words.
+///
+/// Ninja distinguishes running out of allowed failures from running out of work
+/// that does not depend on one, and says so differently. The distinction is
+/// worth keeping because the two mean different things to whoever reads the
+/// log: the first says the build was cut off, the second says it went as far as
+/// it could.
+#[derive(Debug)]
+pub(crate) enum BuildStop {
+    /// The allowed number of failures was used up. Plural when `-k` allowed
+    /// more than one, as Ninja's is.
+    SubcommandFailed { plural: bool },
+    /// Commands failed, and everything still wanted depended on them.
+    CannotMakeProgress,
+    /// No failures, no progress. Ninja's own words for a state it does not
+    /// expect to reach.
+    Stuck,
+    /// The user cut the build short.
+    Interrupted,
+    /// Something other than a command's exit status ended the build. Ninja
+    /// reports that failure itself rather than a summary of the run.
+    Failed(Box<BuildError>),
+}
+
+impl fmt::Display for BuildStop {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SubcommandFailed { plural: false } => formatter.write_str("subcommand failed"),
+            Self::SubcommandFailed { plural: true } => formatter.write_str("subcommands failed"),
+            Self::CannotMakeProgress => {
+                formatter.write_str("cannot make progress due to previous errors")
+            }
+            Self::Stuck => formatter.write_str("stuck [this is a bug]"),
+            Self::Interrupted => formatter.write_str("interrupted by user"),
+            Self::Failed(error) => error.fmt(formatter),
+        }
+    }
+}
+
+impl BuildStop {
+    /// Reads Ninja's account of why the build loop ended.
+    ///
+    /// Ninja does not decide this from the last error but from how many
+    /// failures it was still allowed: exhausting the allowance means the build
+    /// was cut off, while ending with allowance to spare means everything left
+    /// depended on something that had already failed. An error that is not a
+    /// command's own exit status is reported as itself, since a summary would
+    /// lose the only description of what went wrong.
+    pub(crate) fn from_failure(
+        error: BuildError,
+        failures: usize,
+        limit: usize,
+        allowed: usize,
+    ) -> Self {
+        match error {
+            BuildError::Interrupted { .. } => Self::Interrupted,
+            BuildError::SubcommandFailed { .. } if failures >= limit => Self::SubcommandFailed {
+                plural: allowed > 1,
+            },
+            BuildError::SubcommandFailed { .. } => Self::CannotMakeProgress,
+            other => Self::Failed(Box::new(other)),
+        }
+    }
+}
+
 impl BuildError {
+    /// The process exit status this failure carries out of the build.
+    ///
+    /// Ninja propagates a failing command's own status so a caller can tell a
+    /// compile error from an out-of-memory kill. Anything that is not a command
+    /// reporting for itself is a plain failure.
+    pub(crate) fn exit_code(&self) -> i32 {
+        match self {
+            Self::SubcommandFailed { status, .. } => crate::subprocess::exit_status_code(*status),
+            Self::Interrupted { .. } => crate::subprocess::INTERRUPTED_EXIT_CODE,
+            Self::Stopped { status, .. } => *status,
+            _ => 1,
+        }
+    }
+
     pub(crate) const fn io(
         operation: BuildOperation,
         path: Option<BString>,
@@ -722,8 +875,9 @@ impl fmt::Display for BuildError {
             Self::SubcommandFailed { command, .. } => {
                 write!(formatter, "subcommand failed: {command}")
             }
-            Self::DependenciesBlocked => {
-                formatter.write_str("build stopped: dependencies are blocked")
+            Self::Stopped { reason, .. } => write!(formatter, "build stopped: {reason}."),
+            Self::ManifestRebuild { path, reason } => {
+                write!(formatter, "error: rebuilding '{path}': {reason}")
             }
             Self::Io { source, .. } => source.fmt(formatter),
             Self::Clock { source } => source.fmt(formatter),
@@ -1208,6 +1362,84 @@ mod tests {
         let error: Error = BuildError::from(manifest).into();
         assert_eq!(error.kind(), ErrorKind::Manifest);
         assert_eq!(error.to_string(), "missing");
+    }
+
+    fn command_failure(raw: i32) -> BuildError {
+        #[cfg(unix)]
+        use std::os::unix::process::ExitStatusExt as _;
+        BuildError::SubcommandFailed {
+            edge: crate::graph::EdgeId::from_event_key(1).expect("one names a slot"),
+            command: BString::from("exit"),
+            status: std::process::ExitStatus::from_raw(raw),
+        }
+    }
+
+    // [spec:ronin:req:compat.command-runtime/test]
+    // [spec:ronin:req:product.build-outcome/test]
+    #[test]
+    fn a_stopped_build_reports_ninjas_reason_and_the_failing_status() {
+        // Exhausting the allowance says the build was cut off; having allowance
+        // left says it went as far as everything not behind a failure allowed.
+        let cut_off = BuildStop::from_failure(command_failure(7 << 8), 1, 1, 1);
+        assert_eq!(cut_off.to_string(), "subcommand failed");
+        let plural = BuildStop::from_failure(command_failure(7 << 8), 2, 2, 2);
+        assert_eq!(plural.to_string(), "subcommands failed");
+        let exhausted = BuildStop::from_failure(command_failure(7 << 8), 1, usize::MAX, usize::MAX);
+        assert_eq!(
+            exhausted.to_string(),
+            "cannot make progress due to previous errors"
+        );
+        let interrupted =
+            BuildStop::from_failure(BuildError::Interrupted { status: None }, 1, 1, 1);
+        assert_eq!(interrupted.to_string(), "interrupted by user");
+
+        // An error that is not a command's own status keeps its description,
+        // because a summary would be the only account of what went wrong.
+        let internal = BuildError::UnsupportedDepsType {
+            edge: crate::graph::EdgeId::from_event_key(1).expect("one names a slot"),
+            deps_type: "clang".to_owned(),
+        };
+        let other = BuildStop::from_failure(internal, 1, 1, 1);
+        assert_eq!(other.to_string(), "unsupported deps type 'clang'");
+
+        let stopped = BuildError::Stopped {
+            reason: cut_off,
+            status: 7,
+        };
+        assert_eq!(stopped.to_string(), "build stopped: subcommand failed.");
+        assert_eq!(stopped.exit_code(), 7);
+        assert_eq!(command_failure(7 << 8).exit_code(), 7);
+        assert_eq!(BuildError::Interrupted { status: None }.exit_code(), 130);
+        assert_eq!(
+            BuildError::InvalidDepsEncoding {
+                edge: crate::graph::EdgeId::from_event_key(1).expect("one names a slot"),
+            }
+            .exit_code(),
+            1
+        );
+    }
+
+    // [spec:ronin:req:compat.cli-and-tools/test]
+    #[test]
+    fn a_directory_that_cannot_be_entered_is_reported_in_ninjas_words() {
+        let error = CliError::ChangeDirectory {
+            path: BString::from("nope"),
+            source: io::Error::from_raw_os_error(2),
+        };
+        // Ninja quotes strerror; Rust appends an error number that no Ninja
+        // diagnostic carries.
+        assert_eq!(
+            error.to_string(),
+            "fatal: chdir to 'nope' - No such file or directory"
+        );
+        let synthetic = CliError::ChangeDirectory {
+            path: BString::from("nope"),
+            source: io::Error::new(io::ErrorKind::NotADirectory, "not a directory"),
+        };
+        assert_eq!(
+            synthetic.to_string(),
+            "fatal: chdir to 'nope' - not a directory"
+        );
     }
 
     #[test]

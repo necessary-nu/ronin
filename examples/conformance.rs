@@ -290,6 +290,241 @@ fn compare_case(
     ))
 }
 
+/// One build whose failure and directory handling must match Ninja exactly.
+///
+/// These run from a parent directory with `-C`, because where the build says it
+/// is going is as much a part of the contract as what it says when it stops:
+/// editors resolve the relative paths in compiler diagnostics against that line.
+struct BuildCase {
+    name: &'static str,
+    manifest: &'static str,
+    arguments: &'static [&'static str],
+    /// Files to create besides `source`.
+    extra: &'static [(&'static str, &'static str)],
+    /// Backdate the manifest, so a generator edge has something to do. Without
+    /// it a manifest-regeneration case is already up to date and proves nothing.
+    stale_manifest: bool,
+}
+
+const BUILD_CASES: &[BuildCase] = &[
+    BuildCase {
+        name: "failure propagates the command status",
+        manifest: "rule f\n  command = exit 7\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "quiet suppresses the directory line but not the failure",
+        manifest: "rule f\n  command = exit 7\nbuild a: f\n",
+        arguments: &["-C", "@DIR@", "--quiet"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a killed command reports the shell's status",
+        manifest: "rule f\n  command = kill -KILL $$\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a terminated command reads as an interrupt",
+        manifest: "rule f\n  command = kill -TERM $$\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a quit command is an ordinary failure",
+        manifest: "rule f\n  command = kill -QUIT $$\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "keep-going carries the last failure out",
+        manifest: TWO_FAILURES,
+        arguments: &["-C", "@DIR@", "-k", "0", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "stopping at the first failure carries that one out",
+        manifest: TWO_FAILURES,
+        arguments: &["-C", "@DIR@", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "an exhausted allowance above one reports the plural",
+        manifest: TWO_FAILURES,
+        arguments: &["-C", "@DIR@", "-k", "2", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "an unexhausted allowance reports lost progress",
+        manifest: TWO_FAILURES,
+        arguments: &["-C", "@DIR@", "-k", "3", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "work behind a failure cannot proceed",
+        manifest: "rule f\n  command = exit 3\nrule cp\n  command = cp $in $out\n\
+                   build a: f\nbuild b: cp a\ndefault b\n",
+        arguments: &["-C", "@DIR@", "-k", "0", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a console command owns the terminal while it fails",
+        manifest: "rule f\n  command = exit 7\n  pool = console\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a missing input is an error, not a build outcome",
+        manifest: "rule cp\n  command = cp $in $out\nbuild a: cp nosuch\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "the directory is announced before it is entered",
+        manifest: COPY_ONE,
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a directory that cannot be entered is still named",
+        manifest: COPY_ONE,
+        arguments: &["-C", "@DIR@/nope"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "repeated -C does not compose",
+        manifest: COPY_ONE,
+        arguments: &["-C", "@DIR@", "-C", "nested"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a tool suppresses the directory line",
+        manifest: COPY_ONE,
+        arguments: &["-C", "@DIR@", "-t", "targets"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a dry run still announces the directory",
+        manifest: COPY_ONE,
+        arguments: &["-C", "@DIR@", "-n"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a failing manifest regeneration is an error against the manifest",
+        manifest: "rule regen\n  command = exit 4\n  generator = 1\n\
+                   build build.ninja: regen conf\nrule cp\n  command = cp $in $out\n\
+                   build a: cp source\ndefault a\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[("conf", "conf\n")],
+        stale_manifest: true,
+    },
+];
+
+const COPY_ONE: &str = "rule cp\n  command = cp $in $out\nbuild a: cp source\n";
+const TWO_FAILURES: &str = "rule f\n  command = exit 3\nrule g\n  command = exit 5\n\
+                            build a: f\nbuild b: g\ndefault a b\n";
+
+/// Removes the differences the compatibility contract requires.
+///
+/// The product name is Ronin's own and the temporary path differs per run;
+/// everything else is compared byte for byte. The name is only replaced at the
+/// start of a line and only with its colon, so a stray mention inside a path or
+/// a message stays a real difference.
+fn normalize(output: &[u8], directory: &Path) -> Vec<u8> {
+    let text = String::from_utf8_lossy(output).into_owned();
+    let text = text.replace(&directory.display().to_string(), "@DIR@");
+    let mut normalized = String::with_capacity(text.len());
+    for line in text.split_inclusive('\n') {
+        match line
+            .strip_prefix("ninja: ")
+            .or_else(|| line.strip_prefix("ronin: "))
+        {
+            Some(rest) => {
+                normalized.push_str("@TOOL@: ");
+                normalized.push_str(rest);
+            }
+            None => normalized.push_str(line),
+        }
+    }
+    normalized.into_bytes()
+}
+
+fn compare_build_case(ninja: &Path, ronin: &Path, case: &BuildCase) -> Result<(), String> {
+    let mut rendered = Vec::new();
+    for tool in [ninja, ronin] {
+        let parent = TemporaryDirectory::new("case").map_err(|error| error.to_string())?;
+        let directory = parent.0.join("work");
+        fs::create_dir(&directory).map_err(|error| error.to_string())?;
+        fs::create_dir(directory.join("nested")).map_err(|error| error.to_string())?;
+        for (name, contents) in case.extra {
+            fs::write(directory.join(name), contents).map_err(|error| error.to_string())?;
+        }
+        fs::write(directory.join("source"), "source\n").map_err(|error| error.to_string())?;
+        fs::write(directory.join("build.ninja"), case.manifest)
+            .map_err(|error| error.to_string())?;
+        if case.stale_manifest {
+            backdate(&directory.join("build.ninja"))?;
+        }
+        let arguments = case
+            .arguments
+            .iter()
+            .map(|argument| argument.replace("@DIR@", &directory.display().to_string()))
+            .collect::<Vec<_>>();
+        let borrowed = arguments.iter().map(String::as_str).collect::<Vec<_>>();
+        let output = command_output(tool, &borrowed, &parent.0)?;
+        rendered.push((
+            output.status.code(),
+            normalize(&output.stdout, &directory),
+            normalize(&output.stderr, &directory),
+        ));
+    }
+    let (ninja_result, ronin_result) = (&rendered[0], &rendered[1]);
+    if ninja_result == ronin_result {
+        return Ok(());
+    }
+    Err(format!(
+        "build case '{}' differs\n\
+         Ninja rc={:?}\nstdout:\n{}\nstderr:\n{}\n\
+         Ronin rc={:?}\nstdout:\n{}\nstderr:\n{}",
+        case.name,
+        ninja_result.0,
+        String::from_utf8_lossy(&ninja_result.1),
+        String::from_utf8_lossy(&ninja_result.2),
+        ronin_result.0,
+        String::from_utf8_lossy(&ronin_result.1),
+        String::from_utf8_lossy(&ronin_result.2)
+    ))
+}
+
+/// Ages a file so an edge that depends on a newer one has work to do.
+fn backdate(path: &Path) -> Result<(), String> {
+    let file = fs::File::options()
+        .write(true)
+        .open(path)
+        .map_err(|error| error.to_string())?;
+    let stale = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+    file.set_times(fs::FileTimes::new().set_modified(stale))
+        .map_err(|error| error.to_string())
+}
+
 fn verify_state_signatures(directory: &Path) -> Result<(), String> {
     let log = fs::read(directory.join(".ninja_log")).map_err(|error| error.to_string())?;
     if !log.starts_with(b"# ninja log v7\n") {
@@ -476,7 +711,14 @@ fn run(config: &Config) -> Result<(), String> {
     }
     verify_state_signatures(&fixture.0)?;
     compare_log_content(&ninja, &config.ronin, &fixture.0)?;
+    for case in BUILD_CASES {
+        compare_build_case(&ninja, &config.ronin, case)?;
+    }
     println!("differential: 10 CLI/tool cases matched");
+    println!(
+        "build outcome: {} failure and directory cases matched",
+        BUILD_CASES.len()
+    );
     println!("persistence: Ninja → Ronin → Ninja log/deps round trip passed");
     println!("log content: build-log records and dry-run inertness matched");
     Ok(())

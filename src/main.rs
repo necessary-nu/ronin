@@ -81,8 +81,13 @@ fn main() {
                     std::process::exit(1);
                 }
             }
-            if let Some(signal) = signal_handlers.interrupted() {
-                signal.reraise();
+            // [spec:ronin:req:product.build-outcome]
+            // Ninja leaves with 130 rather than dying by the signal it caught,
+            // so an interrupt reports the same status whether it arrived while
+            // the build was running or before it started. C samurai re-raised
+            // here; Ninja is the contract.
+            if signal_handlers.interrupted().is_some() {
+                std::process::exit(ronin::INTERRUPTED_EXIT_CODE);
             }
             std::process::exit(1);
         }

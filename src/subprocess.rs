@@ -710,15 +710,22 @@ fn terminate_and_reap(child: &mut RunningChild) {
     let _ = child.child.wait();
 }
 
+/// Whether a child's death reads as the user interrupting the build.
+///
+/// Ninja counts exactly `SIGINT`, `SIGTERM` and `SIGHUP`, and deliberately not
+/// `SIGQUIT` — which Ronin does handle when the signal arrives at the build tool
+/// itself, but which in a child is an ordinary failure. A build stops on this
+/// without reporting the command as failed, because the command did not fail —
+/// the whole build was being brought down around it.
+// [spec:ronin:req:compat.process-integration]
 pub(crate) fn status_interrupted(status: std::process::ExitStatus) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
-        status
-            .signal()
-            .and_then(|raw| usize::try_from(raw).ok())
-            .and_then(Signal::from_raw)
-            .is_some()
+        matches!(
+            status.signal(),
+            Some(libc_signal::SIGINT | libc_signal::SIGTERM | libc_signal::SIGHUP)
+        )
     }
     #[cfg(not(unix))]
     {
@@ -726,6 +733,48 @@ pub(crate) fn status_interrupted(status: std::process::ExitStatus) -> bool {
         false
     }
 }
+
+#[cfg(unix)]
+mod libc_signal {
+    pub(super) const SIGHUP: i32 = rustix::process::Signal::HUP.as_raw();
+    pub(super) const SIGINT: i32 = rustix::process::Signal::INT.as_raw();
+    pub(super) const SIGTERM: i32 = rustix::process::Signal::TERM.as_raw();
+}
+
+/// Ninja's interpretation of a finished child's wait status.
+///
+/// A child that exited reports its own code, transparently — this is the number
+/// a build tool's own exit status carries, so `exit 3` has to stay 3 all the way
+/// out. A child killed by an interrupting signal reports 130. Anything else
+/// takes Ninja's remaining branch, `raw wait status + 128`, which is not the
+/// same as `128 + signal`: the raw status still has the core-dump bit set, so a
+/// dumping `SIGQUIT` reports 259 rather than 131. That is Ninja's arithmetic and
+/// it is visible in the `FAILED: [code=…]` line, so it is reproduced rather than
+/// corrected.
+// [spec:ronin:req:compat.process-integration]
+pub(crate) fn exit_status_code(status: std::process::ExitStatus) -> i32 {
+    if let Some(code) = status.code() {
+        return code;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if status_interrupted(status) {
+            return INTERRUPTED_EXIT_CODE;
+        }
+        status.into_raw().wrapping_add(128)
+    }
+    #[cfg(not(unix))]
+    {
+        1
+    }
+}
+
+/// Ninja's `ExitInterrupted`, the status a build reports when it was cut short.
+///
+/// Ninja exits with this rather than dying by the signal it caught, so the
+/// executable reports it the same way however far the build had got.
+pub const INTERRUPTED_EXIT_CODE: i32 = 130;
 
 // [spec:ronin:def:os.osspawn-fn]
 // [spec:ronin:sem:os.osspawn-fn]
@@ -996,6 +1045,42 @@ fn run_shell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:product.build-outcome/test]
+    #[test]
+    fn a_finished_child_is_read_the_way_ninja_reads_it() {
+        use std::os::unix::process::ExitStatusExt as _;
+        let status = std::process::ExitStatus::from_raw;
+
+        // A child that exited reports its own code, which is the number a
+        // caller's CI reads to tell a compile error from an OOM kill.
+        assert_eq!(exit_status_code(status(7 << 8)), 7);
+        assert_eq!(exit_status_code(status(0)), 0);
+
+        // The signals that mean the build is being brought down.
+        for signal in [
+            libc_signal::SIGINT,
+            libc_signal::SIGTERM,
+            libc_signal::SIGHUP,
+        ] {
+            assert!(status_interrupted(status(signal)));
+            assert_eq!(exit_status_code(status(signal)), INTERRUPTED_EXIT_CODE);
+        }
+
+        // SIGQUIT is not one of them: Ronin handles it when it arrives here,
+        // but in a child it is an ordinary failure.
+        let quit = 3;
+        assert!(!status_interrupted(status(quit)));
+        assert_eq!(exit_status_code(status(quit)), 131);
+
+        // Ninja adds 128 to the raw wait status rather than to the signal, so a
+        // dumping SIGQUIT reports 259 — reproduced because it is visible in the
+        // `FAILED: [code=…]` line.
+        assert_eq!(exit_status_code(status(quit | 0x80)), 259);
+        assert_eq!(exit_status_code(status(9)), 137);
+    }
 
     #[test]
     fn a_child_is_only_moved_to_a_directory_it_is_not_already_in() {

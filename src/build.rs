@@ -1,6 +1,6 @@
 //! Build scheduling state translated from `build.c`.
 
-use crate::error::{BuildError, BuildOperation, ProcessError};
+use crate::error::{BuildError, BuildOperation, BuildStop, ProcessError};
 use crate::graph::{
     edgeadddeps, edgehash, nodeget, nodestat_with, recompute_dirty_with_validations,
     recompute_edge_dirty_with, EdgeId, Graph, NodeId, PathStyle, TraversalScratch,
@@ -1205,32 +1205,34 @@ impl<'a> Builder<'a> {
                 self.command_finished(edge, &command, Some(1), &visible_output)?;
                 return Err(error);
             }
+            // An interrupted command is not a failed one, so it is never
+            // reported as failed: Ninja tests for the interrupt before it
+            // finishes the command, which is why a build cut short by SIGTERM
+            // prints no `FAILED:` line. Half-written outputs still go.
+            if status_interrupted(status) {
+                let disk = self.disk.clone();
+                for (output, old_mtime) in self.graph.edge(edge).out.iter().zip(&old_mtimes) {
+                    let path = self.graph.node_path(*output).to_owned();
+                    if disk
+                        .stat(path.to_path().expect("byte paths are valid on Unix"))
+                        .ok()
+                        != Some(*old_mtime)
+                    {
+                        let _ =
+                            disk.remove_file(path.to_path().expect("byte paths are valid on Unix"));
+                    }
+                }
+                return Err(BuildError::Interrupted {
+                    status: Some(status),
+                });
+            }
             self.command_finished(
                 edge,
                 &command,
-                (!status.success()).then(|| Self::exit_code(status)),
+                (!status.success()).then(|| crate::subprocess::exit_status_code(status)),
                 &visible_output,
             )?;
             if !status.success() {
-                if status_interrupted(status) {
-                    let disk = self.disk.clone();
-                    for (output, old_mtime) in self.graph.edge(edge).out.iter().zip(&old_mtimes) {
-                        let path = self.graph.node_path(*output).to_owned();
-                        if disk
-                            .stat(path.to_path().expect("byte paths are valid on Unix"))
-                            .ok()
-                            != Some(*old_mtime)
-                        {
-                            let _ = disk
-                                .remove_file(path.to_path().expect("byte paths are valid on Unix"));
-                        }
-                    }
-                }
-                if status_interrupted(status) {
-                    return Err(BuildError::Interrupted {
-                        status: Some(status),
-                    });
-                }
                 return Err(BuildError::SubcommandFailed {
                     edge,
                     command: command.command,
@@ -1696,10 +1698,28 @@ impl<'a> Builder<'a> {
             }
         }
 
+        // Ninja carries the last failing command's status out of the build, and
+        // records the last failure as it goes; those are the same thing, so the
+        // status is read back off the error rather than tracked beside it.
+        // [spec:ronin:req:product.build-outcome]
         let outcome = if let Some(error) = last_error {
-            Err(error)
+            Err(BuildError::Stopped {
+                status: error.exit_code(),
+                reason: BuildStop::from_failure(
+                    error,
+                    failures,
+                    failure_limit,
+                    self.options.maxfail,
+                ),
+            })
         } else if self.plan.more_to_do() {
-            Err(BuildError::DependenciesBlocked)
+            // Ninja returns success here, having recorded no failure to take a
+            // status from. A build that did not finish must not report that it
+            // did, so this one deliberately does not.
+            Err(BuildError::Stopped {
+                status: 1,
+                reason: BuildStop::Stuck,
+            })
         } else {
             Ok(())
         };

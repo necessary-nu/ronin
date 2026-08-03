@@ -329,6 +329,11 @@ struct RunInvocation {
     /// Warnings raised by the command line itself, before any manifest is read.
     warnings: Vec<String>,
     working_directory: crate::os::WorkingDirectory,
+    /// The directory named by `-C`, applied once after the whole command line
+    /// is read. Ninja keeps a single `working_dir` that each `-C` overwrites,
+    /// so repeated flags do not compose: the last one is resolved against the
+    /// directory Ninja was invoked from, not against the one before it.
+    change_directory: Option<BString>,
     manifest: BString,
     targets: Vec<BString>,
     selected_tool: Option<crate::tool::Tool>,
@@ -337,7 +342,9 @@ struct RunInvocation {
 
 enum RunAction {
     Immediate(RunResult),
-    Execute(RunInvocation),
+    /// Boxed because an invocation is far larger than an immediate result and
+    /// this is returned once per process.
+    Execute(Box<RunInvocation>),
 }
 
 const fn debugging_modes() -> &'static str {
@@ -400,7 +407,7 @@ fn emit_parser_warnings(
         Some(sink) => {
             sink.write_all(&rendered)
                 .and_then(|()| sink.flush())
-                .map_err(|source| CliError::CurrentDirectory { source })?;
+                .map_err(CliError::write_output)?;
         }
         None => buffered.extend_from_slice(&rendered),
     }
@@ -499,7 +506,8 @@ fn expand_status_format(format: &str) -> CliResult<String> {
 // [spec:ronin:sem:os.oschdir-fn]
 // [spec:ronin:def:os-posix.oschdir-fn]
 // [spec:ronin:sem:os-posix.oschdir-fn]
-fn change_working_directory(
+// [spec:ronin:req:compat.cli-and-tools]
+fn enter_directory(
     working_directory: &mut crate::os::WorkingDirectory,
     directory: &BString,
 ) -> CliResult<()> {
@@ -571,6 +579,7 @@ fn parse_run_arguments(
         parse_options: ParseOptions::default(),
         warnings: Vec::new(),
         working_directory: working_directory.clone(),
+        change_directory: None,
         manifest: DEFAULT_MANIFEST.into(),
         targets: Vec::new(),
         selected_tool: None,
@@ -718,10 +727,7 @@ fn parse_run_arguments(
                             )?;
                             short = argument.len();
                             match option {
-                                b'C' => change_working_directory(
-                                    &mut invocation.working_directory,
-                                    &value,
-                                )?,
+                                b'C' => invocation.change_directory = Some(value),
                                 b'f' => invocation.manifest = value,
                                 b'j' => jobsflag(
                                     &mut invocation.build_options,
@@ -792,9 +798,7 @@ fn parse_run_arguments(
                                     invocation
                                         .tool_arguments
                                         .extend_from_slice(&arguments[index + 1..]);
-                                    invocation.build_options.working_directory =
-                                        invocation.working_directory.clone();
-                                    return Ok(RunAction::Execute(invocation));
+                                    return Ok(RunAction::Execute(Box::new(invocation)));
                                 }
                                 _ => unreachable!(),
                             }
@@ -811,8 +815,7 @@ fn parse_run_arguments(
         }
         index += 1;
     }
-    invocation.build_options.working_directory = invocation.working_directory.clone();
-    Ok(RunAction::Execute(invocation))
+    Ok(RunAction::Execute(Box::new(invocation)))
 }
 
 // [spec:ronin:req:compat.process-integration]
@@ -1023,12 +1026,17 @@ fn tool_result(output: impl AsRef<[u8]>) -> RunResult {
     tool_result_with(output, Vec::new())
 }
 
-fn tool_result_with(output: impl AsRef<[u8]>, stderr: Vec<u8>) -> RunResult {
+/// Ends output with a newline, as every Ninja run does that produced any.
+fn terminated(output: impl AsRef<[u8]>) -> Vec<u8> {
     let mut output = output.as_ref().to_vec();
     if !output.is_empty() && !matches!(output.last(), Some(b'\n' | b'\0')) {
         output.push(b'\n');
     }
-    RunResult::exit(output, stderr, 0)
+    output
+}
+
+fn tool_result_with(output: impl AsRef<[u8]>, stderr: Vec<u8>) -> RunResult {
+    RunResult::exit(terminated(output), stderr, 0)
 }
 
 fn finish_build_log(log: crate::log::BuildLog) -> Result<(), PersistenceError> {
@@ -1454,8 +1462,31 @@ fn run_bytes(
 ) -> CliResult<RunResult> {
     let mut invocation = match parse_run_arguments(arguments, &runner.working_directory)? {
         RunAction::Immediate(result) => return Ok(result),
-        RunAction::Execute(invocation) => invocation,
+        RunAction::Execute(invocation) => *invocation,
     };
+    // Deferred until the whole command line has been read, as Ninja defers it:
+    // the announcement has to know whether a tool was selected, and a flag that
+    // fails to parse has to fail before the directory moves under it.
+    let mut entering = None;
+    if let Some(directory) = invocation.change_directory.clone() {
+        if invocation.selected_tool.is_none() && !invocation.build_options.quiet {
+            // Ninja's announcement, funny quotes included: Emacs and every
+            // error parser that inherited GNU Make's convention read this line
+            // to resolve the relative paths a compiler prints, so the quoting
+            // is part of the interface rather than decoration.
+            let announcement = format!("{PRODUCT_NAME}: Entering directory `{directory}'");
+            // Written before the move so a directory that cannot be entered is
+            // still named on the way out.
+            if let Some(sink) = build_output.as_deref_mut() {
+                writeln!(sink, "{announcement}").map_err(CliError::write_output)?;
+                sink.flush().map_err(CliError::write_output)?;
+            } else {
+                entering = Some(announcement);
+            }
+        }
+        enter_directory(&mut invocation.working_directory, &directory)?;
+    }
+    invocation.build_options.working_directory = invocation.working_directory.clone();
     normalize_runtime_options(
         &mut invocation.build_options,
         runner.makeflags.as_deref(),
@@ -1475,7 +1506,9 @@ fn run_bytes(
         );
     }
 
-    let mut output = String::new();
+    // Carries the `-C` announcement when there was no sink to stream it to, so
+    // it still leads the output an embedding caller is handed.
+    let mut output = entering.take().unwrap_or_default();
     // Warnings raised while parsing, kept here only when the invocation has no
     // diagnostic sink to stream them to.
     let mut warnings = Vec::new();
@@ -1616,7 +1649,19 @@ fn run_bytes(
                 if !streaming {
                     append_output(&mut output, &String::from_utf8_lossy(&builder.build_output));
                 }
-                result?;
+                // Failing to regenerate the manifest is not a build outcome:
+                // Ninja names the manifest, reports it as an error, and leaves
+                // with a plain failure rather than the command's own status.
+                match result {
+                    Err(BuildError::Stopped { reason, .. }) => {
+                        return Err(BuildError::ManifestRebuild {
+                            path: invocation.manifest.clone(),
+                            reason,
+                        }
+                        .into())
+                    }
+                    other => other?,
+                }
                 Ok(rebuilt)
             })();
             drop(builder);
@@ -1646,6 +1691,9 @@ fn run_bytes(
         } else {
             invocation.targets.clone()
         };
+        // Set when the build ended without finishing, carrying Ninja's reason
+        // and the status to leave with.
+        let mut stopped = None;
         let (result, already_up_to_date) = {
             let streaming = build_output.is_some();
             let mut builder = if let Some(output) = build_output.as_deref_mut() {
@@ -1686,7 +1734,16 @@ fn run_bytes(
                 let result = builder.build();
                 let build_output = (!streaming)
                     .then(|| String::from_utf8_lossy(&builder.build_output).into_owned());
-                result?;
+                // A build that stops is a result, not a diagnostic: Ninja says
+                // so on stdout after the build's own output and exits with the
+                // failing command's status. Anything else is a genuine error.
+                match result {
+                    Err(BuildError::Stopped { reason, status }) => {
+                        stopped =
+                            Some((format!("{PRODUCT_NAME}: build stopped: {reason}."), status));
+                    }
+                    other => other?,
+                }
                 Ok(build_output.unwrap_or_default())
             })();
             (result, already_up_to_date)
@@ -1696,6 +1753,14 @@ fn run_bytes(
         append_output(&mut output, &result?);
         build_log_result?;
         deps_log_result?;
+        if let Some((message, status)) = stopped {
+            append_output(&mut output, &message);
+            return Ok(RunResult::exit(
+                terminated(output),
+                std::mem::take(&mut warnings),
+                status,
+            ));
+        }
         if already_up_to_date && output.is_empty() && !invocation.build_options.quiet {
             output = "ronin: no work to do.".into();
         }
@@ -1837,16 +1902,21 @@ mod tests {
     }
 
     // [spec:ronin:req:runtime.explicit-invocation-boundary/test]
+    // [spec:ronin:req:compat.cli-and-tools/test]
     #[test]
-    fn runner_resolves_sequential_changes_without_mutating_process_cwd() {
+    fn runner_resolves_the_last_change_without_mutating_process_cwd() {
         let original_directory = std::env::current_dir().unwrap();
         let base = std::env::temp_dir().join(format!(
             "ronin-runner-directory-{}-{}",
             std::process::id(),
             NEXT_RUN.fetch_add(1, Ordering::Relaxed)
         ));
-        let working_directory = base.join("first/second");
+        let working_directory = base.join("second");
         fs::create_dir_all(&working_directory).unwrap();
+        // Ninja keeps one directory that each -C overwrites, so this decoy is
+        // never entered: `second` resolves against the invocation directory,
+        // not against `first`.
+        fs::create_dir_all(base.join("first")).unwrap();
         fs::write(
             working_directory.join("rules.ninja"),
             "rule copy\n  command = cp $in $out\n",
@@ -1870,6 +1940,7 @@ mod tests {
             ])
             .unwrap();
         assert!(result.contains("cp input output"));
+        assert!(result.contains("Entering directory `second'"));
         assert_eq!(
             fs::read_to_string(working_directory.join("output")).unwrap(),
             "explicit directory"
