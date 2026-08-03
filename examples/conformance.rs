@@ -302,6 +302,125 @@ fn verify_state_signatures(directory: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// One `.ninja_log` record, as the file stores it.
+#[derive(Debug, PartialEq, Eq)]
+struct LogRecord {
+    start: i64,
+    end: i64,
+    output: String,
+    command_hash: String,
+}
+
+/// Read `.ninja_log` into records, ignoring the comment header.
+///
+/// The mtime column is deliberately dropped: it is the output's real
+/// modification time, so it differs between two runs of the same build for
+/// reasons that say nothing about compatibility.
+fn log_records(directory: &Path) -> Result<Vec<LogRecord>, String> {
+    let log =
+        fs::read_to_string(directory.join(".ninja_log")).map_err(|error| error.to_string())?;
+    parse_log_records(&log)
+}
+
+fn parse_log_records(log: &str) -> Result<Vec<LogRecord>, String> {
+    let mut records = Vec::new();
+    for line in log.lines().filter(|line| !line.starts_with('#')) {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        let [start, end, _mtime, output, hash] = fields[..] else {
+            return Err(format!("unparsable build log line: {line:?}"));
+        };
+        records.push(LogRecord {
+            start: start.parse().map_err(|_| format!("bad start: {line:?}"))?,
+            end: end.parse().map_err(|_| format!("bad end: {line:?}"))?,
+            output: output.to_owned(),
+            command_hash: hash.to_owned(),
+        });
+    }
+    records.sort_by(|left, right| left.output.cmp(&right.output));
+    Ok(records)
+}
+
+/// Build the fixture from scratch and return what the tool recorded.
+fn record_clean_build(tool: &Path, directory: &Path) -> Result<Vec<LogRecord>, String> {
+    for stale in [".ninja_log", ".ninja_deps", "object", "result", "object.d"] {
+        let path = directory.join(stale);
+        if path.exists() {
+            fs::remove_file(&path).map_err(|error| error.to_string())?;
+        }
+    }
+    successful_output(tool, &[], directory)?;
+    log_records(directory)
+}
+
+/// Compare what each tool writes into `.ninja_log`, not merely its signature.
+///
+/// The signature check alone let two real defects through: Ronin recorded
+/// every command with zeroed start and end times, which silently cost Ninja
+/// its progress prediction when it read one of our logs, and a dry run
+/// appended a full set of entries for commands it had not run. Both are
+/// invisible to a check that only reads the first line of the file.
+// [spec:ronin:req:compat.persistent-state]
+fn compare_log_content(ninja: &Path, ronin: &Path, directory: &Path) -> Result<(), String> {
+    let from_ninja = record_clean_build(ninja, directory)?;
+    let from_ronin = record_clean_build(ronin, directory)?;
+
+    let ninja_shape = from_ninja
+        .iter()
+        .map(|record| (&record.output, &record.command_hash))
+        .collect::<Vec<_>>();
+    let ronin_shape = from_ronin
+        .iter()
+        .map(|record| (&record.output, &record.command_hash))
+        .collect::<Vec<_>>();
+    if ninja_shape != ronin_shape {
+        return Err(format!(
+            "build log contents differ\nNinja: {from_ninja:?}\nRonin: {from_ronin:?}"
+        ));
+    }
+
+    // Durations are what Ninja reads back to weight its progress prediction,
+    // so a plausible ordering matters even though the values cannot match.
+    for record in &from_ronin {
+        if record.start > record.end {
+            return Err(format!(
+                "Ronin recorded a command ending before it began: {record:?}"
+            ));
+        }
+    }
+    if from_ronin
+        .iter()
+        .all(|record| record.start == 0 && record.end == 0)
+    {
+        return Err("Ronin recorded no command durations at all".into());
+    }
+
+    // A dry run must add nothing, and the tree has to have work in it for
+    // that to mean anything: on an up-to-date tree a dry run plans nothing and
+    // every tool passes trivially, which is how this defect survived being
+    // looked for the first time.
+    for stale in ["object", "result"] {
+        fs::remove_file(directory.join(stale)).map_err(|error| error.to_string())?;
+    }
+    let before = fs::read(directory.join(".ninja_log")).map_err(|error| error.to_string())?;
+    for tool in [ninja, ronin] {
+        let planned = successful_output(tool, &["-n"], directory)?;
+        if planned.stdout.is_empty() {
+            return Err(format!(
+                "{} planned no commands, so the dry-run check proves nothing",
+                tool.display()
+            ));
+        }
+        let after = fs::read(directory.join(".ninja_log")).map_err(|error| error.to_string())?;
+        if before != after {
+            return Err(format!(
+                "{} changed the build log during a dry run",
+                tool.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
 // [spec:ronin:req:compat.upstream-conformance]
 fn run(config: &Config) -> Result<(), String> {
     let revision = pinned_revision(&config.ninja_source)?;
@@ -356,8 +475,10 @@ fn run(config: &Config) -> Result<(), String> {
         ));
     }
     verify_state_signatures(&fixture.0)?;
+    compare_log_content(&ninja, &config.ronin, &fixture.0)?;
     println!("differential: 10 CLI/tool cases matched");
     println!("persistence: Ninja → Ronin → Ninja log/deps round trip passed");
+    println!("log content: build-log records and dry-run inertness matched");
     Ok(())
 }
 
@@ -366,5 +487,45 @@ fn main() {
     if let Err(error) = result {
         eprintln!("conformance: {error}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_log_records, LogRecord};
+
+    // [spec:ronin:req:compat.persistent-state/test]
+    #[test]
+    fn log_records_drop_the_header_and_the_mtime_column() {
+        let records = parse_log_records("# ninja log v7\n0\t305\t17856\tobject\tabc\n")
+            .expect("a well-formed log parses");
+        assert_eq!(
+            records,
+            vec![LogRecord {
+                start: 0,
+                end: 305,
+                output: "object".to_owned(),
+                command_hash: "abc".to_owned(),
+            }]
+        );
+    }
+
+    // [spec:ronin:req:compat.persistent-state/test]
+    #[test]
+    fn log_records_sort_by_output_so_scheduling_order_does_not_matter() {
+        let records = parse_log_records("0\t1\t9\tresult\tzz\n1\t2\t9\tobject\taa\n")
+            .expect("a well-formed log parses");
+        let outputs = records
+            .iter()
+            .map(|record| record.output.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(outputs, ["object", "result"]);
+    }
+
+    // [spec:ronin:req:compat.persistent-state/test]
+    #[test]
+    fn a_malformed_log_line_is_rejected_rather_than_skipped() {
+        assert!(parse_log_records("0\t1\tobject\n").is_err());
+        assert!(parse_log_records("x\t1\t9\tobject\taa\n").is_err());
     }
 }

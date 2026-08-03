@@ -3181,4 +3181,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-log-content-check
+        title "Compare build-log content, not just its signature"
+        log (
+            {
+                at 2026-08-03T11:57:51.080570854Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-03T11:58:11.051264472Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "The conformance harness now compares what goes into `.ninja_log`, not just the signature on its first line. Two real defects had already walked past the old check.\n\n`verify_state_signatures` read the file, confirmed it began `# ninja log v7`, and stopped. Under that, Ronin recorded every command with zeroed start and end times — costing Ninja its progress prediction whenever it read one of our logs — and a dry run appended a full set of entries for commands it had not run. Both files had perfectly good signatures.\n\nThe new check builds the same fixture from clean with each tool and compares the records: same outputs, same command hashes, in the same order. Timing values cannot match between two runs and are not compared to each other; what is checked is that they are coherent — no command ending before it began, and not every duration zero, which is precisely the shape the old bug had. The mtime column is dropped entirely, since it is the output's real modification time and differs between runs for reasons that say nothing about compatibility.\n\nThen it asserts a dry run changes nothing.\n\nThat last part is the piece worth recording, because the first version of it passed with the bug deliberately put back. The check ran its dry run on the tree the clean build had just left up to date, so nothing was planned, nothing was written, and every tool passed trivially — including a Ronin patched to log on dry runs. The check was asserting that a no-op is a no-op. It now deletes two outputs first so there is real work to plan, and refuses to draw any conclusion if the tool plans nothing, on the grounds that a check which cannot fail is worse than no check because it reads as coverage.\n\nBoth branches were then verified by reintroducing each defect and watching the harness reject it: `Ronin recorded no command durations at all` for the zeroed timings, and `changed the build log during a dry run` for the other. The dry-run defect is also caught earlier and more cheaply by the unit test added when it was fixed — which is why the first attempt at verifying it here proved nothing, since `cargo test` failed before the harness ran. Checking the harness in isolation, against a binary built with the bug, is what exposed that the harness itself was not doing its job.\n\nConformance now reports five lines rather than four: 425 upstream tests, 10 differential cases, the persistence round trip, and build-log records with dry-run inertness."
+            }
+        )
+    }
 )
