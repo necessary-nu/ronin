@@ -112,15 +112,16 @@ pub(crate) struct ProcessSupervisor<External = ()> {
     children: HashMap<EdgeId, (u32, bool)>,
     interrupted: Option<Signal>,
     working_directory: PathBuf,
+    shell: ShellMode,
 }
 
 impl<External> ProcessSupervisor<External> {
     #[cfg(test)]
     pub(crate) fn new() -> ProcessResult<Self> {
-        Self::in_directory(Path::new(""))
+        Self::in_directory(Path::new(""), ShellMode::default())
     }
 
-    pub(crate) fn in_directory(working_directory: &Path) -> ProcessResult<Self> {
+    pub(crate) fn in_directory(working_directory: &Path, shell: ShellMode) -> ProcessResult<Self> {
         let (sender, receiver) = mpsc::channel();
         #[cfg(unix)]
         let poller =
@@ -167,6 +168,7 @@ impl<External> ProcessSupervisor<External> {
             read_buffer: vec![0; 16 * 1024],
             children: HashMap::default(),
             interrupted: None,
+            shell,
             working_directory: directory_to_impose(working_directory),
         })
     }
@@ -369,17 +371,32 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             return Ok(());
         }
 
-        let mut shell = shell_command(&command, &self.working_directory);
-        if !use_console {
-            shell.process_group(0);
-        }
-        let output = configure_output(&mut shell, edge, &command, use_console)?;
-        let child = shell.spawn().map_err(|source| ProcessError::Shell {
-            edge,
-            command: command.clone(),
-            operation: ShellOperation::Spawn,
-            source,
-        })?;
+        let mut mode = self.shell.clone();
+        let (child, output) = loop {
+            let mut shell = shell_command(&command, &self.working_directory, &mode);
+            if !use_console {
+                shell.process_group(0);
+            }
+            let output = configure_output(&mut shell, edge, &command, use_console)?;
+            match shell.spawn() {
+                Ok(child) => break (child, output),
+                // A direct spawn that cannot find the program has not run
+                // anything, so hand the command to the shell and let it
+                // produce the diagnostic and exit status it always would.
+                // Emulating that text here would pin us to one shell's wording.
+                Err(source) if retry_with_shell(&mode, &source) => {
+                    mode = ShellMode::Compat;
+                }
+                Err(source) => {
+                    return Err(ProcessError::Shell {
+                        edge,
+                        command: command.clone(),
+                        operation: ShellOperation::Spawn,
+                        source,
+                    })
+                }
+            }
+        };
         let process_group = !use_console;
         let mut child = RunningChild {
             child,
@@ -760,11 +777,109 @@ fn directory_to_impose(working_directory: &Path) -> PathBuf {
     }
 }
 
-fn shell_command(command: &BString, working_directory: &Path) -> Command {
-    let mut shell = Command::new("/bin/sh");
-    shell
-        .arg("-c")
-        .arg(command.to_os_str().expect("byte strings are valid on Unix"));
+/// The shell Ninja hands commands to on this platform.
+const SYSTEM_SHELL: &str = "/bin/sh";
+
+/// How a command string is turned into a process.
+///
+/// Ninja hands every command to `/bin/sh -c` on Unix, which makes the shell
+/// the interpreter for the `command` binding — its quoting rules, its
+/// operators, its `VAR=value` prefixes. That is the language definition, not
+/// an implementation detail, so nothing here may change what a command *means*
+/// — only whether a shell process is spawned to arrive at that meaning.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) enum ShellMode {
+    /// Spawn a shell only for commands that need one.
+    #[default]
+    Auto,
+    /// Always spawn the system shell, exactly as Ninja does.
+    Compat,
+    /// Always spawn this shell instead of the system one.
+    Program(PathBuf),
+}
+
+/// Bytes that mean something to `sh` beyond being part of a word.
+///
+/// Deliberately over-broad. `#` only opens a comment at the start of a word
+/// and `~` only expands there, but a command containing either anywhere falls
+/// back to the shell rather than inviting an argument about where exactly.
+/// Being wrong here does not produce a crash, it produces a build that ran a
+/// different command than it was told to, so the set errs toward the shell.
+const SHELL_SIGNIFICANT: &[u8] = b"|&;<>()$`\\\"'*?[]~#{}!\n\t\r";
+
+/// Whether `sh` would do anything to this command beyond splitting it.
+///
+/// A command free of significant bytes is one `sh` would split on spaces and
+/// then execute, resolving the first word through `PATH` — which is precisely
+/// what spawning it directly does. A leading `VAR=value` is rejected even
+/// though `=` is not otherwise significant, because to the shell it is an
+/// assignment and to `execvp` it is the name of a program.
+pub(crate) fn needs_shell(command: &[u8]) -> bool {
+    if command.iter().any(|byte| SHELL_SIGNIFICANT.contains(byte)) {
+        return true;
+    }
+    let mut words = command
+        .split(|byte| *byte == b' ')
+        .filter(|word| !word.is_empty());
+    let Some(first) = words.next() else {
+        // Nothing to run: let the shell produce its own answer for that.
+        return true;
+    };
+    first.contains(&b'=')
+}
+
+/// Whether a failed direct spawn should be retried through the shell.
+fn retry_with_shell(mode: &ShellMode, source: &std::io::Error) -> bool {
+    matches!(mode, ShellMode::Auto)
+        && matches!(
+            source.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::PermissionDenied
+        )
+}
+
+/// Split a command that [`needs_shell`] rejected into its argument vector.
+fn direct_argv(command: &[u8]) -> Vec<&[u8]> {
+    command
+        .split(|byte| *byte == b' ')
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+/// Build the process that runs `command` under `mode`.
+///
+/// `Auto` skips the shell only where the shell provably has nothing to do;
+/// every other command, and every command at all under `Compat`, is handed to
+/// a shell exactly as Ninja hands it over.
+fn shell_command(command: &BString, working_directory: &Path, mode: &ShellMode) -> Command {
+    let mut shell = match mode {
+        ShellMode::Auto if !needs_shell(command.as_bytes()) => {
+            let argv = direct_argv(command.as_bytes());
+            let mut direct =
+                Command::new(argv[0].to_os_str().expect("byte strings are valid on Unix"));
+            for argument in &argv[1..] {
+                direct.arg(
+                    argument
+                        .to_os_str()
+                        .expect("byte strings are valid on Unix"),
+                );
+            }
+            direct
+        }
+        ShellMode::Program(program) => {
+            let mut shell = Command::new(program);
+            shell
+                .arg("-c")
+                .arg(command.to_os_str().expect("byte strings are valid on Unix"));
+            shell
+        }
+        ShellMode::Auto | ShellMode::Compat => {
+            let mut shell = Command::new(SYSTEM_SHELL);
+            shell
+                .arg("-c")
+                .arg(command.to_os_str().expect("byte strings are valid on Unix"));
+            shell
+        }
+    };
     #[cfg(unix)]
     shell.stdin(null_stdin());
     #[cfg(not(unix))]
@@ -1064,5 +1179,72 @@ mod tests {
         assert!(output.status.success());
         assert_eq!(output.stdout, b"outerrend");
         assert!(output.stderr.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod launcher_tests {
+    use super::{direct_argv, needs_shell};
+
+    // [spec:ronin:req:compat.process-integration/test]
+    #[test]
+    fn a_plain_command_does_not_need_a_shell() {
+        assert!(!needs_shell(b"touch jobs/0"));
+        assert!(!needs_shell(b"/usr/bin/c++ -DFOO=1 -O3 -c a.cc -o a.o"));
+        assert!(!needs_shell(b"cp  a   b"));
+    }
+
+    // [spec:ronin:req:compat.process-integration/test]
+    #[test]
+    fn anything_the_shell_would_interpret_keeps_the_shell() {
+        for command in [
+            &b"cd x && y"[..],
+            b"a; b",
+            b"a | b",
+            b"a > out",
+            b"a < in",
+            b"echo \"hi\"",
+            b"echo 'hi'",
+            b"ls *.c",
+            b"ls a?.c",
+            b"echo $HOME",
+            b"echo `date`",
+            b"echo ~",
+            b"a # comment",
+            b"a\tb",
+            b"a\nb",
+            b"(a)",
+            b"a \\ b",
+        ] {
+            assert!(
+                needs_shell(command),
+                "{:?} must keep the shell",
+                String::from_utf8_lossy(command)
+            );
+        }
+    }
+
+    // [spec:ronin:req:compat.process-integration/test]
+    #[test]
+    fn a_leading_assignment_is_the_shells_business() {
+        // `execvp` would look for a program literally named `FOO=1`.
+        assert!(needs_shell(b"FOO=1 cmd"));
+        assert!(needs_shell(b"A=b C=d cmd"));
+        // Not an assignment: the word is an argument, not the program.
+        assert!(!needs_shell(b"cmd FOO=1"));
+    }
+
+    // [spec:ronin:req:compat.process-integration/test]
+    #[test]
+    fn an_empty_command_is_left_to_the_shell() {
+        assert!(needs_shell(b""));
+        assert!(needs_shell(b"   "));
+    }
+
+    // [spec:ronin:req:compat.process-integration/test]
+    #[test]
+    fn splitting_collapses_runs_of_spaces_as_the_shell_would() {
+        assert_eq!(direct_argv(b"cp  a   b"), vec![&b"cp"[..], b"a", b"b"]);
+        assert_eq!(direct_argv(b" touch x "), vec![&b"touch"[..], b"x"]);
     }
 }

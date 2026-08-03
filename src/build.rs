@@ -59,6 +59,7 @@ pub(crate) struct BuildOptions {
     pub(crate) quiet: bool,
     pub(crate) statusfmt: String,
     pub(crate) status_from_cli: bool,
+    pub(crate) shell: crate::subprocess::ShellMode,
     pub(crate) style: OutputStyle,
     pub(crate) color: ColorChoice,
     pub(crate) terminal: TerminalContext,
@@ -81,6 +82,7 @@ impl Default for BuildOptions {
             quiet: false,
             statusfmt: "[%f/%t] ".into(),
             status_from_cli: false,
+            shell: crate::subprocess::ShellMode::default(),
             style: OutputStyle::Ninja,
             color: ColorChoice::Auto,
             terminal: TerminalContext::default(),
@@ -1549,6 +1551,7 @@ impl<'a> Builder<'a> {
         let mut console_running = false;
         let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::in_directory(
             self.options.working_directory.as_path(),
+            self.options.shell.clone(),
         )?;
         let mut jobserver = if self.options.dryrun {
             None

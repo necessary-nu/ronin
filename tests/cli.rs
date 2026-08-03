@@ -421,3 +421,58 @@ fn a_self_referencing_phony_warns_by_default_and_errors_on_request() {
     assert!(error.to_string().contains("dependency cycle"), "{error}");
     fs::remove_dir_all(directory).unwrap();
 }
+
+// [spec:ronin:req:product.command-execution/test]
+#[test]
+fn a_command_needing_no_shell_behaves_the_same_with_and_without_one() {
+    let directory = test_directory("launcher-equivalence");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule cc\n  command = touch $out\nbuild out: cc\n",
+    )
+    .unwrap();
+    let mut outputs = Vec::new();
+    for arguments in [
+        vec!["ronin".to_string(), "out".to_string()],
+        vec!["ronin".into(), "--compat".into(), "out".into()],
+    ] {
+        fs::remove_file(directory.join("out")).ok();
+        fs::remove_file(directory.join(".ninja_log")).ok();
+        outputs.push(
+            ronin::Runner::new(&directory)
+                .unwrap()
+                .run(&arguments)
+                .unwrap(),
+        );
+        assert!(directory.join("out").exists());
+    }
+    assert_eq!(outputs[0], outputs[1]);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:product.command-execution/test]
+#[test]
+fn a_missing_program_still_gets_the_shells_diagnostic() {
+    // The direct path cannot produce `sh: 1: …: not found`, so it must hand
+    // the command back to the shell rather than invent a message of its own.
+    let directory = test_directory("launcher-not-found");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule x\n  command = ronin-no-such-program-exists\nbuild out: x\n",
+    )
+    .unwrap();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let error = ronin::Runner::new(&directory)
+        .unwrap()
+        .run_os_with_sinks(&["ronin".into(), "out".into()], &mut stdout, &mut stderr)
+        .unwrap_err();
+    let seen = String::from_utf8_lossy(&stdout).into_owned();
+    assert!(
+        seen.contains("ronin-no-such-program-exists: not found"),
+        "stdout was {seen:?}, error {error}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

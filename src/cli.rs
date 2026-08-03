@@ -187,6 +187,8 @@ pub(crate) fn usage(program: &str) -> String {
             "  --status FMT   progress status format using Ninja-style $vars\n",
             "                 (e.g. --status '[$finished/$total] ')\n",
             "  --output STYLE build output style: ninja, cargo [default=ninja]\n",
+            "  --shell SHELL  shell for commands, or 'none' to skip it when unneeded\n",
+            "  --compat       hand every command to the shell, exactly as Ninja does\n",
             "  --color WHEN   colorize output: auto, always, never [default=auto]\n",
             "\n",
             "  -C DIR   change to DIR before doing anything else\n",
@@ -405,6 +407,26 @@ fn emit_parser_warnings(
     Ok(())
 }
 
+/// Read a `--shell` value: a shell to use, or `none` to never use one.
+// [spec:ronin:req:product.command-execution]
+fn shell_mode(value: &[u8]) -> CliResult<crate::subprocess::ShellMode> {
+    if value == b"none" {
+        return Ok(crate::subprocess::ShellMode::Auto);
+    }
+    if value.is_empty() {
+        return Err(CliError::UnknownOptionValue {
+            option: "--shell",
+            value: String::new(),
+        }
+        .into());
+    }
+    Ok(crate::subprocess::ShellMode::Program(
+        std::path::PathBuf::from(value.to_os_str().map_err(|_| CliError::InvalidEncoding {
+            context: EncodingContext::Argument,
+        })?),
+    ))
+}
+
 /// Name the option in the error when an enumerated value is not one of them.
 // [spec:ronin:req:product.output-style]
 fn require_value<T>(option: &'static str, value: &[u8], parsed: Option<T>) -> CliResult<T> {
@@ -612,6 +634,22 @@ fn parse_run_arguments(
                 })?;
                 invocation.build_options.statusfmt = expand_status_format(format)?;
                 invocation.build_options.status_from_cli = true;
+            }
+            // [spec:ronin:req:product.command-execution]
+            b"--compat" => {
+                invocation.build_options.shell = crate::subprocess::ShellMode::Compat;
+            }
+            b"--shell" => {
+                index += 1;
+                let value = arguments
+                    .get(index)
+                    .ok_or_else(|| CliError::MissingOptionValue {
+                        option: "--shell".to_owned(),
+                    })?;
+                invocation.build_options.shell = shell_mode(value)?;
+            }
+            option if option.starts_with(b"--shell=") => {
+                invocation.build_options.shell = shell_mode(&option[b"--shell=".len()..])?;
             }
             b"--output" => {
                 index += 1;

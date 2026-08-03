@@ -55,6 +55,17 @@ the supported CLI surface.
 > emitted only when the destination is a terminal, suppressed when `NO_COLOR`
 > is set to a non-empty value, and forced on or off by `--color`.
 
+> [spec:ronin:req:product.command-execution]
+> On Unix, Ninja passes each `command` to `/bin/sh -c`, which makes the shell
+> the interpreter for the binding — its quoting rules, operators, and
+> `VAR=value` prefixes. Ronin preserves that meaning exactly. It does not
+> always preserve the shell process: a command the shell would do nothing to
+> but split into words and execute may be executed directly. A command whose
+> program cannot be resolved is handed to the shell regardless, so the
+> diagnostic and exit status are the shell's own rather than an imitation of
+> them. `--compat` spawns a shell for every command, as Ninja does, and
+> `--shell` selects which shell that is.
+
 > [spec:ronin:req:compat.version-reporting]
 > `ronin --version` emits one Ninja-compatible version token beginning with
 > `MAJOR.MINOR` and exits successfully. The token reports the claimed Ninja
