@@ -982,8 +982,16 @@ impl<'a> Builder<'a> {
         }
     }
 
-    pub(crate) const fn already_up_to_date(&self) -> bool {
-        self.plan.is_empty()
+    /// Whether the build has nothing to run, as Ninja judges it.
+    ///
+    /// Ninja's `more_to_do` requires *both* a wanted edge and a command edge,
+    /// so a plan holding only phony work is up to date. Testing the wanted
+    /// count alone diverges on any graph whose default target is a phony over
+    /// other phonies — abseil's is, so Ronin stayed silent there where Ninja
+    /// says `no work to do.`, while the Ninja project's own graph never hits
+    /// the shape and looked correct.
+    pub(crate) fn already_up_to_date(&self) -> bool {
+        self.plan.is_empty() || self.plan.command_edge_count(self.graph) == 0
     }
 
     pub(crate) fn ran_edge(&self, edge: EdgeId) -> bool {

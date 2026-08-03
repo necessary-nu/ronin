@@ -3201,4 +3201,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-no-work-predicate
+        title "Judge an all-phony plan up to date as Ninja does"
+        log (
+            {
+                at 2026-08-03T13:40:32.746834534Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-03T13:40:53.638350049Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Fixed: a plan holding only phony work is up to date, so `ronin: no work to do.` is printed where Ninja prints it.\n\nFound while setting up the three-way comparison, not while looking for it. On abseil-cpp a no-op build printed nothing at all — Ninja said `ninja: no work to do.`, C samurai said its equivalent, Ronin said nothing and exited zero. On the Ninja project's own build directory Ronin printed the message correctly, which is what made it look like a project-specific oddity rather than a semantic difference.\n\nIt is a semantic difference. `already_up_to_date` tested `self.plan.is_empty()`, which is the wanted-edge count; Ninja's `Plan::more_to_do` is `wanted_edges_ > 0 && command_edges_ > 0`. The two agree except on a plan that wants edges but has no commands behind them, which is exactly what abseil's `default all` produces — a phony over phonies, with every real output already up to date. Ronin concluded there was work, ran none, and suppressed the message on the grounds that it was not up to date. The Ninja project's graph never leaves a wanted phony behind in that state, so it never showed there.\n\nWorth noting what this was not: Ronin planned zero commands in both cases and did no extra work, so the three-way comparison taken alongside it stays valid. The divergence was confined to the message.\n\nThe fix uses `command_edge_count`, which already existed for the progress total, so the predicate now reads the same two quantities Ninja reads. A regression test builds a manifest that is nothing but phony edges and asserts the plan is up to date.\n\nThis is the second compatibility defect this session that a real project surfaced and the fixture-based suite did not, after the dry-run build-log writes. Both are the same shape: a graph feature the hand-written fixtures happen not to contain. The differential harness fixture has one phony edge (`build all: phony result`) but that phony sits over a real command, so it never reaches the state that matters. Widening it to include a phony-over-phony default would cost nothing and is worth doing when the manifest-message parity work touches that harness anyway.\n\n400 tests, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases, the persistence round trip and the log-content checks."
+            }
+        )
+    }
 )

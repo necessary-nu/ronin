@@ -3566,3 +3566,22 @@ fn ninja_dry_run_records_nothing_in_the_build_log() {
     log.finish().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }
+
+// [spec:ronin:req:compat.scheduling/test]
+#[test]
+fn a_plan_of_only_phony_work_is_already_up_to_date() {
+    // Ninja's `more_to_do` wants a command edge as well as a wanted edge, so a
+    // default target that is a phony over other phonies has nothing to do.
+    let (mut graph, directory) = build_fixture(
+        "phony-only-plan",
+        "build inner: phony\nbuild all: phony inner\ndefault all\n",
+    );
+    let mut builder = Builder::new(&mut graph, BuildOptions::default());
+    builder.add_target(b"all").unwrap();
+    assert!(
+        builder.already_up_to_date(),
+        "a plan with no command edges has nothing to do"
+    );
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}
