@@ -236,10 +236,22 @@ pub(crate) fn loadflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> 
 
 // [spec:ronin:def:samu.warnflag-fn]
 // [spec:ronin:sem:samu.warnflag-fn]
-pub(crate) fn warnflag(options: &mut ParseOptions, flag: &str) -> CliResult<()> {
+/// Apply one `-w` flag, reporting any warning the flag itself raises.
+// [spec:ronin:req:compat.cli-and-tools]
+pub(crate) fn warnflag(
+    options: &mut ParseOptions,
+    warnings: &mut Vec<String>,
+    flag: &str,
+) -> CliResult<()> {
     match flag {
-        "dupbuild=err" => options.dupbuildwarn = false,
-        "dupbuild=warn" => options.dupbuildwarn = true,
+        // Both spellings are accepted and neither does anything: duplicate
+        // outputs have been unconditionally fatal since Ninja deprecated the
+        // flag, and saying so is the whole of its remaining behaviour.
+        "dupbuild=err" | "dupbuild=warn" => {
+            warnings.push("deprecated warning 'dupbuild'".to_owned());
+        }
+        "phonycycle=err" => options.phony_cycle_warns = false,
+        "phonycycle=warn" => options.phony_cycle_warns = true,
         _ => {
             return Err(CliError::UnknownWarningFlag {
                 flag: flag.to_owned(),
@@ -312,6 +324,8 @@ fn append_stats(output: &mut String, parse_count: usize, parse_elapsed: std::tim
 struct RunInvocation {
     build_options: BuildOptions,
     parse_options: ParseOptions,
+    /// Warnings raised by the command line itself, before any manifest is read.
+    warnings: Vec<String>,
     working_directory: crate::os::WorkingDirectory,
     manifest: BString,
     targets: Vec<BString>,
@@ -533,6 +547,7 @@ fn parse_run_arguments(
     let mut invocation = RunInvocation {
         build_options: BuildOptions::default(),
         parse_options: ParseOptions::default(),
+        warnings: Vec::new(),
         working_directory: working_directory.clone(),
         manifest: DEFAULT_MANIFEST.into(),
         targets: Vec::new(),
@@ -724,10 +739,11 @@ fn parse_run_arguments(
                                             1,
                                         )));
                                     }
-                                    if matches!(value, "phonycycle=err" | "phonycycle=warn") {
-                                        continue;
-                                    }
-                                    warnflag(&mut invocation.parse_options, value)?;
+                                    warnflag(
+                                        &mut invocation.parse_options,
+                                        &mut invocation.warnings,
+                                        value,
+                                    )?;
                                 }
                                 b't' => {
                                     let value =
@@ -1425,10 +1441,19 @@ fn run_bytes(
     // Warnings raised while parsing, kept here only when the invocation has no
     // diagnostic sink to stream them to.
     let mut warnings = Vec::new();
+    // The command line's own warnings go out before the manifest is read, as
+    // Ninja's do, so a flag's complaint survives a manifest that then fails.
+    {
+        let mut flags = crate::parse::Parser::default();
+        flags.warnings.clone_from(&invocation.warnings);
+        emit_parser_warnings(&mut flags, build_diagnostics.as_deref_mut(), &mut warnings)?;
+    }
     let mut parse_count = 0;
     let mut parse_elapsed = std::time::Duration::ZERO;
     for _ in 0..100 {
         let mut graph = crate::graph::Graph::default();
+        // Command-line warnings come first, as they do in Ninja: the flag was
+        // read before the manifest was.
         let mut parser = crate::parse::Parser::with_options_in(
             invocation.parse_options,
             invocation.working_directory.clone(),

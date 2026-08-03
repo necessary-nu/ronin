@@ -353,3 +353,71 @@ fn an_older_required_major_is_accepted_with_ninjas_warning() {
     assert_eq!(result.exit_code, 0);
     fs::remove_dir_all(directory).unwrap();
 }
+
+// [spec:ronin:req:compat.cli-and-tools/test]
+#[test]
+fn dupbuild_is_deprecated_and_duplicates_stay_fatal() {
+    let directory = test_directory("warn-dupbuild");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule t\n  command = touch $out\nbuild o: t\nbuild o: t\n",
+    )
+    .unwrap();
+    for flag in ["dupbuild=warn", "dupbuild=err"] {
+        let mut stderr = Vec::new();
+        let error = ronin::Runner::new(&directory)
+            .unwrap()
+            .run_os_with_sinks(
+                &["ronin".into(), "-w".into(), flag.into(), "-n".into()],
+                &mut Vec::new(),
+                &mut stderr,
+            )
+            .unwrap_err();
+        assert_eq!(
+            String::from_utf8(stderr).unwrap(),
+            "ronin: warning: deprecated warning 'dupbuild'\n"
+        );
+        assert!(
+            error.to_string().contains("multiple rules generate"),
+            "{flag}: {error}"
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:compat.cli-and-tools/test]
+#[test]
+fn a_self_referencing_phony_warns_by_default_and_errors_on_request() {
+    let directory = test_directory("warn-phonycycle");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("build.ninja"), "build a: phony a\n").unwrap();
+
+    let mut stderr = Vec::new();
+    ronin::Runner::new(&directory)
+        .unwrap()
+        .run_os_with_sinks(
+            &["ronin".into(), "-n".into(), "a".into()],
+            &mut Vec::new(),
+            &mut stderr,
+        )
+        .unwrap();
+    assert_eq!(
+        String::from_utf8(stderr).unwrap(),
+        "ronin: warning: phony target 'a' names itself as an input; \
+         ignoring [-w phonycycle=warn]\n"
+    );
+
+    let error = ronin::Runner::new(&directory)
+        .unwrap()
+        .run(&[
+            "ronin".into(),
+            "-w".into(),
+            "phonycycle=err".into(),
+            "-n".into(),
+            "a".into(),
+        ])
+        .unwrap_err();
+    assert!(error.to_string().contains("dependency cycle"), "{error}");
+    fs::remove_dir_all(directory).unwrap();
+}

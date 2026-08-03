@@ -3141,4 +3141,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-warning-flags
+        title "Make the -w warning flags do what Ninja does"
+        log (
+            {
+                at 2026-08-03T11:38:47.360166743Z
+                author "brendan@bbqsrc.net"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-03T11:39:11.08669177Z
+                author "brendan@bbqsrc.net"
+                kind @decision
+                text "Done. Both `-w` flags now behave as Ninja's do, where before one was silently wrong and the other did nothing at all.\n\n`dupbuild` was the wrong one. Ronin carried samurai's behaviour: `dupbuild=warn` suppressed the duplicate-output error and built anyway. Ninja deprecated the flag — both spellings now emit `deprecated warning 'dupbuild'` and change nothing, because duplicate outputs have been unconditionally fatal since. So the `dupbuildwarn` option is gone rather than renamed: there is no mode in which a duplicate is tolerated, and keeping a switch for it would preserve a divergence. The parser test that asserted the manifest was accepted now asserts it is rejected, which is a behaviour change worth stating plainly — a manifest that built under `-w dupbuild=warn` before this will fail after it, and would have failed under Ninja all along.\n\n`phonycycle` was the one that did nothing: the flag was parsed, matched, and explicitly skipped. Ronin already filtered self-referencing phony statements — the CMake 2.8.12 and 3.0 shape — but silently, and `=err` had no effect at all. Now the filter runs only under `=warn`, which is the default and reports `phony target 'a' names itself as an input; ignoring [-w phonycycle=warn]` byte-for-byte with Ninja, and `=err` leaves the self-edge in place so cycle detection sees it and the build fails as it should.\n\nNinja's shape restriction came across with it, deliberately: the diagnostic applies only to a phony edge with exactly one output, no implicit outputs and no implicit inputs, because that is the form old CMake emitted. A phony that mentions itself in any other shape is a genuine cycle and is not filtered.\n\nOrdering matters and cost a fix. Command-line warnings are emitted before the manifest is read, as Ninja's are, rather than being seeded into the parser's list — the first attempt did the latter and the deprecation warning vanished whenever the manifest then failed to parse, which is exactly the case where `-w dupbuild=warn` is most likely to be passed.\n\nOne gap left open and recorded rather than half-closed. Under `=err` Ronin now fails, but says `dependency cycle` where Ninja says `dependency cycle: a -> a [-w phonycycle=err]`. Reporting the path requires an active-node stack threaded through `DirtyEvaluator::evaluate`, which is the iterative dirty-evaluation loop this programme has optimised repeatedly; adding a push and pop per edge to it for a diagnostic is not a change to make casually or without measuring. It belongs with the broader manifest-message parity work, where the same question is asked about every other diagnostic at once.\n\nVerified against Ninja: `=warn` matches exactly, `=err` fails in both where it previously passed in Ronin, and the deprecation warning matches. Four new CLI tests cover both flags in both modes through the public `Runner`. 399 tests plus 11 CLI tests, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
+            }
+        )
+    }
 )

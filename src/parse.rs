@@ -20,9 +20,23 @@ fn manifest_error(scanner: &Scanner<'_>, problem: ManifestProblem) -> ManifestEr
 }
 
 // [spec:ronin:def:parse.parseoptions]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub(crate) struct ParseOptions {
-    pub(crate) dupbuildwarn: bool,
+    /// Whether a phony statement naming itself is filtered with a warning, or
+    /// left in place so the cycle is reported as an error.
+    ///
+    /// Ninja's default is to warn: `CMake` 2.8.12 and 3.0 emitted these, and
+    /// tolerating them is what `-w phonycycle=warn` buys. `=err` keeps the
+    /// self-edge so dependency-cycle detection sees it.
+    pub(crate) phony_cycle_warns: bool,
+}
+
+impl Default for ParseOptions {
+    fn default() -> Self {
+        Self {
+            phony_cycle_warns: true,
+        }
+    }
 }
 
 // [spec:ronin:def:parse.parseinit-fn]
@@ -189,6 +203,7 @@ fn parseedge(
     environment: EnvironmentId,
     state: &EnvState,
     options: ParseOptions,
+    warnings: &mut Vec<String>,
     scratch: &mut Vec<u8>,
 ) -> ManifestResult<()> {
     let mut output_paths = scanpaths(scanner)?;
@@ -242,23 +257,17 @@ fn parseedge(
     for (index, output) in output_paths.iter().enumerate() {
         let node = node_for(scanner, graph, output, environment, scratch)?;
         if graph.node(node).gen.is_some() || out.contains(&node) {
-            if !options.dupbuildwarn {
-                return Err(manifest_error(
-                    scanner,
-                    ManifestProblem::DuplicateOutput {
-                        path: graph.node_path(node).to_owned(),
-                    },
-                ));
-            }
-            continue;
+            return Err(manifest_error(
+                scanner,
+                ManifestProblem::DuplicateOutput {
+                    path: graph.node_path(node).to_owned(),
+                },
+            ));
         }
         retained_explicit_output_count += usize::from(index < explicit_output_count);
         out.push(node);
     }
     if out.is_empty() {
-        if options.dupbuildwarn {
-            return Ok(());
-        }
         return Err(manifest_error(
             scanner,
             ManifestProblem::BuildWithoutOutputs,
@@ -320,7 +329,11 @@ fn parseedge(
         graph.edge_mut(edge).dyndep = Some(dyndep);
     }
 
-    let ignore_phony_self_reference = {
+    // Only warn mode filters the self-reference; under `=err` it is left in
+    // place so cycle detection reports it, which is the whole point of the
+    // flag. The shape restriction is Ninja's: it recognises exactly the form
+    // old CMake emitted rather than any phony that mentions itself.
+    let ignore_phony_self_reference = options.phony_cycle_warns && {
         let edge = graph.edge(edge);
         graph.is_phony_rule(edge.rule)
             && edge.out.len() == 1
@@ -344,6 +357,10 @@ fn parseedge(
                 .node_mut(output)
                 .uses
                 .retain(|candidate| *candidate != edge);
+            warnings.push(format!(
+                "phony target '{}' names itself as an input; ignoring [-w phonycycle=warn]",
+                graph.node_path(output)
+            ));
         }
     }
     Ok(())
@@ -522,6 +539,7 @@ pub(crate) fn parse(
                     environment,
                     state,
                     parser.options,
+                    &mut parser.warnings,
                     &mut path_scratch,
                 )?;
             }
@@ -1010,9 +1028,12 @@ mod ninja_manifest_tests {
     }
 
     #[test]
-    fn ninja_manifest_parser_duplicate_output_warning_mode() {
+    fn ninja_manifest_parser_duplicate_output_is_always_fatal() {
+        // `-w dupbuild=warn` no longer suppresses this: Ninja deprecated the
+        // flag and made duplicate outputs unconditionally fatal, so accepting
+        // the manifest here would be the divergence.
         let path = std::env::temp_dir().join(format!(
-            "ronin-manifest-duplicate-warning-{}-{}.ninja",
+            "ronin-manifest-duplicate-{}-{}.ninja",
             std::process::id(),
             NEXT_MANIFEST.fetch_add(1, Ordering::Relaxed)
         ));
@@ -1023,18 +1044,19 @@ mod ninja_manifest_tests {
         .unwrap();
         let mut graph = crate::graph::Graph::default();
         let mut parser = Parser::default();
-        parser.options.dupbuildwarn = true;
         let mut state = crate::env::EnvState::new(&mut graph);
-        parse(
+        let error = parse(
             path.to_str().unwrap(),
             &mut graph,
             &mut parser,
             state.root,
             &mut state,
         )
-        .unwrap();
-        assert_eq!(graph.edge_count(), 1);
-        assert_eq!(graph.edge(output_edge(&graph, b"out")).input.len(), 1);
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("multiple rules generate"),
+            "{error}"
+        );
         fs::remove_file(path).unwrap();
     }
 
