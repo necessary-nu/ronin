@@ -1,6 +1,6 @@
 //! Ninja version-1 dynamic dependency file parser.
 
-use crate::error::{ManifestError, ScanError};
+use crate::error::{ManifestError, NameKind, ScanError};
 #[cfg(test)]
 use crate::graph::PathStyle;
 use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
@@ -399,7 +399,7 @@ fn parse_build(
         return Err(error(scanner, line, DyndepErrorKind::UnexpectedEof));
     }
     scan!(scanner, scanchar(scanner, ':'));
-    let rule = scanname(scanner)
+    let rule = scanname(scanner, NameKind::Rule)
         .map_err(|_| error(scanner, line, DyndepErrorKind::ExpectedDyndepCommand))?
         .text;
     if rule != "dyndep" {
@@ -423,7 +423,7 @@ fn parse_build(
     };
     if scan!(scanner, scanindent(scanner)) {
         let binding_line = scanner.line();
-        let name = scan!(scanner, scanname(scanner)).text;
+        let name = scan!(scanner, scanname(scanner, NameKind::Variable)).text;
         scan!(scanner, scanchar(scanner, '='));
         let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
         scan!(scanner, scannewline(scanner));

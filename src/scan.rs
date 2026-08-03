@@ -1,6 +1,6 @@
 //! Byte-oriented Ninja manifest lexer.
 
-use crate::error::{ScanError, ScanErrorKind, SeparatorKind};
+use crate::error::{FoundToken, NameKind, ScanError, ScanErrorKind, SeparatorKind};
 use crate::names::Names;
 pub(crate) use crate::source::Source;
 use crate::source::{SourceId, SourceSpan};
@@ -390,7 +390,7 @@ fn comment(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
 
 // [spec:ronin:def:scan.name-fn]
 // [spec:ronin:sem:scan.name-fn]
-fn name<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> {
+fn name<'source>(scanner: &mut Scanner<'source>, kind: NameKind) -> ScanResult<Lexeme<'source>> {
     let source = scanner.source;
     scanner.begin_token();
     let start = scanner.index;
@@ -400,7 +400,7 @@ fn name<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> 
         advance_within_line(scanner);
     }
     if scanner.index == start {
-        return Err(scanerror(scanner, ScanErrorKind::ExpectedName));
+        return Err(scanerror(scanner, ScanErrorKind::ExpectedName(kind)));
     }
     let end = scanner.index;
     let text = BStr::new(&source.bytes()[start..end]);
@@ -430,7 +430,7 @@ pub(crate) fn scankeyword<'source>(
                 newline(scanner)?;
             }
             _ => {
-                let lexeme = name(scanner)?;
+                let lexeme = name(scanner, NameKind::Variable)?;
                 let kind = match &**lexeme.text {
                     b"build" => TokenKind::Build,
                     b"default" => TokenKind::Default,
@@ -448,8 +448,11 @@ pub(crate) fn scankeyword<'source>(
 
 // [spec:ronin:def:scan.scanname-fn]
 // [spec:ronin:sem:scan.scanname-fn]
-pub(crate) fn scanname<'source>(scanner: &mut Scanner<'source>) -> ScanResult<Lexeme<'source>> {
-    name(scanner)
+pub(crate) fn scanname<'source>(
+    scanner: &mut Scanner<'source>,
+    kind: NameKind,
+) -> ScanResult<Lexeme<'source>> {
+    name(scanner, kind)
 }
 
 fn push_literal<'source>(
@@ -609,12 +612,26 @@ pub(crate) fn scanchar(scanner: &mut Scanner<'_>, expected: char) -> ScanResult<
     if scanner.current() != Some(expected) {
         return Err(scanerror(
             scanner,
-            ScanErrorKind::ExpectedCharacter(char::from(expected)),
+            ScanErrorKind::ExpectedCharacter {
+                expected: char::from(expected),
+                found: found_token(scanner),
+            },
         ));
     }
     next(scanner);
     space(scanner)?;
     Ok(())
+}
+
+/// Names the token at the scan position the way Ninja names it.
+fn found_token(scanner: &Scanner<'_>) -> FoundToken {
+    match scanner.current() {
+        None => FoundToken::Eof,
+        Some(b'\r' | b'\n') => FoundToken::Newline,
+        Some(b' ' | b'\t') => FoundToken::Indent,
+        Some(byte) if isvar(byte) => FoundToken::Identifier,
+        Some(byte) => FoundToken::Character(char::from(byte)),
+    }
 }
 
 /// A typed dependency separator.
@@ -700,6 +717,7 @@ pub(crate) fn scanindent(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
 // [spec:ronin:def:scan.scannewline-fn]
 // [spec:ronin:sem:scan.scannewline-fn]
 pub(crate) fn scannewline(scanner: &mut Scanner<'_>) -> ScanResult<()> {
+    scanner.begin_token();
     if newline(scanner)? {
         scanner.continuation_at_eof = false;
         Ok(())
@@ -783,7 +801,10 @@ mod tests {
                 (0, 4, 1, 1)
             );
 
-            assert_eq!(scanname(&mut scanner).unwrap().text, "cc");
+            assert_eq!(
+                scanname(&mut scanner, NameKind::Variable).unwrap().text,
+                "cc"
+            );
             scannewline(&mut scanner).unwrap();
             let value = scanstring(&mut scanner, false).unwrap().unwrap();
             let ScannedEvalString::Parts(parts) = &value else {

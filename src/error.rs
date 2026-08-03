@@ -260,7 +260,7 @@ impl CliError {
 /// text with ` (os error N)` appended, which no Ninja diagnostic carries, so the
 /// suffix it added is removed again rather than the message being rebuilt from
 /// the raw code.
-fn system_message(error: &io::Error) -> String {
+pub(crate) fn system_message(error: &io::Error) -> String {
     let rendered = error.to_string();
     if error.raw_os_error().is_none() || !rendered.ends_with(')') {
         return rendered;
@@ -288,20 +288,55 @@ impl fmt::Display for SeparatorKind {
     }
 }
 
+/// What a name was being read for, so a diagnostic can say so.
+///
+/// Ninja names the grammar position rather than reporting a bare `expected
+/// name`, which on its own leaves the reader to work out which of the several
+/// names on the line was wrong.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NameKind {
+    Pool,
+    Rule,
+    Variable,
+    BuildCommand,
+}
+
+/// A token as Ninja names it when reporting one it did not expect.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FoundToken {
+    Newline,
+    Identifier,
+    Indent,
+    Eof,
+    Character(char),
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ScanErrorKind {
     ExpectedNewlineAfterCarriageReturn,
     TabsNotAllowed,
-    ExpectedName,
+    ExpectedName(NameKind),
     UnexpectedIndent,
     InvalidVariableName,
     CaretEscapeRequiresVersion,
     InvalidDollarEscape,
     ExpectedAsciiToken,
-    ExpectedCharacter(char),
+    ExpectedCharacter { expected: char, found: FoundToken },
     UnexpectedSeparator(SeparatorKind),
     UnexpectedEof { after_continuation: bool },
     ExpectedNewline,
+}
+
+impl fmt::Display for FoundToken {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Newline => formatter.write_str("newline"),
+            Self::Identifier => formatter.write_str("identifier"),
+            Self::Indent => formatter.write_str("indent"),
+            Self::Eof => formatter.write_str("eof"),
+            Self::Character(found) => write!(formatter, "'{found}'"),
+        }
+    }
 }
 
 impl fmt::Display for ScanErrorKind {
@@ -311,15 +346,31 @@ impl fmt::Display for ScanErrorKind {
                 formatter.write_str("expected '\\n' after '\\r'")
             }
             Self::TabsNotAllowed => formatter.write_str("tabs are not allowed, use spaces"),
-            Self::ExpectedName => formatter.write_str("expected name"),
+            Self::ExpectedName(kind) => formatter.write_str(match kind {
+                NameKind::Pool => "expected pool name",
+                NameKind::Rule => "expected rule name",
+                NameKind::Variable => "expected variable name",
+                NameKind::BuildCommand => "expected build command name",
+            }),
             Self::UnexpectedIndent => formatter.write_str("unexpected indent"),
-            Self::InvalidVariableName => formatter.write_str("invalid variable name"),
+            // Ninja reports every malformed `$` the same way, terminated or not.
+            Self::InvalidVariableName | Self::InvalidDollarEscape => {
+                formatter.write_str("bad $-escape (literal $ must be written as $$)")
+            }
             Self::CaretEscapeRequiresVersion => formatter.write_str(
                 "using $^ escape requires specifying 'ninja_required_version' with version greater or equal 1.14",
             ),
-            Self::InvalidDollarEscape => formatter.write_str("invalid $ escape"),
             Self::ExpectedAsciiToken => formatter.write_str("expected ASCII token"),
-            Self::ExpectedCharacter(expected) => write!(formatter, "expected '{expected}'"),
+            // Ninja names what it found as well as what it wanted, and adds a
+            // hint for the colon because a path containing one is the usual
+            // reason to land here.
+            Self::ExpectedCharacter { expected, found } => {
+                write!(formatter, "expected '{expected}', got {found}")?;
+                if *expected == ':' {
+                    formatter.write_str(" ($ also escapes ':')")?;
+                }
+                Ok(())
+            }
             Self::UnexpectedSeparator(separator) => {
                 write!(formatter, "unexpected '{separator}'")
             }
@@ -376,37 +427,42 @@ pub(crate) enum ManifestProblem {
     PoolWithoutDepth,
     InvalidRequiredVersion,
     RequiredVersionTooNew { version: BString },
+    DuplicateRule { name: BString },
+    DuplicatePool { name: BString },
+    UnknownPoolName { name: BString },
+    LoadFailed { path: BString, reason: String },
 }
 
 impl fmt::Display for ManifestProblem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::UnexpectedRuleVariable { name } => {
-                write!(formatter, "unexpected rule variable '{name}'")
+            // Ninja does not say which kind of block the binding was in; the
+            // located line above already points at it.
+            Self::UnexpectedRuleVariable { name } | Self::UnexpectedPoolVariable { name } => {
+                write!(formatter, "unexpected variable '{name}'")
             }
-            Self::RuleMissingCommand { name } => write!(formatter, "rule '{name}' has no command"),
-            Self::IncompleteResponseFileBinding { name } => write!(
-                formatter,
-                "rule '{name}' has rspfile and no rspfile_content or vice versa"
-            ),
+            Self::RuleMissingCommand { .. } => formatter.write_str("expected 'command =' line"),
+            Self::IncompleteResponseFileBinding { .. } => {
+                formatter.write_str("rspfile and rspfile_content need to be both specified")
+            }
             Self::EmptyPath => formatter.write_str("empty path"),
-            Self::BuildWithoutOutputs => formatter.write_str("build has no outputs"),
-            Self::UndefinedRule { name } => write!(formatter, "undefined rule '{name}'"),
-            Self::DuplicateOutput { path } => {
-                write!(formatter, "multiple rules generate '{path}'")
-            }
+            Self::BuildWithoutOutputs => formatter.write_str("expected path"),
+            Self::UndefinedRule { name } => write!(formatter, "unknown build rule '{name}'"),
+            // Unquoted, as Ninja writes it.
+            Self::DuplicateOutput { path } => write!(formatter, "multiple rules generate {path}"),
             Self::DyndepNotInput { path } => write!(formatter, "dyndep '{path}' is not an input"),
             Self::ExpectedIncludePath => formatter.write_str("expected include path"),
             Self::ExpectedTargetName => formatter.write_str("expected target name"),
             Self::UnknownTarget { path } => write!(formatter, "unknown target '{path}'"),
-            Self::UnexpectedPoolVariable { name } => {
-                write!(formatter, "unexpected pool variable '{name}'")
-            }
-            Self::InvalidPoolDepth { value } => {
-                write!(formatter, "invalid pool depth '{value}'")
-            }
-            Self::PoolWithoutDepth => formatter.write_str("pool has no depth"),
+            Self::InvalidPoolDepth { .. } => formatter.write_str("invalid pool depth"),
+            Self::PoolWithoutDepth => formatter.write_str("expected 'depth =' line"),
             Self::InvalidRequiredVersion => formatter.write_str("invalid ninja_required_version"),
+            Self::DuplicateRule { name } => write!(formatter, "duplicate rule '{name}'"),
+            Self::DuplicatePool { name } => write!(formatter, "duplicate pool '{name}'"),
+            Self::UnknownPoolName { name } => write!(formatter, "unknown pool name '{name}'"),
+            Self::LoadFailed { path, reason } => {
+                write!(formatter, "loading '{path}': {reason}")
+            }
             // Ninja's own wording, because a manifest that asks for too new a
             // Ninja is a thing generators and CI logs read about, and the
             // samurai phrasing this used to carry is not what they expect.
@@ -505,7 +561,10 @@ fn write_located(
     // Ninja counts this column from zero, and from the start of the line.
     let column = span.column.saturating_sub(1);
     if column == 0 || column >= TRUNCATE_COLUMN {
-        return Ok(());
+        // Ninja terminates the message itself and the printer terminates the
+        // line, so an error with no source context to show ends with a blank
+        // line. Nothing depends on it, but it is in the bytes.
+        return formatter.write_str("\n");
     }
     let bytes = span.source_bytes();
     let Some(line_start) = span.byte_start.checked_sub(column) else {

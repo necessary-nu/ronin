@@ -220,7 +220,12 @@ fn ninja_lexer_read_ident_and_keywords() {
         scan::scankeyword(&mut scanner).unwrap().unwrap().kind,
         scan::TokenKind::Rule
     );
-    assert_eq!(scan::scanname(&mut scanner).unwrap().text, "cat");
+    assert_eq!(
+        scan::scanname(&mut scanner, crate::error::NameKind::Variable)
+            .unwrap()
+            .text,
+        "cat"
+    );
     scan::scannewline(&mut scanner).unwrap();
     assert_eq!(
         scan::scankeyword(&mut scanner).unwrap().unwrap().kind,
@@ -274,7 +279,12 @@ fn ninja_lexer_variable_values_and_escapes() {
     assert_eq!(serialized_eval(&value), "[ $ab c: cde]");
     scan::scannewline(&mut scanner).unwrap();
     for expected in ["foo", "baR", "baz_123", "foo-bar"] {
-        assert_eq!(scan::scanname(&mut scanner).unwrap().text, expected);
+        assert_eq!(
+            scan::scanname(&mut scanner, crate::error::NameKind::Variable)
+                .unwrap()
+                .text,
+            expected
+        );
     }
     let _ = fs::remove_file(path);
 }
@@ -292,7 +302,7 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
     assert!(scan::scanstring(&mut scanner, false)
         .unwrap_err()
         .to_string()
-        .contains("invalid $ escape"));
+        .contains("bad $-escape (literal $ must be written as $$)"));
 
     fs::write(&path, "   \tfoobar\n").unwrap();
     let source = scan::Source::from_path(&path).unwrap();
@@ -332,7 +342,12 @@ fn ninja_lexer_dotted_and_braced_variables() {
     .unwrap();
     let source = scan::Source::from_path(&path).unwrap();
     let mut scanner = scan::Scanner::new(&source);
-    assert_eq!(scan::scanname(&mut scanner).unwrap().text, "foo.dots");
+    assert_eq!(
+        scan::scanname(&mut scanner, crate::error::NameKind::Variable)
+            .unwrap()
+            .text,
+        "foo.dots"
+    );
     let value = scan::scanstring(&mut scanner, false).unwrap().unwrap();
     assert_eq!(serialized_eval(&value), "[$bar][.dots ][$bar.dots]");
     scan::scannewline(&mut scanner).unwrap();
@@ -659,7 +674,7 @@ fn ninja_manifest_parser_includes_and_errors() {
     )
     .unwrap_err()
     .to_string()
-    .contains("multiple rules generate 'out1'"));
+    .contains("multiple rules generate out1"));
 
     fs::write(&root, "rule cat\n  rspfile = cat.rsp\n").unwrap();
     let mut graph = graph::Graph::default();
@@ -674,7 +689,7 @@ fn ninja_manifest_parser_includes_and_errors() {
     )
     .unwrap_err()
     .to_string()
-    .contains("has no command"));
+    .contains("expected 'command =' line"));
     let _ = fs::remove_dir_all(directory);
 }
 

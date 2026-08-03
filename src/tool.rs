@@ -1252,7 +1252,9 @@ mod tests {
         .unwrap();
 
         let error = clean(&graph, &[], &[], true).unwrap_err();
-        assert!(error.to_string().contains("invalid $ escape"));
+        assert!(error
+            .to_string()
+            .contains("bad $-escape (literal $ must be written as $$)"));
         assert!(output.exists());
     }
 

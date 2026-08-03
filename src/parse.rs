@@ -4,7 +4,7 @@ use crate::env::{
     edgevar, envaddrule, enveval, envrule, mkpool, mkrule, poolget, ruleaddvar, EnvState,
     EnvironmentId,
 };
-use crate::error::{ManifestError, ManifestProblem};
+use crate::error::{ManifestError, ManifestProblem, NameKind};
 use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId, PathStyle};
 use crate::names::Names;
 use crate::scan::{
@@ -15,8 +15,30 @@ use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, IdVec};
 
 type ManifestResult<T> = Result<T, ManifestError>;
 
-fn manifest_error(scanner: &Scanner<'_>, problem: ManifestProblem) -> ManifestError {
-    ManifestError::at(scanner.source_span(scanner.last_token()), problem)
+/// Where a manifest diagnostic points.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Anchor {
+    /// The token being read, which is where Ninja reports nearly everything.
+    Token,
+    /// Where scanning has reached.
+    ///
+    /// A few of Ninja's checks run only once a statement's indented block is
+    /// over — a rule with no `command`, a pool with no `depth`. By then its
+    /// lexer has read past the block, so the diagnostic names the line after it
+    /// and carries no source context, the column being zero.
+    AfterBlock,
+}
+
+fn manifest_error(
+    scanner: &Scanner<'_>,
+    anchor: Anchor,
+    problem: ManifestProblem,
+) -> ManifestError {
+    let span = match anchor {
+        Anchor::Token => scanner.last_token(),
+        Anchor::AfterBlock => scanner.position(),
+    };
+    ManifestError::at(scanner.source_span(span), problem)
 }
 
 // [spec:ronin:def:parse.parseoptions]
@@ -72,7 +94,7 @@ impl Parser {
 fn parselet<'source>(
     scanner: &mut Scanner<'source>,
 ) -> ManifestResult<(&'source BStr, ScannedEvalString<'source>)> {
-    let name = scanname(scanner)?;
+    let name = scanname(scanner, NameKind::Variable)?;
     let value = parse_assignment(scanner)?;
     Ok((name.text, value))
 }
@@ -93,9 +115,13 @@ fn parserule(
     graph: &mut Graph,
     environment: EnvironmentId,
 ) -> ManifestResult<()> {
-    let name = scanname(scanner)?.text;
+    let name = scanname(scanner, NameKind::Rule)?.text;
     let rule = mkrule(graph, name.to_owned());
+    // Ninja tests for a duplicate as soon as the name's line ends, so the
+    // diagnostic points at that line ending rather than at the end of the
+    // whole block.
     scannewline(scanner)?;
+    let named_at = scanner.source_span(scanner.last_token());
     let mut command = false;
     let mut rspfile = false;
     let mut rspfile_content = false;
@@ -117,6 +143,7 @@ fn parserule(
         ) {
             return Err(manifest_error(
                 scanner,
+                Anchor::Token,
                 ManifestProblem::UnexpectedRuleVariable {
                     name: name.to_str_lossy().into_owned(),
                 },
@@ -132,6 +159,7 @@ fn parserule(
     if !command {
         return Err(manifest_error(
             scanner,
+            Anchor::AfterBlock,
             ManifestProblem::RuleMissingCommand {
                 name: name.to_str_lossy().into_owned(),
             },
@@ -140,12 +168,20 @@ fn parserule(
     if rspfile != rspfile_content {
         return Err(manifest_error(
             scanner,
+            Anchor::AfterBlock,
             ManifestProblem::IncompleteResponseFileBinding {
                 name: name.to_str_lossy().into_owned(),
             },
         ));
     }
-    Ok(envaddrule(graph, environment, rule)?)
+    envaddrule(graph, environment, rule).map_err(|_| {
+        ManifestError::at(
+            named_at,
+            ManifestProblem::DuplicateRule {
+                name: name.to_owned(),
+            },
+        )
+    })
 }
 
 fn evaluated_path(
@@ -156,7 +192,11 @@ fn evaluated_path(
 ) -> ManifestResult<BString> {
     let value = enveval(graph, environment, path);
     if value.is_empty() {
-        return Err(manifest_error(scanner, ManifestProblem::EmptyPath));
+        return Err(manifest_error(
+            scanner,
+            Anchor::Token,
+            ManifestProblem::EmptyPath,
+        ));
     }
     Ok(value)
 }
@@ -185,7 +225,11 @@ fn node_for(
     scratch.clear();
     crate::env::enveval_into(graph, environment, path, scratch);
     if scratch.is_empty() {
-        return Err(manifest_error(scanner, ManifestProblem::EmptyPath));
+        return Err(manifest_error(
+            scanner,
+            Anchor::Token,
+            ManifestProblem::EmptyPath,
+        ));
     }
     canonpath(scratch);
     Ok(crate::graph::mknode(graph, scratch))
@@ -214,14 +258,16 @@ fn parseedge(
     if output_paths.is_empty() {
         return Err(manifest_error(
             scanner,
+            Anchor::Token,
             ManifestProblem::BuildWithoutOutputs,
         ));
     }
     scanchar(scanner, ':')?;
-    let rule_name = scanname(scanner)?.text;
+    let rule_name = scanname(scanner, NameKind::BuildCommand)?.text;
     let rule = envrule(graph, environment, rule_name).ok_or_else(|| {
         manifest_error(
             scanner,
+            Anchor::Token,
             ManifestProblem::UndefinedRule {
                 name: rule_name.to_str_lossy().into_owned(),
             },
@@ -259,6 +305,7 @@ fn parseedge(
         if graph.node(node).gen.is_some() || out.contains(&node) {
             return Err(manifest_error(
                 scanner,
+                Anchor::Token,
                 ManifestProblem::DuplicateOutput {
                     path: graph.node_path(node).to_owned(),
                 },
@@ -270,6 +317,7 @@ fn parseedge(
     if out.is_empty() {
         return Err(manifest_error(
             scanner,
+            Anchor::Token,
             ManifestProblem::BuildWithoutOutputs,
         ));
     }
@@ -312,7 +360,15 @@ fn parseedge(
     if let Some(pool_name) =
         edgevar(graph, edge, Names::POOL, PathStyle::ShellEscaped).filter(|pool| !pool.is_empty())
     {
-        graph.edge_mut(edge).pool = Some(poolget(state, BStr::new(&pool_name))?);
+        graph.edge_mut(edge).pool = Some(poolget(state, BStr::new(&pool_name)).map_err(|_| {
+            manifest_error(
+                scanner,
+                Anchor::Token,
+                ManifestProblem::UnknownPoolName {
+                    name: BString::from(pool_name.as_slice()),
+                },
+            )
+        })?);
     }
 
     if let Some(mut dyndep_path) =
@@ -323,6 +379,7 @@ fn parseedge(
         if !graph.edge(edge).input.contains(&dyndep) {
             return Err(manifest_error(
                 scanner,
+                Anchor::Token,
                 ManifestProblem::DyndepNotInput { path: dyndep_path },
             ));
         }
@@ -376,8 +433,12 @@ fn parseinclude(
     state: &mut EnvState,
     newscope: bool,
 ) -> ManifestResult<()> {
-    let path = scanstring(scanner, true)?
-        .ok_or_else(|| manifest_error(scanner, ManifestProblem::ExpectedIncludePath))?;
+    let path = scanstring(scanner, true)?.ok_or_else(|| {
+        manifest_error(scanner, Anchor::Token, ManifestProblem::ExpectedIncludePath)
+    })?;
+    // Taken before the newline is read, so a file that cannot be loaded is
+    // reported against the line that asked for it.
+    let asked_at = scanner.source_span(scanner.last_token());
     scannewline(scanner)?;
     let path = evaluated_path(scanner, graph, &path, environment)?;
     let environment = if newscope {
@@ -385,12 +446,13 @@ fn parseinclude(
     } else {
         environment
     };
-    parse(
+    parse_at(
         path.to_path().expect("byte paths are valid on Unix"),
         graph,
         parser,
         environment,
         state,
+        Some(asked_at),
     )
 }
 
@@ -405,7 +467,11 @@ fn parsedefault(
     let targets = scanpaths(scanner)?;
     scannewline(scanner)?;
     if targets.is_empty() {
-        return Err(manifest_error(scanner, ManifestProblem::ExpectedTargetName));
+        return Err(manifest_error(
+            scanner,
+            Anchor::Token,
+            ManifestProblem::ExpectedTargetName,
+        ));
     }
     for target in targets {
         let mut target = evaluated_path(scanner, graph, &target, environment)?;
@@ -414,6 +480,7 @@ fn parsedefault(
             crate::graph::nodeget(graph, target.as_bytes()).ok_or_else(|| {
                 manifest_error(
                     scanner,
+                    Anchor::Token,
                     ManifestProblem::UnknownTarget {
                         path: target.clone(),
                     },
@@ -432,14 +499,23 @@ fn parsepool(
     state: &mut EnvState,
     environment: EnvironmentId,
 ) -> ManifestResult<()> {
-    let name = scanname(scanner)?.text;
-    let pool = mkpool(graph, state, name.to_owned())?;
+    let name = scanname(scanner, NameKind::Pool)?.text;
+    let named_at = scanner.source_span(scanner.position());
+    let pool = mkpool(graph, state, name.to_owned()).map_err(|_| {
+        ManifestError::at(
+            named_at,
+            ManifestProblem::DuplicatePool {
+                name: name.to_owned(),
+            },
+        )
+    })?;
     scannewline(scanner)?;
     while scanindent(scanner)? {
         let (name, value) = parselet(scanner)?;
         if name != "depth" {
             return Err(manifest_error(
                 scanner,
+                Anchor::Token,
                 ManifestProblem::UnexpectedPoolVariable {
                     name: name.to_str_lossy().into_owned(),
                 },
@@ -453,6 +529,7 @@ fn parsepool(
             .ok_or_else(|| {
                 manifest_error(
                     scanner,
+                    Anchor::Token,
                     ManifestProblem::InvalidPoolDepth {
                         value: value.clone(),
                     },
@@ -461,7 +538,11 @@ fn parsepool(
         graph.pool_mut(pool).set_depth(depth);
     }
     if graph.pool(pool).depth().is_none() {
-        return Err(manifest_error(scanner, ManifestProblem::PoolWithoutDepth));
+        return Err(manifest_error(
+            scanner,
+            Anchor::AfterBlock,
+            ManifestProblem::PoolWithoutDepth,
+        ));
     }
     Ok(())
 }
@@ -477,13 +558,20 @@ fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i
     if major_end == 0 {
         return Err(manifest_error(
             scanner,
+            Anchor::Token,
             ManifestProblem::InvalidRequiredVersion,
         ));
     }
     let major = std::str::from_utf8(&bytes[..major_end])
         .unwrap()
         .parse::<i32>()
-        .map_err(|_| manifest_error(scanner, ManifestProblem::InvalidRequiredVersion))?;
+        .map_err(|_| {
+            manifest_error(
+                scanner,
+                Anchor::Token,
+                ManifestProblem::InvalidRequiredVersion,
+            )
+        })?;
     let mut minor = 0;
     if bytes.get(major_end) == Some(&b'.') {
         let minor_bytes = &bytes[major_end + 1..];
@@ -495,7 +583,13 @@ fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i
             minor = std::str::from_utf8(&minor_bytes[..minor_end])
                 .unwrap()
                 .parse::<i32>()
-                .map_err(|_| manifest_error(scanner, ManifestProblem::InvalidRequiredVersion))?;
+                .map_err(|_| {
+                    manifest_error(
+                        scanner,
+                        Anchor::Token,
+                        ManifestProblem::InvalidRequiredVersion,
+                    )
+                })?;
         }
     }
     if major > crate::cli::NINJA_COMPAT_MAJOR
@@ -503,6 +597,7 @@ fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i
     {
         Err(manifest_error(
             scanner,
+            Anchor::Token,
             ManifestProblem::RequiredVersionTooNew {
                 version: BString::from(bytes),
             },
@@ -522,9 +617,34 @@ pub(crate) fn parse(
     environment: EnvironmentId,
     state: &mut EnvState,
 ) -> ManifestResult<()> {
+    // The manifest named on the command line: nothing in a manifest points at
+    // it, so a failure to read it has nowhere to point back to.
+    parse_at(name, graph, parser, environment, state, None)
+}
+
+fn parse_at(
+    name: impl AsRef<std::path::Path>,
+    graph: &mut Graph,
+    parser: &mut Parser,
+    environment: EnvironmentId,
+    state: &mut EnvState,
+    located: Option<crate::source::SourceSpan>,
+) -> ManifestResult<()> {
     let path = name.as_ref().to_owned();
-    let input = std::fs::read(parser.working_directory.resolve(&path))
-        .map_err(|error| ManifestError::read(&path, error))?;
+    let input = std::fs::read(parser.working_directory.resolve(&path)).map_err(|error| {
+        // Ninja reports this against the manifest that asked for the file, not
+        // as a bare I/O failure with nothing to locate it by.
+        match located {
+            Some(span) => ManifestError::at(
+                span,
+                ManifestProblem::LoadFailed {
+                    path: BString::from(path.to_string_lossy().as_bytes()),
+                    reason: crate::error::system_message(&error),
+                },
+            ),
+            None => ManifestError::read(&path, error),
+        }
+    })?;
     let source = Source::from_bytes(&path, input);
     let mut scanner = Scanner::new(&source);
     // One buffer per manifest, reused by every path reference in it.
@@ -724,7 +844,7 @@ mod ninja_manifest_tests {
         let error = parse_error(
             "rule cat\n  command = cat $in > $out\nbuild foo baz | foo baq foo: cat bar\n",
         );
-        assert!(error.contains("multiple rules generate 'foo'"));
+        assert!(error.contains("multiple rules generate foo"));
     }
 
     #[test]
@@ -815,9 +935,11 @@ mod ninja_manifest_tests {
         assert!(parse_source("pool foo\n  depth = -1\n").is_err());
         assert!(parse_source("pool foo\n  depth = word\n").is_err());
         assert!(parse_source("pool foo\n  bar = 1\n").is_err());
-        assert_eq!(
-            parse_error("pool console\n  depth = 2\n"),
-            "pool 'console' redefined"
+        let duplicate = parse_error("pool console\n  depth = 2\n");
+        assert!(
+            duplicate
+                .ends_with(":1: duplicate pool 'console'\npool console\n            ^ near here"),
+            "{duplicate}"
         );
         assert!(parse_source(
             "rule run\n  command = echo\n  pool = unnamed_pool\nbuild out: run in\n"
@@ -829,7 +951,7 @@ mod ninja_manifest_tests {
     fn ninja_manifest_parser_rejects_unknown_rule_binding() {
         let error = parse_error("rule cc\n  command = foo\n  othervar = bar\n");
         assert!(
-            error.contains(": unexpected rule variable 'othervar'"),
+            error.contains(": unexpected variable 'othervar'"),
             "{error}"
         );
     }
@@ -933,7 +1055,10 @@ mod ninja_manifest_tests {
     #[test]
     fn ninja_manifest_parser_rejects_root_phony_redefinition() {
         let error = parse_error("rule phony\n  command = fake\n");
-        assert_eq!(error, "rule 'phony' redefined");
+        assert!(
+            error.ends_with(":1: duplicate rule 'phony'\nrule phony\n          ^ near here"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1029,7 +1154,7 @@ mod ninja_manifest_tests {
         let Err(error) = parse_path(&root) else {
             panic!("duplicate output unexpectedly parsed");
         };
-        assert!(error.to_string().contains("multiple rules generate 'out1'"));
+        assert!(error.to_string().contains("multiple rules generate out1"));
         fs::remove_dir_all(directory).unwrap();
     }
 

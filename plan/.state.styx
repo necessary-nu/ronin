@@ -182,6 +182,7 @@ assertions (
     {id ronin-failure-surface-parity, kind @doing, author "brendan@necessary.nu", at 2026-08-03T22:49:13.631639708Z}
     {id ronin-cycle-path, kind @doing, author "brendan@necessary.nu", at 2026-08-03T22:59:50.032134012Z}
     {id ronin-diagnostic-anchor, kind @doing, author "brendan@necessary.nu", at 2026-08-03T23:05:33.927661259Z}
+    {id ronin-manifest-message-parity, kind @doing, author "brendan@necessary.nu", at 2026-08-03T23:18:26.397545662Z}
 )
 
 impl_evidence (

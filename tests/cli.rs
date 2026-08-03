@@ -666,11 +666,13 @@ fn a_manifest_diagnostic_points_at_the_token_it_is_about() {
         "reported {unknown_rule:?}"
     );
 
-    // Column zero carries no context in Ninja, so neither does this.
+    // Column zero carries no context in Ninja, so neither does this — and an
+    // error with no context ends with a blank line, because Ninja terminates
+    // the message and the printer terminates the line.
     let indented = run("  command = x\n");
-    assert!(
-        indented.ends_with("unexpected indent\n"),
-        "reported {indented:?}"
+    assert_eq!(
+        indented,
+        "ronin: error: build.ninja:1: unexpected indent\n\n"
     );
 
     fs::remove_dir_all(directory).unwrap();
