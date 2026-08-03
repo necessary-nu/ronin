@@ -3261,4 +3261,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-cycle-path
+        title "Name a dependency cycle by the path around it"
+        log (
+            {
+                at 2026-08-03T22:59:50.032134012Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-03T23:00:08.443608515Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Done. A cycle is now reported as `dependency cycle: a -> b -> c -> a` rather than `dependency cycle`, which said only that one exists.\n\nThe known case was `-w phonycycle=err`, where Ninja appends the flag name so the reader knows which setting turned a warning into an error. Checking it first showed the gap is general: no cycle of any kind reported its path, phony or not. Telling someone their graph has a cycle without saying where is close to useless on a manifest with tens of thousands of edges, which is the only size at which this happens by accident.\n\nNinja assembles the path from its DFS stack, and two details in it are easy to get wrong and were worth reading rather than guessing:\n\nThe cycle is reported from the node that *closes* it, not from whichever node happened to enter the shared edge. Ninja overwrites the stack entry (`*start = node`) with a comment giving the exact case: building `b` where `build a b: cat c` and `build c: cat a` must report `a -> c -> a`, not `b -> c -> a`. A multi-output edge can be entered through any of its outputs, and naming the one that was asked for instead of the one in the cycle points at the wrong place.\n\nThe `[-w phonycycle=err]` suffix is narrower than it looks. It appears only when the cycle is a single node *and* the edge is phony with exactly one output, no implicit outputs and no implicit inputs. Ninja's comment says why: CMake 2.8.12 and 3.0 emitted `build a: phony … a …`, and the flag exists for that shape alone. Any other cycle is an ordinary one, and mentioning a flag that would not have suppressed it would be misdirection.\n\nRonin's evaluator is an iterative worklist rather than recursion, so there was no call stack to read the path off. It now keeps a `path` vector alongside: one entry per active edge, holding the node that edge was reached through, pushed where `Work::Finish` is pushed and popped where it is handled. That is exactly the set of edges on the way down, because `Finish` is pushed before an edge's inputs and popped only after all of them are done.\n\nBoth cycle-detection sites feed it. The third construction site, in the missing-deps root scan, reports that every output is used by something and never walked a path; it keeps the pathless message, which is what Ninja prints there too.\n\nVerified against real Ninja on five shapes: the phony self-cycle with the flag, a two-node phony cycle, a three-node cycle through real rules, a cycle through a multi-output edge asked for by the other output, and the same through phony. All five match byte for byte. Four are now in the conformance corpus, which is up to 22 cases, plus a binary-level test that asserts the rendered text without needing Ninja present.\n\n408 unit tests, 16 integration tests, clippy clean, fmt clean, conformance green."
+            }
+        )
+    }
 )

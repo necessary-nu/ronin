@@ -180,6 +180,7 @@ assertions (
     {id ronin-no-work-predicate, kind @doing, author "brendan@necessary.nu", at 2026-08-03T13:40:32.746834534Z}
     {id ronin-command-launcher, kind @doing, author "brendan@necessary.nu", at 2026-08-03T14:37:28.701326341Z}
     {id ronin-failure-surface-parity, kind @doing, author "brendan@necessary.nu", at 2026-08-03T22:49:13.631639708Z}
+    {id ronin-cycle-path, kind @doing, author "brendan@necessary.nu", at 2026-08-03T22:59:50.032134012Z}
 )
 
 impl_evidence (

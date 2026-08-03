@@ -233,7 +233,13 @@ pub(crate) fn root_nodes(graph: &Graph) -> Result<Vec<NodeId>, GraphError> {
         }
     }
     if roots.is_empty() && has_outputs {
-        Err(GraphError::DependencyCycle { node: None })
+        // Every output is used by something, so there is no root to start from.
+        // Ninja reports this without a path too: it never walked one.
+        Err(GraphError::DependencyCycle {
+            node: None,
+            path: Vec::new(),
+            phony_self_cycle: false,
+        })
     } else {
         Ok(roots)
     }

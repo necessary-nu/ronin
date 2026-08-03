@@ -395,12 +395,16 @@ impl DirtyEvaluator {
         }
 
         let mut work = vec![Work::Enter(target)];
+        // The nodes on the way down, so a cycle can be named by the path around
+        // it rather than merely reported. One entry per active edge, holding
+        // the node the edge was reached through.
+        let mut path = Vec::new();
         while let Some(item) = work.pop() {
             match item {
                 Work::Enter(node) => match self.nodes.get(node.index()) {
                     VisitState::Done => {}
                     VisitState::Active => {
-                        return Err(GraphError::DependencyCycle { node: Some(node) });
+                        return Err(cycle_through(graph, &path, node));
                     }
                     VisitState::New => {
                         let Some(edge) = graph.node(node).gen else {
@@ -419,7 +423,7 @@ impl DirtyEvaluator {
                                 continue;
                             }
                             VisitState::Active => {
-                                return Err(GraphError::DependencyCycle { node: Some(node) });
+                                return Err(cycle_through(graph, &path, node));
                             }
                             VisitState::New => {}
                         }
@@ -442,6 +446,7 @@ impl DirtyEvaluator {
                             self.nodes.set(output.index(), VisitState::Active);
                         }
                         work.push(Work::Finish(edge));
+                        path.push(node);
                         let inputs: &[NodeId] = &graph.edge(edge).input;
                         for &input in inputs.iter().rev() {
                             work.push(Work::Enter(input));
@@ -449,6 +454,7 @@ impl DirtyEvaluator {
                     }
                 },
                 Work::Finish(edge) => {
+                    path.pop();
                     recompute_edge_dirty_with(graph, runtime, edge, stat)?;
                     let outputs: &[NodeId] = &graph.edge(edge).out;
                     for &output in outputs {
@@ -459,6 +465,48 @@ impl DirtyEvaluator {
             }
         }
         Ok(runtime.node(target).dirty())
+    }
+}
+
+/// Names a cycle by the path around it, the way Ninja names one.
+///
+/// The cycle starts at the first node on the way down that shares a generating
+/// edge with the one just met again. That node is reported as the node just
+/// met, not as whichever output of the shared edge happened to be entered:
+/// building `b` where `build a b: cat c` and `build c: cat a` reports
+/// `a -> c -> a`, not `b -> c -> a`.
+// [spec:ronin:req:compat.graph-semantics]
+fn cycle_through(graph: &Graph, path: &[NodeId], node: NodeId) -> GraphError {
+    let Some(edge) = graph.node(node).gen else {
+        return GraphError::DependencyCycle {
+            node: Some(node),
+            path: Vec::new(),
+            phony_self_cycle: false,
+        };
+    };
+    let start = path
+        .iter()
+        .position(|entry| graph.node(*entry).gen == Some(edge))
+        .unwrap_or(path.len());
+    let mut names = vec![BString::from(nodepath_bytes(graph, node, PathStyle::Raw))];
+    names.extend(
+        path[start.saturating_add(1)..]
+            .iter()
+            .map(|entry| BString::from(nodepath_bytes(graph, *entry, PathStyle::Raw))),
+    );
+    // CMake 2.8.12 and 3.0 emitted `build a: phony … a …`, and `-w phonycycle`
+    // exists for that shape alone; a longer cycle, or one with implicit edges,
+    // is an ordinary cycle whoever wrote it has to fix.
+    let edge_data = graph.edge(edge);
+    let phony_self_cycle = names.len() == 1
+        && graph.is_phony_rule(edge_data.rule)
+        && edge_data.out.len() == 1
+        && edge_data.explicit_output_count() == edge_data.out.len()
+        && edge_data.explicit_input_count() == edge_data.non_order_only_input_count();
+    GraphError::DependencyCycle {
+        node: Some(node),
+        path: names,
+        phony_self_cycle,
     }
 }
 

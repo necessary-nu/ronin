@@ -579,3 +579,53 @@ fn entering_a_directory_is_announced_unless_output_is_being_parsed() {
 
     fs::remove_dir_all(base).unwrap();
 }
+
+// [spec:ronin:req:compat.graph-semantics/test]
+#[test]
+fn a_dependency_cycle_is_named_by_the_path_around_it() {
+    let directory = test_directory("cycle-path");
+    fs::create_dir_all(&directory).unwrap();
+    let run = |manifest: &str, arguments: &[&str]| {
+        fs::write(directory.join("build.ninja"), manifest).unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
+            .args(arguments)
+            .current_dir(&directory)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    // The flag exists for the self-referencing phony CMake used to emit, and
+    // names itself so the reader knows which flag turned this into an error.
+    assert_eq!(
+        run(
+            "build a: phony a\nbuild b: phony a\ndefault b\n",
+            &["-w", "phonycycle=err"]
+        ),
+        "ronin: error: dependency cycle: a -> a [-w phonycycle=err]\n"
+    );
+
+    // A longer cycle is an ordinary one, and the flag is not mentioned.
+    assert_eq!(
+        run(
+            "rule cp\n  command = cp $in $out\n\
+             build a: cp b\nbuild b: cp c\nbuild c: cp a\ndefault a\n",
+            &[]
+        ),
+        "ronin: error: dependency cycle: a -> b -> c -> a\n"
+    );
+
+    // Asking for `b` still reports the cycle from `a`, the node that closes
+    // it, rather than from the other output of the edge that starts it.
+    assert_eq!(
+        run(
+            "rule cat\n  command = cat $in > $out\n\
+             build a b: cat c\nbuild c: cat a\ndefault b\n",
+            &[]
+        ),
+        "ronin: error: dependency cycle: a -> c -> a\n"
+    );
+
+    fs::remove_dir_all(directory).unwrap();
+}

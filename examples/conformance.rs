@@ -428,6 +428,38 @@ const BUILD_CASES: &[BuildCase] = &[
         stale_manifest: false,
     },
     BuildCase {
+        name: "a self-referencing phony names the cycle and the flag",
+        manifest: "build a: phony a\nbuild b: phony a\ndefault b\n",
+        arguments: &["-C", "@DIR@", "-w", "phonycycle=err"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a phony cycle through two nodes names both",
+        manifest: "build a: phony c\nbuild c: phony a\ndefault a\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        name: "a cycle through real rules names the path",
+        manifest: "rule cp\n  command = cp $in $out\n\
+                   build a: cp b\nbuild b: cp c\nbuild c: cp a\ndefault a\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
+        // Ninja reports the cycle from the node that closes it, not from
+        // whichever other output of that edge was asked for.
+        name: "a cycle through a multi-output edge starts where it closes",
+        manifest: "rule cat\n  command = cat $in > $out\n\
+                   build a b: cat c\nbuild c: cat a\ndefault b\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+    },
+    BuildCase {
         name: "a failing manifest regeneration is an error against the manifest",
         manifest: "rule regen\n  command = exit 4\n  generator = 1\n\
                    build build.ninja: regen conf\nrule cp\n  command = cp $in $out\n\

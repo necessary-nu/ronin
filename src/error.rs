@@ -611,8 +611,18 @@ pub(crate) enum GraphError {
     UnknownPool {
         name: BString,
     },
+    /// A cycle in the graph, named by the path around it.
+    ///
+    /// The path is carried rendered because the graph it names is long gone by
+    /// the time anything formats this. An empty path means the cycle was
+    /// detected by a check that never walked one, and Ninja has no path to
+    /// print either.
     DependencyCycle {
         node: Option<NodeId>,
+        path: Vec<BString>,
+        /// The self-referencing phony that `-w phonycycle` is about, in the one
+        /// shape `CMake` used to emit.
+        phony_self_cycle: bool,
     },
     NoRootNodes,
     Stat {
@@ -628,7 +638,26 @@ impl fmt::Display for GraphError {
             Self::DuplicateRule { name } => write!(formatter, "rule '{name}' redefined"),
             Self::DuplicatePool { name } => write!(formatter, "pool '{name}' redefined"),
             Self::UnknownPool { name } => write!(formatter, "unknown pool '{name}'"),
-            Self::DependencyCycle { .. } => formatter.write_str("dependency cycle"),
+            Self::DependencyCycle { path, .. } if path.is_empty() => {
+                formatter.write_str("dependency cycle")
+            }
+            Self::DependencyCycle {
+                path,
+                phony_self_cycle,
+                ..
+            } => {
+                formatter.write_str("dependency cycle: ")?;
+                for step in path {
+                    write!(formatter, "{step} -> ")?;
+                }
+                // The path closes on the node it started from, which is what
+                // makes it read as a cycle rather than a list.
+                write!(formatter, "{}", path[0])?;
+                if *phony_self_cycle {
+                    formatter.write_str(" [-w phonycycle=err]")?;
+                }
+                Ok(())
+            }
             Self::NoRootNodes => {
                 formatter.write_str("could not determine root nodes of build graph")
             }
