@@ -64,7 +64,11 @@ the supported CLI surface.
 > program cannot be resolved is handed to the shell regardless, so the
 > diagnostic and exit status are the shell's own rather than an imitation of
 > them. `--compat` spawns a shell for every command, as Ninja does, and
-> `--shell` selects which shell that is.
+> `--shell` selects which shell that is. On Windows there is no shell in this
+> position at all: Ninja hands the whole command line to `CreateProcess` and
+> lets Windows find the program in it, so `--compat` asks for what already
+> happens and POSIX word splitting is not applied. `--shell` still selects one,
+> which is how a shell that runs on Windows is used there.
 
 > [spec:ronin:req:product.build-outcome]
 > A build that does not finish reports why on stdout, after the build's own

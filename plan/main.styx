@@ -3321,4 +3321,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-windows-launcher
+        title "Make the Windows build compile and launch as Ninja does"
+        log (
+            {
+                at 2026-08-03T23:27:18.600512368Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-03T23:27:39.542985614Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "The Windows build did not compile. That is the finding; the launcher backend it was opened for is the smaller half of it.\n\nThe node was to give Windows a direct-spawn backend, since `shell_command` reached for `/bin/sh` on every platform. Before writing one I installed the `x86_64-pc-windows-gnu` target to type check what is there — and it does not build. Two errors, one of them mine: `spawn` on the non-Unix path still called `shell_command` with the two arguments it took before the command launcher gave it a third, so that work broke the Windows build the day it landed and nothing said so. The other was older: the parallel stat warms a shared directory descriptor that only exists on Unix.\n\nThat is worth more than the backend. A platform with no host to run on and no check to compile for it does not degrade loudly, it degrades silently, and the answer is not care but a check. `scripts/check-ninja-conformance.sh` now type checks the Windows target when it is installed, and says out loud when it is skipping because it is not. It takes seconds and it says nothing whatsoever about behaviour — only that the code still compiles, which is the bar that was being missed.\n\nOn the launcher itself, the interesting part is what Windows must *not* inherit. Ninja on Windows has no shell in this position at all: it hands the whole command line to `CreateProcess` with no program argument and lets Windows find the program in it. So `--compat`, which on Unix means \"always spawn a shell\", has nothing to fall back to and asks for what already happens. More sharply, the POSIX word splitting the Unix direct path uses would be actively wrong there — it splits on spaces, and would cut `\"C:\\Program Files\\x\\cl.exe\" /c a.c` in half at the space inside the quoted path, producing a program named `\"C:\\Program`. Applying the Unix rule to Windows would have been worse than the `/bin/sh` it replaced, because it would fail quietly on exactly the paths Windows users have.\n\nRust's `Command` insists on a program separate from its arguments, so the split Windows would have done is done here instead: a quoted program ends at its closing quote, an unquoted one at the first space, an unterminated quote runs to the end of the line. That rule is a pure function of the bytes, so it is compiled and tested on every platform rather than only where it runs — five cases including the quoted path that motivates it, passing here on Linux.\n\nWhat is emphatically not verified: any of this actually spawning anything. There is no Windows machine and no CI, so the backend is type checked and its one piece of real logic is unit tested, and nothing more can honestly be claimed. Anyone with a Windows host should run the differential corpus there before trusting it. The `--shell` seam remains how a shell that runs on Windows gets used, which is where Brendan's dash port lands.\n\n409 unit tests, 17 integration tests, clippy clean on the host target, the Windows target compiles, fmt clean, conformance green at 425 upstream tests, 10 differential cases, 32 build-outcome cases, the persistence round trip and the log-content checks."
+            }
+        )
+    }
 )

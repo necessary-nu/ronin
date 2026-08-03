@@ -207,7 +207,9 @@ impl RealDiskInterface {
         }
         let threads = threads.min(cores());
         // Open the shared directory descriptor before fanning out, so the
-        // workers contend on a `OnceLock` that is already initialized.
+        // workers contend on a `OnceLock` that is already initialized. Only
+        // Unix has one to warm.
+        #[cfg(unix)]
         let _ = self.directory_fd();
         let ideal = paths.len().div_ceil(threads);
         std::thread::scope(|scope| {

@@ -234,12 +234,14 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
         {
             let sender = self.sender.clone();
             let working_directory = self.working_directory.clone();
+            let shell = self.shell.clone();
             self.running += 1;
             std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run_shell(
                         &command,
                         &working_directory,
+                        &shell,
                         use_console,
                         dryrun,
                         |pid, process_group| {
@@ -901,6 +903,14 @@ fn direct_argv(command: &[u8]) -> Vec<&[u8]> {
 /// a shell exactly as Ninja hands it over.
 fn shell_command(command: &BString, working_directory: &Path, mode: &ShellMode) -> Command {
     let mut shell = match mode {
+        ShellMode::Program(program) => {
+            let mut shell = Command::new(program);
+            shell
+                .arg("-c")
+                .arg(command.to_os_str().expect("byte strings are valid on Unix"));
+            shell
+        }
+        #[cfg(unix)]
         ShellMode::Auto if !needs_shell(command.as_bytes()) => {
             let argv = direct_argv(command.as_bytes());
             let mut direct =
@@ -914,19 +924,33 @@ fn shell_command(command: &BString, working_directory: &Path, mode: &ShellMode) 
             }
             direct
         }
-        ShellMode::Program(program) => {
-            let mut shell = Command::new(program);
-            shell
-                .arg("-c")
-                .arg(command.to_os_str().expect("byte strings are valid on Unix"));
-            shell
-        }
+        #[cfg(unix)]
         ShellMode::Auto | ShellMode::Compat => {
             let mut shell = Command::new(SYSTEM_SHELL);
             shell
                 .arg("-c")
                 .arg(command.to_os_str().expect("byte strings are valid on Unix"));
             shell
+        }
+        // Windows has no shell in this position at all: Ninja hands the whole
+        // command line to `CreateProcess` and lets Windows find the program in
+        // it. `Compat` therefore asks for the same thing `Auto` does — there is
+        // nothing to fall back to — and the POSIX word splitting used above
+        // would be actively wrong here, since it would break a quoted program
+        // path at its spaces.
+        #[cfg(not(unix))]
+        ShellMode::Auto | ShellMode::Compat => {
+            use std::os::windows::process::CommandExt;
+            let (program, arguments) = windows_program_and_arguments(command.as_bytes());
+            let mut direct = Command::new(
+                std::str::from_utf8(program).expect("Windows command lines are UTF-8"),
+            );
+            if !arguments.is_empty() {
+                direct.raw_arg(
+                    std::str::from_utf8(arguments).expect("Windows command lines are UTF-8"),
+                );
+            }
+            direct
         }
     };
     #[cfg(unix)]
@@ -937,6 +961,41 @@ fn shell_command(command: &BString, working_directory: &Path, mode: &ShellMode) 
         shell.current_dir(working_directory);
     }
     shell
+}
+
+/// Splits a Windows command line into the program and everything after it.
+///
+/// Windows does this itself when `CreateProcess` is given a command line and no
+/// program, which is what Ninja relies on. Rust's `Command` insists on a
+/// separate program, so the same split is done here rather than reusing the
+/// POSIX word splitting, which would break `"C:\\Program Files\\x\\cl.exe" /c`
+/// at the space inside the quoted path. A quoted program ends at its closing
+/// quote; an unquoted one ends at the first space.
+#[cfg_attr(
+    not(windows),
+    allow(
+        dead_code,
+        reason = "the splitting rule is pure, so it is compiled and tested everywhere rather than only where it runs"
+    )
+)]
+fn windows_program_and_arguments(command: &[u8]) -> (&[u8], &[u8]) {
+    let command = command.trim_ascii_start();
+    if let Some(rest) = command.strip_prefix(b"\"") {
+        // An unterminated quote makes Windows take the rest of the line as
+        // the program.
+        return rest
+            .iter()
+            .position(|byte| *byte == b'\"')
+            .map_or((rest, &[][..]), |end| {
+                (&rest[..end], rest[end + 1..].trim_ascii_start())
+            });
+    }
+    command
+        .iter()
+        .position(|byte| *byte == b' ')
+        .map_or((command, &[][..]), |end| {
+            (&command[..end], command[end..].trim_ascii_start())
+        })
 }
 
 /// Give the child a pipe for its output, and keep the read end.
@@ -1000,6 +1059,7 @@ fn configure_output(
 fn run_shell(
     command: &BString,
     working_directory: &Path,
+    shell: &ShellMode,
     use_console: bool,
     dryrun: bool,
     started: impl FnOnce(u32, bool),
@@ -1007,7 +1067,7 @@ fn run_shell(
     if dryrun {
         return Ok(None);
     }
-    let mut child = shell_command(command, working_directory);
+    let mut child = shell_command(command, working_directory, shell);
     if use_console {
         let mut child = child.spawn().map_err(|source| ShellFailure {
             operation: ShellOperation::Spawn,
@@ -1045,6 +1105,34 @@ fn run_shell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // [spec:ronin:req:product.command-execution/test]
+    #[test]
+    fn a_windows_command_line_keeps_a_quoted_program_whole() {
+        // The reason this cannot reuse the POSIX splitting: a quoted program
+        // path would be cut at the space inside it.
+        assert_eq!(
+            windows_program_and_arguments(br#""C:\Program Files\x\cl.exe" /c a.c"#),
+            (&br"C:\Program Files\x\cl.exe"[..], &b"/c a.c"[..])
+        );
+        assert_eq!(
+            windows_program_and_arguments(b"cl.exe /c a.c"),
+            (&b"cl.exe"[..], &b"/c a.c"[..])
+        );
+        assert_eq!(
+            windows_program_and_arguments(b"cl.exe"),
+            (&b"cl.exe"[..], &b""[..])
+        );
+        // Windows takes an unterminated quote as running to the end.
+        assert_eq!(
+            windows_program_and_arguments(br#""C:\x\cl.exe /c"#),
+            (&br"C:\x\cl.exe /c"[..], &b""[..])
+        );
+        assert_eq!(
+            windows_program_and_arguments(b"  cl.exe  /c"),
+            (&b"cl.exe"[..], &b"/c"[..])
+        );
+    }
 
     #[cfg(unix)]
     // [spec:ronin:req:compat.process-integration/test]
