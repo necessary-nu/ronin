@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-03T23:21:28.62192053Z
+last_sync_at 2026-08-03T23:28:00.489336783Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -100,6 +100,7 @@ derived_priorities (
     {id ronin-uses-compaction, priority 0, derived_at 2026-08-01T22:54:27.099665015Z}
     {id ronin-version-diagnostics, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-warning-flags, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
+    {id ronin-windows-launcher, priority 0, derived_at 2026-08-03T23:28:00.489336783Z}
 )
 
 assertions (
