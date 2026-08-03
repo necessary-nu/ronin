@@ -2,3 +2,8 @@
 /samu
 /target/
 /benchmarks/runtime-probe/target/
+
+# Comparison binaries and build trees the conformance and performance gates read.
+# Large, host-specific, and rebuildable from benchmarks/README.md — but kept in
+# the checkout rather than /tmp, which a reboot empties without telling anyone.
+/reference/

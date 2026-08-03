@@ -20,8 +20,9 @@ impl Default for Config {
     fn default() -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         Self {
-            ninja_source: PathBuf::from("/tmp/ninja"),
-            ninja_build: PathBuf::from("/tmp/ninja-build"),
+            // Under the checkout rather than /tmp, which a reboot empties.
+            ninja_source: root.join("reference/ninja"),
+            ninja_build: root.join("reference/ninja-build"),
             ronin: root.join("target/release/ronin"),
         }
     }

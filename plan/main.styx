@@ -3341,4 +3341,24 @@ children (
             }
         )
     }
+
+    {
+        id ronin-reference-in-checkout
+        title "Keep the comparison references where a reboot cannot delete them"
+        log (
+            {
+                at 2026-08-03T23:43:21.953539012Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-03T23:43:39.590827587Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "The comparison references now live in `reference/` in the checkout instead of `/tmp`, and a missing one fails the run instead of shrinking it.\n\n`/tmp` is tmpfs here, so every reboot destroyed the pinned Ninja checkout, the Ninja build, the C samurai binary and both real-project build trees — 140 MB that takes a clone and two builds to replace. That had already cost a gate run this session. Moving them is the obvious half.\n\nThe half worth recording is what the move exposed. `baseline` defaulted its samurai path with `.exists().then_some(…)`, so when the binary was gone the comparison did not fail — it dropped to two tools, printed a perfectly well-formed table, and exited zero. Every row in it was true. What was false was the thing a reader takes from a three-way comparison table, which is that three things were compared. That is the same shape as the Windows build compiling nowhere and the dry-run log check asserting that a no-op is a no-op: not a wrong answer, an answer to a question nobody asked, wearing the clothes of the one they did.\n\nThe reference is now demanded rather than detected. `tool()` already refused a path that does not exist, so making the default unconditional was enough: a missing binary now prints `samurai-c binary does not exist: …` and exits 1. Verified by hiding the binary and checking both the message and the status. `--without-samurai` remains, so a two-way comparison is still available — as something asked for, not as something that happens.\n\n`conformance`, `check-release.sh`, the README and the benchmarks recipe all point at `reference/` now, which means both gates run with no arguments at all; the recipe in `benchmarks/README.md` builds everything into place. The directory is gitignored — it holds a Ninja checkout with its own `.git`, a 5 MB build tree and two CMake project trees, none of which belong in history.\n\nConformance green from the new location with no arguments: 425 upstream tests, 10 differential cases, 32 build-outcome cases, the persistence round trip and the log-content checks. A one-repetition baseline reports all three tools. 409 tests, clippy clean, fmt clean.\n\nStill unmeasured, unchanged by this: the command launcher's wall-clock effect, the supervisor-bookkeeping wall figure, the scheduler-barrier syscall itemisation at this revision, and the real-project three-way. Load has been between 11 and 40 all evening."
+            }
+        )
+    }
 )

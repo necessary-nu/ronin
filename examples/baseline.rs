@@ -73,12 +73,19 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let samurai = PathBuf::from("/tmp/ronin-samu-reference");
+        // Under the checkout rather than /tmp: a reboot empties /tmp, and a
+        // comparison whose references have quietly vanished still runs and
+        // still prints a table.
+        let reference = root.join("reference");
         Self {
             ronin: root.join("target/release/ronin"),
-            ninja: PathBuf::from("/tmp/ninja-build/ninja"),
-            samurai: samurai.exists().then_some(samurai),
-            ninja_source: PathBuf::from("/tmp/ninja"),
+            ninja: reference.join("ninja-build/ninja"),
+            // Demanded, not detected. This used to fall back to `None` when the
+            // binary was absent, so a comparison that had quietly lost one of
+            // its three subjects still ran and still printed a table.
+            // `--without-samurai` is how you ask for two.
+            samurai: Some(reference.join("samurai")),
+            ninja_source: reference.join("ninja"),
             repetitions: 5,
             warmups: 1,
             output: None,

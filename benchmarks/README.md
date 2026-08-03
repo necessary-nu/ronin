@@ -13,22 +13,28 @@ reference. It generates deterministic version-1 workloads for:
 
 Build the three binaries, then run:
 
+Both references live under `reference/` in the checkout, which is gitignored.
+They used to live in `/tmp`, where a reboot silently destroyed them and the
+gates went on running against whatever was left.
+
 The C samurai reference is built from an upstream checkout; this repository no
-longer carries the C sources it was ported from. The comparison is optional —
-`baseline` omits the `samurai-c` rows when the binary is absent, so check for
-them in the output if you meant to include it.
+longer carries the C sources it was ported from. `baseline` fails when it is
+missing rather than dropping the `samurai-c` rows: pass `--without-samurai` to
+ask for a two-way comparison deliberately.
 
 ```sh
 cargo build --release
 git clone https://git.sr.ht/~mcf/samurai /tmp/samurai-upstream
-cc -O2 -std=c99 -o /tmp/ronin-samu-reference \
-  /tmp/samurai-upstream/*.c -lrt
-cargo run --release --example baseline -- \
-  --ninja /tmp/ninja-build/ninja \
-  --ninja-source /tmp/ninja \
-  --samurai /tmp/ronin-samu-reference \
-  --warmups 1 --repetitions 5
+cc -O2 -std=c99 -o reference/samurai /tmp/samurai-upstream/*.c -lrt
+git clone https://github.com/ninja-build/ninja reference/ninja
+git -C reference/ninja checkout b51a1e37c2fb89bbefa600bd155e1ce13983f09d
+cmake -S reference/ninja -B reference/ninja-build -DCMAKE_BUILD_TYPE=Release
+cmake --build reference/ninja-build
+cargo run --release --example baseline -- --warmups 1 --repetitions 5
 ```
+
+The defaults point at `reference/`, so the paths above only need repeating when
+they are somewhere else.
 
 The harness refuses a Ninja source checkout other than commit
 `b51a1e37c2fb89bbefa600bd155e1ce13983f09d`. Results include the Ronin and
@@ -43,10 +49,7 @@ The original Ronin medians are stored as machine-readable input in
 [`baseline-v1.csv`](baseline-v1.csv). Run the release gate with:
 
 ```sh
-scripts/check-performance.sh \
-  --ninja /tmp/ninja-build/ninja \
-  --ninja-source /tmp/ninja \
-  --warmups 1 --repetitions 7
+scripts/check-performance.sh --warmups 1 --repetitions 7
 ```
 
 The gate interleaves Ronin and Ninja samples to reduce temporal bias. It rejects

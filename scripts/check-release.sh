@@ -4,8 +4,8 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
-ninja_source=${NINJA_SOURCE:-/tmp/ninja}
-ninja_build=${NINJA_BUILD:-/tmp/ninja-build}
+ninja_source=${NINJA_SOURCE:-"$repo_root/reference/ninja"}
+ninja_build=${NINJA_BUILD:-"$repo_root/reference/ninja-build"}
 ninja_binary=${NINJA_BINARY:-"$ninja_build/ninja"}
 performance_warmups=${PERFORMANCE_WARMUPS:-2}
 performance_repetitions=${PERFORMANCE_REPETITIONS:-15}
