@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-03T23:28:00.489336783Z
+last_sync_at 2026-08-03T23:44:05.47689166Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -83,6 +83,7 @@ derived_priorities (
     {id ronin-phony-console-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-progress-bar, priority 2, derived_at 2026-08-01T23:41:43.894694172Z}
     {id ronin-real-project-validation, priority 0, derived_at 2026-08-01T23:07:14.639226469Z}
+    {id ronin-reference-in-checkout, priority 0, derived_at 2026-08-03T23:44:05.47689166Z}
     {id ronin-reporter-seam, priority 0, derived_at 2026-08-01T23:41:43.894694172Z}
     {id ronin-retire-c-corpus, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-scanner-bulk-runs, priority 0, derived_at 2026-08-01T19:11:49.911241827Z}
