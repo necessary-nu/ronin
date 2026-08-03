@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-01T23:56:06.156592866Z
+last_sync_at 2026-08-03T22:54:05.113216545Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -42,29 +42,36 @@ derived_priorities (
     {id ronin-batched-stat, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-byte-class-tables, priority 0, derived_at 2026-08-01T19:23:06.979851655Z}
     {id ronin-cargo-output-style, priority 1, derived_at 2026-08-01T23:41:43.894694172Z}
+    {id ronin-command-launcher, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-compact-graph-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-depfile-inplace, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-deps-record-bounds, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-dispatch-residual-gap, priority 0, derived_at 2026-08-01T20:00:43.762607713Z}
     {id ronin-dispatch-syscall-cost, priority 0, derived_at 2026-07-31T14:51:35.215199716Z}
     {id ronin-drop-port-scaffolding, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
+    {id ronin-dryrun-log-divergence, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-eager-stat-storm, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-edge-id-iteration, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-edge-metadata-cache, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-edge-scope-inline, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-eta-prediction, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-eval-scratch-buffers, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-failure-surface-parity, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-fast-hashing, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-index-growth-rehash, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-intern-single-probe, priority 0, derived_at 2026-08-01T21:55:31.351742377Z}
     {id ronin-large-manifest-fixture, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-log-byte-parsing, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
+    {id ronin-log-content-check, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-log-span-loading, priority 2, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-manifest-diagnostic-shape, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-memchr-scanner, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-mimalloc-allocator, priority 0, derived_at 2026-08-01T18:13:14.434121121Z}
     {id ronin-mmap-inputs, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-musl-static-build, priority 0, derived_at 2026-08-01T14:25:58.591751363Z}
     {id ronin-name-interning, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-ninja-reference-unpinned, priority 0, derived_at 2026-08-01T21:31:59.083938862Z}
+    {id ronin-no-work-predicate, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-node-locality-at-scale, priority 1, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-node-validation-side-table, priority 0, derived_at 2026-08-01T22:31:11.051420975Z}
     {id ronin-output-pipe-not-socketpair, priority 0, derived_at 2026-08-01T20:24:12.837017389Z}
@@ -74,8 +81,10 @@ derived_priorities (
     {id ronin-progress-bar, priority 2, derived_at 2026-08-01T23:41:43.894694172Z}
     {id ronin-real-project-validation, priority 0, derived_at 2026-08-01T23:07:14.639226469Z}
     {id ronin-reporter-seam, priority 0, derived_at 2026-08-01T23:41:43.894694172Z}
+    {id ronin-retire-c-corpus, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-scanner-bulk-runs, priority 0, derived_at 2026-08-01T19:11:49.911241827Z}
     {id ronin-single-pass-dirty, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-spec-namespace, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-stale-bool-suppression, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-startup-floor, priority 0, derived_at 2026-07-31T14:51:35.215199716Z}
     {id ronin-stat-batch-cpu-cost, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
@@ -86,6 +95,8 @@ derived_priorities (
     {id ronin-traversal-mark-option, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-traversal-scratch, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-uses-compaction, priority 0, derived_at 2026-08-01T22:54:27.099665015Z}
+    {id ronin-version-diagnostics, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
+    {id ronin-warning-flags, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
 )
 
 assertions (
