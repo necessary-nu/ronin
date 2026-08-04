@@ -1,10 +1,14 @@
-//! Front-end-agnostic graph construction.
+//! Front-end-agnostic graph construction and execution.
 //!
 //! A front end supplies rules, pools, edges, and default targets through
 //! [`BuildGraph`] and receives a graph the build, tool, and persistence paths
 //! accept without knowing which front end produced it. Ronin's Ninja manifest
 //! parser is one such front end and is built on nothing else; [`load_manifest`]
 //! is its entry point.
+//!
+//! A graph is then run through [`Build`], over the [`Persistence`] that makes a
+//! second build incremental. Ronin's command line is built on those too, so
+//! what a front end can ask for is what the Ninja front end asks for.
 //!
 //! The arenas behind a graph enforce their invariants through the operations
 //! that mutate them: a node's generating edge and its use list, the side table
@@ -24,7 +28,10 @@ use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, EvalPart, E
 use std::fmt;
 use std::num::NonZeroUsize;
 
+mod execute;
+
 pub use crate::parse::{load_manifest, Manifest, ManifestOptions};
+pub use execute::{Build, Jobs, Outcome, Persistence, Planned};
 
 /// A path interned in a graph.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -517,7 +524,11 @@ impl BuildGraph {
         &mut self.arenas
     }
 
-    /// Gives up the graph, for once the front end has nothing left to add.
+    /// Gives up the graph, for the tests that drive the arenas directly.
+    ///
+    /// No build path needs this: a build runs over the graph a front end holds
+    /// rather than taking it away.
+    #[cfg(test)]
     pub(crate) fn into_arenas(self) -> Graph {
         self.arenas
     }

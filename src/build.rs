@@ -2,7 +2,7 @@
 
 use crate::error::{BuildError, BuildOperation, BuildStop, ProcessError};
 use crate::graph::{
-    edgeadddeps, edgehash, nodeget, nodestat_with, recompute_dirty_with_validations,
+    edgeadddeps, edgehash, nodestat_with, recompute_dirty_with_validations,
     recompute_edge_dirty_with, EdgeId, Graph, NodeId, PathStyle, TraversalScratch,
 };
 use crate::names::Names;
@@ -847,11 +847,18 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// The target a path names, for the tests that describe one that way.
+    #[cfg(test)]
     pub(crate) fn add_target(&mut self, path: impl AsRef<[u8]>) -> BuildResult<()> {
         let path = path.as_ref();
-        let node = nodeget(self.graph, path).ok_or_else(|| BuildError::UnknownTarget {
-            path: BString::from(path),
-        })?;
+        let node =
+            crate::graph::nodeget(self.graph, path).ok_or_else(|| BuildError::UnknownTarget {
+                path: BString::from(path),
+            })?;
+        self.add_target_node(node)
+    }
+
+    pub(crate) fn add_target_node(&mut self, node: NodeId) -> BuildResult<()> {
         if !self.targets.contains(&node) {
             self.targets.push(node);
         }
@@ -879,7 +886,7 @@ impl<'a> Builder<'a> {
                 if self.graph.node(node).gen.is_none() {
                     BuildError::MissingRule {
                         node,
-                        path: BString::from(path),
+                        path: self.graph.node_path(node).to_owned(),
                     }
                 } else {
                     error
@@ -955,12 +962,12 @@ impl<'a> Builder<'a> {
         self.plan.is_empty() || self.plan.command_edge_count(self.graph) == 0
     }
 
-    pub(crate) fn ran_edge(&self, edge: EdgeId) -> bool {
-        self.executed_edges.contains(&edge)
-    }
-
-    pub(crate) fn ran_edge_without_restat_pruning(&self, edge: EdgeId) -> bool {
-        self.ran_edge(edge) && !self.runtime.edge(edge).restat_clean()
+    /// Whether the build ran the command that generates `node`, and a `restat`
+    /// rule did not then find the output unchanged.
+    pub(crate) fn regenerated(&self, node: NodeId) -> bool {
+        self.graph.node(node).gen.is_some_and(|edge| {
+            self.executed_edges.contains(&edge) && !self.runtime.edge(edge).restat_clean()
+        })
     }
 
     fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<PreparedEdge> {

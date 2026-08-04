@@ -1,9 +1,11 @@
 use ronin::frontend::{
-    load_manifest, BuildGraph, EdgeSpec, FrontendError, ManifestOptions, Node, Template,
+    load_manifest, Build, BuildGraph, EdgeSpec, FrontendError, Jobs, ManifestOptions, Node,
+    Persistence, Template,
 };
 use ronin::{run, run_os, ErrorKind};
 use std::error::Error as _;
 use std::ffi::OsString;
+use std::num::NonZeroUsize;
 
 #[test]
 fn public_api_classifies_cli_errors() {
@@ -137,6 +139,95 @@ fn public_api_builds_the_same_graph_a_manifest_would() {
     };
     assert_eq!(defaults(&assembled), [b"out".to_vec()]);
     assert_eq!(defaults(&assembled), defaults(&parsed.graph));
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+/// `out` is copied from `mid`, which is copied from the source file `in`.
+///
+/// Every path is absolute, because where a build runs is a command-line option
+/// rather than something the boundary exposes.
+fn copy_graph(directory: &std::path::Path) -> BuildGraph {
+    let path = |name: &str| {
+        let mut bytes = directory.as_os_str().as_encoded_bytes().to_vec();
+        bytes.push(b'/');
+        bytes.extend_from_slice(name.as_bytes());
+        bytes
+    };
+    let mut graph = BuildGraph::new();
+    let root = graph.root();
+    let command = graph.binding(b"command");
+    let mut recipe = Template::literal(b"cp ");
+    let inputs = graph.binding(b"in");
+    recipe.push_variable(inputs);
+    recipe.push_literal(b" ");
+    let outputs = graph.binding(b"out");
+    recipe.push_variable(outputs);
+    let copy = graph
+        .define_rule(root, b"copy", vec![(command, recipe)])
+        .unwrap();
+
+    let source = graph.node(&path("in")).unwrap();
+    let middle = graph.node(&path("mid")).unwrap();
+    let final_output = graph.node(&path("out")).unwrap();
+    for (output, input) in [(middle, source), (final_output, middle)] {
+        graph
+            .add_edge(EdgeSpec {
+                scope: root,
+                rule: copy,
+                explicit_outputs: &[output],
+                implicit_outputs: &[],
+                explicit_inputs: &[input],
+                implicit_inputs: &[],
+                order_only_inputs: &[],
+                validations: &[],
+                bindings: Vec::new(),
+            })
+            .unwrap();
+    }
+    graph.add_default(final_output);
+    graph
+}
+
+// [spec:ronin:req:frontend.graph-construction/test]
+#[test]
+fn public_api_runs_a_graph_no_manifest_described() {
+    let directory = std::env::temp_dir().join(format!(
+        "ronin-execute-api-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("in"), b"source\n").unwrap();
+
+    let mut graph = copy_graph(&directory);
+    let targets = graph.default_targets();
+    let (mut persistence, warning) = Persistence::open(&mut graph, &directory).unwrap();
+    assert!(warning.is_none());
+
+    let mut streamed = Vec::new();
+    let planned = Build::new(&mut graph, &mut persistence)
+        .jobs(Jobs::Limit(NonZeroUsize::new(2).unwrap()))
+        .keep_going(0)
+        .output(&mut streamed)
+        .plan(&targets)
+        .unwrap();
+    assert!(!planned.already_up_to_date());
+    let outcome = planned.run().unwrap();
+
+    assert_eq!(outcome.stopped(), None);
+    assert_eq!(outcome.exit_code(), 0);
+    assert_eq!(outcome.regenerated(), targets.as_slice());
+    assert!(outcome.output().is_empty(), "the sink took the output");
+    assert!(String::from_utf8_lossy(&streamed).contains("cp "));
+    assert_eq!(std::fs::read(directory.join("out")).unwrap(), b"source\n");
+
+    // The persistent state the first build appended is what makes the second
+    // one know it has nothing to do.
+    let planned = Build::new(&mut graph, &mut persistence)
+        .plan(&targets)
+        .unwrap();
+    assert!(planned.already_up_to_date());
+    persistence.finish().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }
 

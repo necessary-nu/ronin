@@ -5,7 +5,7 @@ use crate::error::{
     BuildError, CliError, EncodingContext, PersistenceError, PersistenceOperation,
     ToolAvailability, ToolError,
 };
-use crate::frontend::{BuildGraph, ManifestOptions};
+use crate::frontend::{Build, BuildGraph, ManifestOptions, Node, Persistence};
 use crate::util::{terminated, BString, ByteSlice, ByteVec};
 use crate::Error;
 use std::ffi::OsString;
@@ -1019,18 +1019,6 @@ fn tool_result_with(output: impl AsRef<[u8]>, stderr: Vec<u8>) -> RunResult {
     RunResult::exit(terminated(output), stderr, 0)
 }
 
-fn finish_build_log(log: crate::log::BuildLog) -> Result<(), PersistenceError> {
-    let path = log.path().to_owned();
-    log.finish()
-        .map_err(|source| PersistenceError::io(PersistenceOperation::FlushBuildLog, path, source))
-}
-
-fn finish_deps_log(log: crate::deps::DepsLog) -> Result<(), PersistenceError> {
-    let path = log.path().to_owned();
-    log.finish()
-        .map_err(|source| PersistenceError::io(PersistenceOperation::FlushDepsLog, path, source))
-}
-
 const fn tool_help(tool: crate::tool::Tool) -> Option<&'static str> {
     match tool {
         crate::tool::Tool::Clean => Some(concat!(
@@ -1430,12 +1418,29 @@ pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
     process_runner()?.run_os(arguments)
 }
 
-/// The persistent state and the sinks one build writes through.
+/// The sinks one build writes through.
 struct BuildIo<'a, 'sink> {
-    build_log: &'a mut crate::log::BuildLog,
-    deps_log: &'a mut crate::deps::DepsLog,
     output: Option<&'a mut (dyn std::io::Write + 'sink)>,
     diagnostics: Option<&'a mut (dyn std::io::Write + 'sink)>,
+}
+
+impl<'a, 'sink> BuildIo<'a, 'sink> {
+    /// The build these sinks and `options` describe, over `graph`.
+    fn build(
+        self,
+        graph: &'a mut BuildGraph,
+        persistence: &'a mut Persistence,
+        options: &BuildOptions,
+    ) -> Build<'a, 'sink> {
+        let mut build = Build::with_options(graph, persistence, options.clone());
+        if let Some(sink) = self.output {
+            build = build.output(sink);
+        }
+        if let Some(sink) = self.diagnostics {
+            build = build.diagnostics(sink);
+        }
+        build
+    }
 }
 
 /// Rebuild the manifest itself, for a manifest some build statement generates.
@@ -1443,48 +1448,35 @@ struct BuildIo<'a, 'sink> {
 /// Reports whether it actually changed, which is what sends the invocation
 /// round again to read the one it has now.
 fn rebuild_manifest<'a>(
-    graph: &'a mut crate::graph::Graph,
+    graph: &'a mut BuildGraph,
+    persistence: &'a mut Persistence,
     options: &BuildOptions,
     io: BuildIo<'a, '_>,
     manifest: &BString,
     output: &mut String,
 ) -> CliResult<bool> {
-    let Some(edge) =
-        crate::graph::nodeget(graph, manifest.as_bytes()).and_then(|node| graph.node(node).gen)
+    let Some(target) = graph
+        .lookup(manifest.as_bytes())
+        .filter(|node| graph.generator(*node).is_some())
     else {
         return Ok(false);
     };
-    let streaming = io.output.is_some();
-    let mut builder = crate::build::Builder::from_parts(
-        graph,
-        options.clone(),
-        Some(io.build_log),
-        Some(io.deps_log),
-        io.output.map(|sink| sink as &mut dyn std::io::Write),
-        io.diagnostics.map(|sink| sink as &mut dyn std::io::Write),
-    );
-    builder.add_target(manifest.as_bytes())?;
-    if builder.already_up_to_date() {
+    let planned = io.build(graph, persistence, options).plan(&[target])?;
+    if planned.already_up_to_date() {
         return Ok(false);
     }
-    let result = builder.build();
-    let rebuilt = builder.ran_edge_without_restat_pruning(edge);
-    if !streaming {
-        append_output(output, &String::from_utf8_lossy(&builder.build_output));
-    }
+    let outcome = planned.run()?;
+    append_output(output, &String::from_utf8_lossy(outcome.output()));
     // Failing to regenerate the manifest is not a build outcome: Ninja names
     // the manifest, reports it as an error, and leaves with a plain failure
     // rather than the command's own status.
-    match result {
-        Err(BuildError::Stopped { reason, .. }) => Err(BuildError::ManifestRebuild {
+    match outcome.stopped {
+        Some((reason, _)) => Err(BuildError::ManifestRebuild {
             path: manifest.clone(),
             reason,
         }
         .into()),
-        other => {
-            other?;
-            Ok(rebuilt)
-        }
+        None => Ok(!outcome.regenerated().is_empty()),
     }
 }
 
@@ -1497,43 +1489,46 @@ struct BuildOutcome {
 }
 
 fn build_targets<'a>(
-    graph: &'a mut crate::graph::Graph,
+    graph: &'a mut BuildGraph,
+    persistence: &'a mut Persistence,
     options: &BuildOptions,
     io: BuildIo<'a, '_>,
-    targets: &[BString],
+    names: &[BString],
     output: &mut String,
 ) -> CliResult<BuildOutcome> {
-    let streaming = io.output.is_some();
-    let mut builder = crate::build::Builder::from_parts(
-        graph,
-        options.clone(),
-        Some(io.build_log),
-        Some(io.deps_log),
-        io.output.map(|sink| sink as &mut dyn std::io::Write),
-        io.diagnostics.map(|sink| sink as &mut dyn std::io::Write),
-    );
-    for target in targets {
-        builder
-            .add_target(target.as_bytes())
-            .map_err(BuildError::target_context)?;
-    }
-    let already_up_to_date = builder.already_up_to_date();
-    let result = builder.build();
-    if !streaming {
-        append_output(output, &String::from_utf8_lossy(&builder.build_output));
-    }
+    // A name nothing in the graph interned is the invocation's mistake rather
+    // than the build's, and Ninja reports it the same way it reports the rest of
+    // what its user asked for.
+    let targets = if names.is_empty() {
+        graph.default_targets()
+    } else {
+        names
+            .iter()
+            .map(|name| {
+                graph.lookup(name.as_bytes()).ok_or_else(|| {
+                    BuildError::target_context(BuildError::UnknownTarget { path: name.clone() })
+                        .into()
+                })
+            })
+            .collect::<CliResult<Vec<Node>>>()?
+    };
+    let mut build = io.build(graph, persistence, options);
+    // The targets came from a command line, so a failure to start reads as an
+    // error against the invocation rather than as the engine's own report.
+    build.invocation_errors = true;
+    let planned = build.plan(&targets)?;
+    let already_up_to_date = planned.already_up_to_date();
+    let outcome = planned.run()?;
+    append_output(output, &String::from_utf8_lossy(outcome.output()));
     // A build that stops is a result, not a diagnostic: Ninja says so on stdout
     // after the build's own output and exits with the failing command's status.
     // Anything else is a genuine error.
-    let stopped = match result {
-        Err(BuildError::Stopped { reason, status }) => {
-            Some((format!("{PRODUCT_NAME}: build stopped: {reason}."), status))
-        }
-        other => {
-            other?;
-            None
-        }
-    };
+    let stopped = outcome.stopped().map(|reason| {
+        (
+            format!("{PRODUCT_NAME}: build stopped: {reason}."),
+            outcome.exit_code(),
+        )
+    });
     Ok(BuildOutcome {
         already_up_to_date,
         stopped,
@@ -1656,28 +1651,7 @@ fn run_bytes<'sink>(
             || invocation.working_directory.as_path().to_owned(),
             |directory| invocation.working_directory.resolve(directory),
         );
-        if logical_builddir.is_some() {
-            let directory = &builddir;
-            std::fs::create_dir_all(directory).map_err(|source| {
-                PersistenceError::io(
-                    PersistenceOperation::CreateBuildDirectory,
-                    directory.clone(),
-                    source,
-                )
-            })?;
-        }
-        let build_log_path = builddir.join(".ninja_log");
-        let mut build_log = crate::log::BuildLog::open(Some(&builddir)).map_err(|source| {
-            PersistenceError::io(PersistenceOperation::OpenBuildLog, build_log_path, source)
-        })?;
-        let deps_path = builddir.join(".ninja_deps");
-        let (mut deps_log, warning) = crate::deps::depsloadlog(
-            &deps_path,
-            manifest.graph.arenas_mut(),
-        )
-        .map_err(|source| {
-            PersistenceError::io(PersistenceOperation::OpenDepsLog, deps_path.clone(), source)
-        })?;
+        let (mut persistence, warning) = Persistence::open(&mut manifest.graph, &builddir)?;
         if let Some(warning) = warning {
             append_output(&mut output, &warning);
         }
@@ -1685,25 +1659,22 @@ fn run_bytes<'sink>(
             let result = run_log_tool(
                 tool,
                 &manifest.graph,
-                &mut build_log,
-                &mut deps_log,
+                &mut persistence.build_log,
+                &mut persistence.deps_log,
                 &invocation.tool_arguments,
                 ToolRunContext::new(&invocation.build_options, &invocation.working_directory),
             );
-            let build_log_result = finish_build_log(build_log);
-            let deps_log_result = finish_deps_log(deps_log);
+            let persistence_result = persistence.finish();
             let result = result?;
-            build_log_result?;
-            deps_log_result?;
+            persistence_result?;
             return Ok(result);
         }
 
         let manifest_result = rebuild_manifest(
-            manifest.graph.arenas_mut(),
+            &mut manifest.graph,
+            &mut persistence,
             &invocation.build_options,
             BuildIo {
-                build_log: &mut build_log,
-                deps_log: &mut deps_log,
                 output: build_output.as_deref_mut(),
                 diagnostics: build_diagnostics.as_deref_mut(),
             },
@@ -1713,44 +1684,32 @@ fn run_bytes<'sink>(
         let manifest_rebuilt = match manifest_result {
             Ok(rebuilt) => rebuilt,
             Err(error) => {
-                let _ = build_log.finish();
-                let _ = deps_log.finish();
+                let _ = persistence.finish();
                 return Err(error);
             }
         };
         if manifest_rebuilt {
-            finish_build_log(build_log)?;
-            finish_deps_log(deps_log)?;
+            persistence.finish()?;
             if invocation.build_options.dryrun {
                 return Ok(tool_result_with(output, std::mem::take(&mut warnings)));
             }
             continue;
         }
 
-        let selected_targets = if invocation.targets.is_empty() {
-            default_target_names(&manifest.graph)
-        } else {
-            invocation.targets.clone()
-        };
-        // The front end has nothing left to add, so the build takes the graph.
-        let mut graph = manifest.graph.into_arenas();
         let outcome = build_targets(
-            &mut graph,
+            &mut manifest.graph,
+            &mut persistence,
             &invocation.build_options,
             BuildIo {
-                build_log: &mut build_log,
-                deps_log: &mut deps_log,
                 output: build_output.as_deref_mut(),
                 diagnostics: build_diagnostics.as_deref_mut(),
             },
-            &selected_targets,
+            &invocation.targets,
             &mut output,
         );
-        let build_log_result = finish_build_log(build_log);
-        let deps_log_result = finish_deps_log(deps_log);
+        let persistence_result = persistence.finish();
         let outcome = outcome?;
-        build_log_result?;
-        deps_log_result?;
+        persistence_result?;
         if let Some((message, status)) = outcome.stopped {
             append_output(&mut output, &message);
             return Ok(RunResult::exit(
