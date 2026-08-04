@@ -3431,6 +3431,13 @@ children (
                         kind @note
                         text "Scope of this node beyond adding the submodule, which is done.\n\nWorkspace: the root package gains a workspace with the submodule as a member, so one cargo invocation builds both and the release profile settings apply to the front end too.\n\nFork hygiene, all in our fork rather than carried as patches. criterion is in [dependencies] rather than [dev-dependencies], so plotters, rayon, clap, regex, jiff, half, and ciborium are pulled into release builds; moving it drops the tree from 74 crates toward Ronin's 19. env_logger goes, with diagnostics routed through Ronin's. The #![deny(warnings)] in lib.rs and main.rs goes, because on vendored code it turns every compiler upgrade into a build break. The jemalloc global allocator in main.rs goes; allocator choice belongs to Ronin. The rkati binary stays, because the differential harness needs the upstream-shaped tool to compare against.\n\nGovernance: kati/src-rs/** joins the nspec target-impl include list and the nplan rust platform file globs, so the vendored code is subject to the same spec coverage and quality gates as the rest of the tree rather than sitting in a blind spot. That is the point of vendoring it rather than depending on it.\n\nToolchain: it compiles clean as-is on rustc 1.97.1, a 30 second cold check. Edition 2024 with let-chains is fine while it stays a separate crate; it is a problem only if anyone tries to merge the module tree into the edition 2021 root package, which is not the plan."
                     }
+
+                    {
+                        at 2026-08-04T15:40:13.06282916Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Correction to the hygiene list above. The reason given for dropping jemalloc was wrong: a #[global_allocator] in a binary crate applies only to that binary, and Ronin links the library rather than rkati's main, so nothing about the vendored binary's allocator reaches Ronin's.\n\nIt still belongs on the list, for a different and smaller reason. tikv-jemallocator is a normal target-conditional dependency, not a dev one, so cargo builds it whether or not any linked target installs it: cargo check --lib on the fork compiles tikv-jemalloc-sys and its bundled C sources. That is build cost with no consumer once main.rs is out of the picture, which puts it in the same bucket as the misplaced criterion dependency rather than in the correctness bucket. Confine both to the rkati binary via optional dependencies or a feature so the library builds neither."
+                    }
                 )
             }
 
@@ -3494,6 +3501,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Inventory of the mutable process globals to remove, taken from the submodule at the vendored commit.\n\nsymtab.rs:33 SYMTAB, the interner and Make's global variable table in one structure. symtab.rs:35-40 six symbols derived from it: SHELL, .KATI_ALLOW_RULES, .KATI_READONLY, .VARIABLES, .KATI_SYMBOLS, MAKEFILE_LIST. loc.rs:33 DEFAULT_FILENAME, also derived. flags.rs:32 FLAGS, lazily initialized from the process command line. var.rs:421 SHELL_STATUS. var.rs:427 USED_ENV_VARS. eval.rs:239 USED_UNDEFINED_VARS. fileutil.rs:114 GLOB_CACHE. file_cache.rs:28 CACHE. find.rs:41 NODE_COUNT and find.rs:1352 FIND_EMULATOR. func.rs:602 COMMAND_RESULTS. stats.rs:30 ALL_STATS plus a per-call-site static in each of the two stats macros. main.rs:62 installs jemalloc as the global allocator, which is a Ronin-level choice and collides with the open allocator node.\n\nfunc.rs:1421 FUNC_INFO_MAP is a read-only dispatch table built once from a const array. It is not in scope for removal; it is a lookup table, not ambient state.\n\nSizing for the interner, which is the one that sets the shape of the rest: Symbol is a NonZeroUsize index, and Display, Debug, and as_bytes all take the global lock, so none of them can be given a session by threading a parameter through their signatures. There are roughly 119 as_bytes call sites and 81 intern call sites. The display implementations need explicit session-carrying forms, which is why kati-symbol-display is separated out and blocked on the split rather than folded into it.\n\nThe reason the split comes first is that the symbol table is two things: interning a name and defining a global variable are the same call, via get_global_var and set_global_var hanging off Symbol. Until those separate, the interner cannot be owned by anything, because owning it would mean owning Make's variable scope with it."
+                    }
+
+                    {
+                        at 2026-08-04T15:39:57.391976508Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Correction to the inventory above: the jemalloc global allocator at main.rs:62 is not in scope and was never a conflict. A #[global_allocator] declared in a binary crate applies to that binary alone, and Ronin links the library, not rkati's main. Ronin's allocator choice is unaffected whatever the vendored binary does with its own.\n\nThe inventory therefore stands at twelve mutable globals rather than twelve plus an allocator, and the removal work is unchanged."
                     }
                 )
             }

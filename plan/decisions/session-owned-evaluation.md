@@ -31,7 +31,6 @@ consequences {
         "Symbol interning splits from Make's global variable scope. The symbol table currently stores variable bindings alongside interned names, which is why interning a string and defining a variable are the same operation and neither can be reset without the other."
         "Flags become a parsed value constructed from arguments, not a lazily initialized read of the process command line."
         "Types whose Display and Debug implementations currently reach for the interner gain explicit display forms that take the session."
-        "The front end sets no global allocator; allocator choice stays a Ronin-level decision."
         "Immutable dispatch tables are not globals in the sense being removed here and may remain, provided they are genuinely read-only after construction."
     )
     deferred (
@@ -54,8 +53,7 @@ The vendored front end carries twelve pieces of mutable process-global state:
 the symbol table and six symbols derived from it, a default location symbol,
 the command-line flags, shell status, used environment variables, used
 undefined variables, the glob cache, the makefile cache, the find emulator and
-its node counter, command results, and the statistics registry. The binary also
-installs a global allocator.
+its node counter, command results, and the statistics registry.
 
 Each of them is individually defensible in a program that runs once and exits.
 Together they make the process the unit of evaluation, and this integration
