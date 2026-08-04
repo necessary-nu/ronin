@@ -3475,7 +3475,7 @@ children (
                         implements {
                             target-impl ([spec:ronin:req:make.no-ambient-state])
                         }
-                        deps (kati-symtab-split)
+                        deps (kati-symtab-split kati-scoped-binding)
                         log (
                             {
                                 at 2026-08-04T16:43:19.858259904Z
@@ -3517,6 +3517,20 @@ children (
                         title "Move command results, used-variable tracking, and statistics into the session"
                         deps (kati-session-value)
                     }
+
+                    {
+                        id kati-scoped-binding
+                        title "Replace the scope-restoring Drop guard with explicit save and restore"
+                        deps (kati-symtab-split)
+                        log (
+                            {
+                                at 2026-08-04T17:58:32.362626463Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Split out of kati-session-value because it is the part of it that is a design change rather than a threading exercise, and it blocks the rest.\n\nScopedGlobalVar restores a global variable binding in Drop. Drop takes only &mut self, so it cannot be handed a session, which means it cannot survive session ownership in its current shape. It is not a corner: foreach, foreach_sep, and call use it for the automatic positional variables, so it is on the hot evaluation path and its loop bodies re-enter evaluation.\n\nThe two candidate shapes. Borrow the session in the guard, which poisons every &mut Evaluator borrow for the lifetime of the guard and therefore across the loop bodies that need the evaluator — likely a non-starter, but establish that rather than assume it. Or replace the guard with an explicit save and restore around the closure, shaped like globals.with_bound(sym, var, |globals| ...), which is why GlobalVars::replace already returns the previous binding: kati-symtab-split shaped it for exactly this rewrite.\n\nNote that the guard's restore must run on the error path too, since Make evaluation propagates errors through these functions. A closure form has to be careful not to lose that property, which is the one thing Drop was genuinely buying.\n\nScopedVar in the same file looks identical and is not affected: it holds an Arc<Vars> rather than reaching for a global, so it needs nothing from a session."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
@@ -3547,7 +3561,7 @@ children (
                 implements {
                     target-impl ([spec:ronin:req:make.graph-direct])
                 }
-                deps (ronin-frontend-api kati-build-sink)
+                deps (ronin-frontend-api ronin-execute-api kati-build-sink)
                 log (
                     {
                         at 2026-08-04T14:37:29.490746695Z
@@ -3604,6 +3618,34 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "The intended position is Apache-2.0 OR MIT for Ronin's own work, with the accurate qualification that the vendored front end cannot be moved wholesale onto that dual licence.\n\nkati is Apache-2.0, copyright Google LLC. Apache-2.0 is permissive but not sublicensable, so those files stay Apache-2.0 no matter who forks them, and the NOTICE and patent terms travel with them. Ronin's existing lineage is ISC via samurai, which folds into a permissive distribution cleanly provided the Forney notice is retained, and it already is.\n\nSo the workable arrangement is: the kati crate declares Apache-2.0 and keeps its NOTICE; Ronin's own crate declares Apache-2.0 OR MIT; our modifications to the vendored files are contributed under Apache-2.0 OR MIT, which is a superset of what Apache-2.0 requires and costs nothing; and the distribution carries all three notices. Nothing here blocks the goal, and no part of it requires pretending the Google files are MIT.\n\nWhat this node has to produce is the metadata rather than the argument: crate licence fields, a LICENSE arrangement covering all three, and a NOTICE that survives packaging."
+                    }
+                )
+            }
+
+            {
+                id ronin-execute-api
+                title "Expose graph execution to an out-of-crate front end"
+                deps (ronin-frontend-api)
+                log (
+                    {
+                        at 2026-08-04T17:58:05.995434281Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Opened from a gap found while closing ronin-frontend-api, which this node was not part of.\n\nThat node made a graph constructible from outside the manifest parser, and its rule only requires the build, tool, and persistence paths to accept a front-end-produced graph, which they now do. But they accept it through arenas(), arenas_mut(), and into_arenas(), all pub(crate). So a BuildGraph can be built by anything in the crate and executed only by the crate. The Make front end is a separate crate in the workspace, so kati-graph-sink cannot finish without this, which is why it is now a dependency of it rather than a discovery inside it.\n\nWhat has to be decided rather than merely written: BuildOptions is a large surface, and exposing it wholesale would freeze a lot of internal shape as public API for the sake of one in-workspace consumer. Options worth weighing are a narrower execution request type built from the options a front end actually sets, a builder that a front end fills in and cannot otherwise construct, or keeping the surface crate-internal and moving the Make front end into this crate as a module instead of a workspace member. The last one is a real alternative and should be argued rather than dismissed, since the current split exists to keep the fork's licence and lints quarantined, not because the code has to live in two crates.\n\nWhichever way it goes, it wants recording against [dec:ronin:frontend-graph-boundary], because that decision says the boundary is the supported extension point for any front end and an execution surface is half of what that promises."
+                    }
+                )
+            }
+
+            {
+                id kati-quality-gates
+                title "Bring the vendored fork under Ronin's quality gates"
+                deps (kati-submodule)
+                log (
+                    {
+                        at 2026-08-04T17:58:19.888140202Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Governance gap: the vendored fork is under nspec but not under the quality gates, so \"Ronin's nplan governs it\" is currently half true.\n\n.config/nspec/config.styx now includes kati/src-rs/** and coverage works — make.scope-separation is covered and tested from the fork. But .config/nplan/config.styx still lists the rust platform's files as Cargo.toml, Cargo.lock, and src/**, so function-density, trivial-function, duplication, and comment-smells do not see the fork at all. Every commit touching only kati skips the gates the rest of the tree is held to.\n\nTurning it on is not a one-line config change, which is why this is a node. Measured now: src-rs/func.rs has 59 functions against a limit of 50, and src-rs/find.rs has exactly 50, so it fires immediately and then sits one function from firing again. func.rs is Make's builtin function table, roughly one function per Make builtin, so a high count there is arguably the correct shape rather than a defect — which makes this a question about whether the gate wants an exemption, a split of the table into groups, or a raised threshold for that file. The existing config already has an exempt-paths list and a trivial-function allow-names list, so both mechanisms are available and precedented.\n\nDo this before the fork grows, not after. The longer the gates stay off, the more of the fork is grandfathered in and the more expensive the eventual reckoning. It is also worth running the gates in report-only mode first to see the full inventory rather than discovering it one blocked commit at a time."
                     }
                 )
             }
