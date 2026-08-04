@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-04T14:40:50.111539567Z
+last_sync_at 2026-08-04T16:00:36.438550939Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -219,6 +219,7 @@ assertions (
 )
 
 impl_evidence (
+    {id kati-symtab-split}
     {id ronin-alloc-metrics, covered_rules (
         performance.allocation-accounting
     ), covered_claims (

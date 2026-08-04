@@ -1,3 +1,4 @@
 [submodule "kati"]
 	path = kati
 	url = git@github.com:necessary-nu/kati.git
+	branch = ronin-integration

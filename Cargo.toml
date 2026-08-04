@@ -19,6 +19,10 @@ include = [
     "LICENSE",
 ]
 
+[workspace]
+members = ["kati"]
+resolver = "2"
+
 [lib]
 path = "src/lib.rs"
 
