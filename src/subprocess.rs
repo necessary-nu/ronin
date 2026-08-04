@@ -81,6 +81,18 @@ struct RunningChild {
 #[cfg(unix)]
 const SIGNAL_EVENT_KEY: usize = 0;
 
+/// The first interval waited before re-asking whether a child can be reaped.
+///
+/// Sized to the gap between a child closing its descriptors and the kernel
+/// making it waitable, which is one scheduler hop rather than a millisecond.
+#[cfg(unix)]
+const MIN_REAP_INTERVAL: std::time::Duration = std::time::Duration::from_micros(50);
+
+/// The ceiling that interval grows to, for a child that closed its output and
+/// then carried on working.
+#[cfg(unix)]
+const MAX_REAP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+
 pub(crate) struct ProcessSupervisor<External = ()> {
     sender: Sender<ProcessEvent<External>>,
     receiver: Receiver<ProcessEvent<External>>,
@@ -97,6 +109,18 @@ pub(crate) struct ProcessSupervisor<External = ()> {
     ready: VecDeque<ProcessCompletion>,
     #[cfg(unix)]
     reap_candidates: Vec<EdgeId>,
+    /// How long to wait before asking again whether a child can be reaped.
+    ///
+    /// A child whose output pipe has reported end of file has already begun
+    /// exiting: it closed its descriptors on the way out, and becomes reapable
+    /// a scheduler hop later. Waiting a fixed ten milliseconds to ask cost that
+    /// on every single job — 1.4 seconds across 128 of them, against 180 ms for
+    /// the same work — because the parent lost that race every time and then
+    /// slept through it. Start far below the gap and grow, so the usual child is
+    /// collected almost immediately while one that closes its output and keeps
+    /// running is still only asked about occasionally.
+    #[cfg(unix)]
+    reap_backoff: std::time::Duration,
     /// Scratch for draining child output, kept rather than declared per read.
     #[cfg(unix)]
     read_buffer: Vec<u8>,
@@ -164,6 +188,8 @@ impl<External> ProcessSupervisor<External> {
             ready: VecDeque::new(),
             #[cfg(unix)]
             reap_candidates: Vec::new(),
+            #[cfg(unix)]
+            reap_backoff: MIN_REAP_INTERVAL,
             #[cfg(unix)]
             read_buffer: vec![0; 16 * 1024],
             children: HashMap::default(),
@@ -419,6 +445,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
 
         if use_console {
             self.reap_candidates.push(edge);
+            self.reap_backoff = MIN_REAP_INTERVAL;
         } else {
             let registration = {
                 let output = self.children[&edge]
@@ -469,10 +496,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             }
 
             let wait = deadline.map_or_else(
-                || {
-                    (!self.reap_candidates.is_empty())
-                        .then_some(std::time::Duration::from_millis(10))
-                },
+                || (!self.reap_candidates.is_empty()).then_some(self.reap_backoff),
                 |deadline| Some(deadline.saturating_duration_since(std::time::Instant::now())),
             );
             self.events.clear();
@@ -484,6 +508,10 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             })?;
             if let Some(event) = self.try_channel()? {
                 return Ok(Some(event));
+            }
+
+            if !self.reap_candidates.is_empty() {
+                self.reap_backoff = (self.reap_backoff * 2).min(MAX_REAP_INTERVAL);
             }
 
             let signal_ready = self
@@ -583,6 +611,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                     .registered = false;
                 if !self.try_finish_child(edge) {
                     self.reap_candidates.push(edge);
+                    self.reap_backoff = MIN_REAP_INTERVAL;
                 }
             }
             Drain::Failed(source) => {

@@ -190,6 +190,7 @@ assertions (
     {id ronin-manifest-message-parity, kind @doing, author "brendan@necessary.nu", at 2026-08-03T23:18:26.397545662Z}
     {id ronin-windows-launcher, kind @doing, author "brendan@necessary.nu", at 2026-08-03T23:27:18.600512368Z}
     {id ronin-reference-in-checkout, kind @doing, author "brendan@necessary.nu", at 2026-08-03T23:43:21.953539012Z}
+    {id ronin-reap-latency, kind @doing, author "brendan@necessary.nu", at 2026-08-04T12:15:08.371600823Z}
 )
 
 impl_evidence (
