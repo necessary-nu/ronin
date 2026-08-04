@@ -24,13 +24,18 @@ alternatives (
         option "Reset the globals between evaluations."
         rejected_because "Correctness would depend on remembering to extend the reset whenever a global is added, which is the failure mode that produced twelve of them."
     }
+    {
+        option "Give up the interner and let a symbol own its bytes, so reading one needs no context."
+        rejected_because "A symbol stops being Copy. It is passed by value through dependency analysis, rule matching, and graph construction, and turning every one of those into a move or a borrow is a far larger change than giving the readers a session — for a type whose whole purpose is to be a cheap comparable handle."
+    }
 )
 consequences {
     accepted (
         "Evaluation state is threaded explicitly: symbol interning, variable scope, the glob, file, and find caches, command results, shell status, used-variable tracking, statistics, and flags."
         "Symbol interning splits from Make's global variable scope. The symbol table currently stores variable bindings alongside interned names, which is why interning a string and defining a variable are the same operation and neither can be reset without the other."
         "Flags become a parsed value constructed from arguments, not a lazily initialized read of the process command line."
-        "Types whose Display and Debug implementations currently reach for the interner gain explicit display forms that take the session."
+        "A symbol stays a Copy handle into a session-owned interner, so reading its bytes requires the session at the call site."
+        "Rendering goes through a borrowing wrapper returned by an inherent display method taking the session, and the inherent Display and Debug implementations that reach for a global are removed rather than reimplemented."
         "Immutable dispatch tables are not globals in the sense being removed here and may remain, provided they are genuinely read-only after construction."
     )
     deferred (

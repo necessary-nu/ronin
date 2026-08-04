@@ -3475,6 +3475,14 @@ children (
                         id kati-symbol-display
                         title "Give symbol and location rendering an explicit session"
                         deps (kati-symtab-split)
+                        log (
+                            {
+                                at 2026-08-04T15:54:47.962863942Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Mechanism settled: a symbol stays Copy and stays an index into a session-owned interner. Rendering goes through a borrowing wrapper from an inherent display method taking the session, and the inherent Display and Debug that reach for a global are removed rather than reimplemented. Making a symbol own its bytes was rejected because it costs Copy; recorded as an alternative on the decision.\n\nTwo consequences worth separating before starting, because they are not the same problem.\n\nLoc's Display at loc.rs:27 is on the user-facing diagnostic path, not a debug path. error_loc!, warn_loc!, color_error_log, and color_warn_log all format a location into the message a user reads, and Loc holds a Symbol filename, so the session has to be reachable wherever a diagnostic is constructed. That is the constraint that shapes where the session lives, and it is a stronger one than the trace sites imply. loc.rs:33 DEFAULT_FILENAME disappears with it.\n\nDebug is the softer half. Removing Debug for Symbol silently degrades every derived Debug on a symbol-bearing type — dep.rs:46 DepNode, loc.rs:21 Loc, and the statement and expression types in stmt.rs and expr.rs — to printing an index. There are 66 format sites using it and most are behind the log! macro, which is log::trace! gated on KATI_LOG. Either keep a Debug that prints the raw index and accept that trace output loses symbol names, or convert those sites to session-carrying rendering. Prefer the first unless the traces turn out to be load-bearing during the port; it is honest about what a bare handle can say for itself, and it does not spend the session's reach on trace logging.\n\nOnly Loc and Symbol are affected. The third Display in the crate, Stats at stats.rs:155, does not touch the interner."
+                            }
+                        )
                     }
 
                     {
