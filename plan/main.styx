@@ -3516,6 +3516,14 @@ children (
                         id kati-observation-session
                         title "Move command results, used-variable tracking, and statistics into the session"
                         deps (kati-session-value)
+                        log (
+                            {
+                                at 2026-08-04T18:10:00.331184339Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Scope for this node, made explicit because the parent inventory left one of these unowned.\n\nFour statics: COMMAND_RESULTS in func.rs, ALL_STATS in stats.rs together with the per-call-site STATS that each invocation of the two statistics macros expands to, USED_UNDEFINED_VARS in eval.rs, and USED_ENV_VARS in var.rs. SHELL_STATUS in var.rs belongs here too and had no owner before: it is the value behind .SHELLSTATUS, written by the shell builtin and read by the variable the scope binds, so it is per-evaluation state and not a cache.\n\nThe two used-variable sets are read from get_global_var and lookup_var_global, so they are entangled with the variable scope rather than independent of it, and they will likely have to move in the same change as kati-session-value rather than after it. If that turns out to be true, say so and move them there instead of threading a second session-shaped parameter into the same call sites twice.\n\nThe statistics macros are the awkward part, because each expansion creates its own static and the count therefore grows with call sites rather than being a fixed list. Whatever replaces them has to be reachable from a macro body with only the session in scope."
+                            }
+                        )
                     }
 
                     {
@@ -3528,6 +3536,41 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Split out of kati-session-value because it is the part of it that is a design change rather than a threading exercise, and it blocks the rest.\n\nScopedGlobalVar restores a global variable binding in Drop. Drop takes only &mut self, so it cannot be handed a session, which means it cannot survive session ownership in its current shape. It is not a corner: foreach, foreach_sep, and call use it for the automatic positional variables, so it is on the hot evaluation path and its loop bodies re-enter evaluation.\n\nThe two candidate shapes. Borrow the session in the guard, which poisons every &mut Evaluator borrow for the lifetime of the guard and therefore across the loop bodies that need the evaluator — likely a non-starter, but establish that rather than assume it. Or replace the guard with an explicit save and restore around the closure, shaped like globals.with_bound(sym, var, |globals| ...), which is why GlobalVars::replace already returns the previous binding: kati-symtab-split shaped it for exactly this rewrite.\n\nNote that the guard's restore must run on the error path too, since Make evaluation propagates errors through these functions. A closure form has to be careful not to lose that property, which is the one thing Drop was genuinely buying.\n\nScopedVar in the same file looks identical and is not affected: it holds an Arc<Vars> rather than reaching for a global, so it needs nothing from a session."
+                            }
+                        )
+                    }
+
+                    {
+                        id kati-wellknown-symbols
+                        title "Intern the well-known symbols into the session instead of into statics"
+                        deps (kati-session-value)
+                        log (
+                            {
+                                at 2026-08-04T18:10:14.208535179Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Seven statics, all LazyLock<Symbol> interned from the global interner on first use: SHELL_SYM, ALLOW_RULES_SYM, KATI_READONLY_SYM, VARIABLES_SYM, KATI_SYMBOLS_SYM and MAKEFILE_LIST in symtab.rs, and DEFAULT_FILENAME in loc.rs.\n\nThese are not globals to be relocated, which is why they get their own node rather than a line in the session work. A symbol is an index into one specific interner. The moment the interner is session-owned, a symbol interned into a static is an index into whichever session happened to touch it first, and using it against any other session is either a wrong answer or a panic — Symtab::name indexes directly. So the static form cannot survive in any shape, however the session is threaded.\n\nThe replacement is to intern them during session construction and hold them on the session, which is cheap and gives every one of them a defined interner. Symtab::new already preloads the 255 single-byte names, so a well-known set alongside them is the same idea one level up.\n\nTwo things to watch. DEFAULT_FILENAME is used by Loc's Default, so whatever holds it has to be reachable from wherever a default location is constructed, which is likely to be the same constraint kati-symbol-display hits with Loc's Display on the diagnostic path. And these six symbol statics are pub, so anything outside the crate that names them is API surface — check the binary and find_emulator before assuming they are internal."
+                            }
+                        )
+                    }
+
+                    {
+                        id kati-no-globals-gate
+                        title "Fail the build when a mutable process global reappears in the fork"
+                        deps (
+                            kati-session-value
+                            kati-symbol-display
+                            kati-flags-value
+                            kati-caches-session
+                            kati-observation-session
+                            kati-wellknown-symbols
+                        )
+                        log (
+                            {
+                                at 2026-08-04T18:09:49.332692094Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "The decision says no mutable process globals survive. Removing them once is a cleanup; keeping them gone is a gate, and without one the property decays the first time someone reaches for a convenient lazy static.\n\nWhat this has to catch is a static holding mutable or lazily-initialized state anywhere under kati/src-rs, including inside macro bodies — the statistics macros each expand to a static per call site, which is exactly the shape that slips past a reviewer reading the macro definition rather than its expansions. It must not catch const items or genuinely read-only tables such as the builtin function dispatch map, which the decision explicitly permits.\n\nA source scan is the cheap and honest implementation and can live with the differential harnesses. Rust has no lint for this, and the alternative of a trait-based ban is more machinery than the problem deserves. Whatever form it takes, it should report the offending file and line and say which node was supposed to have removed it, so a regression points at its own history.\n\nNote the ordering constraint this creates: the gate cannot be switched on until every removal node is done, which is why it depends on all of them. Landing it earlier in report-only mode is worthwhile — it gives a running count that should fall monotonically, and a count that rises is a signal worth having during the work rather than after it."
                             }
                         )
                     }
@@ -3545,6 +3588,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Correction to the inventory above: the jemalloc global allocator at main.rs:62 is not in scope and was never a conflict. A #[global_allocator] declared in a binary crate applies to that binary alone, and Ronin links the library, not rkati's main. Ronin's allocator choice is unaffected whatever the vendored binary does with its own.\n\nThe inventory therefore stands at twelve mutable globals rather than twelve plus an allocator, and the removal work is unchanged."
+                    }
+
+                    {
+                        at 2026-08-04T18:09:36.596462302Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Correction to the inventory on this node: twelve was a count of line items, not of statics, and it made the job look smaller than it is.\n\nCounted individually the fork started with twenty mutable process globals, not twelve. The line reading \"six symbols derived from it\" was six statics, and the two statistics statics inside the stats macros were one line item and two more statics. kati-symtab-split then added GLOBAL_VARS, which is a legitimate intermediate — that node's scope was separability rather than removal, and the variable scope had to land somewhere once it stopped living inside the interner — but it means the count is currently twenty-one and has gone up, not down.\n\nOwnership was also incomplete. Seven had no node at all: the six well-known symbol statics and the default location symbol, all LazyLock<Symbol> derived from the global interner. They are not merely globals to relocate. A symbol is an index into one specific interner, so once the interner is session-owned these cannot exist in any form and have to become symbols interned during session construction. That is now kati-wellknown-symbols. SHELL_STATUS had no explicit owner either; it is the value behind .SHELLSTATUS and belongs with the observation state in kati-observation-session.\n\nThe larger miss is that nothing made the end state stick. make.no-ambient-state is verified by two sessions coexisting in one process, which is the right property to test, but it would not notice a twenty-second global appearing beside them. kati-no-globals-gate closes that and depends on every removal node, so it cannot pass until all of them are done."
                     }
                 )
             }

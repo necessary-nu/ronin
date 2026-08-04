@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-04T17:58:46.728108269Z
+last_sync_at 2026-08-04T18:10:27.805223477Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -49,6 +49,7 @@ derived_priorities (
     {id kati-caches-session, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-flags-value, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-graph-sink, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-no-globals-gate, priority 3, derived_at 2026-08-04T18:10:27.805223477Z}
     {id kati-observation-session, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-quality-gates, priority 1, derived_at 2026-08-04T17:58:46.728108269Z}
     {id kati-scoped-binding, priority 1, derived_at 2026-08-04T17:58:46.728108269Z}
@@ -56,6 +57,7 @@ derived_priorities (
     {id kati-submodule, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-symbol-display, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-symtab-split, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-wellknown-symbols, priority 3, derived_at 2026-08-04T18:10:27.805223477Z}
     {id make-conformance-corpus, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-graph-equivalence, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-jobserver-server, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
