@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-03T23:44:05.47689166Z
+last_sync_at 2026-08-04T14:40:50.111539567Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -14,9 +14,18 @@ rule_versions (
     {id compat.scheduling, version 0}
     {id compat.upstream-conformance, version 0}
     {id compat.version-reporting, version 0}
+    {id frontend.graph-construction, version 0}
+    {id make.graph-direct, version 0}
+    {id make.jobserver, version 0}
+    {id make.manifest-equivalence, version 0}
+    {id make.no-ambient-state, version 0}
+    {id make.recursive-invocation, version 0}
+    {id make.scope-separation, version 0}
+    {id make.semantics, version 0}
     {id performance.allocation-accounting, version 0}
     {id performance.no-unexplained-regression, version 0}
     {id performance.reproducible-baseline, version 0}
+    {id product.make-identity, version 0}
     {id product.no-samuflags, version 0}
     {id product.ronin-identity, version 0}
     {id release.compatibility-gate, version 0}
@@ -36,6 +45,20 @@ rule_versions (
 )
 
 derived_priorities (
+    {id kati-build-sink, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-caches-session, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-flags-value, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-graph-sink, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-observation-session, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-session-value, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-submodule, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-symbol-display, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-symtab-split, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-conformance-corpus, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-graph-equivalence, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-jobserver-server, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-licence-position, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-mode-cli, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id ronin-alloc-metrics, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-allocator-revisit, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-arena-slot-access, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
@@ -60,6 +83,7 @@ derived_priorities (
     {id ronin-eval-scratch-buffers, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-failure-surface-parity, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
     {id ronin-fast-hashing, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
+    {id ronin-frontend-api, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
     {id ronin-index-growth-rehash, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-intern-single-probe, priority 0, derived_at 2026-08-01T21:55:31.351742377Z}
     {id ronin-large-manifest-fixture, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
@@ -83,6 +107,7 @@ derived_priorities (
     {id ronin-phony-console-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-progress-bar, priority 2, derived_at 2026-08-01T23:41:43.894694172Z}
     {id ronin-real-project-validation, priority 0, derived_at 2026-08-01T23:07:14.639226469Z}
+    {id ronin-reap-latency, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
     {id ronin-reference-in-checkout, priority 0, derived_at 2026-08-03T23:44:05.47689166Z}
     {id ronin-reporter-seam, priority 0, derived_at 2026-08-01T23:41:43.894694172Z}
     {id ronin-retire-c-corpus, priority 0, derived_at 2026-08-03T22:54:05.113216545Z}
