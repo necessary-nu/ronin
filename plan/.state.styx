@@ -432,4 +432,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
     )}
+    {id kati-session-value, covered_rules (
+        make.no-ambient-state
+    ), covered_claims (
+        {impl_name target-impl, rule make.no-ambient-state}
+    )}
 )
