@@ -219,7 +219,11 @@ assertions (
 )
 
 impl_evidence (
-    {id kati-symtab-split}
+    {id kati-symtab-split, covered_rules (
+        make.scope-separation
+    ), covered_claims (
+        {impl_name target-impl, rule make.scope-separation}
+    )}
     {id ronin-alloc-metrics, covered_rules (
         performance.allocation-accounting
     ), covered_claims (

@@ -3476,6 +3476,14 @@ children (
                             target-impl ([spec:ronin:req:make.no-ambient-state])
                         }
                         deps (kati-symtab-split)
+                        log (
+                            {
+                                at 2026-08-04T16:43:19.858259904Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Findings from the split that land on this node.\n\nThe obstacle is Drop, not the call sites. ScopedGlobalVar restores its binding in Drop, which cannot take a session parameter, and it is used by foreach, foreach_sep, and call for the automatic positional variables, so it sits on the hot evaluation path. Once the scope is session-owned it must either borrow the session — poisoning every &mut Evaluator borrow across loop bodies that re-enter evaluation — or be replaced by explicit save and restore around the closure, something shaped like globals.with_bound(sym, var, |globals| ...). GlobalVars::replace was deliberately shaped to make that rewrite cheap. ScopedVar in the same file looks identical but is not affected, because it holds an Arc<Vars> rather than reaching for a global.\n\nThe variable-scope surface is smaller than expected: 16 call sites, and every one already has an &mut Evaluator in scope or is in main, so threading a session to them is mechanical. The roughly 120 context-free reads the decision worries about are almost all Symbol::as_bytes, Display, and Debug, which belong to kati-symbol-display, and they now funnel through a single with_symtab entry point rather than scattered lock sites.\n\nUSED_ENV_VARS and USED_UNDEFINED_VARS are read from get_global_var and lookup_var_global, so they want to move in this change rather than after it.\n\nOne latent hazard to remove rather than inherit. GLOBAL_VARS is a LazyLock whose initializer calls with_symtab, so it takes the interner lock while constructing the scope. Nothing currently reaches a global variable from inside a with_symtab closure, so it is unreachable today, but a thread holding the interner that first touched the scope would deadlock on a non-reentrant lock. The comment on global_var_names saying nothing takes both locks is accurate for the steady state and not for that initializer. Session ownership removes both the hazard and the comment.\n\nFor contrast, the split already removed a real one: the old Symtab::set_global_var formatted a symbol through Display while holding the interner lock it would need to re-take, reachable only on the readonly-error path, which every caller happened to avoid by passing a readonly out-parameter and raising the diagnostic outside the lock."
+                            }
+                        )
                     }
 
                     {

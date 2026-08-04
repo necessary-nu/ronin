@@ -7,6 +7,6 @@ specs ({
     name ronin,
     include (docs/spec/**/*.md),
     impls (
-        {name target-impl, languages (@rust), include (src/** crates/** tests/** examples/**), exclude (target/**), mode @both}
+        {name target-impl, languages (@rust), include (src/** crates/** tests/** examples/** kati/src-rs/**), exclude (target/**), mode @both}
     )
 })
