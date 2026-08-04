@@ -3416,4 +3416,160 @@ children (
             }
         )
     }
+
+    {
+        id make-subsumption
+        title "Subsume GNU Make into Ronin's build graph"
+        children (
+            {
+                id kati-submodule
+                title "Vendor the kati fork as a submodule and build it in Ronin's workspace"
+                log (
+                    {
+                        at 2026-08-04T14:37:45.39608841Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Scope of this node beyond adding the submodule, which is done.\n\nWorkspace: the root package gains a workspace with the submodule as a member, so one cargo invocation builds both and the release profile settings apply to the front end too.\n\nFork hygiene, all in our fork rather than carried as patches. criterion is in [dependencies] rather than [dev-dependencies], so plotters, rayon, clap, regex, jiff, half, and ciborium are pulled into release builds; moving it drops the tree from 74 crates toward Ronin's 19. env_logger goes, with diagnostics routed through Ronin's. The #![deny(warnings)] in lib.rs and main.rs goes, because on vendored code it turns every compiler upgrade into a build break. The jemalloc global allocator in main.rs goes; allocator choice belongs to Ronin. The rkati binary stays, because the differential harness needs the upstream-shaped tool to compare against.\n\nGovernance: kati/src-rs/** joins the nspec target-impl include list and the nplan rust platform file globs, so the vendored code is subject to the same spec coverage and quality gates as the rest of the tree rather than sitting in a blind spot. That is the point of vendoring it rather than depending on it.\n\nToolchain: it compiles clean as-is on rustc 1.97.1, a 30 second cold check. Edition 2024 with let-chains is fine while it stays a separate crate; it is a problem only if anyone tries to merge the module tree into the edition 2021 root package, which is not the plan."
+                    }
+                )
+            }
+
+            {
+                id ronin-frontend-api
+                title "Expose graph construction independently of manifest parsing"
+                implements {
+                    target-impl ([spec:ronin:req:frontend.graph-construction])
+                }
+            }
+
+            {
+                id kati-global-state
+                title "Replace kati's process globals with an explicit evaluation session"
+                deps (kati-submodule)
+                children (
+                    {
+                        id kati-symtab-split
+                        title "Separate symbol interning from Make's global variable scope"
+                        implements {
+                            target-impl ([spec:ronin:req:make.scope-separation])
+                        }
+                    }
+
+                    {
+                        id kati-session-value
+                        title "Thread an owned session through Make evaluation"
+                        implements {
+                            target-impl ([spec:ronin:req:make.no-ambient-state])
+                        }
+                        deps (kati-symtab-split)
+                    }
+
+                    {
+                        id kati-symbol-display
+                        title "Give symbol and location rendering an explicit session"
+                        deps (kati-symtab-split)
+                    }
+
+                    {
+                        id kati-flags-value
+                        title "Construct Make flags from arguments rather than the process command line"
+                        deps (kati-session-value)
+                    }
+
+                    {
+                        id kati-caches-session
+                        title "Move the glob, makefile, and find caches into the session"
+                        deps (kati-session-value)
+                    }
+
+                    {
+                        id kati-observation-session
+                        title "Move command results, used-variable tracking, and statistics into the session"
+                        deps (kati-session-value)
+                    }
+                )
+                log (
+                    {
+                        at 2026-08-04T14:37:14.750443341Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Inventory of the mutable process globals to remove, taken from the submodule at the vendored commit.\n\nsymtab.rs:33 SYMTAB, the interner and Make's global variable table in one structure. symtab.rs:35-40 six symbols derived from it: SHELL, .KATI_ALLOW_RULES, .KATI_READONLY, .VARIABLES, .KATI_SYMBOLS, MAKEFILE_LIST. loc.rs:33 DEFAULT_FILENAME, also derived. flags.rs:32 FLAGS, lazily initialized from the process command line. var.rs:421 SHELL_STATUS. var.rs:427 USED_ENV_VARS. eval.rs:239 USED_UNDEFINED_VARS. fileutil.rs:114 GLOB_CACHE. file_cache.rs:28 CACHE. find.rs:41 NODE_COUNT and find.rs:1352 FIND_EMULATOR. func.rs:602 COMMAND_RESULTS. stats.rs:30 ALL_STATS plus a per-call-site static in each of the two stats macros. main.rs:62 installs jemalloc as the global allocator, which is a Ronin-level choice and collides with the open allocator node.\n\nfunc.rs:1421 FUNC_INFO_MAP is a read-only dispatch table built once from a const array. It is not in scope for removal; it is a lookup table, not ambient state.\n\nSizing for the interner, which is the one that sets the shape of the rest: Symbol is a NonZeroUsize index, and Display, Debug, and as_bytes all take the global lock, so none of them can be given a session by threading a parameter through their signatures. There are roughly 119 as_bytes call sites and 81 intern call sites. The display implementations need explicit session-carrying forms, which is why kati-symbol-display is separated out and blocked on the split rather than folded into it.\n\nThe reason the split comes first is that the symbol table is two things: interning a name and defining a global variable are the same call, via get_global_var and set_global_var hanging off Symbol. Until those separate, the interner cannot be owned by anything, because owning it would mean owning Make's variable scope with it."
+                    }
+                )
+            }
+
+            {
+                id kati-build-sink
+                title "Route kati's Ninja emission through a build sink trait"
+                deps (kati-submodule)
+            }
+
+            {
+                id kati-graph-sink
+                title "Build Ronin's graph directly from Make dependency nodes"
+                implements {
+                    target-impl ([spec:ronin:req:make.graph-direct])
+                }
+                deps (ronin-frontend-api kati-build-sink)
+                log (
+                    {
+                        at 2026-08-04T14:37:29.490746695Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The field correspondence this node depends on, checked against the vendored commit and the current graph.\n\nkati dep.rs:47 DepNode carries output, implicit_outputs, actual_inputs, actual_order_only_inputs, actual_validations, is_phony, is_restat, depfile_var, ninja_pool_var, cmds, rule_vars, output_pattern, loc. Ronin graph.rs:64 Edge carries out with an explicit-output count, input with explicit and non-order-only partitions, validation, pool, dyndep, rule, and bindings. Every field on the left has a destination on the right; nothing needs inventing.\n\nThe work is therefore not translation, it is redirection. ninja.rs:460 emit_node and ninja.rs:541 emit_build already compute everything an edge needs and then write it out as text. The command construction that feeds them stays where it is: gen_shell_script at ninja.rs:382, translate_command at ninja.rs:267, get_depfile at ninja.rs:431, the 100 kB response-file threshold, and escape_shell are Make concerns and do not belong in graph construction.\n\nTwo shape differences to settle when implementing rather than to discover later. kati emits a synthetic _kati_always_build_ input for phony targets when use_ninja_phony_output is off, which exists to force rebuilds through a manifest and has no reason to exist when the graph is built directly. And escape_ninja / escape_build_target only matter for serialization, so the direct path must take the unescaped symbol bytes, not the escaped ones. Both are places where the emitted manifest and the direct graph could diverge for reasons that are correct rather than defective, so make-graph-equivalence needs to be able to express them as classified differences rather than failures."
+                    }
+                )
+            }
+
+            {
+                id make-graph-equivalence
+                title "Check the direct graph against the emitted manifest over the corpus"
+                implements {
+                    target-impl ([spec:ronin:req:make.manifest-equivalence])
+                }
+                deps (kati-graph-sink)
+            }
+
+            {
+                id make-mode-cli
+                title "Select the Make front end from the invoked name and Make command line"
+                implements {
+                    target-impl ([spec:ronin:req:product.make-identity] [spec:ronin:req:make.recursive-invocation])
+                }
+                deps (kati-graph-sink kati-global-state)
+            }
+
+            {
+                id make-jobserver-server
+                title "Serve the jobserver protocol so a recursive Make tree shares one job budget"
+                implements {
+                    target-impl ([spec:ronin:req:make.jobserver])
+                }
+                deps (make-mode-cli)
+            }
+
+            {
+                id make-conformance-corpus
+                title "Run the Make corpus differentially against GNU Make 4.4.1"
+                implements {
+                    target-impl ([spec:ronin:req:make.semantics])
+                }
+                deps (make-mode-cli)
+            }
+
+            {
+                id make-licence-position
+                title "Record the combined licence position for the vendored fork"
+                deps (kati-submodule)
+                log (
+                    {
+                        at 2026-08-04T14:37:56.111604409Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The intended position is Apache-2.0 OR MIT for Ronin's own work, with the accurate qualification that the vendored front end cannot be moved wholesale onto that dual licence.\n\nkati is Apache-2.0, copyright Google LLC. Apache-2.0 is permissive but not sublicensable, so those files stay Apache-2.0 no matter who forks them, and the NOTICE and patent terms travel with them. Ronin's existing lineage is ISC via samurai, which folds into a permissive distribution cleanly provided the Forney notice is retained, and it already is.\n\nSo the workable arrangement is: the kati crate declares Apache-2.0 and keeps its NOTICE; Ronin's own crate declares Apache-2.0 OR MIT; our modifications to the vendored files are contributed under Apache-2.0 OR MIT, which is a superset of what Apache-2.0 requires and costs nothing; and the distribution carries all three notices. Nothing here blocks the goal, and no part of it requires pretending the Google files are MIT.\n\nWhat this node has to produce is the metadata rather than the argument: crate licence fields, a LICENSE arrangement covering all three, and a NOTICE that survives packaging."
+                    }
+                )
+            }
+        )
+    }
 )

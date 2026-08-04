@@ -116,6 +116,7 @@ elements (
             [spec:ronin:req:runtime.typed-runtime-state]
             [spec:ronin:req:runtime.process-supervisor-scalability]
             [spec:ronin:req:runtime.guarded-signal-boundary]
+            [spec:ronin:req:make.jobserver]
         )
         exposes (
             "src/build.rs"
@@ -131,7 +132,10 @@ elements (
             [arch:ronin:persistence]
         )
         composed_of ()
-        decisions ([dec:ronin:completion-driven-execution])
+        decisions (
+            [dec:ronin:completion-driven-execution]
+            [dec:ronin:multicall-identity]
+        )
         log (
             {
                 at "2026-07-29T15:01:41Z"
@@ -154,6 +158,8 @@ elements (
             [spec:ronin:req:compat.cli-and-tools]
             [spec:ronin:req:runtime.explicit-invocation-boundary]
             [spec:ronin:req:runtime.iterative-tool-traversals]
+            [spec:ronin:req:product.make-identity]
+            [spec:ronin:req:make.recursive-invocation]
         )
         exposes (
             "src/main.rs"
@@ -167,8 +173,17 @@ elements (
             [arch:ronin:execution]
         )
         composed_of ()
-        decisions ([dec:ronin:product-boundary])
+        decisions (
+            [dec:ronin:product-boundary]
+            [dec:ronin:multicall-identity]
+        )
         log (
+            {
+                at "2026-08-04T14:33:27Z"
+                kind @modified
+                by "[dec:ronin:multicall-identity]"
+            }
+
             {
                 at "2026-07-29T15:01:41Z"
                 kind @established
@@ -187,6 +202,7 @@ elements (
             [spec:ronin:req:performance.reproducible-baseline]
             [spec:ronin:req:performance.no-unexplained-regression]
             [spec:ronin:req:release.compatibility-gate]
+            [spec:ronin:req:make.semantics]
         )
         exposes (
             "tests/**"
@@ -201,14 +217,82 @@ elements (
             [arch:ronin:persistence]
             [arch:ronin:execution]
             [arch:ronin:cli]
+            [arch:ronin:graph-construction]
+            [arch:ronin:make-frontend]
         )
         composed_of ()
-        decisions ([dec:ronin:ninja-compatibility-oracle])
+        decisions (
+            [dec:ronin:ninja-compatibility-oracle]
+            [dec:ronin:make-compatibility-oracle]
+        )
         log (
+            {
+                at "2026-08-04T14:33:27Z"
+                kind @modified
+                by "[dec:ronin:make-compatibility-oracle]"
+            }
+
             {
                 at "2026-07-29T15:01:41Z"
                 kind @established
                 by "[dec:ronin:ninja-compatibility-oracle]"
+            }
+        )
+    }
+
+    {
+        id [arch:ronin:graph-construction]
+        name "Front-end-agnostic graph construction"
+        kind @boundary
+        lifecycle @provisional
+        owns ([spec:ronin:req:frontend.graph-construction])
+        exposes (
+            "src/frontend.rs"
+            "src/frontend/**"
+        )
+        depends_on (
+            [arch:ronin:core-data]
+            [arch:ronin:graph-engine]
+        )
+        composed_of ()
+        decisions ([dec:ronin:frontend-graph-boundary])
+        log (
+            {
+                at "2026-08-04T14:33:27Z"
+                kind @established
+                by "[dec:ronin:frontend-graph-boundary]"
+            }
+        )
+    }
+
+    {
+        id [arch:ronin:make-frontend]
+        name "GNU Make frontend"
+        kind @subsystem
+        lifecycle @provisional
+        owns (
+            [spec:ronin:req:make.graph-direct]
+            [spec:ronin:req:make.manifest-equivalence]
+            [spec:ronin:req:make.no-ambient-state]
+            [spec:ronin:req:make.scope-separation]
+        )
+        exposes (
+            "kati/src-rs/**"
+        )
+        depends_on (
+            [arch:ronin:core-data]
+            [arch:ronin:graph-construction]
+        )
+        composed_of ()
+        decisions (
+            [dec:ronin:make-as-graph]
+            [dec:ronin:session-owned-evaluation]
+        )
+        log (
+            {
+                at "2026-08-04T14:33:27Z"
+                kind @established
+                by "[dec:ronin:make-as-graph]"
             }
         )
     }
