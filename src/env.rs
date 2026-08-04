@@ -3,7 +3,6 @@
 use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
 use crate::names::{Bindings, Names, VarId};
-use crate::scan::{ScannedEvalPart, ScannedEvalString};
 use crate::util::{arena_id, BStr, BString, ByteSlice, EvalPart, EvalString};
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
@@ -167,60 +166,6 @@ pub(crate) fn envaddvar(
         .environment_mut(environment)
         .bindings
         .insert(name, value);
-}
-
-// [spec:ronin:def:env.enveval-fn]
-// [spec:ronin:sem:env.enveval-fn]
-pub(crate) fn enveval(
-    graph: &Graph,
-    environment: EnvironmentId,
-    string: &ScannedEvalString<'_>,
-) -> BString {
-    let mut output = Vec::new();
-    enveval_into(graph, environment, string, &mut output);
-    output.into()
-}
-
-/// Evaluate into a caller-owned buffer.
-///
-/// Parsing evaluates one path per reference and most references name a path
-/// that is already interned, so the result is usually discarded; reusing one
-/// buffer keeps those references allocation-free.
-pub(crate) fn enveval_into(
-    graph: &Graph,
-    environment: EnvironmentId,
-    string: &ScannedEvalString<'_>,
-    output: &mut Vec<u8>,
-) {
-    let parts = match string {
-        ScannedEvalString::Plain(bytes) => {
-            output.extend_from_slice(bytes);
-            return;
-        }
-        ScannedEvalString::Parts(parts) => parts,
-    };
-    let capacity = parts
-        .iter()
-        .map(|part| match part {
-            ScannedEvalPart::Literal(value) => value.len(),
-            ScannedEvalPart::EscapedByte(_) => 1,
-            ScannedEvalPart::Variable(name) => {
-                envvar_named(graph, environment, name).map_or(0, |value| value.len())
-            }
-        })
-        .sum();
-    output.reserve(capacity);
-    for part in parts {
-        match part {
-            ScannedEvalPart::Literal(value) => output.extend_from_slice(value),
-            ScannedEvalPart::EscapedByte(byte) => output.push(*byte),
-            ScannedEvalPart::Variable(name) => {
-                if let Some(value) = envvar_named(graph, environment, name) {
-                    output.extend_from_slice(value);
-                }
-            }
-        }
-    }
 }
 
 // [spec:ronin:def:env.envrule-fn]

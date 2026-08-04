@@ -519,7 +519,10 @@ pub(crate) struct Builder<'a> {
 }
 
 impl<'a> Builder<'a> {
-    fn from_parts(
+    /// Builds over `graph`, writing through whichever logs and sinks the
+    /// invocation has. All four are optional because a test, a library caller
+    /// collecting output, and the command line each have a different subset.
+    pub(crate) fn from_parts(
         graph: &'a mut Graph,
         options: BuildOptions,
         build_log: Option<&'a mut crate::log::BuildLog>,
@@ -597,50 +600,6 @@ impl<'a> Builder<'a> {
         deps_log: &'a mut crate::deps::DepsLog,
     ) -> Self {
         Self::from_parts(graph, options, None, Some(deps_log), None, None)
-    }
-
-    pub(crate) fn with_logs(
-        graph: &'a mut Graph,
-        options: BuildOptions,
-        build_log: &'a mut crate::log::BuildLog,
-        deps_log: &'a mut crate::deps::DepsLog,
-    ) -> Self {
-        Self::from_parts(graph, options, Some(build_log), Some(deps_log), None, None)
-    }
-
-    pub(crate) fn with_logs_and_output(
-        graph: &'a mut Graph,
-        options: BuildOptions,
-        build_log: &'a mut crate::log::BuildLog,
-        deps_log: &'a mut crate::deps::DepsLog,
-        output: &'a mut dyn Write,
-    ) -> Self {
-        Self::from_parts(
-            graph,
-            options,
-            Some(build_log),
-            Some(deps_log),
-            Some(output),
-            None,
-        )
-    }
-
-    pub(crate) fn with_logs_and_sinks(
-        graph: &'a mut Graph,
-        options: BuildOptions,
-        build_log: &'a mut crate::log::BuildLog,
-        deps_log: &'a mut crate::deps::DepsLog,
-        output: &'a mut dyn Write,
-        diagnostics: &'a mut dyn Write,
-    ) -> Self {
-        Self::from_parts(
-            graph,
-            options,
-            Some(build_log),
-            Some(deps_log),
-            Some(output),
-            Some(diagnostics),
-        )
     }
 
     fn synchronize_runtime(&mut self) {

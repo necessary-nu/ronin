@@ -1,4 +1,4 @@
-use crate::{env, graph, parse};
+use crate::graph;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -19,10 +19,14 @@ impl Fixture {
         fs::create_dir(&directory).unwrap();
         let path = directory.join("build.ninja");
         fs::write(&path, manifest).unwrap();
-        let mut graph = graph::Graph::default();
-        let mut parser = parse::Parser::default();
-        let mut state = env::EnvState::new(&mut graph);
-        parse::parse(&path, &mut graph, &mut parser, state.root, &mut state).unwrap();
+        let graph = crate::parse::load_manifest_in(
+            &path,
+            crate::os::WorkingDirectory::default(),
+            crate::frontend::ManifestOptions::default(),
+        )
+        .unwrap()
+        .graph
+        .into_arenas();
         Self { directory, graph }
     }
 }

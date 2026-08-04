@@ -1,17 +1,19 @@
 //! Manifest parser translated from `parse.c`.
+//!
+//! The parser is a front end over [`crate::frontend`] and nothing else: it
+//! reads manifest bytes, expands them against the scopes it has declared, and
+//! asks the graph-construction boundary for the rules, pools, edges, and
+//! default targets they describe. Every failure the boundary reports is
+//! located here, against the manifest token that asked for it.
 
-use crate::env::{
-    edgevar, envaddrule, enveval, envrule, mkpool, mkrule, poolget, ruleaddvar, EnvState,
-    EnvironmentId,
-};
 use crate::error::{ManifestError, ManifestProblem, NameKind};
-use crate::graph::{mkedge, mknode, nodeuse, Graph, NodeId, PathStyle};
-use crate::names::Names;
+use crate::frontend::{BuildGraph, EdgeSpec, FrontendError, Node, Scope, Template};
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
-    AllowedSeparators, ScannedEvalString, Scanner, Separator, Source, TokenKind,
+    AllowedSeparators, ScannedEvalPart, ScannedEvalString, Scanner, Separator, Source, TokenKind,
 };
-use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, IdVec};
+use crate::util::{canonpath, BStr, BString, ByteSlice};
+use std::path::Path;
 
 type ManifestResult<T> = Result<T, ManifestError>;
 
@@ -42,18 +44,13 @@ fn manifest_error(
 }
 
 // [spec:ronin:def:parse.parseoptions]
-#[derive(Clone, Copy)]
-pub(crate) struct ParseOptions {
-    /// Whether a phony statement naming itself is filtered with a warning, or
-    /// left in place so the cycle is reported as an error.
-    ///
-    /// Ninja's default is to warn: `CMake` 2.8.12 and 3.0 emitted these, and
-    /// tolerating them is what `-w phonycycle=warn` buys. `=err` keeps the
-    /// self-edge so dependency-cycle detection sees it.
-    pub(crate) phony_cycle_warns: bool,
+/// How a Ninja manifest is read.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ManifestOptions {
+    phony_cycle_warns: bool,
 }
 
-impl Default for ParseOptions {
+impl Default for ManifestOptions {
     fn default() -> Self {
         Self {
             phony_cycle_warns: true,
@@ -61,31 +58,107 @@ impl Default for ParseOptions {
     }
 }
 
+impl ManifestOptions {
+    /// Whether a phony statement naming itself is filtered with a warning, or
+    /// left in place so the cycle is reported as an error.
+    ///
+    /// Ninja's default is to warn: `CMake` 2.8.12 and 3.0 emitted these, and
+    /// tolerating them is what `-w phonycycle=warn` buys. `=err` keeps the
+    /// self-edge so dependency-cycle detection sees it.
+    pub const fn warn_on_phony_cycle(&mut self, warn: bool) {
+        self.phony_cycle_warns = warn;
+    }
+}
+
+/// A Ninja manifest read into a graph.
+pub struct Manifest {
+    /// The graph the manifest describes.
+    pub graph: BuildGraph,
+    /// Diagnostics the manifest raised that did not stop it being read.
+    pub warnings: Vec<String>,
+}
+
 // [spec:ronin:def:parse.parseinit-fn]
 // [spec:ronin:sem:parse.parseinit-fn]
 #[derive(Default)]
-pub(crate) struct Parser {
-    pub(crate) options: ParseOptions,
-    pub(crate) defaults: Vec<NodeId>,
+struct Parser {
+    options: ManifestOptions,
     /// Diagnostics that do not stop the parse, in the order they were raised.
     ///
     /// The parser cannot write them itself: a manifest may be read through a
     /// library caller's sink, or through no sink at all, so where a warning
     /// goes is the invocation's decision rather than the parser's.
-    pub(crate) warnings: Vec<String>,
+    warnings: Vec<String>,
     working_directory: crate::os::WorkingDirectory,
 }
 
-impl Parser {
-    pub(crate) fn with_options_in(
-        options: ParseOptions,
-        working_directory: crate::os::WorkingDirectory,
-    ) -> Self {
-        Self {
-            options,
-            working_directory,
-            ..Self::default()
+/// Reads a Ninja manifest into a graph, without reading a command line first.
+///
+/// `directory` is what relative paths in the manifest resolve against — the
+/// directory Ninja would have been invoked from, not the manifest's own, since
+/// a manifest names its includes and its outputs relative to the former.
+///
+/// # Errors
+///
+/// Returns an error when `directory` cannot be resolved, when the manifest or
+/// anything it includes cannot be read, or when what they describe is not a
+/// graph that can exist.
+// [spec:ronin:req:frontend.graph-construction]
+pub fn load_manifest(
+    directory: impl AsRef<Path>,
+    manifest: impl AsRef<Path>,
+    options: ManifestOptions,
+) -> Result<Manifest, crate::Error> {
+    let directory = directory.as_ref();
+    let working_directory = crate::os::WorkingDirectory::new(directory).map_err(|source| {
+        crate::error::CliError::ChangeDirectory {
+            path: BString::from(directory.to_string_lossy().as_bytes()),
+            source,
         }
+    })?;
+    Ok(load_manifest_in(manifest, working_directory, options)?)
+}
+
+/// Read a manifest against a working directory the caller already resolved.
+pub(crate) fn load_manifest_in(
+    manifest: impl AsRef<Path>,
+    working_directory: crate::os::WorkingDirectory,
+    options: ManifestOptions,
+) -> ManifestResult<Manifest> {
+    let mut graph = BuildGraph::new();
+    let mut parser = Parser {
+        options,
+        warnings: Vec::new(),
+        working_directory,
+    };
+    let root = graph.root();
+    parse(manifest, &mut graph, &mut parser, root)?;
+    Ok(Manifest {
+        graph,
+        warnings: parser.warnings,
+    })
+}
+
+/// Locate a construction failure at the manifest token that asked for it.
+fn construction_problem(error: FrontendError) -> ManifestProblem {
+    match error {
+        FrontendError::EmptyPath => ManifestProblem::EmptyPath,
+        FrontendError::EdgeWithoutOutputs => ManifestProblem::BuildWithoutOutputs,
+        FrontendError::DuplicateOutput { path } => ManifestProblem::DuplicateOutput {
+            path: BString::from(path),
+        },
+        FrontendError::DuplicateRule { name } => ManifestProblem::DuplicateRule {
+            name: BString::from(name),
+        },
+        FrontendError::DuplicatePool { name } => ManifestProblem::DuplicatePool {
+            name: BString::from(name),
+        },
+        FrontendError::UnknownPool { name } => ManifestProblem::UnknownPoolName {
+            name: BString::from(name),
+        },
+        FrontendError::DyndepNotInput { path } => ManifestProblem::DyndepNotInput {
+            path: BString::from(path),
+        },
     }
 }
 
@@ -108,27 +181,89 @@ fn parse_assignment<'source>(
     Ok(value)
 }
 
+/// Expand one scanned value against `scope`, appending to `out`.
+///
+/// A value the scanner found no `$` in is its own expansion, which is the
+/// shape almost every path in a real manifest has.
+fn expand_into(graph: &BuildGraph, scope: Scope, value: &ScannedEvalString<'_>, out: &mut Vec<u8>) {
+    let parts = match value {
+        ScannedEvalString::Plain(bytes) => {
+            out.extend_from_slice(bytes);
+            return;
+        }
+        ScannedEvalString::Parts(parts) => parts,
+    };
+    let capacity = parts
+        .iter()
+        .map(|part| match part {
+            ScannedEvalPart::Literal(literal) => literal.len(),
+            ScannedEvalPart::EscapedByte(_) => 1,
+            ScannedEvalPart::Variable(name) => graph.variable(scope, name).map_or(0, <[u8]>::len),
+        })
+        .sum();
+    out.reserve(capacity);
+    for part in parts {
+        match part {
+            ScannedEvalPart::Literal(literal) => out.extend_from_slice(literal),
+            ScannedEvalPart::EscapedByte(byte) => out.push(*byte),
+            ScannedEvalPart::Variable(name) => {
+                if let Some(value) = graph.variable(scope, name) {
+                    out.extend_from_slice(value);
+                }
+            }
+        }
+    }
+}
+
+// [spec:ronin:def:env.enveval-fn]
+// [spec:ronin:sem:env.enveval-fn]
+fn expand(graph: &BuildGraph, scope: Scope, value: &ScannedEvalString<'_>) -> BString {
+    let mut out = Vec::new();
+    expand_into(graph, scope, value, &mut out);
+    BString::from(out)
+}
+
+/// Intern a scanned value's names so it can be expanded per edge instead.
+fn template_for(graph: &mut BuildGraph, value: &ScannedEvalString<'_>) -> Template {
+    let parts = match value {
+        ScannedEvalString::Plain(bytes) => return Template::literal(bytes),
+        ScannedEvalString::Parts(parts) => parts,
+    };
+    let mut template = Template::default();
+    for part in parts {
+        match part {
+            ScannedEvalPart::Literal(literal) => template.push_literal(literal),
+            ScannedEvalPart::EscapedByte(byte) => template.push_literal(&[*byte]),
+            ScannedEvalPart::Variable(name) => {
+                let name = graph.binding(name);
+                template.push_variable(name);
+            }
+        }
+    }
+    template
+}
+
 // [spec:ronin:def:parse.parserule-fn]
 // [spec:ronin:sem:parse.parserule-fn]
 fn parserule(
     scanner: &mut Scanner<'_>,
-    graph: &mut Graph,
-    environment: EnvironmentId,
+    graph: &mut BuildGraph,
+    scope: Scope,
 ) -> ManifestResult<()> {
     let name = scanname(scanner, NameKind::Rule)?.text;
-    let rule = mkrule(graph, name.to_owned());
     // Ninja tests for a duplicate as soon as the name's line ends, so the
     // diagnostic points at that line ending rather than at the end of the
     // whole block.
     scannewline(scanner)?;
     let named_at = scanner.source_span(scanner.last_token());
+    let mut bindings = Vec::new();
     let mut command = false;
     let mut rspfile = false;
     let mut rspfile_content = false;
     while scanindent(scanner)? {
-        let (name, value) = parselet(scanner)?;
+        let (binding, value) = parselet(scanner)?;
         if !matches!(
-            &**name,
+            &**binding,
             b"command"
                 | b"depfile"
                 | b"dyndep"
@@ -145,16 +280,15 @@ fn parserule(
                 scanner,
                 Anchor::Token,
                 ManifestProblem::UnexpectedRuleVariable {
-                    name: name.to_str_lossy().into_owned(),
+                    name: binding.to_str_lossy().into_owned(),
                 },
             ));
         }
-        command |= name == "command";
-        rspfile |= name == "rspfile";
-        rspfile_content |= name == "rspfile_content";
-        let name = graph.names_mut().intern(name);
-        let value = value.into_owned(graph.names_mut());
-        ruleaddvar(graph, rule, name, value);
+        command |= binding == "command";
+        rspfile |= binding == "rspfile";
+        rspfile_content |= binding == "rspfile_content";
+        let value = template_for(graph, &value);
+        bindings.push((graph.binding(binding), value));
     }
     if !command {
         return Err(manifest_error(
@@ -174,23 +308,19 @@ fn parserule(
             },
         ));
     }
-    envaddrule(graph, environment, rule).map_err(|_| {
-        ManifestError::at(
-            named_at,
-            ManifestProblem::DuplicateRule {
-                name: name.to_owned(),
-            },
-        )
-    })
+    graph
+        .define_rule(scope, name, bindings)
+        .map_err(|error| ManifestError::at(named_at, construction_problem(error)))?;
+    Ok(())
 }
 
 fn evaluated_path(
     scanner: &Scanner<'_>,
-    graph: &Graph,
+    graph: &BuildGraph,
     path: &ScannedEvalString<'_>,
-    environment: EnvironmentId,
+    scope: Scope,
 ) -> ManifestResult<BString> {
-    let value = enveval(graph, environment, path);
+    let value = expand(graph, scope, path);
     if value.is_empty() {
         return Err(manifest_error(
             scanner,
@@ -201,54 +331,73 @@ fn evaluated_path(
     Ok(value)
 }
 
-/// Evaluate one path reference and intern it, reusing `scratch`.
+/// Expand one path reference and intern it, reusing `scratch`.
 ///
-/// Most references name a path that is already interned, so evaluating into a
+/// Most references name a path that is already interned, so expanding into a
 /// shared buffer and interning from bytes leaves the common case allocating
-/// nothing at all.
+/// nothing at all — and a reference that needs no expansion is handed to the
+/// boundary as the manifest bytes themselves.
 fn node_for(
     scanner: &Scanner<'_>,
-    graph: &mut Graph,
+    graph: &mut BuildGraph,
     path: &ScannedEvalString<'_>,
-    environment: EnvironmentId,
+    scope: Scope,
     scratch: &mut Vec<u8>,
-) -> ManifestResult<NodeId> {
-    // A path that expands to nothing and is already canonical needs neither
-    // evaluation nor canonicalization, so it can be hashed and probed against
-    // the manifest bytes themselves — no copy, and no allocation at all unless
-    // the node turns out to be new.
-    if let ScannedEvalString::Plain(bytes) = path {
-        if is_canonical(bytes) {
-            return Ok(crate::graph::mknode(graph, bytes));
+) -> ManifestResult<Node> {
+    let interned = match path {
+        ScannedEvalString::Plain(bytes) => graph.node(bytes),
+        ScannedEvalString::Parts(_) => {
+            scratch.clear();
+            expand_into(graph, scope, path, scratch);
+            graph.node(scratch)
         }
+    };
+    interned.map_err(|error| manifest_error(scanner, Anchor::Token, construction_problem(error)))
+}
+
+/// Expand and intern a run of scanned path references into `nodes`.
+fn nodes_for(
+    scanner: &Scanner<'_>,
+    graph: &mut BuildGraph,
+    paths: &[ScannedEvalString<'_>],
+    scope: Scope,
+    scratch: &mut Vec<u8>,
+    nodes: &mut Vec<Node>,
+) -> ManifestResult<()> {
+    nodes.clear();
+    nodes.reserve(paths.len());
+    for path in paths {
+        let node = node_for(scanner, graph, path, scope, scratch)?;
+        nodes.push(node);
     }
-    scratch.clear();
-    crate::env::enveval_into(graph, environment, path, scratch);
-    if scratch.is_empty() {
-        return Err(manifest_error(
-            scanner,
-            Anchor::Token,
-            ManifestProblem::EmptyPath,
-        ));
-    }
-    canonpath(scratch);
-    Ok(crate::graph::mknode(graph, scratch))
+    Ok(())
+}
+
+/// The buffers every build statement in one manifest reuses.
+///
+/// A statement's paths and its interned nodes are the same shape for every
+/// statement in a file, so holding them here leaves the common case allocating
+/// only what the graph keeps.
+#[derive(Default)]
+struct EdgeScratch {
+    path: Vec<u8>,
+    outputs: Vec<Node>,
+    inputs: Vec<Node>,
+    validations: Vec<Node>,
 }
 
 // [spec:ronin:def:parse.parseedge-fn]
 // [spec:ronin:sem:parse.parseedge-fn]
 #[allow(
     clippy::too_many_lines,
-    reason = "a complete Ninja build production shares scanner state and duplicate-output handling"
+    reason = "a complete Ninja build production shares one scanner cursor across its clauses"
 )]
 fn parseedge(
     scanner: &mut Scanner<'_>,
-    graph: &mut Graph,
-    environment: EnvironmentId,
-    state: &EnvState,
-    options: ParseOptions,
-    warnings: &mut Vec<String>,
-    scratch: &mut Vec<u8>,
+    graph: &mut BuildGraph,
+    scope: Scope,
+    parser: &mut Parser,
+    scratch: &mut EdgeScratch,
 ) -> ManifestResult<()> {
     let mut output_paths = scanpaths(scanner)?;
     let explicit_output_count = output_paths.len();
@@ -264,7 +413,7 @@ fn parseedge(
     }
     scanchar(scanner, ':')?;
     let rule_name = scanname(scanner, NameKind::BuildCommand)?.text;
-    let rule = envrule(graph, environment, rule_name).ok_or_else(|| {
+    let rule = graph.rule(scope, rule_name).ok_or_else(|| {
         manifest_error(
             scanner,
             Anchor::Token,
@@ -293,130 +442,74 @@ fn parseedge(
     };
     scannewline(scanner)?;
 
-    let mut bindings = Vec::new();
+    let mut scanned_bindings = Vec::new();
     while scanindent(scanner)? {
-        bindings.push(parselet(scanner)?);
+        scanned_bindings.push(parselet(scanner)?);
     }
 
-    let mut out = IdVec::new();
-    let mut retained_explicit_output_count = 0;
-    for (index, output) in output_paths.iter().enumerate() {
-        let node = node_for(scanner, graph, output, environment, scratch)?;
-        if graph.node(node).gen.is_some() || out.contains(&node) {
+    // Ninja rejects a duplicate output as soon as it interns that output,
+    // before it has looked at the inputs at all, so a statement that is wrong
+    // in both ways is reported the way Ninja reports it. `add_edge` rejects the
+    // same statement, but only once it has been handed a whole one.
+    scratch.outputs.clear();
+    scratch.outputs.reserve(output_paths.len());
+    for path in &output_paths {
+        let output = node_for(scanner, graph, path, scope, &mut scratch.path)?;
+        if graph.generator(output).is_some() || scratch.outputs.contains(&output) {
             return Err(manifest_error(
                 scanner,
                 Anchor::Token,
                 ManifestProblem::DuplicateOutput {
-                    path: graph.node_path(node).to_owned(),
+                    path: BString::from(graph.path(output)),
                 },
             ));
         }
-        retained_explicit_output_count += usize::from(index < explicit_output_count);
-        out.push(node);
+        scratch.outputs.push(output);
     }
-    if out.is_empty() {
-        return Err(manifest_error(
-            scanner,
-            Anchor::Token,
-            ManifestProblem::BuildWithoutOutputs,
-        ));
-    }
-
-    let input = input_paths
-        .iter()
-        .map(|path| node_for(scanner, graph, path, environment, scratch))
-        .collect::<Result<IdVec<_>, _>>()?;
-    let validation = validation_paths
-        .iter()
-        .map(|path| node_for(scanner, graph, path, environment, scratch))
-        .collect::<Result<IdVec<_>, _>>()?;
-    let edge = mkedge(graph, environment);
-    let edge_env = graph.edge(edge).env;
-    for output in &out {
-        graph.node_mut(*output).gen = Some(edge);
-    }
-    for input_node in &input {
-        nodeuse(graph, *input_node, edge);
-    }
-    for validation_node in &validation {
-        graph.add_validation_use(*validation_node, edge);
-    }
-    {
-        let edge_mut = graph.edge_mut(edge);
-        edge_mut.rule = Some(rule);
-        edge_mut.out = out;
-        edge_mut.input = input;
-        edge_mut.validation = validation;
-        edge_mut.set_explicit_output_count(retained_explicit_output_count);
-        edge_mut.set_input_partitions(explicit_input_count, non_order_only_input_count);
+    nodes_for(
+        scanner,
+        graph,
+        &input_paths,
+        scope,
+        &mut scratch.path,
+        &mut scratch.inputs,
+    )?;
+    nodes_for(
+        scanner,
+        graph,
+        &validation_paths,
+        scope,
+        &mut scratch.path,
+        &mut scratch.validations,
+    )?;
+    let mut bindings = Vec::with_capacity(scanned_bindings.len());
+    for (name, value) in scanned_bindings {
+        let value = expand(graph, scope, &value);
+        bindings.push((graph.binding(name), Vec::from(value)));
     }
 
-    for (name, value) in bindings {
-        let value = enveval(graph, edge_env, &value);
-        let name = graph.names_mut().intern(name);
-        graph.edge_mut(edge).bindings.insert(name, value);
-    }
-
-    if let Some(pool_name) =
-        edgevar(graph, edge, Names::POOL, PathStyle::ShellEscaped).filter(|pool| !pool.is_empty())
-    {
-        graph.edge_mut(edge).pool = Some(poolget(state, BStr::new(&pool_name)).map_err(|_| {
-            manifest_error(
-                scanner,
-                Anchor::Token,
-                ManifestProblem::UnknownPoolName {
-                    name: BString::from(pool_name.as_slice()),
-                },
-            )
-        })?);
-    }
-
-    if let Some(mut dyndep_path) =
-        edgevar(graph, edge, Names::DYNDEP, PathStyle::Raw).filter(|path| !path.is_empty())
-    {
-        canonpath(&mut dyndep_path);
-        let dyndep = mknode(graph, dyndep_path.clone());
-        if !graph.edge(edge).input.contains(&dyndep) {
-            return Err(manifest_error(
-                scanner,
-                Anchor::Token,
-                ManifestProblem::DyndepNotInput { path: dyndep_path },
-            ));
-        }
-        graph.edge_mut(edge).dyndep = Some(dyndep);
-    }
+    let edge = graph
+        .add_edge(EdgeSpec {
+            scope,
+            rule,
+            explicit_outputs: &scratch.outputs[..explicit_output_count],
+            implicit_outputs: &scratch.outputs[explicit_output_count..],
+            explicit_inputs: &scratch.inputs[..explicit_input_count],
+            implicit_inputs: &scratch.inputs[explicit_input_count..non_order_only_input_count],
+            order_only_inputs: &scratch.inputs[non_order_only_input_count..],
+            validations: &scratch.validations,
+            bindings,
+        })
+        .map_err(|error| manifest_error(scanner, Anchor::Token, construction_problem(error)))?;
 
     // Only warn mode filters the self-reference; under `=err` it is left in
     // place so cycle detection reports it, which is the whole point of the
-    // flag. The shape restriction is Ninja's: it recognises exactly the form
-    // old CMake emitted rather than any phony that mentions itself.
-    let ignore_phony_self_reference = options.phony_cycle_warns && {
-        let edge = graph.edge(edge);
-        graph.is_phony_rule(edge.rule)
-            && edge.out.len() == 1
-            && edge.explicit_output_count() == 1
-            && edge.explicit_input_count() == edge.input.len()
-    };
-    if ignore_phony_self_reference {
-        let output = graph.edge(edge).out[0];
-        let removed = graph
-            .edge(edge)
-            .input
-            .iter()
-            .enumerate()
-            .filter_map(|(index, input)| (*input == output).then_some(index))
-            .collect::<Vec<_>>();
-        if !removed.is_empty() {
-            for index in removed.into_iter().rev() {
-                graph.edge_mut(edge).remove_input(index);
-            }
-            graph
-                .node_mut(output)
-                .uses
-                .retain(|candidate| *candidate != edge);
-            warnings.push(format!(
+    // flag.
+    if parser.options.phony_cycle_warns {
+        if let Some(output) = graph.drop_phony_self_reference(edge) {
+            parser.warnings.push(format!(
                 "phony target '{}' names itself as an input; ignoring [-w phonycycle=warn]",
-                graph.node_path(output)
+                graph.path(output).as_bstr()
             ));
         }
     }
@@ -427,10 +520,9 @@ fn parseedge(
 // [spec:ronin:sem:parse.parseinclude-fn]
 fn parseinclude(
     scanner: &mut Scanner<'_>,
-    graph: &mut Graph,
+    graph: &mut BuildGraph,
     parser: &mut Parser,
-    environment: EnvironmentId,
-    state: &mut EnvState,
+    scope: Scope,
     newscope: bool,
 ) -> ManifestResult<()> {
     let path = scanstring(scanner, true)?.ok_or_else(|| {
@@ -440,18 +532,17 @@ fn parseinclude(
     // reported against the line that asked for it.
     let asked_at = scanner.source_span(scanner.last_token());
     scannewline(scanner)?;
-    let path = evaluated_path(scanner, graph, &path, environment)?;
-    let environment = if newscope {
-        crate::env::mkenv(graph, Some(environment))
+    let path = evaluated_path(scanner, graph, &path, scope)?;
+    let scope = if newscope {
+        graph.child_scope(scope)
     } else {
-        environment
+        scope
     };
     parse_at(
         path.to_path().expect("byte paths are valid on Unix"),
         graph,
         parser,
-        environment,
-        state,
+        scope,
         Some(asked_at),
     )
 }
@@ -460,9 +551,8 @@ fn parseinclude(
 // [spec:ronin:sem:parse.parsedefault-fn]
 fn parsedefault(
     scanner: &mut Scanner<'_>,
-    graph: &Graph,
-    parser: &mut Parser,
-    environment: EnvironmentId,
+    graph: &mut BuildGraph,
+    scope: Scope,
 ) -> ManifestResult<()> {
     let targets = scanpaths(scanner)?;
     scannewline(scanner)?;
@@ -474,19 +564,18 @@ fn parsedefault(
         ));
     }
     for target in targets {
-        let mut target = evaluated_path(scanner, graph, &target, environment)?;
+        let mut target = evaluated_path(scanner, graph, &target, scope)?;
         canonpath(&mut target);
-        parser.defaults.push(
-            crate::graph::nodeget(graph, target.as_bytes()).ok_or_else(|| {
-                manifest_error(
-                    scanner,
-                    Anchor::Token,
-                    ManifestProblem::UnknownTarget {
-                        path: target.clone(),
-                    },
-                )
-            })?,
-        );
+        let node = graph.lookup(target.as_bytes()).ok_or_else(|| {
+            manifest_error(
+                scanner,
+                Anchor::Token,
+                ManifestProblem::UnknownTarget {
+                    path: target.clone(),
+                },
+            )
+        })?;
+        graph.add_default(node);
     }
     Ok(())
 }
@@ -495,20 +584,14 @@ fn parsedefault(
 // [spec:ronin:sem:parse.parsepool-fn]
 fn parsepool(
     scanner: &mut Scanner<'_>,
-    graph: &mut Graph,
-    state: &mut EnvState,
-    environment: EnvironmentId,
+    graph: &mut BuildGraph,
+    scope: Scope,
 ) -> ManifestResult<()> {
     let name = scanname(scanner, NameKind::Pool)?.text;
     let named_at = scanner.source_span(scanner.position());
-    let pool = mkpool(graph, state, name.to_owned()).map_err(|_| {
-        ManifestError::at(
-            named_at,
-            ManifestProblem::DuplicatePool {
-                name: name.to_owned(),
-            },
-        )
-    })?;
+    let pool = graph
+        .define_pool(name)
+        .map_err(|error| ManifestError::at(named_at, construction_problem(error)))?;
     scannewline(scanner)?;
     while scanindent(scanner)? {
         let (name, value) = parselet(scanner)?;
@@ -521,7 +604,7 @@ fn parsepool(
                 },
             ));
         }
-        let value = enveval(graph, environment, &value);
+        let value = expand(graph, scope, &value);
         let depth = String::from_utf8_lossy(value.as_bytes())
             .parse()
             .ok()
@@ -530,14 +613,12 @@ fn parsepool(
                 manifest_error(
                     scanner,
                     Anchor::Token,
-                    ManifestProblem::InvalidPoolDepth {
-                        value: value.clone(),
-                    },
+                    ManifestProblem::InvalidPoolDepth { value },
                 )
             })?;
-        graph.pool_mut(pool).set_depth(depth);
+        graph.set_pool_depth(pool, depth);
     }
-    if graph.pool(pool).depth().is_none() {
+    if graph.pool_depth(pool).is_none() {
         return Err(manifest_error(
             scanner,
             Anchor::AfterBlock,
@@ -610,24 +691,22 @@ fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i
 // [spec:ronin:def:parse.parse-fn]
 // [spec:ronin:sem:parse.parse-fn]
 // [spec:ronin:req:compat.manifest-semantics]
-pub(crate) fn parse(
-    name: impl AsRef<std::path::Path>,
-    graph: &mut Graph,
+fn parse(
+    name: impl AsRef<Path>,
+    graph: &mut BuildGraph,
     parser: &mut Parser,
-    environment: EnvironmentId,
-    state: &mut EnvState,
+    scope: Scope,
 ) -> ManifestResult<()> {
     // The manifest named on the command line: nothing in a manifest points at
     // it, so a failure to read it has nowhere to point back to.
-    parse_at(name, graph, parser, environment, state, None)
+    parse_at(name, graph, parser, scope, None)
 }
 
 fn parse_at(
-    name: impl AsRef<std::path::Path>,
-    graph: &mut Graph,
+    name: impl AsRef<Path>,
+    graph: &mut BuildGraph,
     parser: &mut Parser,
-    environment: EnvironmentId,
-    state: &mut EnvState,
+    scope: Scope,
     located: Option<crate::source::SourceSpan>,
 ) -> ManifestResult<()> {
     let path = name.as_ref().to_owned();
@@ -647,34 +726,22 @@ fn parse_at(
     })?;
     let source = Source::from_bytes(&path, input);
     let mut scanner = Scanner::new(&source);
-    // One buffer per manifest, reused by every path reference in it.
-    let mut path_scratch = Vec::new();
+    // One set of buffers per manifest, reused by every statement in it.
+    let mut scratch = EdgeScratch::default();
     while let Some(token) = scankeyword(&mut scanner)? {
         match token.kind {
-            TokenKind::Rule => parserule(&mut scanner, graph, environment)?,
+            TokenKind::Rule => parserule(&mut scanner, graph, scope)?,
             TokenKind::Build => {
-                parseedge(
-                    &mut scanner,
-                    graph,
-                    environment,
-                    state,
-                    parser.options,
-                    &mut parser.warnings,
-                    &mut path_scratch,
-                )?;
+                parseedge(&mut scanner, graph, scope, parser, &mut scratch)?;
             }
-            TokenKind::Include => {
-                parseinclude(&mut scanner, graph, parser, environment, state, false)?;
-            }
-            TokenKind::Subninja => {
-                parseinclude(&mut scanner, graph, parser, environment, state, true)?;
-            }
-            TokenKind::Default => parsedefault(&mut scanner, graph, parser, environment)?,
-            TokenKind::Pool => parsepool(&mut scanner, graph, state, environment)?,
+            TokenKind::Include => parseinclude(&mut scanner, graph, parser, scope, false)?,
+            TokenKind::Subninja => parseinclude(&mut scanner, graph, parser, scope, true)?,
+            TokenKind::Default => parsedefault(&mut scanner, graph, scope)?,
+            TokenKind::Pool => parsepool(&mut scanner, graph, scope)?,
             TokenKind::Variable => {
                 let name = token.lexeme.text;
                 let value = parse_assignment(&mut scanner)?;
-                let value = enveval(graph, environment, &value);
+                let value = expand(graph, scope, &value);
                 if name == "ninja_required_version" {
                     let (major, minor) = checkversion(&scanner, BStr::new(value.as_bytes()))?;
                     // Ninja accepts a manifest written for an older major but
@@ -690,71 +757,50 @@ fn parse_at(
                     }
                     scanner.set_manifest_version(major, minor);
                 }
-                let name = graph.names_mut().intern(name);
-                crate::env::envaddvar(graph, environment, name, value);
+                graph.bind(scope, name, Vec::from(value));
             }
         }
     }
     Ok(())
 }
 
-// [spec:ronin:def:parse.defaultnodes-fn]
-// [spec:ronin:sem:parse.defaultnodes-fn]
-pub(crate) fn defaultnodes(parser: &Parser, graph: &Graph) -> Vec<NodeId> {
-    if parser.defaults.is_empty() {
-        graph
-            .node_ids()
-            .filter(|node| {
-                let node = graph.node(*node);
-                node.gen.is_some() && node.uses.is_empty()
-            })
-            .collect()
-    } else {
-        parser.defaults.clone()
-    }
-}
-
 #[cfg(test)]
 mod ninja_manifest_tests {
     use super::*;
+    use crate::env::edgevar;
+    use crate::graph::{Graph, PathStyle};
+    use crate::names::Names;
     use std::fs;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     static NEXT_MANIFEST: AtomicUsize = AtomicUsize::new(0);
 
-    fn parse_source(source: &str) -> ManifestResult<(Graph, Parser, EnvState)> {
+    fn parse_source(source: &str) -> ManifestResult<Manifest> {
         let path = std::env::temp_dir().join(format!(
             "ronin-manifest-parser-{}-{}.ninja",
             std::process::id(),
             NEXT_MANIFEST.fetch_add(1, Ordering::Relaxed)
         ));
         fs::write(&path, source).unwrap();
-        let mut graph = crate::graph::Graph::default();
-        let mut parser = Parser::default();
-        let mut state = crate::env::EnvState::new(&mut graph);
-        let result = parse(
-            path.to_str().unwrap(),
-            &mut graph,
-            &mut parser,
-            state.root,
-            &mut state,
-        );
+        let result = parse_path(&path);
         fs::remove_file(path).unwrap();
-        result.map(|()| (graph, parser, state))
+        result
     }
 
-    fn parse_path(path: &std::path::Path) -> ManifestResult<(Graph, Parser, EnvState)> {
-        let mut graph = crate::graph::Graph::default();
-        let mut parser = Parser::default();
-        let mut state = crate::env::EnvState::new(&mut graph);
-        parse(
-            path.to_str().unwrap(),
-            &mut graph,
-            &mut parser,
-            state.root,
-            &mut state,
-        )?;
-        Ok((graph, parser, state))
+    fn parse_path(path: &Path) -> ManifestResult<Manifest> {
+        load_manifest_in(
+            path,
+            crate::os::WorkingDirectory::default(),
+            ManifestOptions::default(),
+        )
+    }
+
+    fn parse_graph(source: &str) -> ManifestResult<Graph> {
+        parse_source(source).map(|manifest| manifest.graph.into_arenas())
+    }
+
+    fn parse_graph_at(path: &Path) -> ManifestResult<Graph> {
+        parse_path(path).map(|manifest| manifest.graph.into_arenas())
     }
 
     fn temporary_directory(label: &str) -> std::path::PathBuf {
@@ -782,7 +828,7 @@ mod ninja_manifest_tests {
     }
 
     fn assert_dyndep(source: &str, expected: &[u8]) {
-        let (graph, _, _) = parse_source(source).unwrap();
+        let graph = parse_graph(source).unwrap();
         let edge = output_edge(&graph, b"result");
         let dyndep = graph.edge(edge).dyndep.unwrap();
         assert_eq!(graph.node_path(dyndep).as_bytes(), expected);
@@ -792,8 +838,8 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_validations() {
-        let (graph, _, _) =
-            parse_source("rule cat\n  command = cat $in > $out\nbuild foo: cat bar |@ baz\n")
+        let graph =
+            parse_graph("rule cat\n  command = cat $in > $out\nbuild foo: cat bar |@ baz\n")
                 .unwrap();
         let edge = output_edge(&graph, b"foo");
         assert_eq!(graph.edge(edge).input.len(), 1);
@@ -812,9 +858,8 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_implicit_output() {
-        let (graph, _, _) =
-            parse_source("rule cat\n  command = cat $in > $out\nbuild foo | imp: cat bar\n")
-                .unwrap();
+        let graph = parse_graph("rule cat\n  command = cat $in > $out\nbuild foo | imp: cat bar\n")
+            .unwrap();
         let edge = output_edge(&graph, b"imp");
         assert_eq!(graph.edge(edge).out.len(), 2);
         assert_eq!(graph.edge(edge).explicit_output_count(), 1);
@@ -823,8 +868,8 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_implicit_output_empty() {
-        let (graph, _, _) =
-            parse_source("rule cat\n  command = cat $in > $out\nbuild foo | : cat bar\n").unwrap();
+        let graph =
+            parse_graph("rule cat\n  command = cat $in > $out\nbuild foo | : cat bar\n").unwrap();
         let edge = output_edge(&graph, b"foo");
         assert_eq!(graph.edge(edge).out.len(), 1);
         assert_eq!(graph.edge(edge).explicit_output_count(), 1);
@@ -832,8 +877,8 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_no_explicit_output() {
-        let (graph, _, _) =
-            parse_source("rule cat\n  command = cat $in > $out\nbuild | imp: cat bar\n").unwrap();
+        let graph =
+            parse_graph("rule cat\n  command = cat $in > $out\nbuild | imp: cat bar\n").unwrap();
         let edge = output_edge(&graph, b"imp");
         assert_eq!(graph.edge(edge).out.len(), 1);
         assert_eq!(graph.edge(edge).explicit_output_count(), 0);
@@ -849,7 +894,7 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_phony_self_reference_ignored() {
-        let (graph, _, _) = parse_source("build a: phony a\n").unwrap();
+        let graph = parse_graph("build a: phony a\n").unwrap();
         let edge = output_edge(&graph, b"a");
         assert!(graph.edge(edge).input.is_empty());
         assert!(graph
@@ -860,18 +905,18 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_reserved_words() {
-        let (graph, parser, _) = parse_source(
+        let manifest = parse_source(
             "rule build\n  command = rule run $out\nbuild subninja: build include default foo.cc\ndefault subninja\n",
         )
         .unwrap();
-        assert!(crate::graph::nodeget(&graph, b"subninja").is_some());
-        assert_eq!(defaultnodes(&parser, &graph).len(), 1);
+        assert!(manifest.graph.lookup(b"subninja").is_some());
+        assert_eq!(manifest.graph.default_targets().len(), 1);
     }
 
     #[test]
     fn ninja_manifest_parser_dyndep_not_specified() {
-        let (graph, _, _) =
-            parse_source("rule cat\n  command = cat $in > $out\nbuild result: cat in\n").unwrap();
+        let graph =
+            parse_graph("rule cat\n  command = cat $in > $out\nbuild result: cat in\n").unwrap();
         assert!(graph.edge(output_edge(&graph, b"result")).dyndep.is_none());
     }
 
@@ -920,7 +965,7 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_selects_pool() {
-        let (graph, _, _) = parse_source(
+        let graph = parse_graph(
             "pool link_pool\n  depth = 15\nrule link\n  command = link\n  pool = link_pool\nbuild result: link input\n",
         )
         .unwrap();
@@ -958,9 +1003,9 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_default_cycle_has_no_root() {
-        let (graph, parser, _) =
+        let manifest =
             parse_source("rule cat\n  command = cat $in > $out\nbuild a: cat a\n").unwrap();
-        assert!(defaultnodes(&parser, &graph).is_empty());
+        assert!(manifest.graph.default_targets().is_empty());
     }
 
     #[test]
@@ -982,7 +1027,7 @@ mod ninja_manifest_tests {
             b"rule cat\n  command = cat $in > $out\nbuild out-\xff: cat in-\xfe\n",
         )
         .unwrap();
-        let (graph, _, _) = parse_path(&path).unwrap();
+        let graph = parse_graph_at(&path).unwrap();
         let output = crate::graph::nodeget(&graph, b"out-\xff").unwrap();
         assert!(crate::graph::nodeget(&graph, b"in-\xfe").is_some());
         let edge = graph.node(output).gen.unwrap();
@@ -1005,7 +1050,7 @@ mod ninja_manifest_tests {
             ),
         )
         .unwrap();
-        let (graph, _, _) = parse_path(&root).unwrap();
+        let graph = parse_graph_at(&root).unwrap();
         let inner = output_edge(&graph, b"some_dir/inner");
         let outer = output_edge(&graph, b"some_dir/outer");
         let outer2 = output_edge(&graph, b"some_dir/outer2");
@@ -1036,7 +1081,7 @@ mod ninja_manifest_tests {
             ),
         )
         .unwrap();
-        let (graph, _, _) = parse_path(&root).unwrap();
+        let graph = parse_graph_at(&root).unwrap();
         let real = output_edge(&graph, b"real");
         let shadowed = output_edge(&graph, b"shadowed");
         assert!(graph.is_phony_rule(graph.edge(real).rule));
@@ -1100,7 +1145,7 @@ mod ninja_manifest_tests {
             ),
         )
         .unwrap();
-        let (graph, _, _) = parse_path(&root).unwrap();
+        let graph = parse_graph_at(&root).unwrap();
         assert!(crate::graph::nodeget(&graph, b"x").is_some());
         assert!(crate::graph::nodeget(&graph, b"y").is_some());
         fs::remove_dir_all(directory).unwrap();
@@ -1117,9 +1162,9 @@ mod ninja_manifest_tests {
             format!("var = outer\ninclude {}\n", include.display()),
         )
         .unwrap();
-        let (graph, _, state) = parse_path(&root).unwrap();
-        let value = crate::env::envvar_named(&graph, state.root, BStr::new("var")).unwrap();
-        assert_eq!(value.as_bytes(), b"inner");
+        let graph = parse_path(&root).unwrap().graph;
+        let value = graph.variable(graph.root(), b"var").unwrap();
+        assert_eq!(value, b"inner");
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1173,17 +1218,9 @@ mod ninja_manifest_tests {
             "rule cat\n  command = cat\nbuild out: cat in1\nbuild out: cat in2\n",
         )
         .unwrap();
-        let mut graph = crate::graph::Graph::default();
-        let mut parser = Parser::default();
-        let mut state = crate::env::EnvState::new(&mut graph);
-        let error = parse(
-            path.to_str().unwrap(),
-            &mut graph,
-            &mut parser,
-            state.root,
-            &mut state,
-        )
-        .unwrap_err();
+        let Err(error) = parse_path(&path) else {
+            panic!("a duplicate output unexpectedly parsed");
+        };
         assert!(
             error.to_string().contains("multiple rules generate"),
             "{error}"
@@ -1211,18 +1248,18 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_default_escaped_space() {
-        let (graph, parser, _) = parse_source(
+        let manifest = parse_source(
             "rule cat\n  command = cat\nbuild foo$ bar: cat input\ndefault foo$ bar\n",
         )
         .unwrap();
-        let defaults = defaultnodes(&parser, &graph);
+        let defaults = manifest.graph.default_targets();
         assert_eq!(defaults.len(), 1);
-        assert_eq!(graph.node_path(defaults[0]).as_bytes(), b"foo bar");
+        assert_eq!(manifest.graph.path(defaults[0]), b"foo bar");
     }
 
     #[test]
     fn ninja_state_complex_target_is_preserved() {
-        let (graph, _, _) = parse_source(
+        let graph = parse_graph(
             "rule copy\n  command = cp $in $out\nname = foo %2F bar?baz&x=1\nbuild $name: copy foo\n",
         )
         .unwrap();

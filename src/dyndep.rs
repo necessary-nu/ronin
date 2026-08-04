@@ -966,17 +966,14 @@ mod tests {
         if let Some(dyndep) = dyndep {
             fs::write(&dyndep_path, dyndep).unwrap();
         }
-        let mut graph = Graph::default();
-        let mut parser = crate::parse::Parser::default();
-        let mut state = crate::env::EnvState::new(&mut graph);
-        crate::parse::parse(
+        let graph = crate::parse::load_manifest_in(
             manifest_path.to_str().unwrap(),
-            &mut graph,
-            &mut parser,
-            state.root,
-            &mut state,
+            crate::os::WorkingDirectory::default(),
+            crate::frontend::ManifestOptions::default(),
         )
-        .unwrap();
+        .unwrap()
+        .graph
+        .into_arenas();
         let node = nodeget(&graph, dyndep_path.to_string_lossy().as_bytes()).unwrap();
         (graph, node, directory)
     }

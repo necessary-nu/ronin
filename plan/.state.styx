@@ -418,4 +418,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
     )}
+    {id ronin-frontend-api, covered_rules (
+        frontend.graph-construction
+    ), covered_claims (
+        {impl_name target-impl, rule frontend.graph-construction}
+    )}
 )

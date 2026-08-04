@@ -1,8 +1,8 @@
 //! Wave-3 behavior tests for the literal Rust port.
 
 use crate::names::Names;
-use crate::util::{BStr, BString, ByteSlice};
-use crate::{build, deps, env, graph, log, os, parse, scan, tool, util};
+use crate::util::{BString, ByteSlice};
+use crate::{build, deps, env, graph, log, os, scan, tool, util};
 use std::fs;
 
 // [spec:ronin:sem:util.bufadd-fn/test]
@@ -192,18 +192,13 @@ fn scanner_and_parser_behaviour() {
         (token.lexeme.span.byte_start, token.lexeme.span.byte_end),
         (0, 4)
     );
-    let mut graph = graph::Graph::default();
-    let mut parser = parse::Parser::default();
-    let mut state = env::EnvState::new(&mut graph);
-    parse::parse(
+    let manifest = crate::parse::load_manifest_in(
         path.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
     .unwrap();
-    assert_eq!(parse::defaultnodes(&parser, &graph).len(), 1);
+    assert_eq!(manifest.graph.default_targets().len(), 1);
     let _ = fs::remove_file(path);
 }
 
@@ -235,23 +230,42 @@ fn ninja_lexer_read_ident_and_keywords() {
 }
 
 fn serialized_eval(value: &scan::ScannedEvalString<'_>) -> String {
-    // Interned and read back through one table, so the names round-trip.
-    let mut names = crate::names::Names::default();
-    let value = value.clone().into_owned(&mut names);
-    let mut output = String::new();
-    for part in &value.parts {
+    fn group(output: &mut String, literal: &mut String) {
+        if literal.is_empty() {
+            return;
+        }
         output.push('[');
+        output.push_str(literal);
+        output.push(']');
+        literal.clear();
+    }
+
+    let parts = match value {
+        scan::ScannedEvalString::Plain([]) => return String::new(),
+        scan::ScannedEvalString::Plain(bytes) => {
+            return format!("[{}]", std::str::from_utf8(bytes).unwrap())
+        }
+        scan::ScannedEvalString::Parts(parts) => parts,
+    };
+    // Adjacent literal fragments render as one group, the way a value that
+    // reached the graph would hold them.
+    let mut output = String::new();
+    let mut literal = String::new();
+    for part in parts {
         match part {
-            util::EvalPart::Variable(name) => {
-                output.push('$');
-                output.push_str(&names.name(*name).to_str_lossy());
+            scan::ScannedEvalPart::Literal(bytes) => {
+                literal.push_str(std::str::from_utf8(bytes).unwrap());
             }
-            util::EvalPart::Literal(value) => {
-                output.push_str(std::str::from_utf8(value).unwrap());
+            scan::ScannedEvalPart::EscapedByte(byte) => literal.push(char::from(*byte)),
+            scan::ScannedEvalPart::Variable(name) => {
+                group(&mut output, &mut literal);
+                output.push_str("[$");
+                output.push_str(&name.to_str_lossy());
+                output.push(']');
             }
         }
-        output.push(']');
     }
+    group(&mut output, &mut literal);
     output
 }
 
@@ -369,17 +383,14 @@ fn ninja_manifest_parser_rules() {
         "rule cat\n  command = cat $in > $out\n\nrule date\n  command = date > $out\n\nbuild result: cat in_1.cc in-2.O\n",
     )
     .unwrap();
-    let mut graph = graph::Graph::default();
-    let mut parser = parse::Parser::default();
-    let mut state = env::EnvState::new(&mut graph);
-    parse::parse(
+    let graph = crate::parse::load_manifest_in(
         path.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .graph
+    .into_arenas();
     assert!(graph::nodeget(&graph, b"result").is_some());
     assert!(graph::nodeget(&graph, b"in_1.cc").is_some());
     assert!(graph::nodeget(&graph, b"in-2.O").is_some());
@@ -405,17 +416,14 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
         ),
     )
     .unwrap();
-    let mut graph = graph::Graph::default();
-    let mut parser = parse::Parser::default();
-    let mut state = env::EnvState::new(&mut graph);
-    parse::parse(
+    let graph = crate::parse::load_manifest_in(
         path.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .graph
+    .into_arenas();
     let out = graph::nodeget(&graph, b"out").unwrap();
     let edge = graph.node(out).gen.unwrap();
     assert_eq!(graph.edge(edge).explicit_output_count(), 1);
@@ -433,19 +441,13 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
     let _ = fs::remove_file(path);
 }
 
-fn parse_manifest(path: &std::path::Path) -> (graph::Graph, parse::Parser, env::EnvState) {
-    let mut graph = graph::Graph::default();
-    let mut parser = parse::Parser::default();
-    let mut state = env::EnvState::new(&mut graph);
-    parse::parse(
+fn parse_manifest(path: &std::path::Path) -> crate::frontend::Manifest {
+    crate::parse::load_manifest_in(
         path.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
-    .unwrap();
-    (graph, parser, state)
+    .unwrap()
 }
 
 // Cases adapted from Ninja's ParserTest.RuleAttributes,
@@ -476,7 +478,8 @@ fn ninja_manifest_parser_rule_attributes_and_special_variables() {
         ),
     )
     .unwrap();
-    let (graph, _, _) = parse_manifest(&path);
+    let manifest = parse_manifest(&path);
+    let graph = manifest.graph.into_arenas();
     let out = graph::nodeget(&graph, b"out").unwrap();
     let edge = graph.node(out).gen.unwrap();
     let command = env::edgevar(&graph, edge, Names::COMMAND, graph::PathStyle::Raw).unwrap();
@@ -519,25 +522,15 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
         ),
     )
     .unwrap();
-    let (graph, _, state) = parse_manifest(&path);
+    let manifest = parse_manifest(&path);
+    let root = manifest.graph.root();
+    assert_eq!(manifest.graph.variable(root, b"nested2").unwrap(), b"1/2");
+    assert_eq!(manifest.graph.variable(root, b"foo").unwrap(), b"bar\\baz");
     assert_eq!(
-        env::envvar_named(&graph, state.root, BStr::new("nested2"))
-            .unwrap()
-            .as_bytes(),
-        b"1/2"
-    );
-    assert_eq!(
-        env::envvar_named(&graph, state.root, BStr::new("foo"))
-            .unwrap()
-            .as_bytes(),
-        b"bar\\baz"
-    );
-    assert_eq!(
-        env::envvar_named(&graph, state.root, BStr::new("foo2"))
-            .unwrap()
-            .as_bytes(),
+        manifest.graph.variable(root, b"foo2").unwrap(),
         b"bar\\ baz"
     );
+    let graph = manifest.graph.into_arenas();
     let first = graph
         .node(graph::nodeget(&graph, b"a").unwrap())
         .gen
@@ -583,14 +576,14 @@ fn ninja_manifest_parser_paths_and_defaults() {
         ),
     )
     .unwrap();
-    let (graph, parser, _) = parse_manifest(&path);
-    assert!(graph::nodeget(&graph, b"out/exe").is_some());
-    assert!(graph::nodeget(&graph, b"$dir/exe").is_none());
-    assert!(graph::nodeget(&graph, b"out.o").is_some());
-    assert!(graph::nodeget(&graph, b"bar/foo.cc").is_some());
-    assert!(graph::nodeget(&graph, b"in/2").is_some());
-    let defaults = parse::defaultnodes(&parser, &graph);
-    assert_eq!(defaults.len(), 2);
+    let manifest = parse_manifest(&path);
+    let graph = &manifest.graph;
+    assert!(graph.lookup(b"out/exe").is_some());
+    assert!(graph.lookup(b"$dir/exe").is_none());
+    assert!(graph.lookup(b"out.o").is_some());
+    assert!(graph.lookup(b"bar/foo.cc").is_some());
+    assert!(graph.lookup(b"in/2").is_some());
+    assert_eq!(graph.default_targets().len(), 2);
     let _ = fs::remove_file(path);
 }
 
@@ -616,13 +609,10 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
         ),
     )
     .unwrap();
-    let (graph, _, state) = parse_manifest(&path);
-    assert_eq!(
-        env::envvar_named(&graph, state.root, BStr::new("x"))
-            .unwrap()
-            .as_bytes(),
-        b"$dollar"
-    );
+    let manifest = parse_manifest(&path);
+    let root = manifest.graph.root();
+    assert_eq!(manifest.graph.variable(root, b"x").unwrap(), b"$dollar");
+    let graph = manifest.graph.into_arenas();
     assert!(graph::nodeget(&graph, b"foo bar").is_some());
     assert!(graph::nodeget(&graph, b"$one").is_some());
     assert!(graph::nodeget(&graph, b"two$ three").is_some());
@@ -654,7 +644,7 @@ fn ninja_manifest_parser_includes_and_errors() {
         ),
     )
     .unwrap();
-    let (graph, _, _) = parse_manifest(&root);
+    let graph = parse_manifest(&root).graph.into_arenas();
     assert!(graph::nodeget(&graph, b"out").is_some());
 
     fs::write(
@@ -662,31 +652,23 @@ fn ninja_manifest_parser_includes_and_errors() {
         "rule cat\n  command = cat $in > $out\nbuild out1 out2: cat in1\nbuild out1: cat in2\n",
     )
     .unwrap();
-    let mut graph = graph::Graph::default();
-    let mut parser = parse::Parser::default();
-    let mut state = env::EnvState::new(&mut graph);
-    assert!(parse::parse(
+    assert!(crate::parse::load_manifest_in(
         root.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
+    .map(|_| ())
     .unwrap_err()
     .to_string()
     .contains("multiple rules generate out1"));
 
     fs::write(&root, "rule cat\n  rspfile = cat.rsp\n").unwrap();
-    let mut graph = graph::Graph::default();
-    let mut parser = parse::Parser::default();
-    let mut state = env::EnvState::new(&mut graph);
-    assert!(parse::parse(
+    assert!(crate::parse::load_manifest_in(
         root.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
+    .map(|_| ())
     .unwrap_err()
     .to_string()
     .contains("expected 'command =' line"));
@@ -750,17 +732,14 @@ fn ninja_clean_all_removes_generated_outputs() {
     for path in &paths {
         fs::write(path, "").unwrap();
     }
-    let mut graph = graph::Graph::default();
-    let mut parser = parse::Parser::default();
-    let mut state = env::EnvState::new(&mut graph);
-    parse::parse(
+    let graph = crate::parse::load_manifest_in(
         manifest.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .graph
+    .into_arenas();
     assert_eq!(tool::clean(&graph, &[], &[], true).unwrap(), 4);
     assert!(paths.iter().all(|path| !path.exists()));
     let _ = fs::remove_dir_all(directory);
@@ -801,7 +780,7 @@ fn ninja_clean_target_multi_output_and_rule() {
     for path in [&in1, &out1, &aux1, &in2, &out2] {
         fs::write(path, "").unwrap();
     }
-    let (graph, _, _) = parse_manifest(&manifest);
+    let graph = parse_manifest(&manifest).graph.into_arenas();
     assert_eq!(
         tool::clean(
             &graph,
@@ -856,7 +835,7 @@ fn ninja_clean_auxiliary_files_generators_and_phony_edges() {
     for path in [&output, &depfile, &rspfile, &generated, &phony] {
         fs::write(path, "").unwrap();
     }
-    let (graph, _, _) = parse_manifest(&manifest);
+    let graph = parse_manifest(&manifest).graph.into_arenas();
     assert_eq!(tool::clean(&graph, &[], &[], false).unwrap(), 3);
     assert!(!output.exists() && !depfile.exists() && !rspfile.exists());
     assert!(generated.exists() && phony.exists());
@@ -877,17 +856,14 @@ fn ninja_build_log_write_and_read() {
         "rule cat\n  command = cat $in > $out\nbuild out: cat in\n",
     )
     .unwrap();
-    let mut graph = graph::Graph::default();
-    let mut parser = parse::Parser::default();
-    let mut state = env::EnvState::new(&mut graph);
-    parse::parse(
+    let graph = crate::parse::load_manifest_in(
         manifest.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .graph
+    .into_arenas();
     let output = graph::nodeget(&graph, b"out").unwrap();
     let mut runtime = crate::runtime::RuntimeState::new(&graph);
     runtime
@@ -927,7 +903,7 @@ fn ninja_build_log_loads_duplicate_and_spaced_records() {
         ),
     )
     .unwrap();
-    let (graph, _, _) = parse_manifest(&manifest);
+    let graph = parse_manifest(&manifest).graph.into_arenas();
     fs::write(
         directory.join(".ninja_log"),
         concat!(

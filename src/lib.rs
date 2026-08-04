@@ -13,6 +13,7 @@ mod dyndep;
 mod env;
 mod error;
 mod explanations;
+pub mod frontend;
 mod graph;
 mod htab;
 mod jobserver;

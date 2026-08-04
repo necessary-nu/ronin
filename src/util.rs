@@ -102,10 +102,6 @@ impl EvalString {
             parts: vec![EvalPart::Variable(name)],
         }
     }
-
-    pub(crate) const fn from_parts(parts: Vec<EvalPart>) -> Self {
-        Self { parts }
-    }
 }
 
 // [spec:ronin:def:util.xasprintf-fn]
@@ -232,6 +228,15 @@ pub(crate) fn edit_distance(
         }
     }
     row[right.len()]
+}
+
+/// Ends output with a newline, as every Ninja run does that produced any.
+pub(crate) fn terminated(output: impl AsRef<[u8]>) -> Vec<u8> {
+    let mut output = output.as_ref().to_vec();
+    if !output.is_empty() && !matches!(output.last(), Some(b'\n' | b'\0')) {
+        output.push(b'\n');
+    }
+    output
 }
 
 #[cfg(test)]

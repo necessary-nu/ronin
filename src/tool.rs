@@ -1021,7 +1021,6 @@ pub(crate) fn toolget(name: &str) -> ToolResult<Tool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{env, graph, parse};
     use std::path::Path;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1060,18 +1059,14 @@ mod tests {
     fn parse_manifest(directory: &TempDirectory, manifest: &str) -> Graph {
         let path = directory.join("build.ninja");
         fs::write(&path, manifest).unwrap();
-        let mut graph = graph::Graph::default();
-        let mut parser = parse::Parser::default();
-        let mut state = env::EnvState::new(&mut graph);
-        parse::parse(
+        crate::parse::load_manifest_in(
             path.to_str().unwrap(),
-            &mut graph,
-            &mut parser,
-            state.root,
-            &mut state,
+            crate::os::WorkingDirectory::default(),
+            crate::frontend::ManifestOptions::default(),
         )
-        .unwrap();
-        graph
+        .unwrap()
+        .graph
+        .into_arenas()
     }
 
     fn ninja_path(path: &Path) -> String {

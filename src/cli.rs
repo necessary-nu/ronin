@@ -5,8 +5,8 @@ use crate::error::{
     BuildError, CliError, EncodingContext, PersistenceError, PersistenceOperation,
     ToolAvailability, ToolError,
 };
-use crate::parse::ParseOptions;
-use crate::util::{BStr, BString, ByteSlice, ByteVec};
+use crate::frontend::{BuildGraph, ManifestOptions};
+use crate::util::{terminated, BString, ByteSlice, ByteVec};
 use crate::Error;
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -241,7 +241,7 @@ pub(crate) fn loadflag(options: &mut BuildOptions, flag: &str) -> CliResult<()> 
 /// Apply one `-w` flag, reporting any warning the flag itself raises.
 // [spec:ronin:req:compat.cli-and-tools]
 pub(crate) fn warnflag(
-    options: &mut ParseOptions,
+    options: &mut ManifestOptions,
     warnings: &mut Vec<String>,
     flag: &str,
 ) -> CliResult<()> {
@@ -252,8 +252,8 @@ pub(crate) fn warnflag(
         "dupbuild=err" | "dupbuild=warn" => {
             warnings.push("deprecated warning 'dupbuild'".to_owned());
         }
-        "phonycycle=err" => options.phony_cycle_warns = false,
-        "phonycycle=warn" => options.phony_cycle_warns = true,
+        "phonycycle=err" => options.warn_on_phony_cycle(false),
+        "phonycycle=warn" => options.warn_on_phony_cycle(true),
         _ => {
             return Err(CliError::UnknownWarningFlag {
                 flag: flag.to_owned(),
@@ -325,7 +325,7 @@ fn append_stats(output: &mut String, parse_count: usize, parse_elapsed: std::tim
 
 struct RunInvocation {
     build_options: BuildOptions,
-    parse_options: ParseOptions,
+    parse_options: ManifestOptions,
     /// Warnings raised by the command line itself, before any manifest is read.
     warnings: Vec<String>,
     working_directory: crate::os::WorkingDirectory,
@@ -385,22 +385,23 @@ fn status_placeholder(name: &str) -> CliResult<&'static str> {
     }
 }
 
-/// Send any warnings the parse raised to stderr, as Ninja does.
+/// Send any warnings a manifest or the command line raised to stderr, as Ninja
+/// does.
 ///
 /// Streamed to the diagnostic sink when the invocation has one, so a warning
 /// appears while the build runs rather than after it; buffered into the result
 /// otherwise, for callers that collect output instead of streaming it.
 // [spec:ronin:req:compat.manifest-semantics]
-fn emit_parser_warnings(
-    parser: &mut crate::parse::Parser,
+fn emit_warnings(
+    raised: &mut Vec<String>,
     diagnostics: Option<&mut (dyn std::io::Write + '_)>,
     buffered: &mut Vec<u8>,
 ) -> CliResult<()> {
-    if parser.warnings.is_empty() {
+    if raised.is_empty() {
         return Ok(());
     }
     let mut rendered = Vec::new();
-    for warning in parser.warnings.drain(..) {
+    for warning in raised.drain(..) {
         rendered.extend_from_slice(format!("{PRODUCT_NAME}: warning: {warning}\n").as_bytes());
     }
     match diagnostics {
@@ -576,7 +577,7 @@ fn parse_run_arguments(
 ) -> CliResult<RunAction> {
     let mut invocation = RunInvocation {
         build_options: BuildOptions::default(),
-        parse_options: ParseOptions::default(),
+        parse_options: ManifestOptions::default(),
         warnings: Vec::new(),
         working_directory: working_directory.clone(),
         change_directory: None,
@@ -847,29 +848,16 @@ fn normalize_runtime_options(
     Ok(())
 }
 
-fn default_target_names(
-    parser: &crate::parse::Parser,
-    graph: &crate::graph::Graph,
-) -> Vec<BString> {
-    crate::parse::defaultnodes(parser, graph)
+fn default_target_names(graph: &BuildGraph) -> Vec<BString> {
+    graph
+        .default_targets()
         .into_iter()
-        .map(|node| graph.node_path(node).to_owned())
-        .collect()
-}
-
-fn default_target_paths(
-    parser: &crate::parse::Parser,
-    graph: &crate::graph::Graph,
-) -> Vec<BString> {
-    crate::parse::defaultnodes(parser, graph)
-        .into_iter()
-        .map(|node| graph.node_path(node).to_owned())
+        .map(|node| BString::from(graph.path(node)))
         .collect()
 }
 
 fn run_clean_tool(
-    graph: &crate::graph::Graph,
-    state: &crate::env::EnvState,
+    graph: &BuildGraph,
     arguments: &[BString],
     dryrun: bool,
     verbose: bool,
@@ -913,7 +901,8 @@ fn run_clean_tool(
     };
     if rule_mode {
         for rule in &rule_names {
-            crate::env::envrule(graph, state.root, BStr::new(rule))
+            graph
+                .rule(graph.root(), rule.as_bytes())
                 .ok_or_else(|| ToolError::UnknownRule { name: rule.clone() })?;
         }
     }
@@ -924,7 +913,7 @@ fn run_clean_tool(
     };
     Ok(format_clean_report(
         &crate::tool::clean_with_report_in(
-            graph,
+            graph.arenas(),
             targets,
             rules,
             include_generators,
@@ -1024,15 +1013,6 @@ fn run_compdb_targets_tool(
 
 fn tool_result(output: impl AsRef<[u8]>) -> RunResult {
     tool_result_with(output, Vec::new())
-}
-
-/// Ends output with a newline, as every Ninja run does that produced any.
-fn terminated(output: impl AsRef<[u8]>) -> Vec<u8> {
-    let mut output = output.as_ref().to_vec();
-    if !output.is_empty() && !matches!(output.last(), Some(b'\n' | b'\0')) {
-        output.push(b'\n');
-    }
-    output
 }
 
 fn tool_result_with(output: impl AsRef<[u8]>, stderr: Vec<u8>) -> RunResult {
@@ -1221,9 +1201,7 @@ fn run_flag_tool(
 
 fn run_manifest_tool(
     tool: crate::tool::Tool,
-    graph: &crate::graph::Graph,
-    parser: &crate::parse::Parser,
-    state: &crate::env::EnvState,
+    graph: &BuildGraph,
     arguments: &[BString],
     options: ToolRunContext<'_>,
 ) -> CliResult<RunResult> {
@@ -1251,7 +1229,7 @@ fn run_manifest_tool(
                 | crate::tool::Tool::Inputs
                 | crate::tool::Tool::MultiInputs
         ) {
-        default_arguments = default_target_names(parser, graph);
+        default_arguments = default_target_names(graph);
         &default_arguments
     } else {
         arguments
@@ -1262,7 +1240,6 @@ fn run_manifest_tool(
         }
         crate::tool::Tool::Clean => run_clean_tool(
             graph,
-            state,
             arguments,
             options.dry_run,
             options.verbose,
@@ -1270,13 +1247,18 @@ fn run_manifest_tool(
             crate::os::RealDiskInterface::new(options.working_directory.clone()),
         )
         .map(tool_result),
-        crate::tool::Tool::Compdb => {
-            run_compdb_tool(graph, arguments, options.working_directory.as_path()).map(tool_result)
-        }
-        crate::tool::Tool::CompdbTargets => {
-            run_compdb_targets_tool(graph, arguments, options.working_directory.as_path())
-                .map(tool_result)
-        }
+        crate::tool::Tool::Compdb => run_compdb_tool(
+            graph.arenas(),
+            arguments,
+            options.working_directory.as_path(),
+        )
+        .map(tool_result),
+        crate::tool::Tool::CompdbTargets => run_compdb_targets_tool(
+            graph.arenas(),
+            arguments,
+            options.working_directory.as_path(),
+        )
+        .map(tool_result),
         crate::tool::Tool::Commands
         | crate::tool::Tool::Graph
         | crate::tool::Tool::Inputs
@@ -1284,7 +1266,7 @@ fn run_manifest_tool(
         | crate::tool::Tool::Targets
         | crate::tool::Tool::Rules => Ok(tool_result(crate::tool::run(
             tool,
-            graph,
+            graph.arenas(),
             arguments,
             options.working_directory.as_path(),
         )?)),
@@ -1294,8 +1276,7 @@ fn run_manifest_tool(
 
 fn run_log_tool(
     tool: crate::tool::Tool,
-    graph: &crate::graph::Graph,
-    parser: &crate::parse::Parser,
+    graph: &BuildGraph,
     build_log: &mut crate::log::BuildLog,
     deps_log: &mut crate::deps::DepsLog,
     arguments: &[BString],
@@ -1303,7 +1284,7 @@ fn run_log_tool(
 ) -> CliResult<RunResult> {
     match tool {
         crate::tool::Tool::Deps => Ok(tool_result(crate::tool::deps_in(
-            graph,
+            graph.arenas(),
             deps_log,
             arguments,
             &crate::os::RealDiskInterface::new(options.working_directory.clone()),
@@ -1311,7 +1292,7 @@ fn run_log_tool(
         crate::tool::Tool::MissingDeps => {
             let target_names;
             let arguments = if arguments.is_empty() {
-                target_names = default_target_names(parser, graph);
+                target_names = default_target_names(graph);
                 &target_names
             } else {
                 arguments
@@ -1319,22 +1300,22 @@ fn run_log_tool(
             let targets = arguments
                 .iter()
                 .map(|target| {
-                    crate::graph::nodeget(graph, target.as_bytes()).ok_or_else(|| {
+                    crate::graph::nodeget(graph.arenas(), target.as_bytes()).ok_or_else(|| {
                         ToolError::UnknownTarget {
                             path: target.clone(),
                         }
                     })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let (output, exit_code) = crate::tool::missing_deps(graph, deps_log, &targets);
+            let (output, exit_code) = crate::tool::missing_deps(graph.arenas(), deps_log, &targets);
             Ok(RunResult::exit(output, [], exit_code))
         }
-        crate::tool::Tool::Query => Ok(tool_result(crate::tool::query(graph, arguments)?)),
+        crate::tool::Tool::Query => Ok(tool_result(crate::tool::query(graph.arenas(), arguments)?)),
         crate::tool::Tool::CleanDead => {
             let logged = build_log.entries.keys().cloned().collect::<Vec<_>>();
             Ok(tool_result(format_clean_report(
                 &crate::tool::clean_dead_with_report_in(
-                    graph,
+                    graph.arenas(),
                     &logged,
                     options.dry_run,
                     crate::os::RealDiskInterface::new(options.working_directory.clone()),
@@ -1346,9 +1327,10 @@ fn run_log_tool(
         crate::tool::Tool::Recompact => {
             if !options.dry_run {
                 let build_log_path = build_log.path().to_owned();
+                let arenas = graph.arenas();
                 crate::log::logrecompact(build_log, |path| {
-                    crate::graph::nodeget(graph, path.as_bytes())
-                        .is_none_or(|node| graph.node(node).gen.is_none())
+                    crate::graph::nodeget(arenas, path.as_bytes())
+                        .is_none_or(|node| arenas.node(node).gen.is_none())
                 })
                 .map_err(|source| {
                     PersistenceError::io(
@@ -1358,7 +1340,7 @@ fn run_log_tool(
                     )
                 })?;
                 let deps_log_path = deps_log.path().to_owned();
-                crate::deps::depsrecompact(deps_log, graph).map_err(|source| {
+                crate::deps::depsrecompact(deps_log, graph.arenas()).map_err(|source| {
                     PersistenceError::io(
                         PersistenceOperation::RecompactDepsLog,
                         deps_log_path,
@@ -1448,17 +1430,127 @@ pub fn run_os(arguments: &[OsString]) -> CliResult<RunResult> {
     process_runner()?.run_os(arguments)
 }
 
+/// The persistent state and the sinks one build writes through.
+struct BuildIo<'a, 'sink> {
+    build_log: &'a mut crate::log::BuildLog,
+    deps_log: &'a mut crate::deps::DepsLog,
+    output: Option<&'a mut (dyn std::io::Write + 'sink)>,
+    diagnostics: Option<&'a mut (dyn std::io::Write + 'sink)>,
+}
+
+/// Rebuild the manifest itself, for a manifest some build statement generates.
+///
+/// Reports whether it actually changed, which is what sends the invocation
+/// round again to read the one it has now.
+fn rebuild_manifest<'a>(
+    graph: &'a mut crate::graph::Graph,
+    options: &BuildOptions,
+    io: BuildIo<'a, '_>,
+    manifest: &BString,
+    output: &mut String,
+) -> CliResult<bool> {
+    let Some(edge) =
+        crate::graph::nodeget(graph, manifest.as_bytes()).and_then(|node| graph.node(node).gen)
+    else {
+        return Ok(false);
+    };
+    let streaming = io.output.is_some();
+    let mut builder = crate::build::Builder::from_parts(
+        graph,
+        options.clone(),
+        Some(io.build_log),
+        Some(io.deps_log),
+        io.output.map(|sink| sink as &mut dyn std::io::Write),
+        io.diagnostics.map(|sink| sink as &mut dyn std::io::Write),
+    );
+    builder.add_target(manifest.as_bytes())?;
+    if builder.already_up_to_date() {
+        return Ok(false);
+    }
+    let result = builder.build();
+    let rebuilt = builder.ran_edge_without_restat_pruning(edge);
+    if !streaming {
+        append_output(output, &String::from_utf8_lossy(&builder.build_output));
+    }
+    // Failing to regenerate the manifest is not a build outcome: Ninja names
+    // the manifest, reports it as an error, and leaves with a plain failure
+    // rather than the command's own status.
+    match result {
+        Err(BuildError::Stopped { reason, .. }) => Err(BuildError::ManifestRebuild {
+            path: manifest.clone(),
+            reason,
+        }
+        .into()),
+        other => {
+            other?;
+            Ok(rebuilt)
+        }
+    }
+}
+
+/// How the build the invocation actually asked for ended.
+struct BuildOutcome {
+    already_up_to_date: bool,
+    /// Set when the build ended without finishing, carrying Ninja's reason and
+    /// the status to leave with.
+    stopped: Option<(String, i32)>,
+}
+
+fn build_targets<'a>(
+    graph: &'a mut crate::graph::Graph,
+    options: &BuildOptions,
+    io: BuildIo<'a, '_>,
+    targets: &[BString],
+    output: &mut String,
+) -> CliResult<BuildOutcome> {
+    let streaming = io.output.is_some();
+    let mut builder = crate::build::Builder::from_parts(
+        graph,
+        options.clone(),
+        Some(io.build_log),
+        Some(io.deps_log),
+        io.output.map(|sink| sink as &mut dyn std::io::Write),
+        io.diagnostics.map(|sink| sink as &mut dyn std::io::Write),
+    );
+    for target in targets {
+        builder
+            .add_target(target.as_bytes())
+            .map_err(BuildError::target_context)?;
+    }
+    let already_up_to_date = builder.already_up_to_date();
+    let result = builder.build();
+    if !streaming {
+        append_output(output, &String::from_utf8_lossy(&builder.build_output));
+    }
+    // A build that stops is a result, not a diagnostic: Ninja says so on stdout
+    // after the build's own output and exits with the failing command's status.
+    // Anything else is a genuine error.
+    let stopped = match result {
+        Err(BuildError::Stopped { reason, status }) => {
+            Some((format!("{PRODUCT_NAME}: build stopped: {reason}."), status))
+        }
+        other => {
+            other?;
+            None
+        }
+    };
+    Ok(BuildOutcome {
+        already_up_to_date,
+        stopped,
+    })
+}
+
 // [spec:ronin:def:samu.getbuilddir-fn]
 // [spec:ronin:sem:samu.getbuilddir-fn]
 #[allow(
     clippy::too_many_lines,
     reason = "manifest rebuild and reload is one bounded orchestration loop with ordered cleanup"
 )]
-fn run_bytes(
+fn run_bytes<'sink>(
     runner: &Runner,
     arguments: &[BString],
-    mut build_output: Option<&mut dyn std::io::Write>,
-    mut build_diagnostics: Option<&mut dyn std::io::Write>,
+    mut build_output: Option<&'sink mut dyn std::io::Write>,
+    mut build_diagnostics: Option<&'sink mut dyn std::io::Write>,
 ) -> CliResult<RunResult> {
     let mut invocation = match parse_run_arguments(arguments, &runner.working_directory)? {
         RunAction::Immediate(result) => return Ok(result),
@@ -1514,38 +1606,34 @@ fn run_bytes(
     let mut warnings = Vec::new();
     // The command line's own warnings go out before the manifest is read, as
     // Ninja's do, so a flag's complaint survives a manifest that then fails.
-    {
-        let mut flags = crate::parse::Parser::default();
-        flags.warnings.clone_from(&invocation.warnings);
-        emit_parser_warnings(&mut flags, build_diagnostics.as_deref_mut(), &mut warnings)?;
-    }
+    // Command-line warnings come first, as they do in Ninja: the flag was read
+    // before the manifest was.
+    emit_warnings(
+        &mut invocation.warnings,
+        build_diagnostics.as_deref_mut(),
+        &mut warnings,
+    )?;
     let mut parse_count = 0;
     let mut parse_elapsed = std::time::Duration::ZERO;
     for _ in 0..100 {
-        let mut graph = crate::graph::Graph::default();
-        // Command-line warnings come first, as they do in Ninja: the flag was
-        // read before the manifest was.
-        let mut parser = crate::parse::Parser::with_options_in(
-            invocation.parse_options,
-            invocation.working_directory.clone(),
-        );
-        let mut state = crate::env::EnvState::new(&mut graph);
         let parse_started = std::time::Instant::now();
-        crate::parse::parse(
+        let mut manifest = crate::parse::load_manifest_in(
             invocation
                 .manifest
                 .to_path()
                 .map_err(|_| CliError::InvalidEncoding {
                     context: EncodingContext::ManifestPath,
                 })?,
-            &mut graph,
-            &mut parser,
-            state.root,
-            &mut state,
+            invocation.working_directory.clone(),
+            invocation.parse_options,
         )?;
         parse_count += 1;
         parse_elapsed += parse_started.elapsed();
-        emit_parser_warnings(&mut parser, build_diagnostics.as_deref_mut(), &mut warnings)?;
+        emit_warnings(
+            &mut manifest.warnings,
+            build_diagnostics.as_deref_mut(),
+            &mut warnings,
+        )?;
 
         if let Some(tool) = invocation
             .selected_tool
@@ -1553,15 +1641,15 @@ fn run_bytes(
         {
             return run_manifest_tool(
                 tool,
-                &graph,
-                &parser,
-                &state,
+                &manifest.graph,
                 &invocation.tool_arguments,
                 ToolRunContext::new(&invocation.build_options, &invocation.working_directory),
             );
         }
 
-        let logical_builddir = crate::env::envvar_named(&graph, state.root, BStr::new("builddir"))
+        let logical_builddir = manifest
+            .graph
+            .variable(manifest.graph.root(), b"builddir")
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
         let builddir = logical_builddir.as_deref().map_or_else(
@@ -1583,18 +1671,20 @@ fn run_bytes(
             PersistenceError::io(PersistenceOperation::OpenBuildLog, build_log_path, source)
         })?;
         let deps_path = builddir.join(".ninja_deps");
-        let (mut deps_log, warning) =
-            crate::deps::depsloadlog(&deps_path, &mut graph).map_err(|source| {
-                PersistenceError::io(PersistenceOperation::OpenDepsLog, deps_path.clone(), source)
-            })?;
+        let (mut deps_log, warning) = crate::deps::depsloadlog(
+            &deps_path,
+            manifest.graph.arenas_mut(),
+        )
+        .map_err(|source| {
+            PersistenceError::io(PersistenceOperation::OpenDepsLog, deps_path.clone(), source)
+        })?;
         if let Some(warning) = warning {
             append_output(&mut output, &warning);
         }
         if let Some(tool) = invocation.selected_tool {
             let result = run_log_tool(
                 tool,
-                &graph,
-                &parser,
+                &manifest.graph,
                 &mut build_log,
                 &mut deps_log,
                 &invocation.tool_arguments,
@@ -1608,67 +1698,18 @@ fn run_bytes(
             return Ok(result);
         }
 
-        let manifest_edge = crate::graph::nodeget(&graph, invocation.manifest.as_bytes())
-            .and_then(|node| graph.node(node).gen);
-        let manifest_result = if let Some(edge) = manifest_edge {
-            let streaming = build_output.is_some();
-            let mut builder = if let Some(output) = build_output.as_deref_mut() {
-                if let Some(diagnostics) = build_diagnostics.as_deref_mut() {
-                    crate::build::Builder::with_logs_and_sinks(
-                        &mut graph,
-                        invocation.build_options.clone(),
-                        &mut build_log,
-                        &mut deps_log,
-                        output,
-                        diagnostics,
-                    )
-                } else {
-                    crate::build::Builder::with_logs_and_output(
-                        &mut graph,
-                        invocation.build_options.clone(),
-                        &mut build_log,
-                        &mut deps_log,
-                        output,
-                    )
-                }
-            } else {
-                crate::build::Builder::with_logs(
-                    &mut graph,
-                    invocation.build_options.clone(),
-                    &mut build_log,
-                    &mut deps_log,
-                )
-            };
-            let result: CliResult<bool> = (|| {
-                builder.add_target(invocation.manifest.as_bytes())?;
-                if builder.already_up_to_date() {
-                    return Ok(false);
-                }
-                let result = builder.build();
-                let rebuilt = builder.ran_edge_without_restat_pruning(edge);
-                if !streaming {
-                    append_output(&mut output, &String::from_utf8_lossy(&builder.build_output));
-                }
-                // Failing to regenerate the manifest is not a build outcome:
-                // Ninja names the manifest, reports it as an error, and leaves
-                // with a plain failure rather than the command's own status.
-                match result {
-                    Err(BuildError::Stopped { reason, .. }) => {
-                        return Err(BuildError::ManifestRebuild {
-                            path: invocation.manifest.clone(),
-                            reason,
-                        }
-                        .into())
-                    }
-                    other => other?,
-                }
-                Ok(rebuilt)
-            })();
-            drop(builder);
-            result
-        } else {
-            Ok(false)
-        };
+        let manifest_result = rebuild_manifest(
+            manifest.graph.arenas_mut(),
+            &invocation.build_options,
+            BuildIo {
+                build_log: &mut build_log,
+                deps_log: &mut deps_log,
+                output: build_output.as_deref_mut(),
+                diagnostics: build_diagnostics.as_deref_mut(),
+            },
+            &invocation.manifest,
+            &mut output,
+        );
         let manifest_rebuilt = match manifest_result {
             Ok(rebuilt) => rebuilt,
             Err(error) => {
@@ -1687,73 +1728,30 @@ fn run_bytes(
         }
 
         let selected_targets = if invocation.targets.is_empty() {
-            default_target_paths(&parser, &graph)
+            default_target_names(&manifest.graph)
         } else {
             invocation.targets.clone()
         };
-        // Set when the build ended without finishing, carrying Ninja's reason
-        // and the status to leave with.
-        let mut stopped = None;
-        let (result, already_up_to_date) = {
-            let streaming = build_output.is_some();
-            let mut builder = if let Some(output) = build_output.as_deref_mut() {
-                if let Some(diagnostics) = build_diagnostics.as_deref_mut() {
-                    crate::build::Builder::with_logs_and_sinks(
-                        &mut graph,
-                        invocation.build_options.clone(),
-                        &mut build_log,
-                        &mut deps_log,
-                        output,
-                        diagnostics,
-                    )
-                } else {
-                    crate::build::Builder::with_logs_and_output(
-                        &mut graph,
-                        invocation.build_options.clone(),
-                        &mut build_log,
-                        &mut deps_log,
-                        output,
-                    )
-                }
-            } else {
-                crate::build::Builder::with_logs(
-                    &mut graph,
-                    invocation.build_options.clone(),
-                    &mut build_log,
-                    &mut deps_log,
-                )
-            };
-            let mut already_up_to_date = false;
-            let result: CliResult<String> = (|| {
-                for target in &selected_targets {
-                    builder
-                        .add_target(target.as_bytes())
-                        .map_err(BuildError::target_context)?;
-                }
-                already_up_to_date = builder.already_up_to_date();
-                let result = builder.build();
-                let build_output = (!streaming)
-                    .then(|| String::from_utf8_lossy(&builder.build_output).into_owned());
-                // A build that stops is a result, not a diagnostic: Ninja says
-                // so on stdout after the build's own output and exits with the
-                // failing command's status. Anything else is a genuine error.
-                match result {
-                    Err(BuildError::Stopped { reason, status }) => {
-                        stopped =
-                            Some((format!("{PRODUCT_NAME}: build stopped: {reason}."), status));
-                    }
-                    other => other?,
-                }
-                Ok(build_output.unwrap_or_default())
-            })();
-            (result, already_up_to_date)
-        };
+        // The front end has nothing left to add, so the build takes the graph.
+        let mut graph = manifest.graph.into_arenas();
+        let outcome = build_targets(
+            &mut graph,
+            &invocation.build_options,
+            BuildIo {
+                build_log: &mut build_log,
+                deps_log: &mut deps_log,
+                output: build_output.as_deref_mut(),
+                diagnostics: build_diagnostics.as_deref_mut(),
+            },
+            &selected_targets,
+            &mut output,
+        );
         let build_log_result = finish_build_log(build_log);
         let deps_log_result = finish_deps_log(deps_log);
-        append_output(&mut output, &result?);
+        let outcome = outcome?;
         build_log_result?;
         deps_log_result?;
-        if let Some((message, status)) = stopped {
+        if let Some((message, status)) = outcome.stopped {
             append_output(&mut output, &message);
             return Ok(RunResult::exit(
                 terminated(output),
@@ -1761,7 +1759,7 @@ fn run_bytes(
                 status,
             ));
         }
-        if already_up_to_date && output.is_empty() && !invocation.build_options.quiet {
+        if outcome.already_up_to_date && output.is_empty() && !invocation.build_options.quiet {
             output = "ronin: no work to do.".into();
         }
         if invocation.build_options.stats {

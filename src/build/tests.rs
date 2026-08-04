@@ -19,17 +19,14 @@ fn plan_graph(source: &str) -> Graph {
         format!("rule cat\n  command = cat $in > $out\n{source}"),
     )
     .unwrap();
-    let mut graph = Graph::default();
-    let mut parser = crate::parse::Parser::default();
-    let mut state = crate::env::EnvState::new(&mut graph);
-    crate::parse::parse(
+    let graph = crate::parse::load_manifest_in(
         path.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .graph
+    .into_arenas();
     fs::remove_file(path).unwrap();
     graph
 }
@@ -66,34 +63,27 @@ fn build_fixture(label: &str, manifest: &str) -> (Graph, std::path::PathBuf) {
         manifest.replace("$dir", &directory.to_string_lossy()),
     )
     .unwrap();
-    let mut graph = Graph::default();
-    let mut parser = crate::parse::Parser::default();
-    let mut state = crate::env::EnvState::new(&mut graph);
-    crate::parse::parse(
+    let graph = crate::parse::load_manifest_in(
         path.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
-    .unwrap();
+    .unwrap()
+    .graph
+    .into_arenas();
     (graph, directory)
 }
 
 fn parse_fixture(directory: &Path) -> Graph {
     let path = directory.join("build.ninja");
-    let mut graph = Graph::default();
-    let mut parser = crate::parse::Parser::default();
-    let mut state = crate::env::EnvState::new(&mut graph);
-    crate::parse::parse(
+    crate::parse::load_manifest_in(
         path.to_str().unwrap(),
-        &mut graph,
-        &mut parser,
-        state.root,
-        &mut state,
+        crate::os::WorkingDirectory::default(),
+        crate::frontend::ManifestOptions::default(),
     )
-    .unwrap();
-    graph
+    .unwrap()
+    .graph
+    .into_arenas()
 }
 
 fn assert_multi_output_deps_log(label: &str, depfile: &str) {
@@ -2344,11 +2334,13 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
     let mut build_log = crate::log::BuildLog::open(Some(&directory)).unwrap();
     let mut deps_log = crate::deps::DepsLog::open(Some(&directory)).unwrap();
     {
-        let mut builder = Builder::with_logs(
+        let mut builder = Builder::from_parts(
             &mut graph,
             BuildOptions::default(),
-            &mut build_log,
-            &mut deps_log,
+            Some(&mut build_log),
+            Some(&mut deps_log),
+            None,
+            None,
         );
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
@@ -2368,11 +2360,13 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
     let (mut deps_log, warning) = crate::deps::depsloadlog(&deps_path, &mut graph).unwrap();
     assert!(warning.is_none());
     {
-        let mut builder = Builder::with_logs(
+        let mut builder = Builder::from_parts(
             &mut graph,
             BuildOptions::default(),
-            &mut build_log,
-            &mut deps_log,
+            Some(&mut build_log),
+            Some(&mut deps_log),
+            None,
+            None,
         );
         builder.add_target(&target).unwrap();
         assert!(!builder.already_up_to_date());
@@ -2387,11 +2381,13 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
     let (mut deps_log, warning) = crate::deps::depsloadlog(&deps_path, &mut graph).unwrap();
     assert!(warning.is_none());
     {
-        let mut builder = Builder::with_logs(
+        let mut builder = Builder::from_parts(
             &mut graph,
             BuildOptions::default(),
-            &mut build_log,
-            &mut deps_log,
+            Some(&mut build_log),
+            Some(&mut deps_log),
+            None,
+            None,
         );
         builder.add_target(&target).unwrap();
         assert!(builder.already_up_to_date());

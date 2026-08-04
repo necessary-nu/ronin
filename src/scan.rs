@@ -1,10 +1,9 @@
 //! Byte-oriented Ninja manifest lexer.
 
 use crate::error::{FoundToken, NameKind, ScanError, ScanErrorKind, SeparatorKind};
-use crate::names::Names;
 pub(crate) use crate::source::Source;
 use crate::source::{SourceId, SourceSpan};
-use crate::util::{BStr, BString, EvalPart, EvalString};
+use crate::util::BStr;
 use std::sync::Arc;
 
 type ScanResult<T> = Result<T, ScanError>;
@@ -74,59 +73,6 @@ pub(crate) enum ScannedEvalString<'source> {
 impl Default for ScannedEvalString<'_> {
     fn default() -> Self {
         Self::Plain(&[])
-    }
-}
-
-fn append_scanned_literal(part: ScannedEvalPart<'_>, literal: &mut Vec<u8>) {
-    match part {
-        ScannedEvalPart::Literal(bytes) => literal.extend_from_slice(bytes),
-        ScannedEvalPart::EscapedByte(byte) => literal.push(byte),
-        ScannedEvalPart::Variable(_) => unreachable!("literal group contained a variable"),
-    }
-}
-
-const fn scanned_literal_len(part: ScannedEvalPart<'_>) -> usize {
-    match part {
-        ScannedEvalPart::Literal(bytes) => bytes.len(),
-        ScannedEvalPart::EscapedByte(_) => 1,
-        ScannedEvalPart::Variable(_) => 0,
-    }
-}
-
-impl ScannedEvalString<'_> {
-    /// Interns a parsed value at the graph-ownership boundary.
-    pub(crate) fn into_owned(self, names: &mut Names) -> EvalString {
-        let parts = match self {
-            Self::Plain(b"") => return EvalString::from_parts(Vec::new()),
-            Self::Plain(bytes) => {
-                return EvalString::from_parts(vec![EvalPart::Literal(BString::from(bytes))])
-            }
-            Self::Parts(parts) => parts,
-        };
-        let mut scanned = parts.into_iter().peekable();
-        let mut parts = Vec::new();
-        while let Some(part) = scanned.next() {
-            match part {
-                ScannedEvalPart::Variable(name) => {
-                    parts.push(EvalPart::Variable(names.intern(name)));
-                }
-                first @ (ScannedEvalPart::Literal(_) | ScannedEvalPart::EscapedByte(_)) => {
-                    let mut literal = Vec::with_capacity(scanned_literal_len(first));
-                    append_scanned_literal(first, &mut literal);
-                    while matches!(
-                        scanned.peek(),
-                        Some(ScannedEvalPart::Literal(_) | ScannedEvalPart::EscapedByte(_))
-                    ) {
-                        append_scanned_literal(
-                            scanned.next().expect("peeked evaluation part"),
-                            &mut literal,
-                        );
-                    }
-                    parts.push(EvalPart::Literal(BString::from(literal)));
-                }
-            }
-        }
-        EvalString::from_parts(parts)
     }
 }
 
