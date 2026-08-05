@@ -221,6 +221,15 @@ assertions (
     {id ronin-windows-launcher, kind @doing, author "brendan@necessary.nu", at 2026-08-03T23:27:18.600512368Z}
     {id ronin-reference-in-checkout, kind @doing, author "brendan@necessary.nu", at 2026-08-03T23:43:21.953539012Z}
     {id ronin-reap-latency, kind @doing, author "brendan@necessary.nu", at 2026-08-04T12:15:08.371600823Z}
+    {id kati-scoped-binding, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:40:47.46953552Z}
+    {id ronin-execute-api, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:40:49.919198397Z}
+    {id kati-symbol-display, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:40:55.551895302Z}
+    {id kati-wellknown-symbols, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:40:57.496333718Z}
+    {id kati-flags-value, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:41:04.252805225Z}
+    {id kati-caches-session, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:41:07.971356084Z}
+    {id kati-observation-session, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:41:23.254905623Z}
+    {id kati-no-globals-gate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:41:25.463942244Z}
+    {id make-licence-position, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:42:23.811196065Z}
 )
 
 impl_evidence (

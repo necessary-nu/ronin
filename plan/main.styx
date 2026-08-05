@@ -3497,12 +3497,20 @@ children (
                         id kati-symbol-display
                         title "Give symbol and location rendering an explicit session"
                         deps (kati-symtab-split)
+                        sealed true
                         log (
                             {
                                 at 2026-08-04T15:54:47.962863942Z
                                 author "brendan@necessary.nu"
                                 kind @decision
                                 text "Mechanism settled: a symbol stays Copy and stays an index into a session-owned interner. Rendering goes through a borrowing wrapper from an inherent display method taking the session, and the inherent Display and Debug that reach for a global are removed rather than reimplemented. Making a symbol own its bytes was rejected because it costs Copy; recorded as an alternative on the decision.\n\nTwo consequences worth separating before starting, because they are not the same problem.\n\nLoc's Display at loc.rs:27 is on the user-facing diagnostic path, not a debug path. error_loc!, warn_loc!, color_error_log, and color_warn_log all format a location into the message a user reads, and Loc holds a Symbol filename, so the session has to be reachable wherever a diagnostic is constructed. That is the constraint that shapes where the session lives, and it is a stronger one than the trace sites imply. loc.rs:33 DEFAULT_FILENAME disappears with it.\n\nDebug is the softer half. Removing Debug for Symbol silently degrades every derived Debug on a symbol-bearing type — dep.rs:46 DepNode, loc.rs:21 Loc, and the statement and expression types in stmt.rs and expr.rs — to printing an index. There are 66 format sites using it and most are behind the log! macro, which is log::trace! gated on KATI_LOG. Either keep a Debug that prints the raw index and accept that trace output loses symbol names, or convert those sites to session-carrying rendering. Prefer the first unless the traces turn out to be load-bearing during the port; it is honest about what a bare handle can say for itself, and it does not spend the session's reach on trace logging.\n\nOnly Loc and Symbol are affected. The third Display in the crate, Stats at stats.rs:155, does not touch the interner."
+                            }
+
+                            {
+                                at 2026-08-05T06:40:55.551895302Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Done (nplan complete)"
                             }
                         )
                     }
@@ -3511,24 +3519,50 @@ children (
                         id kati-flags-value
                         title "Construct Make flags from arguments rather than the process command line"
                         deps (kati-session-value)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-05T06:41:04.252805225Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Done (nplan complete)"
+                            }
+                        )
                     }
 
                     {
                         id kati-caches-session
                         title "Move the glob, makefile, and find caches into the session"
                         deps (kati-session-value)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-05T06:41:07.971356084Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Done (nplan complete)"
+                            }
+                        )
                     }
 
                     {
                         id kati-observation-session
                         title "Move command results, used-variable tracking, and statistics into the session"
                         deps (kati-session-value)
+                        sealed true
                         log (
                             {
                                 at 2026-08-04T18:10:00.331184339Z
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Scope for this node, made explicit because the parent inventory left one of these unowned.\n\nFour statics: COMMAND_RESULTS in func.rs, ALL_STATS in stats.rs together with the per-call-site STATS that each invocation of the two statistics macros expands to, USED_UNDEFINED_VARS in eval.rs, and USED_ENV_VARS in var.rs. SHELL_STATUS in var.rs belongs here too and had no owner before: it is the value behind .SHELLSTATUS, written by the shell builtin and read by the variable the scope binds, so it is per-evaluation state and not a cache.\n\nThe two used-variable sets are read from get_global_var and lookup_var_global, so they are entangled with the variable scope rather than independent of it, and they will likely have to move in the same change as kati-session-value rather than after it. If that turns out to be true, say so and move them there instead of threading a second session-shaped parameter into the same call sites twice.\n\nThe statistics macros are the awkward part, because each expansion creates its own static and the count therefore grows with call sites rather than being a fixed list. Whatever replaces them has to be reachable from a macro body with only the session in scope."
+                            }
+
+                            {
+                                at 2026-08-05T06:41:23.254905623Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Done (nplan complete)"
                             }
                         )
                     }
@@ -3537,12 +3571,20 @@ children (
                         id kati-scoped-binding
                         title "Replace the scope-restoring Drop guard with explicit save and restore"
                         deps (kati-symtab-split)
+                        sealed true
                         log (
                             {
                                 at 2026-08-04T17:58:32.362626463Z
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Split out of kati-session-value because it is the part of it that is a design change rather than a threading exercise, and it blocks the rest.\n\nScopedGlobalVar restores a global variable binding in Drop. Drop takes only &mut self, so it cannot be handed a session, which means it cannot survive session ownership in its current shape. It is not a corner: foreach, foreach_sep, and call use it for the automatic positional variables, so it is on the hot evaluation path and its loop bodies re-enter evaluation.\n\nThe two candidate shapes. Borrow the session in the guard, which poisons every &mut Evaluator borrow for the lifetime of the guard and therefore across the loop bodies that need the evaluator — likely a non-starter, but establish that rather than assume it. Or replace the guard with an explicit save and restore around the closure, shaped like globals.with_bound(sym, var, |globals| ...), which is why GlobalVars::replace already returns the previous binding: kati-symtab-split shaped it for exactly this rewrite.\n\nNote that the guard's restore must run on the error path too, since Make evaluation propagates errors through these functions. A closure form has to be careful not to lose that property, which is the one thing Drop was genuinely buying.\n\nScopedVar in the same file looks identical and is not affected: it holds an Arc<Vars> rather than reaching for a global, so it needs nothing from a session."
+                            }
+
+                            {
+                                at 2026-08-05T06:40:47.46953552Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Done (nplan complete)"
                             }
                         )
                     }
@@ -3551,12 +3593,20 @@ children (
                         id kati-wellknown-symbols
                         title "Intern the well-known symbols into the session instead of into statics"
                         deps (kati-session-value)
+                        sealed true
                         log (
                             {
                                 at 2026-08-04T18:10:14.208535179Z
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Seven statics, all LazyLock<Symbol> interned from the global interner on first use: SHELL_SYM, ALLOW_RULES_SYM, KATI_READONLY_SYM, VARIABLES_SYM, KATI_SYMBOLS_SYM and MAKEFILE_LIST in symtab.rs, and DEFAULT_FILENAME in loc.rs.\n\nThese are not globals to be relocated, which is why they get their own node rather than a line in the session work. A symbol is an index into one specific interner. The moment the interner is session-owned, a symbol interned into a static is an index into whichever session happened to touch it first, and using it against any other session is either a wrong answer or a panic — Symtab::name indexes directly. So the static form cannot survive in any shape, however the session is threaded.\n\nThe replacement is to intern them during session construction and hold them on the session, which is cheap and gives every one of them a defined interner. Symtab::new already preloads the 255 single-byte names, so a well-known set alongside them is the same idea one level up.\n\nTwo things to watch. DEFAULT_FILENAME is used by Loc's Default, so whatever holds it has to be reachable from wherever a default location is constructed, which is likely to be the same constraint kati-symbol-display hits with Loc's Display on the diagnostic path. And these six symbol statics are pub, so anything outside the crate that names them is API surface — check the binary and find_emulator before assuming they are internal."
+                            }
+
+                            {
+                                at 2026-08-05T06:40:57.496333718Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Done (nplan complete)"
                             }
                         )
                     }
@@ -3572,12 +3622,20 @@ children (
                             kati-observation-session
                             kati-wellknown-symbols
                         )
+                        sealed true
                         log (
                             {
                                 at 2026-08-04T18:09:49.332692094Z
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "The decision says no mutable process globals survive. Removing them once is a cleanup; keeping them gone is a gate, and without one the property decays the first time someone reaches for a convenient lazy static.\n\nWhat this has to catch is a static holding mutable or lazily-initialized state anywhere under kati/src-rs, including inside macro bodies — the statistics macros each expand to a static per call site, which is exactly the shape that slips past a reviewer reading the macro definition rather than its expansions. It must not catch const items or genuinely read-only tables such as the builtin function dispatch map, which the decision explicitly permits.\n\nA source scan is the cheap and honest implementation and can live with the differential harnesses. Rust has no lint for this, and the alternative of a trait-based ban is more machinery than the problem deserves. Whatever form it takes, it should report the offending file and line and say which node was supposed to have removed it, so a regression points at its own history.\n\nNote the ordering constraint this creates: the gate cannot be switched on until every removal node is done, which is why it depends on all of them. Landing it earlier in report-only mode is worthwhile — it gives a running count that should fall monotonically, and a count that rises is a signal worth having during the work rather than after it."
+                            }
+
+                            {
+                                at 2026-08-05T06:41:25.463942244Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Done (nplan complete)"
                             }
                         )
                     }
@@ -3669,6 +3727,7 @@ children (
                 id make-licence-position
                 title "Record the combined licence position for the vendored fork"
                 deps (kati-submodule)
+                sealed true
                 log (
                     {
                         at 2026-08-04T14:37:56.111604409Z
@@ -3683,6 +3742,13 @@ children (
                         kind @decision
                         text "Closed as already resolved by the crate split, rather than by anything this node needed to do.\n\nThe reason there was a question at all was the possibility of merging the fork into Ronin's crate, where one license field would have had to cover both. ronin-execute-api rejected that merge on independent grounds and used precisely this as one of its reasons, so the arrangement it preserves is the arrangement that was wanted: kati declares Apache-2.0 and keeps its own LICENSE and AUTHORS, Ronin keeps its existing notices, and neither has to describe the other.\n\nThe only thing actually missing was a declaration. kati's manifest had no license field despite shipping an Apache-2.0 LICENSE file, so cargo could not report what the crate was. Set to Apache-2.0, which states the file's existing terms and decides nothing.\n\nRonin's own LICENSE is left alone. It carries four upstream positions — ISC for samurai, Google's terms for the Ninja-derived material, and two MIT notices — and restructuring it is a deliberate act for its owner, not a side effect of vendoring a dependency that never touches it."
                     }
+
+                    {
+                        at 2026-08-05T06:42:23.811196065Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -3690,6 +3756,7 @@ children (
                 id ronin-execute-api
                 title "Expose graph execution to an out-of-crate front end"
                 deps (ronin-frontend-api)
+                sealed true
                 log (
                     {
                         at 2026-08-04T17:58:05.995434281Z
@@ -3703,6 +3770,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Chose a builder whose field set stays private, over a request type with public fields and over folding the fork in as a module.\n\nThe argument that settled it against folding in is worth keeping, because that option was the cheap one and it was rejected on substance rather than convenience. A boundary reachable only from inside the crate is an internal refactor wearing the word boundary, and the one consumer that would prove it works would be the one consumer that never uses it — which contradicts the decision it would be implementing. Licence is also a crate-level fact: cargo has one license field per crate, so merging either makes Ronin's metadata a lie or deletes the MIT option from Ronin's own work for every downstream consumer, not just for us. And edition is per-crate, so merging forces one edition on a vendored tree that tracks upstream.\n\nThe builder is what kept the surface small. None of BuildOptions became public — eighteen fields including TerminalContext, ShellMode, the jobserver transport, and OutputStyle. The CLI reaches the rest through one crate-internal constructor on the same public type and the same execution path, so a foreign front end that later needs one of those knobs gets it as a new method rather than as a breaking change.\n\nTwo behavioural changes came out of it, both toward Ninja and both verified rather than assumed. Target names now resolve through canonicalization as Ninja's CollectTarget and RebuildManifest do, so ronin ./out builds where it previously failed — checked directly against the pinned reference binary, which accepts it. And MissingRule reports the interned path rather than the path as typed, which is the same bytes in every case the old exact lookup would have accepted.\n\nWorth being explicit about what the boundary is not. Tool modes still read the arenas crate-internally, so this is build-a-graph-and-run-it, not everything the Ninja CLI can do to a graph. Inspection tooling for a foreign front end is unbuilt and unplanned, and that is fine until something asks for it."
+                    }
+
+                    {
+                        at 2026-08-05T06:40:49.919198397Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
