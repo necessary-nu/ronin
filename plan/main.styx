@@ -4034,6 +4034,50 @@ children (
                     }
                 )
             }
+
+            {
+                id make-diagnostic-prefix
+                title "Prefix Make-mode diagnostics with the product name, in GNU Make's wording"
+                kind @fix
+                deps (make-mode-cli)
+            }
+
+            {
+                id make-features-variable
+                title "Answer .FEATURES with what the evaluator actually supports"
+                kind @feat
+                deps (make-mode-cli)
+            }
+
+            {
+                id make-fatal-diagnostic-shape
+                title "Give every fatal diagnostic the program name and the Stop. suffix"
+                kind @fix
+                deps (make-diagnostic-prefix)
+                log (
+                    {
+                        at 2026-08-05T18:37:48.297126886Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The mechanism landed with make-diagnostic-prefix; what is left is applying it. Flags::program_name exists, color_error_log uses it when there is no location, and rkati fills it from argv[0]. Only the \"No targets\" message actually goes through that path.\n\nThe corpus measures what remains: identity-prefix 43, stop-suffix 84, out of 159 differing cases. Both families have one cause. Almost every fatal error in the evaluator is raised through the bare `error!` macro, which expands to anyhow::bail! and has no session argument, so it never reaches color_error_log and cannot ask for a name. There are roughly twenty such sites — eval.rs, dep.rs, find.rs, exec.rs, var.rs, ninja.rs.\n\nThe work is to convert each site that raises a GNU Make diagnostic to the session-aware path, and to end it as GNU Make ends it. GNU Make's fatal() is one function with two shapes: with a location it writes \"file:line: *** msg.  Stop.\", without one \"program: *** msg.  Stop.\". The \"  Stop.\" is on both, which means it belongs in color_error_log rather than at each site; the prefix is the only part that differs.\n\nNot every bare error! is a Make diagnostic — \"$(value X) is not implemented yet\" and friends are kati telling the caller it will not do something, and GNU Make has no counterpart to shape them against. Those should keep raising bare, and deciding which is which is most of the judgement in this node.\n\nMeasure it the same way afterwards: scripts/check-make-conformance.sh reports the families by name, so the two counts either fall or the change did not do what it claims."
+                    }
+                )
+            }
+
+            {
+                id make-abandon-exit-status
+                title "Exit 2 when a build is abandoned, as GNU Make does"
+                kind @fix
+                deps (make-mode-cli)
+                log (
+                    {
+                        at 2026-08-05T18:37:55.149571206Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The largest single family in the Make corpus: 98 of 159 differing cases, and for a dozen of them it is now the only difference left.\n\nGNU Make exits 2 when it abandons a build — a makefile it cannot parse, a target it cannot make, a fatal diagnostic of any kind. Ronin's Make mode and rkati both exit 1. The status is documented and scripts branch on it, so this is not cosmetic.\n\nRonin's side is src/make/cli.rs, where the load_makefile failure path returns 1, or 2 when -q was given. That -q special case is right for a different reason — make.question-status says an unanswerable question is 2 — and it should not be the only way to get a 2.\n\nCare is needed not to overreach: 2 is for abandoning, not for every non-zero exit. A recipe that fails under -k still ends with GNU Make exiting 2, but `-q` answering \"out of date\" is 1, and a successful build is 0. Ronin's own build-outcome statuses are governed by compatibility.md and are not in question here.\n\nWorth doing after make-fatal-diagnostic-shape rather than before, so the cases that differ on both collapse in one measurable step instead of half-moving twice."
+                    }
+                )
+            }
         )
     }
 )

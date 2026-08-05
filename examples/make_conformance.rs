@@ -451,7 +451,7 @@ fn normalize(output: &[u8], directory: &Path) -> String {
 
 /// The tail of a line that opens with a tool naming itself, if it does.
 fn tool_identity(line: &str) -> Option<&str> {
-    for name in ["gmake", "ckati", "make", "kati", "ronin"] {
+    for name in ["gmake", "ckati", "rkati", "make", "kati", "ronin"] {
         let Some(rest) = line.strip_prefix(name) else {
             continue;
         };

@@ -537,6 +537,7 @@ fn session_for(
     jobs: usize,
     invoked_as: &Path,
     inherited: Option<&str>,
+    level: usize,
 ) -> Session {
     let mut session = Session::new();
     // A parent's command-line assignments arrive in MAKEFLAGS, after the
@@ -567,6 +568,18 @@ fn session_for(
         // already names Make mode: that is the whole point of selecting the
         // front end by name. Switches and assignments travel in MAKEFLAGS.
         subkati_args: vec![invoked_as.as_os_str().to_owned()],
+        // What a diagnostic with no file and line leads with. GNU Make leads
+        // with its own name and, below the top, with the level too.
+        program_name: if level == 0 {
+            PRODUCT_NAME.to_owned()
+        } else {
+            format!("{PRODUCT_NAME}[{level}]")
+        },
+        // The evaluator declares what a Makefile may assume of the language;
+        // these two are about who runs the recipes, which is Ronin. Both are
+        // real: Make mode serves the jobserver as well as consuming it, in the
+        // named-pipe form GNU Make 4.4 introduced.
+        extra_features: vec!["jobserver".to_owned(), "jobserver-fifo".to_owned()],
         ..Flags::default()
     };
     session.flags.targets = invocation
@@ -832,6 +845,7 @@ pub(crate) fn run(
         job_count(&options),
         &invoked_as,
         runner.makeflags.as_deref(),
+        level,
     );
     record_invocation(&mut session, MAKELEVEL, level.to_string())?;
     // The same switches the children are told, told to the makefile reading

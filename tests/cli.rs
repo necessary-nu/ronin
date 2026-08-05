@@ -831,6 +831,86 @@ fn makefile_tree(label: &str) -> PathBuf {
     directory
 }
 
+/// Every feature `.FEATURES` claims, exercised.
+///
+/// The list is short on purpose — see `EVALUATOR_FEATURES` — and the risk in a
+/// short list is the opposite of the risk in a long one: it is cheap to add a
+/// name here and never find out whether it was true. So each claimed feature
+/// gets a construct that only works if the feature does, and a Makefile that
+/// branches on `.FEATURES` is entitled to exactly this much.
+///
+/// `jobserver` and `jobserver-fifo` are also claimed and are covered by
+/// `make_mode_serves_a_jobserver_to_its_recipes`, which watches the tokens.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_claims_only_the_features_it_has() {
+    let directory = test_directory("make-features");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        // target-specific: the assignment reaches only this target's recipe.
+        // else-if: the second branch is the one taken.
+        // shortest-stem: `%.o: %.c` beats `%: %.c` for `x.o`.
+        // order-only: `dep` is built, and is not a reason to rebuild.
+        "all: x.o | order\n\
+         \t@echo who=$(WHO) branch=$(BRANCH)\n\
+         \t@echo features=$(.FEATURES)\n\
+         all: WHO = specific\n\
+         WHO = global\n\
+         ifeq (1,2)\n\
+         BRANCH = first\n\
+         else ifeq (1,1)\n\
+         BRANCH = second\n\
+         else\n\
+         BRANCH = third\n\
+         endif\n\
+         x.c:;@touch x.c\n\
+         %.o: %.c;@echo stem=long\n\
+         %: %.c;@echo stem=short\n\
+         order:;@echo order=built\n\
+         .PHONY: all order\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reported = String::from_utf8_lossy(&output.stdout);
+
+    assert!(reported.contains("stem=long"), "shortest-stem: {reported}");
+    assert!(reported.contains("order=built"), "order-only: {reported}");
+    assert!(
+        reported.contains("who=specific branch=second"),
+        "target-specific and else-if: {reported}"
+    );
+
+    // Nothing is claimed that the cases above do not cover.
+    let claimed = reported
+        .lines()
+        .find_map(|line| line.strip_prefix("features="))
+        .expect("the feature list");
+    let mut claimed = claimed.split_whitespace().collect::<Vec<_>>();
+    claimed.sort_unstable();
+    assert_eq!(
+        claimed,
+        [
+            "else-if",
+            "jobserver",
+            "jobserver-fifo",
+            "order-only",
+            "shortest-stem",
+            "target-specific",
+        ]
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Run the binary under a name of our choosing, which is what selects the front
 /// end. A symlink is how a multi-call binary is installed, so it is how this is
 /// tested.

@@ -35,10 +35,10 @@ family	recipe-wording	GNU Make 4.x says "recipe" where 3.8x said "commands"; kat
 family	stop-suffix	GNU Make appends "  Stop." to the fatal diagnostic it dies on; kati prints the diagnostic alone.
 
 case	allow_rules.sh#script	extension	kati-extension	815d6aae469c0624
-case	append_self_reference.mk#default	defect	exit-status+stop-suffix+identity-prefix	37f16586283bbdc0
-case	assign_with_trailing_space.mk#default	defect	exit-status+stop-suffix+identity-prefix	331e89df65c1fab8
+case	append_self_reference.mk#default	defect	exit-status+stop-suffix+identity-prefix	e2a25f137a07b0e6
+case	assign_with_trailing_space.mk#default	defect	exit-status+stop-suffix+identity-prefix	c622d326611cfcee
 case	auto_var_suffixes.mk#test2	defect	exit-status+stop-suffix+identity-prefix	b0e964d86f94023c
-case	autovar_assign.mk#default	recorded	evaluation+corpus-todo+exit-status	61afe5330d9b60b0
+case	autovar_assign.mk#default	recorded	evaluation+corpus-todo+exit-status	1e5260ae22077f16
 case	blank_line_before_command.mk#test	recorded	recipe-stream+corpus-todo+exit-status	a861c19bfe008f61
 case	builtin_rules.mk#test2	defect	exit-status+stop-suffix+identity-prefix	b5964f51e5a92942
 case	call_with_whitespace.mk#test	defect	quote-style	a70ab0c62ed68238
@@ -46,7 +46,7 @@ case	circular_dep.mk#test	defect	identity-prefix	595f0714ab1a00bb
 case	colon_ws_in_file.mk#test	recorded	evaluation+corpus-todo	72a5fa6cccaeb171
 case	colon_ws_in_target.mk#test	recorded	evaluation+corpus-todo+exit-status	5c28b9183955487e
 case	cond_syntax.mk#test	defect	append-to-empty	af0174ede9a2571d
-case	crlf_after_directive.mk#default	defect	exit-status+stop-suffix+identity-prefix	8df61824864afa7a
+case	crlf_after_directive.mk#default	defect	exit-status+stop-suffix+identity-prefix	b5e54cae65368744
 case	define_with_comments.mk#test	defect	quote-style	def36077f32e4d2b
 case	delete_on_error.mk#test	recorded	evaluation+corpus-todo+exit-status	ad5552329208da49
 case	deprecated_export.mk#test	extension	kati-extension	6f76de783020faaf
@@ -58,18 +58,18 @@ case	equal_in_target.mk#test	recorded	evaluation+corpus-todo	69c8a232d6046a16
 case	err_both_colon.mk#test	defect	exit-status+stop-suffix+quote-style	9b1ef692c4951c8f
 case	err_deprecated_var_already_deprecated.mk#default	defect	exit-status+stop-suffix	d6409a39e6e957ec
 case	err_deprecated_var_already_obsolete.mk#default	defect	exit-status+stop-suffix	3410dbc41336aec4
-case	err_empty_output.mk#default	defect	exit-status+stop-suffix+identity-prefix	4bcffb1c97fe746c
+case	err_empty_output.mk#default	defect	exit-status+stop-suffix+identity-prefix	881383a25a5fcdf2
 case	err_empty_var_name.mk#default	defect	exit-status+stop-suffix	d250b3659a846574
 case	err_error.mk#test	defect	exit-status+stop-suffix	3cd37902823cd7b2
 case	err_error_in_recipe.mk#test	defect	exit-status+stop-suffix	3cd37902823cd7b2
-case	err_export_override.mk#default	defect	exit-status+stop-suffix+identity-prefix	76feff2b9bd0f6d0
+case	err_export_override.mk#default	defect	exit-status+stop-suffix+identity-prefix	c2ebf6e40f220276
 case	err_extra_else.mk#default	defect	exit-status+stop-suffix+quote-style	ef9ce2b3922acfc9
 case	err_extra_endif.mk#default	defect	exit-status+stop-suffix+quote-style	bfcba13485759511
 case	err_ifdef_two_args.mk#default	defect	exit-status+stop-suffix	df0756a119a493ca
 case	err_ifdef_two_args2.mk#default	defect	exit-status+stop-suffix	d6cdb4c8d1381638
 case	err_ifdef_with_leading_space.mk#default	defect	exit-status+stop-suffix	d6cdb4c8d1381638
 case	err_include.mk#default	defect	io-error-text+exit-status	786e94a4cc73a85a
-case	err_invalid_else.mk#default	defect	exit-status+stop-suffix+identity-prefix+quote-style	94db9b6deaccfe43
+case	err_invalid_else.mk#default	defect	exit-status+stop-suffix+identity-prefix+quote-style	7b921b9ca4e1f487
 case	err_invalid_ifeq.mk#default	defect	exit-status+stop-suffix	df0756a119a493ca
 case	err_invalid_ifeq2.mk#default	defect	exit-status+stop-suffix	df0756a119a493ca
 case	err_invalid_ifeq3.mk#test	defect	quote-style	98b66eb08abef93f
@@ -91,8 +91,8 @@ case	err_obsolete_var_msg.mk#default	defect	exit-status+stop-suffix	cf58bce86630
 case	err_obsolete_var_varref.mk#default	defect	exit-status+stop-suffix	b99c4c1a79decd7c
 case	err_obsolete_var_varsubst.mk#default	defect	exit-status+stop-suffix	a1644c3425e76872
 case	err_override.mk#test	defect	quote-style+recipe-wording	f9ab39e78c6d9605
-case	err_override_export.mk#default	defect	exit-status+stop-suffix+identity-prefix	76feff2b9bd0f6d0
-case	err_pattern_rule_only.mk#default	defect	exit-status+stop-suffix+identity-prefix	4bcffb1c97fe746c
+case	err_override_export.mk#default	defect	exit-status+stop-suffix+identity-prefix	c2ebf6e40f220276
+case	err_pattern_rule_only.mk#default	defect	exit-status+stop-suffix+identity-prefix	881383a25a5fcdf2
 case	err_semicolon.mk#default	defect	exit-status+stop-suffix+recipe-wording	5d4bf4c02f8ab4ac
 case	err_semicolon2.mk#default	defect	exit-status+stop-suffix	e49c93b72440cdd6
 case	err_semicolon3.mk#default	defect	exit-status+stop-suffix+recipe-wording	5d4bf4c02f8ab4ac
@@ -107,7 +107,7 @@ case	err_unterminated_var.mk#default	defect	exit-status+stop-suffix	8b914f4385f6
 case	err_word_non_numeric.mk#test	defect	message-text+exit-status	652000ef863346ef
 case	err_word_zero.mk#test	defect	exit-status+stop-suffix+quote-style	9f2a38bf9602ce5b
 case	eval.mk#test2	defect	exit-status+stop-suffix+identity-prefix	cb29458c8bdcdac6
-case	expanded_nl.mk#default	defect	exit-status+stop-suffix+identity-prefix	4bcffb1c97fe746c
+case	expanded_nl.mk#default	defect	exit-status+stop-suffix+identity-prefix	881383a25a5fcdf2
 case	explicit_pattern_rule.mk#test2	defect	exit-status+stop-suffix+identity-prefix	885f689cb8ca9d0c
 case	export_export.mk#test	recorded	evaluation+corpus-todo	f3c9e7eb3521e92c
 case	fail_ignore_error.mk#test	defect	exit-status+identity-prefix+error-location	397300cd6b7949c3
@@ -117,9 +117,9 @@ case	final_global.sh#script	extension	kati-extension	de89fce928613814
 case	final_rule.sh#script	extension	kati-extension	4ce2782984723726
 case	final_rule2.sh#script	extension	kati-extension	4ce2782984723726
 case	func_backslash.mk#test	defect	quote-style	89a7baefb28487f2
-case	ifdef_rec_var.mk#default	defect	exit-status+stop-suffix+identity-prefix	8df61824864afa7a
+case	ifdef_rec_var.mk#default	defect	exit-status+stop-suffix+identity-prefix	b5e54cae65368744
 case	ifdef_ret_in_arg.mk#default	defect	exit-status+stop-suffix	a14ea38d95a22fc0
-case	ifdef_with_trailing_space.mk#default	defect	exit-status+stop-suffix+identity-prefix	d85b53d7628d604e
+case	ifdef_with_trailing_space.mk#default	defect	exit-status+stop-suffix+identity-prefix	467fa330a3a7f7b8
 case	ifeq_without_parens.mk#test	defect	append-to-empty	e194f5283e5792fd
 case	ignore_error.mk#test	defect	identity-prefix+error-location	a7a1c3b1ed8e8e57
 case	implicit_pattern_rule.mk#test2	defect	exit-status+stop-suffix+identity-prefix	b5964f51e5a92942
@@ -148,7 +148,7 @@ case	override_export.mk#test	defect	exit-status+identity-prefix+error-location	2
 case	param.mk#test	recorded	evaluation+corpus-todo	505fcf3ec002cf56
 case	pattern_rules_priority.mk#test2	defect	exit-status+stop-suffix+identity-prefix	885f689cb8ca9d0c
 case	phony_looks_real.sh#script	extension	kati-extension	4be8593d787df4fc
-case	quine.mk#default	defect	exit-status+stop-suffix+identity-prefix	146aa79c2e6caff4
+case	quine.mk#default	defect	exit-status+stop-suffix+identity-prefix	aa36106f3e4b822a
 case	readonly_global.sh#script	extension	kati-extension	ed0da0ec24fb4a74
 case	readonly_global_missing.sh#script	extension	kati-extension	dc09a5e9ba123816
 case	readonly_rule.sh#script	extension	kati-extension	a6911bb07f39b364
@@ -166,8 +166,8 @@ case	static_pattern.mk#test	defect	exit-status+stop-suffix+identity-prefix	4c84d
 case	suffix_rule.mk#test2	defect	exit-status+stop-suffix+identity-prefix	b5964f51e5a92942
 case	suffix_rule_warn.sh#script	extension	kati-extension	95c87c44f4675254
 case	target_specific_var_append.mk#default	defect	append-to-empty	fe2215252d1ac70f
-case	terms_in_parens.mk#default	defect	exit-status+stop-suffix+identity-prefix	6d329f4a8bcdf89c
-case	test_version.mk#default	defect	exit-status+stop-suffix+identity-prefix	68287caa7125bf80
+case	terms_in_parens.mk#default	defect	exit-status+stop-suffix+identity-prefix	ab7765c0857ff722
+case	test_version.mk#default	defect	exit-status+stop-suffix+identity-prefix	967bc05ecd028926
 case	top_level_phony.sh#script	extension	kati-extension	e217af6911eb3f0e
 case	value_at.mk#test	recorded	evaluation+corpus-todo	1633d74e7f16de9c
 case	var_append.mk#test	defect	append-to-empty	1954c2a82fdbe7cb
@@ -179,8 +179,8 @@ case	var_visibility_prefix_invalid_prefix_four.mk#test	extension	kati-extension	
 case	var_visibility_prefix_invalid_prefix_one.mk#test	extension	kati-extension	a3f6108f20488fea
 case	var_visibility_prefix_invalid_prefix_three.mk#test	extension	kati-extension	85304b33c8f90818
 case	var_visibility_prefix_invalid_prefix_two.mk#test	extension	kati-extension	643af21834e5c35a
-case	variable_location.mk#default	defect	exit-status+stop-suffix+identity-prefix	8aacaa72007191a0
-case	variables.mk#default	defect	exit-status+stop-suffix+identity-prefix	035ed83aa9d0af20
+case	variable_location.mk#default	defect	exit-status+stop-suffix+identity-prefix	542ffc05b4227b86
+case	variables.mk#default	defect	exit-status+stop-suffix+identity-prefix	0d15cad848584806
 case	vpath.mk#test	defect	exit-status+stop-suffix+identity-prefix	5837ba7d75212212
 case	vpath.mk#test2	defect	exit-status+stop-suffix+identity-prefix	5837ba7d75212212
 case	vpath_directive.mk#test	recorded	evaluation+corpus-todo+exit-status	1287fee2feefa39b
