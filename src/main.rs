@@ -45,10 +45,6 @@ fn main() {
         let _ = write_diagnostic(format_args!("failed to install signal handlers: {error}"));
         std::process::exit(1);
     });
-    let runner = ronin::Runner::from_process().unwrap_or_else(|error| {
-        let _ = write_diagnostic(format_args!("reading the working directory: {error}"));
-        std::process::exit(1);
-    });
     let arguments = std::env::args_os().collect::<Vec<_>>();
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
@@ -56,8 +52,9 @@ fn main() {
     let mut stderr = stderr.lock();
     // [spec:ronin:req:product.ronin-identity]
     // [spec:ronin:req:product.no-samuflags]
+    // [spec:ronin:req:product.make-identity]
     // [spec:ronin:req:runtime.explicit-invocation-boundary]
-    match runner.run_os_with_sinks(&arguments, &mut stdout, &mut stderr) {
+    match ronin::run_process(&arguments, &mut stdout, &mut stderr) {
         Ok(result) => {
             if let Err(error) = write_terminal(&result, &mut stdout, &mut stderr) {
                 if error.kind() != std::io::ErrorKind::BrokenPipe {

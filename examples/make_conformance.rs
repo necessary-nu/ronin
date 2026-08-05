@@ -119,6 +119,9 @@ struct Case {
     file: String,
     target: String,
     script: bool,
+    /// Whether the case decides what to expect by looking for `kati` in the
+    /// name of the tool it was handed. See [`self_detecting`].
+    self_detecting: bool,
 }
 
 /// What one tool did with one case, already normalised, plus a digest of what
@@ -211,6 +214,34 @@ fn declared_targets(content: &str) -> Vec<String> {
     }
 }
 
+/// Whether a script chooses its expectations by looking for `kati` in the name
+/// of the tool it was handed.
+///
+/// Half the corpus's shell cases do this, and the branch they take when the
+/// name does not match prints a canned expectation *instead of* running the
+/// tool — the corpus's way of writing GNU Make's side of a comparison for a
+/// feature GNU Make does not have. Hand such a case a front end with any other
+/// name and both runs print the same canned text, so the case agrees with
+/// itself and proves nothing. The harness has to refuse those rather than
+/// count them.
+fn self_detecting(script: &str) -> bool {
+    script
+        .lines()
+        .any(|line| line.contains("${mk}") && line.contains("grep") && line.contains("kati"))
+}
+
+/// Whether the tool under test is the one the self-detecting scripts look for.
+///
+/// The same test the scripts run, against the same string: everything the
+/// script is handed as `$@`.
+fn names_kati(front_end: &FrontEnd) -> bool {
+    front_end.binary.to_string_lossy().contains("kati")
+        || front_end
+            .arguments
+            .iter()
+            .any(|argument| argument.contains("kati"))
+}
+
 fn enumerate_cases(corpus: &Path) -> Result<Vec<Case>, String> {
     let mut names = fs::read_dir(corpus)
         .map_err(|error| format!("reading {}: {error}", corpus.display()))?
@@ -243,17 +274,21 @@ fn enumerate_cases(corpus: &Path) -> Result<Vec<Case>, String> {
                     file: name.clone(),
                     target,
                     script: false,
+                    self_detecting: false,
                 });
             }
         } else if extension == Some(b"sh") && !name.starts_with("ninja_") {
             // A `ninja_` script drives kati's Ninja emitter and then Ninja.
             // GNU Make cannot answer what that should produce, so those cases
             // belong to the manifest oracle, not this one.
+            let script = fs::read_to_string(corpus.join(&name))
+                .map_err(|error| format!("reading {name}: {error}"))?;
             cases.push(Case {
                 id: format!("{name}#script"),
                 file: name.clone(),
                 target: String::new(),
                 script: true,
+                self_detecting: self_detecting(&script),
             });
         }
     }
@@ -279,7 +314,9 @@ fn observe(
 ) -> Result<Observation, String> {
     let mut command = Command::new(if case.script { Path::new("bash") } else { tool });
     if case.script {
-        command.arg(corpus.join(&case.file)).arg(tool);
+        // A script runs the tool itself, so what it is handed has to be the
+        // whole command: the front end and whatever selects its mode.
+        command.arg(corpus.join(&case.file)).arg(tool).args(extra);
     } else {
         fs::copy(corpus.join(&case.file), directory.join("Makefile"))
             .map_err(|error| format!("staging {}: {error}", case.file))?;
@@ -669,6 +706,34 @@ const INVENTORY_HEADER: &str = "\
 
 ";
 
+/// Say which tool the numbers below are about, and which cases could not be
+/// asked about it at all.
+///
+/// Both lines are provenance rather than decoration: two runs against
+/// different front ends have different denominators, and a total quoted
+/// without them cannot be compared with another.
+fn announce(front_end: &FrontEnd, refused: &[Case]) {
+    let mut spelled = front_end.binary.display().to_string();
+    for argument in &front_end.arguments {
+        spelled.push(' ');
+        spelled.push_str(argument);
+    }
+    println!("front end:   {spelled}");
+    if refused.is_empty() {
+        return;
+    }
+    println!(
+        "refused:     {} self-detecting cases. Each greps the name of the tool it was\n\
+         \x20            handed for `kati`, and prints a canned expectation instead of\n\
+         \x20            running anything when it does not match, so against this front\n\
+         \x20            end both sides would print the same text and agree about nothing:",
+        refused.len()
+    );
+    for case in refused {
+        println!("  {}", case.id);
+    }
+}
+
 fn report(
     total: usize,
     verbatim: usize,
@@ -810,6 +875,11 @@ fn run(config: &Config) -> Result<(), String> {
             config.corpus.display()
         ));
     }
+    let exercisable = names_kati(&config.front_end);
+    let (refused, cases): (Vec<Case>, Vec<Case>) = cases
+        .into_iter()
+        .partition(|case| case.self_detecting && !exercisable);
+    announce(&config.front_end, &refused);
     prepare_work(config)?;
     let (verbatim, divergences) = run_corpus(config, &cases)?;
     if config.update {
@@ -843,8 +913,37 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{case_directory_name, declared_targets, normalize, parse_inventory, tool_identity};
-    use std::path::Path;
+    use super::{
+        case_directory_name, declared_targets, names_kati, normalize, parse_inventory,
+        self_detecting, tool_identity, FrontEnd,
+    };
+    use std::path::{Path, PathBuf};
+
+    // [spec:ronin:req:make.semantics/test]
+    #[test]
+    fn a_script_that_greps_its_tools_name_is_recognised() {
+        assert!(self_detecting(
+            "if echo \"${mk}\" | grep -qv \"kati\"; then\n  echo canned\nfi\n"
+        ));
+        assert!(self_detecting("if echo \"${mk}\" | grep -q kati; then\n"));
+        // Naming kati is not the same as branching on the tool's own name.
+        assert!(!self_detecting("# kati writes a stamp here\n${mk} 2>&1\n"));
+        assert!(!self_detecting("grep -q kati out.txt\n"));
+    }
+
+    // [spec:ronin:req:make.semantics/test]
+    #[test]
+    fn a_front_end_is_measured_against_the_name_the_script_will_see() {
+        let front_end = |binary: &str, arguments: &[&str]| FrontEnd {
+            binary: PathBuf::from(binary),
+            arguments: arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect(),
+        };
+        assert!(names_kati(&front_end("target/release/rkati", &[])));
+        assert!(!names_kati(&front_end("target/release/ronin", &["--make"])));
+    }
 
     // [spec:ronin:req:make.semantics/test]
     #[test]

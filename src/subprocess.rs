@@ -522,9 +522,6 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                     source,
                 }
             })?;
-            if let Some(event) = self.try_channel()? {
-                return Ok(Some(event));
-            }
 
             if !self.reap_candidates.is_empty() {
                 self.reap_backoff = (self.reap_backoff * 2).min(MAX_REAP_INTERVAL);
@@ -549,6 +546,15 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                 }
             }
             self.reap_without_output();
+            // Only now, with what the poller reported already consumed. Each
+            // descriptor is armed for one event and rearmed by the drain, so an
+            // event abandoned here is never delivered again: the child that
+            // closed its output would never be reaped, and a wait with nothing
+            // else to wake it never returns. Reporting the token one iteration
+            // later costs a token latency; reporting it sooner cost a build.
+            if let Some(event) = self.try_channel()? {
+                return Ok(Some(event));
+            }
             if signal_ready {
                 return Ok(None);
             }
@@ -1353,6 +1359,54 @@ mod tests {
             .unwrap();
         assert!(matches!(wake, Some(SupervisorWake::External(17))));
         thread.join().unwrap();
+    }
+
+    /// An external event arriving while the poller is reporting a child's
+    /// output closing must not cost that report.
+    ///
+    /// Each descriptor is armed for one event and rearmed by the drain, so an
+    /// event abandoned in favour of the external one is never delivered again:
+    /// the child is never reaped and a supervisor with nothing else to wake it
+    /// waits forever. That deadlock was reachable from any build under an
+    /// inherited jobserver, where token arrivals and completions interleave
+    /// constantly.
+    #[cfg(unix)]
+    #[test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
+    fn a_completion_survives_an_external_event_in_the_same_wait() {
+        let edge = EdgeId::from_event_key(13 + 1).expect("test edge key is nonzero");
+        let mut supervisor = ProcessSupervisor::<usize>::new().unwrap();
+        let sender = supervisor.external_sender();
+        let thread = std::thread::spawn(move || {
+            // Long enough to land while the poller is blocked, short enough to
+            // be there before the child's output closes.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            sender.send(23);
+        });
+        supervisor
+            .spawn(edge, BString::from("sleep 0.1; printf done"), false, false)
+            .unwrap();
+
+        let mut external = None;
+        let mut completion = None;
+        for _ in 0..3 {
+            match supervisor
+                .wait(Some(std::time::Duration::from_secs(2)))
+                .unwrap()
+            {
+                Some(SupervisorWake::Process(reported)) => {
+                    completion = Some(reported);
+                    break;
+                }
+                Some(SupervisorWake::External(value)) => external = Some(value),
+                None => {}
+            }
+        }
+        thread.join().unwrap();
+        assert_eq!(external, Some(23));
+        let completion = completion.expect("the child that finished was reported");
+        assert_eq!(completion.edge, edge);
+        assert_eq!(completion.result.unwrap().unwrap().stdout, b"done");
     }
 
     #[cfg(unix)]

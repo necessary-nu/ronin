@@ -469,4 +469,11 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule make.manifest-equivalence}
     )}
+    {id make-mode-cli, covered_rules (
+        make.recursive-invocation
+        product.make-identity
+    ), covered_claims (
+        {impl_name target-impl, rule make.recursive-invocation}
+        {impl_name target-impl, rule product.make-identity}
+    )}
 )

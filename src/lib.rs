@@ -22,6 +22,7 @@ mod log;
 pub mod make;
 mod missing_deps;
 mod msvc;
+mod multicall;
 mod names;
 mod os;
 mod parse;
@@ -36,6 +37,7 @@ mod util;
 
 pub use cli::{run, run_os, RunResult, Runner, NINJA_COMPAT_VERSION, PRODUCT_NAME};
 pub use error::{Error, ErrorKind};
+pub use multicall::run_process;
 pub use signal::{install_signal_handlers, Signal, SignalHandlers};
 pub use subprocess::INTERRUPTED_EXIT_CODE;
 

@@ -22,12 +22,24 @@
 /// name.
 pub use kati;
 
+pub(crate) mod cli;
 mod sink;
 
 #[cfg(test)]
 mod equivalence;
 
 pub use sink::GraphSink;
+
+/// The GNU Make release whose vocabulary this front end speaks.
+///
+/// The one version Make mode names, and it names it in two places: the
+/// `MAKE_VERSION` a Makefile can branch on, which the evaluator's bootstrap
+/// binds, and `--version`, which reports it as the language rather than as the
+/// tool. A test builds a Makefile that reads `MAKE_VERSION` and compares it
+/// with this, because the two live in different crates and would otherwise
+/// drift apart silently.
+// [spec:ronin:req:product.make-identity]
+pub const MAKE_VERSION: &str = "4.4.1";
 
 use crate::frontend::{BuildGraph, FrontendError};
 use kati::evaluate::{evaluate, Evaluated};

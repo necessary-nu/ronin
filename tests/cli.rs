@@ -811,3 +811,305 @@ fn a_recursive_make_tree_shares_one_job_budget() {
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// A Makefile tree with a recipe that reports what Make told it about itself.
+#[cfg(all(unix, feature = "make"))]
+fn makefile_tree(label: &str) -> PathBuf {
+    let directory = test_directory(label);
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(directory.join("in.txt"), "source\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "WHERE = makefile\n\
+         all: out.txt\n\
+         out.txt: in.txt\n\
+         \tcp in.txt out.txt\n\
+         \t@echo \"version=$(MAKE_VERSION) level=$(MAKELEVEL) exported=$$MAKELEVEL where=$(WHERE)\"\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+    directory
+}
+
+/// Run the binary under a name of our choosing, which is what selects the front
+/// end. A symlink is how a multi-call binary is installed, so it is how this is
+/// tested.
+#[cfg(all(unix, feature = "make"))]
+fn invoked_as(directory: &std::path::Path, name: &str) -> PathBuf {
+    let link = directory.join(name);
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ronin"), &link).unwrap();
+    link
+}
+
+#[cfg(all(unix, feature = "make"))]
+fn make_command(program: &std::path::Path, directory: &std::path::Path) -> Command {
+    let mut command = Command::new(program);
+    command
+        .current_dir(directory)
+        .env_remove("MAKEFLAGS")
+        .env_remove("MFLAGS")
+        .env_remove("CARGO_MAKEFLAGS")
+        .env_remove("MAKELEVEL");
+    command
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn the_invoked_name_selects_make_mode_and_builds_without_a_manifest() {
+    let directory = makefile_tree("make-mode");
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reported = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        reported.contains(&format!("version={}", ronin::make::MAKE_VERSION)),
+        "the version a Makefile can branch on is the one Make mode claims: {reported}"
+    );
+    assert!(reported.contains("level=0 exported=1"), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("out.txt")).unwrap(),
+        "source\n"
+    );
+    // A Makefile becomes a graph, not a manifest: nothing on the way to the
+    // build is written down.
+    assert!(!directory.join("build.ninja").exists());
+
+    // The same build, selected from the command line instead of from the name,
+    // which is what a recursive invocation of an executable called `ronin`
+    // depends on.
+    fs::remove_file(directory.join("out.txt")).unwrap();
+    let output = make_command(
+        std::path::Path::new(env!("CARGO_BIN_EXE_ronin")),
+        &directory,
+    )
+    .arg("--make")
+    .output()
+    .unwrap();
+    assert!(output.status.success());
+    assert!(directory.join("out.txt").exists());
+    assert!(!directory.join("build.ninja").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn ninja_mode_is_reachable_from_a_make_named_invocation() {
+    let directory = test_directory("make-named-ninja-mode");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("in"), "manifest\n").unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule copy\n  command = cp $in $out\nbuild out: copy in\ndefault out\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("--ninja")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("out")).unwrap(),
+        "manifest\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_options_reach_the_scheduler_and_the_evaluation() {
+    let directory = makefile_tree("make-options");
+
+    // A command-line assignment outranks the makefile's own, which is what
+    // makes it a command-line variable rather than an environment variable:
+    // the environment loses to the makefile and this does not.
+    let assigned = make_command(&invoked_as(&directory, "make"), &directory)
+        .args(["WHERE=command-line"])
+        .env("WHERE", "environment")
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&assigned.stdout);
+    assert!(reported.contains("where=command-line"), "{reported}");
+
+    // -n reports without running, so the second build still has work to do.
+    fs::remove_file(directory.join("out.txt")).unwrap();
+    let dry = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-n")
+        .output()
+        .unwrap();
+    assert!(dry.status.success());
+    assert!(!directory.join("out.txt").exists());
+
+    // -C enters each directory in turn, as Make does, rather than replacing
+    // one with the next as Ninja does.
+    fs::create_dir_all(directory.join("sub/deeper")).unwrap();
+    fs::write(
+        directory.join("sub/deeper/Makefile"),
+        "all:\n\t@echo deep\n.PHONY: all\n",
+    )
+    .unwrap();
+    let entered = make_command(&invoked_as(&directory, "make"), &directory)
+        .args(["-C", "sub", "-C", "deeper"])
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&entered.stdout);
+    assert!(entered.status.success(), "{reported}");
+    assert!(reported.contains("deep"), "{reported}");
+
+    // A goal names what to build, and a goal nothing declares is refused.
+    let unknown = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("nothing-declares-this")
+        .output()
+        .unwrap();
+    assert!(!unknown.status.success());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.recursive-invocation/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_recursive_makefile_re_enters_ronin_with_no_make_on_the_path() {
+    let directory = test_directory("make-recursion");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t@echo \"top level=$(MAKELEVEL)\"\n\t$(MAKE) -C sub\n.PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("sub/Makefile"),
+        "all:\n\t@echo \"sub level=$(MAKELEVEL) make=$$(command -v make || echo none)\"\n.PHONY: all\n",
+    )
+    .unwrap();
+    // An empty directory for a PATH, so the only Make that can answer
+    // `$(MAKE)` is the one Ronin named.
+    let empty = directory.join("empty-path");
+    fs::create_dir_all(&empty).unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .env("PATH", &empty)
+        .output()
+        .unwrap();
+
+    let reported = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "{reported}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(reported.contains("top level=0"), "{reported}");
+    // The sub-make ran, counted itself one level deeper, and found no other
+    // Make anywhere: the only thing that could have built it is Ronin.
+    assert!(reported.contains("sub level=1 make=none"), "{reported}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(all(unix, feature = "make"))]
+// [spec:ronin:req:make.jobserver/test]
+// [spec:ronin:req:make.recursive-invocation/test]
+#[test]
+fn a_recursive_makefile_tree_shares_one_job_budget() {
+    use std::fmt::Write as _;
+
+    const LEVELS: [&str; 3] = ["a", "b", "c"];
+    const UNITS: usize = 6;
+
+    let directory = test_directory("make-recursive-budget");
+    let served = directory.join("jobservers");
+    fs::create_dir_all(&served).unwrap();
+    let log = directory.join("units");
+    let stamp = directory.join("unit.sh");
+    fs::write(
+        &stamp,
+        "#!/bin/sh\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let mut top = String::from("all:");
+    for level in LEVELS {
+        write!(top, " {level}").unwrap();
+    }
+    top.push('\n');
+    for level in LEVELS {
+        let units = (0..UNITS)
+            .map(|unit| format!("{level}{unit}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        fs::write(
+            directory.join(format!("{level}.mk")),
+            format!(
+                "all: {units}\n{units}:\n\t@{} $@\n.PHONY: all {units}\n",
+                stamp.display()
+            ),
+        )
+        .unwrap();
+        // Each level is a sub-make, and nothing tells it how many jobs it may
+        // run: what it may run is what the shared budget hands it.
+        write!(top, "{level}:\n\t@$(MAKE) -f {level}.mk all\n").unwrap();
+    }
+    writeln!(top, ".PHONY: all {}", LEVELS.join(" ")).unwrap();
+    fs::write(directory.join("Makefile"), &top).unwrap();
+
+    let program = invoked_as(&directory, "make");
+    let measure = |jobs: usize| {
+        let _ = fs::remove_file(&log);
+        let output = make_command(&program, &directory)
+            .arg(format!("-j{jobs}"))
+            .env("LOG", &log)
+            .env("TMPDIR", &served)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let (peak, units) = peak_concurrency(&fs::read_to_string(&log).unwrap());
+        assert_eq!(units, LEVELS.len() * UNITS);
+        peak
+    };
+
+    for jobs in [1, 2, 4] {
+        let peak = measure(jobs);
+        assert!(
+            peak <= jobs,
+            "-j{jobs} let {peak} recipes of a recursive Makefile tree run at once"
+        );
+    }
+    // The control: the same tree with each level given a budget of its own, so
+    // the measurement above is evidence rather than a tautology.
+    let _ = fs::remove_file(&log);
+    let unshared = top.replace("@$(MAKE) -f", "@env -u MAKEFLAGS $(MAKE) -j6 -f");
+    fs::write(directory.join("unshared.mk"), unshared).unwrap();
+    let output = make_command(&program, &directory)
+        .args(["-j2", "-f", "unshared.mk"])
+        .env("LOG", &log)
+        .env("TMPDIR", &served)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let (peak, _) = peak_concurrency(&fs::read_to_string(&log).unwrap());
+    assert!(
+        peak > UNITS,
+        "the control did not oversubscribe, so the shared measurement proves nothing"
+    );
+
+    assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
+    fs::remove_dir_all(directory).unwrap();
+}

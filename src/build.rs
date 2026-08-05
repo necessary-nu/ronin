@@ -73,6 +73,13 @@ pub(crate) struct BuildOptions {
     /// one in place for children rather than shadowing it with a second
     /// budget that would be spent alongside the first.
     pub(crate) serve_jobserver: bool,
+    /// Variables the front end imposes on every command it runs, beside
+    /// whatever the jobserver publishes.
+    ///
+    /// Make mode counts recursion with one: a recipe is handed a `MAKELEVEL`
+    /// one deeper than the makefile it came from, which is how a sub-make
+    /// knows it is one.
+    pub(crate) environment: Vec<(&'static str, std::ffi::OsString)>,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -97,6 +104,7 @@ impl Default for BuildOptions {
             maxload: 0.0,
             jobserver: None,
             serve_jobserver: false,
+            environment: Vec::new(),
             working_directory: crate::os::WorkingDirectory::default(),
         }
     }
@@ -1547,12 +1555,16 @@ impl<'a> Builder<'a> {
         } else {
             None
         };
-        let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::in_directory(
-            self.options.working_directory.as_path(),
-            self.options.shell.clone(),
+        let mut environment = self.options.environment.clone();
+        environment.extend_from_slice(
             transport
                 .as_ref()
                 .map_or(&[], crate::jobserver::Transport::publication),
+        );
+        let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::in_directory(
+            self.options.working_directory.as_path(),
+            self.options.shell.clone(),
+            &environment,
         )?;
         let mut jobserver = transport
             .map(|transport| {

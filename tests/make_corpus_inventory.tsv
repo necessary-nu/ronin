@@ -29,7 +29,6 @@ family	find-emulator	the case drives --use_find_emulator, kati's in-process repl
 family	identity-prefix	GNU Make prefixes a diagnostic that carries no makefile location with its own name and a colon; kati prints it bare.
 family	io-error-text	the Rust port renders io::Error with its "(os error N)" suffix, which GNU Make does not print.
 family	kati-extension	the case exercises a feature GNU Make does not have, so the corpus writes Make's side of the comparison by hand and only kati's side is evidence.
-family	make-version	MAKE_VERSION is hard-coded to 4.2.1, the version the vendored Go harness pinned. Under the 4.4.1 oracle every makefile that branches on it takes the wrong branch.
 family	message-text	the diagnostic says the same thing in different words from GNU Make's.
 family	quote-style	kati quotes names as `x' , the GNU Make 3.8x style. 4.4.1 quotes 'x'.
 family	recipe-stream	kati captures a recipe's combined output and writes it to its own stdout; GNU Make lets the recipe inherit both descriptors, so a recipe's stderr stays on stderr.
@@ -169,7 +168,7 @@ case	suffix_rule.mk#test2	defect	exit-status+stop-suffix+identity-prefix	b5964f5
 case	suffix_rule_warn.sh#script	extension	kati-extension	95c87c44f4675254
 case	target_specific_var_append.mk#default	defect	append-to-empty	fe2215252d1ac70f
 case	terms_in_parens.mk#default	defect	exit-status+stop-suffix+identity-prefix	6d329f4a8bcdf89c
-case	test_version.mk#default	defect	make-version+exit-status	98dc56d1597308be
+case	test_version.mk#default	defect	exit-status+stop-suffix+identity-prefix	68287caa7125bf80
 case	top_level_phony.sh#script	extension	kati-extension	e217af6911eb3f0e
 case	value_at.mk#test	recorded	evaluation+corpus-todo	1633d74e7f16de9c
 case	var_append.mk#test	defect	append-to-empty	1954c2a82fdbe7cb

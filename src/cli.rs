@@ -76,11 +76,19 @@ impl RunResult {
 /// state.
 // [spec:ronin:req:runtime.explicit-invocation-boundary]
 pub struct Runner {
-    working_directory: crate::os::WorkingDirectory,
-    makeflags: Option<String>,
+    pub(crate) working_directory: crate::os::WorkingDirectory,
+    pub(crate) makeflags: Option<String>,
     status_format: Option<String>,
-    terminal: crate::build::TerminalContext,
-    connect_jobserver: fn() -> Result<jobserver::Client, crate::error::ProcessError>,
+    pub(crate) terminal: crate::build::TerminalContext,
+    pub(crate) connect_jobserver: fn() -> Result<jobserver::Client, crate::error::ProcessError>,
+    /// This executable's own path, which is what `$(MAKE)` has to name for a
+    /// recursive Makefile to re-enter Ronin rather than the first `make` on the
+    /// path. Read once, of the process, because it cannot change under it.
+    #[cfg(all(unix, feature = "make"))]
+    pub(crate) executable: PathBuf,
+    /// How deep in a recursive Make tree this invocation is, as its parent said.
+    #[cfg(all(unix, feature = "make"))]
+    pub(crate) makelevel: Option<String>,
 }
 
 impl Runner {
@@ -100,6 +108,10 @@ impl Runner {
             status_format: None,
             terminal: crate::build::TerminalContext::default(),
             connect_jobserver: crate::jobserver::inherited_client,
+            #[cfg(all(unix, feature = "make"))]
+            executable: std::env::current_exe().unwrap_or_else(|_| PathBuf::from(PRODUCT_NAME)),
+            #[cfg(all(unix, feature = "make"))]
+            makelevel: None,
         })
     }
 
@@ -113,6 +125,10 @@ impl Runner {
     pub fn from_process() -> std::io::Result<Self> {
         let mut runner = Self::new(std::env::current_dir()?)?;
         runner.makeflags = std::env::var("MAKEFLAGS").ok();
+        #[cfg(all(unix, feature = "make"))]
+        {
+            runner.makelevel = std::env::var("MAKELEVEL").ok();
+        }
         runner.status_format = std::env::var(NINJA_STATUS_ENV).ok();
         // Asked once, of the real descriptor, because the build writes through
         // a sink that cannot be asked what it is.
@@ -166,14 +182,25 @@ impl Runner {
     }
 }
 
-// [spec:ronin:def:samu.usage-fn]
-// [spec:ronin:sem:samu.usage-fn]
-pub(crate) fn usage(program: &str) -> String {
-    let default_jobs = match crate::os::osnproc() {
+/// How many commands Ninja mode runs at once when nothing says otherwise.
+///
+/// Ninja's own guess at the machine: one job per processor plus two, so a
+/// build keeps the machine busy across the stalls a compiler spends on I/O.
+/// Make mode does not use it, because Make runs one recipe at a time until it
+/// is told otherwise.
+pub(crate) fn default_jobs() -> usize {
+    let jobs = match crate::os::osnproc() {
         i64::MIN..=1 => 2,
         2 => 3,
         count => count + 2,
     };
+    usize::try_from(jobs).unwrap_or(usize::MAX)
+}
+
+// [spec:ronin:def:samu.usage-fn]
+// [spec:ronin:sem:samu.usage-fn]
+pub(crate) fn usage(program: &str) -> String {
+    let default_jobs = default_jobs();
     format!(
         concat!(
             "usage: {} [options] [targets...]\n",
@@ -190,6 +217,7 @@ pub(crate) fn usage(program: &str) -> String {
             "  --shell SHELL  shell for commands, or 'none' to skip it when unneeded\n",
             "  --compat       hand every command to the shell, exactly as Ninja does\n",
             "  --color WHEN   colorize output: auto, always, never [default=auto]\n",
+            "  --make         read a Makefile instead, whatever this program is called\n",
             "\n",
             "  -C DIR   change to DIR before doing anything else\n",
             "  -f FILE  specify input build file [default={}]\n",
@@ -620,6 +648,10 @@ fn parse_run_arguments(
                     1,
                 )));
             }
+            // The front end was chosen before either parser ran, so the flag
+            // that chose it is an ordinary word to whichever one is reading.
+            // [spec:ronin:req:product.make-identity]
+            selector if crate::multicall::is_selector(selector) => {}
             b"--verbose" => invocation.build_options.verbose = true,
             b"--quiet" => invocation.build_options.quiet = true,
             b"--status" => {
@@ -819,13 +851,19 @@ fn parse_run_arguments(
     Ok(RunAction::Execute(Box::new(invocation)))
 }
 
+/// Settle what the environment decides rather than the command line: the job
+/// budget, the jobserver this build joins or serves, and the terminal.
+///
+/// `unshared` is the limit for a build that named none and found no jobserver
+/// to join, which is the one answer the two front ends give differently.
 // [spec:ronin:req:compat.process-integration]
-fn normalize_runtime_options(
+pub(crate) fn normalize_runtime_options(
     options: &mut BuildOptions,
     makeflags: Option<&str>,
     status_format: Option<&str>,
     terminal: crate::build::TerminalContext,
     connect_jobserver: impl FnOnce() -> Result<jobserver::Client, crate::error::ProcessError>,
+    unshared: JobLimit,
 ) -> CliResult<()> {
     let config = crate::jobserver::parse_makeflags_value(makeflags)?;
     // A jobserver named in the environment is one this build must not shadow,
@@ -838,12 +876,7 @@ fn normalize_runtime_options(
             options.jobs = JobLimit::Unlimited;
             options.jobserver = Some(crate::jobserver::Transport::Inherited(connect_jobserver()?));
         } else {
-            let jobs = match crate::os::osnproc() {
-                i64::MIN..=1 => 2,
-                2 => 3,
-                count => usize::try_from(count + 2).unwrap_or(usize::MAX),
-            };
-            options.jobs = JobLimit::fixed(jobs).expect("default job count is nonzero");
+            options.jobs = unshared;
         }
     }
     options.serve_jobserver = !inheritable;
@@ -1390,7 +1423,7 @@ fn string_result(result: RunResult) -> CliResult<String> {
     }
 }
 
-fn byte_arguments(arguments: &[OsString]) -> CliResult<Vec<BString>> {
+pub(crate) fn byte_arguments(arguments: &[OsString]) -> CliResult<Vec<BString>> {
     arguments
         .iter()
         .cloned()
@@ -1405,7 +1438,7 @@ fn byte_arguments(arguments: &[OsString]) -> CliResult<Vec<BString>> {
         .map_err(Into::into)
 }
 
-fn process_runner() -> CliResult<Runner> {
+pub(crate) fn process_runner() -> CliResult<Runner> {
     Runner::from_process()
         .map_err(|source| CliError::CurrentDirectory { source })
         .map_err(Into::into)
@@ -1547,7 +1580,7 @@ fn build_targets<'a>(
     clippy::too_many_lines,
     reason = "manifest rebuild and reload is one bounded orchestration loop with ordered cleanup"
 )]
-fn run_bytes<'sink>(
+pub(crate) fn run_bytes<'sink>(
     runner: &Runner,
     arguments: &[BString],
     mut build_output: Option<&'sink mut dyn std::io::Write>,
@@ -1586,6 +1619,7 @@ fn run_bytes<'sink>(
         runner.status_format.as_deref(),
         runner.terminal,
         runner.connect_jobserver,
+        JobLimit::fixed(default_jobs()).expect("the default job count is nonzero"),
     )?;
     if let Some(tool) = invocation
         .selected_tool
@@ -1969,6 +2003,7 @@ mod tests {
                 None,
                 crate::build::TerminalContext::default(),
                 || unreachable!("an explicit -j declines an inherited jobserver"),
+                JobLimit::fixed(default_jobs()).expect("the default job count is nonzero"),
             )
             .unwrap();
             options.serve_jobserver
@@ -2000,6 +2035,7 @@ mod tests {
                     source,
                 })
             },
+            JobLimit::fixed(default_jobs()).expect("the default job count is nonzero"),
         )
         .unwrap();
         assert_eq!(options.jobs, JobLimit::Unlimited);
@@ -2015,6 +2051,7 @@ mod tests {
             None,
             crate::build::TerminalContext::default(),
             || panic!("explicit -j must not connect to an inherited jobserver"),
+            JobLimit::fixed(default_jobs()).expect("the default job count is nonzero"),
         )
         .unwrap();
         assert_eq!(explicit.jobs, JobLimit::fixed(2).unwrap());
