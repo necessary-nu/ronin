@@ -3676,6 +3676,13 @@ children (
                         kind @note
                         text "The intended position is Apache-2.0 OR MIT for Ronin's own work, with the accurate qualification that the vendored front end cannot be moved wholesale onto that dual licence.\n\nkati is Apache-2.0, copyright Google LLC. Apache-2.0 is permissive but not sublicensable, so those files stay Apache-2.0 no matter who forks them, and the NOTICE and patent terms travel with them. Ronin's existing lineage is ISC via samurai, which folds into a permissive distribution cleanly provided the Forney notice is retained, and it already is.\n\nSo the workable arrangement is: the kati crate declares Apache-2.0 and keeps its NOTICE; Ronin's own crate declares Apache-2.0 OR MIT; our modifications to the vendored files are contributed under Apache-2.0 OR MIT, which is a superset of what Apache-2.0 requires and costs nothing; and the distribution carries all three notices. Nothing here blocks the goal, and no part of it requires pretending the Google files are MIT.\n\nWhat this node has to produce is the metadata rather than the argument: crate licence fields, a LICENSE arrangement covering all three, and a NOTICE that survives packaging."
                     }
+
+                    {
+                        at 2026-08-05T06:31:58.824646137Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Closed as already resolved by the crate split, rather than by anything this node needed to do.\n\nThe reason there was a question at all was the possibility of merging the fork into Ronin's crate, where one license field would have had to cover both. ronin-execute-api rejected that merge on independent grounds and used precisely this as one of its reasons, so the arrangement it preserves is the arrangement that was wanted: kati declares Apache-2.0 and keeps its own LICENSE and AUTHORS, Ronin keeps its existing notices, and neither has to describe the other.\n\nThe only thing actually missing was a declaration. kati's manifest had no license field despite shipping an Apache-2.0 LICENSE file, so cargo could not report what the crate was. Set to Apache-2.0, which states the file's existing terms and decides nothing.\n\nRonin's own LICENSE is left alone. It carries four upstream positions — ISC for samurai, Google's terms for the Ninja-derived material, and two MIT notices — and restructuring it is a deliberate act for its owner, not a side effect of vendoring a dependency that never touches it."
+                    }
                 )
             }
 
