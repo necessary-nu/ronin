@@ -887,28 +887,28 @@ fn the_invoked_name_selects_make_mode_and_builds_without_a_manifest() {
     // build is written down.
     assert!(!directory.join("build.ninja").exists());
 
-    // The same build, selected from the command line instead of from the name,
-    // which is what a recursive invocation of an executable called `ronin`
-    // depends on.
+    // The other name, and the only other one.
     fs::remove_file(directory.join("out.txt")).unwrap();
-    let output = make_command(
-        std::path::Path::new(env!("CARGO_BIN_EXE_ronin")),
-        &directory,
-    )
-    .arg("--make")
-    .output()
-    .unwrap();
-    assert!(output.status.success());
+    let output = make_command(&invoked_as(&directory, "gmake"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(directory.join("out.txt").exists());
     assert!(!directory.join("build.ninja").exists());
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Ninja mode is what every other name selects, including the one a build
+/// directory is most likely to hold: the binary under its own name.
 // [spec:ronin:req:product.make-identity/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn ninja_mode_is_reachable_from_a_make_named_invocation() {
-    let directory = test_directory("make-named-ninja-mode");
+fn ninja_mode_is_reachable_from_a_ninja_named_invocation() {
+    let directory = test_directory("ninja-named-ninja-mode");
     fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("in"), "manifest\n").unwrap();
     fs::write(
@@ -917,8 +917,7 @@ fn ninja_mode_is_reachable_from_a_make_named_invocation() {
     )
     .unwrap();
 
-    let output = make_command(&invoked_as(&directory, "make"), &directory)
-        .arg("--ninja")
+    let output = make_command(&invoked_as(&directory, "ninja"), &directory)
         .output()
         .unwrap();
 

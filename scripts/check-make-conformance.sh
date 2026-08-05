@@ -9,10 +9,11 @@ cd "$repo_root"
 # builds it, and rkati is that evaluation with nothing else on top.
 #
 # Ronin's Make mode is the same evaluation followed by Ronin's scheduler, and
-# the corpus can be pointed at it:
+# the corpus can be pointed at it. Make mode is reached by the invoked name and
+# by nothing else, so that means a make-named link rather than a flag:
 #
-#   scripts/check-make-conformance.sh --front-end target/release/ronin \
-#       --front-end-arg --make
+#   ln -sf "$PWD/target/release/ronin" /tmp/ronin-make/make
+#   scripts/check-make-conformance.sh --front-end /tmp/ronin-make/make
 #
 # That is not the gate, and the run says why: Ronin prints its own progress
 # line where Make echoes each recipe, so nearly every case differs on that one

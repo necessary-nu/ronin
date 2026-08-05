@@ -1,18 +1,20 @@
 //! Which build language an invocation speaks.
 //!
 //! Ronin has two front ends over one engine, and the name the executable was
-//! invoked under says which of them an invocation wanted: `make` and `gmake`
-//! select Make mode, `ninja`, `samu`, and `ronin` select Ninja mode. The name
-//! is an explicit statement of intent in a way that sniffing the directory for
-//! a `Makefile` or a `build.ninja` is not, and it is how every multi-call
-//! binary has ever done this.
+//! invoked under is the only thing that says which of them an invocation
+//! wanted. `make` and `gmake` select Make mode; every other name, Ronin's own
+//! included, selects Ninja mode. The name is an explicit statement of intent in
+//! a way that sniffing the directory for a `Makefile` or a `build.ninja` is
+//! not, and it is how every multi-call binary has ever done this.
 //!
-//! A name is not the only way in. `--make` and `--ninja` select a front end
-//! outright, in both directions, so neither mode is reachable only through a
-//! symlink somebody remembered to install. `--make` is also what makes
-//! recursion work: `$(MAKE)` names this executable by its real path, which is
-//! `ronin`, and a name that selects Ninja mode has to be overridden for the
-//! sub-make to speak Make.
+//! The name is the *only* way in: there is no flag that selects a front end.
+//! A second door had to answer the same question the name already answers, and
+//! it answered it worse. `$(MAKE)` is the case that settled it — a sub-make
+//! reached through a flag needs the flag carried in `MAKE`, which makes `MAKE`
+//! more than one word, and a great deal of software treats that value as the
+//! path of the make program and execs it. GNU Make's own test suite is the most
+//! demanding example, and it dies on the second word. Reached through the name,
+//! `MAKE` is a path, which is all it ever needed to be.
 //!
 //! See `plan/decisions/multicall-identity.md`.
 // [spec:ronin:req:product.make-identity]
@@ -32,59 +34,39 @@ pub(crate) enum FrontEnd {
     Make,
 }
 
-/// The program names that select Make mode.
+/// The program names that select Make mode, and nothing else does.
 const MAKE_NAMES: [&str; 2] = ["make", "gmake"];
 
-/// Select Make mode whatever the executable is called.
-const MAKE_OPTION: &[u8] = b"--make";
-
-/// Select Ninja mode whatever the executable is called.
-const NINJA_OPTION: &[u8] = b"--ninja";
+/// Whether a program name selects the Make front end.
+///
+/// The whole file name has to be one of the two, not merely start with it: a
+/// `make.old` left behind by a package upgrade is not a request for Make mode.
+/// The one exception is the executable suffix, which is part of the name on
+/// Windows without being part of what the user typed.
+pub(crate) fn is_make_name(name: &str) -> bool {
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    MAKE_NAMES.contains(&name)
+}
 
 /// The front end `arguments` ask for.
 ///
-/// The file stem of the program name decides it, so a path and a symlink read
-/// the same, and an explicit `--make` or `--ninja` anywhere in the options
-/// overrides that. Both flags are ordinary options to whichever front end then
-/// runs, which is what lets the last one win rather than the first.
+/// The invoked program name decides it and nothing else does, so a path and a
+/// symlink read the same and no option anywhere can change the answer. See the
+/// module documentation for why there is no flag.
 // [spec:ronin:req:product.make-identity]
-/// Whether a program name selects the Make front end.
-pub(crate) fn is_make_name(stem: &str) -> bool {
-    MAKE_NAMES.contains(&stem)
-}
-
 pub(crate) fn select(arguments: &[BString]) -> FrontEnd {
-    let invoked = arguments.first().map_or(FrontEnd::Ninja, |program| {
+    arguments.first().map_or(FrontEnd::Ninja, |program| {
         let program = program.to_os_str_lossy();
-        let stem = Path::new(&*program)
-            .file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
+        let name = Path::new(&*program)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if is_make_name(&stem) {
+        if is_make_name(&name) {
             FrontEnd::Make
         } else {
             FrontEnd::Ninja
         }
-    });
-    arguments
-        .iter()
-        .skip(1)
-        // Ninja and Make both end their options at a bare `--`; a front end
-        // named after it is a target, not a request.
-        .take_while(|argument| argument.as_bytes() != b"--")
-        .fold(invoked, |selected, argument| match argument.as_bytes() {
-            MAKE_OPTION => FrontEnd::Make,
-            NINJA_OPTION => FrontEnd::Ninja,
-            _ => selected,
-        })
-}
-
-/// Whether `argument` is one of the two front-end selectors.
-///
-/// Both front ends have already been told which one was chosen by the time
-/// they read their own command line, so both accept and ignore the flag.
-pub(crate) fn is_selector(argument: &[u8]) -> bool {
-    argument == MAKE_OPTION || argument == NINJA_OPTION
+    })
 }
 
 /// Runs Ronin as its executable does.
@@ -151,21 +133,26 @@ mod tests {
         assert_eq!(selected(&["make"]), FrontEnd::Make);
         assert_eq!(selected(&["gmake"]), FrontEnd::Make);
         assert_eq!(selected(&["/usr/local/bin/make"]), FrontEnd::Make);
+        assert_eq!(selected(&["make.exe"]), FrontEnd::Make);
         assert_eq!(selected(&["ronin"]), FrontEnd::Ninja);
         assert_eq!(selected(&["samu"]), FrontEnd::Ninja);
         assert_eq!(selected(&["./out/ninja"]), FrontEnd::Ninja);
-        // A name nobody claimed is Ninja's, which is what Ronin is.
+        // Every other name is Ninja's, which is what Ronin is. `make.old` and
+        // `cmake` are here because the old spelling compared the file *stem*
+        // and so answered Make for both.
         assert_eq!(selected(&["build-tool"]), FrontEnd::Ninja);
+        assert_eq!(selected(&["make.old"]), FrontEnd::Ninja);
+        assert_eq!(selected(&["/usr/bin/gmake.dpkg-dist"]), FrontEnd::Ninja);
+        assert_eq!(selected(&["cmake"]), FrontEnd::Ninja);
     }
 
+    /// The name is the whole answer, so the options are just words to whichever
+    /// front end it chose.
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn either_front_end_is_reachable_from_the_command_line() {
-        assert_eq!(selected(&["ronin", "--make"]), FrontEnd::Make);
-        assert_eq!(selected(&["make", "--ninja"]), FrontEnd::Ninja);
-        assert_eq!(selected(&["ronin", "--make", "--ninja"]), FrontEnd::Ninja);
-        assert_eq!(selected(&["make", "--ninja", "--make"]), FrontEnd::Make);
-        // Past `--` the word is a target both front ends will look up.
-        assert_eq!(selected(&["ronin", "--", "--make"]), FrontEnd::Ninja);
+    fn the_name_decides_whatever_the_options_say() {
+        assert_eq!(selected(&["make", "--ninja"]), FrontEnd::Make);
+        assert_eq!(selected(&["ronin", "--make"]), FrontEnd::Ninja);
+        assert_eq!(selected(&["gmake", "-j4", "all"]), FrontEnd::Make);
     }
 }

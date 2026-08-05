@@ -1570,6 +1570,13 @@ impl<'a> Builder<'a> {
             {
                 Some((_, value)) => {
                     let mut merged = value.clone();
+                    // MAKEFLAGS' publication leads with the space that follows
+                    // the letter group; MFLAGS' does not, because it is spelled
+                    // as a command line. Joining without checking runs the two
+                    // together into a single unparseable word.
+                    if !merged.is_empty() && !published.to_string_lossy().starts_with(' ') {
+                        merged.push(" ");
+                    }
                     merged.push(published);
                     *value = merged;
                 }

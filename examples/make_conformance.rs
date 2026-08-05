@@ -942,7 +942,9 @@ mod tests {
                 .collect(),
         };
         assert!(names_kati(&front_end("target/release/rkati", &[])));
-        assert!(!names_kati(&front_end("target/release/ronin", &["--make"])));
+        // Ronin's Make mode is reached by a make-named path, so what the script
+        // sees is that path and the scripts' own kati test does not match it.
+        assert!(!names_kati(&front_end("target/release/make", &[])));
     }
 
     // [spec:ronin:req:make.semantics/test]

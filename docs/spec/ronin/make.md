@@ -90,9 +90,10 @@ exactly the machinery a manifest-derived graph is.
 ## Product surface
 
 > [spec:ronin:req:product.make-identity]
-> The front end is selected by the invoked program name: `make` and `gmake`
-> select Make mode, `ninja`, `samu`, and `ronin` select Ninja mode. The
-> selection is overridable from the command line in both directions. Make mode
+> The front end is selected by the invoked program name and by nothing else.
+> The whole name must be `make` or `gmake` for Make mode; every other name,
+> Ronin's own included, selects Ninja mode. No command-line option selects a
+> front end, so `MAKE` is a path rather than a command line. Make mode
 > identifies itself as Ronin in its own diagnostics and does not claim to be
 > GNU Make except where a Makefile-visible variable requires a version string.
 
@@ -105,8 +106,11 @@ exactly the machinery a manifest-derived graph is.
 > run to have a status of its own.
 
 > [spec:ronin:req:make.recursive-invocation]
-> In Make mode `MAKE` names Ronin's own executable, so recursive invocation
-> re-enters Ronin rather than any other Make on the path.
+> In Make mode `MAKE` is a single word: the make-named path this invocation
+> arrived through, so recursive invocation re-enters Ronin rather than any
+> other Make on the path, and a consumer that execs the value rather than
+> running it through a shell succeeds. Switches and command-line assignments
+> reach a sub-make through `MAKEFLAGS`, never through `MAKE`.
 
 > [spec:ronin:req:make.jobserver]
 > Make mode participates in the GNU Make jobserver protocol as both client and

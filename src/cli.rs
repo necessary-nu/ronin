@@ -217,7 +217,6 @@ pub(crate) fn usage(program: &str) -> String {
             "  --shell SHELL  shell for commands, or 'none' to skip it when unneeded\n",
             "  --compat       hand every command to the shell, exactly as Ninja does\n",
             "  --color WHEN   colorize output: auto, always, never [default=auto]\n",
-            "  --make         read a Makefile instead, whatever this program is called\n",
             "\n",
             "  -C DIR   change to DIR before doing anything else\n",
             "  -f FILE  specify input build file [default={}]\n",
@@ -648,10 +647,6 @@ fn parse_run_arguments(
                     1,
                 )));
             }
-            // The front end was chosen before either parser ran, so the flag
-            // that chose it is an ordinary word to whichever one is reading.
-            // [spec:ronin:req:product.make-identity]
-            selector if crate::multicall::is_selector(selector) => {}
             b"--verbose" => invocation.build_options.verbose = true,
             b"--quiet" => invocation.build_options.quiet = true,
             b"--status" => {
