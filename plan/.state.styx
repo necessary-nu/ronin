@@ -476,4 +476,9 @@ impl_evidence (
         {impl_name target-impl, rule make.recursive-invocation}
         {impl_name target-impl, rule product.make-identity}
     )}
+    {id make-state-outside-the-tree, covered_rules (
+        make.state-outside-the-tree
+    ), covered_claims (
+        {impl_name target-impl, rule make.state-outside-the-tree}
+    )}
 )

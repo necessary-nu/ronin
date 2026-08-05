@@ -3919,6 +3919,9 @@ children (
             {
                 id make-state-outside-the-tree
                 title "Keep Ronin's build state out of a Makefile's directory"
+                implements {
+                    target-impl ([spec:ronin:req:make.state-outside-the-tree])
+                }
                 deps (make-mode-cli)
                 log (
                     {

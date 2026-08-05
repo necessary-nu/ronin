@@ -57,8 +57,8 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     }
     assert!(!INVENTORY.contains("unclassified"));
     assert!(!INVENTORY.contains("pending"));
-    assert_eq!(cases.len(), 160);
-    assert_eq!(by_class["defect"], 111);
+    assert_eq!(cases.len(), 159);
+    assert_eq!(by_class["defect"], 110);
     assert_eq!(by_class["recorded"], 17);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);

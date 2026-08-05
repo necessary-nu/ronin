@@ -21,7 +21,6 @@ family	build-order	the two tools schedule an order-only prerequisite at differen
 family	corpus-todo	the corpus annotates the case with a leading # TODO, which is how the vendored harness recorded that kati does not match GNU Make here.
 family	corpus-version-gate	the case gates its expectation on $(filter 4.2%,$(MAKE_VERSION)), so moving the oracle off the vendored harness's 4.2.1 pin changes which branch GNU Make takes.
 family	dependent-attribution	kati names the goal rather than the rule that actually wanted the missing prerequisite.
-family	directory-announcement	GNU Make brackets a -C build with Entering directory / Leaving directory; kati prints neither.
 family	error-location	GNU Make 4.0+ names the makefile line inside *** [Makefile:N: target] Error N; kati writes only the target.
 family	evaluation	the makefile evaluates to something else: a different value, a different rule chosen, or a directive kati does not implement.
 family	exit-status	GNU Make exits 2 when it abandons a build; kati exits 1. The status is documented and scripts branch on it.
@@ -193,5 +192,4 @@ case	werror_find_emulator.sh#script	extension	find-emulator	85a1da34d2f0645f
 case	werror_overriding_commands.sh#script	extension	kati-extension+quote-style	f946c792f5ed5905
 case	wildcard_cache.mk#test	recorded	evaluation+corpus-todo	db8677f9a98065fd
 case	wildcard_target.mk#test2	defect	exit-status+stop-suffix+identity-prefix	898406fad81a5bbc
-case	working_dir.sh#script	defect	directory-announcement	2806c395a9fe267d
 case	writable.sh#script	extension	kati-extension	2818a148795feda8

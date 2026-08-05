@@ -850,7 +850,12 @@ fn make_command(program: &std::path::Path, directory: &std::path::Path) -> Comma
         .env_remove("MAKEFLAGS")
         .env_remove("MFLAGS")
         .env_remove("CARGO_MAKEFLAGS")
-        .env_remove("MAKELEVEL");
+        .env_remove("MAKELEVEL")
+        // Make mode keeps its build state outside the tree, which means the
+        // developer's own cache unless a test says otherwise. Every case here
+        // builds in a directory named after its process, so without this each
+        // run would leave an entry behind that nothing ever collects.
+        .env("RONIN_STATE_HOME", directory.join("state"));
     command
 }
 
@@ -977,6 +982,279 @@ fn make_options_reach_the_scheduler_and_the_evaluation() {
         .output()
         .unwrap();
     assert!(!unknown.status.success());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A Makefile that records each recipe that ran, so a build's effect can be
+/// read back rather than inferred from what the scheduler printed.
+#[cfg(all(unix, feature = "make"))]
+fn make_case(label: &str, makefile: &str) -> PathBuf {
+    let directory = test_directory(label);
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("Makefile"), makefile).unwrap();
+    directory
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn always_make_rebuilds_what_is_already_up_to_date() {
+    let directory = make_case(
+        "make-always-make",
+        "out.txt: in.txt\n\tcat in.txt >> out.txt\n",
+    );
+    fs::write(directory.join("in.txt"), "line\n").unwrap();
+    let make = invoked_as(&directory, "make");
+    let run = |arguments: &[&str]| {
+        let output = make_command(&make, &directory).args(arguments).output();
+        let output = output.unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+
+    run(&[]);
+    assert_eq!(
+        fs::read_to_string(directory.join("out.txt")).unwrap(),
+        "line\n"
+    );
+
+    // Nothing changed, so an ordinary build runs nothing and -B runs it anyway.
+    run(&[]);
+    assert_eq!(
+        fs::read_to_string(directory.join("out.txt")).unwrap(),
+        "line\n"
+    );
+    run(&["-B"]);
+    assert_eq!(
+        fs::read_to_string(directory.join("out.txt")).unwrap(),
+        "line\nline\n"
+    );
+    run(&["--always-make"]);
+    assert_eq!(
+        fs::read_to_string(directory.join("out.txt")).unwrap(),
+        "line\nline\nline\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.question-status/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn question_mode_answers_in_the_status_and_builds_nothing() {
+    let directory = make_case("make-question", "out.txt: in.txt\n\tcp in.txt out.txt\n");
+    fs::write(directory.join("in.txt"), "source\n").unwrap();
+    let make = invoked_as(&directory, "make");
+    let ask = |arguments: &[&str]| {
+        let output = make_command(&make, &directory).args(arguments).output();
+        let output = output.unwrap();
+        (
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        )
+    };
+
+    // Something would have to run, and the question does not run it.
+    let (code, said) = ask(&["-q"]);
+    assert_eq!(code, Some(1), "{said}");
+    assert!(said.is_empty(), "{said}");
+    assert!(!directory.join("out.txt").exists());
+
+    assert_eq!(ask(&[]).0, Some(0));
+    // Now it is up to date, in both spellings.
+    assert_eq!(ask(&["-q"]).0, Some(0));
+    assert_eq!(ask(&["--question"]).0, Some(0));
+    // -B makes the same question answer that everything would run again.
+    assert_eq!(ask(&["-q", "-B"]).0, Some(1));
+
+    // A question that cannot be answered is neither of the two answers.
+    let (code, said) = ask(&["-q", "nothing-declares-this"]);
+    assert_eq!(code, Some(2), "{said}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn ignore_errors_runs_the_rest_of_the_recipe() {
+    let directory = make_case(
+        "make-ignore-errors",
+        "all:\n\tfalse\n\techo ran > ran.txt\n.PHONY: all\n",
+    );
+    let make = invoked_as(&directory, "make");
+    let stopped = make_command(&make, &directory).output().unwrap();
+    assert!(!stopped.status.success());
+    assert!(!directory.join("ran.txt").exists());
+
+    for spelling in ["-i", "--ignore-errors"] {
+        let _ = fs::remove_file(directory.join("ran.txt"));
+        let ignored = make_command(&make, &directory)
+            .arg(spelling)
+            .output()
+            .unwrap();
+        assert!(
+            ignored.status.success(),
+            "{spelling}: {}",
+            String::from_utf8_lossy(&ignored.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("ran.txt")).unwrap(),
+            "ran\n"
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn environment_overrides_outrank_the_makefiles_own_assignment() {
+    let directory = make_case(
+        "make-environment-overrides",
+        "WHERE = makefile\nall:\n\t@echo where=$(WHERE)\n.PHONY: all\n",
+    );
+    let make = invoked_as(&directory, "make");
+    let where_is = |arguments: &[&str]| {
+        let output = make_command(&make, &directory)
+            .args(arguments)
+            .env("WHERE", "environment")
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    // Make's ordinary precedence: the makefile beats the environment.
+    assert!(where_is(&[]).contains("where=makefile"));
+    for spelling in ["-e", "--environment-overrides"] {
+        let said = where_is(&[spelling]);
+        assert!(said.contains("where=environment"), "{spelling}: {said}");
+    }
+    // A command-line assignment still outranks both, which is what -e does not
+    // change.
+    assert!(where_is(&["-e", "WHERE=command-line"]).contains("where=command-line"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn no_builtin_rules_withdraws_the_rules_nobody_wrote() {
+    let directory = make_case("make-no-builtin-rules", "all: hello.o\n\t@echo linked\n");
+    fs::write(directory.join("hello.c"), "int main(void){return 0;}\n").unwrap();
+    let make = invoked_as(&directory, "make");
+    let run = |arguments: &[&str]| {
+        let _ = fs::remove_file(directory.join("hello.o"));
+        make_command(&make, &directory)
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+
+    // The built-in .c.o rule is the only thing that knows how to make hello.o.
+    let built = run(&[]);
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+    assert!(directory.join("hello.o").exists());
+
+    for spelling in ["-r", "--no-builtin-rules"] {
+        let refused = run(&[spelling]);
+        assert!(!refused.status.success(), "{spelling}");
+        let diagnostic = String::from_utf8_lossy(&refused.stderr);
+        assert!(diagnostic.contains("hello.o"), "{spelling}: {diagnostic}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn print_directory_brackets_the_build_with_the_directory_it_ran_in() {
+    let directory = make_case("make-print-directory", "all:\n\t@echo built\n.PHONY: all\n");
+    let make = invoked_as(&directory, "make");
+    let said = |arguments: &[&str]| {
+        let output = make_command(&make, &directory)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let here = directory.canonicalize().unwrap();
+    let entering = format!("ronin: Entering directory '{}'", here.display());
+    let leaving = format!("ronin: Leaving directory '{}'", here.display());
+
+    // Nothing moved, so nothing is announced.
+    assert!(!said(&[]).contains("directory"));
+
+    for spelling in ["-w", "--print-directory"] {
+        let reported = said(&[spelling]);
+        let lines = reported.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines.first(),
+            Some(&entering.as_str()),
+            "{spelling}: {reported}"
+        );
+        assert_eq!(
+            lines.last(),
+            Some(&leaving.as_str()),
+            "{spelling}: {reported}"
+        );
+        assert!(reported.contains("built"), "{spelling}: {reported}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_load_ceiling_is_read_in_every_spelling_and_a_bad_one_is_refused() {
+    let directory = make_case("make-load-average", "all:\n\t@echo built\n.PHONY: all\n");
+    let make = invoked_as(&directory, "make");
+    let run = |arguments: &[&str]| {
+        make_command(&make, &directory)
+            .args(arguments)
+            .output()
+            .unwrap()
+    };
+
+    for spelling in [
+        ["-l", "4"].as_slice(),
+        ["-l4.5"].as_slice(),
+        ["--load-average", "4.5"].as_slice(),
+        ["--load-average=4.5"].as_slice(),
+        // A bare -l lifts the ceiling rather than eating the goal after it.
+        ["-l", "all"].as_slice(),
+    ] {
+        let output = run(spelling);
+        assert!(
+            output.status.success(),
+            "{spelling:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("built"),
+            "{spelling:?}"
+        );
+    }
+
+    for spelling in ["-lnope", "--load-average=nope"] {
+        let refused = run(&[spelling]);
+        assert!(!refused.status.success(), "{spelling}");
+        let diagnostic = String::from_utf8_lossy(&refused.stderr);
+        assert!(
+            diagnostic.contains("invalid -l parameter"),
+            "{spelling}: {diagnostic}"
+        );
+    }
     fs::remove_dir_all(directory).unwrap();
 }
 

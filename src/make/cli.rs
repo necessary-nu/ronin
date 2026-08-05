@@ -53,9 +53,14 @@ struct Invocation {
     /// `VAR=value` in command-line order, which is the order Make applies them.
     variables: Vec<Bytes>,
     jobs: Option<JobLimit>,
-    keep_going: bool,
-    dry_run: bool,
-    silent: bool,
+    /// The load average above which no further recipe starts. `-l` with no
+    /// number lifts the limit rather than imposing one, which is what a limit
+    /// of zero already means to the scheduler.
+    load: Option<f64>,
+    /// One bit per [`Switch`] the command line gave. Every switch here is
+    /// answered the same way — it was given or it was not — and a field each is
+    /// what would let a spelling and a meaning drift apart.
+    switches: u16,
 }
 
 impl Invocation {
@@ -66,10 +71,17 @@ impl Invocation {
             goals: Vec::new(),
             variables: Vec::new(),
             jobs: None,
-            keep_going: false,
-            dry_run: false,
-            silent: false,
+            load: None,
+            switches: 0,
         }
+    }
+
+    const fn add(&mut self, switch: Switch) {
+        self.switches |= switch.bit();
+    }
+
+    const fn given(&self, switch: Switch) -> bool {
+        self.switches & switch.bit() != 0
     }
 
     /// The switches a sub-make has to be told about again.
@@ -79,16 +91,92 @@ impl Invocation {
     /// its children draw on and rewriting that would cost them the budget.
     fn propagated(&self) -> Vec<OsString> {
         let mut propagated = Vec::new();
-        for (set, flag) in [
-            (self.keep_going, "-k"),
-            (self.dry_run, "-n"),
-            (self.silent, "-s"),
+        for (switch, spelling) in [
+            (Switch::AlwaysMake, "-B"),
+            (Switch::EnvironmentOverrides, "-e"),
+            (Switch::IgnoreErrors, "-i"),
+            (Switch::KeepGoing, "-k"),
+            (Switch::DryRun, "-n"),
+            (Switch::Question, "-q"),
+            (Switch::NoBuiltinRules, "-r"),
+            (Switch::Silent, "-s"),
+            (Switch::PrintDirectory, "-w"),
         ] {
-            if set {
-                propagated.push(OsString::from(flag));
+            if self.given(switch) {
+                propagated.push(OsString::from(spelling));
             }
         }
         propagated
+    }
+
+    /// Whether this invocation brackets its build with the directory it ran in.
+    ///
+    /// GNU Make's rule, which every option here is a part of: `-w` asks for the
+    /// pair outright, `-C` asks for it by implication because the paths a
+    /// recipe prints are about to stop resolving against the caller's
+    /// directory, `-s` withdraws the implication but not the request, and `-q`
+    /// prints nothing at all because its whole answer is a status.
+    const fn announcing(&self) -> bool {
+        !self.given(Switch::Question)
+            && (self.given(Switch::PrintDirectory)
+                || (!self.directories.is_empty() && !self.given(Switch::Silent)))
+    }
+}
+
+/// A GNU Make option that takes no argument: the whole of it is that it was
+/// given.
+///
+/// Both spellings resolve to one of these before anything is set, so a letter
+/// and its long name cannot come to mean different things.
+#[derive(Clone, Copy)]
+enum Switch {
+    AlwaysMake,
+    DryRun,
+    EnvironmentOverrides,
+    IgnoreErrors,
+    KeepGoing,
+    NoBuiltinRules,
+    PrintDirectory,
+    Question,
+    Silent,
+}
+
+impl Switch {
+    /// The switch one letter names, which is how a cluster like `-ki` reads.
+    const fn short(letter: u8) -> Option<Self> {
+        Some(match letter {
+            b'B' => Self::AlwaysMake,
+            b'e' => Self::EnvironmentOverrides,
+            b'i' => Self::IgnoreErrors,
+            b'k' => Self::KeepGoing,
+            b'n' => Self::DryRun,
+            b'q' => Self::Question,
+            b'r' => Self::NoBuiltinRules,
+            b's' => Self::Silent,
+            b'w' => Self::PrintDirectory,
+            _ => return None,
+        })
+    }
+
+    /// The switch a long name names. GNU Make spells `-n` three ways and `-s`
+    /// two, and every spelling is the one switch.
+    fn long(name: &[u8]) -> Option<Self> {
+        Some(match name {
+            b"--always-make" => Self::AlwaysMake,
+            b"--dry-run" | b"--just-print" | b"--recon" => Self::DryRun,
+            b"--environment-overrides" => Self::EnvironmentOverrides,
+            b"--ignore-errors" => Self::IgnoreErrors,
+            b"--keep-going" => Self::KeepGoing,
+            b"--no-builtin-rules" => Self::NoBuiltinRules,
+            b"--print-directory" => Self::PrintDirectory,
+            b"--question" => Self::Question,
+            b"--silent" | b"--quiet" => Self::Silent,
+            _ => return None,
+        })
+    }
+
+    const fn bit(self) -> u16 {
+        1 << self as u16
     }
 }
 
@@ -112,11 +200,21 @@ fn usage() -> String {
             "  -f FILE  read FILE as the makefile [default={default}]\n",
             "  -C DIR   change to DIR before reading anything, once per option\n",
             "  -j [N]   run N recipes at once, or as many as are ready\n",
+            "  -l [N]   start no recipe while the load average is above N\n",
+            "  -B       rebuild every target, whatever its timestamps say\n",
+            "  -e       let the environment outrank the makefile's assignments\n",
+            "  -i       ignore the status of every recipe line\n",
             "  -k       keep going after a recipe fails\n",
             "  -n       print the recipes without running them\n",
+            "  -q       report whether the goals are up to date, and build nothing\n",
+            "  -r       do not read the built-in rules\n",
             "  -s       do not report what is being built\n",
+            "  -w       announce the directory the build runs in\n",
             "  --ninja  read a Ninja manifest instead, whatever this program is called\n",
-            "  --version, --help\n"
+            "  --version, --help\n",
+            "\n",
+            "Each switch is also spelled as GNU Make's long option, and the ones\n",
+            "taking no argument cluster: -ki is -k and -i.\n"
         ),
         name = PRODUCT_NAME,
         default = DEFAULT_MAKEFILES.join(", "),
@@ -208,6 +306,60 @@ fn jobs_value(
     JobLimit::fixed(count).ok_or_else(invalid)
 }
 
+/// `-l`'s argument, which stands alone only when it is a number.
+///
+/// The same shape as `-j`'s, for the same reason: `make -l all` is one goal and
+/// no load limit at all, so reading the next word unconditionally would swallow
+/// it. A bare `-l` lifts the limit, which is the zero the scheduler reads as
+/// "do not consult the load average".
+fn load_value(arguments: &[BString], index: &mut usize, attached: &[u8]) -> Result<f64, Error> {
+    let numeric = |argument: &&BString| {
+        !argument.is_empty()
+            && argument
+                .iter()
+                .all(|byte| byte.is_ascii_digit() || *byte == b'.')
+    };
+    let digits = if attached.is_empty() {
+        let Some(next) = arguments.get(*index + 1).filter(numeric) else {
+            return Ok(0.0);
+        };
+        *index += 1;
+        next.clone()
+    } else {
+        BString::from(attached)
+    };
+    digits
+        .to_str()
+        .ok()
+        .and_then(|digits| digits.parse::<f64>().ok())
+        .ok_or_else(|| CliError::InvalidParameter { option: "-l" }.into())
+}
+
+/// A long option carrying its value after an `=`, in the spellings that take
+/// one at all. Says whether the option was one of them.
+fn attached_long(
+    invocation: &mut Invocation,
+    option: &[u8],
+    arguments: &[BString],
+    index: &mut usize,
+) -> Result<bool, Error> {
+    if let Some(named) = option
+        .strip_prefix(b"--file=")
+        .or_else(|| option.strip_prefix(b"--makefile="))
+    {
+        invocation.makefile = Some(path_of(named)?);
+    } else if let Some(named) = option.strip_prefix(b"--directory=") {
+        invocation.directories.push(path_of(named)?);
+    } else if let Some(count) = option.strip_prefix(b"--jobs=") {
+        invocation.jobs = Some(jobs_value(arguments, index, count)?);
+    } else if let Some(load) = option.strip_prefix(b"--load-average=") {
+        invocation.load = Some(load_value(arguments, index, load)?);
+    } else {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 /// Read one Make command line.
 // [spec:ronin:req:product.make-identity]
 fn parse(arguments: &[BString]) -> Result<Action, Error> {
@@ -221,15 +373,18 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
             index += 1;
             continue;
         }
+        if let Some(switch) = Switch::long(argument) {
+            invocation.add(switch);
+            index += 1;
+            continue;
+        }
         match argument {
             b"--" => options_enabled = false,
             b"--version" => return Ok(Action::Immediate(reported(version()))),
             b"--help" => return Ok(Action::Immediate(reported(usage()))),
             selector if crate::multicall::is_selector(selector) => {}
-            b"--keep-going" => invocation.keep_going = true,
-            b"--dry-run" | b"--just-print" | b"--recon" => invocation.dry_run = true,
-            b"--silent" | b"--quiet" => invocation.silent = true,
             b"--jobs" => invocation.jobs = Some(jobs_value(arguments, &mut index, b"")?),
+            b"--load-average" => invocation.load = Some(load_value(arguments, &mut index, b"")?),
             b"--file" | b"--makefile" => {
                 let named = value(arguments, &mut index, b"", "--file")?;
                 invocation.makefile = Some(path_of(named.as_bytes())?);
@@ -239,16 +394,7 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
                 invocation.directories.push(path_of(named.as_bytes())?);
             }
             option if option.starts_with(b"--") => {
-                if let Some(named) = option
-                    .strip_prefix(b"--file=")
-                    .or_else(|| option.strip_prefix(b"--makefile="))
-                {
-                    invocation.makefile = Some(path_of(named)?);
-                } else if let Some(named) = option.strip_prefix(b"--directory=") {
-                    invocation.directories.push(path_of(named)?);
-                } else if let Some(count) = option.strip_prefix(b"--jobs=") {
-                    invocation.jobs = Some(jobs_value(arguments, &mut index, count)?);
-                } else {
+                if !attached_long(&mut invocation, option, arguments, &mut index)? {
                     return Ok(refuse(format_args!(
                         "unrecognized option '{}'",
                         option.to_str_lossy()
@@ -260,14 +406,20 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
                 while short < argument.len() {
                     let option = argument[short];
                     short += 1;
+                    if let Some(switch) = Switch::short(option) {
+                        invocation.add(switch);
+                        continue;
+                    }
                     match option {
-                        b'k' => invocation.keep_going = true,
-                        b'n' => invocation.dry_run = true,
-                        b's' => invocation.silent = true,
                         b'h' => return Ok(Action::Immediate(reported(usage()))),
                         b'j' => {
                             invocation.jobs =
                                 Some(jobs_value(arguments, &mut index, &argument[short..])?);
+                            short = argument.len();
+                        }
+                        b'l' => {
+                            invocation.load =
+                                Some(load_value(arguments, &mut index, &argument[short..])?);
                             short = argument.len();
                         }
                         b'f' | b'C' => {
@@ -379,7 +531,13 @@ fn session_for(
         makefile: Some(makefile.as_os_str().to_owned()),
         num_jobs: jobs,
         num_cpus: jobs,
-        is_silent_mode: invocation.silent,
+        is_silent_mode: invocation.given(Switch::Silent),
+        // The three options whose whole effect is on evaluation rather than on
+        // the build: what the makefile starts with, what outranks it, and
+        // whether a recipe line's status is worth stopping for.
+        no_builtin_rules: invocation.given(Switch::NoBuiltinRules),
+        environment_overrides: invocation.given(Switch::EnvironmentOverrides),
+        ignore_errors: invocation.given(Switch::IgnoreErrors),
         cl_vars: variables,
         subkati_args: recursive_command(executable, invocation),
         ..Flags::default()
@@ -432,13 +590,20 @@ fn build_options(
         jobs: invocation.jobs.unwrap_or(JobLimit::Auto),
         // GNU Make's -k has no count: it stops when nothing is left that could
         // run, which is what an unbounded failure limit means here.
-        maxfail: if invocation.keep_going { usize::MAX } else { 1 },
-        dryrun: invocation.dry_run,
+        maxfail: if invocation.given(Switch::KeepGoing) {
+            usize::MAX
+        } else {
+            1
+        },
+        dryrun: invocation.given(Switch::DryRun),
         // Make's `-n` exists to show the recipes rather than to run them, so it
         // asks for the commands themselves and not for the descriptions a
         // build would otherwise report.
-        verbose: invocation.dry_run,
-        quiet: invocation.silent,
+        verbose: invocation.given(Switch::DryRun),
+        quiet: invocation.given(Switch::Silent),
+        // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
+        // further while the load average is above it, and zero is no ceiling.
+        maxload: invocation.load.unwrap_or_default(),
         working_directory,
         ..BuildOptions::default()
     };
@@ -483,6 +648,26 @@ fn enter_directories(directories: &[PathBuf]) -> Result<PathBuf, Error> {
     std::env::current_dir().map_err(|source| CliError::CurrentDirectory { source }.into())
 }
 
+/// What an invocation with nothing to read reports.
+///
+/// The announcement is a pair or it is nothing: an Entering with no Leaving
+/// leaves every parser reading them resolving paths against a directory the
+/// build has already left.
+fn no_makefile(reported: String, announcing: bool, directory: &Path) -> RunResult {
+    departed(
+        RunResult {
+            stdout: terminated(reported),
+            stderr: format!(
+                "{PRODUCT_NAME}: *** No targets specified and no makefile found.  Stop.\n"
+            )
+            .into_bytes(),
+            exit_code: 1,
+        },
+        announcing,
+        directory,
+    )
+}
+
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.recursive-invocation]
@@ -498,21 +683,13 @@ pub(crate) fn run(
     };
     let mut reported = String::new();
     let directory = enter_directories(&invocation.directories)?;
-    if !invocation.directories.is_empty() {
-        // GNU Make announces a `-C` build the same way, because every error
-        // parser that inherited its convention reads this line to resolve the
-        // relative paths a compiler then prints.
-        let announcement = format!(
-            "{PRODUCT_NAME}: Entering directory `{}'",
-            directory.display()
-        );
-        match output.as_deref_mut() {
-            Some(sink) => {
-                writeln!(sink, "{announcement}").map_err(CliError::write_output)?;
-                sink.flush().map_err(CliError::write_output)?;
-            }
-            None => reported.push_str(&announcement),
-        }
+    let announcing = invocation.announcing();
+    if announcing {
+        say(
+            &mut output,
+            &mut reported,
+            &announcement("Entering", &directory),
+        )?;
     }
     let working_directory = crate::os::WorkingDirectory::new(&directory)
         .map_err(|source| CliError::CurrentDirectory { source })?;
@@ -522,14 +699,7 @@ pub(crate) fn run(
         .clone()
         .or_else(|| default_makefile(&directory))
     else {
-        return Ok(RunResult {
-            stdout: Vec::new(),
-            stderr: format!(
-                "{PRODUCT_NAME}: *** No targets specified and no makefile found.  Stop.\n"
-            )
-            .into_bytes(),
-            exit_code: 1,
-        });
+        return Ok(no_makefile(reported, announcing, &directory));
     };
 
     let level = runner
@@ -553,10 +723,19 @@ pub(crate) fn run(
             return Ok(RunResult {
                 stdout: terminated(reported),
                 stderr: terminated(failure.to_string()),
-                exit_code: 1,
-            })
+                // A makefile that will not evaluate is a question `-q` could
+                // not answer, which Make reports as two rather than as one.
+                exit_code: if invocation.given(Switch::Question) {
+                    2
+                } else {
+                    1
+                },
+            });
         }
     };
+    if invocation.given(Switch::AlwaysMake) {
+        graph.rebuild_everything();
+    }
     let (mut persistence, warning) = Persistence::open(&mut graph, &directory)?;
     if let Some(warning) = warning {
         reported.push_str(&warning);
@@ -571,6 +750,16 @@ pub(crate) fn run(
         build = build.diagnostics(sink);
     }
     let planned = build.plan(&targets);
+    if invocation.given(Switch::Question) {
+        let question = planned.map(|planned| planned.already_up_to_date());
+        let flushed = persistence.finish();
+        let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
+        return Ok(departed(
+            answered(reported, question),
+            announcing,
+            &directory,
+        ));
+    }
     let outcome = planned.and_then(|planned| {
         let up_to_date = planned.already_up_to_date();
         planned.run().map(|outcome| (up_to_date, outcome))
@@ -578,7 +767,81 @@ pub(crate) fn run(
     let flushed = persistence.finish();
     let (up_to_date, outcome) = outcome?;
     flushed?;
-    Ok(finished(reported, up_to_date, &outcome, invocation.silent))
+    Ok(departed(
+        finished(
+            reported,
+            up_to_date,
+            &outcome,
+            invocation.given(Switch::Silent),
+        ),
+        announcing,
+        &directory,
+    ))
+}
+
+/// One half of GNU Make's directory announcement, in GNU Make's own words.
+///
+/// Every error parser that inherited the convention reads this pair to resolve
+/// the relative paths a compiler then prints, so the wording and the quoting
+/// are Make 4.4's rather than Ninja's; only the name in front is Ronin's.
+// [spec:ronin:req:product.make-identity]
+fn announcement(verb: &str, directory: &Path) -> String {
+    format!("{PRODUCT_NAME}: {verb} directory '{}'", directory.display())
+}
+
+/// Put a line where the caller will see it, in the order the build saw it.
+///
+/// A caller that gave a sink is watching the build happen and gets the line as
+/// it is said; a caller that did not is handed it back with the result.
+fn say(
+    output: &mut Option<&mut dyn Write>,
+    reported: &mut String,
+    line: &str,
+) -> Result<(), Error> {
+    if let Some(sink) = output.as_deref_mut() {
+        writeln!(sink, "{line}").map_err(CliError::write_output)?;
+        sink.flush().map_err(CliError::write_output)?;
+    } else {
+        reported.push_str(line);
+        reported.push('\n');
+    }
+    Ok(())
+}
+
+/// Close the directory announcement this invocation opened.
+///
+/// Last of everything the invocation says, which is where GNU Make puts it and
+/// where a parser reading the pair stops resolving paths against the directory.
+fn departed(mut result: RunResult, announcing: bool, directory: &Path) -> RunResult {
+    if announcing {
+        result
+            .stdout
+            .extend_from_slice(&terminated(announcement("Leaving", directory)));
+    }
+    result
+}
+
+/// What `-q` reports, which is a status and nothing else.
+///
+/// GNU Make's question mode runs no recipe and says nothing about the build:
+/// zero says the goals are already up to date, one says something would have to
+/// run, and two says the question could not be answered at all. That convention
+/// is Make's rather than Ninja's, and it governs here because no build ran to
+/// have a status of its own.
+// [spec:ronin:req:make.question-status]
+fn answered(reported: String, question: Result<bool, Error>) -> RunResult {
+    match question {
+        Ok(up_to_date) => RunResult {
+            stdout: terminated(reported),
+            stderr: Vec::new(),
+            exit_code: i32::from(!up_to_date),
+        },
+        Err(failure) => RunResult {
+            stdout: terminated(reported),
+            stderr: terminated(crate::util::diagnostic(PRODUCT_NAME, failure)),
+            exit_code: 2,
+        },
+    }
 }
 
 /// What the invocation reports about a build that ran.
@@ -604,7 +867,7 @@ fn finished(reported: String, up_to_date: bool, outcome: &Outcome, silent: bool)
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Action, Invocation};
+    use super::{parse, Action, Invocation, Switch};
     use crate::build::JobLimit;
     use crate::util::BString;
     use std::path::PathBuf;
@@ -627,8 +890,8 @@ mod tests {
             "make", "-j8", "-k", "-n", "-f", "other.mk", "all", "FOO=bar",
         ]);
         assert_eq!(invocation.jobs, JobLimit::fixed(8));
-        assert!(invocation.keep_going);
-        assert!(invocation.dry_run);
+        assert!(invocation.given(Switch::KeepGoing));
+        assert!(invocation.given(Switch::DryRun));
         assert_eq!(invocation.makefile, Some(PathBuf::from("other.mk")));
         assert_eq!(invocation.goals, vec![BString::from("all")]);
         assert_eq!(
@@ -641,7 +904,7 @@ mod tests {
     #[test]
     fn clustered_switches_and_repeated_directories_read_as_make_reads_them() {
         let invocation = parsed(&["make", "-kn", "-C", "a", "-C", "b"]);
-        assert!(invocation.keep_going && invocation.dry_run);
+        assert!(invocation.given(Switch::KeepGoing) && invocation.given(Switch::DryRun));
         assert_eq!(
             invocation.directories,
             vec![PathBuf::from("a"), PathBuf::from("b")]
@@ -677,18 +940,169 @@ mod tests {
         );
     }
 
+    /// The diagnostic an argument list is refused with, or nothing if it
+    /// described a build after all.
+    fn refused(arguments: &[&str]) -> Option<String> {
+        let arguments = arguments
+            .iter()
+            .map(|argument| BString::from(*argument))
+            .collect::<Vec<_>>();
+        match parse(&arguments).unwrap() {
+            Action::Immediate(result) => {
+                assert_eq!(result.exit_code, 1);
+                Some(String::from_utf8_lossy(&result.stderr).into_owned())
+            }
+            Action::Execute(_) => None,
+        }
+    }
+
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn each_switch_reads_the_same_from_its_letter_and_from_its_long_name() {
+        for (letter, name) in [
+            ("-B", "--always-make"),
+            ("-e", "--environment-overrides"),
+            ("-i", "--ignore-errors"),
+            ("-k", "--keep-going"),
+            ("-n", "--dry-run"),
+            ("-q", "--question"),
+            ("-r", "--no-builtin-rules"),
+            ("-s", "--silent"),
+            ("-w", "--print-directory"),
+        ] {
+            let short = parsed(&["make", letter]).switches;
+            assert_eq!(
+                short.count_ones(),
+                1,
+                "{letter} set no switch, or more than one"
+            );
+            assert_eq!(
+                short,
+                parsed(&["make", name]).switches,
+                "{letter} differs from {name}"
+            );
+        }
+    }
+
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn a_cluster_of_the_new_switches_reads_as_make_reads_it() {
+        let invocation = parsed(&["make", "-kiBrq", "all"]);
+        assert!(invocation.given(Switch::KeepGoing));
+        assert!(invocation.given(Switch::IgnoreErrors));
+        assert!(invocation.given(Switch::AlwaysMake));
+        assert!(invocation.given(Switch::NoBuiltinRules));
+        assert!(invocation.given(Switch::Question));
+        assert_eq!(invocation.goals, vec![BString::from("all")]);
+    }
+
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn a_lone_load_flag_takes_a_number_and_leaves_a_goal_alone() {
+        // A bare -l lifts the limit rather than imposing one, and the word
+        // after it is still a goal.
+        let lifted = parsed(&["make", "-l", "all"]);
+        assert_eq!(lifted.load, Some(0.0));
+        assert_eq!(lifted.goals, vec![BString::from("all")]);
+
+        for spelling in [
+            ["-l", "2.5"].as_slice(),
+            ["-l2.5"].as_slice(),
+            ["--load-average", "2.5"].as_slice(),
+            ["--load-average=2.5"].as_slice(),
+        ] {
+            let mut arguments = vec!["make"];
+            arguments.extend_from_slice(spelling);
+            arguments.push("all");
+            let invocation = parsed(&arguments);
+            assert_eq!(invocation.load, Some(2.5), "{spelling:?}");
+            assert_eq!(invocation.goals, vec![BString::from("all")], "{spelling:?}");
+        }
+    }
+
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn a_load_ceiling_reaches_the_setting_the_scheduler_already_honours() {
+        let directory = std::env::temp_dir();
+        let runner = crate::cli::Runner::new(&directory).unwrap();
+        let options = |arguments: &[&str]| {
+            let working = crate::os::WorkingDirectory::new(&directory).unwrap();
+            super::build_options(&parsed(arguments), &runner, working, 0).unwrap()
+        };
+        assert!((options(&["make", "-l", "2.5"]).maxload - 2.5).abs() < f64::EPSILON);
+        // Zero is what the scheduler reads as no ceiling, and it is what an
+        // invocation that never mentioned one leaves behind.
+        assert!(options(&["make"]).maxload.abs() < f64::EPSILON);
+        assert!(options(&["make", "-l"]).maxload.abs() < f64::EPSILON);
+    }
+
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn the_announcement_is_asked_for_by_w_and_implied_by_c() {
+        assert!(!parsed(&["make"]).announcing());
+        assert!(parsed(&["make", "-w"]).announcing());
+        assert!(parsed(&["make", "-C", "sub"]).announcing());
+        // -s withdraws what -C implied but not what -w asked for outright,
+        // and -q says nothing at all because its answer is a status.
+        assert!(!parsed(&["make", "-s", "-C", "sub"]).announcing());
+        assert!(parsed(&["make", "-s", "-w"]).announcing());
+        assert!(!parsed(&["make", "-w", "-q"]).announcing());
+    }
+
+    // [spec:ronin:req:make.recursive-invocation/test]
+    #[test]
+    fn a_sub_make_is_told_every_switch_it_would_otherwise_lose() {
+        let invocation = parsed(&["make", "-Beiqrw", "all"]);
+        let command = super::recursive_command(std::path::Path::new("/opt/ronin"), &invocation);
+        assert_eq!(
+            command,
+            ["/opt/ronin", "--make", "-B", "-e", "-i", "-q", "-r", "-w"]
+                .map(std::ffi::OsString::from)
+                .to_vec()
+        );
+    }
+
     // [spec:ronin:req:product.make-identity/test]
     #[test]
     fn an_option_no_front_end_has_is_refused_by_name() {
-        let arguments = [BString::from("make"), BString::from("--always-make")];
-        let Action::Immediate(result) = parse(&arguments).unwrap() else {
-            panic!("an unknown option cannot describe a build");
-        };
-        assert_eq!(result.exit_code, 1);
-        let diagnostic = String::from_utf8_lossy(&result.stderr);
+        let diagnostic = refused(&["make", "--print-data-base"]).expect("an unknown option");
         assert!(
-            diagnostic.starts_with("ronin: unrecognized option '--always-make'"),
+            diagnostic.starts_with("ronin: unrecognized option '--print-data-base'"),
             "{diagnostic}"
         );
+    }
+
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn the_options_no_machinery_answers_are_still_refused_by_name() {
+        // Each needs work the graph does not take — a per-node timestamp
+        // override, an include search path, a database dump — and being
+        // refused is what keeps an invocation that asks for one from quietly
+        // building something else.
+        for option in ["-t", "-o", "-W", "-I", "-p"] {
+            let diagnostic = refused(&["make", option, "x"])
+                .unwrap_or_else(|| panic!("{option} cannot describe a build"));
+            assert!(
+                diagnostic.starts_with(&format!(
+                    "ronin: invalid option -- '{}'",
+                    option.trim_start_matches('-')
+                )),
+                "{diagnostic}"
+            );
+        }
+        for option in [
+            "--touch",
+            "--old-file",
+            "--what-if",
+            "--include-dir",
+            "--debug",
+        ] {
+            let diagnostic = refused(&["make", option, "x"])
+                .unwrap_or_else(|| panic!("{option} cannot describe a build"));
+            assert!(
+                diagnostic.starts_with(&format!("ronin: unrecognized option '{option}'")),
+                "{diagnostic}"
+            );
+        }
     }
 }

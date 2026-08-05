@@ -59,6 +59,34 @@ exactly the machinery a manifest-derived graph is.
 > name does not create, read, or modify a variable binding, and a session's
 > variable scope can be replaced without reinterning its symbols.
 
+## Persistent state
+
+> [spec:ronin:req:make.state-outside-the-tree]
+> A Make-mode build writes nothing of its own into the tree it builds: the
+> directory holds exactly what the Makefile's recipes put there, as it does
+> after a GNU Make build. The state that makes the next build incremental is
+> relocated rather than discarded, because the build log is what notices a
+> changed command and the dependency log is what carries a compiler's reported
+> headers to the next build, and GNU Make can do neither. Both keep Ninja's
+> formats and Ninja's names, in a per-tree entry under Ronin's state home:
+> `$RONIN_STATE_HOME` when it names an absolute path, otherwise
+> `$XDG_CACHE_HOME/ronin`, otherwise the platform's per-user cache directory,
+> which is `$HOME/.cache/ronin` and `$HOME/Library/Caches/ronin` on macOS. A
+> build with none of those to work from is refused, naming them, rather than
+> falling back into the tree.
+>
+> The entry is keyed by the identity of the directory the build runs in, which
+> is that directory's resolved absolute path together with its inode: two
+> checkouts of one project never share an entry, and a tree that was moved or
+> replaced since it was last built starts from nothing rather than inheriting
+> what the directory recorded before. Losing usable state is the preferred
+> failure, because a build that rebuilds more than it had to is slow and one
+> that rebuilds less is wrong. Each entry names the tree it belongs to, and an
+> entry claimed by a different tree is refused rather than read.
+>
+> Ninja mode is unaffected. A manifest's `.ninja_log` and `.ninja_deps` stay in
+> its build directory, where `compat.persistent-state` requires them.
+
 ## Product surface
 
 > [spec:ronin:req:product.make-identity]
@@ -67,6 +95,14 @@ exactly the machinery a manifest-derived graph is.
 > selection is overridable from the command line in both directions. Make mode
 > identifies itself as Ronin in its own diagnostics and does not claim to be
 > GNU Make except where a Makefile-visible variable requires a version string.
+
+> [spec:ronin:req:make.question-status]
+> Make mode's `-q` answers whether the goals are already up to date and runs
+> nothing at all, and it answers in the exit status alone: zero when nothing
+> would run, one when something would, two when the question could not be
+> answered. This is the one place a Make invocation's status is GNU Make's
+> rather than the build outcome `compatibility.md` governs, because no build is
+> run to have a status of its own.
 
 > [spec:ronin:req:make.recursive-invocation]
 > In Make mode `MAKE` names Ronin's own executable, so recursive invocation

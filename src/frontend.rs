@@ -31,6 +31,7 @@ use std::num::NonZeroUsize;
 mod execute;
 
 pub use crate::parse::{load_manifest, Manifest, ManifestOptions};
+pub(crate) use execute::StatePlacement;
 pub use execute::{Build, Jobs, Outcome, Persistence, Planned};
 
 /// A path interned in a graph.
@@ -208,6 +209,10 @@ pub struct BuildGraph {
     defaults: Vec<NodeId>,
     /// One buffer for canonicalizing the paths that are not canonical already.
     canonical: Vec<u8>,
+    /// Where the front end that built this graph keeps the state that makes a
+    /// second build incremental. Ninja's contract puts it beside the build and
+    /// that is what a graph carries until a front end says otherwise.
+    pub(crate) state_placement: StatePlacement,
 }
 
 impl Default for BuildGraph {
@@ -227,6 +232,7 @@ impl BuildGraph {
             state,
             defaults: Vec::new(),
             canonical: Vec::new(),
+            state_placement: StatePlacement::default(),
         }
     }
 
@@ -505,6 +511,20 @@ impl BuildGraph {
     /// Records `node` as a target to build when none are named.
     pub fn add_default(&mut self, node: Node) {
         self.defaults.push(node.0);
+    }
+
+    /// Makes every edge one that is out of date whenever it is reached.
+    ///
+    /// GNU Make's `-B`: every recipe the goals reach runs, whatever the
+    /// outputs' timestamps say and whatever the last build recorded. That is
+    /// the property `.PHONY` gives one edge, asked of all of them, so it is
+    /// stated the same way rather than by a second notion of dirtiness the
+    /// scheduler would have to consult.
+    // [spec:ronin:req:make.phony-always-dirty]
+    pub fn rebuild_everything(&mut self) {
+        for edge in self.arenas.edge_ids() {
+            self.arenas.edge_mut(edge).always_dirty = true;
+        }
     }
 
     // [spec:ronin:def:parse.defaultnodes-fn]

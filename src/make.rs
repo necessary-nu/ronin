@@ -41,7 +41,7 @@ pub use sink::GraphSink;
 // [spec:ronin:req:product.make-identity]
 pub const MAKE_VERSION: &str = "4.4.1";
 
-use crate::frontend::{BuildGraph, FrontendError};
+use crate::frontend::{BuildGraph, FrontendError, StatePlacement};
 use kati::evaluate::{evaluate, Evaluated};
 use kati::ninja::emit_build;
 use kati::session::Session;
@@ -100,6 +100,12 @@ impl MakeError {
 /// [`Persistence`](crate::frontend::Persistence) makes incremental, with the
 /// Makefile's own default goal recorded as the graph's default target.
 ///
+/// The graph also carries the half of Make's compatibility contract that
+/// persistence answers to: a build leaves the tree holding exactly what the
+/// Makefile put there, so the state that makes the next build incremental is
+/// kept outside it. Ninja's contract says the opposite and a manifest's graph
+/// says so too, which is why the graph is what says it rather than the caller.
+///
 /// # Errors
 ///
 /// Returns [`MakeError::Evaluate`] for a Makefile Make itself rejects — a
@@ -107,12 +113,14 @@ impl MakeError {
 /// [`MakeError::Construct`] for one that evaluates but describes a graph the
 /// engine cannot hold, such as two rules generating one output.
 // [spec:ronin:req:make.graph-direct]
+// [spec:ronin:req:make.state-outside-the-tree]
 pub fn load_makefile(session: Session) -> Result<BuildGraph, MakeError> {
     let Evaluated { mut ev, nodes } =
         evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
     let mut sink = GraphSink::new();
     let emitted = emit_build(&nodes, &mut ev, &mut sink);
-    let graph = sink.into_graph().map_err(MakeError::Construct)?;
+    let mut graph = sink.into_graph().map_err(MakeError::Construct)?;
+    graph.state_placement = StatePlacement::OutsideTheTree;
     emitted.map_err(|error| MakeError::evaluate(&error))?;
     ev.finish().map_err(|error| MakeError::evaluate(&error))?;
     Ok(graph)
