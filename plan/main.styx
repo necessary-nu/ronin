@@ -3732,7 +3732,14 @@ children (
                 implements {
                     target-impl ([spec:ronin:req:make.jobserver])
                 }
-                deps (make-mode-cli)
+                log (
+                    {
+                        at 2026-08-05T08:24:19.659100336Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {
@@ -3741,7 +3748,6 @@ children (
                 implements {
                     target-impl ([spec:ronin:req:make.semantics])
                 }
-                deps (make-mode-cli)
             }
 
             {
@@ -3835,12 +3841,20 @@ children (
                 id kati-command-escapes
                 title "Separate Ninja escaping from Make command construction"
                 deps (kati-build-sink)
+                sealed true
                 log (
                     {
                         at 2026-08-05T06:57:29.771946174Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Opened from a hazard found closing kati-build-sink, and it blocks kati-graph-sink because getting it wrong is silent.\n\nThe sink was designed to carry unescaped data, and for paths it does: they cross as symbol handles, and escape_ninja moved into the writer. Commands are the exception, and not by oversight. translate_command at ninja.rs:312 rewrites a dollar to a doubled dollar, which is purely a Ninja escape, but it lives in gen_shell_script, which is command construction and which the sink design deliberately keeps in the front end. So the bytes crossing SinkRule::command are Ninja-escaped even though nothing else at that boundary is.\n\nWhy that is dangerous rather than merely untidy. Through the emitted manifest the escape is correct and round-trips: Ninja unescapes the pair when it evaluates the command, and the shell sees a single dollar. A graph sink writing the same bytes straight into an edge binding skips the unescaping entirely, so the shell sees two. Every Makefile using a shell variable is affected, and make-graph-equivalence cannot see it, because both sides of that comparison carry the same bytes — the whole point of that oracle is that the two paths agree, and here they would agree on being wrong.\n\nIt cannot be fixed by moving translate_command's dollar case into the writer on its own. strutil::escape_shell special-cases the doubled pair at strutil.rs:464, so the two escapes are written against each other and have to be untangled together. Both sites are confirmed present.\n\nThe gate is byte-identity of the emitted manifest, same as kati-build-sink: this is a refactor of where an escape happens, not a change to what gets written. The corpus and flag-matrix harnesses from that node are the right tool and should be reused rather than rebuilt.\n\nTwo smaller instances of the same shape are in scope. The default description is the literal \"build $out\" and the response file path is \"$out.rsp\"; both are Ninja expressions rather than strings, so a direct graph has to expand them itself or keep an evaluator alive for exactly two bindings."
+                    }
+
+                    {
+                        at 2026-08-05T08:29:17.026818872Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
