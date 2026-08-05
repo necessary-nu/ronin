@@ -75,6 +75,18 @@ pub(crate) struct Edge {
     pub(crate) input: IdVec<NodeId>,
     pub(crate) validation: IdVec<NodeId>,
     pub(crate) dyndep: Option<NodeId>,
+    /// Whether the edge is out of date whenever it is reached.
+    ///
+    /// A GNU Make `.PHONY` target has no file behind it, so neither the
+    /// filesystem nor the build log can answer whether its recipe has to run:
+    /// it runs whenever the target is asked for. Nothing about an edge's
+    /// inputs, outputs, or recorded history expresses that, so the edge says
+    /// it itself.
+    ///
+    /// This is not the built-in `phony` rule, which says an output aliases its
+    /// inputs and runs nothing at all. An edge can be either, both, or
+    /// neither.
+    pub(crate) always_dirty: bool,
     partitions: EdgePartitions,
 }
 
@@ -284,6 +296,7 @@ pub(crate) fn collect_stat_targets(
 }
 
 /// Recompute one edge after all of its inputs have already been evaluated.
+// [spec:ronin:req:make.phony-always-dirty]
 pub(crate) fn recompute_edge_dirty_with<F>(
     graph: &Graph,
     runtime: &mut RuntimeState,
@@ -315,7 +328,7 @@ where
         newest_input = newest_input.max(input.mtime());
     }
 
-    let dirty = if graph.is_phony_rule(edge_data.rule) {
+    let out_of_date = if graph.is_phony_rule(edge_data.rule) {
         let mut any_output_missing = false;
         for output in &edge_data.out {
             if runtime.node(*output).mtime().is_missing() {
@@ -350,6 +363,13 @@ where
             || oldest_recorded_output.is_some_and(|output_mtime| newest_input > output_mtime)
             || newest_input > oldest_output
     };
+
+    // An edge that declares itself never up to date is dirty whatever the
+    // comparison above concluded, which is what makes the build log's record
+    // of it beside the point rather than merely wrong. The comparison still
+    // runs: a phony edge settles its outputs' mtimes there, and a consumer of
+    // one reads them.
+    let dirty = edge_data.always_dirty || out_of_date;
 
     for output in &graph.edge(edge).out {
         runtime.node_mut(*output).set_dirty(dirty);
@@ -604,6 +624,7 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         input: IdVec::new(),
         validation: IdVec::new(),
         dyndep: None,
+        always_dirty: false,
         partitions: EdgePartitions::default(),
     });
     id
@@ -1332,6 +1353,58 @@ mod tests {
         let graph = parse_graph("build in_ph: phony in1\nbuild out1: cat in_ph\n");
         assert!(!recompute_with_mtimes(&graph, b"out1", &[("in1", 1), ("out1", 2)]).unwrap());
         assert!(recompute_with_mtimes(&graph, b"out1", &[("in1", 3), ("out1", 2)]).unwrap());
+    }
+
+    /// An edge that declares itself never up to date is dirty however the
+    /// filesystem and the build log answer, and its outputs carry that to
+    /// whatever consumes them — which is what `.PHONY` means and what neither
+    /// an mtime nor a recorded entry can say.
+    // [spec:ronin:req:make.phony-always-dirty/test]
+    #[test]
+    fn ronin_graph_an_always_dirty_edge_outranks_mtimes_and_the_build_log() {
+        let mut graph = Graph::default();
+        let root = mkenv(&mut graph, None);
+        let output = generated_node(&mut graph, root, "out", &["in"]);
+        let consumer = generated_node(&mut graph, root, "downstream", &["out"]);
+        let mtimes = [("in", 1), ("out", 2), ("downstream", 3)];
+
+        // Newer than its input, which is the whole of what the filesystem has
+        // to say about it.
+        let (dirty, _) = recompute_state_with_mtimes(&graph, b"downstream", &mtimes).unwrap();
+        assert!(!dirty);
+
+        let edge = graph.node(output).gen.unwrap();
+        graph.edge_mut(edge).always_dirty = true;
+        let mtimes = BTreeMap::from_iter(mtimes.map(|(path, mtime)| (path.to_owned(), mtime)));
+        let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        // And recorded by an earlier build with the mtime it still has, which
+        // is the whole of what the build log has to say about it.
+        runtime
+            .node_mut(output)
+            .set_log_mtime(FileTime::observed(2));
+        assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
+        assert!(runtime.node(output).dirty());
+    }
+
+    /// The two senses of phony are independent: an alias for its inputs can
+    /// also be one that is never up to date, and declaring the second must not
+    /// stop the first from settling the mtime a consumer compares against.
+    // [spec:ronin:req:make.phony-always-dirty/test]
+    #[test]
+    fn ronin_graph_an_always_dirty_phony_edge_still_propagates_its_input_mtime() {
+        let mut graph = parse_graph("build in_ph: phony in1\nbuild out1: cat in_ph\n");
+        let alias_output = nodeget(&graph, b"in_ph").unwrap();
+        let consumer = nodeget(&graph, b"out1").unwrap();
+        let alias = graph.node(alias_output).gen.unwrap();
+        graph.edge_mut(alias).always_dirty = true;
+
+        let mtimes = BTreeMap::from([("in1".to_owned(), 1), ("out1".to_owned(), 2)]);
+        let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
+        assert!(runtime.node(alias_output).dirty());
+        assert_eq!(runtime.node(alias_output).mtime(), FileTime::observed(1));
     }
 
     #[test]

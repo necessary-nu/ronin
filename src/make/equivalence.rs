@@ -7,19 +7,24 @@
 //! second one wrote. Two paths, one evaluation, and any disagreement is a defect
 //! in one of them rather than a difference between two runs.
 //!
-//! One difference is legitimate and is normalised away: `_kati_always_build_`
-//! is a synthetic input the writer invents so a manifest can express `.PHONY`.
-//! It names no file, nothing builds it, and a graph built directly has no
-//! reason to carry it, so the edge that declares it and every reference to it
-//! are dropped from the manifest's side before the two are compared.
+//! `_kati_always_build_` is decoded rather than dropped. It is a synthetic
+//! input the writer invents so that a manifest can say `.PHONY`: it names no
+//! file and nothing builds it, so an edge depending on it is out of date
+//! forever, which is the property spelled as a dependency. The direct graph
+//! states the same property on the edge, so the comparison reads both
+//! spellings back into one line and asserts they agree. The synthetic edge and
+//! the references to it stay out of the input lists, because there they would
+//! be a dependency the direct graph is right not to have.
 //!
-//! The writer's other two inventions are deliberately *not* normalised, because
+//! The writer's other two inventions are deliberately *not* decoded, because
 //! hiding a difference and not having one look identical from here.
-//! `phony_output` is compared like every other binding, so it shows up as a
-//! difference under `--use_ninja_phony_output`. `sandbox_disabled` is a rule
-//! binding Ninja does not define, so under `--emit_sandbox_disabled` the
-//! manifest is one Ronin refuses to read at all, and that reports as the
-//! manifest path refusing rather than as a comparison.
+//! `phony_output` is a binding Ronin does not read, so a manifest using it is
+//! genuinely a manifest that does not say `.PHONY` to Ronin; under
+//! `--use_ninja_phony_output` it is reported as a difference, both as a binding
+//! only one side carries and as the property only one side has.
+//! `sandbox_disabled` is a rule binding Ninja does not define, so under
+//! `--emit_sandbox_disabled` the manifest is one Ronin refuses to read at all,
+//! and that reports as the manifest path refusing rather than as a comparison.
 // [spec:ronin:req:make.graph-direct/test]
 
 use super::sink::GraphSink;
@@ -38,7 +43,8 @@ use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::Path;
 
-/// The input the writer invents for `.PHONY`, which the direct graph omits.
+/// The input the writer invents for `.PHONY`, which the direct graph states
+/// on the edge instead.
 const ALWAYS_BUILD: &[u8] = b"_kati_always_build_";
 
 /// Every binding kati can put on a rule or an edge.
@@ -127,6 +133,12 @@ enum Outcome {
 /// count, inputs in their three partitions, validations, the rule, the pool and
 /// its depth, and every binding — because a field left out of the description is
 /// a field the comparison cannot see.
+///
+/// Being never up to date is described once, from whichever of the two
+/// spellings the graph in hand uses: the edge's own declaration, which only
+/// construction can set, or a dependency on `_kati_always_build_`, which is all
+/// a manifest can say. One decoder over both sides is what turns the property
+/// into something the comparison asserts rather than something it hides.
 fn describe_edge(graph: &BuildGraph, edge: crate::graph::EdgeId) -> Option<(Vec<u8>, String)> {
     let arenas = graph.arenas();
     let stored = arenas.edge(edge);
@@ -139,6 +151,8 @@ fn describe_edge(graph: &BuildGraph, edge: crate::graph::EdgeId) -> Option<(Vec<
     let explicit = stored.explicit_input_count();
     let non_order_only = stored.non_order_only_input_count();
     let is_synthetic = |input: &&Vec<u8>| input.as_slice() != ALWAYS_BUILD;
+    let always_dirty =
+        stored.always_dirty || inputs.iter().any(|input| input.as_slice() == ALWAYS_BUILD);
 
     let key = outputs[..stored.explicit_output_count()].join(&b' ');
     let mut described = String::new();
@@ -187,6 +201,7 @@ fn describe_edge(graph: &BuildGraph, edge: crate::graph::EdgeId) -> Option<(Vec<
         &stored.validation.iter().map(path).collect::<Vec<_>>(),
         &mut described,
     );
+    let _ = writeln!(described, "  always dirty: {always_dirty}");
     let _ = writeln!(
         described,
         "  pool: {}",
@@ -358,9 +373,12 @@ in ordered:
     );
 }
 
+/// Both sides say `.PHONY`; only the spelling differs, and the comparison
+/// reads both spellings as the same property rather than excusing one of them.
 // [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.phony-always-dirty/test]
 #[test]
-fn a_phony_target_agrees_apart_from_the_synthetic_input() {
+fn a_phony_target_agrees_on_being_never_up_to_date() {
     agrees(
         "\
 .PHONY: clean all
@@ -487,9 +505,13 @@ all:
 }
 
 /// Android ninja's `phony_output` is the manifest's other way of saying
-/// `.PHONY`, so it is the writer's alone and shows up as a difference rather
-/// than being normalised away.
+/// `.PHONY`, and it is one Ronin does not read. Under that flag the emitted
+/// manifest genuinely describes a build whose `.PHONY` target can go up to
+/// date, so the difference is reported twice over — the binding only the
+/// manifest carries, and the property only the direct graph has — rather than
+/// being decoded away into an agreement that would not hold at build time.
 // [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.phony-always-dirty/test]
 #[test]
 fn phony_output_is_reported_as_a_difference_rather_than_hidden() {
     let outcome = Case::new(
@@ -505,6 +527,13 @@ all:
         Outcome::Compared(differences) => {
             assert!(
                 differences.iter().any(|why| why.contains("phony_output")),
+                "{differences:?}"
+            );
+            assert!(
+                differences
+                    .iter()
+                    .any(|why| why.contains("always dirty: true")
+                        && why.contains("always dirty: false")),
                 "{differences:?}"
             );
         }

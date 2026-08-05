@@ -117,6 +117,20 @@ pub struct EdgeSpec<'a> {
     pub order_only_inputs: &'a [Node],
     /// Targets built alongside this edge without being depended on.
     pub validations: &'a [Node],
+    /// Whether the edge is out of date whenever it is reached, however its
+    /// outputs compare against its inputs and against what the last build
+    /// recorded.
+    ///
+    /// This is GNU Make's `.PHONY`: a target with no file behind it, whose
+    /// recipe runs every time it is asked for. A Ninja manifest has no syntax
+    /// for it and this is the only way to ask for it, so a graph parsed from a
+    /// manifest never carries it.
+    ///
+    /// Distinct from building the edge with the `phony` rule, which makes an
+    /// output an alias for its inputs and runs nothing. The two combine: an
+    /// alias can also be one that is never up to date.
+    // [spec:ronin:req:make.phony-always-dirty]
+    pub always_dirty: bool,
     /// Bindings local to this edge, already expanded.
     pub bindings: Vec<(Binding, Vec<u8>)>,
 }
@@ -409,6 +423,7 @@ impl BuildGraph {
             stored.validation = validation;
             stored.set_explicit_output_count(spec.explicit_outputs.len());
             stored.set_input_partitions(explicit_inputs, non_order_only_inputs);
+            stored.always_dirty = spec.always_dirty;
         }
         for (name, value) in spec.bindings {
             self.arenas
@@ -569,6 +584,7 @@ mod tests {
             implicit_inputs: &[],
             order_only_inputs: &[],
             validations: &[],
+            always_dirty: false,
             bindings: Vec::new(),
         }
     }
@@ -592,6 +608,7 @@ mod tests {
                 implicit_inputs: &used[1..2],
                 order_only_inputs: &used[2..3],
                 validations: &used[3..],
+                always_dirty: true,
                 bindings: vec![(description, b"copying".to_vec())],
             })
             .unwrap();
@@ -603,6 +620,7 @@ mod tests {
         assert_eq!(stored.non_order_only_input_count(), 2);
         assert_eq!(stored.input.len(), 3);
         assert_eq!(stored.validation.len(), 1);
+        assert!(stored.always_dirty);
         // Every output names the edge, every input and validation is recorded
         // as using it, and `$in` and `$out` see only the explicit partitions.
         for output in &built {

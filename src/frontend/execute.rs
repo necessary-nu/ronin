@@ -425,6 +425,7 @@ mod tests {
                     implicit_inputs: &[],
                     order_only_inputs: &[],
                     validations: &[],
+                    always_dirty: false,
                     bindings: Vec::new(),
                 })
                 .unwrap();

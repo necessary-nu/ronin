@@ -498,6 +498,11 @@ fn parseedge(
             implicit_inputs: &scratch.inputs[explicit_input_count..non_order_only_input_count],
             order_only_inputs: &scratch.inputs[non_order_only_input_count..],
             validations: &scratch.validations,
+            // A manifest has no syntax for an edge that is never up to date,
+            // and needs none: Ninja's own answer to the question is a
+            // dependency on a path nothing produces, which a manifest can
+            // already say.
+            always_dirty: false,
             bindings,
         })
         .map_err(|error| manifest_error(scanner, Anchor::Token, construction_problem(error)))?;

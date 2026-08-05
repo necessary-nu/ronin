@@ -29,6 +29,15 @@ exactly the machinery a manifest-derived graph is.
 > Make mode constructs the dependency graph in memory. No serialized manifest
 > is written, read, or reparsed on the path from Makefile to execution.
 
+> [spec:ronin:req:make.phony-always-dirty]
+> A `.PHONY` target is never up to date. The edge it produces is out of date
+> whenever it is reached, whatever its outputs' timestamps are and whatever the
+> build log recorded for them, so its recipe runs on every build that asks for
+> it, as GNU Make's does. An edge carries the property itself, stated when the
+> graph is constructed. A Ninja manifest has no syntax for it and needs none —
+> Ninja's own way to say it is a dependency on a path nothing produces — so a
+> graph parsed from a manifest never carries it.
+
 > [spec:ronin:req:make.manifest-equivalence]
 > For any Makefile the front end accepts, the graph built directly and the
 > graph obtained by parsing that front end's emitted Ninja manifest are

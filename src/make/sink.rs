@@ -54,31 +54,23 @@ impl Bindings {
 
 /// A [`BuildSink`] that builds a Ronin graph instead of a manifest.
 ///
-/// # What is dropped, and why
+/// # `.PHONY`, and what is dropped
 ///
-/// Three things a manifest carries have no destination here, and each is
-/// dropped deliberately rather than for want of somewhere to put it.
-///
-/// [`SinkEdge::always_dirty`] is `.PHONY`. The writer expresses it by giving
-/// the edge a synthetic always-dirty input, or by binding Android ninja's
-/// `phony_output`; both are ways of saying it through a file format, and
-/// neither is the property. Nothing is bound here, because an edge has nowhere
-/// to hold the property itself.
-///
-/// That is a gap rather than a resolution, and it is visible: a `.PHONY` target
-/// runs on the first build, is recorded in the build log, and is then found up
-/// to date on the second, where Make would run it every time. Closing it means
-/// an edge being able to say it is never up to date, which is a change to the
-/// graph rather than to this sink.
+/// [`SinkEdge::always_dirty`] is `.PHONY`, and it crosses as
+/// [`EdgeSpec::always_dirty`]. The writer has to spell the property as
+/// something a manifest can hold — a synthetic input no rule produces, or
+/// Android ninja's `phony_output` binding — and neither spelling is the
+/// property. An edge can state it, so this states it, and the edge is out of
+/// date whenever it is reached however its outputs and the build log compare.
 ///
 /// [`SinkRule::sandbox_disabled`] asks Android's ninja fork to run the command
 /// outside its sandbox. Ronin has no sandbox, and the binding is not one Ninja
 /// itself accepts on a rule, so carrying it would put a value in the graph that
 /// nothing could ever read.
 ///
-/// `.KATI_TAGS` is the exception: it is opaque metadata for whoever consumes
-/// the graph rather than an instruction to the build, so it is carried as an
-/// edge binding under its own name and left alone.
+/// `.KATI_TAGS` is carried rather than dropped: it is opaque metadata for
+/// whoever consumes the graph rather than an instruction to the build, so it
+/// crosses as an edge binding under its own name and is left alone.
 // [spec:ronin:req:make.graph-direct]
 pub struct GraphSink {
     graph: BuildGraph,
@@ -269,6 +261,7 @@ impl BuildSink for GraphSink {
     }
 
     // [spec:ronin:req:make.graph-direct]
+    // [spec:ronin:req:make.phony-always-dirty]
     fn declare_edge(&mut self, names: &dyn Interner, edge: &SinkEdge<'_>) -> anyhow::Result<()> {
         let rule = match edge.rule {
             Some(id) => *self
@@ -302,6 +295,7 @@ impl BuildSink for GraphSink {
             implicit_inputs: &[],
             order_only_inputs: &order_only_inputs,
             validations: &validations,
+            always_dirty: edge.always_dirty,
             bindings,
         };
         match self.graph.add_edge(spec) {
