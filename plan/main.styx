@@ -3893,12 +3893,20 @@ children (
                 id make-phony-always-dirty
                 title "Let an edge declare itself never up to date"
                 deps (kati-graph-sink)
+                sealed true
                 log (
                     {
                         at 2026-08-05T09:46:47.31073908Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while closing kati-graph-sink, reported rather than hidden, and it is the largest behavioural gap in Make mode today.\n\nMake's .PHONY says a target has no file behind it and its recipe runs whenever the target is asked for. Ninja carries the same idea two ways, both of which are serialisation devices: kati emits either a synthetic _kati_always_build_ input that no rule produces, so the edge is permanently out of date, or phony_output = true. The graph sink drops both, correctly — the synthetic node exists only to smuggle the property through a manifest, and phony_output is a binding Ronin does not define.\n\nThe consequence is that the property has nowhere to live. Measured: a .PHONY target runs on the first build, gets recorded in the build log, and is reported already up to date on the second. GNU Make runs it every time. Every Makefile with a `clean`, `test`, `install` or `all` target is affected, which is close to all of them.\n\nThe fix belongs in the graph, not in the sink. An edge needs to be able to say it is never up to date, and the dirty evaluation has to honour it — probably alongside the existing generator and restat handling rather than as a new concept. The manifest front end has no way to spell it and does not need one, so this is the first property the graph carries that only one front end can produce; decide deliberately whether the Ninja side ever gets a spelling or whether it stays construction-only.\n\nTwo things to get right. The build log records these edges today, so whatever lands has to make the log's answer not matter for them rather than merely writing a different entry. And Ninja's own phony rule is a different thing entirely — it means \"this name aliases its inputs\", not \"always run\" — so do not conflate the two senses the way the emitter's field names invite.\n\nThe equivalence oracle will need to know: the manifest side will carry a synthetic input or a phony_output binding that the direct side expresses structurally, so the classification in src/make/equivalence.rs has to move rather than simply pass."
+                    }
+
+                    {
+                        at 2026-08-05T13:32:28.235137884Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -3907,6 +3915,7 @@ children (
                 id ronin-package-with-fork
                 title "Restore packaging now that Ronin depends on the vendored fork"
                 deps (kati-graph-sink)
+                sealed true
                 log (
                     {
                         at 2026-08-05T09:47:04.573834345Z
@@ -3920,6 +3929,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Resolved by deciding what the product is rather than by making the build satisfy a gate. Ronin is a binary tool and will not be published to crates.io, so the crate is now publish = false and the release gate stops building a registry package.\n\nThat reframes the failure. Depending on the vendored fork through a path was never the problem; expecting a self-contained registry artifact was. cargo install --git builds from the checkout with the submodule present and is unaffected, so nothing anyone actually does with Ronin was broken by the dependency. The three options recorded on this node — publish the fork, vendor its sources at publish time, or accept no registry presence — collapse once the third is chosen deliberately instead of by default.\n\nThe leak check went with it. It listed the package contents and failed if planning files, legacy C sources or the old manual appeared, which was worth doing when a crate was the shipped thing. With no crate built it has no subject, and keeping it would mean maintaining an inspection of an artifact nobody consumes. If a distribution artifact is added later — a tarball, a release binary — that check belongs to it and should inspect what actually ships.\n\nA test now asserts the absence, not just the presence. A gate quietly losing a step looks identical to a gate that never had it, and the next person seeing no packaging step would reasonably read it as an oversight and add it back. The test also pins publish = false in the manifest, so the two cannot drift apart.\n\nThe include list in Cargo.toml is retained. It is inert while nothing is packaged, but it still describes what a distribution artifact would be made of, and deleting it would throw away a considered answer to a question that may return."
+                    }
+
+                    {
+                        at 2026-08-05T13:32:30.487992622Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -3945,12 +3961,20 @@ children (
                 id make-option-coverage
                 title "Support the Make options whose machinery already exists"
                 deps (make-mode-cli)
+                sealed true
                 log (
                     {
                         at 2026-08-05T11:22:32.846350061Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "make-mode-cli rejected thirteen options by name rather than ignoring them, which was right — silently accepting -B would build the wrong thing. But rejecting was a statement about that node's scope, not about feasibility, and several of them are now cheap because the machinery landed for other reasons. Checked against the tree rather than assumed.\n\nCheap, because the mechanism already exists and is already exercised:\n-B / --always-make. EdgeSpec::always_dirty exists as of make-phony-always-dirty. Setting it on every edge is the whole implementation, and the property is already tested and already compared by the equivalence oracle.\n-l / --load-average. BuildOptions::maxload exists and build.rs already honours it; Ninja's own -l feeds it. Make's spelling differs but the meaning is the same.\n-q / --question. Planned::already_up_to_date answers exactly this without starting a build, which is why plan and run were separated in the first place.\n-r / --no-builtin-rules. kati's flags already carry no_builtin_rules and its bootstrap already branches on it. This is a pass-through.\n-i / --ignore-errors. kati already models ignore_error per command and already appends the shell idiom for it; -i is that flag set globally.\n-w / --print-directory. Make mode already prints Entering directory for -C. This is forcing it on unconditionally, plus the matching Leaving line, which the corpus records as a difference today.\n-e / --environment-overrides. kati already distinguishes VarOrigin::Environment from EnvironmentOverride, which is the whole semantic difference.\n\nModerate, needing real work but nothing new architecturally: -t (touch outputs instead of running recipes), -o and -W (pretend a file is older or newer than it is, which needs a per-node timestamp override the graph does not currently take), -I (include search path).\n\nExpensive and low value for now: -p (print the whole database, which is a tool mode of its own) and --debug (Make's debug categories have no counterpart and would be invented rather than matched).\n\nDo the cheap seven together. They share one shape — parse a flag, set something that already works — and splitting them across nodes would cost more in ceremony than the work. Each needs a corpus case or a CLI test; several appear in the differing column today, so the make-conformance counts should move and that movement is the evidence."
+                    }
+
+                    {
+                        at 2026-08-05T13:32:38.518451978Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

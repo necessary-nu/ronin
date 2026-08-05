@@ -234,6 +234,9 @@ assertions (
     {id kati-quality-gates, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:06:51.184781451Z}
     {id kati-command-escapes, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:29:17.026818872Z}
     {id kati-submodule, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:31:23.039146987Z}
+    {id make-phony-always-dirty, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:32:28.235137884Z}
+    {id ronin-package-with-fork, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:32:30.487992622Z}
+    {id make-option-coverage, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:32:38.518451978Z}
 )
 
 impl_evidence (
