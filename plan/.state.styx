@@ -454,4 +454,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule make.jobserver}
     )}
+    {id make-conformance-corpus, covered_rules (
+        make.semantics
+    ), covered_claims (
+        {impl_name target-impl, rule make.semantics}
+    )}
 )
