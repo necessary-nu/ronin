@@ -26,6 +26,13 @@ resolver = "2"
 [lib]
 path = "src/lib.rs"
 
+[features]
+default = ["make"]
+# The Make front end: Ronin's fork of kati, evaluating a Makefile into a graph.
+# On by default so the installed binary can run in Make mode, and separable so
+# that using Ronin as a Ninja library does not compile a Make evaluator.
+make = ["dep:kati"]
+
 [dependencies]
 bstr = { version = "1", default-features = false, features = ["std"] }
 jobserver = "0.1.35"
@@ -33,6 +40,9 @@ smallvec = { version = "1.15.2", features = ["union"] }
 tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]
+# The fork is Unix-only, so the feature is too: enabling it on another target
+# selects a Ninja-only build rather than failing to compile one.
+kati = { path = "kati", version = "0.1.0", optional = true }
 polling = "3.11.0"
 rustix = { version = "1.1.4", features = ["fs", "process", "termios"] }
 signal-hook = { version = "0.3.18", default-features = false }

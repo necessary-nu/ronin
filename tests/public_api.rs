@@ -260,3 +260,87 @@ fn public_api_refuses_a_second_generator_for_one_output() {
     );
     assert_eq!(error.to_string(), "multiple rules generate out");
 }
+
+/// A Makefile, evaluated and built without a manifest existing anywhere.
+///
+/// Every path is absolute so the build runs the same wherever the test process
+/// happens to be, which is also what lets it run beside every other test.
+// [spec:ronin:req:make.graph-direct/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn public_api_builds_a_makefile_through_ronins_scheduler() {
+    use ronin::make::kati::session::Session;
+    use ronin::make::load_makefile;
+    use std::ffi::OsString;
+
+    let directory = std::env::temp_dir().join(format!(
+        "ronin-make-graph-direct-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    std::fs::write(directory.join("in"), b"source\n").unwrap();
+    let at = |name: &str| directory.join(name).to_string_lossy().into_owned();
+    let makefile = directory.join("Makefile");
+    std::fs::write(
+        &makefile,
+        format!(
+            "all: {out}\n{out}: {mid}\n\tcp {mid} {out}\n{mid}: {source}\n\tcp {source} {mid}\n",
+            out = at("out"),
+            mid = at("mid"),
+            source = at("in"),
+        ),
+    )
+    .unwrap();
+
+    let mut graph = load_makefile(Session::from_args(vec![
+        OsString::from("ronin"),
+        OsString::from("-f"),
+        makefile.into_os_string(),
+    ]))
+    .unwrap();
+
+    // The Makefile's own default goal is the graph's default target, and
+    // nothing in between wrote, read, or reparsed a manifest.
+    let targets = graph.default_targets();
+    assert_eq!(
+        targets
+            .iter()
+            .map(|node| graph.path(*node).to_vec())
+            .collect::<Vec<_>>(),
+        [b"all".to_vec()]
+    );
+    assert!(!directory.join("build.ninja").exists());
+
+    let (mut persistence, warning) = Persistence::open(&mut graph, &directory).unwrap();
+    assert!(warning.is_none());
+    let mut streamed = Vec::new();
+    let planned = Build::new(&mut graph, &mut persistence)
+        .jobs(Jobs::Limit(NonZeroUsize::new(2).unwrap()))
+        .output(&mut streamed)
+        .plan(&targets)
+        .unwrap();
+    assert!(!planned.already_up_to_date());
+    let outcome = planned.run().unwrap();
+
+    assert_eq!(outcome.stopped(), None);
+    assert_eq!(outcome.exit_code(), 0);
+    assert_eq!(std::fs::read(directory.join("out")).unwrap(), b"source\n");
+    // A recipe that says nothing about itself gets kati's default description,
+    // and the direct graph expands the `$out` in it against the edge.
+    assert!(
+        String::from_utf8_lossy(&streamed).contains(&format!("build {}", at("out"))),
+        "{}",
+        String::from_utf8_lossy(&streamed)
+    );
+
+    // The build log the first build appended is what makes the second one know
+    // the recipe has already run.
+    let planned = Build::new(&mut graph, &mut persistence)
+        .plan(&targets)
+        .unwrap();
+    assert!(planned.already_up_to_date());
+    persistence.finish().unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}

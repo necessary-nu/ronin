@@ -459,4 +459,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule make.semantics}
     )}
+    {id kati-graph-sink, covered_rules (
+        make.graph-direct
+    ), covered_claims (
+        {impl_name target-impl, rule make.graph-direct}
+    )}
 )

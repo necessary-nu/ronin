@@ -18,6 +18,8 @@ mod graph;
 mod htab;
 mod jobserver;
 mod log;
+#[cfg(all(unix, feature = "make"))]
+pub mod make;
 mod missing_deps;
 mod msvc;
 mod names;
