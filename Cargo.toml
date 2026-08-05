@@ -49,6 +49,11 @@ tempfile = "3"
 [target.'cfg(unix)'.dependencies]
 # The fork is Unix-only, so the feature is too: enabling it on another target
 # selects a Ninja-only build rather than failing to compile one.
+#
+# No `default-features = false` here, because the fork has no default features
+# to decline: its jemalloc allocator sits behind an off-by-default `jemalloc`
+# feature that only its own `rkati` binary asks for, so nothing on this side
+# has to remember to opt out of a C build it never wanted.
 kati = { path = "kati", version = "0.1.0", optional = true }
 polling = "3.11.0"
 rustix = { version = "1.1.4", features = ["fs", "process", "termios"] }

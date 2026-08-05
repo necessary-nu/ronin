@@ -13,6 +13,13 @@ performance_repetitions=${PERFORMANCE_REPETITIONS:-15}
 cargo fmt --all -- --check
 cargo check --all-targets
 cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery
+# The Make front end, separately and without the pedantic groups: it is a
+# vendored fork carrying 578 pedantic and nursery findings it inherited, and
+# rewriting Google's code to Ronin's house style is not this gate's business.
+# Plain `-D warnings` is, and it is what the fork's own `#![deny(warnings)]`
+# used to do — moved here so that a rustc release that adds a lint fails a
+# check someone is running rather than every build of the tree.
+cargo clippy -p kati --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 cargo test --all-targets --no-fail-fast
 

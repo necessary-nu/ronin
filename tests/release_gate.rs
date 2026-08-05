@@ -8,6 +8,11 @@ fn release_gate_wires_every_candidate_check() {
         "cargo fmt --all -- --check",
         "cargo check --all-targets",
         "cargo clippy --all-targets",
+        // The Make front end is a vendored fork that used to deny warnings in
+        // its own source. It stopped, because a compiler release should not
+        // break everybody's build; this line is where that denial went, so it
+        // is not free to disappear.
+        "cargo clippy -p kati --all-targets -- -D warnings",
         "cargo doc --no-deps",
         "cargo test --all-targets --no-fail-fast",
         "nplan port check --wave 4",

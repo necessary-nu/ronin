@@ -233,6 +233,7 @@ assertions (
     {id kati-build-sink, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:57:49.078828973Z}
     {id kati-quality-gates, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:06:51.184781451Z}
     {id kati-command-escapes, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:29:17.026818872Z}
+    {id kati-submodule, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:31:23.039146987Z}
 )
 
 impl_evidence (

@@ -3424,6 +3424,7 @@ children (
             {
                 id kati-submodule
                 title "Vendor the kati fork as a submodule and build it in Ronin's workspace"
+                sealed true
                 log (
                     {
                         at 2026-08-04T14:37:45.39608841Z
@@ -3444,6 +3445,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Wiring the workspace surfaced a constraint stronger than the hygiene note above, and it supersedes the advice there to move criterion to dev-dependencies.\n\n.cargo/config.toml applies -C target-feature=+crt-static to cfg(all(target_os = \"linux\", target_env = \"gnu\")). That cfg matches proc-macro crates as well as the final binary, and a proc-macro must be a dylib, so any proc-macro anywhere in the workspace fails to build: \"cannot produce proc-macro for serde_derive as the target x86_64-unknown-linux-gnu does not support these crate types\". Ronin never hit this because its nineteen dependencies include no proc-macro. The front end pulls serde_derive through criterion, so it hits immediately.\n\nThe static link is not negotiable. The config comment records it as load-bearing for startup, measured: a no-op goes 1.37 ms to 0.98 against C samurai's 0.96, and the dependency-log fixture 3.18 to 2.58 against 2.62, which is behind-to-ahead on a workload whose deficit was startup. Removing it to accommodate a benchmark harness would be the wrong way round.\n\nSo the constraint on the fork is: no proc-macro dependencies at all, in normal or dev dependencies. Dev is not a safe harbour, because cargo test --workspace builds dev dependencies for every member and would fail the same way. Moving criterion to dev-dependencies, which the earlier note recommended, does not work.\n\nApplied for now: criterion dropped from dependencies and autobenches set false, so benches/strutil_benchmark.rs is retained but not built. cargo check --workspace --all-targets is clean. Whether that bench gets deleted, ported to Ronin's own performance harness, or left dormant is open — Ronin already has a performance gate and does not need a second one.\n\nThe escape hatch, if a proc-macro ever becomes genuinely necessary, is setting build.target so cargo separates host from target flags. It is not free: it moves every artifact under target/<triple>/, and the harnesses and scripts that reference target/release/ronin would all need updating."
+                    }
+
+                    {
+                        at 2026-08-05T13:31:23.039146987Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
