@@ -1,0 +1,33 @@
+#!/bin/sh
+# Run a command in its own PID namespace, with the filesystem otherwise intact.
+#
+# Some of this repository's test suites deliberately signal their parent.
+# Upstream Ninja's SubprocessTest.InterruptParentWithSigTerm runs `kill -TERM
+# $PPID` — that is the whole point of the test, and it is correct when the
+# parent is ninja_test. Run from an agent's process tree, the same signal has a
+# path toward things that are not ninja_test, and on 2026-08-05 it reached the
+# session and killed it.
+#
+# The filesystem is bound through whole and read-write, because these suites
+# build, write logs, and read the pinned reference binaries. The isolation that
+# matters here is the process tree, not the files: inside, the command is pid 2
+# under a reaper at pid 1, and every host pid is unreachable, so the worst a
+# stray SIGTERM can reach is the sandbox itself.
+#
+# Usage: scripts/sandboxed ./scripts/check-ninja-conformance.sh
+set -eu
+
+if ! command -v sandbox >/dev/null 2>&1; then
+    echo "sandboxed: no 'sandbox' binary on PATH." >&2
+    echo "These suites signal their parent and must not run in the session's" >&2
+    echo "process tree. Install it, or run the command yourself in a terminal." >&2
+    exit 1
+fi
+
+exec sandbox \
+    --unshare pid \
+    --bind /:/ \
+    --proc /proc \
+    --dev /dev \
+    --die-with-parent \
+    -- "$@"

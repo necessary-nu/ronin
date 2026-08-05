@@ -151,6 +151,15 @@
           }
         ],
         "matcher": "^(Bash|Edit|Write|MultiEdit|apply_patch|EnterPlanMode)$"
+      },
+      {
+        "hooks": [
+          {
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard-signalling-tests.py\"",
+            "type": "command"
+          }
+        ],
+        "matcher": "^Bash$"
       }
     ],
     "SessionEnd": [
