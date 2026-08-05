@@ -48,6 +48,11 @@ const NINJA_OPTION: &[u8] = b"--ninja";
 /// overrides that. Both flags are ordinary options to whichever front end then
 /// runs, which is what lets the last one win rather than the first.
 // [spec:ronin:req:product.make-identity]
+/// Whether a program name selects the Make front end.
+pub(crate) fn is_make_name(stem: &str) -> bool {
+    MAKE_NAMES.contains(&stem)
+}
+
 pub(crate) fn select(arguments: &[BString]) -> FrontEnd {
     let invoked = arguments.first().map_or(FrontEnd::Ninja, |program| {
         let program = program.to_os_str_lossy();
@@ -55,7 +60,7 @@ pub(crate) fn select(arguments: &[BString]) -> FrontEnd {
             .file_stem()
             .map(|stem| stem.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if MAKE_NAMES.contains(&stem.as_str()) {
+        if is_make_name(&stem) {
             FrontEnd::Make
         } else {
             FrontEnd::Ninja

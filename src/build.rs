@@ -1556,11 +1556,26 @@ impl<'a> Builder<'a> {
             None
         };
         let mut environment = self.options.environment.clone();
-        environment.extend_from_slice(
-            transport
-                .as_ref()
-                .map_or(&[], crate::jobserver::Transport::publication),
-        );
+        // The jobserver publication and the Make switches both belong in
+        // MAKEFLAGS, which is how GNU Make writes it: the single-letter group
+        // leads, then the job count and the auth token. Extending would let the
+        // publication shadow the switches, so the two are spliced instead.
+        for (name, published) in transport
+            .as_ref()
+            .map_or(&[][..], crate::jobserver::Transport::publication)
+        {
+            match environment
+                .iter_mut()
+                .find(|(existing, _)| existing == name)
+            {
+                Some((_, value)) => {
+                    let mut merged = value.clone();
+                    merged.push(published);
+                    *value = merged;
+                }
+                None => environment.push((name, published.clone())),
+            }
+        }
         let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::in_directory(
             self.options.working_directory.as_path(),
             self.options.shell.clone(),

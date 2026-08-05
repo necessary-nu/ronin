@@ -4006,6 +4006,34 @@ children (
                     }
                 )
             }
+
+            {
+                id make-variable-is-one-word
+                title "Report MAKE as a single executable path"
+                deps (make-mode-cli)
+                log (
+                    {
+                        at 2026-08-05T17:11:02.581433822Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "One defect, and it is worth roughly the whole upstream score.\n\nGNU Make's suite scored Ronin at 65 assertions of 543, eleven per cent. That number is almost meaningless as a measure of Make support: 243 of 261 categories died before a single assertion passed, and they died for one reason. The driver asks make for $(MAKE), adopts the answer as the path for every later invocation, and execs it — as a path, not through a shell. GNU Make answers /usr/bin/make, one word. Ronin answers three: the executable, --make, and whatever switches propagate. Every exec then fails with \"Cannot execute /home/.../ronin --make -s: No such file or directory\", before the test runs.\n\nConfirmed rather than inferred: functions/if produces byte-identical output to GNU Make when its makefile is run by hand, in both the symlinked and the explicit-flag form, and still logs nothing under the driver. Running one category with -verbose prints the ENOENT.\n\nThe multi-word MAKE was a deliberate choice by make-mode-cli and the reasoning holds for what it was about: switches cannot go in MAKEFLAGS because that variable is carrying the jobserver budget a child draws on, and rewriting it would cost the child the budget. What it did not weigh is that MAKE is not only read by recursive makefiles, which tolerate several words, but by anything treating it as the make program's location — of which upstream's own suite is the most demanding example.\n\nThe fix that matches GNU Make is for MAKE to name a single executable that already selects Make mode by its name, so no flag has to ride along. When the invocation arrived through a make-named path, that path is the obvious answer, and the current code discards it: recursive_command uses current_exe, which resolves the symlink back to a ronin-named binary and therefore needs --make to undo the resolution. Reporting the invoked path instead would make recursion re-enter by name exactly as GNU Make does. The case with no such path — someone running `ronin --make` directly — still needs an answer, and shipping a make-named symlink beside the binary is the obvious one.\n\nDo this before quoting any upstream number. Until it is fixed the suite measures one defect 243 times, and the eleven per cent will move a long way for reasons that have nothing to do with the Make language."
+                    }
+                )
+            }
+
+            {
+                id make-recipe-echo
+                title "Echo recipes as Make does instead of reporting Ninja progress"
+                deps (make-mode-cli)
+                log (
+                    {
+                        at 2026-08-05T17:19:49.402788461Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "One difference, and it is worth almost the whole upstream score.\n\nGNU Make prints the recipe line it is about to run, then the recipe's own output. Make mode prints Ninja's progress instead:\n\n    GNU Make    echo plain recipe   /   plain recipe\n    Ronin       [1/1] build all     /   plain recipe\n\nEvery test in GNU Make's suite compares stdout exactly, so this alone fails 1320 of the 1334 assertions the suite now reaches. Nothing else needs to be wrong for the score to be one per cent.\n\nThe rules to implement are Make's, and they are small. The recipe is echoed before it runs. A line beginning `@` is not echoed. `-s` suppresses all echoing. `-n` echoes without running. The text echoed is the recipe after variable expansion, which is what kati already hands the sink. Ninja's `[N/M] description` line is a Ninja product surface and does not belong in Make mode at all.\n\nNote the ordering that makes this worth doing before anything else is measured: until it lands, every upstream number is this defect counted over and over, exactly as the eleven per cent before it was $(MAKE) counted 243 times. Fix it, rerun, and only then read the residue as Make semantics.\n\nWatch for two interactions. The console pool and the output streaming both assume a progress line owns the terminal, and Make's echo does not. And `make-conformance-corpus` records the same difference from the other side — it measured 371 of 372 differing on the recipe echo when pointed at Ronin — so its counts should move sharply here, which is the cross-check that this was really the cause."
+                    }
+                )
+            }
         )
     }
 )

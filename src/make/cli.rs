@@ -505,9 +505,30 @@ fn default_makefile(directory: &Path) -> Option<PathBuf> {
 /// the sub-make a sub-make; without it a recursive Makefile would find a Ninja
 /// front end looking for `build.ninja`.
 // [spec:ronin:req:make.recursive-invocation]
-fn recursive_command(executable: &Path, invocation: &Invocation) -> Vec<OsString> {
-    let mut command = vec![executable.as_os_str().to_owned(), OsString::from("--make")];
-    command.extend(invocation.propagated());
+fn recursive_command(
+    executable: &Path,
+    invoked_as: Option<&Path>,
+    invocation: &Invocation,
+) -> Vec<OsString> {
+    // GNU Make answers `$(MAKE)` with one word, and enough things treat that
+    // answer as the make program's location rather than as a command to run
+    // that a second word breaks them — upstream's own test suite execs it
+    // directly and dies with ENOENT on anything longer.
+    //
+    // A make-named path already selects Make mode by its name, so nothing has
+    // to ride along. current_exe resolves the symlink such a path usually is,
+    // handing back a ronin-named binary that then needs `--make` to undo the
+    // resolution; the path the invocation actually arrived through does not.
+    let mut command = invoked_as.map_or_else(
+        || vec![executable.as_os_str().to_owned(), OsString::from("--make")],
+        |path| vec![path.as_os_str().to_owned()],
+    );
+    // Switches ride in MAKEFLAGS, where GNU Make puts them and where the job
+    // budget already travels. They were once appended here, which made $(MAKE)
+    // several words and broke every consumer that treats it as a path.
+    if invoked_as.is_none() {
+        command.extend(invocation.propagated());
+    }
     command.extend(
         invocation
             .variables
@@ -524,6 +545,7 @@ fn session_for(
     makefile: &Path,
     jobs: usize,
     executable: &Path,
+    invoked_as: Option<&Path>,
     inherited: Option<&str>,
 ) -> Session {
     let mut session = Session::new();
@@ -548,7 +570,7 @@ fn session_for(
         environment_overrides: invocation.given(Switch::EnvironmentOverrides),
         ignore_errors: invocation.given(Switch::IgnoreErrors),
         cl_vars: variables,
-        subkati_args: recursive_command(executable, invocation),
+        subkati_args: recursive_command(executable, invoked_as, invocation),
         ..Flags::default()
     };
     session.flags.targets = invocation
@@ -633,6 +655,20 @@ fn build_options(
         MAKELEVEL,
         OsString::from(level.saturating_add(1).to_string()),
     ));
+    // GNU Make leads MAKEFLAGS with the group of single-letter switches, no
+    // dash, and the job count and jobserver token follow. An empty group is the
+    // leading space children already tolerate, so this writes the letters and
+    // lets the publication append the rest.
+    let letters: String = invocation
+        .propagated()
+        .iter()
+        .filter_map(|switch| switch.to_str().and_then(|switch| switch.strip_prefix('-')))
+        .collect();
+    for name in ["MAKEFLAGS", "MFLAGS", "CARGO_MAKEFLAGS"] {
+        options
+            .environment
+            .push((name, OsString::from(letters.clone())));
+    }
     Ok(options)
 }
 
@@ -677,6 +713,48 @@ fn no_makefile(reported: String, announcing: bool, directory: &Path) -> RunResul
     )
 }
 
+/// The path this invocation arrived through, when that path already says Make.
+///
+/// Absolute, because a sub-make runs somewhere else and a relative `./make`
+/// would not survive the trip. Resolved against `PATH` when the name carries no
+/// directory, since that is how a symlinked `make` is normally reached — and
+/// only accepted when it is this very binary, so a `make` earlier on the path
+/// cannot capture recursion.
+// [spec:ronin:req:make.recursive-invocation]
+fn make_named_invocation(arguments: &[BString], executable: &Path) -> Option<PathBuf> {
+    let program = arguments.first()?.to_os_str().ok()?;
+    let program = Path::new(program);
+    let stem = program.file_stem()?.to_str()?;
+    if !crate::multicall::is_make_name(stem) {
+        return None;
+    }
+    let candidate = if program.components().count() > 1 {
+        std::fs::canonicalize(program).ok()?
+    } else {
+        std::env::var_os("PATH")
+            .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|directory| directory.join(program))
+            .find_map(|entry| std::fs::canonicalize(entry).ok())?
+    };
+    // canonicalize follows the symlink, so both sides name the real binary.
+    (candidate == std::fs::canonicalize(executable).ok()?).then_some(
+        // Report the path as invoked, not as resolved: the resolved one is
+        // ronin-named and would select the other front end.
+        if program.components().count() > 1 {
+            std::path::absolute(program).ok()?
+        } else {
+            std::env::var_os("PATH")
+                .map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+                .unwrap_or_default()
+                .into_iter()
+                .map(|directory| directory.join(program))
+                .find(|entry| entry.exists())?
+        },
+    )
+}
+
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.recursive-invocation]
@@ -690,6 +768,7 @@ pub(crate) fn run(
         Action::Immediate(result) => return Ok(result),
         Action::Execute(invocation) => *invocation,
     };
+    let invoked_as = make_named_invocation(arguments, &runner.executable);
     let mut reported = String::new();
     let directory = enter_directories(&invocation.directories)?;
     let announcing = invocation.announcing();
@@ -722,6 +801,7 @@ pub(crate) fn run(
         &makefile,
         job_count(&options),
         &runner.executable,
+        invoked_as.as_deref(),
         runner.makeflags.as_deref(),
     );
     record_makelevel(&mut session, level)?;
@@ -932,11 +1012,30 @@ mod tests {
         assert_eq!(counted.goals, vec![BString::from("all")]);
     }
 
+    /// A make-named path already selects the front end, so $(MAKE) is that path
+    /// alone. GNU Make answers with one word and enough consumers exec it that a
+    /// second word is a defect — upstream's own suite dies with ENOENT on it.
+    // [spec:ronin:req:make.recursive-invocation/test]
+    #[test]
+    fn an_invocation_by_name_reports_make_as_one_word() {
+        let invocation = parsed(&["make", "-k", "-s", "all"]);
+        let command = super::recursive_command(
+            std::path::Path::new("/opt/ronin"),
+            Some(std::path::Path::new("/usr/local/bin/make")),
+            &invocation,
+        );
+        assert_eq!(
+            command,
+            vec![std::ffi::OsString::from("/usr/local/bin/make")]
+        );
+    }
+
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
     fn a_sub_make_is_told_the_switches_and_the_assignments_again() {
         let invocation = parsed(&["make", "-k", "-s", "FOO=bar", "all"]);
-        let command = super::recursive_command(std::path::Path::new("/opt/ronin"), &invocation);
+        let command =
+            super::recursive_command(std::path::Path::new("/opt/ronin"), None, &invocation);
         assert_eq!(
             command,
             vec![
@@ -1062,7 +1161,8 @@ mod tests {
     #[test]
     fn a_sub_make_is_told_every_switch_it_would_otherwise_lose() {
         let invocation = parsed(&["make", "-Beiqrw", "all"]);
-        let command = super::recursive_command(std::path::Path::new("/opt/ronin"), &invocation);
+        let command =
+            super::recursive_command(std::path::Path::new("/opt/ronin"), None, &invocation);
         assert_eq!(
             command,
             ["/opt/ronin", "--make", "-B", "-e", "-i", "-q", "-r", "-w"]
