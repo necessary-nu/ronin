@@ -48,6 +48,25 @@ ISOLATED = (
     re.compile(r"\bsandbox\b[^|;&]*--unshare[= ][^|;&]*\bpid\b"),
 )
 
+# Naming a suite is not running one. `ls .../run_make_tests.pl` and
+# `grep -n kNumProcs subprocess_test.cc` are how you find out what a thing does
+# before deciding whether to run it, and a guard that refuses them is one that
+# gets switched off. Only a command whose *first word* reads rather than
+# executes is exempt — a pipeline or a `&&` returns to the normal rule, since
+# anything after the first stage can execute.
+INSPECTORS = frozenset(
+    "ls cat head tail grep rg sed awk wc stat file find test realpath basename"
+    " dirname readlink echo printf diff cmp md5sum sha256sum git".split()
+)
+
+
+def is_inspection(command: str) -> bool:
+    """True when the command only looks at things, so a mention is not a run."""
+    if re.search(r"[|;&]|\$\(|`", command):
+        return False
+    first = command.strip().split()
+    return bool(first) and first[0].rsplit("/", 1)[-1] in INSPECTORS
+
 ADVICE = (
     "Refused: this command {because}, and it is not isolated from the session.\n\n"
     "Upstream Ninja's SubprocessTest.InterruptParentWithSigTerm runs "
@@ -71,6 +90,9 @@ def main() -> int:
         return 0
 
     if any(pattern.search(command) for pattern in ISOLATED):
+        return 0
+
+    if is_inspection(command):
         return 0
 
     for pattern, because in PARENT_SIGNALLING:
