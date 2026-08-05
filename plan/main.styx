@@ -3806,12 +3806,27 @@ children (
                 id kati-quality-gates
                 title "Bring the vendored fork under Ronin's quality gates"
                 deps (kati-submodule)
+                sealed true
                 log (
                     {
                         at 2026-08-04T17:58:19.888140202Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Governance gap: the vendored fork is under nspec but not under the quality gates, so \"Ronin's nplan governs it\" is currently half true.\n\n.config/nspec/config.styx now includes kati/src-rs/** and coverage works — make.scope-separation is covered and tested from the fork. But .config/nplan/config.styx still lists the rust platform's files as Cargo.toml, Cargo.lock, and src/**, so function-density, trivial-function, duplication, and comment-smells do not see the fork at all. Every commit touching only kati skips the gates the rest of the tree is held to.\n\nTurning it on is not a one-line config change, which is why this is a node. Measured now: src-rs/func.rs has 59 functions against a limit of 50, and src-rs/find.rs has exactly 50, so it fires immediately and then sits one function from firing again. func.rs is Make's builtin function table, roughly one function per Make builtin, so a high count there is arguably the correct shape rather than a defect — which makes this a question about whether the gate wants an exemption, a split of the table into groups, or a raised threshold for that file. The existing config already has an exempt-paths list and a trivial-function allow-names list, so both mechanisms are available and precedented.\n\nDo this before the fork grows, not after. The longer the gates stay off, the more of the fork is grandfathered in and the more expensive the eventual reckoning. It is also worth running the gates in report-only mode first to see the full inventory rather than discovering it one blocked commit at a time."
+                    }
+
+                    {
+                        at 2026-08-05T08:06:42.848490105Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The fork is now inside the quality gates. Two changes, and the second was the bigger hole.\n\nThe rust platform's file globs gain kati/Cargo.toml, kati/src-rs/** and kati/tests/**, so function-density, trivial-function, duplication, complexity, file-size and the comment sweep see the fork's sources. That was the stated gap.\n\nThe check commands were the unstated one. They ran cargo test and cargo check with no package selection, which in a workspace with a root package means the root package only — so from the moment the fork became a workspace member, no commit gate had ever built or tested it. Both are now --workspace. The three configured checks pass.\n\nfunc.rs is exempted from function-density rather than split. It is GNU Make's builtin function table: one function per builtin plus the dispatch entry naming it. A density limit asks whether a file is doing too many things, and this one does a single thing that happens to have sixty cases, so splitting it to satisfy a count would scatter the table without simplifying anything. The exemption is narrow and the reason is recorded beside it. Note find.rs sits at exactly the limit, so the next function added there fires the gate — that is the gate working, not a problem to pre-empt.\n\nFive files exceed the 1000-line warn threshold for rust: func.rs, find.rs, eval.rs, dep.rs and ninja.rs. The error threshold is 3000, so none of them blocks anything. Left alone deliberately — they are warnings about a vendored tree that tracks upstream, and churning file boundaries in a fork raises the cost of every future merge for no correctness gain.\n\nThe gates are delta-scoped, so none of this fires retroactively. It applies to the next commit that touches each file, which is the right time to pay it."
+                    }
+
+                    {
+                        at 2026-08-05T08:06:51.184781451Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }

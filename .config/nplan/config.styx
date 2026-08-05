@@ -1,17 +1,20 @@
 platforms (
     {
         platform "rust"
-        files (Cargo.toml Cargo.lock src/**)
+        files (Cargo.toml Cargo.lock src/** kati/Cargo.toml kati/src-rs/** kati/tests/**)
         checks {
             format {
                 cmd "cargo fmt --all -- --check"
                 fix "cargo fmt --all"
             }
+            // The Make frontend is a workspace member, so the default
+            // current-package scope would have left it untested and unbuilt by
+            // every commit that touched it.
             test {
-                cmd "cargo test --no-fail-fast --quiet"
+                cmd "cargo test --workspace --no-fail-fast --quiet"
             }
             check {
-                cmd "cargo check --all-targets --quiet"
+                cmd "cargo check --workspace --all-targets --quiet"
             }
         }
     }
@@ -26,7 +29,12 @@ adoption {
 }
 
 quality {
-    exempt-paths (src/build/tests.rs)
+    // func.rs is GNU Make's builtin function table: one function per Make
+    // builtin, plus the dispatch entry that names it. A density limit asks
+    // "is this file doing too many things", and the answer here is that it
+    // does exactly one thing that happens to have sixty cases. Splitting it
+    // to satisfy the count would scatter the table without simplifying it.
+    exempt-paths (src/build/tests.rs kati/src-rs/func.rs)
     function-density {
         exempt-test-scope true
     }
