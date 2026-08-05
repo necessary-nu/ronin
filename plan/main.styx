@@ -3915,6 +3915,34 @@ children (
                     }
                 )
             }
+
+            {
+                id make-state-outside-the-tree
+                title "Keep Ronin's build state out of a Makefile's directory"
+                deps (make-mode-cli)
+                log (
+                    {
+                        at 2026-08-05T11:22:14.760953783Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Decided: nothing Ronin writes for its own bookkeeping may appear in a Makefile's directory. GNU Make leaves no state behind, so a build that drops .ninja_log and .ninja_deps beside a Makefile fails compatibility in the most visible way there is — it changes what the tree looks like afterwards, which shows up in version control, in packaging, and in any script that lists a directory.\n\nMake mode currently writes both to the Makefile's own directory, because that is Ninja's default location and nothing had decided Make mode should differ.\n\nWhat is not decided, and is this node's real question: whether the state moves or stops existing. Stopping is the simplest reading of compatibility and it is expensive — the build log is what detects a changed command, and the dependency log is what makes header dependencies survive between runs. Both are things GNU Make cannot do at all, and they are most of the reason a Makefile is worth building with Ronin rather than with Make. Throwing them away to match Make's directory listing would be matching the wrong thing.\n\nSo the shape to aim for is relocation: keep the persistence, put it somewhere a tree never sees, keyed by the identity of the build rather than by its location. A cache directory under the user's XDG cache root is the obvious candidate. The problems to solve before committing to it are the interesting part rather than an afterthought — two checkouts of the same project must not share an entry, a moved or renamed tree must not silently inherit a stale one, and there has to be an answer for how a user clears it, since `make clean` will not.\n\nNote the Ninja side must not move. build.ninja's log lives beside the manifest by contract and 425 upstream tests depend on it; this is a Make-mode-only relocation, and the persistence boundary decision is written about Ninja's file formats rather than their location, so check whether it needs a sentence."
+                    }
+                )
+            }
+
+            {
+                id make-option-coverage
+                title "Support the Make options whose machinery already exists"
+                deps (make-mode-cli)
+                log (
+                    {
+                        at 2026-08-05T11:22:32.846350061Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "make-mode-cli rejected thirteen options by name rather than ignoring them, which was right — silently accepting -B would build the wrong thing. But rejecting was a statement about that node's scope, not about feasibility, and several of them are now cheap because the machinery landed for other reasons. Checked against the tree rather than assumed.\n\nCheap, because the mechanism already exists and is already exercised:\n-B / --always-make. EdgeSpec::always_dirty exists as of make-phony-always-dirty. Setting it on every edge is the whole implementation, and the property is already tested and already compared by the equivalence oracle.\n-l / --load-average. BuildOptions::maxload exists and build.rs already honours it; Ninja's own -l feeds it. Make's spelling differs but the meaning is the same.\n-q / --question. Planned::already_up_to_date answers exactly this without starting a build, which is why plan and run were separated in the first place.\n-r / --no-builtin-rules. kati's flags already carry no_builtin_rules and its bootstrap already branches on it. This is a pass-through.\n-i / --ignore-errors. kati already models ignore_error per command and already appends the shell idiom for it; -i is that flag set globally.\n-w / --print-directory. Make mode already prints Entering directory for -C. This is forcing it on unconditionally, plus the matching Leaving line, which the corpus records as a difference today.\n-e / --environment-overrides. kati already distinguishes VarOrigin::Environment from EnvironmentOverride, which is the whole semantic difference.\n\nModerate, needing real work but nothing new architecturally: -t (touch outputs instead of running recipes), -o and -W (pretend a file is older or newer than it is, which needs a per-node timestamp override the graph does not currently take), -I (include search path).\n\nExpensive and low value for now: -p (print the whole database, which is a tool mode of its own) and --debug (Make's debug categories have no counterpart and would be invented rather than matched).\n\nDo the cheap seven together. They share one shape — parse a flag, set something that already works — and splitting them across nodes would cost more in ceremony than the work. Each needs a corpus case or a CLI test; several appear in the differing column today, so the make-conformance counts should move and that movement is the evidence."
+                    }
+                )
+            }
         )
     }
 )
