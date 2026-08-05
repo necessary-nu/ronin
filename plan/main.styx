@@ -3978,6 +3978,20 @@ children (
                     }
                 )
             }
+
+            {
+                id make-upstream-suite
+                title "Measure Make support against GNU Make's own test suite"
+                deps (make-mode-cli make-conformance-corpus)
+                log (
+                    {
+                        at 2026-08-05T14:03:47.450163305Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The corpus we have answers the wrong question. It is kati's own, so it tests what kati chose to implement and is silent about everything nobody wrote a case for — vpath being the obvious example, since kati has no vpath and the corpus therefore never asks. GNU Make ships its own suite, and it is written to test an arbitrary make binary rather than its own internals, which makes it the unbiased measure.\n\nEstablished by trying it rather than reading about it, so the next person starts from facts:\n\nShape. 137 scripts under tests/scripts in six categories — features, functions, misc, options, targets, variables — carrying 1060 individual assertions. A Perl driver, run_make_tests.pl, and perl 5.40 is present. Retargeting is one flag, -make <path>, exactly as this project's own harnesses ended up.\n\nBaseline. Real GNU Make 4.4.1 against its own suite in this environment fails 2 tests in 2 categories. So the denominator is about 1058, not 1060, and any comparison has to subtract the environment's own noise before claiming anything.\n\nLicence. GPLv3. Do not vendor it. The repository already has the pattern for exactly this: reference/ is gitignored and holds a pinned upstream Ninja checkout that check-ninja-conformance.sh runs against. Fetch a pinned 4.4.1 tag the same way. Running someone's GPL test scripts against our binary does not make our code derivative; shipping their scripts would be a distribution question we have no reason to take on.\n\nTwo blockers, both in the harness rather than in Ronin, and one of them is a decision.\n\nThe driver needs tests/config-flags.pm, which GNU Make's configure generates. Either run configure once in the fetched tree or supply a stub; find out which fields the driver actually reads before generating a whole build.\n\nThe driver dies unless `make -v` starts with the literal \"GNU Make\". Ronin says \"ronin 0.1.0 / Make front end for GNU Make 4.4.1 makefiles\", by product.make-identity. This is the same shape as the fourteen self-detecting cases in the kati corpus, and it should be settled the same way — in the harness, not by making Ronin claim to be GNU Make. Impersonating upstream in --version to pass upstream's tests would be measuring a lie.\n\nNote argv[0] selects the front end, so the driver must be pointed at a symlink literally named make. Pointing it at a path whose stem is anything else selects Ninja mode and produces a confusing failure; that is the dispatch working, not a defect.\n\nExpect a large number of failures on the first run and do not treat that as a verdict. Some will be real language gaps — the function inventory already says intcmp, let and guile are absent, and vpath, private, undefine and load are unimplemented directives. Others will be things we deliberately do not do: -p database dumps, --debug categories, and the recipe echo contract the kati corpus already showed differs on 371 of 372 runs. Classify before quoting a number, the way make-conformance-corpus does, and report the raw count first."
+                    }
+                )
+            }
         )
     }
 )
