@@ -464,4 +464,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule make.graph-direct}
     )}
+    {id make-graph-equivalence, covered_rules (
+        make.manifest-equivalence
+    ), covered_claims (
+        {impl_name target-impl, rule make.manifest-equivalence}
+    )}
 )

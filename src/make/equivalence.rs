@@ -266,6 +266,7 @@ fn differences(direct: &BuildGraph, parsed: &BuildGraph) -> Vec<String> {
 ///
 /// `directory` is where the manifest is written and read back from; `argv` is a
 /// whole kati command line, program name included.
+// [spec:ronin:req:make.manifest-equivalence]
 fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
     let session = Session::from_args(argv);
     let manifest_path = directory.join("build.ninja");
@@ -522,6 +523,7 @@ all:
 ///     make::equivalence::the_direct_graph_matches_the_manifest_over_the_corpus
 /// ```
 // [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence/test]
 #[test]
 #[ignore = "changes the working directory; run it alone"]
 fn the_direct_graph_matches_the_manifest_over_the_corpus() {

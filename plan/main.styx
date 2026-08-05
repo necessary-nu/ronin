@@ -3722,6 +3722,14 @@ children (
                     target-impl ([spec:ronin:req:make.manifest-equivalence])
                 }
                 deps (kati-graph-sink)
+                log (
+                    {
+                        at 2026-08-05T09:50:27.066753493Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "This node built almost nothing, which was the right outcome rather than a shortcut.\n\nkati-graph-sink established the property and left the machinery behind: a tee sink driving both the graph and the writer from one evaluation, a total edge description, the corpus driver, and ten always-on cases covering what the corpus cannot reach. Rebuilding any of that to satisfy a node boundary would have produced a second oracle to keep in agreement with the first.\n\nSo this node supplied the two things that were actually missing. The rule now has an implementation site on the comparison itself and a verification site on the corpus test, where before it was deliberately unannotated — the sink's agent declined to claim make.manifest-equivalence because its own node did not own it, which was the correct call and left exactly this gap. And there is a script, because the corpus test is #[ignore]d: it changes the working directory, which would break the lib tests running beside it, so it has to run alone and a bare cargo test will silently skip it. A property nobody can invoke is not a gate.\n\nResult at the time of writing: 296 makefiles, 268 graphs identical, one case where both paths refuse, 85 the front end itself rejects, one classified disagreement.\n\nThe guard on the script checks the corpus is non-empty rather than probing for a named file. A submodule that is present but unchecked out otherwise reports as a clean pass over zero makefiles, which is the shape of failure this project has been bitten by before with its reference binaries.\n\nWorth knowing for whoever changes the sink next: make-phony-always-dirty will move a classification here rather than simply passing, because the manifest side carries the always-build property as a synthetic input while the direct side will carry it structurally."
+                    }
+                )
             }
 
             {
@@ -3869,6 +3877,34 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-phony-always-dirty
+                title "Let an edge declare itself never up to date"
+                deps (kati-graph-sink)
+                log (
+                    {
+                        at 2026-08-05T09:46:47.31073908Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while closing kati-graph-sink, reported rather than hidden, and it is the largest behavioural gap in Make mode today.\n\nMake's .PHONY says a target has no file behind it and its recipe runs whenever the target is asked for. Ninja carries the same idea two ways, both of which are serialisation devices: kati emits either a synthetic _kati_always_build_ input that no rule produces, so the edge is permanently out of date, or phony_output = true. The graph sink drops both, correctly — the synthetic node exists only to smuggle the property through a manifest, and phony_output is a binding Ronin does not define.\n\nThe consequence is that the property has nowhere to live. Measured: a .PHONY target runs on the first build, gets recorded in the build log, and is reported already up to date on the second. GNU Make runs it every time. Every Makefile with a `clean`, `test`, `install` or `all` target is affected, which is close to all of them.\n\nThe fix belongs in the graph, not in the sink. An edge needs to be able to say it is never up to date, and the dirty evaluation has to honour it — probably alongside the existing generator and restat handling rather than as a new concept. The manifest front end has no way to spell it and does not need one, so this is the first property the graph carries that only one front end can produce; decide deliberately whether the Ninja side ever gets a spelling or whether it stays construction-only.\n\nTwo things to get right. The build log records these edges today, so whatever lands has to make the log's answer not matter for them rather than merely writing a different entry. And Ninja's own phony rule is a different thing entirely — it means \"this name aliases its inputs\", not \"always run\" — so do not conflate the two senses the way the emitter's field names invite.\n\nThe equivalence oracle will need to know: the manifest side will carry a synthetic input or a phony_output binding that the direct side expresses structurally, so the classification in src/make/equivalence.rs has to move rather than simply pass."
+                    }
+                )
+            }
+
+            {
+                id ronin-package-with-fork
+                title "Restore packaging now that Ronin depends on the vendored fork"
+                deps (kati-graph-sink)
+                log (
+                    {
+                        at 2026-08-05T09:47:04.573834345Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "cargo package now fails with \"no matching package named 'kati' found\", because Ronin gained a path dependency on the vendored fork and a path dependency needs a version resolvable from a registry once the crate is packaged.\n\nThis is the consequence the crate-direction decision on kati-graph-sink recorded and explicitly deferred rather than a surprise. Deferring it was right — the alternative was letting a packaging question dictate an architecture — but it is now a live break in tests/release_gate.rs rather than a hypothetical.\n\nCargo.toml's include list also does not mention kati/**, so even a resolvable version would ship a crate whose Make feature cannot build.\n\nThe options are genuinely different in kind and this node's job is to choose, not to patch. Publish the fork to a registry under our own name, which makes it a real dependency and means every change to it needs a release before Ronin can consume it. Vendor the fork's sources into Ronin's package at publish time, which keeps one publishable artefact but means the submodule and the packaged copy can drift. Or accept that Ronin is not published to crates.io while the Make feature exists, and say so — the feature is default-on, so this is a decision about what the product is, not only about how it ships.\n\nWorth checking before choosing: whether the release gate actually needs cargo package to succeed, or whether it is asserting a property nobody depends on yet. If nothing consumes Ronin from a registry today, the honest fix may be to change what the gate asserts and record why, rather than to contort the build."
                     }
                 )
             }
