@@ -6,6 +6,13 @@ description = "A fast Ninja-compatible build tool implemented in Rust"
 license-file = "LICENSE"
 readme = "README.md"
 repository = "https://github.com/necessary-nu/ronin"
+# Ronin is a binary tool, not a library anyone depends on from a registry, and
+# it carries the Make frontend as a path dependency on a submodule. A registry
+# crate cannot express that, and nothing wants it to: `cargo install --git`
+# builds from the checkout, submodule included. The `include` list below is
+# retained because it still describes what a distribution artifact would be
+# made of, should one ever be built.
+publish = false
 include = [
     "src/**",
     "examples/**",

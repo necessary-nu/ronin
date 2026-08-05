@@ -49,11 +49,13 @@ done
 nplan lint
 nplan audit
 
-package_files=$(cargo package --list)
-printf '%s\n' "$package_files"
-if printf '%s\n' "$package_files" |
-    rg -q '(^|/)(plan/|\.config/|[^/]+\.(c|h)$|Makefile$|samu\.1$)'; then
-    echo "release gate: package contains legacy or planning-only files" >&2
-    exit 1
-fi
-cargo package
+# The gate used to build a registry package here and check that planning-only
+# and legacy files stayed out of it. Ronin is `publish = false`: it is a binary
+# tool, and it carries the Make frontend as a path dependency on a submodule,
+# which no registry crate can express. Building one therefore fails for a
+# reason that says nothing about the release.
+#
+# The leak check went with it because it had no subject once the artifact it
+# inspected stopped being built. If a distribution artifact is ever added, that
+# check belongs to it, not here — and it should inspect the thing actually
+# shipped rather than a crate nobody consumes.

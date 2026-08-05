@@ -17,11 +17,28 @@ fn release_gate_wires_every_candidate_check() {
         "nplan spec stale",
         "nplan lint",
         "nplan audit",
-        "cargo package",
     ] {
         assert!(
             RELEASE_GATE.contains(command),
             "release gate is missing {command}"
         );
     }
+}
+
+/// Ronin is a binary tool carrying the Make frontend as a path dependency on a
+/// submodule, so it is `publish = false` and the gate builds no registry
+/// package. Asserting the absence keeps the check from drifting back in on the
+/// assumption that a missing `cargo package` was an oversight.
+// [spec:ronin:req:release.compatibility-gate/test]
+#[test]
+fn release_gate_builds_no_registry_package() {
+    assert!(
+        !RELEASE_GATE.contains("cargo package"),
+        "the gate packages a crate Ronin does not publish"
+    );
+    let manifest = include_str!("../Cargo.toml");
+    assert!(
+        manifest.contains("publish = false"),
+        "Cargo.toml no longer declares the crate unpublished"
+    );
 }
