@@ -3668,6 +3668,15 @@ children (
                 id kati-build-sink
                 title "Route kati's Ninja emission through a build sink trait"
                 deps (kati-submodule)
+                sealed true
+                log (
+                    {
+                        at 2026-08-05T06:57:49.078828973Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
             }
 
             {
@@ -3676,13 +3685,25 @@ children (
                 implements {
                     target-impl ([spec:ronin:req:make.graph-direct])
                 }
-                deps (ronin-frontend-api ronin-execute-api kati-build-sink)
+                deps (
+                    ronin-frontend-api
+                    ronin-execute-api
+                    kati-build-sink
+                    kati-command-escapes
+                )
                 log (
                     {
                         at 2026-08-04T14:37:29.490746695Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "The field correspondence this node depends on, checked against the vendored commit and the current graph.\n\nkati dep.rs:47 DepNode carries output, implicit_outputs, actual_inputs, actual_order_only_inputs, actual_validations, is_phony, is_restat, depfile_var, ninja_pool_var, cmds, rule_vars, output_pattern, loc. Ronin graph.rs:64 Edge carries out with an explicit-output count, input with explicit and non-order-only partitions, validation, pool, dyndep, rule, and bindings. Every field on the left has a destination on the right; nothing needs inventing.\n\nThe work is therefore not translation, it is redirection. ninja.rs:460 emit_node and ninja.rs:541 emit_build already compute everything an edge needs and then write it out as text. The command construction that feeds them stays where it is: gen_shell_script at ninja.rs:382, translate_command at ninja.rs:267, get_depfile at ninja.rs:431, the 100 kB response-file threshold, and escape_shell are Make concerns and do not belong in graph construction.\n\nTwo shape differences to settle when implementing rather than to discover later. kati emits a synthetic _kati_always_build_ input for phony targets when use_ninja_phony_output is off, which exists to force rebuilds through a manifest and has no reason to exist when the graph is built directly. And escape_ninja / escape_build_target only matter for serialization, so the direct path must take the unescaped symbol bytes, not the escaped ones. Both are places where the emitted manifest and the direct graph could diverge for reasons that are correct rather than defective, so make-graph-equivalence needs to be able to express them as classified differences rather than failures."
+                    }
+
+                    {
+                        at 2026-08-05T06:57:42.983827002Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Corrections to this node's earlier field correspondence, from closing kati-build-sink.\n\nRead the wrong side of the graph and the equivalence check will compare two things that match by coincidence. The earlier note maps DepNode's actual_inputs, actual_order_only_inputs and actual_validations onto Ronin's inputs. The emitter does not read those. It reads deps, order_onlys and validations, and only that side is populated by the plan walk. They agree today because dep.rs pushes them one for one in order, but a graph sink should read the side the emitter reads.\n\ntags_var was missing from the correspondence entirely, and so were sandbox_disabled and phony_output. .KATI_TAGS is emitted per edge, has no counterpart in Ronin's Edge beyond a generic binding, and nothing consumes it. Decide explicitly whether these are dropped or carried as bindings rather than discovering them absent later.\n\nThe sink driver is still private. BuildSink, NinjaWriter and NinjaWriterOptions are public, but NinjaGenerator::emit is not, so an out-of-crate front end cannot supply its own sink yet. One signature, and it belongs here because this node knows what shape it wants.\n\nTwo cosmetic things that will look like defects and are not. Special targets consume a rule id before being filtered, so rule numbering has gaps. Pool names are written unescaped while targets are escaped.\n\nOne genuinely dead branch, worth not faithfully reproducing: the \"Environment variables used\" comment block has never been emitted, in the C++ original or this port, because the map it reads is filled after the comment that reads it. NinjaWriter does not reproduce it and the fill site records why."
                     }
                 )
             }
@@ -3791,6 +3812,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Governance gap: the vendored fork is under nspec but not under the quality gates, so \"Ronin's nplan governs it\" is currently half true.\n\n.config/nspec/config.styx now includes kati/src-rs/** and coverage works — make.scope-separation is covered and tested from the fork. But .config/nplan/config.styx still lists the rust platform's files as Cargo.toml, Cargo.lock, and src/**, so function-density, trivial-function, duplication, and comment-smells do not see the fork at all. Every commit touching only kati skips the gates the rest of the tree is held to.\n\nTurning it on is not a one-line config change, which is why this is a node. Measured now: src-rs/func.rs has 59 functions against a limit of 50, and src-rs/find.rs has exactly 50, so it fires immediately and then sits one function from firing again. func.rs is Make's builtin function table, roughly one function per Make builtin, so a high count there is arguably the correct shape rather than a defect — which makes this a question about whether the gate wants an exemption, a split of the table into groups, or a raised threshold for that file. The existing config already has an exempt-paths list and a trivial-function allow-names list, so both mechanisms are available and precedented.\n\nDo this before the fork grows, not after. The longer the gates stay off, the more of the fork is grandfathered in and the more expensive the eventual reckoning. It is also worth running the gates in report-only mode first to see the full inventory rather than discovering it one blocked commit at a time."
+                    }
+                )
+            }
+
+            {
+                id kati-command-escapes
+                title "Separate Ninja escaping from Make command construction"
+                deps (kati-build-sink)
+                log (
+                    {
+                        at 2026-08-05T06:57:29.771946174Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Opened from a hazard found closing kati-build-sink, and it blocks kati-graph-sink because getting it wrong is silent.\n\nThe sink was designed to carry unescaped data, and for paths it does: they cross as symbol handles, and escape_ninja moved into the writer. Commands are the exception, and not by oversight. translate_command at ninja.rs:312 rewrites a dollar to a doubled dollar, which is purely a Ninja escape, but it lives in gen_shell_script, which is command construction and which the sink design deliberately keeps in the front end. So the bytes crossing SinkRule::command are Ninja-escaped even though nothing else at that boundary is.\n\nWhy that is dangerous rather than merely untidy. Through the emitted manifest the escape is correct and round-trips: Ninja unescapes the pair when it evaluates the command, and the shell sees a single dollar. A graph sink writing the same bytes straight into an edge binding skips the unescaping entirely, so the shell sees two. Every Makefile using a shell variable is affected, and make-graph-equivalence cannot see it, because both sides of that comparison carry the same bytes — the whole point of that oracle is that the two paths agree, and here they would agree on being wrong.\n\nIt cannot be fixed by moving translate_command's dollar case into the writer on its own. strutil::escape_shell special-cases the doubled pair at strutil.rs:464, so the two escapes are written against each other and have to be untangled together. Both sites are confirmed present.\n\nThe gate is byte-identity of the emitted manifest, same as kati-build-sink: this is a refactor of where an escape happens, not a change to what gets written. The corpus and flag-matrix harnesses from that node are the right tool and should be reused rather than rebuilt.\n\nTwo smaller instances of the same shape are in scope. The default description is the literal \"build $out\" and the response file path is \"$out.rsp\"; both are Ninja expressions rather than strings, so a direct graph has to expand them itself or keep an evaluator alive for exactly two bindings."
                     }
                 )
             }

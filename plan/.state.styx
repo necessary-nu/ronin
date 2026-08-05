@@ -230,6 +230,7 @@ assertions (
     {id kati-observation-session, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:41:23.254905623Z}
     {id kati-no-globals-gate, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:41:25.463942244Z}
     {id make-licence-position, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:42:23.811196065Z}
+    {id kati-build-sink, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:57:49.078828973Z}
 )
 
 impl_evidence (
