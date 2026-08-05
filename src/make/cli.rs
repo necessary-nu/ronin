@@ -86,9 +86,11 @@ impl Invocation {
 
     /// The switches a sub-make has to be told about again.
     ///
-    /// GNU Make sends these down through `MAKEFLAGS`; Ronin sends them in
-    /// `$(MAKE)`, because the `MAKEFLAGS` it publishes describes the job budget
-    /// its children draw on and rewriting that would cost them the budget.
+    /// These travel in `MAKEFLAGS`, where GNU Make puts them and where the job
+    /// budget already travels — the two are spliced rather than one replacing
+    /// the other. They were once appended to `$(MAKE)` instead, on the belief
+    /// that `MAKEFLAGS` was the jobserver's alone; that made `$(MAKE)` several
+    /// words, and a consumer that treats the answer as a path cannot exec it.
     fn propagated(&self) -> Vec<OsString> {
         let mut propagated = Vec::new();
         for (switch, spelling) in [
