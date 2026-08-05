@@ -65,6 +65,14 @@ pub(crate) struct BuildOptions {
     pub(crate) terminal: TerminalContext,
     pub(crate) maxload: f64,
     pub(crate) jobserver: Option<crate::jobserver::Transport>,
+    /// Whether this build may create a jobserver of its own.
+    ///
+    /// Set when nothing in the environment described one, which is what makes
+    /// this build the top of its tree. A build that declined an inherited
+    /// jobserver — an explicit `-j` under a parent Make — still leaves that
+    /// one in place for children rather than shadowing it with a second
+    /// budget that would be spent alongside the first.
+    pub(crate) serve_jobserver: bool,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -88,6 +96,7 @@ impl Default for BuildOptions {
             terminal: TerminalContext::default(),
             maxload: 0.0,
             jobserver: None,
+            serve_jobserver: false,
             working_directory: crate::os::WorkingDirectory::default(),
         }
     }
@@ -1517,28 +1526,49 @@ impl<'a> Builder<'a> {
         let mut running_slots = Vec::new();
         running_slots.resize_with(self.graph.edge_count(), || None);
         let mut console_running = false;
+        // A dry run starts no process, so it must claim no slot and publish no
+        // budget: a jobserver there would be a budget nothing is spending.
+        let transport = if self.options.dryrun {
+            None
+        } else if let Some(inherited) = self.options.jobserver.clone() {
+            Some(inherited)
+        } else if let (true, JobLimit::Fixed(jobs)) =
+            (self.options.serve_jobserver, self.options.jobs)
+        {
+            // A budget of one has nothing to share, and Ninja's `-j0` has no
+            // budget at all. GNU Make publishes no jobserver in either case.
+            // Neither has a build with no command to run, which is most of
+            // them: an up-to-date tree must not pay to create and remove a
+            // fifo nothing was ever going to open.
+            (jobs.get() > 1 && self.progress.total != 0)
+                .then(|| crate::jobserver::Transport::serve(jobs))
+                .transpose()?
+                .flatten()
+        } else {
+            None
+        };
         let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::in_directory(
             self.options.working_directory.as_path(),
             self.options.shell.clone(),
+            transport
+                .as_ref()
+                .map_or(&[], crate::jobserver::Transport::publication),
         )?;
-        let mut jobserver = if self.options.dryrun {
-            None
-        } else {
-            self.options
-                .jobserver
-                .clone()
-                .map(|transport| {
-                    let sender = processes.external_sender();
-                    crate::jobserver::JobserverClient::new(transport, move |result| {
-                        sender.send(result);
-                    })
+        let mut jobserver = transport
+            .map(|transport| {
+                let sender = processes.external_sender();
+                crate::jobserver::JobserverClient::new(transport, move |result| {
+                    sender.send(result);
                 })
-                .transpose()?
-        };
+            })
+            .transpose()?;
         let mut available_slot = None;
         let mut load = status::LoadSampler::default();
 
         loop {
+            // Set when work was deferred for want of a shared slot, which is
+            // the one wait a served jobserver cannot wake by itself.
+            let mut starved = false;
             if let Some(signal) = crate::signal::interrupted() {
                 processes.interrupt(signal)?;
                 failures = failure_limit;
@@ -1573,14 +1603,22 @@ impl<'a> Builder<'a> {
                     break;
                 }
                 let slot = if let Some(client) = jobserver.as_mut() {
-                    if let Some(slot) = available_slot
+                    // The implicit slot first, because it is the one slot that
+                    // costs the shared budget nothing. Only past it does a
+                    // command of Ronin's own take capacity a child could have.
+                    let held = match available_slot
                         .take()
                         .or_else(|| client.try_acquire_implicit())
                     {
+                        Some(slot) => Some(slot),
+                        None => client.try_acquire_token()?,
+                    };
+                    if let Some(slot) = held {
                         Some(slot)
                     } else {
                         self.plan.defer_work(self.graph, edge);
                         client.request_token();
+                        starved = true;
                         break;
                     }
                 } else {
@@ -1634,7 +1672,14 @@ impl<'a> Builder<'a> {
             if processes.running_len() == 0 {
                 break;
             }
-            let Some(wake) = processes.wait(None)? else {
+            let deadline = starved
+                .then(|| {
+                    jobserver
+                        .as_ref()
+                        .and_then(crate::jobserver::JobserverClient::retry_interval)
+                })
+                .flatten();
+            let Some(wake) = processes.wait(deadline)? else {
                 continue;
             };
             let completion = match wake {

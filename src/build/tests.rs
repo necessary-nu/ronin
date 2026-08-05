@@ -1463,7 +1463,9 @@ fn ronin_build_acquires_and_releases_jobserver_tokens() {
         jobs: JobLimit::Unlimited,
         // GNU Make contributes one implicit slot; one transport token permits
         // the second command to run concurrently.
-        jobserver: Some(jobserver::Client::new(1).unwrap()),
+        jobserver: Some(crate::jobserver::Transport::Inherited(
+            jobserver::Client::new(1).unwrap(),
+        )),
         ..BuildOptions::default()
     };
     let mut builder = Builder::new(&mut graph, options);

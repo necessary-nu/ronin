@@ -677,3 +677,137 @@ fn a_manifest_diagnostic_points_at_the_token_it_is_about() {
 
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// The peak number of work units alive at once, from a log of start and end
+/// stamps, and how many units the log recorded.
+#[cfg(unix)]
+fn peak_concurrency(log: &str) -> (usize, usize) {
+    let mut events = log
+        .lines()
+        .filter_map(|line| {
+            let (kind, stamp) = line.split_once(' ')?;
+            let start = kind == "S";
+            // Ends sort before starts at an identical stamp, so a unit that
+            // finishes exactly as another begins is not counted as an overlap.
+            Some((stamp.parse::<f64>().ok()?, i32::from(start), start))
+        })
+        .collect::<Vec<_>>();
+    events.sort_by(|left, right| left.partial_cmp(right).expect("stamps are finite"));
+    let (mut live, mut peak, mut started) = (0, 0, 0);
+    for (_, _, start) in events {
+        if start {
+            live += 1;
+            started += 1;
+            peak = peak.max(live);
+        } else {
+            live -= 1;
+        }
+    }
+    (peak, started)
+}
+
+#[cfg(unix)]
+// [spec:ronin:req:make.jobserver/test]
+#[test]
+fn a_recursive_make_tree_shares_one_job_budget() {
+    use std::fmt::Write as _;
+
+    const LEVELS: [&str; 3] = ["a", "b", "c"];
+    const UNITS: usize = 6;
+    /// The same tree with the shared budget removed from what each level is
+    /// told, so every level runs `-j` of its own. Present as a control: it is
+    /// what the tree does when nothing serves it, and it is what makes the
+    /// measurement below evidence rather than a tautology.
+    const UNSHARED: &str = "unshared.ninja";
+
+    if Command::new("make").arg("--version").output().is_err() {
+        return;
+    }
+    let directory = test_directory("recursive-make-budget");
+    let served = directory.join("jobservers");
+    fs::create_dir_all(&served).unwrap();
+    let log = directory.join("units");
+    let stamp = directory.join("unit.sh");
+    fs::write(
+        &stamp,
+        "#!/bin/sh\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let mut shared = String::from("rule submake\n  command = make -f $mk all\n");
+    let mut unshared =
+        String::from("rule submake\n  command = env MAKEFLAGS=$budget make -f $mk all\n");
+    for level in LEVELS {
+        let units = (0..UNITS)
+            .map(|unit| format!("{level}{unit}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        fs::write(
+            directory.join(format!("{level}.mk")),
+            format!(
+                "all: {units}\n{units}:\n\t@{} $@\n.PHONY: all {units}\n",
+                stamp.display()
+            ),
+        )
+        .unwrap();
+        write!(shared, "build {level}: submake\n  mk = {level}.mk\n").unwrap();
+        write!(
+            unshared,
+            "build {level}: submake\n  mk = {level}.mk\n  budget = -j{UNITS}\n"
+        )
+        .unwrap();
+    }
+    for (name, manifest) in [("build.ninja", &mut shared), (UNSHARED, &mut unshared)] {
+        writeln!(manifest, "default {}", LEVELS.join(" ")).unwrap();
+        fs::write(directory.join(name), &*manifest).unwrap();
+    }
+
+    // Every level takes its parallelism from MAKEFLAGS, so a level told `-j`
+    // and nothing else runs that many units on its own. The measurement is of
+    // overlap on the clock, not of what any level believes about its budget.
+    let measure = |jobs: usize, manifest: &str| {
+        let _ = fs::remove_file(&log);
+        for level in LEVELS {
+            let _ = fs::remove_file(directory.join(level));
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
+            .current_dir(&directory)
+            .args([format!("-j{jobs}"), "-f".into(), manifest.into()])
+            .env("LOG", &log)
+            // Somewhere only this run writes, so what is left behind at the
+            // end is this run's and not a sibling test's.
+            .env("TMPDIR", &served)
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("CARGO_MAKEFLAGS")
+            .env_remove("MAKELEVEL")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let (peak, units) = peak_concurrency(&fs::read_to_string(&log).unwrap());
+        assert_eq!(units, LEVELS.len() * UNITS);
+        peak
+    };
+
+    for jobs in [1, 2, 4] {
+        let peak = measure(jobs, "build.ninja");
+        assert!(
+            peak <= jobs,
+            "-j{jobs} let {peak} units of a recursive Make tree run at once"
+        );
+    }
+    let unshared_peak = measure(2, UNSHARED);
+    assert!(
+        unshared_peak > UNITS,
+        "the control did not oversubscribe, so the shared measurement proves nothing"
+    );
+
+    // The fifo belongs to the run that created it and outlives none of them.
+    assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
+    fs::remove_dir_all(directory).unwrap();
+}

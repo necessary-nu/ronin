@@ -80,7 +80,7 @@ pub struct Runner {
     makeflags: Option<String>,
     status_format: Option<String>,
     terminal: crate::build::TerminalContext,
-    connect_jobserver: fn() -> Result<crate::jobserver::Transport, crate::error::ProcessError>,
+    connect_jobserver: fn() -> Result<jobserver::Client, crate::error::ProcessError>,
 }
 
 impl Runner {
@@ -825,13 +825,18 @@ fn normalize_runtime_options(
     makeflags: Option<&str>,
     status_format: Option<&str>,
     terminal: crate::build::TerminalContext,
-    connect_jobserver: impl FnOnce() -> Result<crate::jobserver::Transport, crate::error::ProcessError>,
+    connect_jobserver: impl FnOnce() -> Result<jobserver::Client, crate::error::ProcessError>,
 ) -> CliResult<()> {
+    let config = crate::jobserver::parse_makeflags_value(makeflags)?;
+    // A jobserver named in the environment is one this build must not shadow,
+    // whether or not it draws on it: an explicit `-j` under a parent Make
+    // declines the shared budget for Ronin's own commands, but the commands
+    // still reach the parent's jobserver the way every other child does.
+    let inheritable = config.has_mode() && config.is_native();
     if options.jobs == JobLimit::Auto {
-        let config = crate::jobserver::parse_makeflags_value(makeflags)?;
-        if config.has_mode() && config.is_native() {
+        if inheritable {
             options.jobs = JobLimit::Unlimited;
-            options.jobserver = Some(connect_jobserver()?);
+            options.jobserver = Some(crate::jobserver::Transport::Inherited(connect_jobserver()?));
         } else {
             let jobs = match crate::os::osnproc() {
                 i64::MIN..=1 => 2,
@@ -841,6 +846,7 @@ fn normalize_runtime_options(
             options.jobs = JobLimit::fixed(jobs).expect("default job count is nonzero");
         }
     }
+    options.serve_jobserver = !inheritable;
     if let Some(status) = status_format {
         status.clone_into(&mut options.statusfmt);
     }
@@ -1946,6 +1952,37 @@ mod tests {
             .any(|value| value == b"child-output"));
         assert!(diagnostics.is_empty());
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    // [spec:ronin:req:make.jobserver/test]
+    fn rust_cli_serves_a_jobserver_only_at_the_top_of_the_tree() {
+        let normalize = |makeflags| {
+            let mut options = BuildOptions {
+                jobs: JobLimit::fixed(4).unwrap(),
+                ..BuildOptions::default()
+            };
+            normalize_runtime_options(
+                &mut options,
+                makeflags,
+                None,
+                crate::build::TerminalContext::default(),
+                || unreachable!("an explicit -j declines an inherited jobserver"),
+            )
+            .unwrap();
+            options.serve_jobserver
+        };
+
+        // Nothing in the environment names a jobserver, so this build is the
+        // top of its tree and owns the budget its children share.
+        assert!(normalize(None));
+        assert!(normalize(Some("-k")));
+        // A parent already published one. Declining to draw on it is not a
+        // reason to replace it: the commands still reach the parent's budget,
+        // and a second budget beside it would be spent alongside the first.
+        assert!(!normalize(Some(" -j8 --jobserver-auth=fifo:/tmp/parent")));
+        assert!(!normalize(Some(" -j8 --jobserver-auth=3,4")));
     }
 
     #[cfg(unix)]

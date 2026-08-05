@@ -1136,6 +1136,7 @@ impl error::Error for PersistenceError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum JobserverOperation {
+    CreateJobserver,
     StartHelper,
     AcquireToken,
 }
@@ -1211,6 +1212,7 @@ impl fmt::Display for ProcessError {
             }
             Self::Jobserver { operation, source } => {
                 let context = match operation {
+                    JobserverOperation::CreateJobserver => "Error creating GNU Make jobserver",
                     JobserverOperation::StartHelper => "Error starting GNU Make jobserver helper",
                     JobserverOperation::AcquireToken => "Error acquiring GNU Make jobserver token",
                 };

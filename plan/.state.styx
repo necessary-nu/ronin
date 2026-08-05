@@ -232,7 +232,6 @@ assertions (
     {id make-licence-position, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:42:23.811196065Z}
     {id kati-build-sink, kind @complete, author "brendan@necessary.nu", at 2026-08-05T06:57:49.078828973Z}
     {id kati-quality-gates, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:06:51.184781451Z}
-    {id make-jobserver-server, kind @doing, author "brendan@necessary.nu", at 2026-08-05T08:24:19.659100336Z}
     {id kati-command-escapes, kind @complete, author "brendan@necessary.nu", at 2026-08-05T08:29:17.026818872Z}
 )
 
@@ -449,5 +448,10 @@ impl_evidence (
         make.no-ambient-state
     ), covered_claims (
         {impl_name target-impl, rule make.no-ambient-state}
+    )}
+    {id make-jobserver-server, covered_rules (
+        make.jobserver
+    ), covered_claims (
+        {impl_name target-impl, rule make.jobserver}
     )}
 )

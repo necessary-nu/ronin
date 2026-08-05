@@ -1,16 +1,19 @@
-//! GNU Make jobserver discovery and resource-safe slot ownership.
+//! GNU Make jobserver discovery, publication, and resource-safe slot ownership.
 
 use crate::error::{JobserverOperation, ProcessError};
 use std::cell::Cell;
+use std::ffi::OsString;
 use std::io;
+use std::num::NonZeroUsize;
 use std::rc::Rc;
+#[cfg(unix)]
+use std::sync::Arc;
+use std::time::Duration;
 
 type ProcessResult<T> = Result<T, ProcessError>;
 
 /// Result delivered when the jobserver helper finishes one acquisition.
 pub(crate) type Acquisition = io::Result<jobserver::Acquired>;
-/// Cloneable handle to the inherited jobserver transport.
-pub(crate) type Transport = jobserver::Client;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) enum JobserverMode {
@@ -129,6 +132,219 @@ pub(crate) fn inherited_client() -> ProcessResult<jobserver::Client> {
         .map_err(|source| ProcessError::JobserverEnvironment { source })
 }
 
+/// How long a build waits before re-asking a jobserver it serves for a token.
+///
+/// Ronin only ever wants a token while one of its own commands is already
+/// running, because the implicit slot covers the first. So a wake it misses
+/// costs latency and never progress: the next completion retries anyway. This
+/// bounds that latency for the case where every one of Ronin's own commands is
+/// long-running and a child hands a token back in the middle of them.
+#[cfg(unix)]
+const SERVED_RETRY_INTERVAL: Duration = Duration::from_millis(2);
+
+/// The byte written into a served jobserver for each shareable slot.
+///
+/// The protocol gives the byte no meaning beyond identity — a client must
+/// write back exactly what it read — so this only has to be something.
+#[cfg(unix)]
+const SERVED_TOKEN: u8 = b'+';
+
+/// How many tokens fit in one pipe buffer, which is what a fifo has.
+///
+/// Writing past it would block, and a jobserver whose creator can block on its
+/// own fifo is a deadlock waiting for a large enough `-j`.
+#[cfg(unix)]
+const SERVED_TOKEN_CEILING: usize = 64 * 1024;
+
+/// Where a build gets its job slots from.
+///
+/// Inheriting and serving are mutually exclusive by construction: a build that
+/// found a jobserver in its environment consumes that one and leaves the
+/// environment alone, so children keep reaching the same budget it does.
+#[derive(Clone, Debug)]
+pub(crate) enum Transport {
+    /// A jobserver a parent process published; children inherit it unchanged.
+    Inherited(jobserver::Client),
+    /// A jobserver this build created, sized to its own job limit.
+    #[cfg(unix)]
+    Served(Arc<ServedJobserver>),
+}
+
+// [spec:ronin:req:make.jobserver]
+impl Transport {
+    /// Creates a jobserver sized to `jobs`, where the platform has one to make.
+    ///
+    /// Windows publishes its budget through a named semaphore rather than a
+    /// pipe, which Ronin reads as a client but does not yet write; there a
+    /// build keeps its job limit to itself.
+    pub(crate) fn serve(jobs: NonZeroUsize) -> ProcessResult<Option<Self>> {
+        #[cfg(unix)]
+        {
+            ServedJobserver::create(jobs).map(|served| Some(Self::Served(Arc::new(served))))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = jobs;
+            Ok(None)
+        }
+    }
+
+    /// The environment a child needs to draw on this build's job budget.
+    ///
+    /// Empty for an inherited jobserver: the variables that describe it are
+    /// already in this process's environment and children inherit them, so
+    /// republishing could only corrupt what a parent wrote.
+    pub(crate) fn publication(&self) -> &[(&'static str, OsString)] {
+        match self {
+            Self::Inherited(_) => &[],
+            #[cfg(unix)]
+            Self::Served(served) => &served.environment,
+        }
+    }
+}
+
+/// A GNU Make jobserver this process created, owns, and removes.
+///
+/// The named-pipe form, which is what GNU Make 4.4 publishes on Linux. A path
+/// survives an intermediate process that does not cooperate in passing
+/// descriptors down, and — because nothing has to be made inheritable —
+/// publishing it leaves Ronin's spawn path on `posix_spawn`.
+#[cfg(unix)]
+#[derive(Debug)]
+pub(crate) struct ServedJobserver {
+    path: std::path::PathBuf,
+    /// Opened read-write so the fifo never reports end of file, and
+    /// non-blocking so an empty one is a decision rather than a stall. Both
+    /// belong to this description alone; a child opening the path gets its own.
+    fifo: std::fs::File,
+    environment: [(&'static str, OsString); 3],
+}
+
+#[cfg(unix)]
+// [spec:ronin:req:make.jobserver]
+impl ServedJobserver {
+    fn create(jobs: NonZeroUsize) -> ProcessResult<Self> {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+        let operate = |operation, source| ProcessError::Jobserver { operation, source };
+        let path = std::env::temp_dir().join(format!(
+            "ronin-jobserver-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&path);
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            &path,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .map_err(|source| operate(JobserverOperation::CreateJobserver, source.into()))?;
+        let fifo = rustix::fs::open(
+            &path,
+            rustix::fs::OFlags::RDWR | rustix::fs::OFlags::NONBLOCK,
+            rustix::fs::Mode::empty(),
+        )
+        .map(std::fs::File::from)
+        .map_err(|source| {
+            let _ = std::fs::remove_file(&path);
+            operate(JobserverOperation::CreateJobserver, source.into())
+        })?;
+
+        // One slot short of the limit: the protocol gives every participant an
+        // implicit slot it does not take from the pipe, and Ronin's own
+        // scheduler takes that one. Sharing all `jobs` would hand out a budget
+        // Ronin is simultaneously spending.
+        let served = Self {
+            environment: publication_for(jobs, &path),
+            path,
+            fifo,
+        };
+        served
+            .fill(jobs.get() - 1)
+            .map_err(|source| operate(JobserverOperation::CreateJobserver, source))?;
+        Ok(served)
+    }
+
+    /// Writes the shareable slots, stopping at whatever the fifo will hold.
+    ///
+    /// A budget larger than one pipe buffer is a job limit no machine can
+    /// spend, and stopping there is what keeps the write from blocking.
+    fn fill(&self, tokens: usize) -> io::Result<()> {
+        use io::Write as _;
+
+        const BATCH: [u8; 512] = [SERVED_TOKEN; 512];
+
+        let mut remaining = tokens.min(SERVED_TOKEN_CEILING);
+        while remaining != 0 {
+            match (&self.fifo).write(&BATCH[..remaining.min(BATCH.len())]) {
+                Ok(0) => break,
+                Ok(written) => remaining -= written,
+                Err(source) if source.kind() == io::ErrorKind::Interrupted => {}
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => break,
+                Err(source) => return Err(source),
+            }
+        }
+        Ok(())
+    }
+
+    /// Takes one slot, or reports that every shared slot is in use.
+    fn try_acquire(&self) -> io::Result<Option<u8>> {
+        use io::Read as _;
+
+        let mut token = [0; 1];
+        loop {
+            return match (&self.fifo).read(&mut token) {
+                Ok(1) => Ok(Some(token[0])),
+                Ok(_) => Ok(None),
+                Err(source) if source.kind() == io::ErrorKind::Interrupted => continue,
+                Err(source) if source.kind() == io::ErrorKind::WouldBlock => Ok(None),
+                Err(source) => Err(source),
+            };
+        }
+    }
+
+    /// Hands a slot back, writing back the byte the protocol requires.
+    ///
+    /// This runs from `Drop`, so it has nowhere to report. It also cannot find
+    /// the fifo full, because a slot is only given back by whoever holds it and
+    /// no more were ever written than fit.
+    fn release(&self, token: u8) {
+        use io::Write as _;
+
+        let _ = (&self.fifo).write_all(&[token]);
+    }
+}
+
+#[cfg(unix)]
+impl Drop for ServedJobserver {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+/// The environment GNU Make 4.4.1 would publish for this jobserver.
+///
+/// `MAKEFLAGS` leads with the group of single-letter switches, so an empty
+/// group shows as the leading space Make writes and children tolerate.
+/// `MFLAGS` carries the same switches spelled as a command line. Both are
+/// Make's; `CARGO_MAKEFLAGS` is the same value under the name the Rust
+/// ecosystem's jobserver clients read first, so a `cargo` or `cc` invoked from
+/// a build command joins this budget rather than inventing its own.
+#[cfg(unix)]
+fn publication_for(jobs: NonZeroUsize, path: &std::path::Path) -> [(&'static str, OsString); 3] {
+    let mut authorization = OsString::from(format!("-j{jobs} --jobserver-auth=fifo:"));
+    authorization.push(path);
+    let mut makeflags = OsString::from(" ");
+    makeflags.push(&authorization);
+    [
+        ("MAKEFLAGS", makeflags.clone()),
+        ("MFLAGS", authorization),
+        ("CARGO_MAKEFLAGS", makeflags),
+    ]
+}
+
 #[derive(Debug)]
 struct ImplicitSlot {
     available: Rc<Cell<bool>>,
@@ -144,14 +360,30 @@ impl Drop for ImplicitSlot {
     }
 }
 
+#[cfg(unix)]
+#[derive(Debug)]
+struct ServedSlot {
+    server: Arc<ServedJobserver>,
+    token: u8,
+}
+
+#[cfg(unix)]
+impl Drop for ServedSlot {
+    fn drop(&mut self) {
+        self.server.release(self.token);
+    }
+}
+
 /// An owned GNU Make job slot.
 ///
-/// Both variants release their capacity from `Drop`, so scheduler errors and
+/// Every variant releases its capacity from `Drop`, so scheduler errors and
 /// unwinding cannot strand a token.
 #[derive(Debug)]
 enum SlotOwnership {
     Implicit(ImplicitSlot),
     Explicit(jobserver::Acquired),
+    #[cfg(unix)]
+    Served(ServedSlot),
 }
 
 #[derive(Debug)]
@@ -172,10 +404,19 @@ impl Slot {
         }
     }
 
+    #[cfg(unix)]
+    const fn served(server: Arc<ServedJobserver>, token: u8) -> Self {
+        Self {
+            ownership: SlotOwnership::Served(ServedSlot { server, token }),
+        }
+    }
+
     pub(crate) fn release(self) {
         match self.ownership {
             SlotOwnership::Implicit(slot) => drop(slot),
             SlotOwnership::Explicit(token) => drop(token),
+            #[cfg(unix)]
+            SlotOwnership::Served(slot) => drop(slot),
         }
     }
 
@@ -185,30 +426,46 @@ impl Slot {
     }
 }
 
-/// Owns the implicit slot and the blocking acquisition helper.
+/// Where a build's shared slots come from once it is running.
+#[derive(Debug)]
+enum Acquirer {
+    /// An inherited jobserver, whose blocking read lives on a helper thread
+    /// that reports back through the supervisor's external event channel.
+    Inherited(jobserver::HelperThread),
+    /// A jobserver this build serves, which it can ask without blocking.
+    #[cfg(unix)]
+    Served(Arc<ServedJobserver>),
+}
+
+/// Owns the implicit slot and whatever acquires the shared ones.
 #[derive(Debug)]
 pub(crate) struct JobserverClient {
     implicit_available: Rc<Cell<bool>>,
-    helper: jobserver::HelperThread,
+    acquirer: Acquirer,
     request_pending: bool,
 }
 
 // [spec:ronin:req:runtime.jobserver-resource-safety]
+// [spec:ronin:req:make.jobserver]
 impl JobserverClient {
     pub(crate) fn new(
-        client: jobserver::Client,
+        transport: Transport,
         notify: impl FnMut(Acquisition) + Send + 'static,
     ) -> ProcessResult<Self> {
-        let helper =
-            client
+        let acquirer = match transport {
+            Transport::Inherited(client) => client
                 .into_helper_thread(notify)
+                .map(Acquirer::Inherited)
                 .map_err(|source| ProcessError::Jobserver {
                     operation: JobserverOperation::StartHelper,
                     source,
-                })?;
+                })?,
+            #[cfg(unix)]
+            Transport::Served(served) => Acquirer::Served(served),
+        };
         Ok(Self {
             implicit_available: Rc::new(Cell::new(true)),
-            helper,
+            acquirer,
             request_pending: false,
         })
     }
@@ -219,10 +476,49 @@ impl JobserverClient {
             .then(|| Slot::implicit(self.implicit_available.clone()))
     }
 
+    /// Takes a shared slot if one is free right now.
+    ///
+    /// An inherited jobserver answers only through its helper thread, so this
+    /// reports nothing for it and the caller falls through to a request.
+    pub(crate) fn try_acquire_token(&self) -> ProcessResult<Option<Slot>> {
+        match &self.acquirer {
+            Acquirer::Inherited(_) => Ok(None),
+            #[cfg(unix)]
+            Acquirer::Served(served) => served
+                .try_acquire()
+                .map(|token| token.map(|token| Slot::served(served.clone(), token)))
+                .map_err(|source| ProcessError::Jobserver {
+                    operation: JobserverOperation::AcquireToken,
+                    source,
+                }),
+        }
+    }
+
     pub(crate) fn request_token(&mut self) {
-        if !self.request_pending {
-            self.request_pending = true;
-            self.helper.request_token();
+        match &self.acquirer {
+            Acquirer::Inherited(helper) => {
+                if !self.request_pending {
+                    self.request_pending = true;
+                    helper.request_token();
+                }
+            }
+            // A served jobserver is asked rather than queued on, so there is
+            // nothing here to remember wanting.
+            #[cfg(unix)]
+            Acquirer::Served(_) => {}
+        }
+    }
+
+    /// How long the scheduler may sleep while waiting for a shared slot.
+    ///
+    /// An inherited jobserver wakes the supervisor when a token arrives, so
+    /// there is nothing to time out on. A served one is asked rather than
+    /// waited on, so the wait has to end by itself.
+    pub(crate) const fn retry_interval(&self) -> Option<Duration> {
+        match self.acquirer {
+            Acquirer::Inherited(_) => None,
+            #[cfg(unix)]
+            Acquirer::Served(_) => Some(SERVED_RETRY_INTERVAL),
         }
     }
 
@@ -358,7 +654,7 @@ mod tests {
         drop(probe.acquire().unwrap());
 
         let (sender, receiver) = mpsc::channel();
-        let client = JobserverClient::new(transport, move |result| {
+        let client = JobserverClient::new(Transport::Inherited(transport), move |result| {
             let _ = sender.send(result);
         })
         .unwrap();
@@ -376,7 +672,7 @@ mod tests {
         let transport = jobserver::Client::new(0).unwrap();
         let producer = transport.clone();
         let (sender, receiver) = mpsc::channel();
-        let mut client = JobserverClient::new(transport, move |result| {
+        let mut client = JobserverClient::new(Transport::Inherited(transport), move |result| {
             let _ = sender.send(result);
         })
         .unwrap();
@@ -402,6 +698,110 @@ mod tests {
             error.to_string(),
             "Error acquiring GNU Make jobserver token: unexpected end of file"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    // [spec:ronin:req:make.jobserver/test]
+    fn ronin_serves_the_named_pipe_form_gnu_make_publishes() {
+        let jobs = NonZeroUsize::new(4).unwrap();
+        let served = ServedJobserver::create(jobs).unwrap();
+        let path = served.path.clone();
+        assert!(
+            std::fs::metadata(&path)
+                .map(|metadata| std::os::unix::fs::FileTypeExt::is_fifo(&metadata.file_type()))
+                .unwrap(),
+            "a served jobserver is a named pipe"
+        );
+
+        // GNU Make 4.4.1 writes ` -j4 --jobserver-auth=fifo:/tmp/GMfifo<pid>`
+        // into MAKEFLAGS, the same without the leading empty single-letter
+        // group into MFLAGS, and nothing into CARGO_MAKEFLAGS.
+        let published = |name: &str| {
+            served
+                .environment
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_str().unwrap().to_owned())
+                .unwrap()
+        };
+        let authorization = format!("-j4 --jobserver-auth=fifo:{}", path.display());
+        assert_eq!(published("MAKEFLAGS"), format!(" {authorization}"));
+        assert_eq!(published("MFLAGS"), authorization);
+        assert_eq!(published("CARGO_MAKEFLAGS"), format!(" {authorization}"));
+        assert_eq!(
+            parse_makeflags_value(Some(&published("MAKEFLAGS"))).unwrap(),
+            JobserverConfig {
+                mode: JobserverMode::PosixFifo,
+                path: path.to_str().unwrap().to_owned(),
+            }
+        );
+
+        drop(served);
+        assert!(!path.exists(), "a served jobserver removes its own fifo");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    // [spec:ronin:req:make.jobserver/test]
+    fn a_served_budget_counts_ronins_own_jobs_against_the_slots_it_shares() {
+        const JOBS: usize = 4;
+
+        let transport = Transport::serve(NonZeroUsize::new(JOBS).unwrap())
+            .unwrap()
+            .expect("Unix serves the named-pipe form");
+        assert!(
+            transport.publication().len() == 3,
+            "a served jobserver is published to children"
+        );
+        let mut client = JobserverClient::new(transport, |_| unreachable!()).unwrap();
+
+        // The implicit slot is Ronin's own and costs the shared pool nothing;
+        // every job past it takes capacity a child would otherwise have. Four
+        // jobs at `-j4` therefore leave the pool empty rather than leaving a
+        // full pool beside four running commands.
+        let mut held = vec![client.try_acquire_implicit().unwrap()];
+        while let Some(slot) = client.try_acquire_token().unwrap() {
+            held.push(slot);
+            assert!(held.len() <= JOBS, "a served budget cannot exceed -j");
+        }
+        assert_eq!(held.len(), JOBS);
+        assert!(client.try_acquire_implicit().is_none());
+
+        // Requesting a token is what the scheduler does when it runs dry, and
+        // a served jobserver must not block or queue on it.
+        client.request_token();
+        assert!(client.try_acquire_token().unwrap().is_none());
+        assert!(client.retry_interval().is_some());
+
+        for slot in std::mem::take(&mut held) {
+            slot.release();
+        }
+        held.push(client.try_acquire_implicit().unwrap());
+        while let Some(slot) = client.try_acquire_token().unwrap() {
+            held.push(slot);
+        }
+        assert_eq!(held.len(), JOBS, "released slots return to the shared pool");
+    }
+
+    #[test]
+    // [spec:ronin:req:make.jobserver/test]
+    fn an_inherited_jobserver_is_passed_to_children_untouched() {
+        let transport = Transport::Inherited(jobserver::Client::new(1).unwrap());
+        // The variables naming an inherited jobserver are already in this
+        // process's environment, so children reach it by inheriting them.
+        // Rewriting them here could only replace a parent's budget with a
+        // narrower view of it.
+        assert!(transport.publication().is_empty());
+
+        let (sender, receiver) = mpsc::channel();
+        let client = JobserverClient::new(transport, move |result| {
+            let _ = sender.send(result);
+        })
+        .unwrap();
+        assert!(client.try_acquire_token().unwrap().is_none());
+        assert!(client.retry_interval().is_none());
+        drop(receiver);
     }
 
     #[cfg(unix)]

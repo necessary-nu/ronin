@@ -137,15 +137,27 @@ pub(crate) struct ProcessSupervisor<External = ()> {
     interrupted: Option<Signal>,
     working_directory: PathBuf,
     shell: ShellMode,
+    /// Variables imposed on every child, empty unless this build serves a
+    /// jobserver its children are meant to draw on.
+    ///
+    /// Imposing nothing is not the same as imposing what is already there:
+    /// with no variables set, `Command` hands the child this process's own
+    /// environment block untouched, and the copy it would otherwise build per
+    /// spawn never happens.
+    environment: Vec<(&'static str, std::ffi::OsString)>,
 }
 
 impl<External> ProcessSupervisor<External> {
     #[cfg(test)]
     pub(crate) fn new() -> ProcessResult<Self> {
-        Self::in_directory(Path::new(""), ShellMode::default())
+        Self::in_directory(Path::new(""), ShellMode::default(), &[])
     }
 
-    pub(crate) fn in_directory(working_directory: &Path, shell: ShellMode) -> ProcessResult<Self> {
+    pub(crate) fn in_directory(
+        working_directory: &Path,
+        shell: ShellMode,
+        environment: &[(&'static str, std::ffi::OsString)],
+    ) -> ProcessResult<Self> {
         let (sender, receiver) = mpsc::channel();
         #[cfg(unix)]
         let poller =
@@ -196,6 +208,7 @@ impl<External> ProcessSupervisor<External> {
             interrupted: None,
             shell,
             working_directory: directory_to_impose(working_directory),
+            environment: environment.to_vec(),
         })
     }
 
@@ -261,6 +274,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             let sender = self.sender.clone();
             let working_directory = self.working_directory.clone();
             let shell = self.shell.clone();
+            let environment = self.environment.clone();
             self.running += 1;
             std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -268,6 +282,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                         &command,
                         &working_directory,
                         &shell,
+                        &environment,
                         use_console,
                         dryrun,
                         |pid, process_group| {
@@ -401,7 +416,8 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
 
         let mut mode = self.shell.clone();
         let (child, output) = loop {
-            let mut shell = shell_command(&command, &self.working_directory, &mode);
+            let mut shell =
+                shell_command(&command, &self.working_directory, &mode, &self.environment);
             if !use_console {
                 shell.process_group(0);
             }
@@ -930,7 +946,12 @@ fn direct_argv(command: &[u8]) -> Vec<&[u8]> {
 /// `Auto` skips the shell only where the shell provably has nothing to do;
 /// every other command, and every command at all under `Compat`, is handed to
 /// a shell exactly as Ninja hands it over.
-fn shell_command(command: &BString, working_directory: &Path, mode: &ShellMode) -> Command {
+fn shell_command(
+    command: &BString,
+    working_directory: &Path,
+    mode: &ShellMode,
+    environment: &[(&'static str, std::ffi::OsString)],
+) -> Command {
     let mut shell = match mode {
         ShellMode::Program(program) => {
             let mut shell = Command::new(program);
@@ -988,6 +1009,9 @@ fn shell_command(command: &BString, working_directory: &Path, mode: &ShellMode) 
     shell.stdin(Stdio::null());
     if !working_directory.as_os_str().is_empty() {
         shell.current_dir(working_directory);
+    }
+    for (name, value) in environment {
+        shell.env(name, value);
     }
     shell
 }
@@ -1089,6 +1113,7 @@ fn run_shell(
     command: &BString,
     working_directory: &Path,
     shell: &ShellMode,
+    environment: &[(&'static str, std::ffi::OsString)],
     use_console: bool,
     dryrun: bool,
     started: impl FnOnce(u32, bool),
@@ -1096,7 +1121,7 @@ fn run_shell(
     if dryrun {
         return Ok(None);
     }
-    let mut child = shell_command(command, working_directory, shell);
+    let mut child = shell_command(command, working_directory, shell, environment);
     if use_console {
         let mut child = child.spawn().map_err(|source| ShellFailure {
             operation: ShellOperation::Spawn,
