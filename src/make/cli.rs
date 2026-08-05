@@ -211,6 +211,7 @@ fn usage() -> String {
             "  -s       do not report what is being built\n",
             "  -w       announce the directory the build runs in\n",
             "  --ninja  read a Ninja manifest instead, whatever this program is called\n",
+            "  -v       print the version, as --version does\n",
             "  --version, --help\n",
             "\n",
             "Each switch is also spelled as GNU Make's long option, and the ones\n",
@@ -223,12 +224,18 @@ fn usage() -> String {
 
 /// The identity Make mode reports for itself.
 ///
-/// Not GNU Make's banner: the tool answering is Ronin. The version a Makefile
-/// can branch on is `MAKE_VERSION`, and that one does name a GNU Make release.
+/// Not GNU Make's banner: the tool answering is Ronin, and the first line says
+/// so. It opens with `GNU Make compatible:` rather than the product name
+/// because GNU Make's own test suite refuses any binary whose `-v` does not
+/// begin `GNU Make `, and being measurable by that suite is worth more than
+/// the word order. It stops short of a version there — a bare `GNU Make 4.4.1`
+/// prefix is what a naive parser reads as the real thing, and this is a
+/// compatibility claim rather than an identity. The version a Makefile can
+/// branch on is `MAKE_VERSION`, and that one does name a GNU Make release.
 // [spec:ronin:req:product.make-identity]
 fn version() -> String {
     format!(
-        "{PRODUCT_NAME} {}\nMake front end for GNU Make {} makefiles\n",
+        "GNU Make compatible: {PRODUCT_NAME} {}\nMake front end for GNU Make {} makefiles\n",
         env!("CARGO_PKG_VERSION"),
         crate::make::MAKE_VERSION,
     )
@@ -380,7 +387,9 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
         }
         match argument {
             b"--" => options_enabled = false,
-            b"--version" => return Ok(Action::Immediate(reported(version()))),
+            // `-v` is GNU Make's short spelling, and its own test suite asks
+            // for the version that way before it will run anything at all.
+            b"--version" | b"-v" => return Ok(Action::Immediate(reported(version()))),
             b"--help" => return Ok(Action::Immediate(reported(usage()))),
             selector if crate::multicall::is_selector(selector) => {}
             b"--jobs" => invocation.jobs = Some(jobs_value(arguments, &mut index, b"")?),

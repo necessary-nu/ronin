@@ -3992,6 +3992,20 @@ children (
                     }
                 )
             }
+
+            {
+                id make-deferred-output-portability
+                title "Emit deferred info, warning and error output portably"
+                deps (kati-graph-sink)
+                log (
+                    {
+                        at 2026-08-05T14:20:56.100464105Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found by pointing GNU Make's own suite at Ronin, which is exactly the kind of thing the vendored corpus cannot see: no case in it puts info in a recipe and then reads the result back.\n\nWhen evaluation defers output rather than printing it — which is the path the graph sink uses, since the sink sets avoid_io the way the manifest writer does — info_func, warning_func and error_func at func.rs:831, 845 and 862 each build a shell command reading `echo -e \"...\"`, escaped by strutil::echo_escape. That is a bashism. Debian's /bin/sh is dash, whose echo has no -e, so the flag is printed as part of the output.\n\nDemonstrated, and it is not cosmetic. GNU Make answers `make -sf` on a makefile reading `all:;$(info $(MAKE))` with `/usr/bin/make`. Ronin answers `-e /home/.../ronin --make -s`. The value itself is correct — a recipe printf, a warning and an info on its own line all report it cleanly — so the corruption is entirely in how deferred output is spelled.\n\nThis is the blocker for the upstream suite, not merely a defect it found. run_make_tests.pl asks make for `$(MAKE)` and then uses the answer as the path to every subsequent invocation, so a corrupted value makes every later probe run a nonexistent program and the run dies before any test executes.\n\nThe fix is not a smaller flag. dash's echo interprets backslash escapes with no flag at all, and echo_escape exists to feed exactly that interpretation — it turns a newline into a backslash-n so that echo will turn it back. GNU Make's info prints its argument literally and interprets nothing, so the current arrangement is wrong twice over and only looks right under a shell whose echo takes -e and where nothing in the text has a backslash. printf with a %s format is the portable spelling and the one that matches Make's semantics, and it wants the shell escaping strutil::escape_shell already does rather than the echo escaping.\n\nExpect the emitted manifest to change, and that is correct rather than a regression: kati/tools/sinkcmp.py will report differences on any case whose recipe defers output, and those differences are the fix. Byte-identity is the wrong gate here — compare behaviour against GNU Make instead, and check the make-conformance counts move in the right direction.\n\nWorth checking whether the C++ original does the same thing before deciding whether to send it upstream."
+                    }
+                )
+            }
         )
     }
 )
