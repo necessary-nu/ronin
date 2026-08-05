@@ -24,13 +24,21 @@ import json
 import re
 import sys
 
-# Anything that runs upstream's ninja_test, directly or through a script, plus
-# our own suites that spawn and signal process groups.
+# Two hazards, one rule. A suite either signals its parent or spawns without a
+# bound of its own, and both end the same way when run in the session's tree.
+#
+# The list is deliberately about corpora rather than about the specific tests
+# that have misbehaved. `run_make_tests` was not here on the day it took the
+# machine down, because the list then named only what had already gone wrong.
 PARENT_SIGNALLING = (
-    (r"check-ninja-conformance", "runs upstream ninja_test"),
-    (r"\bninja_test\b", "is upstream ninja_test"),
+    (r"check-ninja-conformance", "runs upstream ninja_test, which signals its parent"),
+    (r"\bninja_test\b", "is upstream ninja_test, which signals its parent"),
     (r"check-release", "runs the conformance gate, and so ninja_test"),
     (r"\bcargo\s+(test|nextest)\b", "runs subprocess::tests and signal::tests"),
+    (r"run_make_tests", "is GNU Make's suite, which has multiplied without bound"),
+    (r"check-make-conformance", "runs the Make corpus, hundreds of spawns"),
+    (r"check-make-equivalence", "evaluates the Make corpus"),
+    (r"\b(sinkcmp|matrix)\.py\b", "runs the emitter corpus, hundreds of spawns"),
 )
 
 # What counts as already isolated: the repo's wrapper, or a hand-rolled

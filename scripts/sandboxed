@@ -1,30 +1,64 @@
 #!/bin/sh
-# Run a command in its own PID namespace, with the filesystem otherwise intact.
+# Run a command contained three ways: its own pid namespace, its own cgroup with
+# process and memory ceilings, and a wall-clock timeout.
 #
-# Some of this repository's test suites deliberately signal their parent.
-# Upstream Ninja's SubprocessTest.InterruptParentWithSigTerm runs `kill -TERM
-# $PPID` — that is the whole point of the test, and it is correct when the
-# parent is ninja_test. Run from an agent's process tree, the same signal has a
+# Each of the three is here because something got out without it.
+#
+# Signals. Upstream Ninja's SubprocessTest.InterruptParentWithSigTerm runs
+# `kill -TERM $PPID` — that is the point of the test, and it is correct when the
+# parent is ninja_test. Run from an agent's process tree the same signal has a
 # path toward things that are not ninja_test, and on 2026-08-05 it reached the
-# session and killed it.
+# session and killed it. `--unshare pid` puts the command under its own reaper.
+#
+# Resources. Later that day GNU Make's own suite was run against Ronin's Make
+# mode and multiplied its Perl driver until the kernel began killing processes
+# and the server locked up. A pid namespace does not help with that at all: the
+# processes were contained and still exhausted the host.
+#
+# Why a cgroup rather than rlimits. `sandbox --limit nproc=` sets RLIMIT_NPROC,
+# which the kernel counts per uid rather than per sandbox. A runaway that hit it
+# would take the user's own shell down with it, unable to fork — which is very
+# likely how the terminal died. TasksMax on a scope of our own is per-cgroup, so
+# the blast stays inside.
 #
 # The filesystem is bound through whole and read-write, because these suites
-# build, write logs, and read the pinned reference binaries. The isolation that
-# matters here is the process tree, not the files: inside, the command is pid 2
-# under a reaper at pid 1, and every host pid is unreachable, so the worst a
-# stray SIGTERM can reach is the sandbox itself.
+# build, write logs, and read the pinned reference binaries. Files are not what
+# has gone wrong here.
 #
 # Usage: scripts/sandboxed ./scripts/check-ninja-conformance.sh
+#        SANDBOX_TASKS=2048 SANDBOX_MEM=16G scripts/sandboxed ...
 set -eu
 
-if ! command -v sandbox >/dev/null 2>&1; then
-    echo "sandboxed: no 'sandbox' binary on PATH." >&2
-    echo "These suites signal their parent and must not run in the session's" >&2
-    echo "process tree. Install it, or run the command yourself in a terminal." >&2
-    exit 1
-fi
+# Above what the suites legitimately want: upstream Ninja's
+# SubprocessTest.SetWithLots spawns 1025 children on purpose, to stress the
+# supervisor. A ceiling below that fails a passing test, which is how a limit
+# gets raised until it stops limiting.
+tasks_max=${SANDBOX_TASKS:-2048}
+# The backstop that actually catches a runaway. At two thousand tasks the count
+# alone is no longer a tight bound — the Perl driver that took the machine down
+# was small processes in great number — so the ceiling that bites first is the
+# total the cgroup may hold. Breaching it kills the cgroup, rather than leaving
+# the kernel to choose victims across the machine.
+memory_max=${SANDBOX_MEM:-8G}
+# A suite that stops making progress should end rather than sit.
+timeout_secs=${SANDBOX_TIMEOUT:-1800}
 
-exec sandbox \
+for tool in sandbox systemd-run timeout; do
+    command -v "$tool" >/dev/null 2>&1 || {
+        echo "sandboxed: no '$tool' on PATH." >&2
+        echo "These suites signal their parent and can multiply without bound;" >&2
+        echo "they must not run uncontained. Install it, or run the command" >&2
+        echo "yourself in a terminal where you can watch it." >&2
+        exit 1
+    }
+done
+
+exec systemd-run --user --scope --quiet --collect \
+    -p "TasksMax=$tasks_max" \
+    -p "MemoryMax=$memory_max" \
+    -p "MemorySwapMax=0" \
+    -- timeout --signal=TERM --kill-after=30s "$timeout_secs" \
+    sandbox \
     --unshare pid \
     --bind /:/ \
     --proc /proc \
