@@ -250,6 +250,7 @@ assertions (
     {id make-second-expansion, kind @doing, author "brendan@necessary.nu", at 2026-08-06T21:04:16.989425862Z}
     {id make-intermediate-files, kind @doing, author "brendan@necessary.nu", at 2026-08-06T21:24:57.252123546Z}
     {id make-order-only-variable, kind @doing, author "brendan@necessary.nu", at 2026-08-06T21:26:39.917755102Z}
+    {id make-suffixes-with-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-06T21:37:50.546517346Z}
 )
 
 impl_evidence (

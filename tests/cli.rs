@@ -992,6 +992,42 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// A `.x.y:` rule is a suffix rule only while both suffixes are on the list.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_reads_the_declared_suffix_list() {
+    let directory = test_directory("make-suffixes");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("hello.bar"), "source\n").unwrap();
+    fs::write(directory.join("hello.baz"), "source\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: hello.tsk\n\
+         .SUFFIXES:\n\
+         .SUFFIXES: .bar .tsk\n\
+         .bar.tsk: ; @echo tsk from $<\n\
+         .baz.tsk: ; @echo tsk from $<\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // `.baz` never made it onto the list, so its rule is not a suffix rule.
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("tsk from hello.bar"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]

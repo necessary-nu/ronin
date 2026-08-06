@@ -4330,6 +4330,13 @@ children (
                         kind @note
                         text "Twenty cases fail on a warning about something that works.\n\ndep.rs:518 warns \"kati doesn't support .SUFFIXES with prerequisites\" whenever `.SUFFIXES:` is given any, which is the ordinary way to declare a suffix. The build then proceeds and produces exactly what GNU Make produces — verified against 4.4.1 on both a plain `.bar.tsk` suffix rule and one preceded by `.SUFFIXES:` to clear the defaults, where the recipe ran and the output matched. The only difference is the warning itself.\n\nSo the message is wrong on its own terms rather than merely noisy: the support it denies is present. Either the warning goes, or it is narrowed to whatever case actually is unsupported — and establishing which that is, if any, is the work here. The bare `.SUFFIXES:` form with no prerequisites is handled a few lines above and clears the list, so the branch that warns is the one that should be doing the declaring.\n\nSmall, and worth doing early for a reason out of proportion to its size: these twenty are counted as `unsupported-feature`, so the capability number is overstated by that much and the family reads as a bigger gap than it is."
                     }
+
+                    {
+                        at 2026-08-06T21:37:50.546517346Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 
