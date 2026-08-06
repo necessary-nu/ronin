@@ -57,7 +57,7 @@ struct Family {
     reason: &'static str,
 }
 
-const FAMILIES: [Family; 13] = [
+const FAMILIES: [Family; 16] = [
     Family {
         name: "recipe-error-line",
         class: Class::Narration,
@@ -117,6 +117,21 @@ const FAMILIES: [Family; 13] = [
         name: "no-makefile-found",
         class: Class::Semantic,
         reason: "Ronin found no makefile to read where GNU Make found one.",
+    },
+    Family {
+        name: "io-error-text",
+        class: Class::Narration,
+        reason: "both tools refused for the same reason and worded it differently; ours carries Rust's \"(os error N)\" suffix.",
+    },
+    Family {
+        name: "makeflags-content",
+        class: Class::Semantic,
+        reason: "a makefile read MAKEFLAGS and got a different set of switches from the one GNU Make puts there.",
+    },
+    Family {
+        name: "parse-failure",
+        class: Class::Semantic,
+        reason: "Ronin could not parse a makefile GNU Make read: missing separator is most of it.",
     },
     Family {
         name: "evaluation",
@@ -373,6 +388,17 @@ fn diagnostic_body<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     (!level.is_empty() && level.bytes().all(|byte| byte.is_ascii_digit())).then_some(body)
 }
 
+/// Whether a line is only switches and command-line assignments.
+///
+/// What `$(MAKEFLAGS)` expands to, and nothing a recipe is likely to print on
+/// its own: every word is either a switch or holds an `=`, and there is at
+/// least one word, so an empty line does not qualify.
+fn is_flag_list(line: &str) -> bool {
+    let mut words = line.split_ascii_whitespace().peekable();
+    words.peek().is_some()
+        && words.all(|word| word == "--" || word.starts_with('-') || word.contains('='))
+}
+
 /// The recipe lines of the makefile a case ran, as the Makefile wrote them.
 ///
 /// The driver leaves a `.run` file beside each `.diff` holding the exact command
@@ -483,13 +509,25 @@ fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
     let mut named_residue = false;
     for (marker, family) in [
         ("doesn't support", "unsupported-feature"),
+        // The evaluator's other way of saying the same thing, about an
+        // automatic variable rather than a directive.
+        ("isn't support", "unsupported-feature"),
         ("no known rule to make it", "no-rule-to-make"),
         ("makefile not found", "no-makefile-found"),
+        ("missing separator", "parse-failure"),
+        ("(os error ", "io-error-text"),
     ] {
         if residue().any(|line| line.contains(marker)) {
             note(family);
             named_residue = true;
         }
+    }
+    // A residue that is nothing but switches and assignments is a makefile
+    // having printed MAKEFLAGS and got a different answer. Recognised by shape
+    // rather than by the case's name, so it holds wherever it happens.
+    if !named_residue && residue().next().is_some() && residue().all(|line| is_flag_list(line)) {
+        note("makeflags-content");
+        named_residue = true;
     }
 
     if named_residue {
@@ -853,5 +891,29 @@ mod tests {
         assert_eq!(verdict.class, Class::Capability);
         assert!(verdict.families.contains(&"unsupported-feature"));
         assert!(!verdict.families.contains(&"evaluation"));
+    }
+
+    /// A residue that is only switches and assignments is a makefile having
+    /// printed MAKEFLAGS, recognised by its shape so it holds wherever it
+    /// happens rather than only in the category named after the variable.
+    #[test]
+    fn a_residue_of_only_switches_is_a_makeflags_value() {
+        let flags = Divergence {
+            expected: Vec::new(),
+            actual: lines(&["-S", "-k"]),
+        };
+        let verdict = classify(&flags, &[]);
+        assert_eq!(verdict.class, Class::Semantic);
+        assert!(verdict.families.contains(&"makeflags-content"));
+
+        assert!(super::is_flag_list("-S"));
+        assert!(super::is_flag_list("-ks -- FOO=bar"));
+        // A recipe's output is not a flag list just for starting with a dash.
+        assert!(!super::is_flag_list("-n is what we printed"));
+        assert!(!super::is_flag_list(""));
+        // The bare letter group MAKEFLAGS leads with is deliberately not
+        // recognised: `ks` is indistinguishable from a word a recipe printed,
+        // and guessing there would swallow real output.
+        assert!(!super::is_flag_list("ks -- FOO=bar"));
     }
 }
