@@ -4332,6 +4332,7 @@ children (
                 title "Build a target whose name begins with a dot"
                 priority 0
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-06T17:58:53.777850841Z
@@ -4345,6 +4346,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T20:01:04.458125837Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -4421,6 +4429,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "`.WAIT` in a prerequisite list is a barrier: everything before it must finish before anything after it starts, and `.WAIT` itself is never built. We treat it as an ordinary file.\n\n  all: pre1 .WAIT pre2 ; @echo done\n  pre1: ; @echo pre1\n  pre2: ; @echo pre2\n\nGNU Make 4.4.1 prints pre1, pre2, done. Ronin refuses `'.WAIT', needed by 'all'`.\n\nSix of the suite's cases, all in targets/WAIT, and make-dot-prefixed-target-nodes takes most of them without any barrier semantics at all, because the suite's makefiles declare `.WAIT:` themselves for the benefit of older makes. That is why this depends on it: do that first, re-measure, and this node is then only the cases that do not declare it plus the ordering assertions.\n\nThe ordering half is not free. targets/WAIT checks that a slow prerequisite finishes before a later one starts — start-pre1, end-pre1, then pre2 — which is only observable when the two could otherwise run at once. GNU Make is serial by default and gets it for nothing; Ronin's Make mode is not, so this needs a real edge in the graph rather than a dropped word."
+                    }
+
+                    {
+                        at 2026-08-06T20:01:12.672527574Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T20:01:32.328275125Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Implemented, and the semantics question was settled by upstream's own comment rather than by preference. GNU Make's suite says, beside the test that pins it:\n\n  \"In the current implementation, .WAIT waits only between two prerequisites in\n  a given target. These same two targets might be run in a different order if\n  they appear as prerequisites of another target. This is the way other\n  implementations of .WAIT work. I personally think it's gross and makes .WAIT\n  just a toy when it comes to ordering, but it's much simpler to implement than\n  creating an actual edge in the DAG to represent .WAIT.\"\n\nSo the ordering GNU Make gives is a property of walking one rule's prerequisite list, not of the graph, and it deliberately does not hold when another rule wants the same prerequisite. Ronin has only the graph.\n\nThe rule taken: add the edge exactly where it cannot say something Make would not. Where the later prerequisite has a single consumer, no other walk can start it early and the two readings agree. Where it has several, Make lets the other consumer win, and an edge would order what Make leaves free. On upstream's own case that is not a theoretical difference — `one: pre1 .WAIT pre2` beside `two: pre2 pre1`, with pre1 and pre2 rendezvousing through files, deadlocks under a graph edge and times out after ten seconds. Verified by building it and running it.\n\nSo this orders less than Make on a shared prerequisite and exactly as much everywhere else. Ordering less is what already happened.\n\nTaking the marker out is the other half and is unambiguous. `.WAIT` names no file, and the suite checks that `$^` on `all: .WAIT pre1 .WAIT pre2` is `pre1 pre2`. It is removed in build_plan before the recursion, so no node is ever made for it, and `.WAIT` joined the directive list so a `.WAIT:` rule cannot become an edge either. Each marker waits for everything to its left rather than for the group since the previous marker — checked against 4.4.1 on `all: pre1 pre2 .WAIT post1 post2`, where both posts wait for both pres.\n\nTwo diagnostics came with it, matching GNU Make's wording: `.WAIT should not have prerequisites` and `.WAIT should not have commands`. The bare `.WAIT:` form is not warned about, because that is what Makefiles write to stay compatible with a make too old to know the marker.\n\nMeasurement, and it is smaller than it looks for a reason worth recording: only two cases moved class, 677 semantic to 675. The ordering cases were already narration, because the classifier reads the same lines in a different order as `recipe-interleave` and calls that narration. So the suite scored a real ordering defect as a difference we chose. Every `recipe-interleave` case was this one, and the family now explains nothing — which also removed the gate's flakiness and let the tolerance added for it come back out.\n\nLeft undone: the general case needs per-consumer readiness in the scheduler, where a node is permitted to run as soon as any one of the rules wanting it has no unmet barrier in front of it. That is expressible but it is a real change to Plan, and it buys one adversarial test."
                     }
                 )
             }

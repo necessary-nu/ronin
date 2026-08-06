@@ -743,7 +743,7 @@ fn main() -> std::process::ExitCode {
     }
 
     let recorded = fs::read_to_string(&config.inventory).unwrap_or_default();
-    if recorded == inventory || settled(&recorded) == settled(&inventory) {
+    if recorded == inventory {
         return std::process::ExitCode::SUCCESS;
     }
     // A classification that moved is the point of running this, so say what
@@ -758,27 +758,6 @@ fn main() -> std::process::ExitCode {
     );
     println!("Re-record with --update once the change is understood.");
     std::process::ExitCode::FAILURE
-}
-
-/// The inventory with the one family that a rerun can decide differently taken
-/// out of it.
-///
-/// `recipe-interleave` says two recipes wrote the same lines in a different
-/// order. Some of the suite's cases arrange for exactly that — `targets/WAIT`
-/// has two recipes rendezvous through files, so which finishes first is decided
-/// by the scheduler and not by anything in the code being measured. Recording
-/// which way a coin landed and then failing when it lands the other way makes
-/// the gate report noise, and a gate nobody believes gets re-recorded blind.
-///
-/// The class is not smoothed over, only this family: a case that changed what
-/// it is still fails. Take this out when `.WAIT` becomes a barrier, because
-/// then the order stops being a coin flip.
-fn settled(inventory: &str) -> String {
-    inventory
-        .lines()
-        .map(|line| line.replace("+recipe-interleave", ""))
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 #[cfg(test)]

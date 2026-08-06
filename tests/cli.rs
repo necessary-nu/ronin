@@ -880,10 +880,9 @@ fn make_mode_finds_a_prerequisite_through_vpath() {
 
 /// A leading dot is how Make spells a message to itself, but only for the names
 /// it reserves. GNU Make's suite reaches `.1` by matching `%bye.x` against
-/// `bye.x`, which leaves an empty stem, and reaches `.WAIT` because Makefiles
-/// declare it to stay compatible with makes that lack it. Both used to be
-/// discarded on the way into the graph, so the parent was refused for a
-/// prerequisite nothing produced.
+/// `bye.x`, which leaves an empty stem. Such a name used to be discarded on the
+/// way into the graph, so the parent was refused for a prerequisite nothing
+/// produced.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -892,11 +891,10 @@ fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
     fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
-        "all: .1 .WAIT\n\
+        "all: .1\n\
          \t@echo built $@ from $^\n\
          .1:\n\
-         \t@echo made .1\n\
-         .WAIT:\n",
+         \t@echo made .1\n",
     )
     .unwrap();
 
@@ -913,7 +911,47 @@ fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
     // wrote — a target that is merely tolerated rather than built would show up
     // as a missing `made .1` with the rest still passing.
     assert!(stdout.contains("made .1"), "{stdout}");
-    assert!(stdout.contains("built all from .1 .WAIT"), "{stdout}");
+    assert!(stdout.contains("built all from .1"), "{stdout}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `.WAIT` names no file: it separates a prerequisite list into groups that run
+/// in order, and must not reach an automatic variable or the graph.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
+    let directory = test_directory("make-wait");
+    fs::create_dir_all(&directory).unwrap();
+    // pre1 is the slow one and comes first, so run in parallel without the
+    // barrier pre2 finishes first — which is what this used to do.
+    fs::write(
+        directory.join("Makefile"),
+        "all: pre1 .WAIT pre2\n\
+         \t@echo all from $^\n\
+         pre1: ; @sleep 0.3; echo pre1\n\
+         pre2: ; @echo pre2\n\
+         .WAIT:\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-j10")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let recipes = stdout
+        .lines()
+        .filter(|line| ["pre1", "pre2"].contains(line))
+        .collect::<Vec<_>>();
+    assert_eq!(recipes, ["pre1", "pre2"], "{stdout}");
+    // The marker separated them and is not one of them.
+    assert!(stdout.contains("all from pre1 pre2"), "{stdout}");
     fs::remove_dir_all(directory).unwrap();
 }
 

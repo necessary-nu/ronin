@@ -240,8 +240,9 @@ assertions (
     {id make-diagnostic-identity, kind @doing, author "brendan@necessary.nu", at 2026-08-06T12:46:51.337695077Z}
     {id make-recipe-echo-line, kind @doing, author "brendan@necessary.nu", at 2026-08-06T14:11:31.44520241Z}
     {id make-vpath-search, kind @doing, author "brendan@necessary.nu", at 2026-08-06T16:56:50.577719384Z}
-    {id make-dot-prefixed-target-nodes, kind @doing, author "brendan@necessary.nu", at 2026-08-06T18:03:45.521405477Z}
+    {id make-dot-prefixed-target-nodes, kind @complete, author "brendan@necessary.nu", at 2026-08-06T20:01:04.458125837Z}
     {id make-implicit-rule-chaining, kind @doing, author "brendan@necessary.nu", at 2026-08-06T18:18:33.011028888Z}
+    {id make-wait-prerequisite, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:01:12.672527574Z}
 )
 
 impl_evidence (
