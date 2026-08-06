@@ -844,6 +844,43 @@ fn makefile_tree(label: &str) -> PathBuf {
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
+fn make_mode_finds_a_prerequisite_through_vpath() {
+    let directory = test_directory("make-vpath");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(directory.join("sub").join("hello.bar"), "source\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        // The directive and the variable, and a directory that has nothing in
+        // it, so the search has to keep looking rather than stop at the first.
+        "vpath %.bar nowhere sub\n\
+         all: hello.tsk\n\
+         hello.tsk: hello.bar\n\
+         \t@echo found $< \n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // The path the search found, not the name the makefile wrote: this is what
+    // `$<` hands the recipe, and a recipe given `hello.bar` would not find it.
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("found sub/hello.bar"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
 fn make_mode_claims_only_the_features_it_has() {
     let directory = test_directory("make-features");
     fs::create_dir_all(&directory).unwrap();
