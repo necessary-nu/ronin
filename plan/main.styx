@@ -4064,6 +4064,13 @@ children (
                         kind @note
                         text "Probed the two buckets left standing after vpath, and both split into named defects rather than staying one number.\n\nno-rule-to-make, 200 cases. 26 of them are cases where GNU Make refuses as well and only the wording differs — narration by our own rule, and make-refusal-wording-is-narration corrects the classifier. The remaining 174 are real, and shaping them by what we refused to build:\n\n  100  an ordinary filename          make-implicit-rule-chaining\n   52  a name still containing $     make-second-expansion\n    9  a name containing a wildcard  make-prerequisite-globbing\n    6  .WAIT                         make-wait-prerequisite\n    4  a name beginning with a dot   make-dot-prefixed-target-nodes\n    3  a -lname library              no node yet, three cases\n\nunsupported-feature, 221 cases, counted by the message rather than by the family:\n\n  123  .SECONDEXPANSION              make-second-expansion\n   33  .DEFAULT                      make-default-target-rule\n   20  .SUFFIXES with prerequisites  make-suffixes-with-prerequisites, and the message is wrong\n   18  $| isn't supported yet        make-order-only-variable\n   16  .SECONDARY                    make-implicit-rule-chaining\n   12  .INTERMEDIATE                 make-implicit-rule-chaining\n   10  .ONESHELL                     make-recipe-one-shell-per-line\n    7  .SILENT .NOTPARALLEL .PRECIOUS .IGNORE .EXPORT_ALL_VARIABLES  make-special-target-noise\n\nMethod, since it is the third time it has paid: every one of these came from a four-line makefile run against GNU Make 4.4.1 and against a make-named symlink to Ronin, comparing captured output. Reading the diffs said which shapes to try; the probes said which of them are actually broken. Two of the guesses the diffs suggested were wrong — statipattrules looked like a stem-substitution bug and is a dropped dot-named node, and implicit rule *selection* looked broken and is correct, including match-anything patterns, double-colon patterns, and preferring the rule whose prerequisite exists.\n\nNo count on this node is a prediction of how far the failing total will fall. The populations overlap — 43 of the 52 literal-$ refusals are in scripts that need chaining too — and the vpath estimate was wrong by a factor of twenty for exactly that reason."
                     }
+
+                    {
+                        at 2026-08-06T23:56:55.994615373Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Second source of gate flap seen, and unlike the first it is not settled.\n\nfeatures/grouped_targets cases 15 and 18 swapped families with each other on one run — 15 took `ninja-progress+evaluation` where 18 had it and vice versa — then held steady across four more runs. Both are semantic in either reading, so the class did not move and the gate's contract is intact; only the family list flipped.\n\nTwo candidates and it was not chased: two grouped-target builds racing, or the suite's per-script diff numbering shifting when an earlier case in the same script changes outcome. The exact swap, each taking the other's families, points at the second.\n\nWorth knowing before someone reads a one-case family change in grouped_targets as a result."
+                    }
                 )
             }
 
@@ -4236,6 +4243,14 @@ children (
                         title "Withhold the built-in variables under -R as -r withholds the rules"
                         priority 2
                         kind @feat
+                        log (
+                            {
+                                at 2026-08-06T23:41:26.745183723Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+                        )
                     }
 
                     {

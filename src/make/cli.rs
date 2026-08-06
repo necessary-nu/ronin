@@ -97,6 +97,11 @@ impl Invocation {
     const fn add(&mut self, switch: Switch) {
         self.switches |= switch.bit();
         self.negated &= !switch.bit();
+        // `-R` is `-r` and more: GNU Make hands a child `MAKEFLAGS=rR`.
+        if matches!(switch, Switch::NoBuiltinVariables) {
+            self.switches |= Switch::NoBuiltinRules.bit();
+            self.negated &= !Switch::NoBuiltinRules.bit();
+        }
     }
 
     const fn withdraw(&mut self, switch: Switch) {
@@ -167,6 +172,7 @@ impl Invocation {
             (Switch::DryRun, "-n"),
             (Switch::Question, "-q"),
             (Switch::NoBuiltinRules, "-r"),
+            (Switch::NoBuiltinVariables, "-R"),
             (Switch::Silent, "-s"),
             (Switch::PrintDirectory, "-w"),
         ] {
@@ -225,6 +231,7 @@ enum Switch {
     IgnoreErrors,
     KeepGoing,
     NoBuiltinRules,
+    NoBuiltinVariables,
     PrintDirectory,
     Question,
     Silent,
@@ -241,6 +248,7 @@ impl Switch {
             b'n' => Self::DryRun,
             b'q' => Self::Question,
             b'r' => Self::NoBuiltinRules,
+            b'R' => Self::NoBuiltinVariables,
             b's' => Self::Silent,
             b'w' => Self::PrintDirectory,
             _ => return None,
@@ -274,6 +282,7 @@ impl Switch {
             b"--ignore-errors" => Self::IgnoreErrors,
             b"--keep-going" => Self::KeepGoing,
             b"--no-builtin-rules" => Self::NoBuiltinRules,
+            b"--no-builtin-variables" => Self::NoBuiltinVariables,
             b"--print-directory" => Self::PrintDirectory,
             b"--question" => Self::Question,
             b"--silent" | b"--quiet" => Self::Silent,
@@ -315,6 +324,7 @@ fn usage() -> String {
             "  -n       print the recipes without running them\n",
             "  -q       report whether the goals are up to date, and build nothing\n",
             "  -r       do not read the built-in rules\n",
+            "  -R       do not define the built-in variables, and imply -r\n",
             "  -s       do not report what is being built\n",
             "  -w       announce the directory the build runs in\n",
             "  -S       stop at the first failure, taking back -k\n",
@@ -664,6 +674,7 @@ fn session_for(
         // the build: what the makefile starts with, what outranks it, and
         // whether a recipe line's status is worth stopping for.
         no_builtin_rules: invocation.given(Switch::NoBuiltinRules),
+        no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
         environment_overrides: invocation.given(Switch::EnvironmentOverrides),
         ignore_errors: invocation.given(Switch::IgnoreErrors),
         cl_vars: variables,

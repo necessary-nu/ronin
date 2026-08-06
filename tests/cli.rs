@@ -1360,6 +1360,42 @@ fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `-R` withholds the tool defaults and implies `-r`, but leaves what Make
+/// defines about itself.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_withholds_the_builtin_variables_under_dash_r() {
+    let directory = test_directory("make-no-builtin-vars");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: ; @echo \"[$(CC)][$(AR)][$(MAKE_VERSION)][$(MAKEFLAGS)]\"\n",
+    )
+    .unwrap();
+    let run = |arguments: &[&str]| {
+        let output = make_command(&invoked_as(&directory, "make"), &directory)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    assert!(run(&[]).contains("[cc][ar]"), "{}", run(&[]));
+    // GNU Make's own answers: the defaults gone, its own version still there,
+    // and both letters handed to a child because -R is -r and more.
+    for spelling in [["-R"].as_slice(), ["--no-builtin-variables"].as_slice()] {
+        let reported = run(spelling);
+        assert!(reported.contains("[][][4.4.1][rR]"), "{reported}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// `+=` on a target reads the target's own scope, not the one outside it.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
