@@ -67,6 +67,17 @@ fi
 
 ulimit -n 512 || true
 
+# Two programs run here and they take different flags, so `--update` is taken
+# for the classifier before anything else is passed to the driver. It is worth
+# the special case: the driver does not reject an argument it has never heard
+# of, it reads it as a category name and runs nothing, and a run that tested
+# nothing still leaves a work directory the classifier will happily read.
+update=
+if [ "${1:-}" = "--update" ]; then
+    update=--update
+    shift
+fi
+
 (
     cd "$suite/tests"
     # The driver's exit status counts failures, and its own summary is not the
@@ -80,4 +91,5 @@ ulimit -n 512 || true
 # like; capability is a Make feature that is somebody's node already.
 exec "$repo_root/target/release/examples/make_upstream" \
     --work "$suite/tests/work" \
-    --inventory "$repo_root/tests/make_upstream_inventory.tsv"
+    --inventory "$repo_root/tests/make_upstream_inventory.tsv" \
+    $update

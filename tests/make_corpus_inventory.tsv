@@ -118,9 +118,6 @@ case	var_visibility_prefix_invalid_prefix_four.mk#test	extension	kati-extension	
 case	var_visibility_prefix_invalid_prefix_one.mk#test	extension	kati-extension	3fac32a95ecde20b
 case	var_visibility_prefix_invalid_prefix_three.mk#test	extension	kati-extension	be1a67d2d373cbbb
 case	var_visibility_prefix_invalid_prefix_two.mk#test	extension	kati-extension	23190c850bfe18d7
-case	vpath_directive.mk#test	recorded	evaluation+corpus-todo+exit-status	276d20fcfac3eaaa
-case	vpath_directive.mk#test1	recorded	evaluation+corpus-todo	cdfb0a449489e18c
-case	vpath_directive.mk#test2	recorded	evaluation+corpus-todo+exit-status	276d20fcfac3eaaa
 case	warn_extra_trailings.mk#default	recorded	evaluation+corpus-todo+exit-status	9c033abcda2b5af9
 case	warn_output_pattern_mismatch.mk#test	defect	quote-style	432e6f655b1c5010
 case	werror_find_emulator.sh#script	extension	find-emulator	76e2b0ef3186089c

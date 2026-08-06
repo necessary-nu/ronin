@@ -477,7 +477,7 @@ case	features/statipattrules.diff.15	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.16	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.17	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.18	narration	product-name+no-work-line+io-error-text
-case	features/statipattrules.diff.19	semantic	product-name+no-work-line+no-rule-to-make
+case	features/statipattrules.diff.19	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.2	narration	ninja-progress
 case	features/statipattrules.diff.20	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.21	narration	ninja-progress+no-work-line
@@ -497,7 +497,7 @@ case	features/statipattrules.diff.33	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.34	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.35	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.36	narration	product-name+no-work-line+io-error-text
-case	features/statipattrules.diff.37	semantic	product-name+no-work-line+no-rule-to-make
+case	features/statipattrules.diff.37	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.38	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.39	semantic	product-name+no-work-line+unsupported-feature+no-rule-to-make
 case	features/statipattrules.diff.4	narration	ninja-progress
@@ -1005,12 +1005,12 @@ case	targets/WAIT.diff.11	semantic	product-name+unsupported-feature+no-rule-to-m
 case	targets/WAIT.diff.12	capability	option-refused
 case	targets/WAIT.diff.13	semantic	ninja-progress+evaluation
 case	targets/WAIT.diff.2	capability	unsupported-feature
-case	targets/WAIT.diff.3	semantic	product-name+no-rule-to-make
+case	targets/WAIT.diff.3	narration	ninja-progress
 case	targets/WAIT.diff.4	narration	ninja-progress
-case	targets/WAIT.diff.5	semantic	product-name+no-rule-to-make
-case	targets/WAIT.diff.6	semantic	product-name+no-rule-to-make
-case	targets/WAIT.diff.7	semantic	product-name+no-rule-to-make
-case	targets/WAIT.diff.8	semantic	product-name+no-rule-to-make
+case	targets/WAIT.diff.5	narration	ninja-progress+recipe-interleave
+case	targets/WAIT.diff.6	narration	ninja-progress
+case	targets/WAIT.diff.7	narration	ninja-progress
+case	targets/WAIT.diff.8	narration	ninja-progress
 case	targets/WAIT.diff.9	semantic	product-name+unsupported-feature+no-rule-to-make
 case	targets/clean.diff	narration	ninja-progress
 case	variables/CURDIR.diff	narration	ninja-progress

@@ -4323,6 +4323,13 @@ children (
                         kind @note
                         text "Ten cases, and the fix is one predicate. Any target whose name begins with a single dot is silently dropped on the way into the build graph, so a prerequisite naming one becomes an input nothing produces and Ronin refuses it.\n\nkati/src-rs/ninja.rs:533, in sink_node: `if is_special_target(&session, &node.output) { return Ok(None) }`. is_special_target at dep.rs:1413 is a shape test — starts with `.` and not with `..` — so it catches `.1` and `.WAIT` along with `.PHONY`. The node is built and then thrown away, which is why the diagnostic blames the parent rather than the missing rule.\n\nProbed against GNU Make 4.4.1. All three of these build for GNU and are refused by us:\n\n  all: .1 ; @echo built $@ from $^\n  .1: ; @echo made .1              # explicit rule with a recipe\n  .1:                              # explicit rule, empty\n  .PHONY: .1                       # declared phony, no rule\n\nThe phony declaration is registered correctly — handle_special_targets does insert `.1` into the phony set — so this is entirely the sink filter, not a lookup failure.\n\nThe shape test is right in its other two uses and must stay there. dep.rs:839 uses it to keep a dot-named rule from becoming the default goal, which is GNU Make's documented behaviour, and dep.rs:565 and :582 use it to keep specials out of --gen_all_targets. Only the sink needs the narrower question, which is whether the name is one of the built-in special targets kati has already consumed: .PHONY, .SUFFIXES, .KATI_RESTAT and the declined list at dep.rs:529, plus the .KATI_* names.\n\nWatch the suffix rules when narrowing it. `.c.o` passes the shape test today and would stop being filtered under a name list, so check whether populate_explicit_rule leaving the suffix rule in self.rules can put one in front of the sink.\n\nWhere the ten are: features/statipattrules and variables/automatic refuse `.1` and `.x` produced by an empty static-pattern stem, targets/WAIT refuses `.WAIT` in six. The WAIT cases declare `.WAIT:` themselves — the suite says \"this is just here so we don't fail with older versions of make\" — so several of them come back from this alone, but the undeclared form needs make-wait-prerequisite."
                     }
+
+                    {
+                        at 2026-08-06T18:03:45.521405477Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 
