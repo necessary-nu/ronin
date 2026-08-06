@@ -49,7 +49,11 @@ cargo build --release --example make_upstream
 
 # Make mode is reached by the invoked name and by nothing else, so pointing the
 # suite at Ronin means a make-named link rather than a flag.
-bin=${TMPDIR:-/tmp}/ronin-make-upstream/bin
+#
+# Beside the checkout rather than in a fixed place under /tmp. Two checkouts
+# running this at once shared that path, and since the last one to start wins
+# the symlink, the other measured a binary it did not build.
+bin=$repo_root/target/make-upstream-bin
 rm -rf "$bin"
 mkdir -p "$bin"
 ln -s "$repo_root/target/release/ronin" "$bin/make"
