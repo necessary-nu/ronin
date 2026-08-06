@@ -42,6 +42,15 @@ const DEFAULT_MAKEFILES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
 /// deeper.
 const MAKELEVEL: &str = "MAKELEVEL";
 
+/// What GNU Make exits with when it abandons a build instead of finishing one.
+///
+/// Every way of not building is this one status: an option it does not know, no
+/// makefile to read, a makefile it cannot evaluate, a target with no rule, a
+/// recipe that failed. One is not a failure in Make's vocabulary — it is the
+/// answer `-q` gives to a question — so a build that gives up must not report
+/// it. Scripts branch on the difference.
+const ABANDONED: i32 = 2;
+
 /// What one Make invocation asks for.
 struct Invocation {
     /// The directories `-C` named, in order. GNU Make enters each in turn, so
@@ -291,7 +300,7 @@ fn refuse(message: impl std::fmt::Display) -> Action {
             usage()
         )
         .into_bytes(),
-        exit_code: 1,
+        exit_code: ABANDONED,
     })
 }
 
@@ -617,7 +626,7 @@ fn record_invocation(
         .set_global_var(name, value, false, None)
         .map_err(|error| {
             CliError::InvocationFailed {
-                exit_code: 1,
+                exit_code: ABANDONED,
                 diagnostic: error.to_string(),
             }
             .into()
@@ -754,7 +763,7 @@ fn no_makefile(reported: String, announcing: bool, directory: &Path) -> RunResul
                 "{PRODUCT_NAME}: *** No targets specified and no makefile found.  Stop.\n"
             )
             .into_bytes(),
-            exit_code: 1,
+            exit_code: ABANDONED,
         },
         announcing,
         directory,
@@ -847,29 +856,11 @@ pub(crate) fn run(
         runner.makeflags.as_deref(),
         level,
     );
-    record_invocation(&mut session, MAKELEVEL, level.to_string())?;
-    // The same switches the children are told, told to the makefile reading
-    // them: a Makefile that branches on `$(findstring s,$(MAKEFLAGS))` is
-    // asking about this invocation, not about the one that spawned it.
-    for (name, value) in flag_environment(&invocation) {
-        record_invocation(&mut session, name, value.to_string_lossy().into_owned())?;
-    }
+    record_invocation_variables(&mut session, &invocation, level)?;
 
-    let mut graph = match crate::make::load_makefile(session) {
+    let mut graph = match evaluated(session, &reported) {
         Ok(graph) => graph,
-        Err(failure) => {
-            return Ok(RunResult {
-                stdout: terminated(reported),
-                stderr: terminated(failure.to_string()),
-                // A makefile that will not evaluate is a question `-q` could
-                // not answer, which Make reports as two rather than as one.
-                exit_code: if invocation.given(Switch::Question) {
-                    2
-                } else {
-                    1
-                },
-            });
-        }
+        Err(result) => return Ok(result),
     };
     if invocation.given(Switch::AlwaysMake) {
         graph.rebuild_everything();
@@ -903,7 +894,16 @@ pub(crate) fn run(
         planned.run().map(|outcome| (up_to_date, outcome))
     });
     let flushed = persistence.finish();
-    let (up_to_date, outcome) = outcome?;
+    let (up_to_date, outcome) = match outcome {
+        Ok(outcome) => outcome,
+        Err(failure) => {
+            return Ok(departed(
+                abandoned(reported, failure),
+                announcing,
+                &directory,
+            ))
+        }
+    };
     flushed?;
     Ok(departed(
         finished(
@@ -915,6 +915,54 @@ pub(crate) fn run(
         announcing,
         &directory,
     ))
+}
+
+/// What the makefile is told about the invocation reading it.
+///
+/// The same switches the children are told, so a Makefile that branches on
+/// `$(findstring s,$(MAKEFLAGS))` is asking about this invocation and not about
+/// the one that spawned it, and the depth it sits at.
+// [spec:ronin:req:make.recursive-invocation]
+fn record_invocation_variables(
+    session: &mut Session,
+    invocation: &Invocation,
+    level: usize,
+) -> Result<(), Error> {
+    record_invocation(session, MAKELEVEL, level.to_string())?;
+    for (name, value) in flag_environment(invocation) {
+        record_invocation(session, name, value.to_string_lossy().into_owned())?;
+    }
+    Ok(())
+}
+
+/// The graph a makefile describes, or the result of not getting one.
+///
+/// A makefile that will not evaluate is a build abandoned, so it leaves with the
+/// same status as any other. The diagnostic is passed through as the evaluator
+/// wrote it, because the evaluator already put the program's name in front of
+/// it; naming it again here would say it twice.
+// [spec:ronin:req:make.recursive-invocation]
+fn evaluated(session: Session, reported: &str) -> Result<crate::frontend::BuildGraph, RunResult> {
+    crate::make::load_makefile(session).map_err(|failure| RunResult {
+        stdout: terminated(reported),
+        stderr: terminated(failure.to_string()),
+        exit_code: ABANDONED,
+    })
+}
+
+/// A build Make could not carry out — a goal with no rule is the usual one.
+///
+/// This exists so the failure does not leave as an error. The process boundary
+/// answers an error with Ninja's status, which is one for every failure alike;
+/// Make abandons with two whatever the reason was, and in Make mode the status
+/// is Make's.
+// [spec:ronin:req:make.recursive-invocation]
+fn abandoned(reported: String, failure: Error) -> RunResult {
+    RunResult {
+        stdout: terminated(reported),
+        stderr: terminated(crate::util::diagnostic(PRODUCT_NAME, failure)),
+        exit_code: ABANDONED,
+    }
 }
 
 /// One half of GNU Make's directory announcement, in GNU Make's own words.
@@ -999,7 +1047,15 @@ fn finished(reported: String, up_to_date: bool, outcome: &Outcome, silent: bool)
     RunResult {
         stdout,
         stderr: Vec::new(),
-        exit_code: outcome.exit_code(),
+        // Ninja reports the failing command's own status here, which is the
+        // right answer for Ninja and the wrong one for Make: GNU Make has two
+        // statuses, and every way of not finishing is the second. A recipe that
+        // exits 3 makes Make exit 2, not 3.
+        exit_code: if outcome.exit_code() == 0 {
+            0
+        } else {
+            ABANDONED
+        },
     }
 }
 
@@ -1130,7 +1186,9 @@ mod tests {
             .collect::<Vec<_>>();
         match parse(&arguments).unwrap() {
             Action::Immediate(result) => {
-                assert_eq!(result.exit_code, 1);
+                // An option Make does not know is a build it will not attempt,
+                // and GNU Make abandons with two whatever the reason.
+                assert_eq!(result.exit_code, super::ABANDONED);
                 Some(String::from_utf8_lossy(&result.stderr).into_owned())
             }
             Action::Execute(_) => None,

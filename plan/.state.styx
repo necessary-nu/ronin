@@ -237,6 +237,7 @@ assertions (
     {id make-phony-always-dirty, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:32:28.235137884Z}
     {id ronin-package-with-fork, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:32:30.487992622Z}
     {id make-option-coverage, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:32:38.518451978Z}
+    {id make-diagnostic-identity, kind @doing, author "brendan@necessary.nu", at 2026-08-06T12:46:51.337695077Z}
 )
 
 impl_evidence (

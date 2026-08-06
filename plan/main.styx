@@ -4054,6 +4054,42 @@ children (
                 title "Give every fatal diagnostic the program name and the Stop. suffix"
                 kind @fix
                 deps (make-diagnostic-prefix)
+                children (
+                    {
+                        id make-diagnostic-identity
+                        title "Route Make's own diagnostics through the session so they carry the name"
+                        kind @fix
+                        log (
+                            {
+                                at 2026-08-06T12:46:36.8908699Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "The line between a GNU Make diagnostic and kati refusing to do something is already written in the source, and it is the `*** ` that opens the message.\n\nEvery bare error! whose text starts with `*** ` has a GNU Make counterpart: implicit output on a phony target (dep.rs), No rule to make target twice over (exec.rs), the recipe-failure line (exec.rs), cannot assign to a readonly variable (var.rs). Every one that does not is kati telling the caller it will not do something and has no counterpart to be shaped against: \"$(value X) is not implemented yet\", \"overriding automatic variable is not implemented yet\", \"appending to $X is not supported\", \"Cannot find the depfile\" (ninja.rs), \"Unknown flag in findleaves.py\" (find.rs), \"body failed\" (eval.rs). Those keep raising bare and keep printing bare.\n\nSo the conversion is mechanical rather than a judgement per site: a `*** ` message goes through error_loc! with no location, which reaches color_error_log and picks up the program name; anything else is left alone.\n\nOne exception, established by running GNU Make rather than by reading it. The recipe-failure line is `make: *** [fail.mk:2: all] Error 3` — it takes the prefix like the others but is not a fatal it dies on, so it must not take the Stop. suffix that make-diagnostic-stop adds in color_error_log. It therefore keeps raising bare and takes the prefix at the site."
+                            }
+
+                            {
+                                at 2026-08-06T12:46:51.337695077Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-06T13:15:36.643044908Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Measured together with make-diagnostic-stop and make-abandon-exit-status, because none of the three can move the corpus alone: the same cases carry all three differences, so fixing one leaves the case differing on the other two and the count does not budge. Doing all three took the corpus from 227 identical of 386 to 293, and from 159 differing to 93.\n\nThe families the corpus names moved as follows. identity-prefix 43 to 9, stop-suffix 84 to 18, exit-status 98 to 32.\n\nWhat is left in identity-prefix is the residue the classification decision predicted: sites raising through the bare error! macro that are kati refusing rather than Make failing, and one that is Make failing but cannot reach the flags — var.rs assign takes an Interner rather than a Context, and readonly variables are a kati extension GNU Make has no counterpart to, so the signature was left alone rather than widened for a message nothing can measure against.\n\nOne thing the work turned up that was not visible from the corpus. Ronin's Make mode does not use kati's exec path at all: \"no rule to make target\" and the recipe-failure line come from Ronin's own scheduler with Ninja's wording. So the kati changes here are measured by the corpus, which runs rkati, and Ronin's Make mode needed its own fix for the same defect. Anything that reasons about Make-mode output from the corpus alone is reasoning about the wrong binary."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-diagnostic-stop
+                        title "End a fatal diagnostic with Stop., and only where Make ends one"
+                        kind @fix
+                        deps (make-diagnostic-identity)
+                    }
+                )
                 log (
                     {
                         at 2026-08-05T18:37:48.297126886Z
@@ -4075,6 +4111,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "The largest single family in the Make corpus: 98 of 159 differing cases, and for a dozen of them it is now the only difference left.\n\nGNU Make exits 2 when it abandons a build — a makefile it cannot parse, a target it cannot make, a fatal diagnostic of any kind. Ronin's Make mode and rkati both exit 1. The status is documented and scripts branch on it, so this is not cosmetic.\n\nRonin's side is src/make/cli.rs, where the load_makefile failure path returns 1, or 2 when -q was given. That -q special case is right for a different reason — make.question-status says an unanswerable question is 2 — and it should not be the only way to get a 2.\n\nCare is needed not to overreach: 2 is for abandoning, not for every non-zero exit. A recipe that fails under -k still ends with GNU Make exiting 2, but `-q` answering \"out of date\" is 1, and a successful build is 0. Ronin's own build-outcome statuses are governed by compatibility.md and are not in question here.\n\nWorth doing after make-fatal-diagnostic-shape rather than before, so the cases that differ on both collapse in one measurable step instead of half-moving twice."
+                    }
+
+                    {
+                        at 2026-08-06T13:15:51.075918696Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Make mode answers with Make's status, and it had to stop letting the failure escape to do it.\n\nEvery way of not building is two: an option Make does not know, no makefile to read, a makefile that will not evaluate, a goal with no rule, a recipe that failed. Verified against GNU Make 4.4.1 for all four, which is what settled that this is one status rather than a family of them. One is not a failure in Make's vocabulary at all — it is the answer -q gives to a question — so the old -q special case was not a special case but the only correct use of 1 in the whole front end.\n\nTwo paths needed more than a constant. A failed recipe reached RunResult through outcome.exit_code(), which is the failing command's own status: right for Ninja, wrong for Make, since a recipe exiting 3 makes Make exit 2. And a goal with no rule left run() as an Error, which the process boundary answers with Ninja's status — fixed at one for every failure alike by product.build-outcome. Make mode now catches that and renders it, so the Ninja contract at main.rs is untouched and Ninja mode still exits 1.\n\nChecked rather than assumed: Ninja mode with no manifest still exits 1 after the change."
                     }
                 )
             }
