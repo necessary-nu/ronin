@@ -3983,6 +3983,22 @@ children (
                 id make-upstream-suite
                 title "Measure Make support against GNU Make's own test suite"
                 deps (make-mode-cli make-conformance-corpus)
+                children (
+                    {
+                        id make-refusal-wording-is-narration
+                        title "Classify a shared refusal as narration, not as a semantic difference"
+                        priority 1
+                        kind @fix
+                        log (
+                            {
+                                at 2026-08-06T17:59:53.88843468Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "The classifier files 200 cases as no-rule-to-make and calls all of them semantic, on the reasoning that a rule which should have matched did not. 26 of them are cases where GNU Make refuses too.\n\n  expected  ronin: *** No rule to make target 'hello.c', needed by 'hello'.  Stop.\n  got       ronin: 'hello.c', needed by 'hello', missing and no known rule to make it\n\nBoth tools decline to build, for the same reason, about the same target. Under the rule this project adopted — recipe output is Make's semantics and must match, tool narration is ours — that is narration, and io-error-text is already classified exactly this way for the same reason.\n\nThe family is triggered on our side's wording alone, at examples/make_upstream.rs:515. It needs to look at the other side as well: our refusal paired with GNU Make's `No rule to make target` is narration, our refusal alone is semantic. Match the target name across the pair rather than only the shape, so that refusing the wrong target is still counted.\n\nMeasured before writing this: 26 both-refuse, 174 ours-only. So this is an honesty correction to the number, not a way of making it smaller — the 174 are real and are what make-implicit-rule-chaining and make-second-expansion are for."
+                            }
+                        )
+                    }
+                )
                 log (
                     {
                         at 2026-08-05T14:03:47.450163305Z
@@ -4017,6 +4033,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "The harness is now usable as a work queue rather than as a number. Three changes, all of them removing a guess.\n\nIt reads the makefile. The driver leaves a `.run` beside each `.diff` holding the exact command line, so the makefile is found by `-f` rather than inferred from the case's name — which matters, because one script writes several makefiles and the two numberings do not agree. A recipe line is written with variables and echoed with them expanded, so the two are never equal; what survives expansion is the literal text around each `$…`, and a recipe that is nothing but an expansion matches nothing rather than everything. This is the `recipe-echo` family, and it is small — 32 cases — because the suite overwhelmingly writes `@echo`, which Make does not echo either. That is the tool reporting a true thing rather than failing to find something.\n\nNarration is side-aware. A shape counts only on the side that can produce it. `[1/2] ` is Ninja's counter from us and a recipe's own output from Make, and the symmetric version silently deleted the latter — faking agreement on any test that echoes something bracket-shaped.\n\n`evaluation` is being split. It fell from 869 to 537 by naming three shapes that were sitting in it: unsupported-feature at 204 (the evaluator says outright it does not support a construct, and .SECONDEXPANSION is most of it), no-rule-to-make at 201 (a rule that should have matched did not — implicit, vpath, or suffix), no-makefile-found at 27. A named residue no longer also falls into `evaluation`, or the naming would undo itself.\n\nStanding at ronin 2c0d8ff: 1338 failing cases — semantic 765, capability 300, narration 273.\n\nThe two semantic families that are named are the obvious next work, and no-rule-to-make at 201 is the largest single defect in the Make front end by this measure. What remains in `evaluation` is genuinely unrecognised and wants the same treatment: run with --explain, find a shape, name it, and the count moves from unknown to somebody's node."
+                    }
+
+                    {
+                        at 2026-08-06T18:00:13.957981629Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Probed the two buckets left standing after vpath, and both split into named defects rather than staying one number.\n\nno-rule-to-make, 200 cases. 26 of them are cases where GNU Make refuses as well and only the wording differs — narration by our own rule, and make-refusal-wording-is-narration corrects the classifier. The remaining 174 are real, and shaping them by what we refused to build:\n\n  100  an ordinary filename          make-implicit-rule-chaining\n   52  a name still containing $     make-second-expansion\n    9  a name containing a wildcard  make-prerequisite-globbing\n    6  .WAIT                         make-wait-prerequisite\n    4  a name beginning with a dot   make-dot-prefixed-target-nodes\n    3  a -lname library              no node yet, three cases\n\nunsupported-feature, 221 cases, counted by the message rather than by the family:\n\n  123  .SECONDEXPANSION              make-second-expansion\n   33  .DEFAULT                      make-default-target-rule\n   20  .SUFFIXES with prerequisites  make-suffixes-with-prerequisites, and the message is wrong\n   18  $| isn't supported yet        make-order-only-variable\n   16  .SECONDARY                    make-implicit-rule-chaining\n   12  .INTERMEDIATE                 make-implicit-rule-chaining\n   10  .ONESHELL                     make-recipe-one-shell-per-line\n    7  .SILENT .NOTPARALLEL .PRECIOUS .IGNORE .EXPORT_ALL_VARIABLES  make-special-target-noise\n\nMethod, since it is the third time it has paid: every one of these came from a four-line makefile run against GNU Make 4.4.1 and against a make-named symlink to Ronin, comparing captured output. Reading the diffs said which shapes to try; the probes said which of them are actually broken. Two of the guesses the diffs suggested were wrong — statipattrules looked like a stem-substitution bug and is a dropped dot-named node, and implicit rule *selection* looked broken and is correct, including match-anything patterns, double-colon patterns, and preferring the rule whose prerequisite exists.\n\nNo count on this node is a prediction of how far the failing total will fall. The populations overlap — 43 of the 52 literal-$ refusals are in scripts that need chaining too — and the vpath estimate was wrong by a factor of twenty for exactly that reason."
                     }
                 )
             }
@@ -4269,6 +4292,127 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Twenty cases fail on a warning about something that works.\n\ndep.rs:518 warns \"kati doesn't support .SUFFIXES with prerequisites\" whenever `.SUFFIXES:` is given any, which is the ordinary way to declare a suffix. The build then proceeds and produces exactly what GNU Make produces — verified against 4.4.1 on both a plain `.bar.tsk` suffix rule and one preceded by `.SUFFIXES:` to clear the defaults, where the recipe ran and the output matched. The only difference is the warning itself.\n\nSo the message is wrong on its own terms rather than merely noisy: the support it denies is present. Either the warning goes, or it is narrowed to whatever case actually is unsupported — and establishing which that is, if any, is the work here. The bare `.SUFFIXES:` form with no prerequisites is handled a few lines above and clears the list, so the branch that warns is the one that should be doing the declaring.\n\nSmall, and worth doing early for a reason out of proportion to its size: these twenty are counted as `unsupported-feature`, so the capability number is overstated by that much and the family reads as a bigger gap than it is."
+                    }
+                )
+            }
+
+            {
+                id make-implicit-rule-chaining
+                title "Chain implicit rules through intermediate files"
+                priority 0
+                kind @feat
+                log (
+                    {
+                        at 2026-08-06T17:58:41.883742508Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The largest real gap left in Make mode, and it is one feature rather than a family: an implicit rule whose prerequisite does not exist but could itself be made by another implicit rule. GNU Make calls this step 5c of the Implicit Rule Search Algorithm and creates the missing prerequisite as an intermediate file; we stop and refuse.\n\nEstablished by probe against GNU Make 4.4.1 rather than by reading, with hello.f the only file present and -r to silence the built-in rules:\n\n  all: hello.x\n  %.x: %.o ; $(info from o)\n  %.o: %.f ; $(info from f)\n\nGNU says `from f`, `from o`, `Nothing to be done for 'all'.` Ronin says `'hello.x', needed by 'all', missing and no known rule to make it`. Every non-chaining shape in the same probe set matches: match-anything `%:` patterns, suffixed `%.o:` patterns, double-colon patterns, and choosing the `%.f` rule over the `%.c` rule because hello.f exists and hello.c does not. So rule selection is right and only the recursion is absent.\n\nSize, counted from the per-case diffs and not from mentions — the lesson make-vpath-search paid for. 174 of the suite's failing cases refuse a target GNU Make built. Of those, 100 name an ordinary file, and the three makefiles read in full so far are all chains: features/patternrules case 4 wants `test.x` from `%.x:`, patternrules.1 wants `foo.out` from `%.out: %` from `%: %.in`, patternrules.2 wants `.o` from `.c` from `.y`. The 100 spread over features/implicit_search 43, features/patternrules 31, and nine other scripts. Beyond that, targets/INTERMEDIATE 12, targets/SECONDARY 16 and targets/NOTINTERMEDIATE 8 are counted as capability today and are all about what happens to a chained intermediate once it has been made, so they can only be reached from here.\n\nDo not turn that into a single predicted number. The honest claim is that the 100 are the population this can move and that some of them will turn out to need something else; measure after.\n\nNothing to repair first: grep for `intermediate` or `chain` across kati/src-rs/dep.rs returns one hit, the string \".INTERMEDIATE\" in the list of special targets it declines. The machinery has never existed."
+                    }
+                )
+            }
+
+            {
+                id make-dot-prefixed-target-nodes
+                title "Build a target whose name begins with a dot"
+                priority 0
+                kind @fix
+                log (
+                    {
+                        at 2026-08-06T17:58:53.777850841Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Ten cases, and the fix is one predicate. Any target whose name begins with a single dot is silently dropped on the way into the build graph, so a prerequisite naming one becomes an input nothing produces and Ronin refuses it.\n\nkati/src-rs/ninja.rs:533, in sink_node: `if is_special_target(&session, &node.output) { return Ok(None) }`. is_special_target at dep.rs:1413 is a shape test — starts with `.` and not with `..` — so it catches `.1` and `.WAIT` along with `.PHONY`. The node is built and then thrown away, which is why the diagnostic blames the parent rather than the missing rule.\n\nProbed against GNU Make 4.4.1. All three of these build for GNU and are refused by us:\n\n  all: .1 ; @echo built $@ from $^\n  .1: ; @echo made .1              # explicit rule with a recipe\n  .1:                              # explicit rule, empty\n  .PHONY: .1                       # declared phony, no rule\n\nThe phony declaration is registered correctly — handle_special_targets does insert `.1` into the phony set — so this is entirely the sink filter, not a lookup failure.\n\nThe shape test is right in its other two uses and must stay there. dep.rs:839 uses it to keep a dot-named rule from becoming the default goal, which is GNU Make's documented behaviour, and dep.rs:565 and :582 use it to keep specials out of --gen_all_targets. Only the sink needs the narrower question, which is whether the name is one of the built-in special targets kati has already consumed: .PHONY, .SUFFIXES, .KATI_RESTAT and the declined list at dep.rs:529, plus the .KATI_* names.\n\nWatch the suffix rules when narrowing it. `.c.o` passes the shape test today and would stop being filtered under a name list, so check whether populate_explicit_rule leaving the suffix rule in self.rules can put one in front of the sink.\n\nWhere the ten are: features/statipattrules and variables/automatic refuse `.1` and `.x` produced by an empty static-pattern stem, targets/WAIT refuses `.WAIT` in six. The WAIT cases declare `.WAIT:` themselves — the suite says \"this is just here so we don't fail with older versions of make\" — so several of them come back from this alone, but the undeclared form needs make-wait-prerequisite."
+                    }
+                )
+            }
+
+            {
+                id make-second-expansion
+                title "Expand prerequisites a second time under .SECONDEXPANSION"
+                priority 1
+                kind @feat
+                log (
+                    {
+                        at 2026-08-06T17:59:09.273978944Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The largest single declined feature: 123 of the suite's failing cases carry `kati doesn't support .SECONDEXPANSION`, and a further 52 refuse a prerequisite whose name still contains a `$` — the unexpanded text taken literally as a filename. They are the same defect counted from both ends, concentrated in features/se_explicit, features/se_implicit, features/se_statpat and features/statipattrules.\n\nProbed against 4.4.1:\n\n  .SECONDEXPANSION:\n  PRE = dep\n  all: $$(PRE) ; @echo got $^\n  dep: ; @echo made dep\n\nGNU says `made dep`, `got dep`. Ronin warns and then refuses `'$(PRE)', needed by 'all'`.\n\nThe declining is at dep.rs:529, in the list of built-in targets handle_special_targets warns about and otherwise ignores. Implementing it means keeping the prerequisite list of every rule in its once-expanded form and expanding it again when the rule is used, with $@ and the stem in scope — which is the point of the feature and also why it cannot be done at parse time.\n\nRanked below make-implicit-rule-chaining despite the larger count, because it is a much bigger change and because the se_* scripts fail on chaining as well: 43 of the 52 literal-`$` refusals are in files that also need step 5c, so the two populations overlap and this one will not move all 175."
+                    }
+                )
+            }
+
+            {
+                id make-special-target-noise
+                title "Stop denying support for special targets that already behave"
+                priority 1
+                kind @fix
+                log (
+                    {
+                        at 2026-08-06T17:59:17.119777603Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The same shape as make-suffixes-with-prerequisites, found by probing the rest of the declined list: we warn that we do not support special targets whose behaviour we already produce. The warning is the entire difference, and it inflates the capability count.\n\nProbed against GNU Make 4.4.1:\n\n  .SILENT: / all: ; echo quiet          GNU prints `quiet`; we print the warning and then `quiet`.\n  .PRECIOUS: out / out: ; @echo > $@    GNU prints nothing; we print the warning and then nothing.\n\nSeven cases across .SILENT 2, .NOTPARALLEL 2, .EXPORT_ALL_VARIABLES 1, .PRECIOUS 1, .IGNORE 1. Establish for each whether the behaviour actually matches before deleting its warning — .IGNORE and .NOTPARALLEL are the two that could plausibly be real, since one changes how a failing recipe is treated and the other constrains the scheduler, and a warning that is merely early is better than silence that is wrong.\n\nDo not fold in .DEFAULT, .INTERMEDIATE, .SECONDARY, .SECONDEXPANSION or .ONESHELL. Those five are genuinely unimplemented and have nodes of their own.\n\nSecond thing to fix here, cheaper still: the message says `kati doesn't support .SILENT` in a program called ronin. Every one of the 216 declining lines in the suite names the wrong product. make-diagnostic-identity settled the shape for fatal diagnostics and left the warnings alone; this is the rest of it."
+                    }
+                )
+            }
+
+            {
+                id make-default-target-rule
+                title "Fall back to .DEFAULT for a target with no rule"
+                priority 2
+                kind @feat
+                log (
+                    {
+                        at 2026-08-06T17:59:25.834455191Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "33 cases. `.DEFAULT` supplies the recipe for any target that has no rule of its own and is not made by an implicit rule. We decline it at dep.rs:529 and then refuse the target.\n\n  all: dep\n  .DEFAULT: ; @echo default made $@\n\nGNU Make 4.4.1 prints `default made dep` and exits 0. Ronin warns, then `'dep', needed by 'all', missing and no known rule to make it`, exit 2.\n\nIt belongs to the same population as make-implicit-rule-chaining — both are steps in what GNU Make does before giving up on a target — and .DEFAULT is the last of them, consulted only after the implicit search has failed. Worth doing after chaining so the two are not fighting over the same fallback path, and so that a target reached by a chain does not accidentally take .DEFAULT's recipe."
+                    }
+                )
+            }
+
+            {
+                id make-order-only-variable
+                title "Answer the order-only automatic variable"
+                priority 2
+                kind @feat
+                log (
+                    {
+                        at 2026-08-06T17:59:30.678380981Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "18 cases, all in features/order_only, all the same line: `Automatic variable `$|' isn't supported yet`. It is fatal, so the script dies at the first use.\n\n  all: | oo ; @echo order-only is \"$|\"\n  oo: ; @echo made oo\n\nGNU Make 4.4.1 prints `made oo`, `order-only is oo`. Ronin dies at parse.\n\nOrder-only prerequisites themselves already work — the graph carries them and the corpus exercises them — so this is the automatic variable that reports them and nothing more. The value is the order-only prerequisite list, which DepNode already holds as actual_order_only_inputs, so the work is one case in the automatic-variable evaluation beside $^ and $?.\n\nSmall and self-contained, and worth taking before anything larger in features/order_only, because every other assertion in that script is hidden behind this one fatal."
+                    }
+                )
+            }
+
+            {
+                id make-wait-prerequisite
+                title "Treat .WAIT in a prerequisite list as a barrier"
+                priority 3
+                kind @feat
+                deps (make-dot-prefixed-target-nodes)
+                log (
+                    {
+                        at 2026-08-06T17:59:43.801508867Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "`.WAIT` in a prerequisite list is a barrier: everything before it must finish before anything after it starts, and `.WAIT` itself is never built. We treat it as an ordinary file.\n\n  all: pre1 .WAIT pre2 ; @echo done\n  pre1: ; @echo pre1\n  pre2: ; @echo pre2\n\nGNU Make 4.4.1 prints pre1, pre2, done. Ronin refuses `'.WAIT', needed by 'all'`.\n\nSix of the suite's cases, all in targets/WAIT, and make-dot-prefixed-target-nodes takes most of them without any barrier semantics at all, because the suite's makefiles declare `.WAIT:` themselves for the benefit of older makes. That is why this depends on it: do that first, re-measure, and this node is then only the cases that do not declare it plus the ordering assertions.\n\nThe ordering half is not free. targets/WAIT checks that a slow prerequisite finishes before a later one starts — start-pre1, end-pre1, then pre2 — which is only observable when the two could otherwise run at once. GNU Make is serial by default and gets it for nothing; Ronin's Make mode is not, so this needs a real edge in the graph rather than a dropped word."
+                    }
+                )
+            }
+
+            {
+                id make-prerequisite-globbing
+                title "Expand wildcards in a prerequisite list"
+                priority 3
+                kind @feat
+                log (
+                    {
+                        at 2026-08-06T17:59:47.241017923Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Nine cases. A prerequisite containing a wildcard is matched against the filesystem by GNU Make and taken literally by us.\n\n  all: a.one* ; @echo got $^          with a.one and a.two present\n\nGNU Make 4.4.1 prints `got a.one`. Ronin refuses `'a.one*', needed by 'all'`.\n\nSpread thin — features/escape, features/grouped_targets, features/patternrules, features/rule_glob, features/suffixrules, options/dash-f, targets/DEFAULT, variables/MAKECMDGOALS — which is a reason to expect it to keep showing up rather than a reason to ignore it.\n\nA related shape found in the same probe and worth settling here: a wildcard in the *target* position. `a.*: ; @echo made $@` with a.one and a.two present makes GNU Make report `'a.one' is up to date`, while we build an edge literally named `a.*` and expand $@ to both names at once. That is a worse failure than the prerequisite case because it produces a wrong build rather than a refusal."
                     }
                 )
             }
