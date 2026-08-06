@@ -659,9 +659,6 @@ fn build_options(
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
         maxload: invocation.load.unwrap_or_default(),
-        // A Makefile gets Make's output, and it is not a preference: Ninja's
-        // counter is a Ninja surface and a Makefile never asked for one.
-        style: crate::build::OutputStyle::Make,
         working_directory,
         ..BuildOptions::default()
     };

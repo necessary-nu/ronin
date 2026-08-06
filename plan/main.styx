@@ -4004,6 +4004,13 @@ children (
                         kind @decision
                         text "The suite is a semantic oracle, not an output oracle, and its pass rate is not a goal.\n\nRonin narrates a build the way Ninja does, because that is the product. GNU Make's suite compares stdout byte for byte against GNU Make's narration, so a Ronin that passed it would be a Ronin that had stopped looking like Ninja. Chasing the pass rate was chasing a number we have decided not to want, and every figure quoted before this — 27 of 1370, 233 of 1370 — was measuring the wrong thing.\n\nWhat the suite is uniquely good for is the other question: given the same Makefile, did we evaluate it to the same thing, run the same recipes, and finish with the same status. examples/make_upstream.rs answers that by subtraction rather than by matching whole diffs. Each side has its own narration — ours is Ninja's progress line and FAILED: block, Make's is its own name in front of a diagnostic — so both are removed and the residue is compared. A case whose residue matches differs only in how the two tools talk; a case whose residue does not is a defect.\n\nThree classes. `narration` is by design and will never be zero. `capability` is a Make feature that is somebody's node. `semantic` is the number that matters, and it is the only one worth reporting as progress.\n\nBaseline at ronin 3a40f7c: 1132 failing cases — semantic 851, capability 203, narration 78.\n\nTwo details that were wrong on the first attempt and are worth not rediscovering. The name has to be peeled off a line before its shape can be recognised, because the suite writes the name it probed for into its own expectations, so `ronin: [Makefile:3: all] Error 1` is a line GNU Make produced and Ronin never does; reading the shape first leaves it looking like recipe output. And a refused option has to explain the whole diff exclusively, because the build never ran — letting the missing output also count as an evaluation difference filed two hundred cases under the family that means \"we do not know why\".\n\nA diagnostic keeps its body and loses only its name, so two tools saying the same thing cancel while two tools saying different things still show. Deleting the whole line would hide a wrong message behind a right prefix.\n\n`evaluation` at 851 is still too coarse to prioritise from. It is the residue nothing else recognised, and splitting it is the next use of the tool rather than a defect in it: `--explain N` prints the residues that justify the classification, and each recognisable pattern becomes a family."
                     }
+
+                    {
+                        at 2026-08-06T15:38:02.918031069Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The reframing paid for itself on the first use, which is the strongest argument for the classifier existing.\n\nReverting the recipe echo moved the suite's own count from 1132 failing cases to 1338 — a loss of 206 by the measure we had abandoned. The classifier says what actually happened: narration 78 to 266, semantic 851 to 869. So the echo was worth eighteen cases, and the other one hundred and eighty-eight were the suite rewarding us for adopting output we do not want. Without the classification that revert would have looked like a regression and would probably not have been made.\n\nOne known imprecision, and those eighteen are it. When Make echoes a recipe line and Ronin prints a progress line instead, the classifier recognises our progress line as narration but cannot recognise Make's recipe line as its counterpart — it has no way to know that an unmatched expected line is the text of the command rather than something the recipe printed. So a handful of cases read as semantic that are really narration.\n\nFixing it needs the recipe text at classification time, which the diff does not carry. The options are to give the classifier the graph, or to accept a bounded overcount. For now it is an overcount of roughly two per cent on the number that matters, stated here rather than silently carried, and semantic counts should be read as an upper bound until it is closed."
+                    }
                 )
             }
 
@@ -4031,89 +4038,6 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "One defect, and it is worth roughly the whole upstream score.\n\nGNU Make's suite scored Ronin at 65 assertions of 543, eleven per cent. That number is almost meaningless as a measure of Make support: 243 of 261 categories died before a single assertion passed, and they died for one reason. The driver asks make for $(MAKE), adopts the answer as the path for every later invocation, and execs it — as a path, not through a shell. GNU Make answers /usr/bin/make, one word. Ronin answers three: the executable, --make, and whatever switches propagate. Every exec then fails with \"Cannot execute /home/.../ronin --make -s: No such file or directory\", before the test runs.\n\nConfirmed rather than inferred: functions/if produces byte-identical output to GNU Make when its makefile is run by hand, in both the symlinked and the explicit-flag form, and still logs nothing under the driver. Running one category with -verbose prints the ENOENT.\n\nThe multi-word MAKE was a deliberate choice by make-mode-cli and the reasoning holds for what it was about: switches cannot go in MAKEFLAGS because that variable is carrying the jobserver budget a child draws on, and rewriting it would cost the child the budget. What it did not weigh is that MAKE is not only read by recursive makefiles, which tolerate several words, but by anything treating it as the make program's location — of which upstream's own suite is the most demanding example.\n\nThe fix that matches GNU Make is for MAKE to name a single executable that already selects Make mode by its name, so no flag has to ride along. When the invocation arrived through a make-named path, that path is the obvious answer, and the current code discards it: recursive_command uses current_exe, which resolves the symlink back to a ronin-named binary and therefore needs --make to undo the resolution. Reporting the invoked path instead would make recursion re-enter by name exactly as GNU Make does. The case with no such path — someone running `ronin --make` directly — still needs an answer, and shipping a make-named symlink beside the binary is the obvious one.\n\nDo this before quoting any upstream number. Until it is fixed the suite measures one defect 243 times, and the eleven per cent will move a long way for reasons that have nothing to do with the Make language."
-                    }
-                )
-            }
-
-            {
-                id make-recipe-echo
-                title "Echo recipes as Make does instead of reporting Ninja progress"
-                deps (make-mode-cli)
-                children (
-                    {
-                        id make-recipe-echo-line
-                        title "Echo the recipe where Ninja printed its progress line"
-                        priority 0
-                        kind @feat
-                        log (
-                            {
-                                at 2026-08-06T14:07:20.651968013Z
-                                author "brendan@necessary.nu"
-                                kind @note
-                                text "The largest single item in the Make work: 587 of the 1338 failing tests in GNU Make's suite show Ronin's `[N/M] description` where Make echoes the recipe, and 219 of those diffs contain nothing else at all. The whole failure is one line of the wrong tool's output.\n\nThe rule is small and it is Make's. The recipe line is printed, after variable expansion, immediately before it runs. A line whose first character is `@` is not printed. `-s`, `.SILENT` and a `MAKEFLAGS` carrying `s` suppress every line. The text is what kati already hands the sink, so nothing has to be re-expanded.\n\nThe Ninja progress line is not a thing to reshape into Make's — it is a Ninja product surface and does not belong in Make mode at all. Deleting it is part of the work rather than a consequence of it.\n\nTwo cautions from having measured this. The `@` rule has to land with the echo rather than after it, because almost every recipe in the suite is `@`-prefixed and echoing those would replace one wrong line with a worse one. And the count above is what the defect is worth *today*: once it lands, the diffs behind it become readable for the first time, and the next number will not be a prediction from this one."
-                            }
-
-                            {
-                                at 2026-08-06T14:11:31.44520241Z
-                                author "brendan@necessary.nu"
-                                kind @status
-                                text "Todo → Doing (nplan start)"
-                            }
-
-                            {
-                                at 2026-08-06T14:13:59.041021083Z
-                                author "brendan@necessary.nu"
-                                kind @blocker
-                                text "Bigger than the node assumed, and the assumption was mine: this is not a reporter change, because by the time anything could report, the thing to report has been thrown away.\n\nkati's gen_shell_script at ninja.rs:435 flattens a recipe into one script joined with ` && `, and drops each line's `echo` flag while doing it. The sink receives one opaque command. So Make mode cannot echo per line — it has no lines — and cannot honour a per-line `@` — it has no flags. Both are required: nearly every recipe in the suite is `@`-prefixed, so echoing what we currently hold would replace one wrong line with a worse one.\n\nThe `[1/1] build all` text is not Make's either. sink.rs:233 invents `build $out` as the description when the Makefile supplied none, exactly as the manifest writer does. In Make mode that string should not exist at all.\n\nThe tempting shortcut does not work. Carrying the echo text in the Ninja `description` binding would need embedded newlines for a multi-line recipe, which cannot appear in an emitted build.ninja, and make-graph-equivalence compares the direct graph against that manifest. The description binding is the wrong vehicle.\n\nSo the recipe has to reach the graph as a sequence. SinkRule gains the lines with their flags, the NinjaWriter keeps ignoring them so the manifest and the equivalence check are untouched, and GraphSink keeps them for the Make reporter.\n\nA second defect falls out of the same finding and is not this node's: joining with ` && ` means one shell for the whole recipe, where GNU Make runs one shell per line. `cd` persisting to the next line is the visible consequence, and .ONESHELL is the Makefile asking for what we already do unconditionally. Once the lines are carried, fixing that is reachable; it should be its own node rather than smuggled in here."
-                            }
-
-                            {
-                                at 2026-08-06T14:32:08.385996565Z
-                                author "brendan@necessary.nu"
-                                kind @decision
-                                text "The recipe travels as a rule binding named `recipe`, and the reason it can is that the equivalence oracle compares a closed list of twelve bindings rather than walking whatever each graph holds. A thirteenth is invisible to it, which is exactly right here: nothing writes `recipe` into a manifest and nothing reads one back, because a newline ends a binding in Ninja's syntax and a recipe is a sequence of lines. The closed list at equivalence.rs:55 was written to make a binding that stops crossing the sink show up as a difference; a binding that was never meant to cross is a different thing and does not belong on it.\n\nkati's side is SinkRecipeLine, carrying the expanded text and whether Make would echo it. gen_shell_script records each line before it does any of its own rewriting — android echo detection and mkdir elision can drop a line from the script, and a line kati drops is still a line Make would have printed.\n\nThe filtering happens in GraphSink rather than in the reporter. A `@` line never reaches the binding at all, so by the time anything prints there is nothing left to decide, and a recipe whose every line is `@` arrives empty and prints nothing rather than a blank line.\n\nReporter::Make is a third variant beside Ninja and Cargo, and OutputStyle::Make is deliberately not offered on the command line. It is not a preference: a Ninja manifest carries no recipe, so asking for this over one would ask for silence. Make mode selects it and nothing else can.\n\nAlso removed: `build $out`, which sink.rs invented as a description when the Makefile supplied none. That string is the manifest writer's answer to a question Make never asks.\n\nVerified byte-identical to GNU Make 4.4.1 for a plain recipe, an `@` recipe, `-s`, and a multi-line all-`@` recipe. One shape still differs and it is the one make-recipe-one-shell-per-line owns: a multi-line echoed recipe prints all its lines and then all its output, where Make interleaves each line with the output of running it. That is not fixable here, because the recipe is still one joined script — there is no point between the lines at which to print."
-                            }
-                        )
-                    }
-
-                    {
-                        id make-recipe-failure-report
-                        title "Report a failed recipe as Make does, not as Ninja does"
-                        priority 1
-                        kind @fix
-                        deps (make-recipe-echo-line)
-                        log (
-                            {
-                                at 2026-08-06T14:07:28.460885341Z
-                                author "brendan@necessary.nu"
-                                kind @note
-                                text "A failed recipe is reported in Ninja's shape, which is four lines where Make writes one. Demonstrated against GNU Make 4.4.1 on `all:;@exit 3`:\n\n  GNU Make   make: *** [fail.mk:2: all] Error 3\n\n  Ronin      [1/1] build all\n             FAILED: [code=3] all\n             /bin/sh -c \"exit 3\"\n             ronin: build stopped: subcommand failed.\n\nThree separate things to get right. The line names the makefile and the line number of the recipe, not just the target — the corpus already calls that family `error-location` and counts five cases of it, and GNU Make has written it that way since 4.0. It carries the program's name and `***`, but not the `Stop.` suffix, because a failed recipe is not a fatal Make dies on; that distinction is already encoded in kati's `diagnostic_prefix` and was established by running Make rather than by reading it. And the status is the recipe's own, reported in the text, while the process exits 2 — which is already done.\n\nThe `FAILED:` block and the command echo are Ninja product surfaces and go, in Make mode only.\n\nNote that this is Ronin's scheduler, not kati's exec path: Make mode never runs kati's executor, so the vendored corpus cannot see this defect at all and only the upstream suite can."
-                            }
-                        )
-                    }
-
-                    {
-                        id make-recipe-dry-run
-                        title "Print recipes under -n without running them, including the plus exception"
-                        priority 2
-                        kind @fix
-                        deps (make-recipe-echo-line)
-                    }
-
-                    {
-                        id make-recipe-one-shell-per-line
-                        title "Run each recipe line in its own shell, as Make does without ONESHELL"
-                        priority 3
-                        kind @fix
-                        deps (make-recipe-echo-line)
-                    }
-                )
-                log (
-                    {
-                        at 2026-08-05T17:19:49.402788461Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "One difference, and it is worth almost the whole upstream score.\n\nGNU Make prints the recipe line it is about to run, then the recipe's own output. Make mode prints Ninja's progress instead:\n\n    GNU Make    echo plain recipe   /   plain recipe\n    Ronin       [1/1] build all     /   plain recipe\n\nEvery test in GNU Make's suite compares stdout exactly, so this alone fails 1320 of the 1334 assertions the suite now reaches. Nothing else needs to be wrong for the score to be one per cent.\n\nThe rules to implement are Make's, and they are small. The recipe is echoed before it runs. A line beginning `@` is not echoed. `-s` suppresses all echoing. `-n` echoes without running. The text echoed is the recipe after variable expansion, which is what kati already hands the sink. Ninja's `[N/M] description` line is a Ninja product surface and does not belong in Make mode at all.\n\nNote the ordering that makes this worth doing before anything else is measured: until it lands, every upstream number is this defect counted over and over, exactly as the eleven per cent before it was $(MAKE) counted 243 times. Fix it, rerun, and only then read the residue as Make semantics.\n\nWatch for two interactions. The console pool and the output streaming both assume a progress line owns the terminal, and Make's echo does not. And `make-conformance-corpus` records the same difference from the other side — it measured 371 of 372 differing on the recipe echo when pointed at Ronin — so its counts should move sharply here, which is the cross-check that this was really the cause."
                     }
                 )
             }
@@ -4209,7 +4133,6 @@ children (
                 id make-option-parity
                 title "Accept the Make options the upstream suite actually passes"
                 kind @feat
-                deps (make-recipe-echo-line)
                 children (
                     {
                         id make-option-negations
@@ -4283,6 +4206,20 @@ children (
                         text "202 of the 1338 failing tests in GNU Make's suite refuse an option the test passed and GNU Make accepted, printing usage and abandoning. Ranked by failing tests, from the diffs rather than from the logs — the logs are per-category and overwritten, so they undercount badly, which is what made this look like eight cases on first inspection instead of two hundred:\n\n  --no-print-directory 45, -I 31, -R 28, -O 20, --debug=* 17, --no-silent 12,\n  --shuffle=* 11, -W 7, --warn-undefined-variables 7, -S 5, --trace 4, -d 4,\n  -t 3, --eval 3, -E 2.\n\nThis was invisible before `$(MAKE)` became one word. The suite never got far enough to pass these options at all, so the whole family was hidden behind a defect counted 243 times. It is the second thing that has behaved that way and it will not be the last: read the residue only after the thing in front of it is gone.\n\nChildren are ranked by how many failing tests each would reach, so the frontier offers the biggest first. That ranking is a starting order and not a claim about difficulty — `--no-print-directory` leads on count and is nearly free, while `-O` is worth twenty and needs output grouping in the scheduler.\n\nDepends on make-recipe-echo-line for measurement rather than for mechanism. An option can be implemented at any time, but until the progress line is gone every one of these diffs also contains it, so a test fixed here will still fail and nobody can tell whether the option work was right.\n\n`make-option-coverage` is Done and is not this: it took the options whose machinery already existed. These are the ones that need machinery."
                     }
                 )
+            }
+
+            {
+                id make-recipe-one-shell-per-line
+                title "Run each recipe line in its own shell, as Make does without ONESHELL"
+                priority 3
+                kind @fix
+            }
+
+            {
+                id make-recipe-dry-run
+                title "Print recipes under -n without running them, including the plus exception"
+                priority 2
+                kind @fix
             }
         )
     }

@@ -29,8 +29,6 @@ struct Bindings {
     rspfile_content: Binding,
     pool: Binding,
     tags: Binding,
-    /// The recipe lines Make echoes, which only Make mode reads.
-    recipe: Binding,
     /// `$out`, for the two bindings whose value is per edge rather than per
     /// rule. kati mints one rule per edge, so this expands to that edge's own
     /// single output.
@@ -49,7 +47,6 @@ impl Bindings {
             rspfile_content: graph.binding(b"rspfile_content"),
             pool: graph.binding(b"pool"),
             tags: graph.binding(b"tags"),
-            recipe: graph.binding(b"recipe"),
             out: graph.binding(b"out"),
         }
     }
@@ -228,20 +225,6 @@ impl BuildSink for GraphSink {
     // [spec:ronin:req:make.graph-direct]
     fn declare_rule(&mut self, _names: &dyn Interner, rule: &SinkRule<'_>) -> anyhow::Result<()> {
         let mut bindings = self.command_bindings(rule);
-        // What Make would print before it ran each line, and nothing else: a
-        // line prefixed `@` is run without being echoed, so it is simply not
-        // here. A recipe whose every line is `@` leaves this empty, which is
-        // the right answer — Make prints nothing for one.
-        let mut echoed = Vec::new();
-        for line in rule.recipe.iter().filter(|line| line.echoed) {
-            if !echoed.is_empty() {
-                echoed.push(b'\n');
-            }
-            echoed.extend_from_slice(line.text);
-        }
-        if !echoed.is_empty() {
-            bindings.push((self.bindings.recipe, Template::literal(&echoed)));
-        }
         bindings.push((
             self.bindings.description,
             rule.description.map_or_else(

@@ -161,15 +161,8 @@ fn relocated_state_still_answers_the_two_questions_make_cannot() {
     )
     .unwrap();
     let after_command = fixture.build_in(&tree, &[]);
-    assert!(
-        after_command.contains("cc -o app main.o"),
-        "{after_command}"
-    );
-    // The compile recipe, not the word `main.o` — the link recipe names that
-    // file too, and now that Make mode echoes recipes rather than describing
-    // edges, the only way to say "main.o was not rebuilt" is to name the
-    // recipe that would have rebuilt it.
-    assert!(!after_command.contains("-c main.c"), "{after_command}");
+    assert!(after_command.contains("app"), "{after_command}");
+    assert!(!after_command.contains("main.o"), "{after_command}");
     assert!(fixture.build_in(&tree, &[]).contains("no work to do"));
 }
 
