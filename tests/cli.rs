@@ -1360,6 +1360,41 @@ fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `+=` on a target reads the target's own scope, not the one outside it.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_appends_to_a_target_variable_from_the_targets_own_scope() {
+    let directory = test_directory("make-targetvar-append");
+    fs::create_dir_all(&directory).unwrap();
+    // The append is written above the assignment it reads, so getting this
+    // right cannot be a matter of taking them in the order they appear.
+    fs::write(
+        directory.join("Makefile"),
+        "A = start\n\
+         Z = outer\n\
+         all: A += $(Z)\n\
+         all: Z = inner\n\
+         all: ; @echo \"[$(A)]\"\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("[start inner]"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// The second reads the first, so their order decides the answer.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]

@@ -4589,6 +4589,20 @@ children (
                         kind @note
                         text "Found because it made the upstream gate flaky, not because a test asked for it. features/targetvars case 12 flipped between passing and failing across identical runs of the same Makefile:\n\n  BLAH := foo\n  COMMAND = echo $(BLAH)\n  all: ; @$(COMMAND)\n  all: BLAH := bar\n  all: COMMAND += snafu $(BLAH)\n\nGNU Make 4.4.1 says `bar snafu bar`. We said `bar snafu bar` or `foo snafu foo` depending on the run, because dep.rs applies a node's target-specific variables by iterating `Vars`, which is a HashMap, and Rust seeds its hasher per process. Whichever of BLAH and COMMAND came out first decided the answer.\n\nSorting by name at the application site settles it, and on this shape settles it on the right answer. That is not the fix, and the code says so: Make applies these in the order they were written, which a HashMap cannot report. Vars would have to keep insertion order — an ordered map, or a sequence beside the map — for the general case.\n\nThere is a second defect underneath, visible in the same case and left alone. `+=` onto a recursive variable appends unexpanded text in Make and keeps the variable recursive; dep.rs expands eagerly and rewrites it as simple. Sorted order happens to hide it here because BLAH is already bar by the time COMMAND is read. A Makefile that appends before assigning would still be answered wrongly, deterministically."
                     }
+
+                    {
+                        at 2026-08-06T23:25:44.994400945Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T23:33:34.743967206Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The defect this node was opened for is fixed, and it was not the one recorded on it.\n\nThe earlier note said `+=` onto a recursive variable expands eagerly where Make appends unexpanded text, and predicted a Makefile that appends before assigning would be answered wrongly. Every shape built to demonstrate that matched GNU Make 4.4.1 already, including the exact one predicted to fail. So the note was wrong about the mechanism, and the sorted order committed with it was hiding nothing.\n\nWhat is actually wrong needs the appended-to variable to have a prior value, which is the case the eager branch is guarded on:\n\n  A = start\n  Z = zed\n  all: A += $(Z)\n  all: Z = changed\n  all: ; @echo \"[$(A)]\"\n\nGNU says `[start changed]`, we said `[start zed]`. The append was expanded while the target's own scope was half built, so `$(Z)` read the Z outside the rule rather than the one the rule sets. Flavour has nothing to do with it: `A := start` gives the same answer on both tools, because a target-specific `+=` resolves when the target is built and by then the target's own Z is in scope.\n\nSo `+=` is applied after everything else on the target, and the sort is now two keys: by name for reproducibility, then appends last. Checked on five shapes, including two appends to one name and the case where the append is written above the assignment it reads.\n\nNo suite case moved. Still a defect.\n\nLeft alone, and no longer believed to be a defect without evidence: whether a target-specific `:=` is expanded when applied or when used. `B := two` beside `A := $(B)` answers `two` on both tools, which is the right answer, and the mechanism was not established."
+                    }
                 )
             }
 
