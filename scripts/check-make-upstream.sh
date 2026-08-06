@@ -45,6 +45,7 @@ if [ ! -d "$suite/tests/scripts" ]; then
 fi
 
 cargo build --release --bin ronin
+cargo build --release --example make_upstream
 
 # Make mode is reached by the invoked name and by nothing else, so pointing the
 # suite at Ronin means a make-named link rather than a flag.
@@ -66,7 +67,17 @@ fi
 
 ulimit -n 512 || true
 
-cd "$suite/tests"
-# The driver's exit status counts failures, and every failure here is expected
-# until Make mode is finished; the summary it prints is the result.
-perl ./run_make_tests.pl -make "$bin/make" "$@" || true
+(
+    cd "$suite/tests"
+    # The driver's exit status counts failures, and its own summary is not the
+    # result: Ronin narrates a build the way Ninja does and is not trying to
+    # produce GNU Make's output, so most of what it counts is a difference we
+    # chose. The classifier below is the reading that means something.
+    perl ./run_make_tests.pl -make "$bin/make" "$@" || true
+)
+
+# Semantic differences are the number. Narration is what we decided to look
+# like; capability is a Make feature that is somebody's node already.
+exec "$repo_root/target/release/examples/make_upstream" \
+    --work "$suite/tests/work" \
+    --inventory "$repo_root/tests/make_upstream_inventory.tsv"
