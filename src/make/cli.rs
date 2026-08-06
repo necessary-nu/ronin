@@ -57,6 +57,8 @@ struct Invocation {
     /// `-C a -C b` is `a/b` rather than `b`, which is where it differs from
     /// Ninja's single overwritten directory.
     directories: Vec<PathBuf>,
+    /// Where `-I` says to look for an `include`, in the order given.
+    include_dirs: Vec<PathBuf>,
     makefile: Option<PathBuf>,
     goals: Vec<BString>,
     /// `VAR=value` in command-line order, which is the order Make applies them.
@@ -80,6 +82,7 @@ impl Invocation {
     const fn new() -> Self {
         Self {
             directories: Vec::new(),
+            include_dirs: Vec::new(),
             makefile: None,
             goals: Vec::new(),
             variables: Vec::new(),
@@ -302,6 +305,7 @@ fn usage() -> String {
             "options:\n",
             "  -f FILE  read FILE as the makefile [default={default}]\n",
             "  -C DIR   change to DIR before reading anything, once per option\n",
+            "  -I DIR   also look in DIR for an include, once per option\n",
             "  -j [N]   run N recipes at once, or as many as are ready\n",
             "  -l [N]   start no recipe while the load average is above N\n",
             "  -B       rebuild every target, whatever its timestamps say\n",
@@ -461,6 +465,8 @@ fn attached_long(
         invocation.makefile = Some(path_of(named)?);
     } else if let Some(named) = option.strip_prefix(b"--directory=") {
         invocation.directories.push(path_of(named)?);
+    } else if let Some(named) = option.strip_prefix(b"--include-dir=") {
+        invocation.include_dirs.push(path_of(named)?);
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
         invocation.jobs = Some(jobs_value(arguments, index, count)?);
     } else if let Some(load) = option.strip_prefix(b"--load-average=") {
@@ -510,6 +516,10 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
                 let named = value(arguments, &mut index, b"", "--directory")?;
                 invocation.directories.push(path_of(named.as_bytes())?);
             }
+            b"--include-dir" => {
+                let named = value(arguments, &mut index, b"", "--include-dir")?;
+                invocation.include_dirs.push(path_of(named.as_bytes())?);
+            }
             option if option.starts_with(b"--") => {
                 if !attached_long(&mut invocation, option, arguments, &mut index)? {
                     return Ok(refuse(format_args!(
@@ -519,61 +529,76 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
                 }
             }
             _ => {
-                let mut short = 1;
-                while short < argument.len() {
-                    let option = argument[short];
-                    short += 1;
-                    if let Some(switch) = Switch::short(option) {
-                        invocation.add(switch);
-                        continue;
-                    }
-                    if let Some(switch) = Switch::short_negation(option) {
-                        invocation.withdraw(switch);
-                        continue;
-                    }
-                    match option {
-                        b'h' => return Ok(Action::Immediate(reported(usage()))),
-                        b'j' => {
-                            invocation.jobs =
-                                Some(jobs_value(arguments, &mut index, &argument[short..])?);
-                            short = argument.len();
-                        }
-                        b'l' => {
-                            invocation.load =
-                                Some(load_value(arguments, &mut index, &argument[short..])?);
-                            short = argument.len();
-                        }
-                        b'f' | b'C' => {
-                            let named = value(
-                                arguments,
-                                &mut index,
-                                &argument[short..],
-                                match option {
-                                    b'f' => "-f",
-                                    _ => "-C",
-                                },
-                            )?;
-                            short = argument.len();
-                            let named = path_of(named.as_bytes())?;
-                            if option == b'f' {
-                                invocation.makefile = Some(named);
-                            } else {
-                                invocation.directories.push(named);
-                            }
-                        }
-                        _ => {
-                            return Ok(refuse(format_args!(
-                                "invalid option -- '{}'",
-                                char::from(option)
-                            )))
-                        }
-                    }
+                if let Some(immediate) =
+                    read_cluster(&mut invocation, argument, arguments, &mut index)?
+                {
+                    return Ok(immediate);
                 }
             }
         }
         index += 1;
     }
     Ok(Action::Execute(Box::new(invocation)))
+}
+
+/// One `-abc` group, which is several switches unless one of them takes an
+/// argument — after which the rest of the word is that argument.
+fn read_cluster(
+    invocation: &mut Invocation,
+    argument: &[u8],
+    arguments: &[BString],
+    index: &mut usize,
+) -> Result<Option<Action>, Error> {
+    let mut short = 1;
+    while short < argument.len() {
+        let option = argument[short];
+        short += 1;
+        if let Some(switch) = Switch::short(option) {
+            invocation.add(switch);
+            continue;
+        }
+        if let Some(switch) = Switch::short_negation(option) {
+            invocation.withdraw(switch);
+            continue;
+        }
+        match option {
+            b'h' => return Ok(Some(Action::Immediate(reported(usage())))),
+            b'j' => {
+                invocation.jobs = Some(jobs_value(arguments, index, &argument[short..])?);
+                short = argument.len();
+            }
+            b'l' => {
+                invocation.load = Some(load_value(arguments, index, &argument[short..])?);
+                short = argument.len();
+            }
+            b'f' | b'C' | b'I' => {
+                let named = value(
+                    arguments,
+                    index,
+                    &argument[short..],
+                    match option {
+                        b'f' => "-f",
+                        b'I' => "-I",
+                        _ => "-C",
+                    },
+                )?;
+                short = argument.len();
+                let named = path_of(named.as_bytes())?;
+                match option {
+                    b'f' => invocation.makefile = Some(named),
+                    b'I' => invocation.include_dirs.push(named),
+                    _ => invocation.directories.push(named),
+                }
+            }
+            _ => {
+                return Ok(Some(refuse(format_args!(
+                    "invalid option -- '{}'",
+                    char::from(option)
+                ))))
+            }
+        }
+    }
+    Ok(None)
 }
 
 fn path_of(value: &[u8]) -> Result<PathBuf, Error> {
@@ -661,6 +686,7 @@ fn session_for(
         // real: Make mode serves the jobserver as well as consuming it, in the
         // named-pipe form GNU Make 4.4 introduced.
         extra_features: vec!["jobserver".to_owned(), "jobserver-fifo".to_owned()],
+        include_dirs: invocation.include_dirs.clone(),
         ..Flags::default()
     };
     session.flags.targets = invocation
@@ -1459,10 +1485,9 @@ mod tests {
     #[test]
     fn the_options_no_machinery_answers_are_still_refused_by_name() {
         // Each needs work the graph does not take — a per-node timestamp
-        // override, an include search path, a database dump — and being
-        // refused is what keeps an invocation that asks for one from quietly
-        // building something else.
-        for option in ["-t", "-o", "-W", "-I", "-p"] {
+        // override, a database dump — and being refused is what keeps an
+        // invocation that asks for one from quietly building something else.
+        for option in ["-t", "-o", "-W", "-p"] {
             let diagnostic = refused(&["make", option, "x"])
                 .unwrap_or_else(|| panic!("{option} cannot describe a build"));
             assert!(
@@ -1473,13 +1498,7 @@ mod tests {
                 "{diagnostic}"
             );
         }
-        for option in [
-            "--touch",
-            "--old-file",
-            "--what-if",
-            "--include-dir",
-            "--debug",
-        ] {
+        for option in ["--touch", "--old-file", "--what-if", "--debug"] {
             let diagnostic = refused(&["make", option, "x"])
                 .unwrap_or_else(|| panic!("{option} cannot describe a build"));
             assert!(

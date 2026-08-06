@@ -992,6 +992,42 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_searches_the_include_directories() {
+    let directory = test_directory("make-include-dir");
+    fs::create_dir_all(directory.join("first")).unwrap();
+    fs::create_dir_all(directory.join("second")).unwrap();
+    fs::write(directory.join("second").join("extra.mk"), "V = second\n").unwrap();
+    fs::write(directory.join("local.mk"), "W = local\n").unwrap();
+    fs::write(directory.join("second").join("local.mk"), "W = searched\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "include extra.mk\n\
+         include local.mk\n\
+         all: ; @echo \"[$(V)][$(W)]\"\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .args(["-I", "first", "-Isecond"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // `first` has neither, and the working directory outranks the search.
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("[second][local]"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// A `.x.y:` rule is a suffix rule only while both suffixes are on the list.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]

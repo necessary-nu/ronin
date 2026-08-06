@@ -4221,6 +4221,14 @@ children (
                         title "Search -I directories when resolving an include"
                         priority 1
                         kind @feat
+                        log (
+                            {
+                                at 2026-08-06T21:48:38.33303262Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+                        )
                     }
 
                     {
@@ -4611,6 +4619,21 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "make-second-expansion did explicit rules and deliberately stopped there. A pattern rule is chosen by matching its prerequisites against the filesystem, so deferring them leaves the rule matching anything: the first attempt at this built `foo.o` out of nothing where GNU Make refuses, which is worse than the refusal it gives today. rule.rs therefore defers only when output_patterns is empty.\n\nDoing it properly means the search itself has to expand. can_pick_implicit_rule tests each candidate's prerequisites for existence, and under second expansion those names are not known until `$@` and the stem are bound — so the expansion has to happen inside the candidate loop, once per rule considered rather than once per node.\n\nStatic pattern rules are the same shape and come through the other branch of parse_prerequisites, where the prerequisite patterns are read after a second colon. `foo.o: %.o: $$*.c` refuses `$*.c` today.\n\nScale, from the suite: features/se_implicit 29 declined plus 11 refusals, features/se_statpat 12 plus 10. Read those after this lands rather than assuming they are all this."
+                    }
+                )
+            }
+
+            {
+                id make-ignore-errors-target
+                title "Honour .IGNORE, .NOTPARALLEL and .EXPORT_ALL_VARIABLES"
+                priority 2
+                kind @feat
+                log (
+                    {
+                        at 2026-08-06T21:48:31.665372748Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The three left standing when make-special-target-noise took the other warnings away. Each was probed against GNU Make 4.4.1 and each is a real gap, not noise:\n\n  .IGNORE                a failing recipe is ignored and the build continues.\n                         `all: a b` with `a: ; @false` gives GNU\n                         `make: [Makefile:3: a] Error 1 (ignored)` and then\n                         `reached-b`; we abandon with 2. Make mode already has\n                         -i, so this is that flag set from the Makefile, plus\n                         the per-target form `.IGNORE: a`.\n\n  .NOTPARALLEL           under -j4 GNU runs a, b, c in order; we run them at\n                         once. Make mode is serial without -j, so this only\n                         shows when the build was asked to be parallel — it is\n                         a job limit of one imposed by the Makefile rather than\n                         by the command line.\n\n  .EXPORT_ALL_VARIABLES  every variable reaches the recipe's environment.\n                         `FOO = bar` with `@echo \"[$$FOO]\"` gives GNU `[bar]`\n                         and us `[]`. kati already tracks exports per variable,\n                         so this is that set turned on wholesale.\n\nThree separate mechanisms in three different places, so this may want splitting\nonce someone starts. Seven cases between them, which is why they are one node\nfor now."
                     }
                 )
             }
