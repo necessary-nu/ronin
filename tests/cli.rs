@@ -992,6 +992,41 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `-n` runs nothing, except the lines the Makefile prefixed `+`.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_runs_only_the_plus_lines_under_dry_run() {
+    let directory = test_directory("make-dry-run");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\
+         \techo before > before\n\
+         \t+echo plus > plus\n\
+         \techo after > after\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-n")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(directory.join("plus").exists(), "the + line did not run");
+    for skipped in ["before", "after"] {
+        assert!(
+            !directory.join(skipped).exists(),
+            "-n ran {skipped}, which it was told not to"
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]

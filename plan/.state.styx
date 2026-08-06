@@ -252,6 +252,7 @@ assertions (
     {id make-order-only-variable, kind @doing, author "brendan@necessary.nu", at 2026-08-06T21:26:39.917755102Z}
     {id make-suffixes-with-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-06T21:37:50.546517346Z}
     {id make-option-include-path, kind @doing, author "brendan@necessary.nu", at 2026-08-06T21:48:38.33303262Z}
+    {id make-recipe-dry-run, kind @doing, author "brendan@necessary.nu", at 2026-08-06T22:10:10.717750281Z}
 )
 
 impl_evidence (

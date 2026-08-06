@@ -8,8 +8,14 @@ use std::fs;
 
 type BuildResult<T> = Result<T, BuildError>;
 
+/// The binding a Makefile's `+`-prefixed recipe lines are assembled into.
+pub(crate) const DRY_RUN_COMMAND: &[u8] = b"dryrun_command";
+
 pub(super) struct CommandSpec {
     pub(super) command: BString,
+    /// What to run when the run is only pretending. `None` for every Ninja
+    /// edge and for a recipe with no `+` line.
+    pub(super) dry_run_command: Option<BString>,
     pub(super) description: BString,
     pub(super) rspfile: Option<BString>,
     pub(super) rspfile_content: BString,
@@ -54,6 +60,14 @@ impl CommandSpec {
     fn evaluate(graph: &Graph, edge: EdgeId, scratch: &mut Vec<u8>) -> BuildResult<Self> {
         let command = crate::env::edgevar(graph, edge, Names::COMMAND, PathStyle::ShellEscaped)
             .unwrap_or_default();
+        // Make's `+` prefix: the part of a recipe that runs even under -n. Only
+        // a Makefile ever binds this, so a Ninja manifest never interned the
+        // name and the lookup answers None.
+        let dry_run_command = graph
+            .names()
+            .lookup(bstr::BStr::new(DRY_RUN_COMMAND))
+            .and_then(|binding| crate::env::edgevar(graph, edge, binding, PathStyle::ShellEscaped))
+            .filter(|command| !command.is_empty());
         let description =
             crate::env::edgevar(graph, edge, Names::DESCRIPTION, PathStyle::ShellEscaped)
                 .unwrap_or_default();
@@ -80,6 +94,7 @@ impl CommandSpec {
         let use_console = graph.is_console_pool(graph.edge(edge).pool);
         Ok(Self {
             command,
+            dry_run_command,
             description,
             rspfile,
             rspfile_content,

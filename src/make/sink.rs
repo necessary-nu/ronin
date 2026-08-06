@@ -29,6 +29,7 @@ struct Bindings {
     rspfile_content: Binding,
     pool: Binding,
     tags: Binding,
+    dry_run_command: Binding,
     /// `$out`, for the two bindings whose value is per edge rather than per
     /// rule. kati mints one rule per edge, so this expands to that edge's own
     /// single output.
@@ -47,6 +48,7 @@ impl Bindings {
             rspfile_content: graph.binding(b"rspfile_content"),
             pool: graph.binding(b"pool"),
             tags: graph.binding(b"tags"),
+            dry_run_command: graph.binding(crate::build::DRY_RUN_COMMAND),
             out: graph.binding(b"out"),
         }
     }
@@ -225,6 +227,15 @@ impl BuildSink for GraphSink {
     // [spec:ronin:req:make.graph-direct]
     fn declare_rule(&mut self, _names: &dyn Interner, rule: &SinkRule<'_>) -> anyhow::Result<()> {
         let mut bindings = self.command_bindings(rule);
+        if !rule.dry_run_command.is_empty() {
+            let mut command = Template::literal(rule.shell);
+            command.push_literal(b" ");
+            command.push_literal(rule.shell_flags);
+            command.push_literal(b" \"");
+            command.push_literal(&escape_shell(&Bytes::copy_from_slice(rule.dry_run_command)));
+            command.push_literal(b"\"");
+            bindings.push((self.bindings.dry_run_command, command));
+        }
         bindings.push((
             self.bindings.description,
             rule.description.map_or_else(

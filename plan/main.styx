@@ -4295,6 +4295,21 @@ children (
                 title "Print recipes under -n without running them, including the plus exception"
                 priority 2
                 kind @fix
+                log (
+                    {
+                        at 2026-08-06T22:10:10.717750281Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T22:28:07.061979516Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Done for the `+` exception, and it moved nothing in GNU Make's suite — no case there exercises `-n` with a `+` line. It was a real defect regardless: `make -n` silently did nothing where GNU Make runs the line, so a Makefile using `+$(MAKE) -C sub` to recurse under `-n` saw an empty answer.\n\nProbed against 4.4.1 first, which is what set the shape:\n\n  plain recipe        neither tool runs it\n  `@` prefixed        both still print it — `-n` overrides `@`\n  `+` prefixed        GNU runs it, we did not\n  mixed lines         GNU runs ONLY the `+` line and prints all three\n\nThat last one ruled out the cheap version. Running the whole recipe when any line is `+` would have created the two files GNU leaves alone, and a wrong build under the one flag whose entire purpose is to touch nothing is the worst place to take that shortcut.\n\nSo the `+` subset is assembled as its own script beside the full one, in the same pass and with the same joining, and carried as a rule binding named `dryrun_command`. Under `-n` an edge that has one runs it instead of being skipped; every other edge is skipped as before. A Ninja manifest never binds the name, so `graph.names().lookup` answers None and nothing changes for Ninja — no plumbing through BuildOptions was needed.\n\nTwo things left, both separate:\n\n`$(MAKE)` gets the same exception in GNU Make, and this does not give it. Make decides by scanning the *unexpanded* recipe line for `$(MAKE)` or `${MAKE}`; kati has already expanded the recipe by the time it has lines, so the information is gone. Verified the distinction is real rather than incidental: `MAKE_ALIAS = $(MAKE)` then `$(MAKE_ALIAS) --version` is printed and NOT run by GNU Make, so it is the reference that matters and not the value. Doing it properly means walking the recipe Value for a VarRef to the MAKE symbol before expansion.\n\nWhat `-n` prints is still ours rather than Make's: `/bin/sh -c \"(a ) && (b )\"` where Make prints each line as written. That is make-recipe-one-shell-per-line, and this node deliberately left it alone."
+                    }
+                )
             }
 
             {

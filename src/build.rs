@@ -24,6 +24,8 @@ pub(crate) use self::status::BuildState;
 
 type BuildResult<T> = Result<T, BuildError>;
 
+pub(crate) use command::DRY_RUN_COMMAND;
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum JobLimit {
     #[default]
@@ -1664,8 +1666,17 @@ impl<'a> Builder<'a> {
                 });
                 match prepared {
                     Ok(prepared) => {
-                        let command = prepared.command.command.clone();
-                        let dryrun = self.options.dryrun;
+                        // Make's `+` lines run even under -n. Nothing else on
+                        // the edge does, so the command becomes just those and
+                        // the run stops pretending for this one.
+                        let dry_run_only = self
+                            .options
+                            .dryrun
+                            .then(|| prepared.command.dry_run_command.clone())
+                            .flatten();
+                        let dryrun = self.options.dryrun && dry_run_only.is_none();
+                        let command =
+                            dry_run_only.unwrap_or_else(|| prepared.command.command.clone());
                         match processes.spawn(edge, command, use_console, dryrun) {
                             Ok(()) => {
                                 running[edge.index()] = Some(prepared);
