@@ -4185,6 +4185,20 @@ children (
                                 kind @note
                                 text "62 failing tests, the largest group here and the cheapest: --no-print-directory 45, --no-silent 12, -S 5.\n\nAll three negate a switch Make mode already has, so none needs new machinery — only the recognition that GNU Make's switches come in pairs and that the later spelling wins. --no-print-directory withdraws -w, --no-silent withdraws -s, -S withdraws -k.\n\nTwo things to get right rather than guess. The negation has to survive MAKEFLAGS into a sub-make, which means `propagated` and `adopt_inherited` have to carry it rather than only carrying the positive form — a tree where the parent said --no-print-directory and the children announce their directories anyway is the defect these tests are looking for. And -w is implied by -C, so --no-print-directory has to withdraw the implication as well as the request; `announcing` already encodes that relationship for -s and is where the answer goes."
                             }
+
+                            {
+                                at 2026-08-06T20:05:13.207391861Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-06T20:19:59.118075842Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Done, and every value in the tests was read off GNU Make 4.4.1 rather than reasoned about: a makefile printing `$(MAKEFLAGS)`, run once per spelling. Three of the answers would not have been guessed.\n\n`-S` is a letter and travels in the letter group, so `make -k -S` hands a child `MAKEFLAGS=S` with no `k` left to argue with. `--no-print-directory` and `--no-silent` have no letter and follow the group: `make -k --no-print-directory` gives `k --no-print-directory`. And `-C .` alone gives an empty MAKEFLAGS, so the announcement it implies is not propagated as a flag — a child gets the implication from its own `-C` or not at all.\n\nThe shape needed a second bitset rather than clearing the first. Refusing a switch is not the same state as never having asked for it, because `-w` is asked for by `-C` as well as by name and GNU Make's help is explicit — \"Turn off -w, even if it was turned on implicitly\". So `add` and `withdraw` each clear the other's bit, which is also what makes the last spelling win in both directions.\n\nAll fourteen shapes now answer as GNU Make does, checked side by side including the Entering/Leaving pairs, with only the progress line differing.\n\nThe measurement, and it is the pattern this suite keeps producing rather than a regression. option-refused 203 to 147, capability 316 to 265, and three tests now pass the suite outright. Semantic went 675 to 720 — every case that moved was capability before, 45 to semantic and 6 to narration, and nothing that was already narration or semantic got worse. The refusal had been standing in front of a difference; taking it away is what makes the difference countable.\n\nWhat is behind it, by script: variables/MAKEFLAGS 21, features/jobserver 6, options/print-directory 5, options/dash-s 4, options/dash-C 3. By family it is 35 evaluation, which is the unnamed bucket and wants the same --explain treatment the others got. Read that before assuming MAKEFLAGS content is one defect: makeflags-content is only 4 of them."
+                            }
                         )
                     }
 
