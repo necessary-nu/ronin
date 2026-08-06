@@ -4441,6 +4441,20 @@ children (
                         kind @note
                         text "33 cases. `.DEFAULT` supplies the recipe for any target that has no rule of its own and is not made by an implicit rule. We decline it at dep.rs:529 and then refuse the target.\n\n  all: dep\n  .DEFAULT: ; @echo default made $@\n\nGNU Make 4.4.1 prints `default made dep` and exits 0. Ronin warns, then `'dep', needed by 'all', missing and no known rule to make it`, exit 2.\n\nIt belongs to the same population as make-implicit-rule-chaining — both are steps in what GNU Make does before giving up on a target — and .DEFAULT is the last of them, consulted only after the implicit search has failed. Worth doing after chaining so the two are not fighting over the same fallback path, and so that a target reached by a chain does not accidentally take .DEFAULT's recipe."
                     }
+
+                    {
+                        at 2026-08-06T20:56:02.797047373Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T21:03:45.262091784Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Implemented as Make's step 7, after the implicit search and only for a target with no rule of its own that is not already on disk. Five shapes checked against 4.4.1 and all five now match semantically:\n\n  a target with no rule                 takes it\n  a rule with no recipe                 does not — Make says Nothing to be done\n  a file that exists                    does not\n  a later bare `.DEFAULT:`              cancels the earlier one\n  a failed implicit search              falls through to it\n\nThe cancelling form is why the rule is read as \"the last `.DEFAULT` that has a recipe\" rather than as a merge.\n\n26 cases moved: 13 to narration, 12 from semantic to capability, 1 the other way. The twelve are the pattern this suite keeps producing — the build now gets past `.DEFAULT` and reaches the next declined feature, so an unexplained difference becomes a named one."
+                    }
                 )
             }
 

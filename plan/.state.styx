@@ -246,6 +246,7 @@ assertions (
     {id make-option-negations, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:05:13.207391861Z}
     {id make-special-target-noise, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:21:38.785688554Z}
     {id make-refusal-wording-is-narration, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:39:54.627130864Z}
+    {id make-default-target-rule, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:56:02.797047373Z}
 )
 
 impl_evidence (

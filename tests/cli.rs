@@ -947,6 +947,38 @@ fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Make's step 7: the recipe for a target nothing else could make.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_falls_back_to_the_default_rule() {
+    let directory = test_directory("make-default-rule");
+    fs::create_dir_all(&directory).unwrap();
+    // `declared` has a rule, so it is not the default rule's business even
+    // though that rule makes nothing.
+    fs::write(
+        directory.join("Makefile"),
+        "all: nowhere declared\n\
+         declared:\n\
+         .DEFAULT:\n\
+         \t@echo default made $@\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("default made nowhere"), "{stdout}");
+    assert!(!stdout.contains("default made declared"), "{stdout}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Step 6 of GNU Make's implicit rule search.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
