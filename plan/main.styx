@@ -4005,6 +4005,20 @@ children (
                                 kind @note
                                 text "The classifier files 200 cases as no-rule-to-make and calls all of them semantic, on the reasoning that a rule which should have matched did not. 26 of them are cases where GNU Make refuses too.\n\n  expected  ronin: *** No rule to make target 'hello.c', needed by 'hello'.  Stop.\n  got       ronin: 'hello.c', needed by 'hello', missing and no known rule to make it\n\nBoth tools decline to build, for the same reason, about the same target. Under the rule this project adopted — recipe output is Make's semantics and must match, tool narration is ours — that is narration, and io-error-text is already classified exactly this way for the same reason.\n\nThe family is triggered on our side's wording alone, at examples/make_upstream.rs:515. It needs to look at the other side as well: our refusal paired with GNU Make's `No rule to make target` is narration, our refusal alone is semantic. Match the target name across the pair rather than only the shape, so that refusing the wrong target is still counted.\n\nMeasured before writing this: 26 both-refuse, 174 ours-only. So this is an honesty correction to the number, not a way of making it smaller — the 174 are real and are what make-implicit-rule-chaining and make-second-expansion are for."
                             }
+
+                            {
+                                at 2026-08-06T20:39:54.627130864Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-06T20:45:20.190343194Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "26 cases, exactly as measured before the work: semantic 722 to 696, no-rule-to-make 168 to 142.\n\nTwo families rather than one, because the 26 are not all the same thing. 22 refuse the same target and differ only in wording — shared-refusal. In 4, GNU Make walks further into a broken chain before giving up: it names `hello` needed by `hello.tsk` where we name `hello.tsk` needed by `all`. Both refuse the same build for the same reason and only the link named differs, which is narration by the same argument and is the shape the kati corpus already calls dependent-attribution. Keeping them apart means the attribution question stays visible instead of being absorbed.\n\nThe decision is made against the raw divergence rather than the residue, because the target name is what distinguishes the two cases and normalisation is free to drop the line that carries it.\n\nWhat is left in no-rule-to-make is 142, and all of it is a target GNU Make actually built."
+                            }
                         )
                     }
                 )

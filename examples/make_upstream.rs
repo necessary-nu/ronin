@@ -57,7 +57,7 @@ struct Family {
     reason: &'static str,
 }
 
-const FAMILIES: [Family; 16] = [
+const FAMILIES: [Family; 18] = [
     Family {
         name: "recipe-error-line",
         class: Class::Narration,
@@ -112,6 +112,16 @@ const FAMILIES: [Family; 16] = [
         name: "no-rule-to-make",
         class: Class::Semantic,
         reason: "Ronin cannot find a rule for a target GNU Make built, so a rule that should have matched did not: an implicit rule, a vpath search, or a suffix rule.",
+    },
+    Family {
+        name: "shared-refusal",
+        class: Class::Narration,
+        reason: "both tools refused to build the same target for the same reason and worded it differently.",
+    },
+    Family {
+        name: "refusal-attribution",
+        class: Class::Narration,
+        reason: "both tools refused, naming a different link of the same broken chain: Make walks further in before giving up.",
     },
     Family {
         name: "no-makefile-found",
@@ -449,6 +459,27 @@ struct Verdict {
     actual: Vec<String>,
 }
 
+/// The target Ronin refused to build, if it refused one.
+fn refusal_of(lines: &[String]) -> Option<&str> {
+    lines
+        .iter()
+        .find(|line| line.contains("no known rule to make it"))
+        .and_then(|line| quoted(line))
+}
+
+/// The target GNU Make refused to build, if it refused one.
+fn refusal_target(lines: &[String]) -> Option<&str> {
+    lines
+        .iter()
+        .find(|line| line.contains("No rule to make target"))
+        .and_then(|line| quoted(line))
+}
+
+fn quoted(line: &str) -> Option<&str> {
+    let (_, rest) = line.split_once('\'')?;
+    rest.split_once('\'').map(|(name, _)| name)
+}
+
 fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
     let mut families = Vec::new();
     let mut note = |family: &'static str| {
@@ -512,7 +543,6 @@ fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
         // The evaluator's other way of saying the same thing, about an
         // automatic variable rather than a directive.
         ("isn't support", "unsupported-feature"),
-        ("no known rule to make it", "no-rule-to-make"),
         ("makefile not found", "no-makefile-found"),
         ("missing separator", "parse-failure"),
         ("(os error ", "io-error-text"),
@@ -521,6 +551,14 @@ fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
             note(family);
             named_residue = true;
         }
+    }
+    if let Some(refusal) = refusal_of(&divergence.actual) {
+        note(match refusal_target(&divergence.expected) {
+            None => "no-rule-to-make",
+            Some(theirs) if theirs == refusal => "shared-refusal",
+            Some(_) => "refusal-attribution",
+        });
+        named_residue = true;
     }
     // A residue that is nothing but switches and assignments is a makefile
     // having printed MAKEFLAGS and got a different answer. Recognised by shape
@@ -766,6 +804,39 @@ mod tests {
 
     fn lines(text: &[&str]) -> Vec<String> {
         text.iter().map(|line| (*line).to_owned()).collect()
+    }
+
+    /// Refusing is only a defect when Make built the thing. When Make refused
+    /// too, the difference is the wording.
+    #[test]
+    fn a_refusal_both_tools_made_is_not_a_defect() {
+        let refused = |theirs: &str| {
+            classify(
+                &Divergence {
+                    expected: lines(&[theirs]),
+                    actual: lines(&[
+                        "ronin: 'hello.c', needed by 'hello', missing and no known rule to make it",
+                    ]),
+                },
+                &[],
+            )
+        };
+
+        let shared =
+            refused("ronin: *** No rule to make target 'hello.c', needed by 'hello'.  Stop.");
+        assert_eq!(shared.class, Class::Narration);
+        assert!(shared.families.contains(&"shared-refusal"));
+
+        // Make walked further into the chain before giving up. Still a refusal
+        // on both sides; only the link named differs.
+        let attributed =
+            refused("ronin: *** No rule to make target 'hello.o', needed by 'hello'.  Stop.");
+        assert_eq!(attributed.class, Class::Narration);
+        assert!(attributed.families.contains(&"refusal-attribution"));
+
+        let ours_alone = refused("built hello");
+        assert_eq!(ours_alone.class, Class::Semantic);
+        assert!(ours_alone.families.contains(&"no-rule-to-make"));
     }
 
     /// The suite writes the name it probed for into its own expectations, so a

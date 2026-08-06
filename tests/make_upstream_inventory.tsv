@@ -9,6 +9,8 @@ family	recipe-interleave	narration	the same lines in a different order: Make int
 family	option-refused	capability	Ronin refused an option the test passed and GNU Make accepted.
 family	unsupported-feature	capability	the evaluator says outright that it does not support a construct the makefile used; .SECONDEXPANSION is most of it.
 family	no-rule-to-make	semantic	Ronin cannot find a rule for a target GNU Make built, so a rule that should have matched did not: an implicit rule, a vpath search, or a suffix rule.
+family	shared-refusal	narration	both tools refused to build the same target for the same reason and worded it differently.
+family	refusal-attribution	narration	both tools refused, naming a different link of the same broken chain: Make walks further in before giving up.
 family	no-makefile-found	semantic	Ronin found no makefile to read where GNU Make found one.
 family	io-error-text	narration	both tools refused for the same reason and worded it differently; ours carries Rust's "(os error N)" suffix.
 family	makeflags-content	semantic	a makefile read MAKEFLAGS and got a different set of switches from the one GNU Make puts there.
@@ -115,8 +117,8 @@ case	features/grouped_targets.diff.7	semantic	ninja-progress+evaluation
 case	features/grouped_targets.diff.8	semantic	ninja-progress+evaluation
 case	features/grouped_targets.diff.9	semantic	ninja-progress+evaluation
 case	features/implicit_search.diff	narration	ninja-progress+no-work-line
-case	features/implicit_search.diff.1	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.10	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.1	narration	product-name+shared-refusal
+case	features/implicit_search.diff.10	narration	product-name+shared-refusal
 case	features/implicit_search.diff.11	semantic	ninja-progress+recipe-error-line+evaluation
 case	features/implicit_search.diff.12	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.13	narration	ninja-progress+no-work-line
@@ -125,7 +127,7 @@ case	features/implicit_search.diff.15	capability	ninja-progress+no-work-line+uns
 case	features/implicit_search.diff.16	semantic	product-name+recipe-error-line+unsupported-feature+no-rule-to-make
 case	features/implicit_search.diff.17	semantic	product-name+recipe-error-line+unsupported-feature+no-rule-to-make
 case	features/implicit_search.diff.18	narration	ninja-progress+no-work-line
-case	features/implicit_search.diff.19	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.19	narration	product-name+shared-refusal
 case	features/implicit_search.diff.2	semantic	ninja-progress+recipe-error-line+evaluation
 case	features/implicit_search.diff.20	semantic	ninja-progress+recipe-error-line+evaluation
 case	features/implicit_search.diff.21	narration	ninja-progress+no-work-line
@@ -135,7 +137,7 @@ case	features/implicit_search.diff.24	capability	ninja-progress+no-work-line+uns
 case	features/implicit_search.diff.25	semantic	product-name+recipe-error-line+unsupported-feature+no-rule-to-make
 case	features/implicit_search.diff.26	semantic	product-name+recipe-error-line+unsupported-feature+no-rule-to-make
 case	features/implicit_search.diff.27	narration	ninja-progress+no-work-line
-case	features/implicit_search.diff.28	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.28	narration	product-name+shared-refusal
 case	features/implicit_search.diff.29	semantic	ninja-progress+recipe-error-line+evaluation
 case	features/implicit_search.diff.3	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.30	narration	ninja-progress+no-work-line
@@ -144,9 +146,9 @@ case	features/implicit_search.diff.32	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.33	capability	ninja-progress+no-work-line+unsupported-feature
 case	features/implicit_search.diff.34	semantic	product-name+recipe-error-line+unsupported-feature+no-rule-to-make
 case	features/implicit_search.diff.35	semantic	product-name+recipe-error-line+unsupported-feature+no-rule-to-make
-case	features/implicit_search.diff.36	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.37	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.38	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.36	narration	product-name+shared-refusal
+case	features/implicit_search.diff.37	narration	product-name+shared-refusal
+case	features/implicit_search.diff.38	narration	product-name+shared-refusal
 case	features/implicit_search.diff.39	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.4	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.40	narration	ninja-progress+no-work-line
@@ -160,11 +162,11 @@ case	features/implicit_search.diff.47	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.48	semantic	product-name+no-work-line+no-rule-to-make
 case	features/implicit_search.diff.49	semantic	product-name+no-work-line+no-rule-to-make
 case	features/implicit_search.diff.5	narration	ninja-progress+no-work-line
-case	features/implicit_search.diff.50	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.51	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.52	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.53	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.54	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.50	narration	product-name+shared-refusal
+case	features/implicit_search.diff.51	narration	product-name+shared-refusal
+case	features/implicit_search.diff.52	narration	product-name+shared-refusal
+case	features/implicit_search.diff.53	narration	product-name+shared-refusal
+case	features/implicit_search.diff.54	narration	product-name+shared-refusal
 case	features/implicit_search.diff.55	semantic	ninja-progress+recipe-error-line+evaluation
 case	features/implicit_search.diff.56	semantic	ninja-progress+recipe-error-line+evaluation
 case	features/implicit_search.diff.57	semantic	ninja-progress+recipe-error-line+evaluation
@@ -173,25 +175,25 @@ case	features/implicit_search.diff.59	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.6	capability	ninja-progress+no-work-line+unsupported-feature
 case	features/implicit_search.diff.60	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.61	narration	ninja-progress+no-work-line
-case	features/implicit_search.diff.62	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.62	narration	product-name+shared-refusal
 case	features/implicit_search.diff.63	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.64	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.65	narration	ninja-progress+no-work-line
-case	features/implicit_search.diff.66	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.67	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.68	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.69	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.66	narration	product-name+refusal-attribution
+case	features/implicit_search.diff.67	narration	product-name+refusal-attribution
+case	features/implicit_search.diff.68	narration	product-name+refusal-attribution
+case	features/implicit_search.diff.69	narration	product-name+refusal-attribution
 case	features/implicit_search.diff.7	semantic	product-name+recipe-error-line+unsupported-feature+no-rule-to-make
 case	features/implicit_search.diff.70	semantic	ninja-progress+evaluation
 case	features/implicit_search.diff.71	semantic	product-name+no-rule-to-make
 case	features/implicit_search.diff.72	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.73	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.74	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.73	narration	product-name+shared-refusal
+case	features/implicit_search.diff.74	narration	product-name+shared-refusal
 case	features/implicit_search.diff.75	semantic	product-name+no-rule-to-make
 case	features/implicit_search.diff.76	semantic	product-name+no-rule-to-make
 case	features/implicit_search.diff.77	semantic	no-work-line+product-name+evaluation
 case	features/implicit_search.diff.78	semantic	product-name+no-rule-to-make
-case	features/implicit_search.diff.79	semantic	product-name+no-rule-to-make
+case	features/implicit_search.diff.79	narration	product-name+shared-refusal
 case	features/implicit_search.diff.8	semantic	product-name+recipe-error-line+unsupported-feature+no-rule-to-make
 case	features/implicit_search.diff.80	semantic	product-name+no-rule-to-make
 case	features/implicit_search.diff.81	semantic	product-name+no-work-line+unsupported-feature+no-rule-to-make
@@ -213,7 +215,7 @@ case	features/include.diff.16	narration	product-name+io-error-text
 case	features/include.diff.17	narration	product-name+io-error-text
 case	features/include.diff.18	narration	recipe-error-line+io-error-text
 case	features/include.diff.19	narration	product-name+io-error-text
-case	features/include.diff.2	semantic	product-name+no-rule-to-make
+case	features/include.diff.2	narration	product-name+shared-refusal
 case	features/include.diff.20	narration	io-error-text
 case	features/include.diff.21	narration	io-error-text
 case	features/include.diff.22	narration	product-name+io-error-text
@@ -237,8 +239,8 @@ case	features/include.diff.4	narration	ninja-progress
 case	features/include.diff.5	narration	ninja-progress
 case	features/include.diff.6	narration	ninja-progress
 case	features/include.diff.7	narration	ninja-progress
-case	features/include.diff.8	semantic	product-name+no-rule-to-make
-case	features/include.diff.9	semantic	product-name+no-rule-to-make
+case	features/include.diff.8	narration	product-name+shared-refusal
+case	features/include.diff.9	narration	product-name+shared-refusal
 case	features/jobserver.diff	semantic	ninja-progress+evaluation
 case	features/jobserver.diff.1	semantic	ninja-progress+evaluation
 case	features/jobserver.diff.10	capability	option-refused
@@ -256,7 +258,7 @@ case	features/jobserver.diff.6	narration	ninja-progress+no-work-line
 case	features/jobserver.diff.7	semantic	ninja-progress+directory-announce+product-name+evaluation
 case	features/jobserver.diff.8	capability	option-refused
 case	features/jobserver.diff.9	semantic	parse-failure
-case	features/mult_rules.diff	semantic	product-name+no-rule-to-make
+case	features/mult_rules.diff	narration	product-name+shared-refusal
 case	features/mult_rules.diff.1	narration	ninja-progress
 case	features/mult_rules.diff.2	semantic	ninja-progress+product-name+evaluation
 case	features/mult_targets.diff	narration	ninja-progress
@@ -534,7 +536,7 @@ case	features/statipattrules.diff.67	semantic	no-work-line+evaluation
 case	features/statipattrules.diff.7	semantic	parse-failure
 case	features/statipattrules.diff.8	narration	ninja-progress
 case	features/statipattrules.diff.9	narration	ninja-progress
-case	features/suffixrules.diff	semantic	product-name+no-rule-to-make
+case	features/suffixrules.diff	narration	product-name+shared-refusal
 case	features/suffixrules.diff.1	capability	product-name+unsupported-feature
 case	features/suffixrules.diff.10	narration	ninja-progress+no-work-line
 case	features/suffixrules.diff.11	semantic	no-work-line+product-name+evaluation
@@ -888,7 +890,7 @@ case	options/dash-n.diff.2	semantic	ninja-progress+product-name+evaluation
 case	options/dash-n.diff.3	semantic	no-work-line+product-name+evaluation
 case	options/dash-n.diff.4	capability	option-refused
 case	options/dash-n.diff.5	semantic	ninja-progress+evaluation
-case	options/dash-q.diff.9	semantic	product-name+no-rule-to-make
+case	options/dash-q.diff.9	narration	product-name+shared-refusal
 case	options/dash-r.diff	semantic	product-name+evaluation
 case	options/dash-r.diff.1	semantic	product-name+evaluation
 case	options/dash-r.diff.2	capability	option-refused
