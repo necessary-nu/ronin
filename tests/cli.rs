@@ -992,6 +992,38 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_answers_the_order_only_automatic_variable() {
+    let directory = test_directory("make-order-only-var");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: a | oo1 oo2 oo1\n\
+         \t@echo \"^=$^ |=$| |D=$(|D)\"\n\
+         a oo1 oo2: ; @:\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Deduplicated, and no D form — GNU Make reads $(|D) as a variable nobody
+    // defined.
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("^=a |=oo1 oo2 |D="),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Make's step 7: the recipe for a target nothing else could make.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]

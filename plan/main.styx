@@ -4338,6 +4338,7 @@ children (
                 title "Chain implicit rules through intermediate files"
                 priority 0
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-06T17:58:41.883742508Z
@@ -4351,6 +4352,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T21:24:48.860635896Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -4484,6 +4492,13 @@ children (
                         kind @note
                         text "18 cases, all in features/order_only, all the same line: `Automatic variable `$|' isn't supported yet`. It is fatal, so the script dies at the first use.\n\n  all: | oo ; @echo order-only is \"$|\"\n  oo: ; @echo made oo\n\nGNU Make 4.4.1 prints `made oo`, `order-only is oo`. Ronin dies at parse.\n\nOrder-only prerequisites themselves already work — the graph carries them and the corpus exercises them — so this is the automatic variable that reports them and nothing more. The value is the order-only prerequisite list, which DepNode already holds as actual_order_only_inputs, so the work is one case in the automatic-variable evaluation beside $^ and $?.\n\nSmall and self-contained, and worth taking before anything larger in features/order_only, because every other assertion in that script is hidden behind this one fatal."
                     }
+
+                    {
+                        at 2026-08-06T21:26:39.917755102Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 
@@ -4559,6 +4574,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "The half of chaining that make-implicit-rule-chaining deliberately did not do, and one upstream case moved backwards for want of it.\n\nA file the implicit rule search invents to complete a chain is *intermediate*: GNU Make does not treat its absence as a reason to rebuild what needs it, and deletes it when the build finishes. We invent it and then treat it as an ordinary file, so we rebuild things Make leaves alone.\n\nfeatures/patternrules, the sv 60188 subtests, is the measurement. `hello.tsk` exists, `hello.z` does not, and `%.tsk: %.z` beside `%.z: %.x` reaches it. GNU Make prints `Nothing to be done for 'all'.`; we now build hello.z and then hello.tsk. That case was narration before chaining landed and is semantic after it — the only case that moved that way against nineteen that moved the other, and it is this.\n\nExplicit mention is what makes a file not intermediate, and the suite tests that distinction hard: `%.tsk: %.z test.z` makes test.z ordinary and hello.z intermediate in the same rule, and it holds when the name is assembled from variables. So the rule is about whether the name appears in the Makefile, not about how it was reached.\n\nThis is where targets/INTERMEDIATE, targets/SECONDARY and targets/NOTINTERMEDIATE live — 36 cases counted as capability today, all of them about what happens to an intermediate once it exists. .SECONDARY is intermediate without the deletion, .NOTINTERMEDIATE the opposite, and neither can mean anything until the base case does.\n\nDeletion needs somewhere to live that kati does not currently have: the graph knows how to build, and nothing owns cleaning up afterwards."
+                    }
+
+                    {
+                        at 2026-08-06T21:24:57.252123546Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T21:26:16.758758169Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Probed, and the shape is now precise. Three behaviours, of which only the first is the hard one:\n\n  a missing intermediate is not a reason to rebuild its consumer   the defect\n  the intermediate is deleted when the build finishes              cosmetic here\n  a name the Makefile mentions is not intermediate                 already right\n\nThe third was checked and needs nothing: `%.tsk: %.z test.z` builds test.z and hello.z on both tools, differing only in order.\n\nThe first cannot be expressed the way the rest of the dirty pass is. graph.rs:331 already has almost the right branch for phony edges — a missing output takes the newest input's mtime, and the edge is dirty only if an input was dirty — and applying that to an intermediate gives GNU Make's answer for the case that regressed: hello.z absent, hello.tsk present, nothing to do.\n\nIt breaks on the other half. If hello.tsk is also missing, its edge is dirty and hello.z's is not, so the plan never adds hello.z and the recipe runs against a file that is not there. GNU Make has no such problem because it decides the intermediate's staleness from its consumer: the intermediate needs remaking if the final target does.\n\nThat is top-down, and recompute_edge_dirty_with is bottom-up by construction — inputs settle before the edge that reads them. So this needs a second traversal that pushes dirtiness back down into intermediates whose consumers are dirty, plus a per-edge flag carried from kati through BuildSink, plus somewhere to own deleting the files afterwards, which nothing currently does.\n\nNot started for that reason rather than for lack of time: half of it is worse than none, because marking intermediates without the second pass turns a spurious rebuild into a build that runs a recipe with its input missing.\n\nThe 36 declined cases behind .INTERMEDIATE, .SECONDARY and .NOTINTERMEDIATE all sit on top of this and cannot move before it."
                     }
                 )
             }
