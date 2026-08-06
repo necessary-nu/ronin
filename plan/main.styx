@@ -4397,6 +4397,20 @@ children (
                         kind @note
                         text "The largest single declined feature: 123 of the suite's failing cases carry `kati doesn't support .SECONDEXPANSION`, and a further 52 refuse a prerequisite whose name still contains a `$` — the unexpanded text taken literally as a filename. They are the same defect counted from both ends, concentrated in features/se_explicit, features/se_implicit, features/se_statpat and features/statipattrules.\n\nProbed against 4.4.1:\n\n  .SECONDEXPANSION:\n  PRE = dep\n  all: $$(PRE) ; @echo got $^\n  dep: ; @echo made dep\n\nGNU says `made dep`, `got dep`. Ronin warns and then refuses `'$(PRE)', needed by 'all'`.\n\nThe declining is at dep.rs:529, in the list of built-in targets handle_special_targets warns about and otherwise ignores. Implementing it means keeping the prerequisite list of every rule in its once-expanded form and expanding it again when the rule is used, with $@ and the stem in scope — which is the point of the feature and also why it cannot be done at parse time.\n\nRanked below make-implicit-rule-chaining despite the larger count, because it is a much bigger change and because the se_* scripts fail on chaining as well: 43 of the 52 literal-`$` refusals are in files that also need step 5c, so the two populations overlap and this one will not move all 175."
                     }
+
+                    {
+                        at 2026-08-06T21:04:16.989425862Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T21:15:34.566128367Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Explicit rules only, and the boundary was found by the first attempt going wrong rather than by planning.\n\nThe mechanism is cheaper than it looks. GNU Make's first expansion already turns `$$(PRE)` into `$(PRE)` — nothing has to be kept unexpanded through the parser. So the rule keeps the once-expanded prerequisite text, and dep.rs expands that text again at fill time with `@` bound as a scoped simple variable, then reads the result as prerequisites. `$@` is unbound during dep building because the AutoCommandVar table is not registered until CommandEvaluator::new, so a scoped binding is enough and none of that machinery is needed.\n\n`.SECONDEXPANSION` applies only below its own declaration, so the flag lives on the Evaluator and is read as each rule is evaluated, not gathered afterwards like the other special targets.\n\nWhere it stopped: deferring a pattern rule's prerequisites leaves it with none, and a pattern rule with no prerequisites matches anything. The probe built `foo.o` out of nothing where GNU Make refuses — a wrong build in place of a refusal, which is worse than the gap. So rule.rs defers only when output_patterns is empty, and make-second-expansion-patterns has the rest.\n\nMeasured: 14 cases genuinely fixed — 10 capability to narration, 3 semantic to narration, 1 now passing the suite outright. 32 more moved capability to semantic, which is the warning no longer standing in front of them; most of that is the pattern half.\n\nFour shapes verified against 4.4.1: `$$(VAR)`, `$$@.dep`, an order-only `| $$(VAR)`, and a rule written above the declaration correctly not getting it."
+                    }
                 )
             }
 
@@ -4545,6 +4559,22 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "The half of chaining that make-implicit-rule-chaining deliberately did not do, and one upstream case moved backwards for want of it.\n\nA file the implicit rule search invents to complete a chain is *intermediate*: GNU Make does not treat its absence as a reason to rebuild what needs it, and deletes it when the build finishes. We invent it and then treat it as an ordinary file, so we rebuild things Make leaves alone.\n\nfeatures/patternrules, the sv 60188 subtests, is the measurement. `hello.tsk` exists, `hello.z` does not, and `%.tsk: %.z` beside `%.z: %.x` reaches it. GNU Make prints `Nothing to be done for 'all'.`; we now build hello.z and then hello.tsk. That case was narration before chaining landed and is semantic after it — the only case that moved that way against nineteen that moved the other, and it is this.\n\nExplicit mention is what makes a file not intermediate, and the suite tests that distinction hard: `%.tsk: %.z test.z` makes test.z ordinary and hello.z intermediate in the same rule, and it holds when the name is assembled from variables. So the rule is about whether the name appears in the Makefile, not about how it was reached.\n\nThis is where targets/INTERMEDIATE, targets/SECONDARY and targets/NOTINTERMEDIATE live — 36 cases counted as capability today, all of them about what happens to an intermediate once it exists. .SECONDARY is intermediate without the deletion, .NOTINTERMEDIATE the opposite, and neither can mean anything until the base case does.\n\nDeletion needs somewhere to live that kati does not currently have: the graph knows how to build, and nothing owns cleaning up afterwards."
+                    }
+                )
+            }
+
+            {
+                id make-second-expansion-patterns
+                title "Expand a pattern rule's prerequisites a second time"
+                priority 1
+                kind @feat
+                deps (make-second-expansion)
+                log (
+                    {
+                        at 2026-08-06T21:15:19.860819532Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "make-second-expansion did explicit rules and deliberately stopped there. A pattern rule is chosen by matching its prerequisites against the filesystem, so deferring them leaves the rule matching anything: the first attempt at this built `foo.o` out of nothing where GNU Make refuses, which is worse than the refusal it gives today. rule.rs therefore defers only when output_patterns is empty.\n\nDoing it properly means the search itself has to expand. can_pick_implicit_rule tests each candidate's prerequisites for existence, and under second expansion those names are not known until `$@` and the stem are bound — so the expansion has to happen inside the candidate loop, once per rule considered rather than once per node.\n\nStatic pattern rules are the same shape and come through the other branch of parse_prerequisites, where the prerequisite patterns are read after a second colon. `foo.o: %.o: $$*.c` refuses `$*.c` today.\n\nScale, from the suite: features/se_implicit 29 declined plus 11 refusals, features/se_statpat 12 plus 10. Read those after this lands rather than assuming they are all this."
                     }
                 )
             }

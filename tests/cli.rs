@@ -947,6 +947,51 @@ fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// The first expansion leaves `$$@` as `$@`; the second happens when the rule
+/// is used and `$@` has a value.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_expands_prerequisites_again_under_second_expansion() {
+    let directory = test_directory("make-second-expansion");
+    fs::create_dir_all(&directory).unwrap();
+    // `early` is above the declaration and must not get it.
+    fs::write(
+        directory.join("Makefile"),
+        "early: $$(PRE)\n\
+         .SECONDEXPANSION:\n\
+         PRE = dep\n\
+         all: $$(PRE) $$@.extra\n\
+         \t@echo got $^\n\
+         dep: ; @echo made dep\n\
+         all.extra: ; @echo made $@\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("all")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("got dep all.extra"), "{stdout}");
+
+    let early = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("early")
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&early.stderr).contains("$(PRE)"),
+        "{}",
+        String::from_utf8_lossy(&early.stderr)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Make's step 7: the recipe for a target nothing else could make.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
