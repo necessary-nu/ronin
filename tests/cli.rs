@@ -868,8 +868,7 @@ fn make_mode_finds_a_prerequisite_through_vpath() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    // The path the search found, not the name the makefile wrote: this is what
-    // `$<` hands the recipe, and a recipe given `hello.bar` would not find it.
+    // The path the search found, which is what `$<` hands the recipe.
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("found sub/hello.bar"),
         "{}",
@@ -878,11 +877,8 @@ fn make_mode_finds_a_prerequisite_through_vpath() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// A leading dot is how Make spells a message to itself, but only for the names
-/// it reserves. GNU Make's suite reaches `.1` by matching `%bye.x` against
-/// `bye.x`, which leaves an empty stem. Such a name used to be discarded on the
-/// way into the graph, so the parent was refused for a prerequisite nothing
-/// produced.
+/// A leading dot is Make's own spelling only for the names it reserves; `.1`
+/// falls out of matching `%bye.x` against `bye.x`.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -915,16 +911,13 @@ fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// `.WAIT` names no file: it separates a prerequisite list into groups that run
-/// in order, and must not reach an automatic variable or the graph.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
     let directory = test_directory("make-wait");
     fs::create_dir_all(&directory).unwrap();
-    // pre1 is the slow one and comes first, so run in parallel without the
-    // barrier pre2 finishes first — which is what this used to do.
+    // pre1 is the slow one and comes first, so unbarriered these invert.
     fs::write(
         directory.join("Makefile"),
         "all: pre1 .WAIT pre2\n\
@@ -950,14 +943,11 @@ fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
         .filter(|line| ["pre1", "pre2"].contains(line))
         .collect::<Vec<_>>();
     assert_eq!(recipes, ["pre1", "pre2"], "{stdout}");
-    // The marker separated them and is not one of them.
     assert!(stdout.contains("all from pre1 pre2"), "{stdout}");
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// Step 6 of GNU Make's implicit rule search: when no rule's prerequisites all
-/// exist, a prerequisite that could itself be made by another implicit rule
-/// counts, and the file it stands for is invented on the way through.
+/// Step 6 of GNU Make's implicit rule search.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -967,8 +957,7 @@ fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
     fs::write(directory.join("hello.f"), "source\n").unwrap();
     fs::write(
         directory.join("Makefile"),
-        // Only hello.f exists. Reaching hello.z means making hello.o and then
-        // hello.x, neither of which the Makefile mentions by name.
+        // Only hello.f exists; hello.o and hello.x are never named.
         "all: hello.z\n\
          %.z: %.x\n\
          \t@echo z from $<\n\
@@ -989,8 +978,7 @@ fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    // Each link of the chain ran, and each was handed the file the link below
-    // it made rather than the name the pattern was written with.
+    // Each link ran, and was handed what the link below it made.
     for expected in ["o from hello.f", "x from hello.o", "z from hello.x"] {
         assert!(
             stdout.contains(expected),
@@ -1000,23 +988,16 @@ fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// GNU Make runs one recipe at a time unless `-j` says otherwise, and plenty of
-/// Makefiles depend on that rather than merely tolerate it.
-///
-/// Make mode gets this right by a route that is easy to break: `build_options`
-/// starts at `JobLimit::Auto`, which means nothing was asked for rather than
-/// guess the machine, and `normalize_runtime_options` resolves it to one job
-/// unless a jobserver in the environment says a parent is already sharing a
-/// budget. Reading only the first half says Ronin defaults to parallel.
+/// `build_options` starts at `JobLimit::Auto`, meaning nothing was asked for;
+/// `normalize_runtime_options` resolves that to one job. Reading only the first
+/// half says Make mode defaults to parallel, which it does not.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
     let directory = test_directory("make-serial-default");
     fs::create_dir_all(&directory).unwrap();
-    // Descending sleeps, so the two schedules are told apart by order rather
-    // than by duration: run serially these finish a, b, c because that is the
-    // order they were written, and run at once they finish c, b, a.
+    // Descending sleeps: serially these finish a, b, c; at once, c, b, a.
     fs::write(
         directory.join("Makefile"),
         "all: a b c\n\
@@ -1044,14 +1025,12 @@ fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
     };
 
     assert_eq!(recipes(&[]), "abc");
-    // The other half of the claim: asked for, it is available. Without this the
-    // test would also pass on a build that could not run anything in parallel.
+    // Without this a build incapable of parallelism would also pass.
     assert_eq!(recipes(&["-j4"]), "cba");
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// Two target-specific variables on one target, where the second reads the
-/// first. Their order decides the answer, so it must not be a hash map's.
+/// The second reads the first, so their order decides the answer.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -1068,9 +1047,7 @@ fn make_mode_applies_target_specific_variables_in_a_settled_order() {
     )
     .unwrap();
 
-    // Repeated, because the failure this covers was a coin flip: Rust seeds its
-    // hasher per process, so one run of the same Makefile said bar and the next
-    // said foo. One invocation cannot tell the difference.
+    // Repeated: the failure was a coin flip on the per-process hash seed.
     for _ in 0..8 {
         let output = make_command(&invoked_as(&directory, "make"), &directory)
             .output()

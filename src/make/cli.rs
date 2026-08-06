@@ -70,13 +70,9 @@ struct Invocation {
     /// answered the same way — it was given or it was not — and a field each is
     /// what would let a spelling and a meaning drift apart.
     switches: u16,
-    /// One bit per [`Switch`] the command line took back.
-    ///
-    /// Not the complement of `switches`: `--no-print-directory` has to withdraw
-    /// the announcement `-C` asks for by implication as well as the one `-w`
-    /// asks for outright, so having refused it is a different state from never
-    /// having asked. GNU Make's own help says as much — "Turn off -w, even if
-    /// it was turned on implicitly."
+    /// One bit per [`Switch`] the command line took back. Not the complement of
+    /// `switches`: `--no-print-directory` withdraws the announcement `-C`
+    /// implies, so refusing differs from never having asked.
     negated: u16,
 }
 
@@ -94,11 +90,7 @@ impl Invocation {
         }
     }
 
-    /// Ask for a switch, and stop having taken it back.
-    ///
-    /// Each spelling clears the other because GNU Make settles a switch given
-    /// both ways by the one written last: `-w --no-print-directory` announces
-    /// nothing and `--no-print-directory -w` announces.
+    /// Each spelling clears the other, so the one written last wins.
     const fn add(&mut self, switch: Switch) {
         self.switches |= switch.bit();
         self.negated &= !switch.bit();
@@ -129,8 +121,8 @@ impl Invocation {
     /// the assignments are `session_for`'s and the jobserver's auth token is
     /// the transport's, and a long option is skipped whole rather than read
     /// letter by letter, since `--jobserver-auth` is full of letters that name
-    /// switches. The withdrawals are the exception: two of them have no letter
-    /// to travel as, so they are recognised by name before the skip.
+    /// switches. The two long withdrawals are recognised by name before that
+    /// skip, having no letter to travel as.
     // [spec:ronin:req:make.recursive-invocation]
     fn adopt_inherited(&mut self, inherited: Option<&str>) {
         for word in inherited
@@ -179,21 +171,16 @@ impl Invocation {
                 propagated.push(OsString::from(spelling));
             }
         }
-        // GNU Make's one negating letter, and it travels with the rest of them:
-        // `make -k -S` hands a child `MAKEFLAGS=S`, with no `k` to argue with.
+        // The one negating letter, and it travels with the rest: `make -k -S`
+        // hands a child `MAKEFLAGS=S`.
         if self.refused(Switch::KeepGoing) {
             propagated.push(OsString::from("-S"));
         }
         propagated
     }
 
-    /// The withdrawals a sub-make has to be told about, which have no letter.
-    ///
-    /// GNU Make writes these after the letter group, so `make -k
-    /// --no-print-directory` hands a child `MAKEFLAGS=k --no-print-directory`.
-    /// They have to travel, or a tree whose top said `--no-print-directory`
-    /// announces every directory below it anyway — which is the whole point of
-    /// the option and what the suite is checking.
+    /// The withdrawals with no letter, which GNU Make writes after the group:
+    /// `make -k --no-print-directory` gives `MAKEFLAGS=k --no-print-directory`.
     fn withdrawn(&self) -> Vec<&'static str> {
         let mut withdrawn = Vec::new();
         for (switch, spelling) in [
@@ -257,7 +244,7 @@ impl Switch {
         })
     }
 
-    /// The switch a letter takes back. GNU Make has exactly one of these.
+    /// GNU Make has exactly one of these.
     const fn short_negation(letter: u8) -> Option<Self> {
         match letter {
             b'S' => Some(Self::KeepGoing),
@@ -265,7 +252,6 @@ impl Switch {
         }
     }
 
-    /// The switch a long name takes back.
     fn long_negation(name: &[u8]) -> Option<Self> {
         Some(match name {
             b"--no-keep-going" | b"--stop" => Self::KeepGoing,
@@ -1313,8 +1299,6 @@ mod tests {
         }
     }
 
-    /// Every value here was read off GNU Make 4.4.1 rather than reasoned about:
-    /// a makefile printing `$(MAKEFLAGS)`, run once per spelling.
     // [spec:ronin:req:product.make-identity/test]
     #[test]
     fn a_negating_spelling_takes_back_the_switch_it_names() {
@@ -1330,16 +1314,13 @@ mod tests {
             assert!(!invocation.given(switch), "{spelling} also asked for it");
         }
 
-        // The one written last wins, both ways round.
         assert!(!parsed(&["make", "-k", "-S"]).given(Switch::KeepGoing));
         assert!(parsed(&["make", "-S", "-k"]).given(Switch::KeepGoing));
         assert!(!parsed(&["make", "-w", "--no-print-directory"]).announcing());
         assert!(parsed(&["make", "--no-print-directory", "-w"]).announcing());
     }
 
-    /// `-w` is asked for by `-C` as well as by name, and the refusal has to
-    /// reach both — GNU Make's own help says "Turn off -w, even if it was
-    /// turned on implicitly".
+    /// GNU Make's help: "Turn off -w, even if it was turned on implicitly".
     // [spec:ronin:req:product.make-identity/test]
     #[test]
     fn refusing_to_print_the_directory_withdraws_what_dash_c_implied() {
@@ -1351,8 +1332,6 @@ mod tests {
         assert!(parsed(&["make", "-C", ".", "-s", "-w"]).announcing());
     }
 
-    /// A withdrawal that does not reach a sub-make is a tree whose top said
-    /// `--no-print-directory` and whose every level announces anyway.
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
     fn a_sub_make_is_told_what_was_taken_back_as_well_as_what_was_asked_for() {
@@ -1365,8 +1344,7 @@ mod tests {
                 .map(|(_, value)| value.to_string_lossy().into_owned())
                 .unwrap()
         };
-        // GNU Make's own answers: the negating letter travels with the letters
-        // and the two long ones follow them.
+        // Read off GNU Make 4.4.1, once per spelling.
         assert_eq!(makeflags(&["-S"]), "S");
         assert_eq!(makeflags(&["-k", "-S"]), "S");
         assert_eq!(
@@ -1379,7 +1357,6 @@ mod tests {
         );
         assert_eq!(makeflags(&["-k", "--no-silent", "-S"]), "S --no-silent");
 
-        // And a child reads back what a parent wrote, for each of them.
         let mut adopted = parsed(&["make", "all"]);
         adopted.adopt_inherited(Some("S --no-print-directory --no-silent"));
         assert!(adopted.refused(Switch::KeepGoing));

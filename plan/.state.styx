@@ -244,6 +244,7 @@ assertions (
     {id make-implicit-rule-chaining, kind @doing, author "brendan@necessary.nu", at 2026-08-06T18:18:33.011028888Z}
     {id make-wait-prerequisite, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:01:12.672527574Z}
     {id make-option-negations, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:05:13.207391861Z}
+    {id make-special-target-noise, kind @doing, author "brendan@necessary.nu", at 2026-08-06T20:21:38.785688554Z}
 )
 
 impl_evidence (

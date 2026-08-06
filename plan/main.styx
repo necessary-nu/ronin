@@ -4398,6 +4398,20 @@ children (
                         kind @note
                         text "The same shape as make-suffixes-with-prerequisites, found by probing the rest of the declined list: we warn that we do not support special targets whose behaviour we already produce. The warning is the entire difference, and it inflates the capability count.\n\nProbed against GNU Make 4.4.1:\n\n  .SILENT: / all: ; echo quiet          GNU prints `quiet`; we print the warning and then `quiet`.\n  .PRECIOUS: out / out: ; @echo > $@    GNU prints nothing; we print the warning and then nothing.\n\nSeven cases across .SILENT 2, .NOTPARALLEL 2, .EXPORT_ALL_VARIABLES 1, .PRECIOUS 1, .IGNORE 1. Establish for each whether the behaviour actually matches before deleting its warning — .IGNORE and .NOTPARALLEL are the two that could plausibly be real, since one changes how a failing recipe is treated and the other constrains the scheduler, and a warning that is merely early is better than silence that is wrong.\n\nDo not fold in .DEFAULT, .INTERMEDIATE, .SECONDARY, .SECONDEXPANSION or .ONESHELL. Those five are genuinely unimplemented and have nodes of their own.\n\nSecond thing to fix here, cheaper still: the message says `kati doesn't support .SILENT` in a program called ronin. Every one of the 216 declining lines in the suite names the wrong product. make-diagnostic-identity settled the shape for fatal diagnostics and left the warnings alone; this is the rest of it."
                     }
+
+                    {
+                        at 2026-08-06T20:21:38.785688554Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T20:36:02.699997768Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Three of the six turned out to be noise, not seven as this node estimated. Each was probed against GNU Make 4.4.1 rather than assumed:\n\n  .SILENT               no-op here, we never echo a recipe            warning removed\n  .PRECIOUS             neither tool deletes a target whose recipe\n                        failed; all four combinations of the\n                        declaration leave the partial file            warning removed\n  .LOW_RESOLUTION_TIME  obsolete and ignored in 4.x too               warning removed\n  .IGNORE               we abandon where GNU Make continues           kept\n  .NOTPARALLEL          ignored under -j                              kept\n  .EXPORT_ALL_VARIABLES recipe sees nothing                           kept\n\nSo half of what this node called noise is a real gap wearing a warning, which is the correct outcome for a node whose whole job was to establish which was which. .IGNORE, .NOTPARALLEL and .EXPORT_ALL_VARIABLES want nodes of their own.\n\nThe naming half is done for every message the Make front end can emit: the text takes Flags::program_name rather than the literal `kati`, so a program called ronin says so. rkati's own Entering/Leaving line in main.rs still says `kati` and is left alone — that is rkati's binary rather than the product.\n\nMeasured: four cases moved, all from capability. Two to narration and two to semantic.\n\nWorth passing on: both of the semantic ones are a classifier gap rather than a Ronin defect. targets/SILENT declares `.SILENT: b` on `a b: ; echo $@`, so GNU Make echoes `echo a` and not `echo b`; we echo neither, by the narration decision. The residue is therefore a recipe echo, which `recipe-echo` exists to name, and it landed in `evaluation` instead — the family reads the makefile to recognise the echo and does not see through `$@`."
+                    }
                 )
             }
 

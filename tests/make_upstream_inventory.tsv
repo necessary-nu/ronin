@@ -321,7 +321,7 @@ case	features/patternrules.diff.26	semantic	product-name+no-rule-to-make
 case	features/patternrules.diff.27	semantic	ninja-progress+evaluation
 case	features/patternrules.diff.28	semantic	ninja-progress+evaluation
 case	features/patternrules.diff.29	semantic	ninja-progress+evaluation
-case	features/patternrules.diff.3	capability	ninja-progress+ninja-failure-block+recipe-error-line+unsupported-feature
+case	features/patternrules.diff.3	narration	ninja-progress+ninja-failure-block+recipe-error-line
 case	features/patternrules.diff.30	semantic	ninja-progress+evaluation
 case	features/patternrules.diff.31	semantic	product-name+evaluation
 case	features/patternrules.diff.32	capability	option-refused
@@ -992,9 +992,9 @@ case	targets/SECONDARY.diff.6	capability	ninja-progress+product-name+unsupported
 case	targets/SECONDARY.diff.7	capability	ninja-progress+unsupported-feature
 case	targets/SECONDARY.diff.8	capability	option-refused
 case	targets/SECONDARY.diff.9	capability	option-refused
-case	targets/SILENT.diff	capability	ninja-progress+unsupported-feature
-case	targets/SILENT.diff.1	capability	ninja-progress+unsupported-feature
-case	targets/SILENT.diff.2	capability	ninja-progress+unsupported-feature
+case	targets/SILENT.diff	semantic	ninja-progress+evaluation
+case	targets/SILENT.diff.1	narration	ninja-progress
+case	targets/SILENT.diff.2	semantic	ninja-progress+evaluation
 case	targets/WAIT.diff	capability	unsupported-feature
 case	targets/WAIT.diff.1	capability	unsupported-feature
 case	targets/WAIT.diff.10	capability	ninja-progress+unsupported-feature
