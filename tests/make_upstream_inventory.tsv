@@ -937,7 +937,7 @@ case	options/warn-undefined-variables.diff.3	capability	option-refused
 case	targets/DEFAULT.diff	narration	ninja-progress+directory-announce
 case	targets/DELETE_ON_ERROR.diff	semantic	ninja-progress+ninja-failure-block+recipe-error-line+product-name+evaluation
 case	targets/DELETE_ON_ERROR.diff.1	semantic	ninja-progress+ninja-failure-block+recipe-error-line+product-name+evaluation
-case	targets/FORCE.diff	capability	ninja-progress+unsupported-feature
+case	targets/FORCE.diff	semantic	ninja-progress+evaluation
 case	targets/INTERMEDIATE.diff	capability	ninja-progress+unsupported-feature
 case	targets/INTERMEDIATE.diff.1	capability	no-work-line+product-name+unsupported-feature
 case	targets/INTERMEDIATE.diff.2	capability	ninja-progress+unsupported-feature

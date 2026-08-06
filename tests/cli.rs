@@ -992,6 +992,52 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `.IGNORE` is `-i` asked for by the Makefile, and with prerequisites it is
+/// that for those targets alone.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_ignores_recipe_failures_the_makefile_named() {
+    let directory = test_directory("make-ignore");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".IGNORE: forgiven\n\
+         all: forgiven; @echo reached-all\n\
+         forgiven: ; @false\n",
+    )
+    .unwrap();
+    let forgiving = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-k")
+        .output()
+        .unwrap();
+    assert!(
+        forgiving.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forgiving.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&forgiving.stdout).contains("reached-all"),
+        "{}",
+        String::from_utf8_lossy(&forgiving.stdout)
+    );
+
+    // A target it did not name still fails, so the declaration is doing the
+    // work rather than failure having stopped mattering.
+    fs::write(
+        directory.join("Makefile"),
+        ".IGNORE: forgiven\n\
+         all: other; @echo reached-all\n\
+         other: ; @false\n",
+    )
+    .unwrap();
+    let strict = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(!strict.status.success());
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// `-n` runs nothing, except the lines the Makefile prefixed `+`.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]

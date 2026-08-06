@@ -4650,6 +4650,35 @@ children (
                         kind @note
                         text "The three left standing when make-special-target-noise took the other warnings away. Each was probed against GNU Make 4.4.1 and each is a real gap, not noise:\n\n  .IGNORE                a failing recipe is ignored and the build continues.\n                         `all: a b` with `a: ; @false` gives GNU\n                         `make: [Makefile:3: a] Error 1 (ignored)` and then\n                         `reached-b`; we abandon with 2. Make mode already has\n                         -i, so this is that flag set from the Makefile, plus\n                         the per-target form `.IGNORE: a`.\n\n  .NOTPARALLEL           under -j4 GNU runs a, b, c in order; we run them at\n                         once. Make mode is serial without -j, so this only\n                         shows when the build was asked to be parallel — it is\n                         a job limit of one imposed by the Makefile rather than\n                         by the command line.\n\n  .EXPORT_ALL_VARIABLES  every variable reaches the recipe's environment.\n                         `FOO = bar` with `@echo \"[$$FOO]\"` gives GNU `[bar]`\n                         and us `[]`. kati already tracks exports per variable,\n                         so this is that set turned on wholesale.\n\nThree separate mechanisms in three different places, so this may want splitting\nonce someone starts. Seven cases between them, which is why they are one node\nfor now."
                     }
+
+                    {
+                        at 2026-08-06T22:33:06.773398919Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T22:42:34.381557659Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "`.IGNORE` done, both forms, checked against 4.4.1: bare it is `-i` the Makefile asked for, and with prerequisites it is that for those targets alone while every other target still fails. It rides on DepNode beside is_restat, which is the same shape `.KATI_RESTAT` already had, and command evaluation starts each recipe from it.\n\nOne suite case moved, capability to semantic.\n\nThe other two are not done and the reason for one of them is worth having.\n\n.EXPORT_ALL_VARIABLES is blocked, and not on itself: `export` does not work at all in Make mode. `export FOO` with `FOO = bar` gives GNU `[bar]` and us `[]`. That is make-export-to-recipes, and .EXPORT_ALL_VARIABLES is that plus a flag, so it cannot be done first.\n\n.NOTPARALLEL is still open. It is a job limit of one imposed by the Makefile rather than the command line, discovered during dep building, so it needs a flag on Session that Make mode reads back after evaluation and before it builds BuildOptions."
+                    }
+                )
+            }
+
+            {
+                id make-export-to-recipes
+                title "Put an exported variable in the recipe's environment"
+                priority 1
+                kind @fix
+                log (
+                    {
+                        at 2026-08-06T22:36:13.258751667Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while probing .EXPORT_ALL_VARIABLES, and it is the larger bug underneath it: `export` does not work at all in Make mode. A recipe sees nothing.\n\n  export FOO\n  FOO = bar\n  all: ; @echo \"[$$FOO]\"\n\nGNU Make 4.4.1 prints `[bar]`; we print `[]`. Same for the assignment form `export FOO = bar`.\n\nThe channel is not missing, which is what makes this contained. `MAKELEVEL` reaches recipes through BuildOptions::environment and prints `[1]` on both tools, and an inherited environment variable passes through untouched. What is missing is the connection: kati records exports in `Evaluator::exports`, and the only consumer is ninja.rs, which writes them into a generated `env.sh` for the `ninja.sh` wrapper to source. That is manifest generation. Make mode runs the recipes itself and never reads the map.\n\nSo: after evaluation, collect `exports` and add them to `options.environment`, unsetting the ones recorded false.\n\nOne thing to widen on the way: `BuildOptions::environment` is `Vec<(&'static str, OsString)>`, and every name it carries today is a literal — MAKELEVEL, MAKEFLAGS, MFLAGS. An exported name comes from the Makefile, so the field, `ProcessSupervisor::environment` and `shell_command` all need an owned name.\n\n`unexport` cannot be checked until this lands: both tools print `[]` today, ours only because export never worked.\n\n.EXPORT_ALL_VARIABLES is this plus a flag, and make-ignore-errors-target keeps it."
+                    }
                 )
             }
         )
