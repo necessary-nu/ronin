@@ -11,6 +11,9 @@ type BuildResult<T> = Result<T, BuildError>;
 pub(super) struct CommandSpec {
     pub(super) command: BString,
     pub(super) description: BString,
+    /// The recipe lines Make echoes before running them, newline-separated,
+    /// and empty for a graph that did not come from a Makefile.
+    pub(super) recipe: BString,
     pub(super) rspfile: Option<BString>,
     pub(super) rspfile_content: BString,
     pub(super) deps_type: DepsType,
@@ -57,6 +60,10 @@ impl CommandSpec {
         let description =
             crate::env::edgevar(graph, edge, Names::DESCRIPTION, PathStyle::ShellEscaped)
                 .unwrap_or_default();
+        // Raw, because these are the lines as the Makefile wrote them once its
+        // variables were expanded, and Make echoes exactly that.
+        let recipe =
+            crate::env::edgevar(graph, edge, Names::RECIPE, PathStyle::Raw).unwrap_or_default();
         let rspfile = crate::env::edgevar(graph, edge, Names::RSPFILE, PathStyle::Raw)
             .filter(|path| !path.is_empty());
         let rspfile_content =
@@ -81,6 +88,7 @@ impl CommandSpec {
         Ok(Self {
             command,
             description,
+            recipe,
             rspfile,
             rspfile_content,
             deps_type,

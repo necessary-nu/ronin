@@ -58,6 +58,12 @@ pub(crate) enum OutputStyle {
     #[default]
     Ninja,
     Cargo,
+    /// GNU Make's: the recipe itself, echoed line by line before it runs.
+    ///
+    /// Not offered on the command line, because it is not a preference. Make
+    /// mode selects it and nothing else can: a Ninja manifest carries no recipe
+    /// to echo, so asking for this over one would ask for silence.
+    Make,
 }
 
 /// When to emit terminal colour.
@@ -218,12 +224,21 @@ pub(crate) enum Reporter {
     Ninja,
     /// Cargo's shape: a right-aligned verb, then what it acted on.
     Cargo(CargoStyle),
+    /// Make's shape, which is not a status line at all: Make prints the recipe
+    /// it is about to run and then lets the recipe's own output follow.
+    ///
+    /// There is no counter, no description and no name for the edge. Ninja's
+    /// `[N/M] description` is a Ninja product surface, and a Makefile that
+    /// never asked for it should not be told how many edges Ronin thinks there
+    /// are.
+    Make,
 }
 
 impl Reporter {
     pub(crate) const fn new(style: OutputStyle, color: bool) -> Self {
         match style {
             OutputStyle::Ninja => Self::Ninja,
+            OutputStyle::Make => Self::Make,
             OutputStyle::Cargo => Self::Cargo(CargoStyle {
                 palette: Palette::select(color),
                 // The bar rides with colour rather than with terminal
@@ -304,6 +319,7 @@ impl Reporter {
         match self {
             Self::Ninja => ninja_status(out, progress, options, command),
             Self::Cargo(style) => cargo_status(out, style.palette, progress, options, command),
+            Self::Make => make_status(out, command),
         }
     }
 
@@ -317,7 +333,9 @@ impl Reporter {
         command: &CommandSpec,
     ) {
         match self {
-            Self::Ninja => ninja_failure(out, graph, edge, exit_code, command),
+            // Make's failure line is its own shape and is not this; until
+            // make-recipe-failure-report gives it one, Ninja's is what there is.
+            Self::Ninja | Self::Make => ninja_failure(out, graph, edge, exit_code, command),
             Self::Cargo(style) => {
                 cargo_failure(out, style.palette, graph, edge, exit_code, command);
             }
@@ -415,6 +433,21 @@ fn terminal_width() -> usize {
     {
         ASSUMED_WIDTH
     }
+}
+
+/// Print the recipe, which is the whole of what Make says before running one.
+///
+/// The lines arrive already joined by newlines and already filtered: a line
+/// prefixed `@` never reached the binding, so there is nothing to decide here.
+/// An empty recipe is a recipe Make would print nothing for, and prints
+/// nothing — not a blank line.
+// [spec:ronin:req:make.recipe-echo]
+fn make_status(out: &mut Vec<u8>, command: &CommandSpec) {
+    if command.recipe.is_empty() {
+        return;
+    }
+    out.extend_from_slice(&command.recipe);
+    out.push(b'\n');
 }
 
 // [spec:ronin:def:build.printstatus-fn]
@@ -608,9 +641,14 @@ mod tests {
     use super::*;
 
     fn spec(command: &str, description: &str) -> CommandSpec {
+        recipe_spec(command, description, "")
+    }
+
+    fn recipe_spec(command: &str, description: &str, recipe: &str) -> CommandSpec {
         CommandSpec {
             command: command.into(),
             description: description.into(),
+            recipe: recipe.into(),
             rspfile: None,
             rspfile_content: crate::util::BString::default(),
             deps_type: super::super::command::DepsType::None,
@@ -620,6 +658,33 @@ mod tests {
             generator: false,
             use_console: false,
         }
+    }
+
+    /// Make says the recipe and nothing else — no counter, no description, and
+    /// nothing at all for a recipe it would not have echoed.
+    // [spec:ronin:req:make.recipe-echo/test]
+    #[test]
+    fn make_mode_prints_the_recipe_and_no_progress_of_its_own() {
+        let options = BuildOptions::default();
+
+        let echoed = recipe_spec("cc -c main.c", "build main.o", "cc -c main.c");
+        assert_eq!(
+            render(OutputStyle::Make, &options, &echoed),
+            "cc -c main.c\n"
+        );
+
+        // Every line of the recipe, in order, because Make echoes each one.
+        let several = recipe_spec("a && b", "build out", "a\nb");
+        assert_eq!(render(OutputStyle::Make, &options, &several), "a\nb\n");
+
+        // A recipe whose lines were all `@` arrives empty and says nothing —
+        // not a blank line, which is what printing an empty string would give.
+        let silent = recipe_spec("echo hi", "build out", "");
+        assert_eq!(render(OutputStyle::Make, &options, &silent), "");
+
+        // The description is Ninja's answer to a question Make never asks, and
+        // it is not consulted even when there is one.
+        assert!(!render(OutputStyle::Make, &options, &echoed).contains("build main.o"));
     }
 
     fn render(style: OutputStyle, options: &BuildOptions, command: &CommandSpec) -> String {
@@ -786,7 +851,7 @@ mod tests {
     fn bar_state(reporter: &mut Reporter) -> &mut Bar {
         match reporter {
             Reporter::Cargo(style) => style.bar.as_mut().expect("this rendering has a bar"),
-            Reporter::Ninja => panic!("Ninja has no bar"),
+            Reporter::Ninja | Reporter::Make => panic!("only Cargo's rendering has a bar"),
         }
     }
 

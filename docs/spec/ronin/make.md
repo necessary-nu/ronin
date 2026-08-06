@@ -105,6 +105,14 @@ exactly the machinery a manifest-derived graph is.
 > rather than the build outcome `compatibility.md` governs, because no build is
 > run to have a status of its own.
 
+> [spec:ronin:req:make.recipe-echo]
+> Make mode narrates a build the way Make does: it prints each recipe line it
+> is about to run, after variable expansion, and prints nothing else of its
+> own. A line prefixed `@` is run without being printed, and `-s` silences
+> every line. Ninja's `[N/M] description` progress line is a Ninja product
+> surface and does not appear in Make mode at all, nor does any description
+> invented for an edge the Makefile did not name.
+
 > [spec:ronin:req:make.recursive-invocation]
 > In Make mode `MAKE` is a single word: the make-named path this invocation
 > arrived through, so recursive invocation re-enters Ronin rather than any

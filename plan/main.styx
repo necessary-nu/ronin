@@ -4045,6 +4045,27 @@ children (
                                 kind @note
                                 text "The largest single item in the Make work: 587 of the 1338 failing tests in GNU Make's suite show Ronin's `[N/M] description` where Make echoes the recipe, and 219 of those diffs contain nothing else at all. The whole failure is one line of the wrong tool's output.\n\nThe rule is small and it is Make's. The recipe line is printed, after variable expansion, immediately before it runs. A line whose first character is `@` is not printed. `-s`, `.SILENT` and a `MAKEFLAGS` carrying `s` suppress every line. The text is what kati already hands the sink, so nothing has to be re-expanded.\n\nThe Ninja progress line is not a thing to reshape into Make's — it is a Ninja product surface and does not belong in Make mode at all. Deleting it is part of the work rather than a consequence of it.\n\nTwo cautions from having measured this. The `@` rule has to land with the echo rather than after it, because almost every recipe in the suite is `@`-prefixed and echoing those would replace one wrong line with a worse one. And the count above is what the defect is worth *today*: once it lands, the diffs behind it become readable for the first time, and the next number will not be a prediction from this one."
                             }
+
+                            {
+                                at 2026-08-06T14:11:31.44520241Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-06T14:13:59.041021083Z
+                                author "brendan@necessary.nu"
+                                kind @blocker
+                                text "Bigger than the node assumed, and the assumption was mine: this is not a reporter change, because by the time anything could report, the thing to report has been thrown away.\n\nkati's gen_shell_script at ninja.rs:435 flattens a recipe into one script joined with ` && `, and drops each line's `echo` flag while doing it. The sink receives one opaque command. So Make mode cannot echo per line — it has no lines — and cannot honour a per-line `@` — it has no flags. Both are required: nearly every recipe in the suite is `@`-prefixed, so echoing what we currently hold would replace one wrong line with a worse one.\n\nThe `[1/1] build all` text is not Make's either. sink.rs:233 invents `build $out` as the description when the Makefile supplied none, exactly as the manifest writer does. In Make mode that string should not exist at all.\n\nThe tempting shortcut does not work. Carrying the echo text in the Ninja `description` binding would need embedded newlines for a multi-line recipe, which cannot appear in an emitted build.ninja, and make-graph-equivalence compares the direct graph against that manifest. The description binding is the wrong vehicle.\n\nSo the recipe has to reach the graph as a sequence. SinkRule gains the lines with their flags, the NinjaWriter keeps ignoring them so the manifest and the equivalence check are untouched, and GraphSink keeps them for the Make reporter.\n\nA second defect falls out of the same finding and is not this node's: joining with ` && ` means one shell for the whole recipe, where GNU Make runs one shell per line. `cd` persisting to the next line is the visible consequence, and .ONESHELL is the Makefile asking for what we already do unconditionally. Once the lines are carried, fixing that is reachable; it should be its own node rather than smuggled in here."
+                            }
+
+                            {
+                                at 2026-08-06T14:32:08.385996565Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "The recipe travels as a rule binding named `recipe`, and the reason it can is that the equivalence oracle compares a closed list of twelve bindings rather than walking whatever each graph holds. A thirteenth is invisible to it, which is exactly right here: nothing writes `recipe` into a manifest and nothing reads one back, because a newline ends a binding in Ninja's syntax and a recipe is a sequence of lines. The closed list at equivalence.rs:55 was written to make a binding that stops crossing the sink show up as a difference; a binding that was never meant to cross is a different thing and does not belong on it.\n\nkati's side is SinkRecipeLine, carrying the expanded text and whether Make would echo it. gen_shell_script records each line before it does any of its own rewriting — android echo detection and mkdir elision can drop a line from the script, and a line kati drops is still a line Make would have printed.\n\nThe filtering happens in GraphSink rather than in the reporter. A `@` line never reaches the binding at all, so by the time anything prints there is nothing left to decide, and a recipe whose every line is `@` arrives empty and prints nothing rather than a blank line.\n\nReporter::Make is a third variant beside Ninja and Cargo, and OutputStyle::Make is deliberately not offered on the command line. It is not a preference: a Ninja manifest carries no recipe, so asking for this over one would ask for silence. Make mode selects it and nothing else can.\n\nAlso removed: `build $out`, which sink.rs invented as a description when the Makefile supplied none. That string is the manifest writer's answer to a question Make never asks.\n\nVerified byte-identical to GNU Make 4.4.1 for a plain recipe, an `@` recipe, `-s`, and a multi-line all-`@` recipe. One shape still differs and it is the one make-recipe-one-shell-per-line owns: a multi-line echoed recipe prints all its lines and then all its output, where Make interleaves each line with the output of running it. That is not fixable here, because the recipe is still one joined script — there is no point between the lines at which to print."
+                            }
                         )
                     }
 
@@ -4068,6 +4089,14 @@ children (
                         id make-recipe-dry-run
                         title "Print recipes under -n without running them, including the plus exception"
                         priority 2
+                        kind @fix
+                        deps (make-recipe-echo-line)
+                    }
+
+                    {
+                        id make-recipe-one-shell-per-line
+                        title "Run each recipe line in its own shell, as Make does without ONESHELL"
+                        priority 3
                         kind @fix
                         deps (make-recipe-echo-line)
                     }

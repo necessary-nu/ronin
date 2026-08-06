@@ -14,7 +14,7 @@ arena_id!(VarId);
 ///
 /// `Names::default` interns these first and in this order, so the constants
 /// below are valid for every graph and the hot comparisons are constants.
-const RESERVED: [&[u8]; 14] = [
+const RESERVED: [&[u8]; 15] = [
     b"in",
     b"in_newline",
     b"out",
@@ -29,6 +29,11 @@ const RESERVED: [&[u8]; 14] = [
     b"restat",
     b"rspfile",
     b"rspfile_content",
+    // Make's, not Ninja's: the recipe lines Make echoes before it runs them,
+    // already separated by newlines. A manifest has no such binding and no way
+    // to hold one — a newline ends a binding there — so nothing ever writes
+    // this into a build.ninja and nothing ever reads one back out.
+    b"recipe",
 ];
 
 pub(crate) struct Names {
@@ -51,6 +56,7 @@ impl Names {
     pub(crate) const RESTAT: VarId = VarId::from_index(11);
     pub(crate) const RSPFILE: VarId = VarId::from_index(12);
     pub(crate) const RSPFILE_CONTENT: VarId = VarId::from_index(13);
+    pub(crate) const RECIPE: VarId = VarId::from_index(14);
 
     pub(crate) fn intern(&mut self, name: &BStr) -> VarId {
         if let Some(id) = self.ids.get(name) {
