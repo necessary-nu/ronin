@@ -4679,6 +4679,20 @@ children (
                         kind @note
                         text "Found while probing .EXPORT_ALL_VARIABLES, and it is the larger bug underneath it: `export` does not work at all in Make mode. A recipe sees nothing.\n\n  export FOO\n  FOO = bar\n  all: ; @echo \"[$$FOO]\"\n\nGNU Make 4.4.1 prints `[bar]`; we print `[]`. Same for the assignment form `export FOO = bar`.\n\nThe channel is not missing, which is what makes this contained. `MAKELEVEL` reaches recipes through BuildOptions::environment and prints `[1]` on both tools, and an inherited environment variable passes through untouched. What is missing is the connection: kati records exports in `Evaluator::exports`, and the only consumer is ninja.rs, which writes them into a generated `env.sh` for the `ninja.sh` wrapper to source. That is manifest generation. Make mode runs the recipes itself and never reads the map.\n\nSo: after evaluation, collect `exports` and add them to `options.environment`, unsetting the ones recorded false.\n\nOne thing to widen on the way: `BuildOptions::environment` is `Vec<(&'static str, OsString)>`, and every name it carries today is a literal — MAKELEVEL, MAKEFLAGS, MFLAGS. An exported name comes from the Makefile, so the field, `ProcessSupervisor::environment` and `shell_command` all need an owned name.\n\n`unexport` cannot be checked until this lands: both tools print `[]` today, ours only because export never worked.\n\n.EXPORT_ALL_VARIABLES is this plus a flag, and make-ignore-errors-target keeps it."
                     }
+
+                    {
+                        at 2026-08-06T22:45:54.418565505Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-06T23:14:28.826072483Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Done, and `.EXPORT_ALL_VARIABLES` came with it since it is this plus a flag.\n\nFive shapes against 4.4.1, all matching now: `export FOO`, `export FOO = bar`, a variable nobody exported staying unset, `unexport` of a name the caller's environment supplied, and `.EXPORT_ALL_VARIABLES`.\n\nThat last one has a boundary worth recording, because it was checked rather than assumed: it covers what the Makefile defined and not the built-in defaults. With it declared, GNU Make still leaves `CC` unset in a recipe. So the set is the globals whose origin is File, unioned with whatever `export` named.\n\nThe values are evaluated in load_makefile, before ev.finish, because the evaluator that can answer for them does not outlive that call. Loaded now carries them beside the graph.\n\nBuildOptions::environment went from `Vec<(&'static str, OsString)>` to `Vec<(OsString, Option<OsString>)>`. Owned names because an exported name comes from the Makefile rather than from a literal, and the option because `unexport` has to remove a name the caller's environment supplied, which is env_remove rather than a binding.\n\nEight suite cases moved semantic to narration and one capability to semantic.\n\nA correction on the way: features/parallelism started flapping between `ninja-progress` and `ninja-progress+recipe-interleave`. That case has three recipes rendezvous through files under -j4 and they must overlap to finish at all, so which lands first is the scheduler's. The tolerance for that family was removed when .WAIT landed on the grounds that nothing used it any more; that was wrong. The cause is any case that asks for concurrency, and .WAIT was only the one that happened to be flapping then. It is back, with the reason generalised."
+                    }
                 )
             }
         )

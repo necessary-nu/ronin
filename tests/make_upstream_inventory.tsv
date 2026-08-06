@@ -87,15 +87,15 @@ case	features/export.diff	semantic	no-work-line+makeflags-content
 case	features/export.diff.1	semantic	no-work-line+makeflags-content
 case	features/export.diff.10	semantic	evaluation
 case	features/export.diff.11	narration	ninja-progress
-case	features/export.diff.12	semantic	ninja-progress+makeflags-content
+case	features/export.diff.12	narration	ninja-progress
 case	features/export.diff.13	semantic	ninja-progress+makeflags-content
 case	features/export.diff.2	semantic	no-work-line+makeflags-content
 case	features/export.diff.3	semantic	no-work-line+makeflags-content
 case	features/export.diff.4	semantic	no-work-line+makeflags-content
-case	features/export.diff.5	capability	no-work-line+unsupported-feature
+case	features/export.diff.5	semantic	no-work-line+makeflags-content
 case	features/export.diff.6	semantic	no-work-line+makeflags-content
 case	features/export.diff.7	semantic	no-work-line+makeflags-content
-case	features/export.diff.8	semantic	ninja-progress+makeflags-content
+case	features/export.diff.8	narration	ninja-progress
 case	features/export.diff.9	semantic	no-work-line+makeflags-content
 case	features/grouped_targets.diff	narration	no-work-line
 case	features/grouped_targets.diff.1	semantic	product-name+no-rule-to-make
@@ -627,7 +627,7 @@ case	functions/andor.diff.1	narration	ninja-progress
 case	functions/basename.diff	narration	ninja-progress
 case	functions/call.diff	semantic	ninja-progress+evaluation
 case	functions/call.diff.1	narration	ninja-progress
-case	functions/call.diff.2	semantic	ninja-progress+evaluation
+case	functions/call.diff.2	narration	ninja-progress
 case	functions/error.diff.2	semantic	ninja-progress+ninja-failure-block+evaluation
 case	functions/error.diff.3	semantic	ninja-progress+ninja-failure-block+evaluation
 case	functions/error.diff.4	semantic	ninja-progress+ninja-failure-block+evaluation
@@ -645,7 +645,7 @@ case	functions/file.diff.1	narration	ninja-progress
 case	functions/file.diff.10	narration	ninja-progress
 case	functions/file.diff.11	narration	ninja-progress
 case	functions/file.diff.12	narration	ninja-progress
-case	functions/file.diff.13	semantic	ninja-progress+evaluation
+case	functions/file.diff.13	narration	ninja-progress
 case	functions/file.diff.14	semantic	ninja-progress+product-name+evaluation
 case	functions/file.diff.15	narration	ninja-progress
 case	functions/file.diff.16	semantic	evaluation
@@ -713,8 +713,8 @@ case	functions/shell.diff.3	semantic	ninja-progress+evaluation
 case	functions/shell.diff.4	semantic	ninja-progress+evaluation
 case	functions/shell.diff.5	semantic	ninja-progress+evaluation
 case	functions/shell.diff.6	semantic	ninja-progress+evaluation
-case	functions/shell.diff.7	semantic	ninja-progress+evaluation
-case	functions/shell.diff.8	semantic	ninja-progress+evaluation
+case	functions/shell.diff.7	narration	ninja-progress
+case	functions/shell.diff.8	narration	ninja-progress
 case	functions/shell.diff.9	semantic	ninja-progress+evaluation
 case	functions/sort.diff	narration	ninja-progress
 case	functions/sort.diff.1	narration	ninja-progress
@@ -724,7 +724,7 @@ case	functions/substitution.diff	narration	ninja-progress
 case	functions/substitution.diff.1	narration	ninja-progress
 case	functions/substitution.diff.2	narration	ninja-progress
 case	functions/suffix.diff	semantic	ninja-progress+evaluation
-case	functions/value.diff	semantic	ninja-progress+evaluation
+case	functions/value.diff	narration	ninja-progress
 case	functions/warning.diff	narration	ninja-progress
 case	functions/warning.diff.1	narration	ninja-progress
 case	functions/warning.diff.2	narration	ninja-progress
@@ -1331,7 +1331,7 @@ case	variables/private.diff.1	semantic	ninja-progress+evaluation
 case	variables/private.diff.10	semantic	ninja-progress+evaluation
 case	variables/private.diff.11	narration	ninja-progress
 case	variables/private.diff.12	narration	ninja-progress
-case	variables/private.diff.13	semantic	ninja-progress+makeflags-content
+case	variables/private.diff.13	narration	ninja-progress
 case	variables/private.diff.14	semantic	ninja-progress+makeflags-content
 case	variables/private.diff.15	narration	ninja-progress
 case	variables/private.diff.2	semantic	ninja-progress+evaluation

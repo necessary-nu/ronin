@@ -81,7 +81,9 @@ pub(crate) struct BuildOptions {
     /// Make mode counts recursion with one: a recipe is handed a `MAKELEVEL`
     /// one deeper than the makefile it came from, which is how a sub-make
     /// knows it is one.
-    pub(crate) environment: Vec<(&'static str, std::ffi::OsString)>,
+    /// `None` removes the name instead of binding it, which is Make's
+    /// `unexport` of a variable that arrived from outside.
+    pub(crate) environment: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -1568,9 +1570,9 @@ impl<'a> Builder<'a> {
         {
             match environment
                 .iter_mut()
-                .find(|(existing, _)| existing == name)
+                .find(|(existing, _)| existing == std::ffi::OsStr::new(name))
             {
-                Some((_, value)) => {
+                Some((_, Some(value))) => {
                     let mut merged = value.clone();
                     // MAKEFLAGS' publication leads with the space that follows
                     // the letter group; MFLAGS' does not, because it is spelled
@@ -1582,7 +1584,7 @@ impl<'a> Builder<'a> {
                     merged.push(published);
                     *value = merged;
                 }
-                None => environment.push((name, published.clone())),
+                _ => environment.push(((*name).into(), Some(published.clone()))),
             }
         }
         let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::in_directory(

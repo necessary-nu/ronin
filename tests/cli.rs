@@ -992,6 +992,74 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_exports_variables_to_the_recipe_environment() {
+    let directory = test_directory("make-export");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "export NAMED\n\
+         NAMED = named\n\
+         export INLINE = inline\n\
+         QUIET = quiet\n\
+         unexport INHERITED\n\
+         all: ; @echo \"[$$NAMED][$$INLINE][$$QUIET][$$INHERITED]\"\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .env("INHERITED", "from-the-caller")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Exported by both spellings, silent for the one nobody exported, and
+    // `unexport` takes back what the caller's environment supplied.
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("[named][inline][][]"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `.EXPORT_ALL_VARIABLES` covers what the Makefile defined and nothing else —
+/// GNU Make leaves the built-in defaults unset in a recipe.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_exports_every_variable_the_makefile_defined() {
+    let directory = test_directory("make-export-all");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".EXPORT_ALL_VARIABLES:\n\
+         MINE = mine\n\
+         all: ; @echo \"[$$MINE][$$CC]\"\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("[mine][]"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// `.IGNORE` is `-i` asked for by the Makefile, and with prerequisites it is
 /// that for those targets alone.
 // [spec:ronin:req:make.semantics/test]

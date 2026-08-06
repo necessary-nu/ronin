@@ -774,10 +774,14 @@ fn build_options(
         JobLimit::Fixed(std::num::NonZeroUsize::MIN),
     )?;
     options.environment.push((
-        MAKELEVEL,
-        OsString::from(level.saturating_add(1).to_string()),
+        MAKELEVEL.into(),
+        Some(OsString::from(level.saturating_add(1).to_string())),
     ));
-    options.environment.extend(flag_environment(invocation));
+    options.environment.extend(
+        flag_environment(invocation)
+            .into_iter()
+            .map(|(name, value)| (OsString::from(name), Some(value))),
+    );
     Ok(options)
 }
 
@@ -960,8 +964,12 @@ pub(crate) fn run(
     );
     record_invocation_variables(&mut session, &invocation, level)?;
 
+    let mut options = options;
     let mut graph = match evaluated(session, &reported) {
-        Ok(graph) => graph,
+        Ok(loaded) => {
+            options.environment.extend(loaded.exported);
+            loaded.graph
+        }
         Err(result) => return Ok(result),
     };
     if invocation.given(Switch::AlwaysMake) {
@@ -1044,7 +1052,7 @@ fn record_invocation_variables(
 /// wrote it, because the evaluator already put the program's name in front of
 /// it; naming it again here would say it twice.
 // [spec:ronin:req:make.recursive-invocation]
-fn evaluated(session: Session, reported: &str) -> Result<crate::frontend::BuildGraph, RunResult> {
+fn evaluated(session: Session, reported: &str) -> Result<crate::make::Loaded, RunResult> {
     crate::make::load_makefile(session).map_err(|failure| RunResult {
         stdout: terminated(reported),
         stderr: terminated(failure.to_string()),

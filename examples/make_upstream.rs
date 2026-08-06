@@ -781,7 +781,7 @@ fn main() -> std::process::ExitCode {
     }
 
     let recorded = fs::read_to_string(&config.inventory).unwrap_or_default();
-    if recorded == inventory {
+    if recorded == inventory || settled(&recorded) == settled(&inventory) {
         return std::process::ExitCode::SUCCESS;
     }
     // A classification that moved is the point of running this, so say what
@@ -798,12 +798,45 @@ fn main() -> std::process::ExitCode {
     std::process::ExitCode::FAILURE
 }
 
+/// The inventory without the one family a rerun can decide differently.
+///
+/// `recipe-interleave` says the same lines came out in a different order. Some
+/// of the suite's cases arrange for exactly that — features/parallelism has
+/// three recipes rendezvous through files under -j4, and they have to overlap
+/// to finish at all — so which lands first is the scheduler's and not a
+/// property of the code being measured. Recording a coin flip and then failing
+/// when it lands the other way makes the gate report noise.
+///
+/// Only this family, and only within a class: a case that changed what it is
+/// still fails. This was taken out once when .WAIT stopped being the only
+/// source of it, which was wrong — the cause is any case that asks for
+/// concurrency, and .WAIT was just the one that happened to be flapping.
+fn settled(inventory: &str) -> String {
+    inventory
+        .lines()
+        .map(|line| line.replace("+recipe-interleave", ""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{classify, echoes, normalise, read_divergence, Class, Divergence, Side};
+    use super::{classify, echoes, normalise, read_divergence, settled, Class, Divergence, Side};
 
     fn lines(text: &[&str]) -> Vec<String> {
         text.iter().map(|line| (*line).to_owned()).collect()
+    }
+
+    /// A case that races decides its own family, so the comparison ignores that
+    /// one — but only that one, and only within a class.
+    #[test]
+    fn an_interleaving_is_not_a_classification_that_moved() {
+        let with = "case\tfeatures/parallelism\tnarration\tninja-progress+recipe-interleave";
+        let without = "case\tfeatures/parallelism\tnarration\tninja-progress";
+        assert_eq!(settled(with), settled(without));
+
+        let changed = "case\tfeatures/parallelism\tsemantic\tninja-progress";
+        assert_ne!(settled(with), settled(changed));
     }
 
     /// Refusing is only a defect when Make built the thing. When Make refused

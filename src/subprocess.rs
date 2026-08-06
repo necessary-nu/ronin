@@ -144,7 +144,7 @@ pub(crate) struct ProcessSupervisor<External = ()> {
     /// with no variables set, `Command` hands the child this process's own
     /// environment block untouched, and the copy it would otherwise build per
     /// spawn never happens.
-    environment: Vec<(&'static str, std::ffi::OsString)>,
+    environment: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
 }
 
 impl<External> ProcessSupervisor<External> {
@@ -156,7 +156,7 @@ impl<External> ProcessSupervisor<External> {
     pub(crate) fn in_directory(
         working_directory: &Path,
         shell: ShellMode,
-        environment: &[(&'static str, std::ffi::OsString)],
+        environment: &[(std::ffi::OsString, Option<std::ffi::OsString>)],
     ) -> ProcessResult<Self> {
         let (sender, receiver) = mpsc::channel();
         #[cfg(unix)]
@@ -956,7 +956,7 @@ fn shell_command(
     command: &BString,
     working_directory: &Path,
     mode: &ShellMode,
-    environment: &[(&'static str, std::ffi::OsString)],
+    environment: &[(std::ffi::OsString, Option<std::ffi::OsString>)],
 ) -> Command {
     let mut shell = match mode {
         ShellMode::Program(program) => {
@@ -1017,7 +1017,10 @@ fn shell_command(
         shell.current_dir(working_directory);
     }
     for (name, value) in environment {
-        shell.env(name, value);
+        match value {
+            Some(value) => shell.env(name, value),
+            None => shell.env_remove(name),
+        };
     }
     shell
 }
@@ -1119,7 +1122,7 @@ fn run_shell(
     command: &BString,
     working_directory: &Path,
     shell: &ShellMode,
-    environment: &[(&'static str, std::ffi::OsString)],
+    environment: &[(std::ffi::OsString, Option<std::ffi::OsString>)],
     use_console: bool,
     dryrun: bool,
     started: impl FnOnce(u32, bool),

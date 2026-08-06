@@ -114,7 +114,7 @@ impl MakeError {
 /// engine cannot hold, such as two rules generating one output.
 // [spec:ronin:req:make.graph-direct]
 // [spec:ronin:req:make.state-outside-the-tree]
-pub fn load_makefile(session: Session) -> Result<BuildGraph, MakeError> {
+pub fn load_makefile(session: Session) -> Result<Loaded, MakeError> {
     let Evaluated { mut ev, nodes } =
         evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
     let mut sink = GraphSink::new();
@@ -122,6 +122,54 @@ pub fn load_makefile(session: Session) -> Result<BuildGraph, MakeError> {
     let mut graph = sink.into_graph().map_err(MakeError::Construct)?;
     graph.state_placement = StatePlacement::OutsideTheTree;
     emitted.map_err(|error| MakeError::evaluate(&error))?;
+    let exported = exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
     ev.finish().map_err(|error| MakeError::evaluate(&error))?;
-    Ok(graph)
+    Ok(Loaded { graph, exported })
+}
+
+/// A Makefile read: the graph it describes, and what it exported.
+pub struct Loaded {
+    /// What the Makefile builds.
+    pub graph: BuildGraph,
+    /// What `export` put in every recipe's environment, and what `unexport`
+    /// took out of it. Values are evaluated here because the evaluator that
+    /// can answer for them does not outlive this call.
+    pub exported: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+}
+
+fn exported_environment(
+    ev: &mut kati::eval::Evaluator,
+) -> Result<Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>, kati::anyhow::Error> {
+    use std::os::unix::ffi::OsStringExt;
+    let mut exports = ev.exports.clone();
+    // `.EXPORT_ALL_VARIABLES` names nothing, so it is the set of variables the
+    // Makefile itself defined. GNU Make leaves the built-in defaults out: with
+    // it declared, `CC` is still unset in a recipe.
+    if ev.session.flags.export_all_variables {
+        for (name, var) in ev
+            .session
+            .globals
+            .matching(|var| var.read().origin() == kati::var::VarOrigin::File)
+        {
+            let _ = var;
+            exports.entry(name).or_insert(true);
+        }
+    }
+    let mut exported = Vec::new();
+    let mut names = exports.into_iter().collect::<Vec<_>>();
+    // By name, because a map's order is not one and a recipe's environment
+    // should not depend on which way the hash fell.
+    names.sort_by_cached_key(|(name, _)| name.as_bytes(&ev.session));
+    for (name, is_exported) in names {
+        let value = if is_exported {
+            Some(std::ffi::OsString::from_vec(ev.eval_var(name)?.to_vec()))
+        } else {
+            None
+        };
+        exported.push((
+            std::ffi::OsString::from_vec(name.as_bytes(&ev.session).to_vec()),
+            value,
+        ));
+    }
+    Ok(exported)
 }

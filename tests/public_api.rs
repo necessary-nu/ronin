@@ -313,7 +313,8 @@ fn public_api_builds_a_makefile_through_ronins_scheduler() {
         OsString::from("-f"),
         makefile.into_os_string(),
     ]))
-    .unwrap();
+    .unwrap()
+    .graph;
 
     // The Makefile's own default goal is the graph's default target, and
     // nothing in between wrote, read, or reparsed a manifest.
