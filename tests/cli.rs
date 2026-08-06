@@ -962,6 +962,56 @@ fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// GNU Make runs one recipe at a time unless `-j` says otherwise, and plenty of
+/// Makefiles depend on that rather than merely tolerate it.
+///
+/// Make mode gets this right by a route that is easy to break: `build_options`
+/// starts at `JobLimit::Auto`, which means nothing was asked for rather than
+/// guess the machine, and `normalize_runtime_options` resolves it to one job
+/// unless a jobserver in the environment says a parent is already sharing a
+/// budget. Reading only the first half says Ronin defaults to parallel.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
+    let directory = test_directory("make-serial-default");
+    fs::create_dir_all(&directory).unwrap();
+    // Descending sleeps, so the two schedules are told apart by order rather
+    // than by duration: run serially these finish a, b, c because that is the
+    // order they were written, and run at once they finish c, b, a.
+    fs::write(
+        directory.join("Makefile"),
+        "all: a b c\n\
+         a: ; @sleep 0.3; echo a\n\
+         b: ; @sleep 0.2; echo b\n\
+         c: ; @sleep 0.1; echo c\n",
+    )
+    .unwrap();
+
+    let recipes = |arguments: &[&str]| {
+        let output = make_command(&invoked_as(&directory, "make"), &directory)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| ["a", "b", "c"].contains(line))
+            .collect::<Vec<_>>()
+            .join("")
+    };
+
+    assert_eq!(recipes(&[]), "abc");
+    // The other half of the claim: asked for, it is available. Without this the
+    // test would also pass on a build that could not run anything in parallel.
+    assert_eq!(recipes(&["-j4"]), "cba");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Two target-specific variables on one target, where the second reads the
 /// first. Their order decides the answer, so it must not be a hash map's.
 // [spec:ronin:req:make.semantics/test]

@@ -3747,6 +3747,15 @@ children (
                     target-impl ([spec:ronin:req:product.make-identity] [spec:ronin:req:make.recursive-invocation])
                 }
                 deps (kati-graph-sink kati-global-state)
+                log (
+                    {
+                        at 2026-08-06T19:36:51.697008623Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "I reported that Make mode defaults to parallel and flagged it as a divergence from GNU Make. That was wrong, and the correction is worth recording because the code reads that way at a glance.\n\nbuild_options sets `jobs: invocation.jobs.unwrap_or(JobLimit::Auto)`, and Auto is Ninja's guess at the machine. Reading only that line says Make mode runs as many recipes at once as it has cores. It does not: Auto here means nothing was asked for, and normalize_runtime_options at cli.rs:869 resolves it — to the parent's jobserver if the environment names an inheritable one, and otherwise to the `unshared` argument, which the Make call site passes as one job with a comment saying why.\n\nMeasured against GNU Make 4.4.1 on three recipes with descending sleeps, directly and through `$(MAKE)`: serial 0.625s to Make's 0.639s, `-j4` 0.315s to Make's 0.313s, same completion order in both. The behaviour was already right, including the inheritance.\n\nPinned now by make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise, which tells the two schedules apart by completion order rather than by duration, and asserts both halves — one job by default, and parallel when asked. It was only correct via a two-step path with no test on it.\n\nWhat actually races in targets/WAIT is the suite passing `-j10` itself. That is a real gap and it is make-wait-prerequisite, not a defaulting question."
+                        after_done true
+                    }
+                )
             }
 
             {
