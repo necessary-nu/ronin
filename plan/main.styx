@@ -4032,6 +4032,46 @@ children (
                 id make-recipe-echo
                 title "Echo recipes as Make does instead of reporting Ninja progress"
                 deps (make-mode-cli)
+                children (
+                    {
+                        id make-recipe-echo-line
+                        title "Echo the recipe where Ninja printed its progress line"
+                        priority 0
+                        kind @feat
+                        log (
+                            {
+                                at 2026-08-06T14:07:20.651968013Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "The largest single item in the Make work: 587 of the 1338 failing tests in GNU Make's suite show Ronin's `[N/M] description` where Make echoes the recipe, and 219 of those diffs contain nothing else at all. The whole failure is one line of the wrong tool's output.\n\nThe rule is small and it is Make's. The recipe line is printed, after variable expansion, immediately before it runs. A line whose first character is `@` is not printed. `-s`, `.SILENT` and a `MAKEFLAGS` carrying `s` suppress every line. The text is what kati already hands the sink, so nothing has to be re-expanded.\n\nThe Ninja progress line is not a thing to reshape into Make's — it is a Ninja product surface and does not belong in Make mode at all. Deleting it is part of the work rather than a consequence of it.\n\nTwo cautions from having measured this. The `@` rule has to land with the echo rather than after it, because almost every recipe in the suite is `@`-prefixed and echoing those would replace one wrong line with a worse one. And the count above is what the defect is worth *today*: once it lands, the diffs behind it become readable for the first time, and the next number will not be a prediction from this one."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-recipe-failure-report
+                        title "Report a failed recipe as Make does, not as Ninja does"
+                        priority 1
+                        kind @fix
+                        deps (make-recipe-echo-line)
+                        log (
+                            {
+                                at 2026-08-06T14:07:28.460885341Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "A failed recipe is reported in Ninja's shape, which is four lines where Make writes one. Demonstrated against GNU Make 4.4.1 on `all:;@exit 3`:\n\n  GNU Make   make: *** [fail.mk:2: all] Error 3\n\n  Ronin      [1/1] build all\n             FAILED: [code=3] all\n             /bin/sh -c \"exit 3\"\n             ronin: build stopped: subcommand failed.\n\nThree separate things to get right. The line names the makefile and the line number of the recipe, not just the target — the corpus already calls that family `error-location` and counts five cases of it, and GNU Make has written it that way since 4.0. It carries the program's name and `***`, but not the `Stop.` suffix, because a failed recipe is not a fatal Make dies on; that distinction is already encoded in kati's `diagnostic_prefix` and was established by running Make rather than by reading it. And the status is the recipe's own, reported in the text, while the process exits 2 — which is already done.\n\nThe `FAILED:` block and the command echo are Ninja product surfaces and go, in Make mode only.\n\nNote that this is Ronin's scheduler, not kati's exec path: Make mode never runs kati's executor, so the vendored corpus cannot see this defect at all and only the upstream suite can."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-recipe-dry-run
+                        title "Print recipes under -n without running them, including the plus exception"
+                        priority 2
+                        kind @fix
+                        deps (make-recipe-echo-line)
+                    }
+                )
                 log (
                     {
                         at 2026-08-05T17:19:49.402788461Z
@@ -4125,6 +4165,86 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Make mode answers with Make's status, and it had to stop letting the failure escape to do it.\n\nEvery way of not building is two: an option Make does not know, no makefile to read, a makefile that will not evaluate, a goal with no rule, a recipe that failed. Verified against GNU Make 4.4.1 for all four, which is what settled that this is one status rather than a family of them. One is not a failure in Make's vocabulary at all — it is the answer -q gives to a question — so the old -q special case was not a special case but the only correct use of 1 in the whole front end.\n\nTwo paths needed more than a constant. A failed recipe reached RunResult through outcome.exit_code(), which is the failing command's own status: right for Ninja, wrong for Make, since a recipe exiting 3 makes Make exit 2. And a goal with no rule left run() as an Error, which the process boundary answers with Ninja's status — fixed at one for every failure alike by product.build-outcome. Make mode now catches that and renders it, so the Ninja contract at main.rs is untouched and Ninja mode still exits 1.\n\nChecked rather than assumed: Ninja mode with no manifest still exits 1 after the change."
+                    }
+                )
+            }
+
+            {
+                id make-option-parity
+                title "Accept the Make options the upstream suite actually passes"
+                kind @feat
+                deps (make-recipe-echo-line)
+                children (
+                    {
+                        id make-option-negations
+                        title "Answer the negating spellings of switches Make mode already has"
+                        priority 0
+                        kind @feat
+                        log (
+                            {
+                                at 2026-08-06T14:07:49.200538015Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "62 failing tests, the largest group here and the cheapest: --no-print-directory 45, --no-silent 12, -S 5.\n\nAll three negate a switch Make mode already has, so none needs new machinery — only the recognition that GNU Make's switches come in pairs and that the later spelling wins. --no-print-directory withdraws -w, --no-silent withdraws -s, -S withdraws -k.\n\nTwo things to get right rather than guess. The negation has to survive MAKEFLAGS into a sub-make, which means `propagated` and `adopt_inherited` have to carry it rather than only carrying the positive form — a tree where the parent said --no-print-directory and the children announce their directories anyway is the defect these tests are looking for. And -w is implied by -C, so --no-print-directory has to withdraw the implication as well as the request; `announcing` already encodes that relationship for -s and is where the answer goes."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-option-include-path
+                        title "Search -I directories when resolving an include"
+                        priority 1
+                        kind @feat
+                    }
+
+                    {
+                        id make-option-no-builtin-variables
+                        title "Withhold the built-in variables under -R as -r withholds the rules"
+                        priority 2
+                        kind @feat
+                    }
+
+                    {
+                        id make-option-output-sync
+                        title "Group a recipe's output under -O instead of interleaving it"
+                        priority 3
+                        kind @feat
+                    }
+
+                    {
+                        id make-option-debug-and-trace
+                        title "Answer --debug, -d and --trace with what Make reports"
+                        priority 4
+                        kind @feat
+                    }
+
+                    {
+                        id make-option-eval-and-warnings
+                        title "Evaluate --eval text and warn on an undefined variable when asked"
+                        priority 5
+                        kind @feat
+                    }
+
+                    {
+                        id make-option-shuffle
+                        title "Shuffle goal and prerequisite order under --shuffle"
+                        priority 6
+                        kind @feat
+                    }
+
+                    {
+                        id make-option-touch-and-what-if
+                        title "Pretend at timestamps for -t and -W without running recipes"
+                        priority 7
+                        kind @feat
+                    }
+                )
+                log (
+                    {
+                        at 2026-08-06T14:07:43.934563758Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "202 of the 1338 failing tests in GNU Make's suite refuse an option the test passed and GNU Make accepted, printing usage and abandoning. Ranked by failing tests, from the diffs rather than from the logs — the logs are per-category and overwritten, so they undercount badly, which is what made this look like eight cases on first inspection instead of two hundred:\n\n  --no-print-directory 45, -I 31, -R 28, -O 20, --debug=* 17, --no-silent 12,\n  --shuffle=* 11, -W 7, --warn-undefined-variables 7, -S 5, --trace 4, -d 4,\n  -t 3, --eval 3, -E 2.\n\nThis was invisible before `$(MAKE)` became one word. The suite never got far enough to pass these options at all, so the whole family was hidden behind a defect counted 243 times. It is the second thing that has behaved that way and it will not be the last: read the residue only after the thing in front of it is gone.\n\nChildren are ranked by how many failing tests each would reach, so the frontier offers the biggest first. That ranking is a starting order and not a claim about difficulty — `--no-print-directory` leads on count and is nearly free, while `-O` is worth twenty and needs output grouping in the scheduler.\n\nDepends on make-recipe-echo-line for measurement rather than for mechanism. An option can be implemented at any time, but until the progress line is gone every one of these diffs also contains it, so a test fixed here will still fail and nobody can tell whether the option work was right.\n\n`make-option-coverage` is Done and is not this: it took the options whose machinery already existed. These are the ones that need machinery."
                     }
                 )
             }
