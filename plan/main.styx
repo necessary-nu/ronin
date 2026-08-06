@@ -4228,6 +4228,36 @@ children (
                 priority 2
                 kind @fix
             }
+
+            {
+                id make-vpath-search
+                title "Search vpath and VPATH directories for a prerequisite"
+                priority 0
+                kind @feat
+                log (
+                    {
+                        at 2026-08-06T16:44:04.328704769Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The largest single defect in the Make front end: 117 of the suite's 1338 failing cases, across thirteen makefiles and thirteen scripts.\n\nIt is not a search that goes wrong. `vpath` and `VPATH` appear nowhere in the evaluator at all — grep the whole of src-rs and there are no hits — so the directive is not a directive as far as the parser is concerned, and a line beginning `vpath ` is read as a rule without a colon. What the suite sees is `*** missing separator.  Stop.`, and every target that would have been found through the search then reports having no rule.\n\nThat is why it was hard to see in the family counts. One cause splits across two families — parse-failure for the makefiles that use the directive form, no-rule-to-make for the ones that set the variable — and neither number looks like 117 on its own. It took a minimal probe to find, which is the argument for keeping probes minimal:\n\n  vpath %.bar sub\n  %.tsk: %.bar\n  \t@echo made $@ from $<\n  all: hello.tsk\n\nGNU Make 4.4.1 says `made hello.tsk from sub/hello.bar`; Ronin says `Makefile:1: *** missing separator.  Stop.`\n\nTwo halves to implement and they are not the same size. `VPATH` is a variable holding a colon or space separated list of directories searched for any prerequisite. `vpath` is a directive with three forms: `vpath pattern dirs` adds a search path for names matching the pattern, `vpath pattern` clears that pattern's, and bare `vpath` clears all of them. Both need the search to happen where a prerequisite is resolved to a file, and the resolved path — not the name as written — is what `$<` and `$^` must expand to, which is the part a naive implementation gets wrong.\n\nWorth knowing before starting: the pattern and suffix rule machinery around it already works. A minimal `%.tsk: %.bar` pattern rule and a `.bar.tsk` suffix rule both build correctly, verified against 4.4.1. So this is an addition to prerequisite resolution rather than a repair of rule matching, and the 201 no-rule-to-make cases should be re-read after it lands rather than assumed to be one thing."
+                    }
+                )
+            }
+
+            {
+                id make-suffixes-with-prerequisites
+                title "Stop warning about .SUFFIXES declarations that work"
+                priority 2
+                kind @fix
+                log (
+                    {
+                        at 2026-08-06T16:44:17.361364795Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Twenty cases fail on a warning about something that works.\n\ndep.rs:518 warns \"kati doesn't support .SUFFIXES with prerequisites\" whenever `.SUFFIXES:` is given any, which is the ordinary way to declare a suffix. The build then proceeds and produces exactly what GNU Make produces — verified against 4.4.1 on both a plain `.bar.tsk` suffix rule and one preceded by `.SUFFIXES:` to clear the defaults, where the recipe ran and the output matched. The only difference is the warning itself.\n\nSo the message is wrong on its own terms rather than merely noisy: the support it denies is present. Either the warning goes, or it is narrowed to whatever case actually is unsupported — and establishing which that is, if any, is the work here. The bare `.SUFFIXES:` form with no prerequisites is handled a few lines above and clears the list, so the branch that warns is the one that should be doing the declaring.\n\nSmall, and worth doing early for a reason out of proportion to its size: these twenty are counted as `unsupported-feature`, so the capability number is overstated by that much and the family reads as a bigger gap than it is."
+                    }
+                )
+            }
         )
     }
 )
