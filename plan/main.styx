@@ -4308,6 +4308,13 @@ children (
                         kind @note
                         text "The largest real gap left in Make mode, and it is one feature rather than a family: an implicit rule whose prerequisite does not exist but could itself be made by another implicit rule. GNU Make calls this step 5c of the Implicit Rule Search Algorithm and creates the missing prerequisite as an intermediate file; we stop and refuse.\n\nEstablished by probe against GNU Make 4.4.1 rather than by reading, with hello.f the only file present and -r to silence the built-in rules:\n\n  all: hello.x\n  %.x: %.o ; $(info from o)\n  %.o: %.f ; $(info from f)\n\nGNU says `from f`, `from o`, `Nothing to be done for 'all'.` Ronin says `'hello.x', needed by 'all', missing and no known rule to make it`. Every non-chaining shape in the same probe set matches: match-anything `%:` patterns, suffixed `%.o:` patterns, double-colon patterns, and choosing the `%.f` rule over the `%.c` rule because hello.f exists and hello.c does not. So rule selection is right and only the recursion is absent.\n\nSize, counted from the per-case diffs and not from mentions — the lesson make-vpath-search paid for. 174 of the suite's failing cases refuse a target GNU Make built. Of those, 100 name an ordinary file, and the three makefiles read in full so far are all chains: features/patternrules case 4 wants `test.x` from `%.x:`, patternrules.1 wants `foo.out` from `%.out: %` from `%: %.in`, patternrules.2 wants `.o` from `.c` from `.y`. The 100 spread over features/implicit_search 43, features/patternrules 31, and nine other scripts. Beyond that, targets/INTERMEDIATE 12, targets/SECONDARY 16 and targets/NOTINTERMEDIATE 8 are counted as capability today and are all about what happens to a chained intermediate once it has been made, so they can only be reached from here.\n\nDo not turn that into a single predicted number. The honest claim is that the 100 are the population this can move and that some of them will turn out to need something else; measure after.\n\nNothing to repair first: grep for `intermediate` or `chain` across kati/src-rs/dep.rs returns one hit, the string \".INTERMEDIATE\" in the list of special targets it declines. The machinery has never existed."
                     }
+
+                    {
+                        at 2026-08-06T18:18:33.011028888Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 
@@ -4420,6 +4427,37 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Nine cases. A prerequisite containing a wildcard is matched against the filesystem by GNU Make and taken literally by us.\n\n  all: a.one* ; @echo got $^          with a.one and a.two present\n\nGNU Make 4.4.1 prints `got a.one`. Ronin refuses `'a.one*', needed by 'all'`.\n\nSpread thin — features/escape, features/grouped_targets, features/patternrules, features/rule_glob, features/suffixrules, options/dash-f, targets/DEFAULT, variables/MAKECMDGOALS — which is a reason to expect it to keep showing up rather than a reason to ignore it.\n\nA related shape found in the same probe and worth settling here: a wildcard in the *target* position. `a.*: ; @echo made $@` with a.one and a.two present makes GNU Make report `'a.one' is up to date`, while we build an edge literally named `a.*` and expand $@ to both names at once. That is a worse failure than the prerequisite case because it produces a wrong build rather than a refusal."
+                    }
+                )
+            }
+
+            {
+                id make-target-variable-order
+                title "Apply target-specific variables in the order the Makefile wrote them"
+                priority 2
+                kind @fix
+                log (
+                    {
+                        at 2026-08-06T18:58:16.479619979Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found because it made the upstream gate flaky, not because a test asked for it. features/targetvars case 12 flipped between passing and failing across identical runs of the same Makefile:\n\n  BLAH := foo\n  COMMAND = echo $(BLAH)\n  all: ; @$(COMMAND)\n  all: BLAH := bar\n  all: COMMAND += snafu $(BLAH)\n\nGNU Make 4.4.1 says `bar snafu bar`. We said `bar snafu bar` or `foo snafu foo` depending on the run, because dep.rs applies a node's target-specific variables by iterating `Vars`, which is a HashMap, and Rust seeds its hasher per process. Whichever of BLAH and COMMAND came out first decided the answer.\n\nSorting by name at the application site settles it, and on this shape settles it on the right answer. That is not the fix, and the code says so: Make applies these in the order they were written, which a HashMap cannot report. Vars would have to keep insertion order — an ordered map, or a sequence beside the map — for the general case.\n\nThere is a second defect underneath, visible in the same case and left alone. `+=` onto a recursive variable appends unexpanded text in Make and keeps the variable recursive; dep.rs expands eagerly and rewrites it as simple. Sorted order happens to hide it here because BLAH is already bar by the time COMMAND is read. A Makefile that appends before assigning would still be answered wrongly, deterministically."
+                    }
+                )
+            }
+
+            {
+                id make-intermediate-files
+                title "Treat a file invented by rule chaining as intermediate"
+                priority 1
+                kind @feat
+                deps (make-implicit-rule-chaining)
+                log (
+                    {
+                        at 2026-08-06T18:58:24.881624201Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The half of chaining that make-implicit-rule-chaining deliberately did not do, and one upstream case moved backwards for want of it.\n\nA file the implicit rule search invents to complete a chain is *intermediate*: GNU Make does not treat its absence as a reason to rebuild what needs it, and deletes it when the build finishes. We invent it and then treat it as an ordinary file, so we rebuild things Make leaves alone.\n\nfeatures/patternrules, the sv 60188 subtests, is the measurement. `hello.tsk` exists, `hello.z` does not, and `%.tsk: %.z` beside `%.z: %.x` reaches it. GNU Make prints `Nothing to be done for 'all'.`; we now build hello.z and then hello.tsk. That case was narration before chaining landed and is semantic after it — the only case that moved that way against nineteen that moved the other, and it is this.\n\nExplicit mention is what makes a file not intermediate, and the suite tests that distinction hard: `%.tsk: %.z test.z` makes test.z ordinary and hello.z intermediate in the same rule, and it holds when the name is assembled from variables. So the rule is about whether the name appears in the Makefile, not about how it was reached.\n\nThis is where targets/INTERMEDIATE, targets/SECONDARY and targets/NOTINTERMEDIATE live — 36 cases counted as capability today, all of them about what happens to an intermediate once it exists. .SECONDARY is intermediate without the deletion, .NOTINTERMEDIATE the opposite, and neither can mean anything until the base case does.\n\nDeletion needs somewhere to live that kati does not currently have: the graph knows how to build, and nothing owns cleaning up afterwards."
                     }
                 )
             }

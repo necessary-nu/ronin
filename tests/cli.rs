@@ -917,6 +917,87 @@ fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Step 6 of GNU Make's implicit rule search: when no rule's prerequisites all
+/// exist, a prerequisite that could itself be made by another implicit rule
+/// counts, and the file it stands for is invented on the way through.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
+    let directory = test_directory("make-implicit-chain");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("hello.f"), "source\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        // Only hello.f exists. Reaching hello.z means making hello.o and then
+        // hello.x, neither of which the Makefile mentions by name.
+        "all: hello.z\n\
+         %.z: %.x\n\
+         \t@echo z from $<\n\
+         %.x: %.o\n\
+         \t@echo x from $<\n\
+         %.o: %.f\n\
+         \t@echo o from $<\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-r")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Each link of the chain ran, and each was handed the file the link below
+    // it made rather than the name the pattern was written with.
+    for expected in ["o from hello.f", "x from hello.o", "z from hello.x"] {
+        assert!(
+            stdout.contains(expected),
+            "{expected} missing from {stdout}"
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Two target-specific variables on one target, where the second reads the
+/// first. Their order decides the answer, so it must not be a hash map's.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_applies_target_specific_variables_in_a_settled_order() {
+    let directory = test_directory("make-targetvar-order");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "BLAH := foo\n\
+         COMMAND = echo $(BLAH)\n\
+         all: ; @$(COMMAND)\n\
+         all: BLAH := bar\n\
+         all: COMMAND += snafu $(BLAH)\n",
+    )
+    .unwrap();
+
+    // Repeated, because the failure this covers was a coin flip: Rust seeds its
+    // hasher per process, so one run of the same Makefile said bar and the next
+    // said foo. One invocation cannot tell the difference.
+    for _ in 0..8 {
+        let output = make_command(&invoked_as(&directory, "make"), &directory)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("bar snafu bar"), "{stdout}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
