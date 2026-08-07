@@ -259,7 +259,7 @@ assertions (
     {id make-option-no-builtin-variables, kind @doing, author "brendan@necessary.nu", at 2026-08-06T23:41:26.745183723Z}
     {id make-recipe-one-shell-per-line, kind @doing, author "brendan@necessary.nu", at 2026-08-07T00:05:44.589481378Z}
     {id make-real-project-gate, kind @doing, author "brendan@necessary.nu", at 2026-08-07T00:53:37.398690019Z}
-    {id make-recursive-jobserver-reach, kind @doing, author "brendan@necessary.nu", at 2026-08-07T01:10:28.84834717Z}
+    {id make-recursive-jobserver-reach, kind @complete, author "brendan@necessary.nu", at 2026-08-07T02:09:17.462787007Z}
 )
 
 impl_evidence (
