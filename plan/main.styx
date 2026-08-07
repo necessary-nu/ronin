@@ -4781,6 +4781,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-07T02:08:32.477208632Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Fixed, and measured. Cause: a sub-make is handed a MAKEFLAGS built from its own switches (make/cli.rs `flag_environment`), which replaced the one the `--jobserver-auth` arrived in. `Transport::Inherited` published nothing on the belief that the process environment already carried the budget — true until the front end overwrites the variable that carries it. So the budget reached exactly one hop: the top served a fifo, Makefile2 drew on it, and every build.make below ran at -j1.\n\nNinja's own CMake Makefile at -j8, all three in one window on a busy host (load 30-45; the absolute numbers are inflated, the ratios are not):\n\n               wall     concurrent compiles (cc1plus, sampled every 2s)\n  GNU Make     32.6s    7 7 7 4 5 5 8 7\n  Ronin before 77.2s    2 2 3 2 1 1 0 1 1 3 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1\n  Ronin after  41.0s    8 3 5 6 4 6 7 6 3\n\nThe existing CLI test was too weak twice over. It asserted `peak <= jobs`, which -j1 satisfies; and its three levels sat side by side, where each level's implicit slot fills the budget whether or not the budget arrived. It now nests with the work at the deepest level and asserts peak == jobs exactly.\n\nA second defect found by probe on the same splice: with a command-line assignment, MAKEFLAGS came out `ks -- FOO=bar -j8 --jobserver-auth=...`, past the `--` that ends the switches. A GNU sub-make read `-j8` as a goal and died with \"No rule to make target '-j4'\". The splice now inserts before the `--`, matching GNU's word order.\n\nDeliberately not fixed, needs its own node and its own decision. An explicit `-j` under a parent jobserver publishes no budget at all, so everything below that sub-make runs serially. GNU Make warns \"-jN forced in submake: resetting jobserver mode\" and serves a fresh jobserver sized to N; Ronin declines the inherited one and serves nothing, which `rust_cli_serves_a_jobserver_only_at_the_top_of_the_tree` pins on purpose. In Make mode the same branch also drops the inherited auth from the rewritten MAKEFLAGS, so the comment in `normalize_runtime_options` — \"the commands still reach the parent's jobserver the way every other child does\" — is false there. Both are the same question: what a build that declines an inherited budget should publish. It touches the Ninja front end too."
+                    }
                 )
             }
         )
