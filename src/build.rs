@@ -1562,30 +1562,9 @@ impl<'a> Builder<'a> {
         let mut environment = self.options.environment.clone();
         // The jobserver publication and the Make switches both belong in
         // MAKEFLAGS, which is how GNU Make writes it: the single-letter group
-        // leads, then the job count and the auth token. Extending would let the
-        // publication shadow the switches, so the two are spliced instead.
-        for (name, published) in transport
-            .as_ref()
-            .map_or(&[][..], crate::jobserver::Transport::publication)
-        {
-            match environment
-                .iter_mut()
-                .find(|(existing, _)| existing == std::ffi::OsStr::new(name))
-            {
-                Some((_, Some(value))) => {
-                    let mut merged = value.clone();
-                    // MAKEFLAGS' publication leads with the space that follows
-                    // the letter group; MFLAGS' does not, because it is spelled
-                    // as a command line. Joining without checking runs the two
-                    // together into a single unparseable word.
-                    if !merged.is_empty() && !published.to_string_lossy().starts_with(' ') {
-                        merged.push(" ");
-                    }
-                    merged.push(published);
-                    *value = merged;
-                }
-                _ => environment.push(((*name).into(), Some(published.clone()))),
-            }
+        // leads, then the job count and the auth token.
+        if let Some(transport) = transport.as_ref() {
+            transport.publish_into(&mut environment);
         }
         let mut processes = ProcessSupervisor::<crate::jobserver::Acquisition>::in_directory(
             self.options.working_directory.as_path(),

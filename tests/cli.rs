@@ -2036,10 +2036,9 @@ fn a_recursive_makefile_re_enters_ronin_with_no_make_on_the_path() {
 // [spec:ronin:req:make.recursive-invocation/test]
 #[test]
 fn a_recursive_makefile_tree_shares_one_job_budget() {
-    use std::fmt::Write as _;
-
     const LEVELS: [&str; 3] = ["a", "b", "c"];
     const UNITS: usize = 6;
+    const BUDGETS: [usize; 3] = [1, 2, 4];
 
     let directory = test_directory("make-recursive-budget");
     let served = directory.join("jobservers");
@@ -2053,30 +2052,39 @@ fn a_recursive_makefile_tree_shares_one_job_budget() {
     .unwrap();
     std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
-    let mut top = String::from("all:");
-    for level in LEVELS {
-        write!(top, " {level}").unwrap();
-    }
-    top.push('\n');
-    for level in LEVELS {
+    // The levels nest and only the deepest one has work, which is the shape a
+    // generated build has. Levels side by side would not measure the budget's
+    // reach: every level owns one implicit slot, so a tree whose work sits one
+    // hop down runs `-j` recipes whether or not the budget arrived at all.
+    // Nothing tells any level how many jobs it may run.
+    let tree = |prefix: &str, recurse: &str| {
+        let (deepest, delegating) = LEVELS.split_last().expect("the tree has levels");
+        for (index, level) in delegating.iter().enumerate() {
+            let next = LEVELS[index + 1];
+            fs::write(
+                directory.join(format!("{prefix}{level}.mk")),
+                format!("all:\n\t@{recurse} -f {prefix}{next}.mk all\n.PHONY: all\n"),
+            )
+            .unwrap();
+        }
         let units = (0..UNITS)
-            .map(|unit| format!("{level}{unit}"))
+            .map(|unit| format!("{deepest}{unit}"))
             .collect::<Vec<_>>()
             .join(" ");
         fs::write(
-            directory.join(format!("{level}.mk")),
+            directory.join(format!("{prefix}{deepest}.mk")),
             format!(
                 "all: {units}\n{units}:\n\t@{} $@\n.PHONY: all {units}\n",
                 stamp.display()
             ),
         )
         .unwrap();
-        // Each level is a sub-make, and nothing tells it how many jobs it may
-        // run: what it may run is what the shared budget hands it.
-        write!(top, "{level}:\n\t@$(MAKE) -f {level}.mk all\n").unwrap();
-    }
-    writeln!(top, ".PHONY: all {}", LEVELS.join(" ")).unwrap();
-    fs::write(directory.join("Makefile"), &top).unwrap();
+        format!(
+            "all:\n\t@{recurse} -f {prefix}{}.mk all\n.PHONY: all\n",
+            LEVELS[0]
+        )
+    };
+    fs::write(directory.join("Makefile"), tree("", "$(MAKE)")).unwrap();
 
     let program = invoked_as(&directory, "make");
     let measure = |jobs: usize| {
@@ -2093,21 +2101,24 @@ fn a_recursive_makefile_tree_shares_one_job_budget() {
             String::from_utf8_lossy(&output.stderr)
         );
         let (peak, units) = peak_concurrency(&fs::read_to_string(&log).unwrap());
-        assert_eq!(units, LEVELS.len() * UNITS);
+        assert_eq!(units, UNITS);
         peak
     };
 
-    for jobs in [1, 2, 4] {
+    // Exactly `-j`, not at most it. The ceiling alone is met by a tree that
+    // runs one recipe at a time, which is what a budget reaching nobody looks
+    // like; the whole point of sharing it is that it is also spent.
+    for jobs in BUDGETS {
         let peak = measure(jobs);
-        assert!(
-            peak <= jobs,
-            "-j{jobs} let {peak} recipes of a recursive Makefile tree run at once"
+        assert_eq!(
+            peak, jobs,
+            "-j{jobs} ran {peak} recipes of a recursive Makefile tree at once"
         );
     }
     // The control: the same tree with each level given a budget of its own, so
     // the measurement above is evidence rather than a tautology.
     let _ = fs::remove_file(&log);
-    let unshared = top.replace("@$(MAKE) -f", "@env -u MAKEFLAGS $(MAKE) -j6 -f");
+    let unshared = tree("unshared-", "env -u MAKEFLAGS $(MAKE) -j6");
     fs::write(directory.join("unshared.mk"), unshared).unwrap();
     let output = make_command(&program, &directory)
         .args(["-j2", "-f", "unshared.mk"])
@@ -2118,7 +2129,7 @@ fn a_recursive_makefile_tree_shares_one_job_budget() {
     assert!(output.status.success());
     let (peak, _) = peak_concurrency(&fs::read_to_string(&log).unwrap());
     assert!(
-        peak > UNITS,
+        peak > BUDGETS[BUDGETS.len() - 1],
         "the control did not oversubscribe, so the shared measurement proves nothing"
     );
 

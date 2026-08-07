@@ -869,7 +869,10 @@ pub(crate) fn normalize_runtime_options(
     if options.jobs == JobLimit::Auto {
         if inheritable {
             options.jobs = JobLimit::Unlimited;
-            options.jobserver = Some(crate::jobserver::Transport::Inherited(connect_jobserver()?));
+            options.jobserver = Some(crate::jobserver::Transport::inherit(
+                connect_jobserver()?,
+                makeflags,
+            ));
         } else {
             options.jobs = unshared;
         }

@@ -159,12 +159,12 @@ const SERVED_TOKEN_CEILING: usize = 64 * 1024;
 /// Where a build gets its job slots from.
 ///
 /// Inheriting and serving are mutually exclusive by construction: a build that
-/// found a jobserver in its environment consumes that one and leaves the
-/// environment alone, so children keep reaching the same budget it does.
+/// found a jobserver in its environment consumes that one, so children keep
+/// reaching the same budget it does.
 #[derive(Clone, Debug)]
 pub(crate) enum Transport {
-    /// A jobserver a parent process published; children inherit it unchanged.
-    Inherited(jobserver::Client),
+    /// A jobserver a parent process published, with the words that named it.
+    Inherited(jobserver::Client, Vec<(&'static str, OsString)>),
     /// A jobserver this build created, sized to its own job limit.
     #[cfg(unix)]
     Served(Arc<ServedJobserver>),
@@ -189,18 +189,79 @@ impl Transport {
         }
     }
 
-    /// The environment a child needs to draw on this build's job budget.
+    /// Joins a jobserver a parent published, keeping how it was named.
     ///
-    /// Empty for an inherited jobserver: the variables that describe it are
-    /// already in this process's environment and children inherit them, so
-    /// republishing could only corrupt what a parent wrote.
-    pub(crate) fn publication(&self) -> &[(&'static str, OsString)] {
+    /// A sub-make is handed a MAKEFLAGS built from its own switches, which
+    /// replaces the one this budget arrived in. So the words naming the budget
+    /// have to be written again, or it reaches exactly one level down.
+    pub(crate) fn inherit(client: jobserver::Client, makeflags: Option<&str>) -> Self {
+        let budget = makeflags
+            .unwrap_or_default()
+            .split_ascii_whitespace()
+            .take_while(|word| *word != "--")
+            .filter(|word| word.starts_with("-j") || word.starts_with("--jobserver-"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let publication = if budget.is_empty() {
+            Vec::new()
+        } else {
+            publication_of(OsString::from(budget)).into()
+        };
+        Self::Inherited(client, publication)
+    }
+
+    /// The environment a child needs to draw on this build's job budget.
+    fn publication(&self) -> &[(&'static str, OsString)] {
         match self {
-            Self::Inherited(_) => &[],
+            Self::Inherited(_, publication) => publication,
             #[cfg(unix)]
             Self::Served(served) => &served.environment,
         }
     }
+
+    /// Writes this build's job budget into the environment a child is given.
+    ///
+    /// An inherited budget is only restored where the front end overrode the
+    /// variable carrying it. Elsewhere this process's own environment still
+    /// names it and a child inherits that, switches and all.
+    pub(crate) fn publish_into(&self, environment: &mut Vec<(OsString, Option<OsString>)>) {
+        let owned = !matches!(self, Self::Inherited(..));
+        for (name, published) in self.publication() {
+            match environment
+                .iter_mut()
+                .find(|(existing, _)| existing == std::ffi::OsStr::new(name))
+            {
+                Some((_, Some(value))) => splice(value, published),
+                _ if owned => environment.push(((*name).into(), Some(published.clone()))),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Joins a published budget into switches the front end already wrote.
+fn splice(switches: &mut OsString, published: &OsString) {
+    // GNU Make ends the switches at a `--` and writes the command-line
+    // assignments after it. A budget appended past that is read by a child as a
+    // goal to build, and there is no rule to make `-j4`.
+    if let Some((given, assignments)) = switches
+        .to_str()
+        .and_then(|switches| switches.split_once(" -- "))
+    {
+        let mut merged = OsString::from(given);
+        merged.push(published);
+        merged.push(" -- ");
+        merged.push(assignments);
+        *switches = merged;
+        return;
+    }
+    // MAKEFLAGS' publication leads with the space that follows the letter
+    // group; MFLAGS' does not, because it is spelled as a command line. Joining
+    // without checking runs the two together into a single unparseable word.
+    if !switches.is_empty() && !published.to_string_lossy().starts_with(' ') {
+        switches.push(" ");
+    }
+    switches.push(published);
 }
 
 /// A GNU Make jobserver this process created, owns, and removes.
@@ -325,6 +386,14 @@ impl Drop for ServedJobserver {
 }
 
 /// The environment GNU Make 4.4.1 would publish for this jobserver.
+#[cfg(unix)]
+fn publication_for(jobs: NonZeroUsize, path: &std::path::Path) -> [(&'static str, OsString); 3] {
+    let mut authorization = OsString::from(format!("-j{jobs} --jobserver-auth=fifo:"));
+    authorization.push(path);
+    publication_of(authorization)
+}
+
+/// The variables that carry a budget, given the words describing it.
 ///
 /// `MAKEFLAGS` leads with the group of single-letter switches, so an empty
 /// group shows as the leading space Make writes and children tolerate.
@@ -332,10 +401,7 @@ impl Drop for ServedJobserver {
 /// Make's; `CARGO_MAKEFLAGS` is the same value under the name the Rust
 /// ecosystem's jobserver clients read first, so a `cargo` or `cc` invoked from
 /// a build command joins this budget rather than inventing its own.
-#[cfg(unix)]
-fn publication_for(jobs: NonZeroUsize, path: &std::path::Path) -> [(&'static str, OsString); 3] {
-    let mut authorization = OsString::from(format!("-j{jobs} --jobserver-auth=fifo:"));
-    authorization.push(path);
+fn publication_of(authorization: OsString) -> [(&'static str, OsString); 3] {
     let mut makeflags = OsString::from(" ");
     makeflags.push(&authorization);
     [
@@ -453,7 +519,7 @@ impl JobserverClient {
         notify: impl FnMut(Acquisition) + Send + 'static,
     ) -> ProcessResult<Self> {
         let acquirer = match transport {
-            Transport::Inherited(client) => client
+            Transport::Inherited(client, _) => client
                 .into_helper_thread(notify)
                 .map(Acquirer::Inherited)
                 .map_err(|source| ProcessError::Jobserver {
@@ -654,7 +720,7 @@ mod tests {
         drop(probe.acquire().unwrap());
 
         let (sender, receiver) = mpsc::channel();
-        let client = JobserverClient::new(Transport::Inherited(transport), move |result| {
+        let client = JobserverClient::new(Transport::inherit(transport, None), move |result| {
             let _ = sender.send(result);
         })
         .unwrap();
@@ -672,7 +738,7 @@ mod tests {
         let transport = jobserver::Client::new(0).unwrap();
         let producer = transport.clone();
         let (sender, receiver) = mpsc::channel();
-        let mut client = JobserverClient::new(Transport::Inherited(transport), move |result| {
+        let mut client = JobserverClient::new(Transport::inherit(transport, None), move |result| {
             let _ = sender.send(result);
         })
         .unwrap();
@@ -786,14 +852,52 @@ mod tests {
 
     #[test]
     // [spec:ronin:req:make.jobserver/test]
-    fn an_inherited_jobserver_is_passed_to_children_untouched() {
-        let transport = Transport::Inherited(jobserver::Client::new(1).unwrap());
-        // The variables naming an inherited jobserver are already in this
-        // process's environment, so children reach it by inheriting them.
-        // Rewriting them here could only replace a parent's budget with a
-        // narrower view of it.
-        assert!(transport.publication().is_empty());
+    // [spec:ronin:req:make.recursive-invocation/test]
+    fn an_inherited_jobserver_survives_a_rewritten_makeflags() {
+        let inherit =
+            |makeflags| Transport::inherit(jobserver::Client::new(1).unwrap(), Some(makeflags));
+        let published = |transport: &Transport, environment: &mut Vec<_>| {
+            transport.publish_into(environment);
+            environment
+                .iter()
+                .map(|(name, value): &(OsString, Option<OsString>)| {
+                    format!(
+                        "{}={}",
+                        name.display(),
+                        value.clone().unwrap_or_default().display()
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
 
+        // Nothing overrides the variables naming the budget, so this process's
+        // own environment still describes it and a child inherits that whole —
+        // the switches a parent wrote beside it included.
+        let transport = inherit("ks -j4 --jobserver-auth=fifo:/tmp/x --no-print-directory");
+        assert!(published(&transport, &mut Vec::new()).is_empty());
+
+        // A sub-make is handed MAKEFLAGS built from its own switches, which
+        // would drop the budget one level below where it was found.
+        let mut rewritten = vec![
+            (
+                OsString::from("MAKEFLAGS"),
+                Some(OsString::from("ks -- A=1")),
+            ),
+            (OsString::from("MFLAGS"), Some(OsString::from("-ks"))),
+        ];
+        assert_eq!(
+            published(&transport, &mut rewritten),
+            [
+                "MAKEFLAGS=ks -j4 --jobserver-auth=fifo:/tmp/x -- A=1",
+                "MFLAGS=-ks -j4 --jobserver-auth=fifo:/tmp/x",
+            ]
+        );
+
+        // A parent that named no budget leaves nothing to write again.
+        let mut rewritten = vec![(OsString::from("MAKEFLAGS"), Some(OsString::from("ks")))];
+        assert_eq!(published(&inherit("ks"), &mut rewritten), ["MAKEFLAGS=ks"]);
+
+        let transport = inherit("--jobserver-auth=fifo:/tmp/x");
         let (sender, receiver) = mpsc::channel();
         let client = JobserverClient::new(transport, move |result| {
             let _ = sender.send(result);

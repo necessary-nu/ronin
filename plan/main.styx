@@ -4774,6 +4774,13 @@ children (
                         kind @note
                         text "A real recursive-make build runs at roughly `-j1` whatever `-j` says. Found by the first thing make-real-project-gate built, and invisible to GNU Make's suite.\n\nNinja's own CMake-generated Makefile, 541 recursive `$(MAKE)` lines, on a quiet host:\n\n              serial     -j8\n  GNU Make    89.1s      22.9s     3.9x\n  Ronin       88.7s      64.4s     1.4x\n\nSerial is a dead heat, so the evaluator, the graph and the scheduler are all fine. What is missing is only the parallelism, and sampling concurrent compiler processes every two seconds says how badly:\n\n  GNU     16 16 15 16 14 6 14 12 16 14 14 13 14 14 15 15 15 15 16 16\n  Ronin    4  4  2  6  4 2  2  2  2  2  2  1  2  2  2  2 15  9 13  7\n\nTwo processes is one compile — the c++ driver and its cc1plus. So for most of the build we run one recipe at a time, with brief bursts when a wide sub-make happens to get the budget.\n\nNot a scheduler bug: a top-level `-j8` on a flat Makefile parallelises correctly, and the CLI test for it passes. It is the budget not reaching down through the recursion. The top level serves a jobserver and publishes `--jobserver-auth` in MAKEFLAGS, and a child reads it back and sets JobLimit::Unlimited with an inherited transport — that path is tested. Something between there and the 541 nested invocations is not sharing.\n\nTwo things worth checking before writing any code, in this order. Whether the token budget is actually acquired per recipe by a child that inherited it, or whether the inherited transport hands out only what its own pipe was seeded with. And whether the depth matters: cmake nests three levels, Makefile to Makefile2 to build.make, and the auth may survive one hop and not two.\n\nThis outranks everything left in the suite queue. It is the difference between Ronin being a faster Make and a slower one, on the shape of build most projects with a Makefile actually have."
                     }
+
+                    {
+                        at 2026-08-07T01:10:28.84834717Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
         )
