@@ -1360,6 +1360,38 @@ fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Without `.ONESHELL` each recipe line is isolated; with it they share one
+/// shell, so a `cd` carries and a failing line does not stop the rest.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_shares_one_shell_across_a_recipe_only_under_oneshell() {
+    let directory = test_directory("make-oneshell");
+    fs::create_dir_all(&directory).unwrap();
+    let recipe = "all:\n\
+                  \t@V=set\n\
+                  \t@false\n\
+                  \t@echo \"[$$V]\"\n";
+    let run = |makefile: &str| {
+        fs::write(directory.join("Makefile"), makefile).unwrap();
+        let output = make_command(&invoked_as(&directory, "make"), &directory)
+            .output()
+            .unwrap();
+        (
+            output.status.success(),
+            String::from_utf8_lossy(&output.stdout).into_owned(),
+        )
+    };
+
+    let (ok, reported) = run(recipe);
+    assert!(!ok, "the false should have stopped the recipe: {reported}");
+
+    let (ok, reported) = run(&format!(".ONESHELL:\n{recipe}"));
+    assert!(ok, "{reported}");
+    assert!(reported.contains("[set]"), "{reported}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// `-R` withholds the tool defaults and implies `-r`, but leaves what Make
 /// defines about itself.
 // [spec:ronin:req:make.semantics/test]

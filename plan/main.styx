@@ -4300,9 +4300,24 @@ children (
 
             {
                 id make-recipe-one-shell-per-line
-                title "Run each recipe line in its own shell, as Make does without ONESHELL"
+                title "Share one shell across a recipe under .ONESHELL"
                 priority 3
                 kind @fix
+                log (
+                    {
+                        at 2026-08-07T00:05:44.589481378Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-07T00:14:02.334106954Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The defect this node described does not exist, and the one next to it did. Retitled to match what was actually wrong.\n\nIt said a `cd` persists across the `&&`-joined script because Make runs each line in its own shell and we run one. That is not what happens: gen_shell_script already wraps every line of a multi-line recipe in `( )`, so the isolation is there. Seven shapes checked against 4.4.1 and all matched before any change — `cd`, a shell variable, `exit`, `set -x`, a failing line stopping the rest, and a syntax error in a later line still letting the earlier one run.\n\nWhat was missing is the opposite. `.ONESHELL` asks for the lines to share a shell and was being declined, so a Makefile that uses it got the isolation it had explicitly turned off. Under it: a `cd` carries, a variable set in one line is visible in the next, and a failing line does not stop the rest — only the script's final status counts.\n\nSo the implementation is three conditions on the flag rather than new machinery: no subshell, lines separated by a newline instead of ` && `, and no `; true` for `-` since the intermediate statuses stop mattering.\n\nTen cases moved, 6 capability to semantic and 4 to narration.\n\nLeft: the `-` prefix and `@` under `.ONESHELL` apply to the first line only in GNU Make, which is not modelled — every line still carries its own. It did not show up in any shape probed, because `@` is narration here and `-` stops mattering once the intermediate statuses do."
+                    }
+                )
             }
 
             {

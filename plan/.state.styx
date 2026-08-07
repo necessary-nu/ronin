@@ -257,6 +257,7 @@ assertions (
     {id make-export-to-recipes, kind @doing, author "brendan@necessary.nu", at 2026-08-06T22:45:54.418565505Z}
     {id make-target-variable-order, kind @doing, author "brendan@necessary.nu", at 2026-08-06T23:25:44.994400945Z}
     {id make-option-no-builtin-variables, kind @doing, author "brendan@necessary.nu", at 2026-08-06T23:41:26.745183723Z}
+    {id make-recipe-one-shell-per-line, kind @doing, author "brendan@necessary.nu", at 2026-08-07T00:05:44.589481378Z}
 )
 
 impl_evidence (
