@@ -4739,6 +4739,43 @@ children (
                     }
                 )
             }
+
+            {
+                id make-real-project-gate
+                title "Build a real Makefile project with Make mode, as a gate"
+                priority 0
+                kind @test
+                log (
+                    {
+                        at 2026-08-07T00:53:37.398690019Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-07T01:07:13.484913118Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "scripts/check-make-project.sh builds Ninja from its own CMake-generated Unix Makefile with Make mode, and checks the artefacts exist and run rather than trusting the exit status.\n\nIt works: exit 0, `ninja` and `ninja_test` both linked, `./ninja --version` answers 1.14.0.git. So Make mode builds a real project — 541 recursive `$(MAKE)` lines, a `.NOTPARALLEL`, generated dependency files, a hundred-odd compiles.\n\nThe subject is reference/ninja, which the Ninja conformance gate already pins and which lives in the checkout rather than in /tmp. The build tree is generated once and kept: configuring is CMake's work and doing it per run would time the wrong tool.\n\nTwo findings in the first run, neither of which GNU Make's suite can see:\n\nThe job budget does not reach a recursive sub-make. GNU 22.9s at -j8 against our 64.4s, from an identical 89s serial — make-recursive-jobserver-reach has the evidence. This is now the most valuable open item and it was nowhere near the top of the queue an hour ago.\n\n`.NOTPARALLEL` is declared by every CMake-generated Makefile. It was sized at seven suite cases and P2 on make-ignore-errors-target; it is in the first real Makefile anyone tried.\n\nWhich is the argument for the gate. Ranking by suite case count put `--shuffle` and `-S` above both of these."
+                    }
+                )
+            }
+
+            {
+                id make-recursive-jobserver-reach
+                title "Share the job budget with a recursive sub-make"
+                priority 0
+                kind @fix
+                log (
+                    {
+                        at 2026-08-07T01:06:58.301524813Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "A real recursive-make build runs at roughly `-j1` whatever `-j` says. Found by the first thing make-real-project-gate built, and invisible to GNU Make's suite.\n\nNinja's own CMake-generated Makefile, 541 recursive `$(MAKE)` lines, on a quiet host:\n\n              serial     -j8\n  GNU Make    89.1s      22.9s     3.9x\n  Ronin       88.7s      64.4s     1.4x\n\nSerial is a dead heat, so the evaluator, the graph and the scheduler are all fine. What is missing is only the parallelism, and sampling concurrent compiler processes every two seconds says how badly:\n\n  GNU     16 16 15 16 14 6 14 12 16 14 14 13 14 14 15 15 15 15 16 16\n  Ronin    4  4  2  6  4 2  2  2  2  2  2  1  2  2  2  2 15  9 13  7\n\nTwo processes is one compile — the c++ driver and its cc1plus. So for most of the build we run one recipe at a time, with brief bursts when a wide sub-make happens to get the budget.\n\nNot a scheduler bug: a top-level `-j8` on a flat Makefile parallelises correctly, and the CLI test for it passes. It is the budget not reaching down through the recursion. The top level serves a jobserver and publishes `--jobserver-auth` in MAKEFLAGS, and a child reads it back and sets JobLimit::Unlimited with an inherited transport — that path is tested. Something between there and the 541 nested invocations is not sharing.\n\nTwo things worth checking before writing any code, in this order. Whether the token budget is actually acquired per recipe by a child that inherited it, or whether the inherited transport hands out only what its own pipe was seeded with. And whether the depth matters: cmake nests three levels, Makefile to Makefile2 to build.make, and the auth may survive one hop and not two.\n\nThis outranks everything left in the suite queue. It is the difference between Ronin being a faster Make and a slower one, on the shape of build most projects with a Makefile actually have."
+                    }
+                )
+            }
         )
     }
 )
