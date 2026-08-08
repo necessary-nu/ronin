@@ -2275,6 +2275,75 @@ fn a_recursive_makefile_re_enters_ronin_with_no_make_on_the_path() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// GNU Make's `should_print_dir` is `!silent && (makelevel > 0 || directories)`,
+/// so depth alone asks for the pair — this tree reaches its sub-make with `cd`
+/// rather than `-C`, and neither invocation is given `-w`. The level crosses a
+/// process boundary in `MAKELEVEL`, which is why it is measured through one.
+// [spec:ronin:req:product.make-identity/test]
+// [spec:ronin:req:make.recursive-invocation/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_sub_make_announces_the_directory_it_is_in_and_the_depth_it_is_at() {
+    let directory = test_directory("make-announce-level");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t@cd sub && $(MAKE) all\n.PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("sub/Makefile"),
+        "all:\n\t@echo bottom\n.PHONY: all\n",
+    )
+    .unwrap();
+    let here = directory.canonicalize().unwrap();
+    let top = here.display().to_string();
+    let below = here.join("sub").display().to_string();
+
+    let announced = |arguments: &[&str]| {
+        let output = make_command(&invoked_as(&directory, "make"), &directory)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.contains(" directory '"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+
+    // The top of the tree moved nowhere and was asked for nothing, so it says
+    // nothing; the level below announces without being asked, and the pair
+    // names the depth rather than the bare product name.
+    assert_eq!(
+        announced(&[]),
+        [
+            format!("ronin[1]: Entering directory '{below}'"),
+            format!("ronin[1]: Leaving directory '{below}'"),
+        ]
+    );
+    // -s withdraws what the depth implied, the way it withdraws what -C
+    // implies, and reaches the sub-make through MAKEFLAGS.
+    assert_eq!(announced(&["-s"]), [] as [String; 0]);
+    // -w asks outright for the pair the top of the tree does not imply, and
+    // the level below still counts itself one deeper.
+    assert_eq!(
+        announced(&["-w"]),
+        [
+            format!("ronin: Entering directory '{top}'"),
+            format!("ronin[1]: Entering directory '{below}'"),
+            format!("ronin[1]: Leaving directory '{below}'"),
+            format!("ronin: Leaving directory '{top}'"),
+        ]
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(all(unix, feature = "make"))]
 // [spec:ronin:req:make.jobserver/test]
 // [spec:ronin:req:make.recursive-invocation/test]
