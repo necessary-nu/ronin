@@ -1275,11 +1275,11 @@ pub(crate) fn run(
         ));
     }
     let outcome = planned.and_then(|planned| {
-        let up_to_date = planned.already_up_to_date();
-        planned.run().map(|outcome| (up_to_date, outcome))
+        let ending = (planned.already_up_to_date(), planned.disposable());
+        planned.run().map(|outcome| (ending, outcome))
     });
     let flushed = persistence.finish();
-    let (up_to_date, outcome) = match outcome {
+    let ((up_to_date, disposable), outcome) = match outcome {
         Ok(outcome) => outcome,
         Err(failure) => {
             return Ok(departed(
@@ -1290,13 +1290,10 @@ pub(crate) fn run(
         }
     };
     flushed?;
+    let silent = invocation.given(Switch::Silent);
+    let removed = discard_intermediates(&disposable, &invocation);
     Ok(departed(
-        finished(
-            reported,
-            up_to_date,
-            &outcome,
-            invocation.given(Switch::Silent),
-        ),
+        finished(reported, up_to_date, &outcome, silent, &removed),
         announcing,
         &directory,
     ))
@@ -1355,6 +1352,40 @@ fn pretend_at(graph: &mut crate::frontend::BuildGraph, invocation: &Invocation) 
     for assumed in &invocation.assumed_new {
         graph.assume_new(assumed.as_bytes());
     }
+}
+
+/// Throw away the files the build invented to complete a chain of implicit
+/// rules, and say so in GNU Make's words.
+///
+/// Last of everything the build does, and it happens whether the build finished
+/// or gave up: what was invented on the way is rubbish either way. `-t` made
+/// files by touching them rather than by running anything, so it leaves them
+/// alone; `-n` ran nothing, so it names what it would have removed and removes
+/// nothing.
+fn discard_intermediates(disposable: &[Vec<u8>], invocation: &Invocation) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if disposable.is_empty() || invocation.given(Switch::Touch) {
+        return Vec::new();
+    }
+    let pretending = invocation.given(Switch::DryRun);
+    let mut removed = Vec::new();
+    for path in disposable {
+        if pretending || std::fs::remove_file(Path::new(std::ffi::OsStr::from_bytes(path))).is_ok()
+        {
+            removed.push(path);
+        }
+    }
+    if removed.is_empty() || invocation.given(Switch::Silent) {
+        return Vec::new();
+    }
+    let mut said = b"rm".to_vec();
+    for path in removed {
+        said.push(b' ');
+        said.extend_from_slice(path);
+    }
+    said.push(b'\n');
+    said
 }
 
 /// What the Makefile said about running it, rather than about what to build.

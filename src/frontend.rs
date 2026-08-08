@@ -132,6 +132,15 @@ pub struct EdgeSpec<'a> {
     /// alias can also be one that is never up to date.
     // [spec:ronin:req:make.phony-always-dirty]
     pub always_dirty: bool,
+    /// Whether the outputs' absence is no reason to rebuild what reads them,
+    /// which is GNU Make's intermediate file: one its implicit rule search
+    /// invented to complete a chain, or one `.INTERMEDIATE` or `.SECONDARY`
+    /// named. A graph parsed from a manifest never carries it: Ninja has no way
+    /// to say it.
+    pub intermediate: bool,
+    /// Whether the front end should throw the outputs away once the build has
+    /// finished with them.
+    pub disposable: bool,
     /// Bindings local to this edge, already expanded.
     pub bindings: Vec<(Binding, Vec<u8>)>,
 }
@@ -441,6 +450,8 @@ impl BuildGraph {
             stored.set_explicit_output_count(spec.explicit_outputs.len());
             stored.set_input_partitions(explicit_inputs, non_order_only_inputs);
             stored.always_dirty = spec.always_dirty;
+            stored.intermediate = spec.intermediate;
+            stored.disposable = spec.disposable;
         }
         for (name, value) in spec.bindings {
             self.arenas
@@ -629,6 +640,8 @@ mod tests {
             order_only_inputs: &[],
             validations: &[],
             always_dirty: false,
+            intermediate: false,
+            disposable: false,
             bindings: Vec::new(),
         }
     }
@@ -653,6 +666,8 @@ mod tests {
                 order_only_inputs: &used[2..3],
                 validations: &used[3..],
                 always_dirty: true,
+                intermediate: false,
+                disposable: false,
                 bindings: vec![(description, b"copying".to_vec())],
             })
             .unwrap();

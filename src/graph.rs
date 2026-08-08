@@ -3,6 +3,7 @@
 mod edge;
 mod ids;
 mod index;
+mod intermediate;
 mod marks;
 mod path;
 mod validation;
@@ -61,6 +62,10 @@ pub(crate) struct Node {
 }
 
 // [spec:ronin:def:graph.edge]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the lint guards a positional argument list, and this is only ever filled in by name"
+)]
 pub(crate) struct Edge {
     pub(crate) rule: Option<RuleId>,
     pub(crate) pool: Option<PoolId>,
@@ -94,6 +99,17 @@ pub(crate) struct Edge {
     /// `-B` spells itself with that same bit, and would otherwise make every
     /// target look like a `.PHONY` one.
     pub(crate) untouchable: bool,
+    /// Whether the outputs are files the Makefile never names, invented by the
+    /// implicit rule search to complete a chain.
+    ///
+    /// GNU Make will not remake what reads such a file merely because it is
+    /// absent: the file stands in for the newest thing behind it, and only a
+    /// consumer that has to be rebuilt anyway makes it worth creating. It is
+    /// deleted once the build has finished.
+    pub(crate) intermediate: bool,
+    /// Whether the build throws this edge's outputs away once it has finished
+    /// with them, which every intermediate but a `.SECONDARY` one is.
+    pub(crate) disposable: bool,
     partitions: EdgePartitions,
 }
 
@@ -345,7 +361,32 @@ where
         newest_input = newest_input.max(input.mtime());
     }
 
-    let out_of_date = if graph.is_phony_rule(edge_data.rule) {
+    // A file the Makefile never names, invented to complete a chain and not
+    // there: GNU Make hides its absence from whatever reads it, standing the
+    // newest thing behind it in its place, and remakes it only once something
+    // that reads it has to be remade anyway. `push_intermediates` is that
+    // second half, which is why the substitution is recorded and not merely
+    // done — an output holding an input's timestamp no longer looks absent,
+    // and a build scans the same edge more than once.
+    let absent_intermediate = edge_data.intermediate
+        && (runtime.edge(edge).absent_intermediate()
+            || edge_data
+                .out
+                .iter()
+                .all(|output| runtime.node(*output).mtime().is_missing()));
+    runtime
+        .edge_mut(edge)
+        .set_absent_intermediate(absent_intermediate);
+    let edge_data = graph.edge(edge);
+
+    let out_of_date = if absent_intermediate {
+        for output in &edge_data.out {
+            if runtime.node(*output).mtime().is_missing() {
+                runtime.node_mut(*output).set_mtime(newest_input);
+            }
+        }
+        input_dirty
+    } else if graph.is_phony_rule(edge_data.rule) {
         let mut any_output_missing = false;
         for output in &edge_data.out {
             if runtime.node(*output).mtime().is_missing() {
@@ -398,6 +439,7 @@ where
 struct DirtyEvaluator {
     nodes: VisitMarks,
     edges: VisitMarks,
+    pushed: MarkSet,
 }
 
 impl DirtyEvaluator {
@@ -501,6 +543,7 @@ impl DirtyEvaluator {
                 }
             }
         }
+        self.push_intermediates(graph, runtime, target);
         Ok(runtime.node(target).dirty())
     }
 }
@@ -643,6 +686,8 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         dyndep: None,
         always_dirty: false,
         untouchable: false,
+        intermediate: false,
+        disposable: false,
         partitions: EdgePartitions::default(),
     });
     id
@@ -1423,6 +1468,40 @@ mod tests {
         assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
         assert!(runtime.node(alias_output).dirty());
         assert_eq!(runtime.node(alias_output).mtime(), FileTime::observed(1));
+    }
+
+    /// GNU Make's intermediate file: one the implicit rule search invented, so
+    /// its absence says nothing. A consumer sees the newest thing behind it
+    /// where the file itself would be, and only a consumer that has to run
+    /// anyway asks for the file to exist at all.
+    #[test]
+    fn ronin_graph_an_absent_intermediate_is_made_only_for_a_consumer_that_must_run() {
+        let mut graph = Graph::default();
+        let root = mkenv(&mut graph, None);
+        let middle = generated_node(&mut graph, root, "mid", &["src"]);
+        let consumer = generated_node(&mut graph, root, "out", &["mid"]);
+        let producer = graph.node(middle).gen.unwrap();
+        graph.edge_mut(producer).intermediate = true;
+
+        let settled = |mtimes: [(&str, i64); 2]| {
+            let mtimes = BTreeMap::from_iter(mtimes.map(|(path, mtime)| (path.to_owned(), mtime)));
+            let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
+            let mut runtime = RuntimeState::new(&graph);
+            let dirty = recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap();
+            (dirty, runtime)
+        };
+
+        // `mid` is not there and nothing minds: `out` is newer than `src`, and
+        // `mid` stands in for `src` rather than for a missing file.
+        let (dirty, runtime) = settled([("src", 1), ("out", 2)]);
+        assert!(!dirty);
+        assert!(!runtime.node(middle).dirty());
+        assert_eq!(runtime.node(middle).mtime(), FileTime::observed(1));
+
+        // `src` moved ahead of `out`, so `out` has to run and now needs it.
+        let (dirty, runtime) = settled([("src", 3), ("out", 2)]);
+        assert!(dirty);
+        assert!(runtime.node(middle).dirty());
     }
 
     /// GNU Make's `-W`: the file counts as just modified whatever the disk

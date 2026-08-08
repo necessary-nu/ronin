@@ -999,6 +999,19 @@ impl<'a> Builder<'a> {
         self.plan.is_empty() || self.plan.command_edge_count(self.graph) == 0
     }
 
+    /// The intermediate files this plan is going to create, which is GNU Make's
+    /// own test for which of them it may delete afterwards: one it was never
+    /// going to make is not one it put there.
+    pub(crate) fn disposable_outputs(&self) -> Vec<BString> {
+        self.plan
+            .wanted_edges(self.graph)
+            .into_iter()
+            .filter(|edge| self.graph.edge(*edge).disposable)
+            .flat_map(|edge| self.graph.edge(edge).out.iter().copied())
+            .map(|output| self.graph.node_path(output).to_owned())
+            .collect()
+    }
+
     /// Whether the build ran the command that generates `node`, and a `restat`
     /// rule did not then find the output unchanged.
     pub(crate) fn regenerated(&self, node: NodeId) -> bool {

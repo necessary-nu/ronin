@@ -132,6 +132,7 @@ pub(super) fn finished(
     up_to_date: bool,
     outcome: &Outcome,
     silent: bool,
+    removed: &[u8],
 ) -> RunResult {
     let mut stdout = terminated(reported);
     stdout.extend_from_slice(outcome.output());
@@ -140,6 +141,9 @@ pub(super) fn finished(
     } else if up_to_date && stdout.is_empty() && !silent {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: no work to do.\n").as_bytes());
     }
+    // Last of everything the build itself said, which is where GNU Make says
+    // what it threw away.
+    stdout.extend_from_slice(removed);
     RunResult {
         stdout,
         stderr: Vec::new(),
