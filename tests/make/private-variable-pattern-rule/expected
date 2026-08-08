@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| all: a.out
+| F = global
+| %.out: private F = pattern
+| %.out: dep ; @printf '[%s]\n' '$(F)' > $@
+| dep: ; @printf '[%s]\n' '$(F)' > dep.txt
+| all: ; @printf '[%s]\n' '$(F)' > all.txt
+file a.out touched 1
+| [pattern]
+file all.txt touched 1
+| [global]
+file dep.txt touched 1
+| [global]

@@ -318,6 +318,16 @@ fn exported_environment(
     // should not depend on which way the hash fell.
     names.sort_by_cached_key(|(name, _)| name.as_bytes(&ev.session));
     for (name, is_exported) in names {
+        // A recipe cannot reach a `private` variable, and a recipe's environment
+        // is the recipe's: `private export F = g` reaches `$(shell)` and nothing
+        // a rule runs.
+        if ev
+            .session
+            .peek_global_var(name)
+            .is_some_and(|var| var.read().is_private)
+        {
+            continue;
+        }
         let value = if is_exported {
             Some(std::ffi::OsString::from_vec(ev.eval_var(name)?.to_vec()))
         } else {
