@@ -282,6 +282,7 @@ assertions (
     {id make-deferred-output-portability, kind @doing, author "brendan@necessary.nu", at 2026-08-08T22:15:42.2258627Z}
     {id make-upstream-clean-worktree, kind @doing, author "brendan@necessary.nu", at 2026-08-08T22:34:40.338332867Z}
     {id make-diagnostic-prefix, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:45:20.264158794Z}
+    {id make-features-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:46:36.696066472Z}
 )
 
 impl_evidence (

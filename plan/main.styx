@@ -4289,6 +4289,29 @@ children (
                 title "Answer .FEATURES with what the evaluator actually supports"
                 kind @feat
                 deps (make-mode-cli)
+                sealed true
+                log (
+                    {
+                        at 2026-08-08T22:46:15.952928331Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T22:46:36.626612909Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Already delivered by de9abee6fa9675908c31a44cfb7c6cb459e16e66, which carries this node's nplan-id but uses the retired `done:` commit type. The current make_mode_claims_only_the_features_it_has integration test passes and exercises target-specific, order-only, else-if, and shortest-stem behavior before asserting the exact advertised set; jobserver and jobserver-fifo remain interface claims mapped to the outer Ninja scheduler. This is historical completion/provenance repair, not a reason to expand the feature list or emulate Make execution."
+                    }
+
+                    {
+                        at 2026-08-08T22:46:36.696066472Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {
