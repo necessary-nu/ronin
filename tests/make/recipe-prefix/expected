@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| .RECIPEPREFIX = >
+| all: out
+| out:
+| > echo prefixed > $@
+file out touched 1
+| prefixed

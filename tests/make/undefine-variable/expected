@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| FOO = set
+| undefine FOO
+| all: ; printf '[%s]\n' '$(FOO)' > out
+file out touched 1
+| []

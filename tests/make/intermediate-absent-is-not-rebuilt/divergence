@@ -1,0 +1,5 @@
+make-timestamp-dirtiness. hello.tsk exists and is newer than hello.x, so GNU Make
+does nothing; Ronin has no build-log entry for it on a first run, calls it dirty,
+and rebuilds through the absent intermediate. Correct on a second run, which is
+what makes this the same defect as up-to-date-without-log rather than a gap in
+make-intermediate-files.

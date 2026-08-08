@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| GREETING != echo hello
+| all: ; printf '%s\n' '$(GREETING)' > out
+file out touched 1
+| hello

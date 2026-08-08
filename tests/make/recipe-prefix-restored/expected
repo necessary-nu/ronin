@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| .RECIPEPREFIX = >
+| first:
+| > echo one > one.out
+| .RECIPEPREFIX =
+| second: first
+| 	echo two > two.out
+| all: second
+file one.out touched 1
+| one
