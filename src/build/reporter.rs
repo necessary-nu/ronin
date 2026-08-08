@@ -465,6 +465,10 @@ fn ninja_status(
 /// actually failed. The two agree for every one-line recipe and for every
 /// recipe whose first line is the one that fails; naming the other lines needs
 /// a shell per line, which is `make-recipe-one-shell-per-line`'s ground.
+///
+/// A failure the Makefile said to ignore drops the stars and gains the reason,
+/// `make: [Makefile:3: all] Error 1 (ignored)`, which is Make saying the target
+/// was made anyway.
 // [spec:ronin:req:product.make-identity]
 pub(super) fn make_failure(
     out: &mut Vec<u8>,
@@ -472,13 +476,15 @@ pub(super) fn make_failure(
     location: &[u8],
     target: &[u8],
     exit_code: i32,
+    ignored: bool,
 ) {
     out.extend_from_slice(name.as_bytes());
-    out.extend_from_slice(b": *** [");
+    out.extend_from_slice(if ignored { b": [" } else { b": *** [" });
     out.extend_from_slice(location);
     out.extend_from_slice(b": ");
     out.extend_from_slice(target);
-    let _ = writeln!(out, "] Error {exit_code}");
+    let _ = write!(out, "] Error {exit_code}");
+    out.extend_from_slice(if ignored { b" (ignored)\n" } else { b"\n" });
 }
 
 fn ninja_failure(
@@ -658,6 +664,7 @@ mod tests {
             restat: false,
             generator: false,
             use_console: false,
+            ignore_errors: false,
         }
     }
 

@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| .IGNORE: one
+| all: one two
+| one:
+| 	exit 5
+| 	echo one > one.out
+| two:
+| 	echo two > two.out
+file one.out touched 1
+| one
+file two.out touched 1
+| two

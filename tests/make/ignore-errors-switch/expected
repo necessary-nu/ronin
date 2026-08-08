@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| all:
+| 	false
+| 	exit 3
+| 	echo reached > out
+file out touched 1
+| reached

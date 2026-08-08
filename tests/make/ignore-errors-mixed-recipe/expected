@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+status 2
+file Makefile kept 5
+| all:
+| 	-exit 1
+| 	echo first > first.out
+| 	false
+| 	echo never > never.out
+file first.out touched 1
+| first

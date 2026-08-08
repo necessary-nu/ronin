@@ -24,7 +24,7 @@ pub(crate) use self::status::BuildState;
 
 type BuildResult<T> = Result<T, BuildError>;
 
-pub(crate) use command::{DRY_RUN_COMMAND, RECIPE_LOCATION};
+pub(crate) use command::{DRY_RUN_COMMAND, IGNORE_ERRORS, RECIPE_LOCATION};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum JobLimit {
@@ -1256,7 +1256,9 @@ impl<'a> Builder<'a> {
                 (!status.success()).then(|| crate::subprocess::exit_status_code(status)),
                 &visible_output,
             )?;
-            if !status.success() {
+            // A recipe whose errors Make was told to ignore leaves its target
+            // made: the status has been reported and the build carries on.
+            if !status.success() && !command.ignore_errors {
                 return Err(BuildError::SubcommandFailed {
                     edge,
                     command: command.command,
