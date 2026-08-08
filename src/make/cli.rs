@@ -37,6 +37,9 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+mod interface;
+use interface::{makeflags_arguments, prepend_command_line_evals};
+
 /// The makefiles GNU Make reads when no `-f` names one, in its own order.
 const DEFAULT_MAKEFILES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
 
@@ -57,6 +60,210 @@ const DB_PRINT: u16 = 0x010;
 const DB_WHY: u16 = 0x020;
 const DB_MAKEFILES: u16 = 0x100;
 const DB_ALL: u16 = 0xfff;
+
+/// What accepting a GNU Make option commits the front end to doing with it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OptionClass {
+    /// The option changes Makefile evaluation or the graph kati produces.
+    CompilerInput,
+    /// The option maps onto an ordinary control of the Ninja front end.
+    NinjaControl,
+    /// The spelling and argument are accepted without emulating Make's runner.
+    NoOp,
+}
+
+/// The argument shape GNU Make exposes for an option.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ArgumentShape {
+    None,
+    Required,
+    /// Optional only when attached: `-Oline` or `--output-sync=line`.
+    OptionalAttached,
+    /// Optional, with a following numeric word consumed when present.
+    OptionalNumeric,
+}
+
+/// One row of the GNU Make 4.4.1 command-line surface.
+struct InterfaceOption {
+    spellings: &'static [&'static str],
+    argument: ArgumentShape,
+    class: OptionClass,
+}
+
+/// Every option GNU Make 4.4.1 exposes, plus the three transport options it
+/// writes into `MAKEFLAGS` itself.
+///
+/// This is a classification table, not an implementation wish list. The
+/// parser uses it for deliberately ignored options, while the options with a
+/// compiler or Ninja meaning are handled explicitly below.
+// [spec:ronin:req:make.interface-compatibility]
+const MAKE_OPTION_SURFACE: &[InterfaceOption] = &[
+    InterfaceOption {
+        spellings: &["-b", "-m"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-B", "--always-make"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-C", "--directory"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::CompilerInput,
+    },
+    InterfaceOption {
+        spellings: &["-d"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["--debug"],
+        argument: ArgumentShape::OptionalAttached,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-e", "--environment-overrides"],
+        argument: ArgumentShape::None,
+        class: OptionClass::CompilerInput,
+    },
+    InterfaceOption {
+        spellings: &["-E", "--eval"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::CompilerInput,
+    },
+    InterfaceOption {
+        spellings: &["-f", "--file", "--makefile"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::CompilerInput,
+    },
+    InterfaceOption {
+        spellings: &["-h", "--help"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["-i", "--ignore-errors"],
+        argument: ArgumentShape::None,
+        class: OptionClass::CompilerInput,
+    },
+    InterfaceOption {
+        spellings: &["-I", "--include-dir"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::CompilerInput,
+    },
+    InterfaceOption {
+        spellings: &["-j", "--jobs"],
+        argument: ArgumentShape::OptionalNumeric,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["--jobserver-style"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["--jobserver-auth", "--jobserver-fds", "--sync-mutex"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-k", "--keep-going"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["-l", "--load-average", "--max-load"],
+        argument: ArgumentShape::OptionalNumeric,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["-L", "--check-symlink-times"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-n", "--just-print", "--dry-run", "--recon"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["-o", "--old-file", "--assume-old"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-O", "--output-sync"],
+        argument: ArgumentShape::OptionalAttached,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-p", "--print-data-base"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-q", "--question"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["-r", "--no-builtin-rules"],
+        argument: ArgumentShape::None,
+        class: OptionClass::CompilerInput,
+    },
+    InterfaceOption {
+        spellings: &["-R", "--no-builtin-variables"],
+        argument: ArgumentShape::None,
+        class: OptionClass::CompilerInput,
+    },
+    InterfaceOption {
+        spellings: &["--shuffle"],
+        argument: ArgumentShape::OptionalAttached,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-s", "--silent", "--quiet", "--no-silent"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["-S", "--no-keep-going", "--stop"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["-t", "--touch"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["--trace"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-v", "--version"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["-w", "--print-directory", "--no-print-directory"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["-W", "--what-if", "--new-file", "--assume-new"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::NoOp,
+    },
+    InterfaceOption {
+        spellings: &["--warn-undefined-variables"],
+        argument: ArgumentShape::None,
+        class: OptionClass::NoOp,
+    },
+];
 
 /// One `--debug` argument folded into what is already selected.
 ///
@@ -104,6 +311,8 @@ struct Invocation {
     goals: Vec<BString>,
     /// `VAR=value` in command-line order, which is the order Make applies them.
     variables: Vec<Bytes>,
+    /// Makefile statements supplied through `-E`/`--eval`, in source order.
+    evals: Vec<Bytes>,
     /// Each `--debug` argument as it was written. Kept as words rather than as
     /// the facets they mean, because a sub-make is handed them unchanged.
     debug: Vec<BString>,
@@ -137,6 +346,7 @@ impl Invocation {
             makefile: None,
             goals: Vec::new(),
             variables: Vec::new(),
+            evals: Vec::new(),
             debug: Vec::new(),
             shuffle: Shuffle::None,
             jobs: None,
@@ -198,79 +408,6 @@ impl Invocation {
             level = debug_facets(level, spec.as_bytes()).unwrap_or(level);
         }
         level
-    }
-
-    /// Take on what a parent make put in `MAKEFLAGS`.
-    ///
-    /// GNU Make reads that variable as though it were typed on the command
-    /// line, which is what makes `-s` and `-k` reach the whole tree from the
-    /// top of it. Ronin has to read it for the same reason, and more sharply:
-    /// this is the only way a switch reaches a sub-make, since `$(MAKE)` is a
-    /// path and carries nothing.
-    ///
-    /// Read before the command line rather than after it, which is what lets
-    /// the command line outrank it: GNU Make decodes this variable first and
-    /// the arguments second, so whichever spoke last about a switch is the one
-    /// that settles it, and the arguments always speak last. A switch nobody
-    /// typed keeps whatever arrived here.
-    ///
-    /// The switches and the assignments, and nothing else: the jobserver's
-    /// auth token is the transport's and goes with the rest of the long
-    /// options, which are skipped whole rather than read letter by letter,
-    /// since `--jobserver-auth` is full of letters that name switches. The two
-    /// long withdrawals are recognised by name before that skip, having no
-    /// letter to travel as.
-    // [spec:ronin:req:make.recursive-invocation]
-    fn adopt_inherited(&mut self, inherited: Option<&str>) {
-        let mut words = inherited.unwrap_or_default().split_ascii_whitespace();
-        for word in words.by_ref().take_while(|word| *word != "--") {
-            if let Some(switch) = Switch::long_negation(word.as_bytes()) {
-                self.withdraw(switch);
-                continue;
-            }
-            // The long options that carry a facet rather than a letter, and so
-            // would be lost to the skip below.
-            if let Some(spec) = word.strip_prefix("--debug=") {
-                self.debug.push(BString::from(spec));
-                continue;
-            }
-            if word == "--trace" {
-                self.add(Switch::Trace);
-                continue;
-            }
-            // A parent settled the seed, so this reads a permutation rather than
-            // a request and the whole tree shuffles the same way.
-            if let Some(spec) = word.strip_prefix("--shuffle=") {
-                if let Some(mode) = Shuffle::requested(spec.as_bytes()) {
-                    self.shuffle = mode;
-                }
-                continue;
-            }
-            // One word carrying a name, not a cluster: read letter by letter it
-            // would turn on -e and -r. A name this does not know is left to the
-            // one already settled rather than clearing it.
-            if let Some(kind) = word.strip_prefix("-O") {
-                if let Ok(sync) = OutputSync::parse(kind.as_bytes()) {
-                    self.output_sync = Some(sync);
-                }
-                continue;
-            }
-            if word.starts_with("--") || word.contains('=') {
-                continue;
-            }
-            for letter in word.trim_start_matches('-').bytes() {
-                if let Some(switch) = Switch::short(letter) {
-                    self.add(switch);
-                } else if let Some(switch) = Switch::short_negation(letter) {
-                    self.withdraw(switch);
-                }
-            }
-        }
-        // What follows the `--`, and read before the command line as the
-        // switches are, so a name assigned again here outranks the one that
-        // arrived.
-        self.variables
-            .extend(words.map(|word| Bytes::from(word.as_bytes().to_vec())));
     }
 
     /// The switches a sub-make has to be told about again.
@@ -645,6 +782,73 @@ fn load_value(arguments: &[BString], index: &mut usize, attached: &[u8]) -> Resu
         .ok_or_else(|| CliError::InvalidParameter { option: "-l" }.into())
 }
 
+/// Consume a deliberately ignored long option, including its required value.
+///
+/// Options with a compiler or Ninja mapping are handled explicitly. This
+/// fallback is the executable meaning of [`OptionClass::NoOp`]: accepting a
+/// spelling never silently turns it into Make runtime behavior.
+fn accept_noop_long(
+    option: &[u8],
+    arguments: &[BString],
+    index: &mut usize,
+) -> Result<bool, Error> {
+    for declared in MAKE_OPTION_SURFACE
+        .iter()
+        .filter(|declared| declared.class == OptionClass::NoOp)
+    {
+        for spelling in declared
+            .spellings
+            .iter()
+            .filter(|spelling| spelling.starts_with("--"))
+        {
+            let spelling = spelling.as_bytes();
+            if option == spelling {
+                if declared.argument == ArgumentShape::Required {
+                    let name = String::from_utf8_lossy(spelling);
+                    let _ = value(arguments, index, b"", &name)?;
+                }
+                return Ok(true);
+            }
+            if option.starts_with(spelling)
+                && option.get(spelling.len()) == Some(&b'=')
+                && matches!(
+                    declared.argument,
+                    ArgumentShape::Required | ArgumentShape::OptionalAttached
+                )
+            {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Consume a deliberately ignored short option from a cluster.
+fn accept_noop_short(
+    option: u8,
+    argument: &[u8],
+    short: &mut usize,
+    arguments: &[BString],
+    index: &mut usize,
+) -> Result<bool, Error> {
+    let spelling = [b'-', option];
+    let Some(declared) = MAKE_OPTION_SURFACE.iter().find(|declared| {
+        declared.class == OptionClass::NoOp
+            && declared
+                .spellings
+                .iter()
+                .any(|candidate| candidate.as_bytes() == spelling.as_slice())
+    }) else {
+        return Ok(false);
+    };
+    if declared.argument == ArgumentShape::Required {
+        let name = String::from_utf8_lossy(&spelling);
+        let _ = value(arguments, index, &argument[*short..], &name)?;
+        *short = argument.len();
+    }
+    Ok(true)
+}
+
 /// A long option carrying its value after an `=`, in the spellings that take
 /// one at all. Says whether the option was one of them.
 fn attached_long(
@@ -668,9 +872,14 @@ fn attached_long(
         .or_else(|| option.strip_prefix(b"--assume-new="))
     {
         invocation.assumed_new.push(BString::from(named));
+    } else if let Some(eval) = option.strip_prefix(b"--eval=") {
+        invocation.evals.push(Bytes::from(eval.to_vec()));
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
         invocation.jobs = Some(jobs_value(arguments, index, count)?);
-    } else if let Some(load) = option.strip_prefix(b"--load-average=") {
+    } else if let Some(load) = option
+        .strip_prefix(b"--load-average=")
+        .or_else(|| option.strip_prefix(b"--max-load="))
+    {
         invocation.load = Some(load_value(arguments, index, load)?);
     } else if let Some(kind) = option.strip_prefix(b"--output-sync=") {
         invocation.output_sync = Some(OutputSync::parse(kind)?);
@@ -682,16 +891,37 @@ fn attached_long(
 
 /// Read one Make command line, over whatever a parent make put in `MAKEFLAGS`.
 // [spec:ronin:req:product.make-identity]
-// [spec:ronin:req:make.recursive-invocation]
+// [spec:ronin:req:make.interface-compatibility]
 fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error> {
     let mut invocation = Invocation::new();
-    invocation.adopt_inherited(inherited);
+    if let Some(inherited) = inherited {
+        let inherited = makeflags_arguments(inherited);
+        if let Some(action) = parse_arguments(&mut invocation, &inherited)? {
+            return Ok(action);
+        }
+    }
+    if let Some(action) = parse_arguments(&mut invocation, arguments)? {
+        return Ok(action);
+    }
+    // GNU Make forgets -d once the words have had their say, so a `--debug=n`
+    // after it leaves nothing for a sub-make to inherit either.
+    if invocation.debugging() == 0 {
+        invocation.switches &= !Switch::Debug.bit();
+    }
+    Ok(Action::Execute(Box::new(invocation)))
+}
+
+/// Read one argv-shaped option source into an invocation.
+fn parse_arguments(
+    invocation: &mut Invocation,
+    arguments: &[BString],
+) -> Result<Option<Action>, Error> {
     let mut index = 1;
     let mut options_enabled = true;
     while index < arguments.len() {
         let argument = arguments[index].as_bytes();
         if !options_enabled || !argument.starts_with(b"-") || argument == b"-" {
-            classify_word(&mut invocation, &arguments[index]);
+            classify_word(invocation, &arguments[index]);
             index += 1;
             continue;
         }
@@ -709,8 +939,8 @@ fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error
             b"--" => options_enabled = false,
             // `-v` is GNU Make's short spelling, and its own test suite asks
             // for the version that way before it will run anything at all.
-            b"--version" | b"-v" => return Ok(Action::Immediate(reported(version()))),
-            b"--help" => return Ok(Action::Immediate(reported(usage()))),
+            b"--version" | b"-v" => return Ok(Some(Action::Immediate(reported(version())))),
+            b"--help" => return Ok(Some(Action::Immediate(reported(usage())))),
             b"--output-sync" => invocation.output_sync = Some(OutputSync::Target),
             // GNU Make's argument is optional and its default is the basic
             // level, which is also what the group of letters is read against.
@@ -718,10 +948,10 @@ fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error
             option if option.starts_with(b"--debug=") => {
                 let spec = &option["--debug=".len()..];
                 if debug_facets(0, spec).is_none() {
-                    return Ok(refuse(format_args!(
+                    return Ok(Some(refuse(format_args!(
                         "unknown debug level specification '{}'",
                         spec.to_str_lossy()
-                    )));
+                    ))));
                 }
                 invocation.debug.push(BString::from(spec));
             }
@@ -729,15 +959,17 @@ fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error
             option if option == b"--shuffle" || option.starts_with(b"--shuffle=") => {
                 let spec = option.strip_prefix(b"--shuffle=").unwrap_or(b"random");
                 let Some(mode) = Shuffle::requested(spec) else {
-                    return Ok(refuse(format_args!(
+                    return Ok(Some(refuse(format_args!(
                         "invalid shuffle mode: Invalid value: '{}'",
                         spec.to_str_lossy()
-                    )));
+                    ))));
                 };
                 invocation.shuffle = mode;
             }
             b"--jobs" => invocation.jobs = Some(jobs_value(arguments, &mut index, b"")?),
-            b"--load-average" => invocation.load = Some(load_value(arguments, &mut index, b"")?),
+            b"--load-average" | b"--max-load" => {
+                invocation.load = Some(load_value(arguments, &mut index, b"")?);
+            }
             b"--file" | b"--makefile" => {
                 let named = value(arguments, &mut index, b"", "--file")?;
                 invocation.makefile = Some(path_of(named.as_bytes())?);
@@ -750,35 +982,35 @@ fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error
                 let named = value(arguments, &mut index, b"", "--include-dir")?;
                 invocation.include_dir(named.as_bytes())?;
             }
+            b"--eval" => {
+                let eval = value(arguments, &mut index, b"", "--eval")?;
+                invocation.evals.push(Bytes::from(eval.to_vec()));
+            }
             b"--what-if" | b"--new-file" | b"--assume-new" => {
                 invocation
                     .assumed_new
                     .push(value(arguments, &mut index, b"", "--what-if")?);
             }
             option if option.starts_with(b"--") => {
-                if !attached_long(&mut invocation, option, arguments, &mut index)? {
-                    return Ok(refuse(format_args!(
+                if !attached_long(invocation, option, arguments, &mut index)?
+                    && !accept_noop_long(option, arguments, &mut index)?
+                {
+                    return Ok(Some(refuse(format_args!(
                         "unrecognized option '{}'",
                         option.to_str_lossy()
-                    )));
+                    ))));
                 }
             }
             _ => {
-                if let Some(immediate) =
-                    read_cluster(&mut invocation, argument, arguments, &mut index)?
+                if let Some(immediate) = read_cluster(invocation, argument, arguments, &mut index)?
                 {
-                    return Ok(immediate);
+                    return Ok(Some(immediate));
                 }
             }
         }
         index += 1;
     }
-    // GNU Make forgets -d once the words have had their say, so a `--debug=n`
-    // after it leaves nothing for a sub-make to inherit either.
-    if invocation.debugging() == 0 {
-        invocation.switches &= !Switch::Debug.bit();
-    }
-    Ok(Action::Execute(Box::new(invocation)))
+    Ok(None)
 }
 
 /// One `-abc` group, which is several switches unless one of them takes an
@@ -803,6 +1035,11 @@ fn read_cluster(
         }
         match option {
             b'h' => return Ok(Some(Action::Immediate(reported(usage())))),
+            b'E' => {
+                let eval = value(arguments, index, &argument[short..], "-E")?;
+                short = argument.len();
+                invocation.evals.push(Bytes::from(eval.to_vec()));
+            }
             b'j' => {
                 invocation.jobs = Some(jobs_value(arguments, index, &argument[short..])?);
                 short = argument.len();
@@ -841,10 +1078,12 @@ fn read_cluster(
                 }
             }
             _ => {
-                return Ok(Some(refuse(format_args!(
-                    "invalid option -- '{}'",
-                    char::from(option)
-                ))))
+                if !accept_noop_short(option, argument, &mut short, arguments, index)? {
+                    return Ok(Some(refuse(format_args!(
+                        "invalid option -- '{}'",
+                        char::from(option)
+                    ))));
+                }
             }
         }
     }
@@ -1271,7 +1510,7 @@ pub(crate) fn run(
     );
     record_invocation_variables(&mut session, &invocation, level)?;
 
-    let mut graph = match evaluated(session, invocation.shuffle, &reported) {
+    let mut graph = match evaluated(session, &invocation.evals, invocation.shuffle, &reported) {
         Ok(loaded) => adopt(&mut options, loaded),
         Err(result) => return Ok(result),
     };
@@ -1355,10 +1594,18 @@ fn record_invocation_variables(
 /// it; naming it again here would say it twice.
 // [spec:ronin:req:make.recursive-invocation]
 fn evaluated(
-    session: Session,
+    mut session: Session,
+    evals: &[Bytes],
     shuffle: Shuffle,
     reported: &str,
 ) -> Result<crate::make::Loaded, RunResult> {
+    if let Err(failure) = prepend_command_line_evals(&mut session, evals) {
+        return Err(RunResult {
+            stdout: terminated(reported),
+            stderr: terminated(failure.to_string()),
+            exit_code: ABANDONED,
+        });
+    }
     crate::make::load_makefile(session, shuffle).map_err(|failure| RunResult {
         stdout: terminated(reported),
         stderr: terminated(failure.to_string()),
@@ -1428,28 +1675,19 @@ fn narrate(
 }
 
 #[cfg(test)]
+mod interface_tests;
+
+#[cfg(test)]
 mod tests {
-    use super::{
-        announcement, parse, Action, Invocation, OutputSync, Shuffle, Switch, PRODUCT_NAME,
-    };
+    use super::interface_tests::{parsed, parsed_under, refused};
+    use super::{announcement, Invocation, OutputSync, Shuffle, Switch, PRODUCT_NAME};
     use crate::build::JobLimit;
     use crate::util::BString;
     use std::path::{Path, PathBuf};
 
-    fn parsed(arguments: &[&str]) -> Invocation {
-        let arguments = arguments
-            .iter()
-            .map(|argument| BString::from(*argument))
-            .collect::<Vec<_>>();
-        match parse(&arguments, None).unwrap() {
-            Action::Execute(invocation) => *invocation,
-            Action::Immediate(_) => panic!("these arguments describe a build"),
-        }
-    }
-
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn make_options_map_onto_the_settings_the_scheduler_already_has() {
+    fn maps_make_options_to_ninja_controls() {
         let invocation = parsed(&[
             "make", "-j8", "-k", "-n", "-f", "other.mk", "all", "FOO=bar",
         ]);
@@ -1466,7 +1704,7 @@ mod tests {
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn clustered_switches_and_repeated_directories_read_as_make_reads_them() {
+    fn parses_clusters_and_directories() {
         let invocation = parsed(&["make", "-kn", "-C", "a", "-C", "b"]);
         assert!(invocation.given(Switch::KeepGoing) && invocation.given(Switch::DryRun));
         assert_eq!(
@@ -1477,7 +1715,7 @@ mod tests {
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn a_lone_jobs_flag_takes_a_number_and_leaves_a_goal_alone() {
+    fn parses_optional_jobs_count() {
         let unlimited = parsed(&["make", "-j", "all"]);
         assert_eq!(unlimited.jobs, Some(JobLimit::Unlimited));
         assert_eq!(unlimited.goals, vec![BString::from("all")]);
@@ -1492,7 +1730,7 @@ mod tests {
     /// defect — upstream's own suite dies with ENOENT on it.
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
-    fn make_is_the_invoked_path_and_nothing_else() {
+    fn make_variable_is_invoked_path() {
         let arguments = |program: &str| vec![BString::from(program)];
         let executable = std::path::Path::new("/opt/ronin");
 
@@ -1518,18 +1756,8 @@ mod tests {
     /// the parent named still takes effect.
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
-    fn a_sub_make_takes_on_the_switches_its_parent_recorded() {
-        // The same read `parsed` does, with something for it to read over.
-        let under = |inherited: Option<&str>, arguments: &[&str]| {
-            let arguments = arguments
-                .iter()
-                .map(|argument| BString::from(*argument))
-                .collect::<Vec<_>>();
-            match parse(&arguments, inherited).unwrap() {
-                Action::Execute(invocation) => *invocation,
-                Action::Immediate(_) => panic!("these arguments describe a build"),
-            }
-        };
+    fn inherits_parent_switches() {
+        let under = parsed_under;
 
         let invocation = under(Some("ks -- FOO=bar"), &["make", "all"]);
         assert!(invocation.given(Switch::KeepGoing));
@@ -1579,7 +1807,7 @@ mod tests {
     /// is where GNU Make puts the two apart.
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
-    fn a_sub_make_is_told_the_switches_and_the_assignments_through_makeflags() {
+    fn exports_makeflags_and_mflags() {
         let invocation = parsed(&["make", "-k", "-s", "FOO=bar", "all"]);
         let environment = super::flag_environment(&invocation);
         let value = |name: &str| {
@@ -1595,27 +1823,9 @@ mod tests {
         assert_eq!(value("CARGO_MAKEFLAGS"), None);
     }
 
-    /// The diagnostic an argument list is refused with, or nothing if it
-    /// described a build after all.
-    fn refused(arguments: &[&str]) -> Option<String> {
-        let arguments = arguments
-            .iter()
-            .map(|argument| BString::from(*argument))
-            .collect::<Vec<_>>();
-        match parse(&arguments, None).unwrap() {
-            Action::Immediate(result) => {
-                // An option Make does not know is a build it will not attempt,
-                // and GNU Make abandons with two whatever the reason.
-                assert_eq!(result.exit_code, super::ABANDONED);
-                Some(String::from_utf8_lossy(&result.stderr).into_owned())
-            }
-            Action::Execute(_) => None,
-        }
-    }
-
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn each_switch_reads_the_same_from_its_letter_and_from_its_long_name() {
+    fn accepts_short_and_long_switches() {
         for (letter, name) in [
             ("-B", "--always-make"),
             ("-e", "--environment-overrides"),
@@ -1644,7 +1854,7 @@ mod tests {
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn a_negating_spelling_takes_back_the_switch_it_names() {
+    fn negation_withdraws_switch() {
         for (spelling, switch) in [
             ("-S", Switch::KeepGoing),
             ("--no-keep-going", Switch::KeepGoing),
@@ -1666,7 +1876,7 @@ mod tests {
     /// GNU Make's help: "Turn off -w, even if it was turned on implicitly".
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn refusing_to_print_the_directory_withdraws_what_dash_c_implied() {
+    fn directory_negation_overrides_chdir() {
         assert!(parsed(&["make", "-C", "."]).announcing(0));
         assert!(!parsed(&["make", "-C", ".", "--no-print-directory"]).announcing(0));
         // Silent withdraws the implication and not the request, which is a
@@ -1677,7 +1887,7 @@ mod tests {
 
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
-    fn a_sub_make_is_told_what_was_taken_back_as_well_as_what_was_asked_for() {
+    fn propagates_switch_negations() {
         let makeflags = |arguments: &[&str]| {
             let mut all = vec!["make"];
             all.extend_from_slice(arguments);
@@ -1739,8 +1949,7 @@ mod tests {
             " --trace --no-print-directory"
         );
 
-        let mut adopted = parsed(&["make", "all"]);
-        adopted.adopt_inherited(Some("S --no-print-directory --no-silent"));
+        let adopted = parsed_under(Some("S --no-print-directory --no-silent"), &["make", "all"]);
         assert!(adopted.refused(Switch::KeepGoing));
         assert!(adopted.refused(Switch::PrintDirectory));
         assert!(adopted.refused(Switch::Silent));
@@ -1748,8 +1957,10 @@ mod tests {
 
         // And the two long spellings back again, which the letterwise read
         // would otherwise lose.
-        let mut adopted = parsed(&["make", "--debug=b"]);
-        adopted.adopt_inherited(Some("k --debug=b --trace --shuffle=12345"));
+        let adopted = parsed_under(
+            Some("k --debug=b --trace --shuffle=12345"),
+            &["make", "--debug=b"],
+        );
         assert_eq!(adopted.shuffle, Shuffle::Seed(12345));
         assert_eq!(
             adopted.debugging(),
@@ -1767,7 +1978,7 @@ mod tests {
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn a_cluster_of_the_new_switches_reads_as_make_reads_it() {
+    fn parses_extended_switch_cluster() {
         let invocation = parsed(&["make", "-kiBrq", "all"]);
         assert!(invocation.given(Switch::KeepGoing));
         assert!(invocation.given(Switch::IgnoreErrors));
@@ -1779,7 +1990,7 @@ mod tests {
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn a_lone_load_flag_takes_a_number_and_leaves_a_goal_alone() {
+    fn parses_optional_load_limit() {
         // A bare -l lifts the limit rather than imposing one, and the word
         // after it is still a goal.
         let lifted = parsed(&["make", "-l", "all"]);
@@ -1803,7 +2014,7 @@ mod tests {
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn a_load_ceiling_reaches_the_setting_the_scheduler_already_honours() {
+    fn maps_load_limit_to_scheduler() {
         let directory = std::env::temp_dir();
         let runner = crate::cli::Runner::new(&directory).unwrap();
         let options = |arguments: &[&str]| {
@@ -1821,7 +2032,7 @@ mod tests {
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn the_announcement_is_asked_for_by_w_and_implied_by_c() {
+    fn maps_directory_announcement_switches() {
         assert!(!parsed(&["make"]).announcing(0));
         assert!(parsed(&["make", "-w"]).announcing(0));
         assert!(parsed(&["make", "-C", "sub"]).announcing(0));
@@ -1837,7 +2048,7 @@ mod tests {
     /// things that withdraw what `-C` implied.
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn a_sub_make_announces_its_directory_without_being_asked() {
+    fn recursion_implies_directory_announcement() {
         assert!(parsed(&["make"]).announcing(1));
         assert!(!parsed(&["make", "-s"]).announcing(1));
         assert!(!parsed(&["make", "--no-print-directory"]).announcing(1));
@@ -1849,7 +2060,7 @@ mod tests {
     /// the same invocation names.
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn the_announcement_carries_the_level_it_was_made_at() {
+    fn directory_announcement_carries_level() {
         assert_eq!(
             announcement("Entering", Path::new("/sub"), 0),
             format!("{PRODUCT_NAME}: Entering directory '/sub'")
@@ -1866,7 +2077,7 @@ mod tests {
     /// told which switches were asked for, not which files to pretend about.
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
-    fn a_sub_make_is_told_every_switch_it_would_otherwise_lose() {
+    fn propagates_inherited_switches() {
         let invocation = parsed(&["make", "-Beikqrstw", "-W", "b.x", "all"]);
         let environment = super::flag_environment(&invocation);
         assert_eq!(
@@ -1883,7 +2094,7 @@ mod tests {
     /// arrives in.
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn what_if_names_a_file_in_each_spelling_make_accepts() {
+    fn accepts_what_if_aliases() {
         for spelling in [
             ["-W", "b.x"].as_slice(),
             ["-Wb.x"].as_slice(),
@@ -1910,7 +2121,7 @@ mod tests {
     /// question mode never gets its say and the invocation speaks after all.
     // [spec:ronin:req:make.question-status/test]
     #[test]
-    fn touching_outranks_the_question_it_would_otherwise_have_answered() {
+    fn touch_overrides_question_mode() {
         assert!(parsed(&["make", "-q"]).questioning());
         assert!(!parsed(&["make", "-q", "-t"]).questioning());
         assert!(!parsed(&["make", "-w", "-q"]).announcing(0));
@@ -1922,7 +2133,7 @@ mod tests {
     /// well as their own, and `n` takes back whatever preceded it.
     // [spec:ronin:req:product.make-identity/test]
     #[test]
-    fn a_debug_argument_selects_the_facets_gnu_make_reads_out_of_it() {
+    fn parses_debug_facets() {
         let level = |arguments: &[&str]| {
             let mut all = vec!["make"];
             all.extend_from_slice(arguments);
@@ -1950,41 +2161,6 @@ mod tests {
         let diagnostic = refused(&["make", "--debug=x"]).expect("a level Make does not have");
         assert!(
             diagnostic.starts_with("ronin: unknown debug level specification 'x'"),
-            "{diagnostic}"
-        );
-    }
-
-    // [spec:ronin:req:product.make-identity/test]
-    #[test]
-    fn an_option_no_front_end_has_is_refused_by_name() {
-        let diagnostic = refused(&["make", "--print-data-base"]).expect("an unknown option");
-        assert!(
-            diagnostic.starts_with("ronin: unrecognized option '--print-data-base'"),
-            "{diagnostic}"
-        );
-    }
-
-    // [spec:ronin:req:product.make-identity/test]
-    #[test]
-    fn the_options_no_machinery_answers_are_still_refused_by_name() {
-        // Each needs work the graph does not take — an old-file override, a
-        // database dump — and being refused is what keeps an invocation that
-        // asks for one from quietly building something else.
-        for option in ["-o", "-p"] {
-            let diagnostic = refused(&["make", option, "x"])
-                .unwrap_or_else(|| panic!("{option} cannot describe a build"));
-            assert!(
-                diagnostic.starts_with(&format!(
-                    "ronin: invalid option -- '{}'",
-                    option.trim_start_matches('-')
-                )),
-                "{diagnostic}"
-            );
-        }
-        let diagnostic =
-            refused(&["make", "--old-file", "x"]).expect("--old-file cannot describe a build");
-        assert!(
-            diagnostic.starts_with("ronin: unrecognized option '--old-file'"),
             "{diagnostic}"
         );
     }

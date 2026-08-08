@@ -518,4 +518,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule make.state-outside-the-tree}
     )}
+    {id make-interface-surface, covered_rules (
+        make.interface-compatibility
+    ), covered_claims (
+        {impl_name target-impl, rule make.interface-compatibility}
+    )}
 )

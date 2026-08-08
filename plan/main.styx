@@ -5383,6 +5383,13 @@ children (
                                 kind @decision
                                 text "Accept every GNU Make 4.4.1 option spelling and argument shape on argv and through MAKEFLAGS. Give every accepted option an explicit classification: kati compiler input, mapping to an already-existing Ninja control, or accepted no-op. Test syntactic acceptance separately from behavior. Graph-affecting goals, assignments, include paths, and evaluation controls must reach compilation; output ceremony and Make-runner controls do not acquire executor implementations merely because their spellings are accepted."
                             }
+
+                            {
+                                at 2026-08-08T14:23:55.282653354Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
                         )
                     }
 
