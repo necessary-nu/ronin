@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-04T18:10:27.805223477Z
+last_sync_at 2026-08-08T21:00:59.885791732Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -15,13 +15,13 @@ rule_versions (
     {id compat.upstream-conformance, version 0}
     {id compat.version-reporting, version 0}
     {id frontend.graph-construction, version 0}
+    {id make.compiler-boundary, version 0}
     {id make.graph-direct, version 0}
-    {id make.jobserver, version 0}
+    {id make.interface-compatibility, version 0}
     {id make.manifest-equivalence, version 0}
+    {id make.narration, version 0}
     {id make.no-ambient-state, version 0}
-    {id make.recursive-invocation, version 0}
     {id make.scope-separation, version 0}
-    {id make.semantics, version 0}
     {id performance.allocation-accounting, version 0}
     {id performance.no-unexplained-regression, version 0}
     {id performance.reproducible-baseline, version 0}
@@ -47,6 +47,7 @@ rule_versions (
 derived_priorities (
     {id kati-build-sink, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-caches-session, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id kati-command-escapes, priority 2, derived_at 2026-08-08T21:00:59.885791732Z}
     {id kati-flags-value, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-graph-sink, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-no-globals-gate, priority 3, derived_at 2026-08-04T18:10:27.805223477Z}
@@ -59,10 +60,17 @@ derived_priorities (
     {id kati-symtab-split, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-wellknown-symbols, priority 3, derived_at 2026-08-04T18:10:27.805223477Z}
     {id make-conformance-corpus, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-deferred-output-portability, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-diagnostic-identity, priority 0, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-diagnostic-prefix, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-features-variable, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
     {id make-graph-equivalence, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
-    {id make-jobserver-server, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-io-error-wording, priority 0, derived_at 2026-08-08T21:00:59.885791732Z}
     {id make-licence-position, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-mode-cli, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-option-coverage, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-phony-always-dirty, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-variable-is-one-word, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
     {id ronin-alloc-metrics, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-allocator-revisit, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-arena-slot-access, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
@@ -107,6 +115,7 @@ derived_priorities (
     {id ronin-node-locality-at-scale, priority 1, derived_at 2026-07-31T14:10:28.410346265Z}
     {id ronin-node-validation-side-table, priority 0, derived_at 2026-08-01T22:31:11.051420975Z}
     {id ronin-output-pipe-not-socketpair, priority 0, derived_at 2026-08-01T20:24:12.837017389Z}
+    {id ronin-package-with-fork, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
     {id ronin-path-interning-arena, priority 1, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-path-scratch, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-phony-console-ids, priority 0, derived_at 2026-07-30T09:13:15.704782991Z}
@@ -238,7 +247,6 @@ assertions (
     {id ronin-package-with-fork, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:32:30.487992622Z}
     {id make-option-coverage, kind @complete, author "brendan@necessary.nu", at 2026-08-05T13:32:38.518451978Z}
     {id make-diagnostic-identity, kind @doing, author "brendan@necessary.nu", at 2026-08-06T12:46:51.337695077Z}
-    {id make-recipe-echo-line, kind @doing, author "brendan@necessary.nu", at 2026-08-06T14:11:31.44520241Z}
     {id make-vpath-search, kind @doing, author "brendan@necessary.nu", at 2026-08-06T16:56:50.577719384Z}
     {id make-dot-prefixed-target-nodes, kind @complete, author "brendan@necessary.nu", at 2026-08-06T20:01:04.458125837Z}
     {id make-implicit-rule-chaining, kind @complete, author "brendan@necessary.nu", at 2026-08-06T21:24:48.860635896Z}
@@ -270,16 +278,66 @@ assertions (
     {id make-recipe-failure-line, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:56:34.37591408Z}
     {id make-switch-precedence, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:56:34.515784999Z}
     {id make-makelike-audit, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:22:49.921372177Z}
-    {id make-subninja-recursion, kind @doing, author "brendan@necessary.nu", at 2026-08-08T15:14:36.672578691Z}
 )
 
 impl_evidence (
+    {id kati-graph-sink, covered_rules (
+        make.graph-direct
+    ), covered_claims (
+        {impl_name target-impl, rule make.graph-direct}
+    ), rule_versions_seen (
+        {id make.graph-direct, version 0}
+    )}
+    {id kati-session-value, covered_rules (
+        make.no-ambient-state
+    ), covered_claims (
+        {impl_name target-impl, rule make.no-ambient-state}
+    ), rule_versions_seen (
+        {id make.no-ambient-state, version 0}
+    )}
     {id kati-symtab-split, covered_rules (
         make.scope-separation
     ), covered_claims (
         {impl_name target-impl, rule make.scope-separation}
     ), rule_versions_seen (
         {id make.scope-separation, version 0}
+    )}
+    {id make-build-intent-gate}
+    {id make-executor-boundary}
+    {id make-graph-equivalence, covered_rules (
+        make.manifest-equivalence
+    ), covered_claims (
+        {impl_name target-impl, rule make.manifest-equivalence}
+    ), rule_versions_seen (
+        {id make.manifest-equivalence, version 0}
+    )}
+    {id make-interface-surface, covered_rules (
+        make.interface-compatibility
+    ), covered_claims (
+        {impl_name target-impl, rule make.interface-compatibility}
+    ), rule_versions_seen (
+        {id make.interface-compatibility, version 0}
+    )}
+    {id make-mode-cli, covered_rules (
+        product.make-identity
+    ), covered_claims (
+        {impl_name target-impl, rule product.make-identity}
+    ), rule_versions_seen (
+        {id product.make-identity, version 0}
+    )}
+    {id make-ninja-narration, covered_rules (
+        make.narration
+    ), covered_claims (
+        {impl_name target-impl, rule make.narration}
+    ), rule_versions_seen (
+        {id make.narration, version 0}
+        {id product.make-identity, version 0}
+    )}
+    {id make-single-ninja-scheduler}
+    {id make-subninja-recursion, covered_rules (
+        make.recursive-invocation
+    ), covered_claims (
+        {impl_name target-impl, rule make.recursive-invocation}
     )}
     {id ronin-alloc-metrics, covered_rules (
         performance.allocation-accounting
@@ -481,52 +539,5 @@ impl_evidence (
         {impl_name target-impl, rule runtime.typed-runtime-state}
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
-    )}
-    {id kati-session-value, covered_rules (
-        make.no-ambient-state
-    ), covered_claims (
-        {impl_name target-impl, rule make.no-ambient-state}
-    )}
-    {id make-jobserver-server, covered_rules (
-        make.jobserver
-    ), covered_claims (
-        {impl_name target-impl, rule make.jobserver}
-    )}
-    {id make-conformance-corpus, covered_rules (
-        make.semantics
-    ), covered_claims (
-        {impl_name target-impl, rule make.semantics}
-    )}
-    {id kati-graph-sink, covered_rules (
-        make.graph-direct
-    ), covered_claims (
-        {impl_name target-impl, rule make.graph-direct}
-    )}
-    {id make-graph-equivalence, covered_rules (
-        make.manifest-equivalence
-    ), covered_claims (
-        {impl_name target-impl, rule make.manifest-equivalence}
-    )}
-    {id make-mode-cli, covered_rules (
-        make.recursive-invocation
-        product.make-identity
-    ), covered_claims (
-        {impl_name target-impl, rule make.recursive-invocation}
-        {impl_name target-impl, rule product.make-identity}
-    )}
-    {id make-state-outside-the-tree, covered_rules (
-        make.state-outside-the-tree
-    ), covered_claims (
-        {impl_name target-impl, rule make.state-outside-the-tree}
-    )}
-    {id make-interface-surface, covered_rules (
-        make.interface-compatibility
-    ), covered_claims (
-        {impl_name target-impl, rule make.interface-compatibility}
-    )}
-    {id make-ninja-narration, covered_rules (
-        make.narration
-    ), covered_claims (
-        {impl_name target-impl, rule make.narration}
     )}
 )

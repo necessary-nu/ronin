@@ -10,6 +10,7 @@ children (
         id ninja-upstream-tests
         title "Port Ninja upstream unit-test coverage to Rust"
         priority 0
+        kind @test
         sealed true
         log (
             {
@@ -40,6 +41,7 @@ children (
         id port-scan-nested-modules
         title "Track translated symbols in nested Rust modules"
         priority 0
+        kind @fix
         deps (ninja-upstream-tests)
         sealed true
         log (
@@ -62,6 +64,7 @@ children (
     {
         id ronin-idiomatization
         title "Idiomatize Ronin while preserving Ninja compatibility"
+        kind @refactor
         children (
             {
                 id ronin-compatibility-contract
@@ -807,6 +810,7 @@ children (
     {
         id ronin-rust-hardening
         title "Harden Ronin's Rust architecture after blind review"
+        kind @refactor
         children (
             {
                 id ronin-jobserver-raii
@@ -2084,6 +2088,7 @@ children (
         id ronin-mimalloc-tuning
         title "Measure mimalloc and single-unit release tuning"
         priority 1
+        kind @perf
         deps (ronin-release-tuning ronin-iterative-tools)
         sealed true
         log (
@@ -2113,6 +2118,7 @@ children (
     {
         id ronin-allocation-discipline
         title "Eliminate hot-path allocation traffic to close the C-samurai gap"
+        kind @perf
         children (
             {
                 id ronin-alloc-metrics
@@ -2933,6 +2939,7 @@ children (
     {
         id ronin-drop-port-scaffolding
         title "Delete code retained only for C port fidelity"
+        kind @refactor
         sealed true
         log (
             {
@@ -2961,6 +2968,7 @@ children (
     {
         id ronin-output-styles
         title "Make build output rendering selectable"
+        kind @feat
         children (
             {
                 id ronin-reporter-seam
@@ -3066,6 +3074,7 @@ children (
     {
         id ronin-dryrun-log-divergence
         title "Stop the dry run appending to the build log"
+        kind @fix
         log (
             {
                 at 2026-08-02T00:11:57.602191042Z
@@ -3093,6 +3102,7 @@ children (
     {
         id ronin-retire-c-corpus
         title "Retire the C samurai corpus from the repository"
+        kind @chore
         log (
             {
                 at 2026-08-02T00:57:11.953556275Z
@@ -3113,6 +3123,7 @@ children (
     {
         id ronin-spec-namespace
         title "Rename the spec namespace from samurai to ronin"
+        kind @chore
         log (
             {
                 at 2026-08-02T11:15:44.663345192Z
@@ -3133,6 +3144,7 @@ children (
     {
         id ronin-eta-prediction
         title "Record edge durations and predict progress the way Ninja does"
+        kind @feat
         log (
             {
                 at 2026-08-02T13:47:41.16237236Z
@@ -3153,6 +3165,7 @@ children (
     {
         id ronin-version-diagnostics
         title "Match Ninja's wording for the version-check diagnostics"
+        kind @fix
         log (
             {
                 at 2026-08-02T17:09:47.062827392Z
@@ -3173,6 +3186,7 @@ children (
     {
         id ronin-warning-flags
         title "Make the -w warning flags do what Ninja does"
+        kind @fix
         log (
             {
                 at 2026-08-03T11:38:47.360166743Z
@@ -3193,6 +3207,7 @@ children (
     {
         id ronin-manifest-diagnostic-shape
         title "Render manifest diagnostics in Ninja's located shape"
+        kind @fix
         log (
             {
                 at 2026-08-03T11:48:05.315557083Z
@@ -3213,6 +3228,7 @@ children (
     {
         id ronin-log-content-check
         title "Compare build-log content, not just its signature"
+        kind @test
         log (
             {
                 at 2026-08-03T11:57:51.080570854Z
@@ -3233,6 +3249,7 @@ children (
     {
         id ronin-no-work-predicate
         title "Judge an all-phony plan up to date as Ninja does"
+        kind @fix
         log (
             {
                 at 2026-08-03T13:40:32.746834534Z
@@ -3253,6 +3270,7 @@ children (
     {
         id ronin-command-launcher
         title "Separate command interpretation from process spawning"
+        kind @refactor
         log (
             {
                 at 2026-08-03T14:37:28.701326341Z
@@ -3280,6 +3298,7 @@ children (
     {
         id ronin-failure-surface-parity
         title "Match Ninja's build-failure and directory-change surface"
+        kind @fix
         log (
             {
                 at 2026-08-03T22:49:13.631639708Z
@@ -3300,6 +3319,7 @@ children (
     {
         id ronin-cycle-path
         title "Name a dependency cycle by the path around it"
+        kind @fix
         log (
             {
                 at 2026-08-03T22:59:50.032134012Z
@@ -3320,6 +3340,7 @@ children (
     {
         id ronin-diagnostic-anchor
         title "Point a manifest diagnostic at the token it is about"
+        kind @fix
         log (
             {
                 at 2026-08-03T23:05:33.927661259Z
@@ -3340,6 +3361,7 @@ children (
     {
         id ronin-manifest-message-parity
         title "Say what Ninja says when a manifest is wrong"
+        kind @fix
         log (
             {
                 at 2026-08-03T23:18:26.397545662Z
@@ -3360,6 +3382,7 @@ children (
     {
         id ronin-windows-launcher
         title "Make the Windows build compile and launch as Ninja does"
+        kind @fix
         log (
             {
                 at 2026-08-03T23:27:18.600512368Z
@@ -3380,6 +3403,7 @@ children (
     {
         id ronin-reference-in-checkout
         title "Keep the comparison references where a reboot cannot delete them"
+        kind @test
         log (
             {
                 at 2026-08-03T23:43:21.953539012Z
@@ -3400,6 +3424,7 @@ children (
     {
         id ronin-reap-latency
         title "Stop sleeping ten milliseconds through every child's exit"
+        kind @perf
         log (
             {
                 at 2026-08-04T12:15:08.371600823Z
@@ -3420,6 +3445,7 @@ children (
     {
         id make-subsumption
         title "Subsume GNU Make into Ronin's build graph"
+        kind @feat
         children (
             {
                 id kati-submodule
