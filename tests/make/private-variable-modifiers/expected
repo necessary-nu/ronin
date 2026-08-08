@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| override private A = a
+| private override B = b
+| GLOBAL := A [$(A)] $(origin A) B [$(B)] $(origin B)
+| all: export override private C = c
+| all: ; @printf '%s\n' '$(GLOBAL)' 'recipe A [$(A)] B [$(B)] C [$(C)]' > out
+file out touched 2
+| A [a] override B [b] override
+| recipe A [] B [] C [c]

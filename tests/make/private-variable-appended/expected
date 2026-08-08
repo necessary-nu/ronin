@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 8
+| DEFS = FOO
+| all: bar1
+| bar1: private DEFS += 1
+| bar3: private DEFS += 3
+| bar1: bar2
+| bar2: bar3
+| bar1 bar2 bar3: ; @printf '%s\n' '$(DEFS)' > $@.out
+| all: ; @true
+file bar1.out touched 1
+| FOO 1
+file bar2.out touched 1
+| FOO
+file bar3.out touched 1
+| FOO 3

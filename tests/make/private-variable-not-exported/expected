@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| private export F = g
+| export G = h
+| all: ; @printf 'F=[%s] G=[%s] value [%s][%s]\n' "$${F-unset}" "$${G-unset}" '$(F)' '$(G)' > out
+file out touched 1
+| F=[unset] G=[h] value [][h]

@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| P = global
+| Q = global
+| all: private P = mine
+| all: Q = ours
+| all: dep
+| dep: ; @printf 'P=[%s] Q=[%s]\n' '$(P)' '$(Q)' > dep.out
+| all: ; @printf 'P=[%s] Q=[%s]\n' '$(P)' '$(Q)' > all.out
+file all.out touched 1
+| P=[mine] Q=[ours]
+file dep.out touched 1
+| P=[global] Q=[ours]
