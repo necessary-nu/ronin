@@ -840,7 +840,7 @@ fn makefile_tree(label: &str) -> PathBuf {
 ///
 /// `jobserver` and `jobserver-fifo` remain interface claims: Make mode accepts
 /// their spellings and can map an inherited budget onto its Ninja scheduler.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_finds_a_prerequisite_through_vpath() {
@@ -878,7 +878,7 @@ fn make_mode_finds_a_prerequisite_through_vpath() {
 
 /// A leading dot is Make's own spelling only for the names it reserves; `.1`
 /// falls out of matching `%bye.x` against `bye.x`.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
@@ -912,7 +912,7 @@ fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
 
 /// `.RECIPEPREFIX` decides what introduces a recipe line, from where it is
 /// written until it is cleared, and a tab is an ordinary character in between.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_reads_a_recipe_introduced_by_the_declared_prefix() {
@@ -947,7 +947,7 @@ fn make_mode_reads_a_recipe_introduced_by_the_declared_prefix() {
 
 /// `undefine` removes a variable rather than emptying it, and reaches no
 /// further than the makefile unless it says `override`.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_undefines_a_variable() {
@@ -987,7 +987,7 @@ fn make_mode_undefines_a_variable() {
 
 /// `!=` runs its right-hand side and keeps what the command printed, folding
 /// every newline into a space and dropping one at the end.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_assigns_what_a_shell_command_printed() {
@@ -1019,7 +1019,7 @@ fn make_mode_assigns_what_a_shell_command_printed() {
 
 /// A variable name is one word, so `x y = 1` is not an assignment at all and
 /// the line is read as a rule, which has no separator.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 // [spec:ronin:req:make.narration/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -1041,7 +1041,7 @@ fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
@@ -1079,7 +1079,7 @@ fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
 
 /// The first expansion leaves `$$@` as `$@`; the second happens when the rule
 /// is used and `$@` has a value.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_expands_prerequisites_again_under_second_expansion() {
@@ -1125,7 +1125,7 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
 /// A pattern rule is chosen by whether its prerequisites are there, so under
 /// `.SECONDEXPANSION` the expansion is part of the search: `%.o` must build
 /// `named.o` where `named.c` exists and decline where it does not.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_expands_a_pattern_rules_prerequisites_again() {
@@ -1166,7 +1166,7 @@ fn make_mode_expands_a_pattern_rules_prerequisites_again() {
 
 /// The prerequisite patterns after a static pattern rule's second colon get the
 /// same treatment, with `%` standing for the stem in what the expansion left.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_expands_a_static_pattern_rules_prerequisites_again() {
@@ -1203,7 +1203,7 @@ fn make_mode_expands_a_static_pattern_rules_prerequisites_again() {
 
 /// A `|` ends the word it falls in, so the order-only list can arrive from the
 /// expansion rather than from what was written.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_reads_an_order_only_marker_out_of_an_expansion() {
@@ -1232,7 +1232,7 @@ fn make_mode_reads_an_order_only_marker_out_of_an_expansion() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_exports_variables_to_the_recipe_environment() {
@@ -1270,7 +1270,7 @@ fn make_mode_exports_variables_to_the_recipe_environment() {
 
 /// `.EXPORT_ALL_VARIABLES` covers what the Makefile defined and nothing else —
 /// GNU Make leaves the built-in defaults unset in a recipe.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_exports_every_variable_the_makefile_defined() {
@@ -1302,7 +1302,7 @@ fn make_mode_exports_every_variable_the_makefile_defined() {
 
 /// `.IGNORE` is `-i` asked for by the Makefile, and with prerequisites it is
 /// that for those targets alone.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_ignores_recipe_failures_the_makefile_named() {
@@ -1347,7 +1347,7 @@ fn make_mode_ignores_recipe_failures_the_makefile_named() {
 }
 
 /// `-n` runs nothing, except the lines the Makefile prefixed `+`.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_runs_only_the_plus_lines_under_dry_run() {
@@ -1381,7 +1381,7 @@ fn make_mode_runs_only_the_plus_lines_under_dry_run() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_searches_the_include_directories() {
@@ -1418,7 +1418,7 @@ fn make_mode_searches_the_include_directories() {
 }
 
 /// `-I -` is a restart of the search path, not a directory called `-`.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_forgets_the_include_directories_before_a_bare_dash() {
@@ -1452,7 +1452,7 @@ fn make_mode_forgets_the_include_directories_before_a_bare_dash() {
 }
 
 /// A `.x.y:` rule is a suffix rule only while both suffixes are on the list.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_reads_the_declared_suffix_list() {
@@ -1487,7 +1487,7 @@ fn make_mode_reads_the_declared_suffix_list() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_answers_the_order_only_automatic_variable() {
@@ -1520,7 +1520,7 @@ fn make_mode_answers_the_order_only_automatic_variable() {
 }
 
 /// Make's step 7: the recipe for a target nothing else could make.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_falls_back_to_the_default_rule() {
@@ -1552,7 +1552,7 @@ fn make_mode_falls_back_to_the_default_rule() {
 }
 
 /// Step 6 of GNU Make's implicit rule search.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
@@ -1595,7 +1595,7 @@ fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
 /// `build_options` starts at `JobLimit::Auto`, meaning nothing was asked for;
 /// `normalize_runtime_options` resolves that to one job. Reading only the first
 /// half says Make mode defaults to parallel, which it does not.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
@@ -1637,7 +1637,7 @@ fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
 /// `.NOTPARALLEL` serialises this Makefile's own recipes and leaves what it
 /// hands a sub-make alone. Every CMake-generated Makefile declares it at the
 /// top and still expects the levels below to run wide.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_serialises_only_the_makefile_that_declared_notparallel() {
@@ -1708,7 +1708,7 @@ fn make_mode_serialises_only_the_makefile_that_declared_notparallel() {
 
 /// Without `.ONESHELL` each recipe line is isolated; with it they share one
 /// shell, so a `cd` carries and a failing line does not stop the rest.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_shares_one_shell_across_a_recipe_only_under_oneshell() {
@@ -1740,7 +1740,7 @@ fn make_mode_shares_one_shell_across_a_recipe_only_under_oneshell() {
 
 /// `-R` withholds the tool defaults and implies `-r`, but leaves what Make
 /// defines about itself.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_withholds_the_builtin_variables_under_dash_r() {
@@ -1775,7 +1775,7 @@ fn make_mode_withholds_the_builtin_variables_under_dash_r() {
 }
 
 /// `+=` on a target reads the target's own scope, not the one outside it.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_appends_to_a_target_variable_from_the_targets_own_scope() {
@@ -1810,7 +1810,7 @@ fn make_mode_appends_to_a_target_variable_from_the_targets_own_scope() {
 }
 
 /// The second reads the first, so their order decides the answer.
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_applies_target_specific_variables_in_a_settled_order() {
@@ -1842,7 +1842,7 @@ fn make_mode_applies_target_specific_variables_in_a_settled_order() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_claims_only_the_features_it_has() {

@@ -302,7 +302,11 @@ impl_evidence (
     ), rule_versions_seen (
         {id make.scope-separation, version 0}
     )}
-    {id make-build-intent-gate}
+    {id make-build-intent-gate, covered_rules (
+        make.semantics
+    ), covered_claims (
+        {impl_name target-impl, rule make.semantics}
+    )}
     {id make-executor-boundary, covered_rules (
         make.compiler-boundary
         make.state-outside-the-tree

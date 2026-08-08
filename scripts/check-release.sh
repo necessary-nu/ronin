@@ -22,6 +22,7 @@ cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery
 cargo clippy -p kati --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 cargo test --all-targets --no-fail-fast
+scripts/check-make-equivalence.sh
 
 nplan port check --wave 4
 

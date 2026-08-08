@@ -7,9 +7,8 @@ set -eu
 # retire from the execution path without taking the evidence with it.
 #
 # The check lives as a test rather than a program because it needs Ronin's
-# graph internals to compare on. It is #[ignore]d because it changes the
-# working directory, which would break other tests running beside it, so it
-# runs alone and this script is the supported way to ask for it.
+# graph internals to compare on. It changes the process working directory, so
+# ordinary parallel libtest runs ignore it and this script runs it alone.
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
@@ -21,5 +20,6 @@ if [ "$corpus_size" -eq 0 ]; then
     exit 1
 fi
 
-exec cargo test --release --lib -- --ignored --exact --test-threads=1 --nocapture \
-    make::equivalence::the_direct_graph_matches_the_manifest_over_the_corpus
+exec cargo test --release --lib \
+    make::equivalence::the_direct_graph_matches_the_manifest_over_the_corpus \
+    -- --ignored --exact --test-threads=1 --nocapture

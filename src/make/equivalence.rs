@@ -33,12 +33,12 @@ use crate::frontend::{load_manifest, BuildGraph, ManifestOptions};
 use crate::graph::PathStyle;
 use crate::util::{BStr, ByteSlice};
 use kati::anyhow;
-use kati::build_sink::{BuildSink, SinkEdge, SinkPool, SinkRule};
+use kati::build_sink::{BuildSink, RuleId, SinkCommand, SinkEdge, SinkPool, SinkRule};
 use kati::evaluate::{evaluate, Evaluated};
 use kati::ninja::{emit_build, NinjaWriter, NinjaWriterOptions};
 use kati::session::Session;
 use kati::symtab::{Interner, Symbol};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::Path;
@@ -76,6 +76,33 @@ const BINDINGS: [(&str, PathStyle); 12] = [
 struct Tee<'a> {
     graph: &'a mut GraphSink,
     manifest: &'a mut dyn BuildSink,
+    rule_semantics: HashMap<RuleId, RuleSemantics>,
+    edge_semantics: &'a mut EdgeSemantics,
+}
+
+/// A rule property whose two sinks intentionally encode differently.
+struct RuleSemantics {
+    ignored_command: Option<IgnoredCommand>,
+    recursive: bool,
+}
+
+enum IgnoredCommand {
+    Inline(Vec<u8>),
+    ResponseFile(Vec<u8>),
+}
+
+/// Semantic overrides keyed by the rule's primary output.
+///
+/// A manifest has no ignore-failure edge property, so its writer wraps the
+/// shell script; the in-memory graph keeps the script and binds the property.
+/// A recursive recipe is likewise a wrapper edge only in the legacy manifest,
+/// while the graph sink holds it for semantic subninja composition. Recording
+/// these at the common sink boundary lets the comparison judge the properties
+/// rather than require their destination-specific spellings to be identical.
+#[derive(Default)]
+struct EdgeSemantics {
+    ignored: BTreeMap<Vec<u8>, IgnoredCommand>,
+    recursive: BTreeSet<Vec<u8>>,
 }
 
 impl BuildSink for Tee<'_> {
@@ -85,11 +112,31 @@ impl BuildSink for Tee<'_> {
     }
 
     fn declare_rule(&mut self, names: &dyn Interner, rule: &SinkRule<'_>) -> anyhow::Result<()> {
+        let ignored_command = rule.ignore_errors.then(|| match rule.command {
+            SinkCommand::Inline(script) => IgnoredCommand::Inline(script.to_vec()),
+            SinkCommand::ResponseFile(script) => IgnoredCommand::ResponseFile(script.to_vec()),
+        });
+        self.rule_semantics.insert(
+            rule.id,
+            RuleSemantics {
+                ignored_command,
+                recursive: rule.contains_recursive,
+            },
+        );
         let _ = self.graph.declare_rule(names, rule);
         self.manifest.declare_rule(names, rule)
     }
 
     fn declare_edge(&mut self, names: &dyn Interner, edge: &SinkEdge<'_>) -> anyhow::Result<()> {
+        if let Some(semantics) = edge.rule.and_then(|rule| self.rule_semantics.remove(&rule)) {
+            let output = names.symtab().name(edge.output).to_vec();
+            if let Some(command) = semantics.ignored_command {
+                self.edge_semantics.ignored.insert(output.clone(), command);
+            }
+            if semantics.recursive {
+                self.edge_semantics.recursive.insert(output);
+            }
+        }
         let _ = self.graph.declare_edge(names, edge);
         self.manifest.declare_edge(names, edge)
     }
@@ -139,12 +186,74 @@ enum Outcome {
 /// construction can set, or a dependency on `_kati_always_build_`, which is all
 /// a manifest can say. One decoder over both sides is what turns the property
 /// into something the comparison asserts rather than something it hides.
-fn describe_edge(graph: &BuildGraph, edge: crate::graph::EdgeId) -> Option<(Vec<u8>, String)> {
+#[derive(Clone, Copy)]
+enum Side {
+    Direct,
+    Manifest,
+}
+
+fn describe_ignore_semantics<'a>(
+    graph: &BuildGraph,
+    edge: crate::graph::EdgeId,
+    output: &[u8],
+    semantics: &'a EdgeSemantics,
+    side: Side,
+    described: &mut String,
+) -> Option<&'a IgnoredCommand> {
+    let command = semantics.ignored.get(output)?;
+    let ignored = match side {
+        Side::Direct => graph
+            .arenas()
+            .names()
+            .lookup(BStr::new(crate::build::IGNORE_ERRORS))
+            .and_then(|binding| edgevar(graph.arenas(), edge, binding, PathStyle::Raw))
+            .is_some_and(|value| !value.is_empty()),
+        // The writer received this property at the common sink boundary and
+        // encodes it by muting the script in the manifest.
+        Side::Manifest => true,
+    };
+    let _ = writeln!(described, "  ignore errors: {ignored}");
+    match command {
+        IgnoredCommand::Inline(script) => {
+            let _ = writeln!(described, "  semantic command: {:?}", script.as_bstr());
+        }
+        IgnoredCommand::ResponseFile(script) => {
+            let _ = writeln!(
+                described,
+                "  semantic response content: {:?}",
+                script.as_bstr()
+            );
+        }
+    }
+    Some(command)
+}
+
+fn destination_specific_binding(name: &str, command: Option<&IgnoredCommand>) -> bool {
+    matches!(
+        (name, command),
+        ("command", Some(IgnoredCommand::Inline(_)))
+            | ("rspfile_content", Some(IgnoredCommand::ResponseFile(_)))
+    )
+}
+
+fn describe_edge(
+    graph: &BuildGraph,
+    edge: crate::graph::EdgeId,
+    semantics: &EdgeSemantics,
+    side: Side,
+) -> Option<(Vec<u8>, String)> {
     let arenas = graph.arenas();
     let stored = arenas.edge(edge);
     let path = |node: &crate::graph::NodeId| arenas.node_path(*node).as_bytes().to_vec();
     let outputs: Vec<Vec<u8>> = stored.out.iter().map(path).collect();
     if outputs.len() == 1 && outputs[0] == ALWAYS_BUILD {
+        return None;
+    }
+    if semantics.recursive.contains(&outputs[0]) {
+        // The manifest writer can only retain the recursive wrapper command.
+        // The direct sink holds it outside the graph until load_with_subninjas
+        // replaces it with child goals, so this one-unit oracle has no edge on
+        // the direct side to compare. Recognition is checked in compare().
         return None;
     }
     let inputs: Vec<Vec<u8>> = stored.input.iter().map(path).collect();
@@ -202,6 +311,8 @@ fn describe_edge(graph: &BuildGraph, edge: crate::graph::EdgeId) -> Option<(Vec<
         &mut described,
     );
     let _ = writeln!(described, "  always dirty: {always_dirty}");
+    let ignored_command =
+        describe_ignore_semantics(graph, edge, &outputs[0], semantics, side, &mut described);
     let _ = writeln!(
         described,
         "  pool: {}",
@@ -215,6 +326,9 @@ fn describe_edge(graph: &BuildGraph, edge: crate::graph::EdgeId) -> Option<(Vec<
         )
     );
     for (name, style) in BINDINGS {
+        if destination_specific_binding(name, ignored_command) {
+            continue;
+        }
         let Some(id) = arenas.names().lookup(BStr::new(name)) else {
             continue;
         };
@@ -226,11 +340,11 @@ fn describe_edge(graph: &BuildGraph, edge: crate::graph::EdgeId) -> Option<(Vec<
 }
 
 /// Every edge in a graph, keyed by the outputs `$out` names.
-fn shape(graph: &BuildGraph) -> BTreeMap<Vec<u8>, String> {
+fn shape(graph: &BuildGraph, semantics: &EdgeSemantics, side: Side) -> BTreeMap<Vec<u8>, String> {
     graph
         .arenas()
         .edge_ids()
-        .filter_map(|edge| describe_edge(graph, edge))
+        .filter_map(|edge| describe_edge(graph, edge, semantics, side))
         .collect()
 }
 
@@ -245,9 +359,12 @@ fn defaults(graph: &BuildGraph) -> Vec<Vec<u8>> {
 }
 
 /// Every way two graphs of the same Makefile disagree.
-fn differences(direct: &BuildGraph, parsed: &BuildGraph) -> Vec<String> {
+fn differences(direct: &BuildGraph, parsed: &BuildGraph, semantics: &EdgeSemantics) -> Vec<String> {
     let mut found = Vec::new();
-    let (direct_shape, parsed_shape) = (shape(direct), shape(parsed));
+    let (direct_shape, parsed_shape) = (
+        shape(direct, semantics, Side::Direct),
+        shape(parsed, semantics, Side::Manifest),
+    );
     for output in direct_shape.keys().chain(parsed_shape.keys()) {
         match (direct_shape.get(output), parsed_shape.get(output)) {
             (Some(mine), Some(theirs)) if mine == theirs => {}
@@ -282,6 +399,7 @@ fn differences(direct: &BuildGraph, parsed: &BuildGraph) -> Vec<String> {
 /// `directory` is where the manifest is written and read back from; `argv` is a
 /// whole kati command line, program name included.
 // [spec:ronin:req:make.manifest-equivalence]
+// [spec:ronin:req:make.semantics+1]
 fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
     let session = Session::from_args(argv);
     let manifest_path = directory.join("build.ninja");
@@ -292,22 +410,35 @@ fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
         Err(error) => return Outcome::NotAccepted(format!("{error:#}")),
     };
     let mut sink = GraphSink::new();
+    let mut semantics = EdgeSemantics::default();
     let emitted = {
         let file = std::fs::File::create(&manifest_path).expect("the case directory is writable");
         let mut writer = NinjaWriter::new(std::io::BufWriter::new(file), options);
         let mut tee = Tee {
             graph: &mut sink,
             manifest: &mut writer,
+            rule_semantics: HashMap::new(),
+            edge_semantics: &mut semantics,
         };
         emit_build(&nodes, &mut ev, &mut tee)
     };
     if let Err(error) = emitted {
         return Outcome::NotAccepted(format!("{error:#}"));
     }
+    let pending_subninjas = sink.take_unit().subninjas.len();
     let direct = sink.into_graph();
     let parsed = load_manifest(directory, "build.ninja", ManifestOptions::default());
     match (direct, parsed) {
-        (Ok(direct), Ok(parsed)) => Outcome::Compared(differences(&direct, &parsed.graph)),
+        (Ok(direct), Ok(parsed)) => {
+            let mut found = differences(&direct, &parsed.graph, &semantics);
+            if pending_subninjas != semantics.recursive.len() {
+                found.push(format!(
+                    "recursive rules: sink held {pending_subninjas}, boundary declared {}",
+                    semantics.recursive.len()
+                ));
+            }
+            Outcome::Compared(found)
+        }
         (Err(direct), Err(manifest)) => Outcome::BothRefused {
             direct: direct.to_string(),
             manifest: manifest.to_string(),
@@ -543,19 +674,21 @@ all:
 
 /// The whole Make corpus, one comparison per target each `.mk` file declares.
 ///
-/// Ignored because it changes the working directory: a testcase reads and
-/// writes files beside its own Makefile, so it has to run in its own directory,
-/// and the process has only one. Run it alone:
-///
-/// ```sh
-/// cargo test --release --lib -- --ignored --exact --test-threads=1 \
-///     make::equivalence::the_direct_graph_matches_the_manifest_over_the_corpus
-/// ```
+/// A testcase reads and writes files beside its own Makefile, so the corpus
+/// pass has to change its process working directory. It is ignored in ordinary
+/// parallel libtest runs and the release gate invokes it alone through
+/// `scripts/check-make-equivalence.sh`; otherwise the process-global directory
+/// can race unrelated tests that launch commands.
 // [spec:ronin:req:make.graph-direct/test]
 // [spec:ronin:req:make.manifest-equivalence/test]
+// [spec:ronin:req:make.semantics+1/test]
 #[test]
-#[ignore = "changes the working directory; run it alone"]
+#[ignore = "changes the process working directory; the release gate runs it alone"]
 fn the_direct_graph_matches_the_manifest_over_the_corpus() {
+    compare_corpus_graphs();
+}
+
+fn compare_corpus_graphs() {
     let corpus = Path::new(env!("CARGO_MANIFEST_DIR")).join("kati/testcase");
     let mut makefiles: Vec<_> = std::fs::read_dir(&corpus)
         .expect("the kati submodule is checked out")

@@ -6,7 +6,6 @@ const CLASSES: [&str; 4] = ["defect", "recorded", "extension", "artefact"];
 /// The inventory is the classification, so it is checked without running the
 /// corpus: an entry that names no family, or a family that explains nothing,
 /// would let a difference through without anyone deciding what it is.
-// [spec:ronin:req:make.semantics/test]
 #[test]
 fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     let mut families = BTreeMap::new();

@@ -5553,6 +5553,20 @@ children (
                                 kind @decision
                                 text "Replace GNU Make runner parity as the gate. GNU Make 4.4.1 remains the oracle for which targets, prerequisites, ordering, variables, and recipes the invocation describes. Gate the direct graph against emitted Ninja graph equivalence and gate end-to-end cases on selected work, normal build outcome, and filesystem effects. Stdout/stderr wording, timing, jobserver choreography, recursive banners, and runner-specific status distinctions are discovery data, not pass criteria."
                             }
+
+                            {
+                                at 2026-08-08T21:42:32.606727237Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T22:03:15.057024013Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Completed the replacement gate around build intent rather than Make runner parity. make_port now invokes the exact Ronin binary Cargo built, normalises outcomes to success/failure, and compares selected filesystem effects across 51 GNU Make-recorded cases. Thirteen fixtures that assert GNU Make timestamp/log rules, recursive MAKEFLAGS choreography, or the execution effects of accepted no-op flags are explicitly retained as discovery-only instead of being allowed to pass accidentally. The direct-vs-emitted graph oracle now covers all 296 Kati makefiles, compares ignore-error recipes by semantic property across their in-memory-binding and manifest-wrapper encodings, and verifies recursive recipes were held for subninja composition while excluding the obsolete emitted wrapper edge. Its process-cwd mutation is isolated as an exact ignored test and wired into scripts/check-release.sh. Exact stdout/stderr/status inventory remains discovery-only and no longer claims make.semantics coverage. All v1 build-intent refs are fresh. Verified full workspace/all-target tests, focused release graph equivalence, nplan check, all-feature check, strict all-feature Clippy, clean lint/comments/audit, spec validation, and zero stale refs."
+                            }
                         )
                     }
                 )

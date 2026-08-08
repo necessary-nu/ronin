@@ -1,4 +1,4 @@
-//! Differential harness for Make evaluation against GNU Make 4.4.1.
+//! Differential discovery harness for Make evaluation against GNU Make 4.4.1.
 //!
 //! Every case in the vendored kati corpus is run twice from the same absolute
 //! directory — once under the pinned GNU Make, once under the Make front end —
@@ -6,10 +6,12 @@
 //! corpus is not expected to be clean: kati is a partial clone aimed at one
 //! build system, so the differences are classified in
 //! `tests/make_corpus_inventory.tsv` rather than filtered away, and a
-//! difference that has no entry there fails the run.
+//! difference that has no entry there fails the inventory check. Exact runner
+//! status and stdout/stderr are retained here to discover evaluator gaps; they
+//! are not Ronin's Make build-intent conformance gate.
 //!
-//! See `[spec:ronin:req:make.semantics]` and
-//! `[dec:ronin:make-compatibility-oracle]`.
+//! See `[dec:ronin:make-compiles-to-ninja]` and
+//! `[dec:ronin:ninja-compatibility-oracle]`.
 
 #![deny(missing_docs, unreachable_pub)]
 
@@ -858,7 +860,6 @@ fn indent(text: &str) -> String {
         .join("\n")
 }
 
-// [spec:ronin:req:make.semantics]
 fn run(config: &Config) -> Result<(), String> {
     verify_oracle(&config.make)?;
     if !config.front_end.binary.is_file() {
@@ -919,7 +920,6 @@ mod tests {
     };
     use std::path::{Path, PathBuf};
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn a_script_that_greps_its_tools_name_is_recognised() {
         assert!(self_detecting(
@@ -931,7 +931,6 @@ mod tests {
         assert!(!self_detecting("grep -q kati out.txt\n"));
     }
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn a_front_end_is_measured_against_the_name_the_script_will_see() {
         let front_end = |binary: &str, arguments: &[&str]| FrontEnd {
@@ -947,20 +946,17 @@ mod tests {
         assert!(!names_kati(&front_end("target/release/make", &[])));
     }
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn a_file_with_no_test_targets_yields_one_default_run() {
         assert_eq!(declared_targets("all:\n\techo hi\n"), vec![String::new()]);
     }
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn declared_targets_match_the_vendored_harness_shape() {
         let content = "test2: test1\ntest1:\n\techo\ntest10:\n# test3 in a comment\n";
         assert_eq!(declared_targets(content), ["test1", "test10", "test2"]);
     }
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn the_tool_name_is_replaced_and_not_deleted() {
         let directory = Path::new("/tmp/x");
@@ -974,7 +970,6 @@ mod tests {
         );
     }
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn a_tool_name_inside_a_message_is_left_alone() {
         assert_eq!(tool_identity("cp: cannot stat 'make: x'"), None);
@@ -987,13 +982,11 @@ mod tests {
         );
     }
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn the_run_directory_cannot_contain_a_comment_character() {
         assert_eq!(case_directory_name("a.mk#test2"), "a.mk__test2");
     }
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn a_case_naming_an_undeclared_family_is_rejected() {
         let text = "family\ta\treason\ncase\tx.mk#test\tdefect\tb\t0\n";
@@ -1002,7 +995,6 @@ mod tests {
         assert!(parse_inventory(text).is_ok());
     }
 
-    // [spec:ronin:req:make.semantics/test]
     #[test]
     fn a_case_in_no_recognised_class_is_rejected() {
         let text = "family\ta\treason\ncase\tx.mk#test\twontfix\ta\t0\n";
