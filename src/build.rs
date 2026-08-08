@@ -58,6 +58,9 @@ pub(crate) struct BuildOptions {
     pub(crate) keepdepfile: bool,
     pub(crate) keeprsp: bool,
     pub(crate) dryrun: bool,
+    /// Make's `-t`: give each output a fresh timestamp instead of running the
+    /// recipe that would have produced it.
+    pub(crate) touch: bool,
     pub(crate) quiet: bool,
     pub(crate) statusfmt: String,
     pub(crate) status_from_cli: bool,
@@ -102,6 +105,7 @@ impl Default for BuildOptions {
             keepdepfile: false,
             keeprsp: false,
             dryrun: false,
+            touch: false,
             quiet: false,
             statusfmt: "[%f/%t] ".into(),
             status_from_cli: false,
@@ -1235,6 +1239,12 @@ impl<'a> Builder<'a> {
             self.command_finished(edge, &command, None, &[])?;
         }
 
+        // Before the outputs are stat'ed, so the time `-t` just gave them is
+        // the time this run records.
+        if self.touching(edge, &command) {
+            self.touch_outputs(edge)?;
+        }
+
         let disk = self.disk.clone();
         let mut new_mtimes = Vec::new();
         let output_ids = self.graph.edge(edge).out.clone();
@@ -1654,15 +1664,15 @@ impl<'a> Builder<'a> {
                 });
                 match prepared {
                     Ok(prepared) => {
-                        // Make's `+` lines run even under -n. Nothing else on
-                        // the edge does, so the command becomes just those and
-                        // the run stops pretending for this one.
-                        let dry_run_only = self
-                            .options
-                            .dryrun
+                        // Make's `+` lines run even under -n, and under -t for
+                        // the same reason. Nothing else on the edge does, so
+                        // the command becomes just those and the run stops
+                        // pretending for this one.
+                        let pretending = self.options.dryrun || self.options.touch;
+                        let dry_run_only = pretending
                             .then(|| prepared.command.dry_run_command.clone())
                             .flatten();
-                        let dryrun = self.options.dryrun && dry_run_only.is_none();
+                        let dryrun = pretending && dry_run_only.is_none();
                         let command =
                             dry_run_only.unwrap_or_else(|| prepared.command.command.clone());
                         match processes.spawn(edge, command, use_console, dryrun) {

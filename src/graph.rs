@@ -87,6 +87,13 @@ pub(crate) struct Edge {
     /// inputs and runs nothing at all. An edge can be either, both, or
     /// neither.
     pub(crate) always_dirty: bool,
+    /// Whether `-t` must give this edge's outputs no timestamp, because the
+    /// target has no file behind it.
+    ///
+    /// Recorded rather than read off `always_dirty` when the touch happens:
+    /// `-B` spells itself with that same bit, and would otherwise make every
+    /// target look like a `.PHONY` one.
+    pub(crate) untouchable: bool,
     partitions: EdgePartitions,
 }
 
@@ -114,6 +121,16 @@ pub(crate) struct Graph {
     /// largest structure a large manifest builds. Holding them aside keeps the
     /// feature exactly and charges only the nodes that use it.
     validation_uses: crate::htab::RapidHashMap<NodeId, IdVec<EdgeId>>,
+    /// The nodes to treat as freshly modified whatever the disk reports, which
+    /// is GNU Make's `-W`. A pretence about the timestamp source rather than
+    /// about the file, so it is answered where every timestamp is: the scan
+    /// stats a node only when the runtime has no time for it, and this is how
+    /// the runtime gets one.
+    ///
+    /// `-W` names a handful of files at most, so this is held aside rather
+    /// than on the node, where it would charge the largest arena a big graph
+    /// builds for a feature almost nothing uses.
+    pub(crate) assumed_new: Vec<NodeId>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
     names: crate::names::Names,
@@ -625,6 +642,7 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         validation: IdVec::new(),
         dyndep: None,
         always_dirty: false,
+        untouchable: false,
         partitions: EdgePartitions::default(),
     });
     id
@@ -1405,6 +1423,25 @@ mod tests {
         assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
         assert!(runtime.node(alias_output).dirty());
         assert_eq!(runtime.node(alias_output).mtime(), FileTime::observed(1));
+    }
+
+    /// GNU Make's `-W`: the file counts as just modified whatever the disk
+    /// reports, so everything reading it is out of date and nothing stats it
+    /// back down to what is really there.
+    #[test]
+    fn ronin_graph_a_node_assumed_new_outranks_the_time_on_disk() {
+        let mut graph = parse_graph("build out: cat in\n");
+        let input = nodeget(&graph, b"in").unwrap();
+        let output = nodeget(&graph, b"out").unwrap();
+        let mtimes = [("in", 1), ("out", 2)];
+        assert!(!recompute_with_mtimes(&graph, b"out", &mtimes).unwrap());
+
+        graph.assumed_new.push(input);
+        let mtimes = BTreeMap::from_iter(mtimes.map(|(path, mtime)| (path.to_owned(), mtime)));
+        let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(recompute_dirty_with(&graph, &mut runtime, output, &mut stat).unwrap());
+        assert_eq!(runtime.node(input).mtime(), FileTime::NEWEST);
     }
 
     #[test]

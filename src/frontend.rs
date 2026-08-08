@@ -296,6 +296,17 @@ impl BuildGraph {
         nodeget(&self.arenas, &canonical).map(Node)
     }
 
+    /// Builds as though `path` had just been modified, which is GNU Make's
+    /// `-W`.
+    ///
+    /// A path no node holds is not an error: nothing reads it, so there is
+    /// nothing the pretence could change.
+    pub fn assume_new(&mut self, path: &[u8]) {
+        if let Some(node) = self.lookup(path) {
+            self.arenas.assumed_new.push(node.0);
+        }
+    }
+
     /// The edge that generates `node`, absent for a file nothing builds.
     #[must_use]
     pub fn generator(&self, node: Node) -> Option<Edge> {
@@ -524,6 +535,19 @@ impl BuildGraph {
     pub fn rebuild_everything(&mut self) {
         for edge in self.arenas.edge_ids() {
             self.arenas.edge_mut(edge).always_dirty = true;
+        }
+    }
+
+    /// Spares from `-t` the targets GNU Make gives no timestamp to: a `.PHONY`
+    /// one, which has no file behind it.
+    ///
+    /// Read before [`Self::rebuild_everything`], which spells `-B` with the
+    /// same bit and would otherwise make every target look phony.
+    pub fn spare_phony_from_touch(&mut self) {
+        for edge in self.arenas.edge_ids() {
+            if self.arenas.edge(edge).always_dirty {
+                self.arenas.edge_mut(edge).untouchable = true;
+            }
         }
     }
 

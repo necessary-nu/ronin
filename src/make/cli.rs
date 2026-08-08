@@ -59,6 +59,10 @@ struct Invocation {
     directories: Vec<PathBuf>,
     /// Where `-I` says to look for an `include`, in the order given.
     include_dirs: Vec<PathBuf>,
+    /// The files `-W` says to build as though they had just been modified.
+    /// Paths rather than filenames, because the graph names its nodes by path
+    /// and this pretence is about a node.
+    assumed_new: Vec<BString>,
     makefile: Option<PathBuf>,
     goals: Vec<BString>,
     /// `VAR=value` in command-line order, which is the order Make applies them.
@@ -83,6 +87,7 @@ impl Invocation {
         Self {
             directories: Vec::new(),
             include_dirs: Vec::new(),
+            assumed_new: Vec::new(),
             makefile: None,
             goals: Vec::new(),
             variables: Vec::new(),
@@ -174,6 +179,7 @@ impl Invocation {
             (Switch::NoBuiltinRules, "-r"),
             (Switch::NoBuiltinVariables, "-R"),
             (Switch::Silent, "-s"),
+            (Switch::Touch, "-t"),
             (Switch::PrintDirectory, "-w"),
         ] {
             if self.given(switch) {
@@ -203,6 +209,15 @@ impl Invocation {
         withdrawn
     }
 
+    /// Whether this invocation answers a question rather than carrying out a
+    /// build.
+    ///
+    /// `-t` outranks `-q`: GNU Make decides to touch before a recipe is ever
+    /// reached, and question mode has nothing to answer about once it has.
+    const fn questioning(&self) -> bool {
+        self.given(Switch::Question) && !self.given(Switch::Touch)
+    }
+
     /// Whether this invocation brackets its build with the directory it ran in.
     ///
     /// GNU Make's rule, which every option here is a part of: `-w` asks for the
@@ -211,7 +226,7 @@ impl Invocation {
     /// directory, `-s` withdraws the implication but not the request, and `-q`
     /// prints nothing at all because its whole answer is a status.
     const fn announcing(&self) -> bool {
-        !self.given(Switch::Question)
+        !self.questioning()
             && !self.refused(Switch::PrintDirectory)
             && (self.given(Switch::PrintDirectory)
                 || (!self.directories.is_empty() && !self.given(Switch::Silent)))
@@ -235,6 +250,7 @@ enum Switch {
     PrintDirectory,
     Question,
     Silent,
+    Touch,
 }
 
 impl Switch {
@@ -250,6 +266,7 @@ impl Switch {
             b'r' => Self::NoBuiltinRules,
             b'R' => Self::NoBuiltinVariables,
             b's' => Self::Silent,
+            b't' => Self::Touch,
             b'w' => Self::PrintDirectory,
             _ => return None,
         })
@@ -286,6 +303,7 @@ impl Switch {
             b"--print-directory" => Self::PrintDirectory,
             b"--question" => Self::Question,
             b"--silent" | b"--quiet" => Self::Silent,
+            b"--touch" => Self::Touch,
             _ => return None,
         })
     }
@@ -315,6 +333,7 @@ fn usage() -> String {
             "  -f FILE  read FILE as the makefile [default={default}]\n",
             "  -C DIR   change to DIR before reading anything, once per option\n",
             "  -I DIR   also look in DIR for an include, once per option\n",
+            "  -W FILE  build as though FILE had just been modified\n",
             "  -j [N]   run N recipes at once, or as many as are ready\n",
             "  -l [N]   start no recipe while the load average is above N\n",
             "  -B       rebuild every target, whatever its timestamps say\n",
@@ -326,6 +345,7 @@ fn usage() -> String {
             "  -r       do not read the built-in rules\n",
             "  -R       do not define the built-in variables, and imply -r\n",
             "  -s       do not report what is being built\n",
+            "  -t       touch the targets that are out of date, running no recipe\n",
             "  -w       announce the directory the build runs in\n",
             "  -S       stop at the first failure, taking back -k\n",
             "  -v       print the version, as --version does\n",
@@ -477,6 +497,12 @@ fn attached_long(
         invocation.directories.push(path_of(named)?);
     } else if let Some(named) = option.strip_prefix(b"--include-dir=") {
         invocation.include_dirs.push(path_of(named)?);
+    } else if let Some(named) = option
+        .strip_prefix(b"--what-if=")
+        .or_else(|| option.strip_prefix(b"--new-file="))
+        .or_else(|| option.strip_prefix(b"--assume-new="))
+    {
+        invocation.assumed_new.push(BString::from(named));
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
         invocation.jobs = Some(jobs_value(arguments, index, count)?);
     } else if let Some(load) = option.strip_prefix(b"--load-average=") {
@@ -530,6 +556,11 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
                 let named = value(arguments, &mut index, b"", "--include-dir")?;
                 invocation.include_dirs.push(path_of(named.as_bytes())?);
             }
+            b"--what-if" | b"--new-file" | b"--assume-new" => {
+                invocation
+                    .assumed_new
+                    .push(value(arguments, &mut index, b"", "--what-if")?);
+            }
             option if option.starts_with(b"--") => {
                 if !attached_long(&mut invocation, option, arguments, &mut index)? {
                     return Ok(refuse(format_args!(
@@ -580,6 +611,11 @@ fn read_cluster(
             b'l' => {
                 invocation.load = Some(load_value(arguments, index, &argument[short..])?);
                 short = argument.len();
+            }
+            b'W' => {
+                let named = value(arguments, index, &argument[short..], "-W")?;
+                short = argument.len();
+                invocation.assumed_new.push(named);
             }
             b'f' | b'C' | b'I' => {
                 let named = value(
@@ -766,10 +802,12 @@ fn build_options(
             1
         },
         dryrun: invocation.given(Switch::DryRun),
+        touch: invocation.given(Switch::Touch),
         // Make's `-n` exists to show the recipes rather than to run them, so it
         // asks for the commands themselves and not for the descriptions a
-        // build would otherwise report.
-        verbose: invocation.given(Switch::DryRun),
+        // build would otherwise report. Under `-t` the recipe is not what
+        // would happen, so there is nothing there worth showing.
+        verbose: invocation.given(Switch::DryRun) && !invocation.given(Switch::Touch),
         quiet: invocation.given(Switch::Silent),
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
@@ -998,9 +1036,7 @@ pub(crate) fn run(
         Ok(loaded) => adopt(&mut options, loaded),
         Err(result) => return Ok(result),
     };
-    if invocation.given(Switch::AlwaysMake) {
-        graph.rebuild_everything();
-    }
+    pretend_at(&mut graph, &invocation);
     let (mut persistence, warning) = Persistence::open(&mut graph, &directory)?;
     if let Some(warning) = warning {
         reported.push_str(&warning);
@@ -1015,7 +1051,7 @@ pub(crate) fn run(
         build = build.diagnostics(sink);
     }
     let planned = build.plan(&targets);
-    if invocation.given(Switch::Question) {
+    if invocation.questioning() {
         let question = planned.map(|planned| planned.already_up_to_date());
         let flushed = persistence.finish();
         let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
@@ -1084,6 +1120,24 @@ fn evaluated(session: Session, reported: &str) -> Result<crate::make::Loaded, Ru
         stderr: terminated(failure.to_string()),
         exit_code: ABANDONED,
     })
+}
+
+/// The switches that argue with the timestamps rather than with the build:
+/// `-t` touches instead of remaking, `-B` calls every recipe out of date, `-W`
+/// calls one file just modified.
+///
+/// `-t`'s exemption is read first, because `-B` sets the same bit that tells a
+/// `.PHONY` target from one with a file behind it.
+fn pretend_at(graph: &mut crate::frontend::BuildGraph, invocation: &Invocation) {
+    if invocation.given(Switch::Touch) {
+        graph.spare_phony_from_touch();
+    }
+    if invocation.given(Switch::AlwaysMake) {
+        graph.rebuild_everything();
+    }
+    for assumed in &invocation.assumed_new {
+        graph.assume_new(assumed.as_bytes());
+    }
 }
 
 /// What the Makefile said about running it, rather than about what to build.
@@ -1350,6 +1404,7 @@ mod tests {
             ("-q", "--question"),
             ("-r", "--no-builtin-rules"),
             ("-s", "--silent"),
+            ("-t", "--touch"),
             ("-w", "--print-directory"),
         ] {
             let short = parsed(&["make", letter]).switches;
@@ -1499,10 +1554,14 @@ mod tests {
         assert!(!parsed(&["make", "-w", "-q"]).announcing());
     }
 
+    /// The group and its order are GNU Make 4.4.1's own, read off a makefile
+    /// printing `$(MAKEFLAGS)` rather than reasoned about. `-W` is missing
+    /// from it because GNU Make's option table leaves it out: a sub-make is
+    /// told which switches were asked for, not which files to pretend about.
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
     fn a_sub_make_is_told_every_switch_it_would_otherwise_lose() {
-        let invocation = parsed(&["make", "-Beiqrw", "all"]);
+        let invocation = parsed(&["make", "-Beikqrstw", "-W", "b.x", "all"]);
         let environment = super::flag_environment(&invocation);
         assert_eq!(
             environment
@@ -1510,8 +1569,46 @@ mod tests {
                 .find(|(name, _)| *name == "MAKEFLAGS")
                 .map(|(_, value)| value.to_string_lossy().into_owned())
                 .as_deref(),
-            Some("Beiqrw")
+            Some("Beikqrstw")
         );
+    }
+
+    /// Every spelling GNU Make gives `-W`, and every shape its argument
+    /// arrives in.
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn what_if_names_a_file_in_each_spelling_make_accepts() {
+        for spelling in [
+            ["-W", "b.x"].as_slice(),
+            ["-Wb.x"].as_slice(),
+            ["--what-if", "b.x"].as_slice(),
+            ["--what-if=b.x"].as_slice(),
+            ["--new-file=b.x"].as_slice(),
+            ["--assume-new=b.x"].as_slice(),
+        ] {
+            let mut arguments = vec!["make"];
+            arguments.extend_from_slice(spelling);
+            arguments.push("all");
+            let invocation = parsed(&arguments);
+            assert_eq!(
+                invocation.assumed_new,
+                vec![BString::from("b.x")],
+                "{spelling:?}"
+            );
+            assert_eq!(invocation.goals, vec![BString::from("all")], "{spelling:?}");
+        }
+    }
+
+    /// `-t` outranks `-q`, which is what GNU Make does and not an ordering
+    /// chosen here: the touch is decided before a recipe is ever reached, so
+    /// question mode never gets its say and the invocation speaks after all.
+    // [spec:ronin:req:make.question-status/test]
+    #[test]
+    fn touching_outranks_the_question_it_would_otherwise_have_answered() {
+        assert!(parsed(&["make", "-q"]).questioning());
+        assert!(!parsed(&["make", "-q", "-t"]).questioning());
+        assert!(!parsed(&["make", "-w", "-q"]).announcing());
+        assert!(parsed(&["make", "-w", "-q", "-t"]).announcing());
     }
 
     // [spec:ronin:req:product.make-identity/test]
@@ -1527,10 +1624,10 @@ mod tests {
     // [spec:ronin:req:product.make-identity/test]
     #[test]
     fn the_options_no_machinery_answers_are_still_refused_by_name() {
-        // Each needs work the graph does not take — a per-node timestamp
-        // override, a database dump — and being refused is what keeps an
-        // invocation that asks for one from quietly building something else.
-        for option in ["-t", "-o", "-W", "-p"] {
+        // Each needs work the graph does not take — an old-file override, a
+        // database dump — and being refused is what keeps an invocation that
+        // asks for one from quietly building something else.
+        for option in ["-o", "-p"] {
             let diagnostic = refused(&["make", option, "x"])
                 .unwrap_or_else(|| panic!("{option} cannot describe a build"));
             assert!(
@@ -1541,7 +1638,7 @@ mod tests {
                 "{diagnostic}"
             );
         }
-        for option in ["--touch", "--old-file", "--what-if", "--debug"] {
+        for option in ["--old-file", "--debug"] {
             let diagnostic = refused(&["make", option, "x"])
                 .unwrap_or_else(|| panic!("{option} cannot describe a build"));
             assert!(
