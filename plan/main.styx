@@ -5443,23 +5443,150 @@ children (
                 title "Refactor Make-like runtime emulation into Kati-to-Ninja compilation"
                 priority 0
                 kind @refactor
-                implements {
-                    target-impl (
-                        [spec:ronin:req:make.compiler-boundary]
-                        [spec:ronin:req:make.interface-compatibility]
-                        [spec:ronin:req:make.recursive-invocation+1]
-                        [spec:ronin:req:make.jobserver+1]
-                        [spec:ronin:req:make.semantics+1]
-                        [spec:ronin:req:make.narration]
-                    )
-                }
-                deps (kati-graph-sink make-graph-equivalence)
+                children (
+                    {
+                        id make-makelike-audit
+                        title "Classify Make work as compiler semantics, Ninja mappings, no-ops, or runtime emulation"
+                        priority 0
+                        kind @chore
+                        deps (kati-graph-sink make-graph-equivalence)
+                        log (
+                            {
+                                at 2026-08-08T14:08:20.792415437Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Inventory every landed Make-mode code path and every open Make WBS node. Classify each as (1) kati/compiler semantics required to produce the faithful graph, (2) a Make interface control mapped to an existing Ninja control, (3) an accepted no-op, or (4) GNU Make runtime emulation to remove or retire. Record the classification and update the affected WBS nodes before completing this manual leaf. Graph-affecting language work stays; scheduler, persistence, reporting, recursive-process, and jobserver imitation does not."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-interface-surface
+                        title "Accept and classify the complete GNU Make interface"
+                        priority 0
+                        kind @feat
+                        implements {
+                            target-impl ([spec:ronin:req:make.interface-compatibility])
+                        }
+                        deps (make-makelike-audit)
+                        log (
+                            {
+                                at 2026-08-08T14:08:20.86765262Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Accept every GNU Make 4.4.1 option spelling and argument shape on argv and through MAKEFLAGS. Give every accepted option an explicit classification: kati compiler input, mapping to an already-existing Ninja control, or accepted no-op. Test syntactic acceptance separately from behavior. Graph-affecting goals, assignments, include paths, and evaluation controls must reach compilation; output ceremony and Make-runner controls do not acquire executor implementations merely because their spellings are accepted."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-subninja-recursion
+                        title "Compile recursive $(MAKE) invocations as subninja graph composition"
+                        priority 0
+                        kind @feat
+                        implements {
+                            target-impl ([spec:ronin:req:make.recursive-invocation+1])
+                        }
+                        deps (make-interface-surface)
+                        log (
+                            {
+                                at 2026-08-08T14:08:20.95858131Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Recognize recursive $(MAKE) invocations while kati compiles recipes. Evaluate the child directory, selected Makefile, goals, assignments, and graph-affecting flags as another compilation unit and compose its edges into the parent as semantic subninja inclusion. Preserve dependency and ordering relationships across the boundary. Do not leave a child Make command for the executor to launch."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-single-ninja-scheduler
+                        title "Replace recursive Make jobservers with one Ninja scheduler"
+                        priority 0
+                        kind @refactor
+                        implements {
+                            target-impl ([spec:ronin:req:make.jobserver+1])
+                        }
+                        deps (make-subninja-recursion)
+                        log (
+                            {
+                                at 2026-08-08T14:08:21.040117409Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Remove the recursive GNU Make jobserver server/tree once subninja composition supplies one graph. The composed graph is scheduled once by Ronin's Ninja scheduler with one job limit. Jobserver option spellings and authentication values remain accepted interface data; an inherited outer budget may be mapped to the existing scheduler or ignored, but no second scheduler, token server, or per-level process budget remains."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-ninja-narration
+                        title "Narrate Makefile-derived graphs the Ninja way"
+                        priority 0
+                        kind @refactor
+                        implements {
+                            target-impl ([spec:ronin:req:make.narration])
+                        }
+                        deps (make-makelike-audit)
+                        log (
+                            {
+                                at 2026-08-08T14:08:21.11516112Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Delete or bypass Make-specific execution narration: idle messages, directory enter/leave banners, recursive level prefixes, per-recipe Make failure lines, keep-going summaries, Stop. suffixes, and other GNU reporter ceremony. A graph built from a Makefile uses the same progress, failure, and diagnostic shape as a manifest-built graph. Front-end parse/evaluation diagnostics may still identify Makefile source; they do not justify Make behavior in the graph reporter."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-executor-boundary
+                        title "Remove Make provenance from graph execution"
+                        priority 0
+                        kind @refactor
+                        implements {
+                            target-impl ([spec:ronin:req:make.compiler-boundary])
+                        }
+                        deps (make-single-ninja-scheduler make-ninja-narration)
+                        log (
+                            {
+                                at 2026-08-08T14:08:21.187826233Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Remove Make provenance from scheduling, dirtiness, persistence, process supervision, pools, depfiles, restat, console handling, and failure propagation. After graph construction, graph structure, edge bindings, and ordinary Ninja execution options are the only channels by which kati can affect execution. Delete Make-mode branches or move their legitimate build meaning into kati's graph/command construction. Verify that equivalent graphs execute identically regardless of frontend."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-build-intent-gate
+                        title "Gate Make compilation on graph shape and build effects"
+                        priority 0
+                        kind @test
+                        implements {
+                            target-impl ([spec:ronin:req:make.semantics+1])
+                        }
+                        deps (make-executor-boundary)
+                        log (
+                            {
+                                at 2026-08-08T14:08:21.264466632Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Replace GNU Make runner parity as the gate. GNU Make 4.4.1 remains the oracle for which targets, prerequisites, ordering, variables, and recipes the invocation describes. Gate the direct graph against emitted Ninja graph equivalence and gate end-to-end cases on selected work, normal build outcome, and filesystem effects. Stdout/stderr wording, timing, jobserver choreography, recursive banners, and runner-specific status distinctions are discovery data, not pass criteria."
+                            }
+                        )
+                    }
+                )
                 log (
                     {
                         at 2026-08-08T13:42:29.048553633Z
                         author "brendan@necessary.nu"
                         kind @decision
                         text "This is the corrective boundary gate for [dec:ronin:make-compiles-to-ninja]. Audit every Make-mode change and open node against one question: does it help kati compile the invocation into the faithful Ninja graph, or does it make Ronin's executor behave like GNU Make?\n\nKeep and complete Makefile evaluation semantics that affect targets, prerequisites, ordering, variables, recipes, default goals, and generated build effects. Accept the complete GNU Make 4.4.1 flag surface, then record each flag as a compiler input, a mapping to an existing Ninja control, or an accepted no-op. Interface acceptance must be tested independently of behavioral parity.\n\nRefactor or remove Make-specific branches in scheduling, dirtiness, persistence, process supervision, failure reporting, idle narration, and jobserver service. Recursive $(MAKE) is compiled as subninja graph composition using the child directory, Makefile, goals, assignments, and graph-affecting flags; it is not a child Make executor and does not form a recursive jobserver tree.\n\nRewrite the compatibility gate around compiled graph shape, selected commands/work, normal build outcome, and filesystem effects. GNU Make output, recursive banners, exact status ceremony, timing, and scheduler behavior are discovery data rather than pass criteria. Review the existing Make-like backlog under this rule, retiring behavior-only nodes and rewriting mixed nodes around graph compilation before implementation."
+                    }
+
+                    {
+                        at 2026-08-08T14:08:20.716497985Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Decomposed into seven P0 leaves after operator approval. The dependency DAG is deliberate: inventory first; interface acceptance and Ninja narration then split; recursive compilation leads to removal of the jobserver tree; those branches join at the executor boundary; build-intent verification is the final gate. This parent is a pure container and owns no spec rules directly."
                     }
                 )
             }
