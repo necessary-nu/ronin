@@ -1014,6 +1014,53 @@ fn make_build_names_the_makefile_line_the_target_and_the_status() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// A recipe whose errors Make was told to ignore: the status is reported and
+/// the build carries on, which is the only use the status is of. The ported
+/// suite cannot hold this half, since it compares effect rather than output.
+// [spec:ronin:req:product.make-identity/test]
+#[test]
+fn make_build_reports_an_ignored_status_and_carries_on() {
+    let (mut graph, directory) = build_fixture(
+        "make-ignored-failure",
+        "rule fail\n  command = exit 3\nbuild $dir/out: fail\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut output = Vec::new();
+    {
+        let options = BuildOptions {
+            recipe_failure: Some("ronin".to_owned()),
+            ..BuildOptions::default()
+        };
+        let mut builder = Builder::with_output(&mut graph, options, &mut output);
+        builder.add_target(&target).unwrap();
+        let node = nodeget(builder.graph, target.as_bytes()).unwrap();
+        let edge = builder.graph.node(node).gen.unwrap();
+        let name = builder
+            .graph
+            .names_mut()
+            .intern(BStr::new(super::RECIPE_LOCATION));
+        builder
+            .graph
+            .edge_mut(edge)
+            .bindings
+            .insert(name, BString::from("Makefile:2"));
+        let name = builder
+            .graph
+            .names_mut()
+            .intern(BStr::new(super::IGNORE_ERRORS));
+        builder
+            .graph
+            .edge_mut(edge)
+            .bindings
+            .insert(name, BString::from("1"));
+        assert!(builder.build().is_ok(), "an ignored error is not a failure");
+    }
+    let output = String::from_utf8(output).unwrap();
+    let line = format!("ronin: [Makefile:2: {target}] Error 3 (ignored)\n");
+    assert!(output.ends_with(&line), "{output:?}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn ninja_build_interrupted_command_cleans_only_changed_outputs() {

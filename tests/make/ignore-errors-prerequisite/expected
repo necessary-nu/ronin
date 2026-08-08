@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| all: dep
+| 	echo top > top.out
+| dep:
+| 	-exit 5
+| 	echo dep > dep.out
+file dep.out touched 1
+| dep
+file top.out touched 1
+| top

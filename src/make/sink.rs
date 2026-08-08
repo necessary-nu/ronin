@@ -31,6 +31,7 @@ struct Bindings {
     tags: Binding,
     dry_run_command: Binding,
     recipe_location: Binding,
+    ignore_errors: Binding,
     /// `$out`, for the two bindings whose value is per edge rather than per
     /// rule. kati mints one rule per edge, so this expands to that edge's own
     /// single output.
@@ -51,6 +52,7 @@ impl Bindings {
             tags: graph.binding(b"tags"),
             dry_run_command: graph.binding(crate::build::DRY_RUN_COMMAND),
             recipe_location: graph.binding(crate::build::RECIPE_LOCATION),
+            ignore_errors: graph.binding(crate::build::IGNORE_ERRORS),
             out: graph.binding(b"out"),
         }
     }
@@ -258,6 +260,13 @@ impl BuildSink for GraphSink {
         }
         if rule.restat {
             bindings.push((self.bindings.restat, Template::literal(b"1")));
+        }
+        // Carried rather than answered for here. kati left the recipe's status
+        // in place instead of throwing it away, so that whatever runs the
+        // recipe can say what it was and go on, and only the thing running it
+        // can do that.
+        if rule.ignore_errors {
+            bindings.push((self.bindings.ignore_errors, Template::literal(b"1")));
         }
 
         let name = format!("rule{}", rule.id);

@@ -19,6 +19,16 @@ pub(crate) const DRY_RUN_COMMAND: &[u8] = b"dryrun_command";
 /// about the rule rather than about the file it builds.
 pub(crate) const RECIPE_LOCATION: &[u8] = b"recipe_location";
 
+/// The recipe's errors are Make's to ignore: `-` on every line, `-i`, `.IGNORE`.
+///
+/// Bound only where a nonzero status can mean nothing else, so the build reads
+/// the status the recipe left, says what it was, and carries on.
+pub(crate) const IGNORE_ERRORS: &[u8] = b"ignore_errors";
+
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "each is one binding an edge either carries or does not, and grouping them would name a state nothing declares"
+)]
 pub(super) struct CommandSpec {
     pub(super) command: BString,
     /// What to run when the run is only pretending. `None` for every Ninja
@@ -33,6 +43,8 @@ pub(super) struct CommandSpec {
     pub(super) restat: bool,
     pub(super) generator: bool,
     pub(super) use_console: bool,
+    /// A nonzero status here is an error Make was told to ignore.
+    pub(super) ignore_errors: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -100,6 +112,14 @@ impl CommandSpec {
         crate::env::edgevar_into(graph, edge, Names::GENERATOR, PathStyle::Raw, scratch);
         let generator = !scratch.is_empty();
         let use_console = graph.is_console_pool(graph.edge(edge).pool);
+        // Bound by the Make front end alone, so a manifest never interned it.
+        let ignore_errors = graph
+            .names()
+            .lookup(bstr::BStr::new(IGNORE_ERRORS))
+            .is_some_and(|binding| {
+                crate::env::edgevar(graph, edge, binding, PathStyle::Raw)
+                    .is_some_and(|value| !value.is_empty())
+            });
         Ok(Self {
             command,
             dry_run_command,
@@ -112,6 +132,7 @@ impl CommandSpec {
             restat,
             generator,
             use_console,
+            ignore_errors,
         })
     }
 }
@@ -336,6 +357,7 @@ impl Builder<'_> {
                     &self.recipe_location(edge),
                     self.graph.node_path(target).as_bytes(),
                     exit_code,
+                    command.ignore_errors,
                 ),
                 _ => self
                     .reporter
