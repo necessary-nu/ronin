@@ -5009,6 +5009,52 @@ children (
                 title "Port GNU Make's behaviour into cases this repository owns"
                 priority 0
                 kind @test
+                children (
+                    {
+                        id make-corpus-features
+                        title "Port GNU Make's feature scenarios into owned cases"
+                        priority 1
+                        kind @test
+                        log (
+                            {
+                                at 2026-08-08T12:12:13.65782247Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "One of three lanes growing `tests/make/` from GNU Make's own scenarios. This one takes `reference/gnumake/tests/scripts/features/`.\n\nThe point is coverage of behaviour we already claim, not finding new defects — though it will find some. Every case is a makefile written here from behaviour probed off /usr/bin/make 4.4.1, never copied: upstream's scripts are GPLv3 and `reference/gnumake` is a pinned checkout for exactly that reason (`make-licence-position`).\n\nCase names take a `feature-` prefix so three lanes writing concurrently cannot collide.\n\nA case that means to test a value writes it to a file — the harness compares exit status and file effect, never output. That excludes any scenario whose whole content is a diagnostic; skip those and say which, rather than contorting a case around it.\n\nWhere a case fails, record a `divergence` file naming the defect and, if one exists, the node. Do not fix code — that is another lane's ground this wave, and a divergence file that turns out to be already-fixed is caught automatically, because the suite fails when a recorded divergence starts passing."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-corpus-functions
+                        title "Port GNU Make's function and variable scenarios into owned cases"
+                        priority 1
+                        kind @test
+                        log (
+                            {
+                                at 2026-08-08T12:12:18.611844281Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "One of three lanes growing `tests/make/` from GNU Make's own scenarios. This one takes `reference/gnumake/tests/scripts/functions/` and `variables/`.\n\nThe point is coverage of behaviour we already claim, not finding new defects — though it will find some. Every case is a makefile written here from behaviour probed off /usr/bin/make 4.4.1, never copied: upstream's scripts are GPLv3 and `reference/gnumake` is a pinned checkout for exactly that reason (`make-licence-position`).\n\nCase names take a `function-` or `variable-` prefix so three lanes writing concurrently cannot collide.\n\nFunctions are the awkward half: most of what a function test does is `$(info ...)`, which the harness cannot compare because it does not read output. Write these so the value under test reaches a file — `all: ; @printf '%s\\n' '$(sort c a b)' > out` — which is a fair test of the function and a better one of the recipe path with it. Say which scenarios cannot survive that translation.\n\nWhere a case fails, record a `divergence` file naming the defect and, if one exists, the node. Do not fix code — that is another lane's ground this wave."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-corpus-targets
+                        title "Port GNU Make's target and rule scenarios into owned cases"
+                        priority 1
+                        kind @test
+                        log (
+                            {
+                                at 2026-08-08T12:12:24.679244313Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "One of three lanes growing `tests/make/` from GNU Make's own scenarios. This one takes `reference/gnumake/tests/scripts/targets/` and `misc/`.\n\nThe point is coverage of behaviour we already claim, not finding new defects — though it will find some. Every case is a makefile written here from behaviour probed off /usr/bin/make 4.4.1, never copied: upstream's scripts are GPLv3 and `reference/gnumake` is a pinned checkout for exactly that reason (`make-licence-position`).\n\nCase names take a `target-` prefix so three lanes writing concurrently cannot collide.\n\nThis is the best-suited of the three sets, because a special target's whole effect is on what gets built and what is left behind — which is exactly what the harness compares. `tests/make/intermediate-is-removed` and `tests/make/secondary-is-kept` are the shape.\n\nWatch for the ones already covered: `.PHONY`, `.DEFAULT`, `.INTERMEDIATE`, `.SECONDARY`, `.NOTINTERMEDIATE`, `.IGNORE`, `.NOTPARALLEL`, `.SUFFIXES`, `.EXPORT_ALL_VARIABLES` and `.WAIT` all have cases already. Extend rather than duplicate, and prefer the combinations — a special target's interaction with another is where the gaps are.\n\nWhere a case fails, record a `divergence` file naming the defect and, if one exists, the node. Do not fix code — that is another lane's ground this wave."
+                            }
+                        )
+                    }
+                )
                 log (
                     {
                         at 2026-08-08T09:28:13.183474663Z
@@ -5224,6 +5270,96 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-nothing-to-be-done
+                title "Say what Make says when a build had nothing to do"
+                priority 0
+                kind @feat
+                log (
+                    {
+                        at 2026-08-08T12:11:23.186128875Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Ronin says `ronin: no work to do.` where GNU Make says `make: 'out' is up to date.` for a named goal and `make: Nothing to be done for 'all'.` for a target with no recipe.\n\n`make-timestamp-dirtiness` made this the common path rather than a rare one: a first run in a tree GNU Make has already built now always takes it, so it is what somebody meets first.\n\nThis needs a decision before code, and the decision is not obvious. `[spec:ronin:req:make.narration]` says Make mode reports in the manifest front end's shape rather than reproducing GNU Make's wording, and calls that a product decision rather than a gap. `make-io-error-wording` read that rule and correctly refused to reword a shared refusal because of it.\n\nBut these two lines are not a refusal's wording. They are Make's answer to \"what did you do\", they name the target, and a script that greps for them is reading a fact rather than a brand. Weigh that against the rule as written, decide, and if the answer supersedes `make.narration` in part, say which part and leave the rest standing.\n\nAlso here, from `make-directory-announce-level`: a front-end refusal below the top carries no level — `ronin: *** No targets specified...` where GNU says `make[1]:`. `program_at` already formats it and `no_makefile`/`abandoned` are the two callers that want it.\n\nThe port gate cannot see any of this — it compares observable effect, not output — so whatever lands needs `tests/cli.rs` coverage instead."
+                    }
+                )
+            }
+
+            {
+                id make-keep-going-report
+                title "Report the goals a keep-going build could not remake"
+                priority 1
+                kind @feat
+                log (
+                    {
+                        at 2026-08-08T12:11:27.751145324Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Two lines a keep-going build says and Ronin does not, found by `make-recipe-failure-line`:\n\n`make: Target 'x' not remade because of errors.` — 18 diffs. GNU says it **per goal, at the point that goal finishes**, not as a summary appended at the end. So it needs the goal list inside the build loop rather than a line added after it, which is why the node exists rather than it being three lines.\n\n`make: *** Waiting for unfinished jobs....` — 1 diff, said when a parallel build has failed and is draining.\n\nVerify both against /usr/bin/make 4.4.1: which goals count, what happens under `-k` with several failures, what a phony goal does, and whether the line appears when the failure was ignored (`make-ignore-errors-status` just changed what \"failed\" means here).\n\n`src/build.rs` and `src/build/reporter.rs`."
+                    }
+                )
+            }
+
+            {
+                id make-option-carrying
+                title "Carry every option a sub-make should inherit, as Make writes it"
+                priority 2
+                kind @fix
+                log (
+                    {
+                        at 2026-08-08T12:11:34.418431875Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Four ways a sub-make is told something GNU Make would have told it, or told it differently. All found by `make-switch-precedence` and `make-jobserver-explicit-under-parent` while doing adjacent work, and all deliberately left.\n\n`-l` is neither adopted from an inherited MAKEFLAGS nor written into a child's. Unlike `-j`, there is no reason for it — `-j` travels through the jobserver transport on purpose, and adopting it would make every sub-make look like it forced its own.\n\n`-j`'s inherited count is not read at all. The clean shape, if wanted, is to map it onto `normalize_runtime_options`'s `unshared` argument — exactly GNU's `arg_job_slots = env_slots` fallback — which leaves `make-jobserver-explicit-under-parent`'s warning keyed on the command line alone. That decision is recorded there; do not undo it.\n\nA propagated assignment's value is not escaped: GNU writes `FOO=a\\ b`, Ronin writes `FOO=a b`, so a value with a space arrives as two words.\n\n`splice` appends the budget after the long switches — `--no-print-directory -j3 --jobserver-auth=...` where GNU writes `-j3 --jobserver-auth=... --no-print-directory`. Children parse either; the suite compares strings. Three lines in `jobserver.rs`.\n\n`src/make/cli.rs` and `src/jobserver.rs`."
+                    }
+                )
+            }
+
+            {
+                id make-refusal-reaches-further
+                title "Refuse only where GNU Make refuses, and name the file when doing it"
+                priority 2
+                kind @fix
+                log (
+                    {
+                        at 2026-08-08T12:11:47.03355994Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Places Ronin abandons a build GNU Make finishes, or refuses without saying what it was reading. Found by `make-io-error-wording` while removing Rust's `(os error N)` suffix, and left because they are behaviour rather than wording.\n\nA stem past `NAME_MAX` makes Ronin abandon on ENAMETOOLONG where Make builds the target — 10 cases, `GraphError::Stat`. Statting a path that cannot exist is not an error; it is the answer \"no\".\n\n`jobserver unavailable: using -j1` — GNU Make warns and finishes; Ronin says the same thing and exits 1. Verified side by side.\n\nNinja mode answers a missing manifest with `ronin: No such file or directory` where upstream Ninja says `ninja: error: loading 'build.ninja': No such file or directory`. The missing `error: loading '<path>': ` context is a real gap the 425 pinned tests do not reach — check it against the pinned reference binary, and note this half is Ninja's contract, not Make's, so `[spec:ronin:req:compat.upstream-conformance]` governs rather than the Make narration rule.\n\n`src/main.rs:62` reports `writing terminal output:` where the suite expects `/^ronin: write error/`. `system_message` is `pub(crate)` and main.rs is the binary crate, so reaching it means widening the library's public API — decide whether that is worth it or whether the message moves instead.\n\n`src/error.rs`, `src/graph.rs`, `src/main.rs`. Do not touch `src/build.rs` or `src/make/**` — other lanes own them this wave."
+                    }
+                )
+            }
+
+            {
+                id make-include-semantics
+                title "Build a missing include and go on where GNU Make does"
+                priority 1
+                kind @fix
+                log (
+                    {
+                        at 2026-08-08T12:11:54.762848733Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "40 of the 53 cases `make-io-error-wording` grouped are kati's, and they are one behaviour and one rendering.\n\nkati treats a failed `include` as fatal. GNU Make **warns, tries to build the named file as a target, and re-reads the makefile if it succeeded** — `features/include.diff.10` shows Make building `inc1` and `inc2` and then running the recipe. That is the remaking-makefiles pass, which Ronin has no equivalent of, so decide how far to go: warning and continuing is most of the value and does not need the pass; building the include does.\n\n`kati/src-rs/eval.rs:958-966` renders a raw `std::io::Error` into `\"{pat}: {err}\"`, which is 35 of the 40. `kati/src-rs/file.rs:36` reads with `std::fs::read(...)?` into anyhow with no context at all, so the whole diagnostic is `Permission denied (os error 13)` — no name, no location. That is 5.\n\nRonin's side already has `system_message` for exactly this shape; `make-io-error-wording` applied it everywhere an `io::Error` reaches a Ronin diagnostic.\n\nAlso here, from `make-parser-parity`: `-I -` restarts the include search path, and `dash-I.5` still differs because we name the resolved path and add kati's `In file included from` line, which GNU has no equivalent of.\n\n`kati/src-rs/eval.rs` and `kati/src-rs/file.rs`. Other lanes own `dep.rs`, `parser.rs` and `ninja.rs` this wave."
+                    }
+                )
+            }
+
+            {
+                id make-assignment-modifiers
+                title "Read an assignment's modifiers where GNU Make reads them"
+                priority 2
+                kind @fix
+                log (
+                    {
+                        at 2026-08-08T12:12:00.9362117Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Two corners where kati reads an assignment differently from GNU Make, both already a wrong build, both found by `make-private-variables` and left because they are the parser's rather than the variable table's.\n\nGNU treats `override`, `export`, `private` and `undefine` as **literal words**, not as the result of expansion. `a: $(P) F = 1` with `P=private`: GNU refuses, Ronin builds — before that node it made a variable named `private F`, after it a private `F`. Neither is right.\n\nBeside it, `a: X Y = 1` — the one-word variable-name rule was applied to global assignments and not to target-specific ones, so a two-word target-specific name is still accepted.\n\nAlso here, from `make-parser-parity`'s residue: `$(flavor)` on a `!=` variable says `simple` where GNU says `recursive`; `$(origin .RECIPEPREFIX)` says `undefined` where GNU says `default`; a command-line variable removed by `override undefine` is back inside a recipe in GNU; and `.SHELLSTATUS` cannot be read inside a rule.\n\nNeither of the two main corners is reachable without a variable expanding to a keyword, which is why they survived this long — but both are wrong builds rather than refusals, and that ranks them.\n\n`kati/src-rs/parser.rs`, `kati/src-rs/stmt.rs`, `kati/src-rs/strutil.rs`, `kati/src-rs/func.rs`. Other lanes own `dep.rs`, `eval.rs` and `ninja.rs` this wave."
                     }
                 )
             }
