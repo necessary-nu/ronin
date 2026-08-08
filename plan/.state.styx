@@ -285,6 +285,7 @@ assertions (
     {id make-features-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:46:36.696066472Z}
     {id make-prerequisite-globbing, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:47:45.308464139Z}
     {id make-variable-is-one-word, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:48:37.306379932Z}
+    {id make-option-eval-and-warnings, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:49:27.148448274Z}
 )
 
 impl_evidence (

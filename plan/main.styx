@@ -4458,6 +4458,29 @@ children (
                         priority 5
                         kind @feat
                         deps (make-interface-surface)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-08T22:48:57.119390118Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T22:49:27.075676581Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Subsumed and delivered by make-interface-surface in 435fd17b7bdb30570b406171985f94d1408ca22b. `-E`/`--eval` is a compiler input: fragments from MAKEFLAGS and argv are parsed in order and prepended to the selected Makefile's cached AST, so a goal defined only there becomes a graph edge. Warning controls, including --warn-undefined-variables, are accepted interface no-ops and do not create a Make runner. Focused eval_fragments_reach_compilation, accepts_every_make_option_shape, and make_narration_flags_are_accepted_noops tests pass. Seal this child rather than duplicate the parent implementation."
+                            }
+
+                            {
+                                at 2026-08-08T22:49:27.148448274Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
+                        )
                     }
                 )
                 log (
