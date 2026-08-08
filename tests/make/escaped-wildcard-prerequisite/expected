@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| out: a\*b
+| 	echo "$^" > $@
+file a*b kept 0
+file aXb kept 0
+file out touched 1
+| a*b

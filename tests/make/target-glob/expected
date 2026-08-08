@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| all: a.one a.two
+| a.*: fresh
+| 	echo made "$@" > $@
+| fresh: ;
+file a.one touched 1
+| made a.one
+file a.two touched 1
+| made a.two
