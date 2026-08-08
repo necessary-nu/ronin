@@ -685,13 +685,8 @@ fn session_for(
         // already names Make mode: that is the whole point of selecting the
         // front end by name. Switches and assignments travel in MAKEFLAGS.
         subkati_args: vec![invoked_as.as_os_str().to_owned()],
-        // What a diagnostic with no file and line leads with. GNU Make leads
-        // with its own name and, below the top, with the level too.
-        program_name: if level == 0 {
-            PRODUCT_NAME.to_owned()
-        } else {
-            format!("{PRODUCT_NAME}[{level}]")
-        },
+        // What a diagnostic with no file and line leads with.
+        program_name: program_at(level),
         // The evaluator declares what a Makefile may assume of the language;
         // these two are about who runs the recipes, which is Ronin. Both are
         // real: Make mode serves the jobserver as well as consuming it, in the
@@ -706,6 +701,16 @@ fn session_for(
         .map(|goal| session.intern(goal.to_vec()))
         .collect();
     session
+}
+
+/// What a diagnostic from this invocation leads with: GNU Make names itself
+/// and, below the top of the tree, the level too.
+fn program_at(level: usize) -> String {
+    if level == 0 {
+        PRODUCT_NAME.to_owned()
+    } else {
+        format!("{PRODUCT_NAME}[{level}]")
+    }
 }
 
 /// Tell the makefile what the invocation it is being read by looks like.
@@ -742,14 +747,15 @@ fn record_invocation(
         })
 }
 
-/// The scheduler settings this invocation asks for.
+/// The scheduler settings this invocation asks for, and GNU Make's warning
+/// where an explicit `-j` replaced a budget this invocation inherited.
 // [spec:ronin:req:product.make-identity]
 fn build_options(
     invocation: &Invocation,
     runner: &Runner,
     working_directory: crate::os::WorkingDirectory,
     level: usize,
-) -> Result<BuildOptions, Error> {
+) -> Result<(BuildOptions, Option<String>), Error> {
     let mut options = BuildOptions {
         jobs: invocation.jobs.unwrap_or(JobLimit::Auto),
         // GNU Make's -k has no count: it stops when nothing is left that could
@@ -771,7 +777,7 @@ fn build_options(
         working_directory,
         ..BuildOptions::default()
     };
-    crate::cli::normalize_runtime_options(
+    let forced = crate::cli::normalize_runtime_options(
         &mut options,
         runner.makeflags.as_deref(),
         // NINJA_STATUS is the Ninja front end's name for its own rendering, and
@@ -793,7 +799,15 @@ fn build_options(
             .into_iter()
             .map(|(name, value)| (OsString::from(name), Some(value))),
     );
-    Ok(options)
+    Ok((
+        options,
+        forced.map(|jobs| {
+            format!(
+                "{}: warning: -j{jobs} forced in submake: resetting jobserver mode.",
+                program_at(level)
+            )
+        }),
+    ))
 }
 
 /// How many recipes at once, for the pool the evaluator declares for itself.
@@ -929,7 +943,7 @@ pub(crate) fn run(
     runner: &Runner,
     arguments: &[BString],
     mut output: Option<&mut dyn Write>,
-    diagnostics: Option<&mut dyn Write>,
+    mut diagnostics: Option<&mut dyn Write>,
 ) -> Result<RunResult, Error> {
     let mut invocation = match parse(arguments)? {
         Action::Immediate(result) => return Ok(result),
@@ -964,7 +978,11 @@ pub(crate) fn run(
         .as_deref()
         .and_then(|level| level.trim().parse::<usize>().ok())
         .unwrap_or(0);
-    let options = build_options(&invocation, runner, working_directory, level)?;
+    let (options, warning) = build_options(&invocation, runner, working_directory, level)?;
+    // After the directory announcement, which is where GNU Make puts it.
+    if let Some(warning) = warning {
+        say(&mut diagnostics, &mut reported, &warning)?;
+    }
     let mut session = session_for(
         &invocation,
         &makefile,
@@ -1457,7 +1475,9 @@ mod tests {
         let runner = crate::cli::Runner::new(&directory).unwrap();
         let options = |arguments: &[&str]| {
             let working = crate::os::WorkingDirectory::new(&directory).unwrap();
-            super::build_options(&parsed(arguments), &runner, working, 0).unwrap()
+            super::build_options(&parsed(arguments), &runner, working, 0)
+                .unwrap()
+                .0
         };
         assert!((options(&["make", "-l", "2.5"]).maxload - 2.5).abs() < f64::EPSILON);
         // Zero is what the scheduler reads as no ceiling, and it is what an

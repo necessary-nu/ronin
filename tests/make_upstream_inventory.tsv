@@ -250,12 +250,12 @@ case	features/jobserver.diff.13	semantic	no-work-line+evaluation
 case	features/jobserver.diff.14	narration	no-work-line
 case	features/jobserver.diff.15	narration	product-name+io-error-text
 case	features/jobserver.diff.16	narration	product-name+io-error-text
-case	features/jobserver.diff.2	semantic	ninja-progress+no-work-line+product-name+evaluation
-case	features/jobserver.diff.3	semantic	ninja-progress+no-work-line+product-name+evaluation
+case	features/jobserver.diff.2	semantic	ninja-progress+evaluation
+case	features/jobserver.diff.3	semantic	ninja-progress+evaluation
 case	features/jobserver.diff.4	semantic	product-name+parse-failure
 case	features/jobserver.diff.5	capability	option-refused
 case	features/jobserver.diff.6	narration	ninja-progress+no-work-line
-case	features/jobserver.diff.7	semantic	ninja-progress+directory-announce+product-name+evaluation
+case	features/jobserver.diff.7	narration	ninja-progress+directory-announce
 case	features/jobserver.diff.8	capability	option-refused
 case	features/jobserver.diff.9	semantic	parse-failure
 case	features/mult_rules.diff	narration	product-name+shared-refusal

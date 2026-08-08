@@ -74,11 +74,10 @@ pub(crate) struct BuildOptions {
     pub(crate) jobserver: Option<crate::jobserver::Transport>,
     /// Whether this build may create a jobserver of its own.
     ///
-    /// Set when nothing in the environment described one, which is what makes
-    /// this build the top of its tree. A build that declined an inherited
-    /// jobserver — an explicit `-j` under a parent Make — still leaves that
-    /// one in place for children rather than shadowing it with a second
-    /// budget that would be spent alongside the first.
+    /// Set when this build is not spending an inherited budget, which covers
+    /// the top of a tree and a build that declined one — an explicit `-j`
+    /// under a parent Make, which asks for that count below here as well and
+    /// has to serve it to get it there.
     pub(crate) serve_jobserver: bool,
     /// Variables the front end imposes on every command it runs, beside
     /// whatever the jobserver publishes.
