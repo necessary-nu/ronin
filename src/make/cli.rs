@@ -22,6 +22,7 @@ use crate::build::{BuildOptions, JobLimit, OutputGroup};
 use crate::cli::{RunResult, Runner, PRODUCT_NAME};
 use crate::error::CliError;
 use crate::frontend::{Build, Outcome, Persistence};
+use crate::make::Shuffle;
 use crate::util::{terminated, BString, ByteSlice};
 use crate::Error;
 use kati::bytes::Bytes;
@@ -51,6 +52,47 @@ const MAKELEVEL: &str = "MAKELEVEL";
 /// it. Scripts branch on the difference.
 const ABANDONED: i32 = 2;
 
+/// The workings GNU Make's `--debug` selects, in the bits GNU Make holds them
+/// in. `a` is every one of them and `n` is none.
+const DB_BASIC: u16 = 0x001;
+const DB_VERBOSE: u16 = 0x002;
+const DB_JOBS: u16 = 0x004;
+const DB_IMPLICIT: u16 = 0x008;
+const DB_PRINT: u16 = 0x010;
+const DB_WHY: u16 = 0x020;
+const DB_MAKEFILES: u16 = 0x100;
+const DB_ALL: u16 = 0xfff;
+
+/// One `--debug` argument folded into what is already selected.
+///
+/// GNU Make reads the first letter of each comma- or space-separated word and
+/// skips the rest of it, so `--debug=basic` and `--debug=b` are one thing.
+/// Three letters imply the basic narration as well as their own, and `n` takes
+/// back whatever came before it. `None` for a letter GNU Make does not know.
+fn debug_facets(mut level: u16, spec: &[u8]) -> Option<u16> {
+    for word in spec
+        .split(|byte| *byte == b',' || *byte == b' ')
+        .filter(|word| !word.is_empty())
+    {
+        level |= match word[0].to_ascii_lowercase() {
+            b'a' => DB_ALL,
+            b'b' => DB_BASIC,
+            b'i' => DB_BASIC | DB_IMPLICIT,
+            b'j' => DB_JOBS,
+            b'm' => DB_BASIC | DB_MAKEFILES,
+            b'n' => {
+                level = 0;
+                continue;
+            }
+            b'p' => DB_PRINT,
+            b'v' => DB_BASIC | DB_VERBOSE,
+            b'w' => DB_WHY,
+            _ => return None,
+        };
+    }
+    Some(level)
+}
+
 /// What one Make invocation asks for.
 struct Invocation {
     /// The directories `-C` named, in order. GNU Make enters each in turn, so
@@ -67,6 +109,12 @@ struct Invocation {
     goals: Vec<BString>,
     /// `VAR=value` in command-line order, which is the order Make applies them.
     variables: Vec<Bytes>,
+    /// Each `--debug` argument as it was written. Kept as words rather than as
+    /// the facets they mean, because a sub-make is handed them unchanged.
+    debug: Vec<BString>,
+    /// What `--shuffle` settled on, already resolved to a permutation rather
+    /// than left as the word that asked for one.
+    shuffle: Shuffle,
     jobs: Option<JobLimit>,
     /// The load average above which no further recipe starts. `-l` with no
     /// number lifts the limit rather than imposing one, which is what a limit
@@ -94,6 +142,8 @@ impl Invocation {
             makefile: None,
             goals: Vec::new(),
             variables: Vec::new(),
+            debug: Vec::new(),
+            shuffle: Shuffle::None,
             jobs: None,
             load: None,
             switches: 0,
@@ -126,6 +176,22 @@ impl Invocation {
         self.negated & switch.bit() != 0
     }
 
+    /// Which of Make's own workings this invocation asked to be told about.
+    ///
+    /// GNU Make settles this after the whole command line is read rather than
+    /// as it goes: `-d` is every facet and `--trace` is the two it names,
+    /// whatever their position, and the `--debug` words fold in over the top.
+    fn debugging(&self) -> u16 {
+        let mut level = if self.given(Switch::Debug) { DB_ALL } else { 0 };
+        if self.given(Switch::Trace) {
+            level |= DB_PRINT | DB_WHY;
+        }
+        for spec in &self.debug {
+            level = debug_facets(level, spec.as_bytes()).unwrap_or(level);
+        }
+        level
+    }
+
     /// Take on the switches a parent make put in `MAKEFLAGS`.
     ///
     /// GNU Make reads that variable as though it were typed on the command
@@ -149,6 +215,24 @@ impl Invocation {
         {
             if let Some(switch) = Switch::long_negation(word.as_bytes()) {
                 self.withdraw(switch);
+                continue;
+            }
+            // The long options that carry a facet rather than a letter, and so
+            // would be lost to the skip below.
+            if let Some(spec) = word.strip_prefix("--debug=") {
+                self.debug.push(BString::from(spec));
+                continue;
+            }
+            if word == "--trace" {
+                self.add(Switch::Trace);
+                continue;
+            }
+            // A parent settled the seed, so this reads a permutation rather than
+            // a request and the whole tree shuffles the same way.
+            if let Some(spec) = word.strip_prefix("--shuffle=") {
+                if let Some(mode) = Shuffle::requested(spec.as_bytes()) {
+                    self.shuffle = mode;
+                }
                 continue;
             }
             // One word carrying a name, not a cluster: read letter by letter it
@@ -183,6 +267,7 @@ impl Invocation {
         let mut propagated = Vec::new();
         for (switch, spelling) in [
             (Switch::AlwaysMake, "-B"),
+            (Switch::Debug, "-d"),
             (Switch::EnvironmentOverrides, "-e"),
             (Switch::IgnoreErrors, "-i"),
             (Switch::KeepGoing, "-k"),
@@ -288,6 +373,7 @@ impl OutputSync {
 #[derive(Clone, Copy)]
 enum Switch {
     AlwaysMake,
+    Debug,
     DryRun,
     EnvironmentOverrides,
     IgnoreErrors,
@@ -298,6 +384,7 @@ enum Switch {
     Question,
     Silent,
     Touch,
+    Trace,
 }
 
 impl Switch {
@@ -305,6 +392,7 @@ impl Switch {
     const fn short(letter: u8) -> Option<Self> {
         Some(match letter {
             b'B' => Self::AlwaysMake,
+            b'd' => Self::Debug,
             b'e' => Self::EnvironmentOverrides,
             b'i' => Self::IgnoreErrors,
             b'k' => Self::KeepGoing,
@@ -351,6 +439,7 @@ impl Switch {
             b"--question" => Self::Question,
             b"--silent" | b"--quiet" => Self::Silent,
             b"--touch" => Self::Touch,
+            b"--trace" => Self::Trace,
             _ => return None,
         })
     }
@@ -396,6 +485,10 @@ fn usage() -> String {
             "  -t       touch the targets that are out of date, running no recipe\n",
             "  -w       announce the directory the build runs in\n",
             "  -S       stop at the first failure, taking back -k\n",
+            "  -d       report what Make is doing, as --debug=a does\n",
+            "  --debug[=FLAGS]  report the workings FLAGS names: a b i j m n p v w\n",
+            "  --trace  report why each recipe is running, as --debug=p,w does\n",
+            "  --shuffle[=MODE]  build in another order: SEED, random, reverse, none\n",
             "  -v       print the version, as --version does\n",
             "  --no-print-directory, --no-silent\n",
             "  --version, --help\n",
@@ -593,6 +686,30 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
             b"--version" | b"-v" => return Ok(Action::Immediate(reported(version()))),
             b"--help" => return Ok(Action::Immediate(reported(usage()))),
             b"--output-sync" => invocation.output_sync = Some(OutputSync::Target),
+            // GNU Make's argument is optional and its default is the basic
+            // level, which is also what the group of letters is read against.
+            b"--debug" => invocation.debug.push(BString::from(&b"basic"[..])),
+            option if option.starts_with(b"--debug=") => {
+                let spec = &option["--debug=".len()..];
+                if debug_facets(0, spec).is_none() {
+                    return Ok(refuse(format_args!(
+                        "unknown debug level specification '{}'",
+                        spec.to_str_lossy()
+                    )));
+                }
+                invocation.debug.push(BString::from(spec));
+            }
+            // GNU Make's argument is optional and its default is `random`.
+            option if option == b"--shuffle" || option.starts_with(b"--shuffle=") => {
+                let spec = option.strip_prefix(b"--shuffle=").unwrap_or(b"random");
+                let Some(mode) = Shuffle::requested(spec) else {
+                    return Ok(refuse(format_args!(
+                        "invalid shuffle mode: Invalid value: '{}'",
+                        spec.to_str_lossy()
+                    )));
+                };
+                invocation.shuffle = mode;
+            }
             b"--jobs" => invocation.jobs = Some(jobs_value(arguments, &mut index, b"")?),
             b"--load-average" => invocation.load = Some(load_value(arguments, &mut index, b"")?),
             b"--file" | b"--makefile" => {
@@ -629,6 +746,11 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
             }
         }
         index += 1;
+    }
+    // GNU Make forgets -d once the words have had their say, so a `--debug=n`
+    // after it leaves nothing for a sub-make to inherit either.
+    if invocation.debugging() == 0 {
+        invocation.switches &= !Switch::Debug.bit();
     }
     Ok(Action::Execute(Box::new(invocation)))
 }
@@ -865,10 +987,13 @@ fn build_options(
         touch: invocation.given(Switch::Touch),
         // Make's `-n` exists to show the recipes rather than to run them, so it
         // asks for the commands themselves and not for the descriptions a
-        // build would otherwise report. Under `-t` the recipe is not what
-        // would happen, so there is nothing there worth showing.
-        verbose: invocation.given(Switch::DryRun) && !invocation.given(Switch::Touch),
+        // build would otherwise report, and `--debug=p` asks for the same of a
+        // build that does run them. Under `-t` the recipe is not what would
+        // happen, so there is nothing there worth showing.
+        verbose: (invocation.given(Switch::DryRun) && !invocation.given(Switch::Touch))
+            || invocation.debugging() & DB_PRINT != 0,
         quiet: invocation.given(Switch::Silent),
+        trace: invocation.debugging() & DB_WHY != 0,
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
         maxload: invocation.load.unwrap_or_default(),
@@ -950,14 +1075,38 @@ fn flag_environment(invocation: &Invocation) -> Vec<(&'static str, OsString)> {
     assignments.sort_unstable();
     let mut makeflags = letters.clone();
     // Between the letter group and the long options, which is where GNU Make
-    // writes it: `k -Oline --no-print-directory`.
+    // writes it: `k -Oline --debug=b --trace --no-print-directory`.
     if let Some(sync) = invocation.output_sync {
         makeflags.push(' ');
         makeflags.push_str(sync.spelling());
     }
+    // The requests with no letter to travel as, which GNU Make writes after the
+    // group and before the withdrawals, in its own switch table's order.
+    // Deduplicated as GNU Make deduplicates them: the same `--debug` can arrive
+    // from the command line and from a parent's `MAKEFLAGS` at once, and a
+    // letter in the group cannot say a thing twice.
+    let mut long = Vec::new();
+    for spec in &invocation.debug {
+        let option = format!(" --debug={}", spec.to_str_lossy());
+        if !long.contains(&option) {
+            long.push(option);
+        }
+    }
+    if invocation.given(Switch::Trace) {
+        long.push(" --trace".to_owned());
+    }
+    for option in long {
+        makeflags.push_str(&option);
+    }
     for withdrawn in invocation.withdrawn() {
         makeflags.push(' ');
         makeflags.push_str(withdrawn);
+    }
+    // Last, where GNU Make's switch table puts it, and carrying the seed this
+    // run settled on so that a child reproduces the same order.
+    if let Some(mode) = invocation.shuffle.spelling() {
+        makeflags.push_str(" --shuffle=");
+        makeflags.push_str(&mode);
     }
     if !assignments.is_empty() {
         // GNU Make ends the switches at a `--` before the assignments, so that
@@ -1103,6 +1252,7 @@ pub(crate) fn run(
     if let Some(forced) = forced {
         say(&mut diagnostics, &mut reported, &forced)?;
     }
+    narrate(&invocation, &mut output, &mut reported, Phase::Reading)?;
 
     let Some(makefile) = invocation
         .makefile
@@ -1122,15 +1272,14 @@ pub(crate) fn run(
     );
     record_invocation_variables(&mut session, &invocation, level)?;
 
-    let mut graph = match evaluated(session, &reported) {
+    let mut graph = match evaluated(session, invocation.shuffle, &reported) {
         Ok(loaded) => adopt(&mut options, loaded),
         Err(result) => return Ok(result),
     };
     pretend_at(&mut graph, &invocation);
     let (mut persistence, warning) = Persistence::open(&mut graph, &directory)?;
-    if let Some(warning) = warning {
-        reported.push_str(&warning);
-    }
+    reported.push_str(warning.as_deref().unwrap_or_default());
+    narrate(&invocation, &mut output, &mut reported, Phase::Updating)?;
 
     let targets = graph.default_targets();
     let mut build = Build::with_options(&mut graph, &mut persistence, options);
@@ -1204,8 +1353,12 @@ fn record_invocation_variables(
 /// wrote it, because the evaluator already put the program's name in front of
 /// it; naming it again here would say it twice.
 // [spec:ronin:req:make.recursive-invocation]
-fn evaluated(session: Session, reported: &str) -> Result<crate::make::Loaded, RunResult> {
-    crate::make::load_makefile(session).map_err(|failure| RunResult {
+fn evaluated(
+    session: Session,
+    shuffle: Shuffle,
+    reported: &str,
+) -> Result<crate::make::Loaded, RunResult> {
+    crate::make::load_makefile(session, shuffle).map_err(|failure| RunResult {
         stdout: terminated(reported),
         stderr: terminated(failure.to_string()),
         exit_code: ABANDONED,
@@ -1260,6 +1413,42 @@ fn abandoned(reported: String, failure: Error) -> RunResult {
 // [spec:ronin:req:product.make-identity]
 fn announcement(verb: &str, directory: &Path) -> String {
     format!("{PRODUCT_NAME}: {verb} directory '{}'", directory.display())
+}
+
+/// The two points in a run that `--debug`'s basic level marks.
+#[derive(Clone, Copy)]
+enum Phase {
+    /// The makefiles are about to be read. Ronin says who is answering where
+    /// GNU Make prints its own banner.
+    Reading,
+    /// The goals are about to be brought up to date.
+    Updating,
+}
+
+/// Say where the run has got to, in Make's words.
+///
+/// GNU Make separates the two with a third marker, `Updating makefiles....`,
+/// for the pass that remakes the makefiles themselves; there is no such pass
+/// here, and a marker for one would report something that did not happen. What
+/// GNU Make says between them — which target it is considering, which pattern
+/// rule it is trying — narrates the dependency search, which the evaluator runs
+/// rather than this front end.
+fn narrate(
+    invocation: &Invocation,
+    output: &mut Option<&mut dyn Write>,
+    reported: &mut String,
+    phase: Phase,
+) -> Result<(), Error> {
+    if invocation.debugging() & DB_BASIC == 0 {
+        return Ok(());
+    }
+    match phase {
+        Phase::Reading => {
+            say(output, reported, version().trim_end())?;
+            say(output, reported, "Reading makefiles...")
+        }
+        Phase::Updating => say(output, reported, "Updating goal targets...."),
+    }
 }
 
 /// Put a line where the caller will see it, in the order the build saw it.
@@ -1348,7 +1537,7 @@ fn finished(reported: String, up_to_date: bool, outcome: &Outcome, silent: bool)
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Action, Invocation, Switch};
+    use super::{parse, Action, Invocation, Shuffle, Switch};
     use crate::build::JobLimit;
     use crate::util::BString;
     use std::path::PathBuf;
@@ -1568,6 +1757,43 @@ mod tests {
             "k --no-print-directory"
         );
         assert_eq!(makeflags(&["-k", "--no-silent", "-S"]), "S --no-silent");
+        // `-d` is a letter in the group; the two options that carry a facet
+        // follow it, before the withdrawals, which is where GNU Make's switch
+        // table puts them. A `--debug` said twice is handed on once.
+        // `--shuffle` is last of all, and carries the seed this run settled on
+        // rather than the word that asked for one.
+        assert_eq!(makeflags(&["--shuffle=reverse"]), " --shuffle=reverse");
+        assert_eq!(makeflags(&["--shuffle=identity"]), " --shuffle=identity");
+        assert_eq!(makeflags(&["--shuffle=12345"]), " --shuffle=12345");
+        assert_eq!(makeflags(&["--shuffle=none"]), "");
+        assert_eq!(
+            makeflags(&["-k", "--shuffle=reverse"]),
+            "k --shuffle=reverse"
+        );
+        assert_eq!(
+            makeflags(&["--no-print-directory", "--shuffle=reverse"]),
+            " --no-print-directory --shuffle=reverse"
+        );
+        let seeded = makeflags(&["--shuffle"]);
+        assert!(
+            seeded
+                .strip_prefix(" --shuffle=")
+                .is_some_and(|seed| seed.parse::<u32>().is_ok()),
+            "{seeded}"
+        );
+
+        assert_eq!(makeflags(&["-d"]), "d");
+        assert_eq!(makeflags(&["--debug"]), " --debug=basic");
+        assert_eq!(
+            makeflags(&["--debug=b", "--debug=j"]),
+            " --debug=b --debug=j"
+        );
+        assert_eq!(makeflags(&["-k", "--trace"]), "k --trace");
+        assert_eq!(makeflags(&["-d", "--debug=n"]), " --debug=n");
+        assert_eq!(
+            makeflags(&["--trace", "--no-print-directory"]),
+            " --trace --no-print-directory"
+        );
 
         let mut adopted = parsed(&["make", "all"]);
         adopted.adopt_inherited(Some("S --no-print-directory --no-silent"));
@@ -1575,6 +1801,24 @@ mod tests {
         assert!(adopted.refused(Switch::PrintDirectory));
         assert!(adopted.refused(Switch::Silent));
         assert!(!adopted.announcing());
+
+        // And the two long spellings back again, which the letterwise read
+        // would otherwise lose.
+        let mut adopted = parsed(&["make", "--debug=b"]);
+        adopted.adopt_inherited(Some("k --debug=b --trace --shuffle=12345"));
+        assert_eq!(adopted.shuffle, Shuffle::Seed(12345));
+        assert_eq!(
+            adopted.debugging(),
+            super::DB_BASIC | super::DB_PRINT | super::DB_WHY
+        );
+        assert_eq!(
+            super::flag_environment(&adopted)
+                .into_iter()
+                .find(|(name, _)| *name == "MAKEFLAGS")
+                .map(|(_, value)| value.to_string_lossy().into_owned())
+                .as_deref(),
+            Some("k --debug=b --trace --shuffle=12345")
+        );
     }
 
     // [spec:ronin:req:product.make-identity/test]
@@ -1701,6 +1945,43 @@ mod tests {
         assert!(parsed(&["make", "-w", "-q", "-t"]).announcing());
     }
 
+    /// Read off GNU Make 4.4.1's own `decode_debug_flags`: only the first
+    /// letter of each word is looked at, three letters imply the basic level as
+    /// well as their own, and `n` takes back whatever preceded it.
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn a_debug_argument_selects_the_facets_gnu_make_reads_out_of_it() {
+        let level = |arguments: &[&str]| {
+            let mut all = vec!["make"];
+            all.extend_from_slice(arguments);
+            parsed(&all).debugging()
+        };
+        assert_eq!(level(&["-d"]), super::DB_ALL);
+        assert_eq!(level(&["--debug=a"]), super::DB_ALL);
+        assert_eq!(level(&["--trace"]), super::DB_PRINT | super::DB_WHY);
+        assert_eq!(level(&["--debug=print,why"]), level(&["--trace"]));
+        assert_eq!(level(&["--debug"]), super::DB_BASIC);
+        assert_eq!(level(&["--debug=basic"]), level(&["--debug=b"]));
+        assert_eq!(
+            level(&["--debug=i"]),
+            super::DB_BASIC | super::DB_IMPLICIT,
+            "an implicit-rule account carries the basic one"
+        );
+        assert_eq!(level(&["--debug=n"]), 0);
+        assert_eq!(level(&["-d", "--debug=n"]), 0);
+        assert_eq!(level(&["--debug=n", "-d"]), 0);
+        assert_eq!(
+            level(&["--debug=b", "--debug=j"]),
+            super::DB_BASIC | super::DB_JOBS
+        );
+
+        let diagnostic = refused(&["make", "--debug=x"]).expect("a level Make does not have");
+        assert!(
+            diagnostic.starts_with("ronin: unknown debug level specification 'x'"),
+            "{diagnostic}"
+        );
+    }
+
     // [spec:ronin:req:product.make-identity/test]
     #[test]
     fn an_option_no_front_end_has_is_refused_by_name() {
@@ -1728,13 +2009,11 @@ mod tests {
                 "{diagnostic}"
             );
         }
-        for option in ["--old-file", "--debug"] {
-            let diagnostic = refused(&["make", option, "x"])
-                .unwrap_or_else(|| panic!("{option} cannot describe a build"));
-            assert!(
-                diagnostic.starts_with(&format!("ronin: unrecognized option '{option}'")),
-                "{diagnostic}"
-            );
-        }
+        let diagnostic =
+            refused(&["make", "--old-file", "x"]).expect("--old-file cannot describe a build");
+        assert!(
+            diagnostic.starts_with("ronin: unrecognized option '--old-file'"),
+            "{diagnostic}"
+        );
     }
 }

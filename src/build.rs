@@ -24,7 +24,7 @@ pub(crate) use self::status::BuildState;
 
 type BuildResult<T> = Result<T, BuildError>;
 
-pub(crate) use command::DRY_RUN_COMMAND;
+pub(crate) use command::{DRY_RUN_COMMAND, RECIPE_LOCATION};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum JobLimit {
@@ -62,6 +62,8 @@ pub(crate) struct BuildOptions {
     /// recipe that would have produced it.
     pub(crate) touch: bool,
     pub(crate) quiet: bool,
+    /// Make's `--trace`: name the rule and the reason before each recipe runs.
+    pub(crate) trace: bool,
     pub(crate) statusfmt: String,
     pub(crate) status_from_cli: bool,
     pub(crate) shell: crate::subprocess::ShellMode,
@@ -110,6 +112,7 @@ impl Default for BuildOptions {
             dryrun: false,
             touch: false,
             quiet: false,
+            trace: false,
             statusfmt: "[%f/%t] ".into(),
             status_from_cli: false,
             shell: crate::subprocess::ShellMode::default(),

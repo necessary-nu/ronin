@@ -274,7 +274,7 @@ fn public_api_refuses_a_second_generator_for_one_output() {
 #[test]
 fn public_api_builds_a_makefile_through_ronins_scheduler() {
     use ronin::make::kati::session::Session;
-    use ronin::make::load_makefile;
+    use ronin::make::{load_makefile, Shuffle};
     use std::ffi::OsString;
 
     let directory = std::env::temp_dir().join(format!(
@@ -308,11 +308,14 @@ fn public_api_builds_a_makefile_through_ronins_scheduler() {
     )
     .unwrap();
 
-    let mut graph = load_makefile(Session::from_args(vec![
-        OsString::from("ronin"),
-        OsString::from("-f"),
-        makefile.into_os_string(),
-    ]))
+    let mut graph = load_makefile(
+        Session::from_args(vec![
+            OsString::from("ronin"),
+            OsString::from("-f"),
+            makefile.into_os_string(),
+        ]),
+        Shuffle::None,
+    )
     .unwrap()
     .graph;
 

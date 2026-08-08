@@ -3,6 +3,7 @@ use super::{status, Builder};
 use crate::error::{BuildError, BuildOperation};
 use crate::graph::{edgehash, EdgeId, Graph, PathStyle};
 use crate::names::Names;
+use crate::runtime::FileTime;
 use crate::util::{BString, ByteSlice};
 use std::fs;
 
@@ -10,6 +11,13 @@ type BuildResult<T> = Result<T, BuildError>;
 
 /// The binding a Makefile's `+`-prefixed recipe lines are assembled into.
 pub(crate) const DRY_RUN_COMMAND: &[u8] = b"dryrun_command";
+
+/// Where the recipe an edge runs was written, as `file:line`.
+///
+/// Only a Makefile has such a place, so only the Make front end binds it and a
+/// manifest's edges answer nothing. Make names it in the diagnostics that are
+/// about the rule rather than about the file it builds.
+pub(crate) const RECIPE_LOCATION: &[u8] = b"recipe_location";
 
 pub(super) struct CommandSpec {
     pub(super) command: BString,
@@ -363,11 +371,74 @@ impl Builder<'_> {
         self.emit_rendered(Rendering::Status(command))
     }
 
+    /// GNU Make's `--trace`: name the rule about to run and say what for.
+    ///
+    /// Make's own line, word for word, because everything that reads `--trace`
+    /// reads it as Make's — the place the recipe was written, the target, and
+    /// one of Make's four reasons in Make's order: a target with no file behind
+    /// it, a target that is not there, the prerequisites newer than it, and the
+    /// prerequisites still missing.
+    fn trace_update(&mut self, edge: EdgeId) -> BuildResult<()> {
+        if !self.options.trace {
+            return Ok(());
+        }
+        let Some(output) = self.graph.edge(edge).out.first().copied() else {
+            return Ok(());
+        };
+        let written = self
+            .graph
+            .names()
+            .lookup(bstr::BStr::new(RECIPE_LOCATION))
+            .and_then(|binding| crate::env::edgevar(self.graph, edge, binding, PathStyle::Raw))
+            .filter(|written| !written.is_empty())
+            .unwrap_or_else(|| BString::from(&b"<builtin>"[..]));
+        let line = format!(
+            "{}: update target '{}' due to: {}\n",
+            written.to_str_lossy(),
+            self.graph.node_path(output).to_str_lossy(),
+            self.update_reason(edge, output),
+        );
+        self.emit(line.as_bytes())
+    }
+
+    /// Which of Make's reasons this edge is running for.
+    fn update_reason(&self, edge: EdgeId, output: crate::graph::NodeId) -> String {
+        if self.graph.edge(edge).always_dirty {
+            return "target is .PHONY".to_owned();
+        }
+        let target = self.runtime.node(output).mtime();
+        if target.is_missing() {
+            return "target does not exist".to_owned();
+        }
+        let named = |inputs: &[crate::graph::NodeId], keep: &dyn Fn(FileTime) -> bool| {
+            inputs
+                .iter()
+                .filter(|input| keep(self.runtime.node(**input).mtime()))
+                .map(|input| self.graph.node_path(*input).to_str_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        // `$?`, which is what Make itself prints here.
+        let newer = named(self.graph.edge(edge).non_order_only_inputs(), &|mtime| {
+            mtime > target
+        });
+        if !newer.is_empty() {
+            return newer;
+        }
+        let absent = named(&self.graph.edge(edge).input, &FileTime::is_missing);
+        if absent.is_empty() {
+            "unknown reasons".to_owned()
+        } else {
+            absent
+        }
+    }
+
     pub(super) fn command_started(
         &mut self,
         edge: EdgeId,
         command: &CommandSpec,
     ) -> BuildResult<()> {
+        self.trace_update(edge)?;
         self.progress.started += 1;
         self.reporter.started(&self.options, command);
         if command.use_console {
