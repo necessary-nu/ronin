@@ -5084,6 +5084,51 @@ children (
                     }
                 )
             }
+
+            {
+                id make-private-variables
+                title "Read the private keyword on a variable assignment"
+                priority 1
+                kind @feat
+                log (
+                    {
+                        at 2026-08-08T10:36:07.460550581Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "16 cases in variables/private, and two of them are a wrong build rather than a refusal.\n\n`make-parser-parity` found this while implementing the one-word variable-name rule: without `private`, `private FOO = g` reads as an assignment to a variable literally named `private FOO`. The one-word rule now refuses it, which is correct until the keyword exists, and moved two cases into parse-failure on purpose.\n\n`all: private FOO = a` gives an empty `$(FOO)` today where GNU Make gives `a`.\n\nThree positions to cover, and it is not a no-op in any of them. Globally, `private FOO = a` defines FOO but withholds it from the target-specific inheritance chain. On a target, `target: private FOO = a` gives FOO to that target's recipe and not to its prerequisites' recipes — which is the whole point of the keyword. On a pattern rule the same. `override private` and `private override` are both accepted by GNU and mean the same thing.\n\nVerify each against /usr/bin/make 4.4.1 rather than from this note, including what `$(origin)` and `$(flavor)` say about a private variable and whether it is exported.\n\nkati's parser and variable table. Two other lanes are in kati this wave and neither is in these files."
+                    }
+                )
+            }
+
+            {
+                id make-ignore-errors-status
+                title "Keep a recipe's status when its errors are ignored"
+                priority 1
+                kind @fix
+                log (
+                    {
+                        at 2026-08-08T10:36:14.813157958Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "kati compiles an ignored-error recipe as `cmd ; true` inside a subshell (`kati/src-rs/ninja.rs:474`, decided at `command.rs:334`). That is wrong twice over, and `make-recipe-failure-line` found both while making the failure line match GNU's:\n\nIt does not survive `exit`. `exit 1` leaves the subshell before `true` runs, so we genuinely fail where GNU Make continues. Three cases that looked like narration differences were this — the classifier had been subtracting our `FAILED:` block and finding the residue matched, so the defect hid behind our own output.\n\nIt destroys the status before the runner sees it. GNU Make reports `make: [Makefile:3: all] Error 1 (ignored)`, which needs the real exit code; `; true` makes it zero, so `(ignored)` can never be printed at all.\n\n9 diffs. Covers the `-` recipe prefix, `-i`, and `.IGNORE` — all three compile the same way.\n\nThe fix has to keep the status and let the runner decide, rather than making the shell lie about it. Ronin's side already knows how to report it: `make-recipe-failure-line` put the failure line in place and left the `(ignored)` half unreachable.\n\n`kati/src-rs/ninja.rs` and `kati/src-rs/command.rs`. Two other lanes are in kati this wave; neither is in these files."
+                    }
+                )
+            }
+
+            {
+                id make-switch-precedence
+                title "Let the command line outrank an inherited MAKEFLAGS"
+                priority 1
+                kind @fix
+                log (
+                    {
+                        at 2026-08-08T10:36:21.372364297Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "An inherited MAKEFLAGS currently outranks the command line, for every switch.\n\nFound by `make-directory-announce-level`, which confirmed it is pre-existing by building without its own change: `--no-print-directory` at the top with `$(MAKE) -w -C b` below announces in GNU Make and does not here.\n\nGNU decodes the environment's MAKEFLAGS first and then decodes the command line, so the command line wins. Ronin calls `adopt_inherited` after `parse`, so the inherited value overwrites what was typed.\n\nThe ordering is not the whole fix: `adopt_inherited` sets switches unconditionally, so simply moving it earlier would make the environment lose even where GNU keeps it — a switch present only in MAKEFLAGS must still take effect. What is needed is that a switch the command line spoke about, in either direction, is not then overwritten. `Invocation` already tracks withdrawal separately from assertion (`given`/`refused`/`withdraw`), which is the machinery for saying \"the command line had an opinion here\".\n\nVerify against /usr/bin/make 4.4.1 across: a switch only in MAKEFLAGS, only on the command line, in both agreeing, in both disagreeing in each direction, and a negating spelling on the command line against an asserting one in MAKEFLAGS.\n\n`src/make/cli.rs`. No other lane is in that file this wave."
+                    }
+                )
+            }
         )
         log (
             {
