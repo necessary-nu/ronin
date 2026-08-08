@@ -219,7 +219,7 @@ impl fmt::Display for CliError {
                 EncodingContext::ToolValue => "invalid -t parameter",
             }),
             Self::CurrentDirectory { source } | Self::WriteOutput { source } => {
-                source.fmt(formatter)
+                formatter.write_str(&system_message(source))
             }
             // Ninja reports this one through `Fatal`, quoting the directory it
             // was asked for and the system's own message for why it could not
@@ -256,19 +256,29 @@ impl CliError {
 
 /// Renders a system error the way `strerror` does.
 ///
-/// Ninja quotes `strerror(errno)` directly. Rust's `io::Error` prints the same
-/// text with ` (os error N)` appended, which no Ninja diagnostic carries, so the
-/// suffix it added is removed again rather than the message being rebuilt from
-/// the raw code.
-pub(crate) fn system_message(error: &io::Error) -> String {
+/// Ninja quotes `strerror(errno)` directly and so does GNU Make. Rust's
+/// `io::Error` prints the same text with ` (os error N)` appended, which
+/// neither carries, so the suffix it added is removed again rather than the
+/// message being rebuilt from the raw code. Taken off the rendered text rather
+/// than off the error, because a source that owns one renders it inside a
+/// sentence of its own.
+pub(crate) fn system_message(error: &impl fmt::Display) -> String {
+    const OS_ERROR: &str = " (os error ";
     let rendered = error.to_string();
-    if error.raw_os_error().is_none() || !rendered.ends_with(')') {
-        return rendered;
+    let mut kept = String::with_capacity(rendered.len());
+    let mut rest = rendered.as_str();
+    while let Some(open) = rest.find(OS_ERROR) {
+        let number = &rest[open + OS_ERROR.len()..];
+        let Some(close) = number.find(')') else { break };
+        let code = &number[..close];
+        if code.is_empty() || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+            break;
+        }
+        kept.push_str(&rest[..open]);
+        rest = &number[close + 1..];
     }
-    match rendered.rfind(" (os error ") {
-        Some(cut) => rendered[..cut].to_owned(),
-        None => rendered,
-    }
+    kept.push_str(rest);
+    kept
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -592,7 +602,7 @@ fn write_located(
 impl fmt::Display for ManifestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Read { source, .. } => source.fmt(formatter),
+            Self::Read { source, .. } => formatter.write_str(&system_message(source)),
             Self::Scan(error) => error.fmt(formatter),
             // Ninja reports a too-new required version through `Fatal`, not
             // through the lexer, so it carries no file or line and no caret.
@@ -607,7 +617,9 @@ impl fmt::Display for ManifestError {
             Self::Problem { span: None, problem } => write!(formatter, "error: {problem}"),
             Self::Graph(error) => error.fmt(formatter),
             Self::Dyndep(error) => error.fmt(formatter),
-            Self::DyndepRead { path, source } => write!(formatter, "loading '{path}': {source}"),
+            Self::DyndepRead { path, source } => {
+                write!(formatter, "loading '{path}': {}", system_message(source))
+            }
             Self::DyndepMissingOutput { path, output } => {
                 write!(formatter, "'{output}' not mentioned in its dyndep file '{path}'")
             }
@@ -720,7 +732,7 @@ impl fmt::Display for GraphError {
             Self::NoRootNodes => {
                 formatter.write_str("could not determine root nodes of build graph")
             }
-            Self::Stat { source, .. } => source.fmt(formatter),
+            Self::Stat { source, .. } => formatter.write_str(&system_message(source)),
         }
     }
 }
@@ -968,7 +980,7 @@ impl fmt::Display for BuildError {
             Self::ManifestRebuild { path, reason } => {
                 write!(formatter, "error: rebuilding '{path}': {reason}")
             }
-            Self::Io { source, .. } => source.fmt(formatter),
+            Self::Io { source, .. } => formatter.write_str(&system_message(source)),
             Self::Clock { source } => source.fmt(formatter),
             Self::TargetContext { source } => write!(formatter, "error: {source}"),
             Self::Manifest(error) => error.fmt(formatter),
@@ -1116,18 +1128,28 @@ impl fmt::Display for PersistenceError {
                 operation: PersistenceOperation::LoadBuildLog,
                 path,
                 source,
-            } => write!(formatter, "loading build log {}: {source}", path.display()),
+            } => write!(
+                formatter,
+                "loading build log {}: {}",
+                path.display(),
+                system_message(source)
+            ),
             Self::Io {
                 operation: PersistenceOperation::RecompactBuildLog,
                 source,
                 ..
-            } => write!(formatter, "failed recompaction: {source}"),
+            } => write!(formatter, "failed recompaction: {}", system_message(source)),
             Self::Io {
                 operation: PersistenceOperation::OpenStateDirectory,
                 path,
                 source,
-            } => write!(formatter, "build state {}: {source}", path.display()),
-            Self::Io { source, .. } => source.fmt(formatter),
+            } => write!(
+                formatter,
+                "build state {}: {}",
+                path.display(),
+                system_message(source)
+            ),
+            Self::Io { source, .. } => formatter.write_str(&system_message(source)),
         }
     }
 }
@@ -1214,7 +1236,8 @@ impl fmt::Display for ProcessError {
             Self::JobserverEnvironment { source } => {
                 write!(
                     formatter,
-                    "Error opening inherited GNU Make jobserver: {source}"
+                    "Error opening inherited GNU Make jobserver: {}",
+                    system_message(source)
                 )
             }
             Self::Jobserver { operation, source } => {
@@ -1223,9 +1246,11 @@ impl fmt::Display for ProcessError {
                     JobserverOperation::StartHelper => "Error starting GNU Make jobserver helper",
                     JobserverOperation::AcquireToken => "Error acquiring GNU Make jobserver token",
                 };
-                write!(formatter, "{context}: {source}")
+                write!(formatter, "{context}: {}", system_message(source))
             }
-            Self::Shell { source, .. } | Self::Supervisor { source, .. } => source.fmt(formatter),
+            Self::Shell { source, .. } | Self::Supervisor { source, .. } => {
+                formatter.write_str(&system_message(source))
+            }
             Self::SignalDelivery {
                 pid,
                 process_group,
@@ -1239,7 +1264,8 @@ impl fmt::Display for ProcessError {
                 };
                 write!(
                     formatter,
-                    "failed to send {signal} to {target} {pid}: {source}"
+                    "failed to send {signal} to {target} {pid}: {}",
+                    system_message(source)
                 )
             }
             Self::ThreadPanicked { .. } => formatter.write_str("subcommand thread panicked"),
@@ -1402,7 +1428,7 @@ impl fmt::Display for ToolError {
                 ToolAvailability::BrowseUnsupported => "browse tool not supported on this platform",
             }),
             Self::PathTooLong => formatter.write_str("path too long"),
-            Self::Io { source, .. } => source.fmt(formatter),
+            Self::Io { source, .. } => formatter.write_str(&system_message(source)),
             Self::Graph(error) => error.fmt(formatter),
             Self::Manifest(error) => error.fmt(formatter),
         }
@@ -1459,6 +1485,24 @@ mod tests {
         let error: Error = BuildError::from(manifest).into();
         assert_eq!(error.kind(), ErrorKind::Manifest);
         assert_eq!(error.to_string(), "missing");
+    }
+
+    /// Neither Ninja nor GNU Make appends Rust's raw errno to `strerror`, and
+    /// a source that renders one inside a sentence of its own carries it in the
+    /// middle rather than at the end.
+    #[test]
+    fn a_system_error_reads_as_strerror_wherever_it_sits() {
+        let missing = io::Error::from_raw_os_error(2);
+        let strerror = missing.to_string().replace(" (os error 2)", "");
+        assert_eq!(system_message(&missing), strerror);
+        assert_eq!(
+            system_message(&format!("opening 'x': {missing}: giving up")),
+            format!("opening 'x': {strerror}: giving up")
+        );
+        assert_eq!(
+            system_message(&"nothing (os error) to cut"),
+            "nothing (os error) to cut"
+        );
     }
 
     fn command_failure(raw: i32) -> BuildError {
