@@ -2400,6 +2400,130 @@ fn recursive_make_compiles_as_subninja() {
 // [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
+fn mixed_recipe_composes_subninjas() {
+    let directory = test_directory("make-mixed-subninjas");
+    fs::create_dir_all(directory.join("first")).unwrap();
+    fs::create_dir_all(directory.join("second")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "MAKE := ./must-not-run\n\
+         all:\n\
+         \t@printf ordinary > ordinary-result\n\
+         \t$(MAKE) -C first all\n\
+         \t$(MAKE) -C second all\n\
+         \t@test -f first/result\n\
+         \t@test -f second/result\n\
+         \t@printf complete > result\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("first/Makefile"),
+        "all:\n\t@printf first > result\n.PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("second/Makefile"),
+        "all:\n\
+         \t@test -f ../first/result\n\
+         \t@printf second > result\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("must-not-run"),
+        "#!/bin/sh\ntouch nested-make-ran\nexit 99\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        directory.join("must-not-run"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("first/result")).unwrap(),
+        "first"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("second/result")).unwrap(),
+        "second"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("ordinary-result")).unwrap(),
+        "ordinary"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("result")).unwrap(),
+        "complete"
+    );
+    assert!(!directory.join("nested-make-ran").exists(), "{reported}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn unsplittable_submake_never_executes() {
+    let directory = test_directory("make-unsplittable-subninja");
+    fs::create_dir_all(directory.join("first")).unwrap();
+    fs::create_dir_all(directory.join("second")).unwrap();
+    fs::create_dir_all(directory.join("third")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "MAKE := ./must-not-run\n\
+         all:\n\
+         \t$(MAKE) -C first all\n\
+         \t$(MAKE) -C second all && $(MAKE) -C third all\n\
+         \t@touch residual-ran\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+    for child in ["first", "second", "third"] {
+        fs::write(
+            directory.join(child).join("Makefile"),
+            "all:\n\t@touch result\n.PHONY: all\n",
+        )
+        .unwrap();
+    }
+    fs::write(
+        directory.join("must-not-run"),
+        "#!/bin/sh\ntouch nested-make-ran\nexit 99\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        directory.join("must-not-run"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "{reported}");
+    assert!(
+        reported.contains("recursive Make recipe cannot compile as subninja"),
+        "{reported}"
+    );
+    assert!(!directory.join("nested-make-ran").exists(), "{reported}");
+    assert!(!directory.join("residual-ran").exists(), "{reported}");
+    for child in ["first", "second", "third"] {
+        assert!(!directory.join(child).join("result").exists(), "{reported}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
 fn make_reference_as_data_stays_recipe() {
     let directory = test_directory("make-reference-data");
     fs::create_dir_all(&directory).unwrap();

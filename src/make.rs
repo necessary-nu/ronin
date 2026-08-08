@@ -297,17 +297,22 @@ where
         apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
     }
     for pending in unit.subninjas {
-        let child = resolve(&pending.command, &pending.make, &descendant_context)?;
-        let child_key = child.cache_key.clone();
-        let child_targets = if let Some(targets) = cache.get(&child_key) {
-            targets.clone()
-        } else {
-            let child_scope = pending.scope;
-            let child = compile_unit(child, sink, Some(child_scope), resolve, cache, compiling)?;
-            cache.insert(child_key, child.targets.clone());
-            child.targets
-        };
-        sink.complete_subninja(pending, &child_targets)
+        let mut child_target_groups = Vec::with_capacity(pending.invocations.len());
+        for invocation in &pending.invocations {
+            let child = resolve(&invocation.command, &invocation.make, &descendant_context)?;
+            let child_key = child.cache_key.clone();
+            let child_targets = if let Some(targets) = cache.get(&child_key) {
+                targets.clone()
+            } else {
+                let child_scope = pending.scope;
+                let child =
+                    compile_unit(child, sink, Some(child_scope), resolve, cache, compiling)?;
+                cache.insert(child_key, child.targets.clone());
+                child.targets
+            };
+            child_target_groups.push(child_targets);
+        }
+        sink.complete_subninja(pending, &child_target_groups)
             .map_err(MakeError::Construct)?;
     }
     compiling.remove(&compilation_key);

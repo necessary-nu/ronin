@@ -61,11 +61,18 @@ impl Bindings {
     }
 }
 
-/// A recursive recipe held until its child Makefile has been compiled.
-pub(crate) struct PendingSubninja {
+/// One static recursive invocation within a held recipe.
+pub(crate) struct SubninjaInvocation {
     pub(crate) command: Vec<u8>,
     pub(crate) make: Vec<u8>,
+}
+
+/// A recursive recipe held until all its child Makefiles have been compiled.
+pub(crate) struct PendingSubninja {
+    pub(crate) invocations: Vec<SubninjaInvocation>,
     pub(crate) scope: Scope,
+    residual_rule: Option<Rule>,
+    diagnostic_command: Vec<u8>,
     explicit_outputs: Vec<Node>,
     implicit_outputs: Vec<Node>,
     inputs: Vec<Node>,
@@ -75,6 +82,13 @@ pub(crate) struct PendingSubninja {
     intermediate: bool,
     disposable: bool,
     bindings: Vec<(Binding, Vec<u8>)>,
+}
+
+/// The non-executor description retained between kati's rule and edge calls.
+struct SubninjaRule {
+    invocations: Vec<SubninjaInvocation>,
+    residual_rule: Option<Rule>,
+    diagnostic_command: Vec<u8>,
 }
 
 /// What one kati compilation unit contributed to the shared graph.
@@ -127,7 +141,7 @@ pub struct GraphSink {
     /// Recursive rules are not executor rules. They wait for their immediately
     /// following edge so the compiler can replace that edge with graph
     /// composition.
-    subninja_rules: HashMap<RuleId, (Vec<u8>, Vec<u8>)>,
+    subninja_rules: HashMap<RuleId, SubninjaRule>,
     /// kati's symbols to Ronin's nodes, so a path shared by many edges is
     /// canonicalized and interned once.
     interned: HashMap<Symbol, Node>,
@@ -263,26 +277,43 @@ impl GraphSink {
     pub(crate) fn complete_subninja(
         &mut self,
         pending: PendingSubninja,
-        child_targets: &[Node],
+        child_target_groups: &[Vec<Node>],
     ) -> Result<(), FrontendError> {
-        let waits = pending
+        debug_assert_eq!(pending.invocations.len(), child_target_groups.len());
+        let mut waits = pending
             .inputs
             .iter()
             .chain(&pending.order_only_inputs)
             .copied()
             .collect::<Vec<_>>();
-        for target in child_targets {
-            if let Some(edge) = self.graph.generator(*target) {
-                let waits = waits
-                    .iter()
-                    .copied()
-                    .filter(|wait| wait != target)
-                    .collect::<Vec<_>>();
-                self.graph.add_order_only_inputs(edge, &waits);
+        let mut child_targets = Vec::new();
+        for targets in child_target_groups {
+            for target in targets {
+                if let Some(edge) = self.graph.generator(*target) {
+                    let preceding = waits
+                        .iter()
+                        .copied()
+                        .filter(|wait| wait != target)
+                        .collect::<Vec<_>>();
+                    self.graph.add_order_only_inputs(edge, &preceding);
+                }
+                if !child_targets.contains(target) {
+                    child_targets.push(*target);
+                }
+            }
+            if !targets.is_empty() {
+                waits.clear();
+                for target in targets {
+                    if !waits.contains(target) {
+                        waits.push(*target);
+                    }
+                }
             }
         }
 
-        let collapsed = pending.implicit_outputs.is_empty()
+        let collapsed = pending.residual_rule.is_none()
+            && child_target_groups.len() == 1
+            && pending.implicit_outputs.is_empty()
             && pending.explicit_outputs.len() == 1
             && child_targets.contains(&pending.explicit_outputs[0])
             && self.graph.generator(pending.explicit_outputs[0]).is_some();
@@ -301,23 +332,39 @@ impl GraphSink {
             return Ok(());
         }
 
-        let mut inputs = pending.inputs;
-        for target in child_targets {
-            if !pending.explicit_outputs.contains(target)
-                && !pending.implicit_outputs.contains(target)
-                && !inputs.contains(target)
-            {
-                inputs.push(*target);
-            }
+        if child_targets.iter().any(|target| {
+            pending.explicit_outputs.contains(target) || pending.implicit_outputs.contains(target)
+        }) {
+            return Err(FrontendError::UncomposableSubninja {
+                command: pending.diagnostic_command,
+            });
         }
+
+        let (rule, inputs, order_only_inputs) = if let Some(rule) = pending.residual_rule {
+            let mut order_only_inputs = pending.order_only_inputs;
+            for target in &child_targets {
+                if !order_only_inputs.contains(target) {
+                    order_only_inputs.push(*target);
+                }
+            }
+            (rule, pending.inputs, order_only_inputs)
+        } else {
+            let mut inputs = pending.inputs;
+            for target in &child_targets {
+                if !inputs.contains(target) {
+                    inputs.push(*target);
+                }
+            }
+            (self.phony, inputs, pending.order_only_inputs)
+        };
         self.graph.add_edge(EdgeSpec {
             scope: pending.scope,
-            rule: self.phony,
+            rule,
             explicit_outputs: &pending.explicit_outputs,
             implicit_outputs: &pending.implicit_outputs,
             explicit_inputs: &inputs,
             implicit_inputs: &[],
-            order_only_inputs: &pending.order_only_inputs,
+            order_only_inputs: &order_only_inputs,
             validations: &pending.validations,
             always_dirty: pending.always_dirty,
             intermediate: pending.intermediate,
@@ -450,19 +497,24 @@ impl GraphSink {
         command
     }
 
-    /// The command line that runs `rule`'s script, and the bindings it needs.
+    /// The command line that runs one script, and the bindings it needs.
     ///
     /// A script short enough to pass as an argument is quoted into one, which
     /// is why it is escaped for the shell that will unquote it. A script too
     /// long has to reach the shell as a file, and the shell is then given the
     /// file rather than a `-c` and a string.
-    fn command_bindings(&self, rule: &SinkRule<'_>) -> Vec<(Binding, Template)> {
-        match rule.command {
+    fn command_bindings(
+        &self,
+        shell: &[u8],
+        shell_flags: &[u8],
+        command: SinkCommand<'_>,
+    ) -> Vec<(Binding, Template)> {
+        match command {
             SinkCommand::Inline(script) => {
                 let mut command = self.command_prefix();
-                command.push_literal(rule.shell);
+                command.push_literal(shell);
                 command.push_literal(b" ");
-                command.push_literal(rule.shell_flags);
+                command.push_literal(shell_flags);
                 command.push_literal(b" \"");
                 command.push_literal(&escape_shell(&Bytes::copy_from_slice(script)));
                 command.push_literal(b"\"");
@@ -481,7 +533,7 @@ impl GraphSink {
                 response_file.push_variable(self.bindings.out);
                 response_file.push_literal(b".rsp");
                 let mut command = self.command_prefix();
-                command.push_literal(rule.shell);
+                command.push_literal(shell);
                 command.push_literal(b" ");
                 if !self.unit.root && !self.root_directory.as_os_str().is_empty() {
                     command.push_literal(self.root_directory.as_os_str().as_bytes());
@@ -495,6 +547,72 @@ impl GraphSink {
                     (self.bindings.rspfile_content, Template::literal(script)),
                 ]
             }
+        }
+    }
+
+    /// Bind the executor-facing half of a kati rule. Recursive invocations are
+    /// deliberately absent: their child graphs are connected by
+    /// [`Self::complete_subninja`] instead.
+    fn executor_rule_bindings(
+        &self,
+        rule: &SinkRule<'_>,
+        command: SinkCommand<'_>,
+        dry_run_command: &[u8],
+        ignore_errors: bool,
+    ) -> Vec<(Binding, Template)> {
+        let mut bindings = self.command_bindings(rule.shell, rule.shell_flags, command);
+        if !dry_run_command.is_empty() {
+            let mut command = self.command_prefix();
+            command.push_literal(rule.shell);
+            command.push_literal(b" ");
+            command.push_literal(rule.shell_flags);
+            command.push_literal(b" \"");
+            command.push_literal(&escape_shell(&Bytes::copy_from_slice(dry_run_command)));
+            command.push_literal(b"\"");
+            bindings.push((self.bindings.dry_run_command, command));
+        }
+        bindings.push((
+            self.bindings.description,
+            rule.description.map_or_else(
+                // What a build prints when the Makefile did not say. The
+                // manifest writer picks the same thing, in the same terms.
+                || {
+                    let mut default = Template::literal(b"build ");
+                    default.push_variable(self.bindings.out);
+                    default
+                },
+                Template::literal,
+            ),
+        ));
+        if let Some(depfile) = rule.depfile {
+            bindings.push((
+                self.bindings.depfile,
+                Template::literal(&self.qualify_path(depfile)),
+            ));
+            // kati emits no other depfile format, and says so.
+            bindings.push((self.bindings.deps, Template::literal(b"gcc")));
+        }
+        if rule.restat {
+            bindings.push((self.bindings.restat, Template::literal(b"1")));
+        }
+        // Carried rather than answered for here. kati left the recipe's status
+        // in place instead of throwing it away, so that whatever runs the
+        // recipe can say what it was and go on, and only the thing running it
+        // can do that.
+        if ignore_errors {
+            bindings.push((self.bindings.ignore_errors, Template::literal(b"1")));
+        }
+        bindings
+    }
+
+    fn define_executor_rule(
+        &mut self,
+        name: &[u8],
+        bindings: Vec<(Binding, Template)>,
+    ) -> Result<Rule, anyhow::Error> {
+        match self.graph.define_rule(self.unit.scope, name, bindings) {
+            Ok(defined) => Ok(defined),
+            Err(failure) => Err(self.refuse(failure)),
         }
     }
 }
@@ -529,70 +647,54 @@ impl BuildSink for GraphSink {
         let script = match rule.command {
             SinkCommand::Inline(script) | SinkCommand::ResponseFile(script) => script,
         };
-        if let Some(make) = rule.recursive_make {
-            self.subninja_rules
-                .insert(rule.id, (script.to_vec(), make.to_vec()));
+        if rule.contains_recursive {
+            if rule.subninjas.is_empty() {
+                return Err(self.refuse(FrontendError::UncomposableSubninja {
+                    command: script.to_vec(),
+                }));
+            }
+            let residual_rule = rule
+                .residual_command
+                .map(|command| {
+                    let bindings = self.executor_rule_bindings(
+                        rule,
+                        command,
+                        rule.residual_dry_run_command,
+                        rule.residual_ignore_errors,
+                    );
+                    let name = format!("rule{}_residual", rule.id);
+                    self.define_executor_rule(name.as_bytes(), bindings)
+                })
+                .transpose()?;
+            let invocations = rule
+                .subninjas
+                .iter()
+                .map(|subninja| SubninjaInvocation {
+                    command: subninja.command.to_vec(),
+                    make: subninja.make.to_vec(),
+                })
+                .collect();
+            self.subninja_rules.insert(
+                rule.id,
+                SubninjaRule {
+                    invocations,
+                    residual_rule,
+                    diagnostic_command: script.to_vec(),
+                },
+            );
             return Ok(());
         }
-        if rule.contains_recursive {
-            return Err(self.refuse(FrontendError::UncomposableSubninja {
-                command: script.to_vec(),
-            }));
-        }
-        let mut bindings = self.command_bindings(rule);
-        if !rule.dry_run_command.is_empty() {
-            let mut command = self.command_prefix();
-            command.push_literal(rule.shell);
-            command.push_literal(b" ");
-            command.push_literal(rule.shell_flags);
-            command.push_literal(b" \"");
-            command.push_literal(&escape_shell(&Bytes::copy_from_slice(rule.dry_run_command)));
-            command.push_literal(b"\"");
-            bindings.push((self.bindings.dry_run_command, command));
-        }
-        bindings.push((
-            self.bindings.description,
-            rule.description.map_or_else(
-                // What a build prints when the Makefile did not say. The
-                // manifest writer picks the same thing, in the same terms.
-                || {
-                    let mut default = Template::literal(b"build ");
-                    default.push_variable(self.bindings.out);
-                    default
-                },
-                Template::literal,
-            ),
-        ));
-        if let Some(depfile) = rule.depfile {
-            bindings.push((
-                self.bindings.depfile,
-                Template::literal(&self.qualify_path(depfile)),
-            ));
-            // kati emits no other depfile format, and says so.
-            bindings.push((self.bindings.deps, Template::literal(b"gcc")));
-        }
-        if rule.restat {
-            bindings.push((self.bindings.restat, Template::literal(b"1")));
-        }
-        // Carried rather than answered for here. kati left the recipe's status
-        // in place instead of throwing it away, so that whatever runs the
-        // recipe can say what it was and go on, and only the thing running it
-        // can do that.
-        if rule.ignore_errors {
-            bindings.push((self.bindings.ignore_errors, Template::literal(b"1")));
-        }
 
+        let bindings = self.executor_rule_bindings(
+            rule,
+            rule.command,
+            rule.dry_run_command,
+            rule.ignore_errors,
+        );
         let name = format!("rule{}", rule.id);
-        match self
-            .graph
-            .define_rule(self.unit.scope, name.as_bytes(), bindings)
-        {
-            Ok(defined) => {
-                self.rules.insert(rule.id, defined);
-                Ok(())
-            }
-            Err(failure) => Err(self.refuse(failure)),
-        }
+        let defined = self.define_executor_rule(name.as_bytes(), bindings)?;
+        self.rules.insert(rule.id, defined);
+        Ok(())
     }
 
     // [spec:ronin:req:make.graph-direct]
@@ -611,10 +713,10 @@ impl BuildSink for GraphSink {
         if let Some(tags) = edge.tags {
             bindings.push((self.bindings.tags, tags.to_vec()));
         }
-        let is_subninja = edge
-            .rule
-            .is_some_and(|id| self.subninja_rules.contains_key(&id));
-        if edge.pool.is_none() && edge.rule.is_some() && !is_subninja {
+        let subninja_rule = edge.rule.and_then(|id| self.subninja_rules.get(&id));
+        let is_subninja = subninja_rule.is_some();
+        let has_residual_action = subninja_rule.is_some_and(|rule| rule.residual_rule.is_some());
+        if edge.pool.is_none() && edge.rule.is_some() && (!is_subninja || has_residual_action) {
             if let Some(pool) = &self.unit.serial_pool {
                 bindings.push((self.bindings.pool, pool.clone()));
             }
@@ -630,11 +732,12 @@ impl BuildSink for GraphSink {
         }
 
         if let Some(id) = edge.rule {
-            if let Some((command, make)) = self.subninja_rules.remove(&id) {
+            if let Some(rule) = self.subninja_rules.remove(&id) {
                 self.unit.subninjas.push(PendingSubninja {
-                    command,
-                    make,
+                    invocations: rule.invocations,
                     scope: self.unit.scope,
+                    residual_rule: rule.residual_rule,
+                    diagnostic_command: rule.diagnostic_command,
                     explicit_outputs: outputs,
                     implicit_outputs,
                     inputs,
