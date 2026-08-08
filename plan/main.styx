@@ -4760,6 +4760,7 @@ children (
                 title "Expand wildcards in a prerequisite list"
                 priority 3
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-06T17:59:47.241017923Z
@@ -4780,6 +4781,27 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Settled, and the target position needed the same mechanism rather than a different one — which the GNU Make source says plainly and the probes only confirmed.\n\nBoth positions go through parse_file_seq (read.c), which globs unless PARSEFS_NOGLOB is set: targets at read.c:1173, prerequisites through split_prereqs from record_files, and a second-expanded list through split_prereqs from expand_deps. `glob(name, GLOB_ALTDIRFUNC, ...)` with no GLOB_NOSORT, so results are sorted; GLOB_NOMATCH keeps the name. So one helper in rule.rs covers all three sites and matches on every axis checked:\n\n  gated on `?*[` only — `%` is not a metacharacter, so `%.o*:` stays a pattern rule\n  no match keeps the name verbatim, including the backslash of `a\\*b`\n  sorted, not readdir order\n  substituted in place and not deduplicated: `all: a.one a.* a.two` gives $+ four words\n  no dotfiles, directories match, subdirectory patterns work, VPATH is not consulted\n  order-only, pattern-rule and static-pattern prerequisite lists all glob\n  a target-specific variable's target list globs (`a.*: V := x` reaches a.one)\n  command-line goals do not glob (`make 'a.*'` refuses)\n\nTwo probe results were traps and are worth recording so nobody re-derives them. First, `s*: ; @echo made $@` with `$(shell touch s1)` on a later line prints `made s1`, which looks like late globbing; it is the recipe's own shell expanding an unglobbed `$@`. Quote it and the answer is `made s*`. Second, prerequisites look like they glob at snap time because expand_deps does it — they do not, unless .SECONDEXPANSION deferred them; record_files splits them immediately.\n\nThe wrong build the note called out is gone: `a.*: dep` with a.one and a.two present now makes two targets with a recipe each, where before it made one edge named `a.*` whose $@ was both names.\n\nNot taken, and out of scope here: under .SECONDEXPANSION, GNU expands a rule's prerequisites when the rule is reached during remaking, so `second: $$(wildcard sub*)` sees a file an earlier recipe made. Ronin plans the whole graph before running anything, so it globs early and refuses. It refuses rather than mis-building, and the fix is architectural — it belongs to make-second-expansion.\n\nNine cases in tests/make/: prerequisite-glob, prerequisite-glob-matches-nothing, target-glob, target-glob-matches-nothing, order-only-glob, escaped-wildcard-prerequisite, plus the three for the adjacent items below. Four of them fail on the parent commit; the two matches-nothing cases pass on both sides deliberately, since what must not change is the literal fallback.\n\nBoth adjacent items were taken.\n\nTwo output patterns: `%.1 %.15: ; touch $*.1 $*.15` builds both under GNU, which the manual is explicit about — one recipe, run once, responsible for every target. can_pick_implicit_rule entered the sibling in `done` against the first target's node and stopped, so the node declared one output. Whichever of x.1 and x.15 the plan reached second was refused, in either order, while asking for either alone worked. Pushing the sibling into the node's implicit_outputs is the same shape the grouped-target path uses.\n\n`*** No targets.`: build() read first_rule before looking at targets, so `make x.o` against a makefile holding only `%.o: %.c` died. It does not shift goal selection — first_rule still supplies the default goal, unchanged — it only moves when the refusal fires. Checked in both directions: no goal and no default goal still refuses with the same wording; no goal with an explicit rule still picks the first one.\n\nkati's vendored corpus unmoved at 44 defects across all four changes."
+                    }
+
+                    {
+                        at 2026-08-08T22:46:55.710266564Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T22:47:45.23352576Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Already delivered on main by 98b1ed6610a9df63f7239303461ba5ba9800a84a and its integration commit bc8cac58396324d9e8cb67d344a37c2850cd0b4b; both are `feat` commits carrying nplan-id make-prerequisite-globbing. The implementation covers target, ordinary prerequisite, order-only, pattern-rule, static-pattern, target-specific-variable, and second-expanded lists with sorted matches and literal no-match fallback. The owned make_build_intent_matches_oracle corpus passes. The node remained open because its completion assertion was never sealed after the lane integration, so manually complete it rather than repeat the implementation."
+                    }
+
+                    {
+                        at 2026-08-08T22:47:45.308464139Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
