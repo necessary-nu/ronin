@@ -19,7 +19,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use self::command::{CommandSpec, DepsType, PreparedEdge, ResponseFile};
 use self::reporter::Reporter;
-pub(crate) use self::reporter::{ColorChoice, OutputStyle, TerminalContext};
+pub(crate) use self::reporter::{ColorChoice, OutputGroup, OutputStyle, TerminalContext};
 pub(crate) use self::status::BuildState;
 
 type BuildResult<T> = Result<T, BuildError>;
@@ -89,6 +89,9 @@ pub(crate) struct BuildOptions {
     /// `None` removes the name instead of binding it, which is Make's
     /// `unexport` of a variable that arrived from outside.
     pub(crate) environment: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+    /// Set when Make's `-O` asked for each command's held output to be
+    /// bracketed with the directory it was produced in.
+    pub(crate) output_group: Option<OutputGroup>,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -115,6 +118,7 @@ impl Default for BuildOptions {
             jobserver: None,
             serve_jobserver: false,
             environment: Vec::new(),
+            output_group: None,
             working_directory: crate::os::WorkingDirectory::default(),
         }
     }
