@@ -12,8 +12,11 @@ use kati::build_sink::{BuildSink, RuleId, SinkCommand, SinkEdge, SinkPool, SinkR
 use kati::bytes::Bytes;
 use kati::strutil::escape_shell;
 use kati::symtab::{Interner, Symbol};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ffi::{OsStr, OsString};
 use std::num::NonZeroUsize;
+use std::os::unix::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 
 /// The binding names an edge kati produced can carry.
 ///
@@ -58,6 +61,39 @@ impl Bindings {
     }
 }
 
+/// A recursive recipe held until its child Makefile has been compiled.
+pub(crate) struct PendingSubninja {
+    pub(crate) command: Vec<u8>,
+    pub(crate) make: Vec<u8>,
+    pub(crate) scope: Scope,
+    explicit_outputs: Vec<Node>,
+    implicit_outputs: Vec<Node>,
+    inputs: Vec<Node>,
+    order_only_inputs: Vec<Node>,
+    validations: Vec<Node>,
+    always_dirty: bool,
+    intermediate: bool,
+    disposable: bool,
+    bindings: Vec<(Binding, Vec<u8>)>,
+}
+
+/// What one kati compilation unit contributed to the shared graph.
+pub(crate) struct UnitOutput {
+    pub(crate) targets: Vec<Node>,
+    pub(crate) subninjas: Vec<PendingSubninja>,
+}
+
+struct Unit {
+    scope: Scope,
+    path_prefix: PathBuf,
+    command_directory: PathBuf,
+    root: bool,
+    serial_pool: Option<Vec<u8>>,
+    recipe_environment: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    targets: Vec<Node>,
+    subninjas: Vec<PendingSubninja>,
+}
+
 /// A [`BuildSink`] that builds a Ronin graph instead of a manifest.
 ///
 /// # `.PHONY`, and what is dropped
@@ -80,16 +116,23 @@ impl Bindings {
 // [spec:ronin:req:make.graph-direct]
 pub struct GraphSink {
     graph: BuildGraph,
-    scope: Scope,
+    root_directory: PathBuf,
+    unit: Unit,
     bindings: Bindings,
     phony: Rule,
     /// kati's rule handles to Ronin's. kati mints one rule per edge and
     /// declares it immediately before that edge, so this holds one entry for
     /// as long as it takes to reach the edge that names it.
     rules: HashMap<RuleId, Rule>,
+    /// Recursive rules are not executor rules. They wait for their immediately
+    /// following edge so the compiler can replace that edge with graph
+    /// composition.
+    subninja_rules: HashMap<RuleId, (Vec<u8>, Vec<u8>)>,
     /// kati's symbols to Ronin's nodes, so a path shared by many edges is
     /// canonicalized and interned once.
     interned: HashMap<Symbol, Node>,
+    declared_pools: HashSet<Vec<u8>>,
+    serial_units: usize,
     /// The first construction failure, kept because kati's walk unwinds through
     /// [`anyhow::Error`] and the typed error is what a caller can act on.
     failure: Option<FrontendError>,
@@ -111,6 +154,12 @@ impl GraphSink {
     /// arrange.
     #[must_use]
     pub fn new() -> Self {
+        Self::new_at(Path::new(""))
+    }
+
+    /// A sink whose response files are anchored at the executor's root.
+    #[must_use]
+    pub(crate) fn new_at(root_directory: &Path) -> Self {
         let mut graph = BuildGraph::new();
         let scope = graph.root();
         let bindings = Bindings::intern(&mut graph);
@@ -119,13 +168,163 @@ impl GraphSink {
             .expect("a new graph holds the built-in phony rule");
         Self {
             graph,
-            scope,
+            root_directory: root_directory.to_owned(),
+            unit: Unit {
+                scope,
+                path_prefix: PathBuf::new(),
+                command_directory: PathBuf::new(),
+                root: true,
+                serial_pool: None,
+                recipe_environment: Vec::new(),
+                targets: Vec::new(),
+                subninjas: Vec::new(),
+            },
             bindings,
             phony,
             rules: HashMap::new(),
+            subninja_rules: HashMap::new(),
             interned: HashMap::new(),
+            declared_pools: HashSet::new(),
+            serial_units: 0,
             failure: None,
         }
+    }
+
+    /// Start emitting a child compilation unit into a scoped, path-qualified
+    /// part of the same graph.
+    pub(crate) fn begin_subninja(
+        &mut self,
+        parent: Scope,
+        path_prefix: PathBuf,
+        command_directory: PathBuf,
+    ) {
+        debug_assert!(self.rules.is_empty());
+        debug_assert!(self.subninja_rules.is_empty());
+        self.interned.clear();
+        self.unit = Unit {
+            scope: self.graph.child_scope(parent),
+            path_prefix,
+            command_directory,
+            root: false,
+            serial_pool: None,
+            recipe_environment: Vec::new(),
+            targets: Vec::new(),
+            subninjas: Vec::new(),
+        };
+    }
+
+    /// Constrain only this compilation unit's command edges to depth one.
+    /// A semantic child gets its own unit, so a parent's `.NOTPARALLEL` never
+    /// turns into a global executor switch that serialises the child graph.
+    pub(crate) fn serialise_unit(&mut self, serial: bool) {
+        if serial {
+            let name = format!("make_serial_{}", self.serial_units).into_bytes();
+            self.serial_units += 1;
+            self.unit.serial_pool = Some(name);
+        }
+    }
+
+    /// Give this compilation unit the environment changes that differ from
+    /// the root Make invocation. They become part of each child command, so a
+    /// composed subninja observes its own exports and `MAKELEVEL` without a
+    /// nested process boundary.
+    pub(crate) fn set_recipe_environment(
+        &mut self,
+        environment: Vec<(OsString, Option<OsString>)>,
+    ) {
+        let mut normalised = BTreeMap::new();
+        for (name, value) in environment {
+            normalised.insert(
+                name.as_os_str().as_bytes().to_vec(),
+                value.map(|value| value.as_os_str().as_bytes().to_vec()),
+            );
+        }
+        self.unit.recipe_environment = normalised.into_iter().collect();
+    }
+
+    /// Finish the current compilation unit without finishing the shared graph.
+    pub(crate) fn take_unit(&mut self) -> UnitOutput {
+        debug_assert!(self.rules.is_empty());
+        debug_assert!(self.subninja_rules.is_empty());
+        UnitOutput {
+            targets: std::mem::take(&mut self.unit.targets),
+            subninjas: std::mem::take(&mut self.unit.subninjas),
+        }
+    }
+
+    /// Replace a recursive wrapper edge with the child goals it requested.
+    ///
+    /// Parent prerequisites become order-only inputs of each child goal: the
+    /// subgraph starts only once the wrapper recipe could have started, while
+    /// the child's own timestamps still decide what work it needs. When parent
+    /// and child name the same goal, the child edge subsumes the held wrapper;
+    /// otherwise the wrapper becomes a phony alias for the child targets.
+    // [spec:ronin:req:make.recursive-invocation+1]
+    pub(crate) fn complete_subninja(
+        &mut self,
+        pending: PendingSubninja,
+        child_targets: &[Node],
+    ) -> Result<(), FrontendError> {
+        let waits = pending
+            .inputs
+            .iter()
+            .chain(&pending.order_only_inputs)
+            .copied()
+            .collect::<Vec<_>>();
+        for target in child_targets {
+            if let Some(edge) = self.graph.generator(*target) {
+                let waits = waits
+                    .iter()
+                    .copied()
+                    .filter(|wait| wait != target)
+                    .collect::<Vec<_>>();
+                self.graph.add_order_only_inputs(edge, &waits);
+            }
+        }
+
+        let collapsed = pending.implicit_outputs.is_empty()
+            && pending.explicit_outputs.len() == 1
+            && child_targets.contains(&pending.explicit_outputs[0])
+            && self.graph.generator(pending.explicit_outputs[0]).is_some();
+        if collapsed {
+            let edge = self
+                .graph
+                .generator(pending.explicit_outputs[0])
+                .expect("the collapse predicate found the child edge");
+            self.graph.merge_edge_properties(
+                edge,
+                pending.always_dirty,
+                pending.intermediate,
+                pending.disposable,
+                &pending.validations,
+            );
+            return Ok(());
+        }
+
+        let mut inputs = pending.inputs;
+        for target in child_targets {
+            if !pending.explicit_outputs.contains(target)
+                && !pending.implicit_outputs.contains(target)
+                && !inputs.contains(target)
+            {
+                inputs.push(*target);
+            }
+        }
+        self.graph.add_edge(EdgeSpec {
+            scope: pending.scope,
+            rule: self.phony,
+            explicit_outputs: &pending.explicit_outputs,
+            implicit_outputs: &pending.implicit_outputs,
+            explicit_inputs: &inputs,
+            implicit_inputs: &[],
+            order_only_inputs: &pending.order_only_inputs,
+            validations: &pending.validations,
+            always_dirty: pending.always_dirty,
+            intermediate: pending.intermediate,
+            disposable: pending.disposable,
+            bindings: pending.bindings,
+        })?;
+        Ok(())
     }
 
     /// The graph, or the first thing kati asked for that a graph cannot hold.
@@ -141,6 +340,11 @@ impl GraphSink {
         }
     }
 
+    /// The typed construction failure behind kati's sink error, if any.
+    pub(crate) fn construction_failure(&self) -> Option<FrontendError> {
+        self.failure.clone()
+    }
+
     /// Record a construction failure and give kati something to unwind with.
     fn refuse(&mut self, failure: FrontendError) -> anyhow::Error {
         let reported = anyhow::Error::new(failure.clone());
@@ -154,7 +358,13 @@ impl GraphSink {
             return Ok(*node);
         }
         let path = symbol.as_bytes(&names);
-        match self.graph.node(&path) {
+        let path = Path::new(std::ffi::OsStr::from_bytes(&path));
+        let qualified = if self.unit.path_prefix.as_os_str().is_empty() || path.is_absolute() {
+            path.to_owned()
+        } else {
+            self.unit.path_prefix.join(path)
+        };
+        match self.graph.node(qualified.as_os_str().as_bytes()) {
             Ok(node) => {
                 self.interned.insert(symbol, node);
                 Ok(node)
@@ -175,6 +385,71 @@ impl GraphSink {
             .collect()
     }
 
+    /// Qualify a Makefile-relative auxiliary path the same way as its graph
+    /// nodes. The child command writes it after `cd`, while Ronin reads it from
+    /// the root, so both names must identify the same file.
+    fn qualify_path(&self, bytes: &[u8]) -> Vec<u8> {
+        let path = Path::new(OsStr::from_bytes(bytes));
+        if self.unit.path_prefix.as_os_str().is_empty() || path.is_absolute() {
+            bytes.to_vec()
+        } else {
+            self.unit
+                .path_prefix
+                .join(path)
+                .as_os_str()
+                .as_bytes()
+                .to_vec()
+        }
+    }
+
+    fn push_shell_word(command: &mut Template, word: &[u8]) {
+        command.push_literal(b"'");
+        for byte in word {
+            if *byte == b'\'' {
+                command.push_literal(b"'\\''");
+            } else {
+                command.push_literal(&[*byte]);
+            }
+        }
+        command.push_literal(b"'");
+    }
+
+    /// The shell prefix that gives a child compilation unit its Make `-C`
+    /// working directory without moving Ronin's executor.
+    fn command_prefix(&self) -> Template {
+        let mut command = Template::default();
+        if !self.unit.command_directory.as_os_str().is_empty() {
+            command.push_literal(b"cd ");
+            Self::push_shell_word(
+                &mut command,
+                self.unit.command_directory.as_os_str().as_bytes(),
+            );
+            command.push_literal(b" && ");
+        }
+
+        if !self.unit.recipe_environment.is_empty() {
+            command.push_literal(b"env");
+            for (name, value) in &self.unit.recipe_environment {
+                if value.is_none() {
+                    command.push_literal(b" -u ");
+                    Self::push_shell_word(&mut command, name);
+                }
+            }
+            for (name, value) in &self.unit.recipe_environment {
+                if let Some(value) = value {
+                    let mut assignment = Vec::with_capacity(name.len() + value.len() + 1);
+                    assignment.extend_from_slice(name);
+                    assignment.push(b'=');
+                    assignment.extend_from_slice(value);
+                    command.push_literal(b" ");
+                    Self::push_shell_word(&mut command, &assignment);
+                }
+            }
+            command.push_literal(b" ");
+        }
+        command
+    }
+
     /// The command line that runs `rule`'s script, and the bindings it needs.
     ///
     /// A script short enough to pass as an argument is quoted into one, which
@@ -184,7 +459,8 @@ impl GraphSink {
     fn command_bindings(&self, rule: &SinkRule<'_>) -> Vec<(Binding, Template)> {
         match rule.command {
             SinkCommand::Inline(script) => {
-                let mut command = Template::literal(rule.shell);
+                let mut command = self.command_prefix();
+                command.push_literal(rule.shell);
                 command.push_literal(b" ");
                 command.push_literal(rule.shell_flags);
                 command.push_literal(b" \"");
@@ -198,10 +474,19 @@ impl GraphSink {
             // that escapes every other path, instead of reimplementing it.
             SinkCommand::ResponseFile(script) => {
                 let mut response_file = Template::default();
+                if !self.unit.root && !self.root_directory.as_os_str().is_empty() {
+                    response_file.push_literal(self.root_directory.as_os_str().as_bytes());
+                    response_file.push_literal(std::path::MAIN_SEPARATOR_STR.as_bytes());
+                }
                 response_file.push_variable(self.bindings.out);
                 response_file.push_literal(b".rsp");
-                let mut command = Template::literal(rule.shell);
+                let mut command = self.command_prefix();
+                command.push_literal(rule.shell);
                 command.push_literal(b" ");
+                if !self.unit.root && !self.root_directory.as_os_str().is_empty() {
+                    command.push_literal(self.root_directory.as_os_str().as_bytes());
+                    command.push_literal(std::path::MAIN_SEPARATOR_STR.as_bytes());
+                }
                 command.push_variable(self.bindings.out);
                 command.push_literal(b".rsp");
                 vec![
@@ -217,6 +502,9 @@ impl GraphSink {
 impl BuildSink for GraphSink {
     fn start(&mut self, pools: &[SinkPool<'_>]) -> anyhow::Result<()> {
         for pool in pools {
+            if !self.declared_pools.insert(pool.name.to_vec()) {
+                continue;
+            }
             let declared = match self.graph.define_pool(pool.name) {
                 Ok(declared) => declared,
                 Err(failure) => return Err(self.refuse(failure)),
@@ -225,14 +513,36 @@ impl BuildSink for GraphSink {
                 self.graph.set_pool_depth(declared, depth);
             }
         }
+        if let Some(name) = self.unit.serial_pool.clone() {
+            self.declared_pools.insert(name.clone());
+            let declared = self
+                .graph
+                .define_pool(&name)
+                .map_err(|failure| self.refuse(failure))?;
+            self.graph.set_pool_depth(declared, NonZeroUsize::MIN);
+        }
         Ok(())
     }
 
     // [spec:ronin:req:make.graph-direct]
     fn declare_rule(&mut self, _names: &dyn Interner, rule: &SinkRule<'_>) -> anyhow::Result<()> {
+        let script = match rule.command {
+            SinkCommand::Inline(script) | SinkCommand::ResponseFile(script) => script,
+        };
+        if let Some(make) = rule.recursive_make {
+            self.subninja_rules
+                .insert(rule.id, (script.to_vec(), make.to_vec()));
+            return Ok(());
+        }
+        if rule.contains_recursive {
+            return Err(self.refuse(FrontendError::UncomposableSubninja {
+                command: script.to_vec(),
+            }));
+        }
         let mut bindings = self.command_bindings(rule);
         if !rule.dry_run_command.is_empty() {
-            let mut command = Template::literal(rule.shell);
+            let mut command = self.command_prefix();
+            command.push_literal(rule.shell);
             command.push_literal(b" ");
             command.push_literal(rule.shell_flags);
             command.push_literal(b" \"");
@@ -254,7 +564,10 @@ impl BuildSink for GraphSink {
             ),
         ));
         if let Some(depfile) = rule.depfile {
-            bindings.push((self.bindings.depfile, Template::literal(depfile)));
+            bindings.push((
+                self.bindings.depfile,
+                Template::literal(&self.qualify_path(depfile)),
+            ));
             // kati emits no other depfile format, and says so.
             bindings.push((self.bindings.deps, Template::literal(b"gcc")));
         }
@@ -272,7 +585,7 @@ impl BuildSink for GraphSink {
         let name = format!("rule{}", rule.id);
         match self
             .graph
-            .define_rule(self.scope, name.as_bytes(), bindings)
+            .define_rule(self.unit.scope, name.as_bytes(), bindings)
         {
             Ok(defined) => {
                 self.rules.insert(rule.id, defined);
@@ -285,13 +598,6 @@ impl BuildSink for GraphSink {
     // [spec:ronin:req:make.graph-direct]
     // [spec:ronin:req:make.phony-always-dirty]
     fn declare_edge(&mut self, names: &dyn Interner, edge: &SinkEdge<'_>) -> anyhow::Result<()> {
-        let rule = match edge.rule {
-            Some(id) => *self
-                .rules
-                .get(&id)
-                .ok_or_else(|| anyhow::Error::msg(format!("edge names undeclared rule{id}")))?,
-            None => self.phony,
-        };
         let outputs = vec![self.node(names, edge.output)?];
         let implicit_outputs = self.node_list(names, edge.implicit_outputs)?;
         let inputs = self.node_list(names, edge.inputs)?;
@@ -305,6 +611,14 @@ impl BuildSink for GraphSink {
         if let Some(tags) = edge.tags {
             bindings.push((self.bindings.tags, tags.to_vec()));
         }
+        let is_subninja = edge
+            .rule
+            .is_some_and(|id| self.subninja_rules.contains_key(&id));
+        if edge.pool.is_none() && edge.rule.is_some() && !is_subninja {
+            if let Some(pool) = &self.unit.serial_pool {
+                bindings.push((self.bindings.pool, pool.clone()));
+            }
+        }
         // Where the rule was written. Make leads the diagnostics that are about
         // the rule rather than about the file with it, and nothing else an edge
         // carries can say where it came from.
@@ -315,8 +629,36 @@ impl BuildSink for GraphSink {
             ));
         }
 
+        if let Some(id) = edge.rule {
+            if let Some((command, make)) = self.subninja_rules.remove(&id) {
+                self.unit.subninjas.push(PendingSubninja {
+                    command,
+                    make,
+                    scope: self.unit.scope,
+                    explicit_outputs: outputs,
+                    implicit_outputs,
+                    inputs,
+                    order_only_inputs,
+                    validations,
+                    always_dirty: edge.always_dirty,
+                    intermediate: edge.intermediate,
+                    disposable: edge.disposable,
+                    bindings,
+                });
+                return Ok(());
+            }
+        }
+
+        let rule = match edge.rule {
+            Some(id) => self
+                .rules
+                .remove(&id)
+                .ok_or_else(|| anyhow::Error::msg(format!("edge names undeclared rule{id}")))?,
+            None => self.phony,
+        };
+
         let spec = EdgeSpec {
-            scope: self.scope,
+            scope: self.unit.scope,
             rule,
             explicit_outputs: &outputs,
             implicit_outputs: &implicit_outputs,
@@ -344,7 +686,10 @@ impl BuildSink for GraphSink {
     ) -> anyhow::Result<()> {
         for target in targets {
             let node = self.node(names, *target)?;
-            self.graph.add_default(node);
+            if self.unit.root {
+                self.graph.add_default(node);
+            }
+            self.unit.targets.push(node);
         }
         Ok(())
     }

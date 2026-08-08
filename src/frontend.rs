@@ -178,6 +178,12 @@ pub enum FrontendError {
         /// The dyndep path the edge asked for.
         path: Vec<u8>,
     },
+    /// A recipe mixes a recursive `$(MAKE)` line with shell work that cannot
+    /// be represented as one static subninja inclusion.
+    UncomposableSubninja {
+        /// The expanded recipe, retained for an actionable compiler error.
+        command: Vec<u8>,
+    },
 }
 
 impl fmt::Display for FrontendError {
@@ -200,6 +206,11 @@ impl fmt::Display for FrontendError {
             Self::DyndepNotInput { path } => {
                 write!(formatter, "dyndep '{}' is not an input", path.as_bstr())
             }
+            Self::UncomposableSubninja { command } => write!(
+                formatter,
+                "recursive Make recipe cannot compile as subninja: {}",
+                command.as_bstr()
+            ),
         }
     }
 }
@@ -467,6 +478,46 @@ impl BuildGraph {
         self.resolve_pool(edge)?;
         self.resolve_dyndep(edge)?;
         Ok(Edge(edge))
+    }
+
+    /// Make `edge` wait for additional order-only inputs.
+    ///
+    /// Subninja composition uses this to preserve the parent recipe boundary:
+    /// every prerequisite of the wrapper target finishes before any requested
+    /// child goal starts, without making that prerequisite part of the child's
+    /// own timestamp dirtiness calculation.
+    pub(crate) fn add_order_only_inputs(&mut self, edge: Edge, inputs: &[Node]) {
+        for input in inputs {
+            if self.arenas.edge(edge.0).input.contains(&input.0) {
+                continue;
+            }
+            nodeuse(&mut self.arenas, input.0, edge.0);
+            self.arenas.edge_mut(edge.0).input.push(input.0);
+        }
+    }
+
+    /// Carry wrapper-edge properties onto a child edge that produces the same
+    /// logical target and therefore subsumes the wrapper entirely.
+    pub(crate) fn merge_edge_properties(
+        &mut self,
+        edge: Edge,
+        always_dirty: bool,
+        intermediate: bool,
+        disposable: bool,
+        validations: &[Node],
+    ) {
+        let mut added = Vec::new();
+        for validation in validations {
+            if !self.arenas.edge(edge.0).validation.contains(&validation.0) {
+                self.arenas.add_validation_use(validation.0, edge.0);
+                added.push(validation.0);
+            }
+        }
+        let stored = self.arenas.edge_mut(edge.0);
+        stored.validation.extend(added);
+        stored.always_dirty |= always_dirty;
+        stored.intermediate |= intermediate;
+        stored.disposable |= disposable;
     }
 
     fn resolve_pool(&mut self, edge: EdgeId) -> Result<(), FrontendError> {

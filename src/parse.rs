@@ -159,6 +159,9 @@ fn construction_problem(error: FrontendError) -> ManifestProblem {
         FrontendError::DyndepNotInput { path } => ManifestProblem::DyndepNotInput {
             path: BString::from(path),
         },
+        FrontendError::UncomposableSubninja { .. } => {
+            unreachable!("only the Make compiler creates subninja construction errors")
+        }
     }
 }
 

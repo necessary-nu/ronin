@@ -32,13 +32,14 @@ use crate::Error;
 use kati::bytes::Bytes;
 use kati::flags::Flags;
 use kati::session::Session;
-use kati::var::{VarOrigin, Variable};
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
 mod interface;
+mod subninja;
 use interface::{makeflags_arguments, prepend_command_line_evals};
+pub(super) use subninja::compile as compile_subninja;
 
 /// The makefiles GNU Make reads when no `-f` names one, in its own order.
 const DEFAULT_MAKEFILES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
@@ -1159,36 +1160,16 @@ fn session_for(
 
 /// Tell the makefile what the invocation it is being read by looks like.
 ///
-/// The evaluator imports the process environment itself, so a value that
-/// arrived there is already the makefile's, with the origin GNU Make gives it.
-/// Only the top of a tree, where nothing set one, needs an answer supplied:
-/// `MAKELEVEL` is zero there, and `MAKEFLAGS` is this invocation's own switches,
-/// which no parent can have described.
+/// The evaluator imports this session's environment snapshot. Recording the
+/// invocation there makes the same mechanism work for the process entry point
+/// and for a semantic subninja compiled inside this process.
 // [spec:ronin:req:make.recursive-invocation]
-fn record_invocation(
-    session: &mut Session,
-    name: &'static str,
-    value: String,
-) -> Result<(), Error> {
-    if std::env::var_os(name).is_some() {
-        return Ok(());
-    }
-    let name = session.intern(name);
-    let value = Variable::with_simple_string(
-        Bytes::from(value.into_bytes()),
-        VarOrigin::Environment,
-        None,
-        None,
-    );
-    session
-        .set_global_var(name, value, false, None)
-        .map_err(|error| {
-            CliError::InvocationFailed {
-                exit_code: ABANDONED,
-                diagnostic: error.to_string(),
-            }
-            .into()
-        })
+fn record_invocation(session: &mut Session, name: &'static str, value: String) {
+    let environment = session
+        .invocation_environment
+        .get_or_insert_with(|| std::env::vars_os().collect());
+    environment.retain(|(candidate, _)| candidate != name);
+    environment.push((OsString::from(name), OsString::from(value)));
 }
 
 /// The scheduler settings this invocation maps onto Ninja's controls.
@@ -1416,9 +1397,22 @@ pub(crate) fn run(
     };
 
     let mut session = session_for(&invocation, &makefile, job_count(&options), &invoked_as);
-    record_invocation_variables(&mut session, &invocation, level)?;
+    record_invocation_variables(&mut session, &invocation, level);
+    let compilation = compilation_context(
+        &invocation,
+        directory.clone(),
+        job_count(&options),
+        level,
+        &session,
+    );
 
-    let mut graph = match evaluated(session, &invocation.evals, invocation.shuffle, &reported) {
+    let mut graph = match evaluated(
+        session,
+        &invocation.evals,
+        invocation.shuffle,
+        compilation,
+        &reported,
+    ) {
         Ok(loaded) => adopt(&mut options, loaded),
         Err(result) => return Ok(result),
     };
@@ -1467,16 +1461,52 @@ pub(crate) fn run(
 /// `$(findstring s,$(MAKEFLAGS))` is asking about this invocation and not about
 /// the one that spawned it, and the depth it sits at.
 // [spec:ronin:req:make.recursive-invocation]
-fn record_invocation_variables(
-    session: &mut Session,
-    invocation: &Invocation,
-    level: usize,
-) -> Result<(), Error> {
-    record_invocation(session, MAKELEVEL, level.to_string())?;
+fn record_invocation_variables(session: &mut Session, invocation: &Invocation, level: usize) {
+    record_invocation(session, MAKELEVEL, level.to_string());
     for (name, value) in flag_environment(invocation) {
-        record_invocation(session, name, value.to_string_lossy().into_owned())?;
+        record_invocation(session, name, value.to_string_lossy().into_owned());
     }
-    Ok(())
+}
+
+/// The compiler context that a recursive recipe inherits from this unit.
+fn compilation_context(
+    invocation: &Invocation,
+    directory: PathBuf,
+    jobs: usize,
+    level: usize,
+    session: &Session,
+) -> crate::make::CompilationContext {
+    crate::make::CompilationContext {
+        root_directory: directory.clone(),
+        directory,
+        path_prefix: PathBuf::new(),
+        makeflags: propagated_makeflags(invocation),
+        level,
+        jobs,
+        environment: session
+            .invocation_environment
+            .clone()
+            .unwrap_or_else(|| std::env::vars_os().collect()),
+        recipe_environment: Vec::new(),
+    }
+}
+
+/// The exact MAKEFLAGS value this compilation unit hands to a semantic child.
+fn propagated_makeflags(invocation: &Invocation) -> String {
+    flag_environment(invocation)
+        .into_iter()
+        .find(|(name, _)| *name == "MAKEFLAGS")
+        .map(|(_, value)| value.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn compilation_key(directory: &Path, makefile: &[u8], makeflags: &str) -> Vec<u8> {
+    let mut key = directory.as_os_str().as_encoded_bytes().to_vec();
+    key.push(0);
+    key.extend_from_slice(makefile);
+    key.push(0);
+    key.extend_from_slice(makeflags.as_bytes());
+    key
 }
 
 /// The graph a makefile describes, or the result of not getting one.
@@ -1490,6 +1520,7 @@ fn evaluated(
     mut session: Session,
     evals: &[Bytes],
     shuffle: Shuffle,
+    context: crate::make::CompilationContext,
     reported: &str,
 ) -> Result<crate::make::Loaded, RunResult> {
     if let Err(failure) = prepend_command_line_evals(&mut session, evals) {
@@ -1499,7 +1530,20 @@ fn evaluated(
             exit_code: ABANDONED,
         });
     }
-    crate::make::load_makefile(session, shuffle).map_err(|failure| RunResult {
+    let makefile = session
+        .flags
+        .makefile
+        .as_ref()
+        .map(|makefile| makefile.as_encoded_bytes())
+        .unwrap_or_default();
+    let cache_key = compilation_key(&context.directory, makefile, &context.makeflags);
+    let compilation = crate::make::Compilation {
+        session,
+        shuffle,
+        context,
+        cache_key,
+    };
+    crate::make::load_with_subninjas(compilation, compile_subninja).map_err(|failure| RunResult {
         stdout: terminated(reported),
         stderr: ordinary_diagnostic(failure),
         exit_code: ABANDONED,

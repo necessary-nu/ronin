@@ -5409,6 +5409,13 @@ children (
                                 kind @decision
                                 text "Recognize recursive $(MAKE) invocations while kati compiles recipes. Evaluate the child directory, selected Makefile, goals, assignments, and graph-affecting flags as another compilation unit and compose its edges into the parent as semantic subninja inclusion. Preserve dependency and ordering relationships across the boundary. Do not leave a child Make command for the executor to launch."
                             }
+
+                            {
+                                at 2026-08-08T15:14:36.672578691Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
                         )
                     }
 

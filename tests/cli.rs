@@ -2333,49 +2333,104 @@ fn a_load_ceiling_is_read_in_every_spelling_and_a_bad_one_is_refused() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.recursive-invocation/test]
+// [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn a_recursive_makefile_re_enters_ronin_with_no_make_on_the_path() {
-    let directory = test_directory("make-recursion");
+fn recursive_make_compiles_as_subninja() {
+    let directory = test_directory("make-subninja");
     fs::create_dir_all(directory.join("sub")).unwrap();
     fs::write(
         directory.join("Makefile"),
-        "all:\n\t@echo \"top level=$(MAKELEVEL)\"\n\t$(MAKE) -C sub\n.PHONY: all\n",
+        "MAKE := ./must-not-run\n\
+         RECURSE = $(MAKE) -C sub -f Child.mk child FLAG='from parent'\n\
+         export PARENT := seen-by-child-evaluator\n\
+         export REMOVE := remove-before-child-recipe\n\
+         all: ready\n\
+         \t$(RECURSE)\n\
+         ready:\n\
+         \t@printf ready > ready-file\n\
+         .PHONY: all ready\n",
     )
     .unwrap();
     fs::write(
-        directory.join("sub/Makefile"),
-        "all:\n\t@echo \"sub level=$(MAKELEVEL) make=$$(command -v make || echo none)\"\n.PHONY: all\n",
+        directory.join("sub/Child.mk"),
+        "ifeq ($(PARENT),seen-by-child-evaluator)\n\
+         EVALUATED := yes\n\
+         else\n\
+         EVALUATED := no\n\
+         endif\n\
+         LEVEL := $(MAKELEVEL)\n\
+         export CHILD := child-recipe-environment\n\
+         unexport REMOVE\n\
+         child:\n\
+         \t@test -f ../ready-file\n\
+         \t@printf '%s' \"$(FLAG)|$(EVALUATED)|$$CHILD|$${REMOVE-unset}|$(LEVEL)|$$MAKELEVEL\" > result\n\
+         .PHONY: child\n",
     )
     .unwrap();
-    // An empty directory for a PATH, so the only Make that can answer
-    // `$(MAKE)` is the one Ronin named.
-    let empty = directory.join("empty-path");
-    fs::create_dir_all(&empty).unwrap();
+    fs::write(
+        directory.join("must-not-run"),
+        "#!/bin/sh\ntouch nested-make-ran\nexit 99\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        directory.join("must-not-run"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
 
     let output = make_command(&invoked_as(&directory, "make"), &directory)
-        .env("PATH", &empty)
         .output()
         .unwrap();
-
-    let reported = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        output.status.success(),
-        "{reported}{}",
-        String::from_utf8_lossy(&output.stderr)
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("sub/result")).unwrap(),
+        "from parent|yes|child-recipe-environment|unset|1|2"
     );
-    assert!(reported.contains("top level=0"), "{reported}");
-    // The sub-make ran, counted itself one level deeper, and found no other
-    // Make anywhere: the only thing that could have built it is Ronin.
-    assert!(reported.contains("sub level=1 make=none"), "{reported}");
+    assert!(!directory.join("nested-make-ran").exists(), "{reported}");
+    assert!(
+        !directory.join("sub/nested-make-ran").exists(),
+        "{reported}"
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// A recursive process is still temporary executor behaviour, but it may not
-/// install GNU Make's directory or recursion narrator around its output.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_reference_as_data_stays_recipe() {
+    let directory = test_directory("make-reference-data");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "MAKE := ./not-an-invocation\n\
+         all:\n\
+         \t@printf '%s' '$(MAKE)' > result\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("result")).unwrap(),
+        "./not-an-invocation"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A composed child uses the same Ninja narrator as every other edge; there is
+/// no recursive Make reporter left to install directory banners around it.
 // [spec:ronin:req:make.narration/test]
-// [spec:ronin:req:make.recursive-invocation/test]
+// [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn recursive_make_uses_ninja_narration() {
@@ -2417,9 +2472,9 @@ fn recursive_make_uses_ninja_narration() {
 
 #[cfg(all(unix, feature = "make"))]
 // [spec:ronin:req:make.jobserver/test]
-// [spec:ronin:req:make.recursive-invocation/test]
+// [spec:ronin:req:make.recursive-invocation+1/test]
 #[test]
-fn a_recursive_makefile_tree_shares_one_job_budget() {
+fn recursive_make_tree_uses_one_budget() {
     const LEVELS: [&str; 3] = ["a", "b", "c"];
     const UNITS: usize = 6;
     const BUDGETS: [usize; 3] = [1, 2, 4];
@@ -2499,40 +2554,19 @@ fn a_recursive_makefile_tree_shares_one_job_budget() {
             "-j{jobs} ran {peak} recipes of a recursive Makefile tree at once"
         );
     }
-    // The control: the same tree with each level given a budget of its own, so
-    // the measurement above is evidence rather than a tautology.
-    let _ = fs::remove_file(&log);
-    let unshared = tree("unshared-", "env -u MAKEFLAGS $(MAKE) -j6");
-    fs::write(directory.join("unshared.mk"), unshared).unwrap();
-    let output = make_command(&program, &directory)
-        .args(["-j2", "-f", "unshared.mk"])
-        .env("LOG", &log)
-        .env("TMPDIR", &served)
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let (peak, _) = peak_concurrency(&fs::read_to_string(&log).unwrap());
-    assert!(
-        peak > BUDGETS[BUDGETS.len() - 1],
-        "the control did not oversubscribe, so the shared measurement proves nothing"
-    );
-
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// A sub-make given its own `-j` declines the budget it inherited and serves
-/// that count instead, so the levels below it get it rather than running one
-/// recipe at a time. GNU Make resets the mode the same way and warns in these
-/// words.
+/// A child `-j` remains accepted interface data; it cannot create another
+/// scheduler inside the graph the parent already owns.
 #[cfg(all(unix, feature = "make"))]
 // [spec:ronin:req:make.jobserver/test]
 #[test]
-fn a_forced_job_count_replaces_the_budget_a_sub_make_inherited() {
+fn child_jobs_keep_one_scheduler() {
     const LEVELS: [&str; 3] = ["a", "b", "c"];
     const UNITS: usize = 6;
-    /// Larger than the budget the top of the tree serves, so a level below the
-    /// forced one running at the parent's count is a different measurement.
+    /// Different from the root limit, so two schedulers are distinguishable.
     const FORCED: usize = 4;
 
     let directory = test_directory("make-forced-budget");
@@ -2596,12 +2630,10 @@ fn a_forced_job_count_replaces_the_budget_a_sub_make_inherited() {
     assert!(output.status.success(), "{said}");
     let (peak, ran) = peak_concurrency(&fs::read_to_string(&log).unwrap());
     assert_eq!(ran, UNITS);
-    // Exactly the forced count: the ceiling alone is met by a tree running one
-    // recipe at a time, which is what the inherited budget stopping at the
-    // forcing level looks like.
+    // The child spelling did not replace the root graph's one scheduler.
     assert_eq!(
-        peak, FORCED,
-        "-j{FORCED} forced two levels up ran {peak} recipes at the bottom"
+        peak, 2,
+        "child -j{FORCED} split a root -j2 graph into another scheduler ({peak})"
     );
     assert!(!said.contains("resetting jobserver mode"), "{said}");
 

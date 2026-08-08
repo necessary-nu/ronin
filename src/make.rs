@@ -45,12 +45,15 @@ pub use sink::GraphSink;
 // [spec:ronin:req:product.make-identity]
 pub const MAKE_VERSION: &str = "4.4.1";
 
-use crate::frontend::{BuildGraph, FrontendError, StatePlacement, UnrecordedOutput};
+use crate::frontend::{BuildGraph, FrontendError, Node, Scope, StatePlacement, UnrecordedOutput};
 use kati::evaluate::{evaluate, Evaluated};
 use kati::ninja::emit_build;
 use kati::session::Session;
+use std::collections::{HashMap, HashSet};
 use std::error;
+use std::ffi::OsString;
 use std::fmt;
+use std::path::PathBuf;
 
 /// Why a Makefile did not become a graph.
 #[derive(Debug)]
@@ -122,23 +125,259 @@ impl MakeError {
 // [spec:ronin:req:make.graph-direct]
 // [spec:ronin:req:make.state-outside-the-tree]
 pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeError> {
-    let Evaluated { mut ev, mut nodes } =
-        evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
-    reorder(shuffle, ev.session.flags.not_parallel, &mut nodes);
-    let mut sink = GraphSink::new();
-    let emitted = emit_build(&nodes, &mut ev, &mut sink);
+    let directory = std::env::current_dir().map_err(|error| {
+        MakeError::Evaluate(format!(
+            "reading current directory for Make compilation: {error}"
+        ))
+    })?;
+    let makefile = session
+        .flags
+        .makefile
+        .as_ref()
+        .map(|makefile| makefile.as_encoded_bytes())
+        .unwrap_or_default();
+    let mut key = directory.as_os_str().as_encoded_bytes().to_vec();
+    key.push(0);
+    key.extend_from_slice(makefile);
+    let environment = session
+        .invocation_environment
+        .clone()
+        .unwrap_or_else(|| std::env::vars_os().collect::<Vec<_>>());
+    let environment_value = |name: &str| {
+        environment
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .map(|(_, value)| value.to_string_lossy().into_owned())
+    };
+    let compilation = Compilation {
+        context: CompilationContext {
+            root_directory: directory.clone(),
+            directory,
+            path_prefix: PathBuf::new(),
+            makeflags: environment_value("MAKEFLAGS").unwrap_or_default(),
+            level: environment_value("MAKELEVEL")
+                .and_then(|level| level.parse().ok())
+                .unwrap_or(0),
+            jobs: session.flags.num_jobs.max(1),
+            environment,
+            recipe_environment: Vec::new(),
+        },
+        session,
+        shuffle,
+        cache_key: key,
+    };
+    load_with_subninjas(compilation, cli::compile_subninja)
+}
+
+/// Invocation context retained while one Makefile compilation discovers its
+/// semantic subninjas.
+#[derive(Clone)]
+pub(crate) struct CompilationContext {
+    pub(crate) root_directory: PathBuf,
+    pub(crate) directory: PathBuf,
+    pub(crate) path_prefix: PathBuf,
+    pub(crate) makeflags: String,
+    pub(crate) level: usize,
+    pub(crate) jobs: usize,
+    /// The environment this unit imports while kati evaluates it.
+    pub(crate) environment: Vec<(OsString, OsString)>,
+    /// Changes child commands need in addition to the root build environment.
+    pub(crate) recipe_environment: Vec<(OsString, Option<OsString>)>,
+}
+
+/// One Makefile ready for kati evaluation and graph composition.
+pub(crate) struct Compilation {
+    pub(crate) session: Session,
+    pub(crate) shuffle: Shuffle,
+    pub(crate) context: CompilationContext,
+    /// Canonical Makefile identity plus every graph-affecting invocation input.
+    /// Reusing it reuses the already-composed target nodes rather than defining
+    /// the same outputs twice.
+    pub(crate) cache_key: Vec<u8>,
+}
+
+struct CompiledUnit {
+    targets: Vec<Node>,
+    exported: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+}
+
+/// Evaluate a root Makefile and every recursive `$(MAKE)` recipe into one
+/// shared graph before returning it to the executor.
+// [spec:ronin:req:make.recursive-invocation+1]
+pub(crate) fn load_with_subninjas<F>(root: Compilation, mut resolve: F) -> Result<Loaded, MakeError>
+where
+    F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+{
+    let mut sink = GraphSink::new_at(&root.context.root_directory);
+    let mut cache = HashMap::new();
+    let mut compiling = HashSet::new();
+    let root_key = root.cache_key.clone();
+    let compiled = compile_unit(
+        root,
+        &mut sink,
+        None,
+        &mut resolve,
+        &mut cache,
+        &mut compiling,
+    )?;
+    cache.insert(root_key, compiled.targets.clone());
     let mut graph = sink.into_graph().map_err(MakeError::Construct)?;
     graph.state_placement = StatePlacement::OutsideTheTree;
     graph.unrecorded_output = UnrecordedOutput::SaysNothing;
-    emitted.map_err(|error| MakeError::evaluate(&error))?;
-    let exported = exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
-    let serial = ev.session.flags.not_parallel;
-    ev.finish().map_err(|error| MakeError::evaluate(&error))?;
     Ok(Loaded {
         graph,
-        exported,
-        serial,
+        exported: compiled.exported,
+        // `.NOTPARALLEL` is a per-compilation-unit graph pool. It is never a
+        // provenance flag for the one executor running the composed graph.
+        serial: false,
     })
+}
+
+fn compile_unit<F>(
+    compilation: Compilation,
+    sink: &mut GraphSink,
+    parent_scope: Option<Scope>,
+    resolve: &mut F,
+    cache: &mut HashMap<Vec<u8>, Vec<Node>>,
+    compiling: &mut HashSet<Vec<u8>>,
+) -> Result<CompiledUnit, MakeError>
+where
+    F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+{
+    let compilation_key = compilation.cache_key.clone();
+    if !compiling.insert(compilation_key.clone()) {
+        return Err(MakeError::Evaluate(
+            "recursive Make compilation includes itself".to_owned(),
+        ));
+    }
+    let context = compilation.context.clone();
+    let session = compilation.session;
+    let shuffle = compilation.shuffle;
+    let is_root = parent_scope.is_none();
+    let evaluated = in_directory(&context.directory, || {
+        let Evaluated { mut ev, mut nodes } =
+            evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
+        reorder(shuffle, ev.session.flags.not_parallel, &mut nodes);
+        let exported =
+            exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+        if let Some(parent) = parent_scope {
+            sink.begin_subninja(
+                parent,
+                context.path_prefix.clone(),
+                context.directory.clone(),
+            );
+        }
+        sink.serialise_unit(ev.session.flags.not_parallel);
+        let mut recipe_environment = context.recipe_environment.clone();
+        if !is_root {
+            apply_recipe_environment(&mut recipe_environment, &exported);
+        }
+        sink.set_recipe_environment(recipe_environment);
+        if let Err(error) = emit_build(&nodes, &mut ev, sink) {
+            if let Some(failure) = sink.construction_failure() {
+                return Err(MakeError::Construct(failure));
+            }
+            return Err(MakeError::evaluate(&error));
+        }
+        let unit = sink.take_unit();
+        ev.finish().map_err(|error| MakeError::evaluate(&error))?;
+        Ok((unit, exported))
+    });
+    let (unit, exported) = match evaluated {
+        Ok(evaluated) => evaluated,
+        Err(error) => {
+            compiling.remove(&compilation_key);
+            return Err(error);
+        }
+    };
+
+    let mut descendant_context = context;
+    apply_exported_environment(&mut descendant_context.environment, &exported);
+    if !is_root {
+        apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
+    }
+    for pending in unit.subninjas {
+        let child = resolve(&pending.command, &pending.make, &descendant_context)?;
+        let child_key = child.cache_key.clone();
+        let child_targets = if let Some(targets) = cache.get(&child_key) {
+            targets.clone()
+        } else {
+            let child_scope = pending.scope;
+            let child = compile_unit(child, sink, Some(child_scope), resolve, cache, compiling)?;
+            cache.insert(child_key, child.targets.clone());
+            child.targets
+        };
+        sink.complete_subninja(pending, &child_targets)
+            .map_err(MakeError::Construct)?;
+    }
+    compiling.remove(&compilation_key);
+    Ok(CompiledUnit {
+        targets: unit.targets,
+        exported,
+    })
+}
+
+/// Apply Make's `export`/`unexport` result to the environment imported by a
+/// semantic child compiler session.
+fn apply_exported_environment(
+    environment: &mut Vec<(OsString, OsString)>,
+    changes: &[(OsString, Option<OsString>)],
+) {
+    for (name, value) in changes {
+        environment.retain(|(candidate, _)| candidate != name);
+        if let Some(value) = value {
+            environment.push((name.clone(), value.clone()));
+        }
+    }
+    environment.sort_unstable_by(|left, right| left.0.cmp(&right.0));
+}
+
+/// Keep only the last change for each recipe variable while carrying a nested
+/// unit's overrides into its descendants.
+fn apply_recipe_environment(
+    environment: &mut Vec<(OsString, Option<OsString>)>,
+    changes: &[(OsString, Option<OsString>)],
+) {
+    for (name, value) in changes {
+        environment.retain(|(candidate, _)| candidate != name);
+        environment.push((name.clone(), value.clone()));
+    }
+}
+
+/// Evaluate one unit from its Make working directory and restore the caller's
+/// directory before any child unit is entered.
+fn in_directory<T>(
+    directory: &std::path::Path,
+    evaluate: impl FnOnce() -> Result<T, MakeError>,
+) -> Result<T, MakeError> {
+    let previous = std::env::current_dir().map_err(|error| {
+        MakeError::Evaluate(format!(
+            "reading current directory for Make compilation: {error}"
+        ))
+    })?;
+    if previous != directory {
+        std::env::set_current_dir(directory).map_err(|error| {
+            MakeError::Evaluate(format!(
+                "entering Make compilation directory '{}': {error}",
+                directory.display()
+            ))
+        })?;
+    }
+    let result = evaluate();
+    let restored = if previous == directory {
+        Ok(())
+    } else {
+        std::env::set_current_dir(&previous).map_err(|error| {
+            MakeError::Evaluate(format!(
+                "restoring Make compilation directory '{}': {error}",
+                previous.display()
+            ))
+        })
+    };
+    match (result, restored) {
+        (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+        (Ok(value), Ok(())) => Ok(value),
+    }
 }
 
 /// What `--shuffle` reorders the goals and each target's prerequisites by.
