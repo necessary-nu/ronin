@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| all: out
+| gate: ; echo gate > $@
+| src: ; echo src > $@
+| out: src | gate
+| 	printf '[%s][%s][%s]\n' '$<' '$^' '$|' > $@
+file gate touched 1
+| gate
+file out touched 1
+| [src][src][gate]
+file src touched 1
+| src

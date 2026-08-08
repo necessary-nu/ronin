@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| all: out
+| dir.stamp: ; echo stamp > $@
+| in.txt: ; echo in > $@
+| out: in.txt | dir.stamp
+| 	printf 'normal=%s order=%s\n' '$^' '$|' > $@
+file dir.stamp touched 1
+| stamp
+file in.txt touched 1
+| in
+file out touched 1
+| normal=in.txt order=dir.stamp

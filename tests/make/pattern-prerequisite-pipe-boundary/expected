@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| all: main.o
+| main.c: ; echo source > $@
+| gate.h: ; echo gate > $@
+| %.o: %.c|gate.h
+| 	printf 'made %s from %s order %s\n' '$@' '$<' '$|' > $@
+file gate.h touched 1
+| gate
+file main.c touched 1
+| source
+file main.o touched 1
+| made main.o from main.c order gate.h

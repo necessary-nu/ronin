@@ -1,0 +1,4 @@
+Make mode calls an output with no build-log entry dirty, which is Ninja's rule.
+Make has no build log: a file newer than its prerequisites is up to date whether
+or not this tool has seen it before. So Ronin rebuilds the whole tree the first
+time it is run anywhere GNU Make has built, which is the ordinary case.

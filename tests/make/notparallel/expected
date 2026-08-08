@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| .NOTPARALLEL:
+| all: a b
+| a: ; echo a > a
+| b: ; test -f a && echo b > b
+file a touched 1
+| a
+file b touched 1
+| b

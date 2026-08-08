@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| .SECONDEXPANSION:
+| out: $$(SRC)
+| 	cat $^ > $@
+| SRC = one.txt two.txt
+| one.txt: ; echo one > $@
+| two.txt: ; echo two > $@
+file one.txt touched 1
+| one
+file out touched 2
+| one
+| two
+file two.txt touched 1
+| two

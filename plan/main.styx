@@ -4917,6 +4917,36 @@ children (
                     }
                 )
             }
+
+            {
+                id make-ported-correctness-suite
+                title "Port GNU Make's behaviour into cases this repository owns"
+                priority 0
+                kind @test
+                log (
+                    {
+                        at 2026-08-08T09:28:13.183474663Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "`tests/make_port.rs` over `tests/make/`. Each case is a makefile written here; `expected` records what GNU Make 4.4.1 did with it; the test replays it against Make mode and asserts the same result. A failure is a sentence naming the file and what about it, and it fails the build.\n\nThis replaces the upstream classifier as the measure. `examples/make_upstream.rs` sorts a diff into 18 families and reports counts — a report, not a gate, and nothing fails when a fixed thing regresses. It stays as a discovery tool, which is what it is good at: it found the option family, second expansion, and the recursive jobserver. It should not be quoted as a score again.\n\nWhat is compared: exit status, and for every file the build could have touched, its contents and whether the build wrote it. Not stdout — Make mode narrates the way the manifest front end does (`[spec:ronin:req:make.narration]`, reaffirmed 2026-08-08), so comparing output means deciding line by line which lines were narration, and that decision is what a classifier is. Observable effect needs no such judgement. A case that means to test output writes it to a file; the corpus is ours, so that is how a case is written rather than a limitation.\n\nExpectations are recorded from the oracle and never written by hand — `MAKE_PORT_RECORD=1` on a `--test make_port` run, which asserts the oracle's version before it writes anything. Recording needs `/usr/bin/make`; running the test does not, so it is a plain `cargo test` and works anywhere.\n\nThe makefiles are ours. GNU Make's own scripts are GPLv3, which is why `reference/gnumake` is a pinned checkout and not vendored (`make-licence-position`), so a case is written here from behaviour probed off 4.4.1 rather than copied.\n\nA known divergence is a `divergence` file beside the case, holding the defect. The suite fails on an unrecorded difference **and** on a recorded one that has started passing, so the list cannot become a place differences go to be forgotten.\n\nFirst run: 17 cases, 16 passing, and it found two defects the classifier never saw — see `make-timestamp-dirtiness`. The 18th case was written for the larger of them.\n\nGrow it from what each lane verifies. Every lane this week probed `/usr/bin/make` side by side to check its work and then threw that away; each of those probes is a case."
+                    }
+                )
+            }
+
+            {
+                id make-timestamp-dirtiness
+                title "Call a Make target up to date on its timestamps alone"
+                priority 0
+                kind @fix
+                log (
+                    {
+                        at 2026-08-08T09:28:01.524638529Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Ronin's Make mode rebuilds a tree GNU Make calls up to date, whenever the build log has no entry for the output. Probed:\n\n  $ make            builds out\n  $ make            'out' is up to date.\n  $ ronin (as make) [1/1] build out\n\nAn output with no build-log entry is dirty here. That is Ninja's rule and correct in Ninja, where the log carries the command hash and a missing entry means the command is unknown. Make has no build log at all: a file newer than its prerequisites is up to date whether or not this tool has ever seen it. So the first Ronin run in any tree GNU Make has built redoes the entire build — which is the ordinary way somebody would try this.\n\nInvisible to GNU Make's own suite, because every case there starts in an empty directory and there is never a pre-existing artefact without a log entry. Found by the first run of make-ported-correctness-suite, whose cases can start from a populated tree because we write them.\n\nIt also reaches `-t`: `make-option-touch-and-what-if` routes the touch through `finish_edge` so the log entry gets written, so `-t` touches every edge Ronin thinks is dirty. GNU touches only what is out of date, so a prerequisite that already exists is left alone. Both cases are recorded as known divergences in the ported suite (`up-to-date-without-log`, `touch-option`) and the suite fails when either starts passing, so the markers cannot be forgotten.\n\nThe fix is a Make-mode dirtiness rule that reads timestamps and not the log. Care is needed about what the log is still for in Make mode — the command hash still catches a changed recipe, which GNU Make does not do at all but which is not wrong to keep. Decide that explicitly rather than by deleting the check."
+                    }
+                )
+            }
         )
         log (
             {

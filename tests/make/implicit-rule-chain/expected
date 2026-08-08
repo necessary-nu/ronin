@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| all: hello.c
+| hello.y: ; echo grammar > $@
+| %.c: %.y ; cat $< > $@
+file hello.c touched 1
+| grammar
+file hello.y touched 1
+| grammar
