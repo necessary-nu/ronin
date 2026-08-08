@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| # The mirror: what reaches each sub-make is a withdrawal, and the command line
+| # asks for the switch outright. A withdrawal nobody argues with still stands.
+| all:
+| 	@OUT=inherited $(MAKE) -f sub.mk
+| 	@OUT=asserted-w $(MAKE) -w -f sub.mk
+| 	@OUT=asserted-s $(MAKE) -s -f sub.mk
+| 	@OUT=asserted-k $(MAKE) -k -f sub.mk
+file asserted-k touched 1
+| k --no-print-directory --no-silent
+file asserted-s touched 1
+| sS --no-print-directory
+file asserted-w touched 1
+| Sw --no-silent
+file inherited touched 1
+| S --no-print-directory --no-silent
+file sub.mk kept 1
+| all: ; @printf '%s\n' "$$MAKEFLAGS" > $$OUT

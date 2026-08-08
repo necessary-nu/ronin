@@ -1,0 +1,27 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 10
+| # Every switch here reaches each sub-make through MAKEFLAGS, and each of them
+| # says something else about one of them on its own command line. What the
+| # sub-make settled on is what it would hand a make of its own.
+| all:
+| 	@OUT=inherited $(MAKE) -f sub.mk
+| 	@OUT=withdrawn-w $(MAKE) --no-print-directory -f sub.mk
+| 	@OUT=withdrawn-s $(MAKE) --no-silent -f sub.mk
+| 	@OUT=withdrawn-k $(MAKE) -S -f sub.mk
+| 	@OUT=agreeing $(MAKE) -k -f sub.mk
+| 	@OUT=added $(MAKE) -r -f sub.mk
+file added touched 1
+| ikrsw
+file agreeing touched 1
+| iksw
+file inherited touched 1
+| iksw
+file sub.mk kept 1
+| all: ; @printf '%s\n' "$$MAKEFLAGS" > $$OUT
+file withdrawn-k touched 1
+| isSw
+file withdrawn-s touched 1
+| ikw --no-silent
+file withdrawn-w touched 1
+| iks --no-print-directory

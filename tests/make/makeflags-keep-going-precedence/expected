@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| # Keep going reaches both sub-makes through MAKEFLAGS. The first takes it back
+| # on its own command line and stops at the failure; the second says it again
+| # and carries on to the target beside it.
+| all:
+| 	-@$(MAKE) -S -f stop.mk
+| 	-@$(MAKE) -k -f go.mk
+file go.mk kept 3
+| all: failing went
+| failing: ; @false
+| went: ; @echo reached > went
+file stop.mk kept 3
+| all: failing stopped
+| failing: ; @false
+| stopped: ; @echo reached > stopped
+file went touched 1
+| reached
