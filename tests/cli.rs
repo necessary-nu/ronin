@@ -1741,6 +1741,7 @@ fn make_mode_claims_only_the_features_it_has() {
             "jobserver",
             "jobserver-fifo",
             "order-only",
+            "output-sync",
             "shortest-stem",
             "target-specific",
         ]
@@ -2125,6 +2126,67 @@ fn print_directory_brackets_the_build_with_the_directory_it_ran_in() {
             "{spelling}: {reported}"
         );
         assert!(reported.contains("built"), "{spelling}: {reported}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `-O` brackets each recipe's held output with the directory instead of
+/// bracketing the whole build, and settles on a type a sub-make can read.
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn output_sync_brackets_each_recipes_block_rather_than_the_whole_build() {
+    let directory = make_case(
+        "make-output-sync",
+        "all: a b\n\
+         a: ; @echo a1; echo a2\n\
+         b: ; @echo b1\n\
+         flags: ; @echo \"[$(MAKEFLAGS)]\"\n\
+         .PHONY: all a b flags\n",
+    );
+    let make = invoked_as(&directory, "make");
+    let said = |arguments: &[&str]| {
+        let output = make_command(&make, &directory)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+    let blocks = |reported: &str| {
+        reported
+            .lines()
+            .filter(|line| line.contains("Entering directory"))
+            .count()
+    };
+
+    for spelling in ["-O", "-Otarget", "--output-sync", "--output-sync=target"] {
+        let reported = said(&["-w", "-j2", spelling]);
+        assert_eq!(blocks(&reported), 2, "{spelling}: {reported}");
+        for held in ["a1", "a2", "b1"] {
+            assert!(reported.contains(held), "{spelling}: {reported}");
+        }
+    }
+
+    // The types that hold nothing, and a build with nothing to interleave,
+    // keep the one pair a whole build is bracketed with.
+    for arguments in [
+        ["-w", "-j2", "-Onone"].as_slice(),
+        ["-w", "-j2", "-Orecurse"].as_slice(),
+        ["-w", "-j1", "-Otarget"].as_slice(),
+    ] {
+        let reported = said(arguments);
+        assert_eq!(blocks(&reported), 1, "{arguments:?}: {reported}");
+    }
+
+    // What a sub-make is told, which is the resolved type and not the spelling.
+    for (spelling, told) in [("-O", "[ -Otarget]"), ("--output-sync=line", "[ -Oline]")] {
+        let reported = said(&[spelling, "flags"]);
+        assert!(reported.contains(told), "{spelling}: {reported}");
     }
     fs::remove_dir_all(directory).unwrap();
 }

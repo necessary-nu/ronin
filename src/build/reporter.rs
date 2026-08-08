@@ -70,6 +70,18 @@ pub(crate) enum ColorChoice {
     Never,
 }
 
+/// The two lines a held block is bracketed with, already terminated.
+///
+/// GNU Make's `-O` moves the directory announcement from around the whole
+/// build to around each block it releases, so a reader still knows what the
+/// paths inside one resolve against. The pair is fixed for the build, so it is
+/// formatted once by whoever knows the directory rather than per block.
+#[derive(Clone)]
+pub(crate) struct OutputGroup {
+    pub(crate) entering: Vec<u8>,
+    pub(crate) leaving: Vec<u8>,
+}
+
 /// What the process knows about its own output, captured once at startup.
 ///
 /// A build writes through a `dyn Write` that may be a terminal, a pipe, or a

@@ -396,6 +396,12 @@ impl Builder<'_> {
         if !command.use_console {
             self.emit_status(edge, command)?;
         }
+        // GNU Make releases a block only when the command left something in it,
+        // so a silent recipe that succeeded is bracketed by nothing.
+        let held = failure_code.is_some() || !output.is_empty();
+        if held {
+            self.emit_boundary(true)?;
+        }
         if let Some(exit_code) = failure_code {
             self.emit_rendered(Rendering::Failure {
                 edge,
@@ -406,11 +412,40 @@ impl Builder<'_> {
         if !output.is_empty() {
             self.emit_below_bar(output)?;
         }
+        if held {
+            self.emit_boundary(false)?;
+        }
         let repainted = self.repaint()?;
         if wrote_batch || repainted {
             self.flush_sinks()?;
         }
         Ok(())
+    }
+
+    /// Open or close the directory bracket around one held block.
+    ///
+    /// Nothing at all unless `-O` asked for it, which is why the pair is an
+    /// option rather than a flag: the lines are the front end's own wording.
+    fn emit_boundary(&mut self, opening: bool) -> BuildResult<()> {
+        if self.options.output_group.is_none() {
+            return Ok(());
+        }
+        let mut line = std::mem::take(&mut self.status_scratch);
+        line.clear();
+        self.reporter.clear(&mut line);
+        let group = self
+            .options
+            .output_group
+            .as_ref()
+            .expect("the group was checked above");
+        line.extend_from_slice(if opening {
+            &group.entering
+        } else {
+            &group.leaving
+        });
+        let result = self.emit(&line);
+        self.status_scratch = line;
+        result
     }
 
     /// Write bytes the reporter did not render, displacing the bar first.

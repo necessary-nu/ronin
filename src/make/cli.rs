@@ -18,7 +18,7 @@
 //! is why Make mode is entered from the executable rather than from
 //! [`Runner`]'s library path, which never moves it.
 
-use crate::build::{BuildOptions, JobLimit};
+use crate::build::{BuildOptions, JobLimit, OutputGroup};
 use crate::cli::{RunResult, Runner, PRODUCT_NAME};
 use crate::error::CliError;
 use crate::frontend::{Build, Outcome, Persistence};
@@ -80,6 +80,9 @@ struct Invocation {
     /// `switches`: `--no-print-directory` withdraws the announcement `-C`
     /// implies, so refusing differs from never having asked.
     negated: u16,
+    /// What `-O` asked for, which is not a switch: it has four values and the
+    /// one it settles on travels to a sub-make by name.
+    output_sync: Option<OutputSync>,
 }
 
 impl Invocation {
@@ -95,6 +98,7 @@ impl Invocation {
             load: None,
             switches: 0,
             negated: 0,
+            output_sync: None,
         }
     }
 
@@ -145,6 +149,14 @@ impl Invocation {
         {
             if let Some(switch) = Switch::long_negation(word.as_bytes()) {
                 self.withdraw(switch);
+                continue;
+            }
+            // One word carrying a name, not a cluster: read letter by letter it
+            // would turn on -e and -r. The command line outranks it.
+            if let Some(kind) = word.strip_prefix("-O") {
+                if self.output_sync.is_none() {
+                    self.output_sync = OutputSync::parse(kind.as_bytes()).ok();
+                }
                 continue;
             }
             if word.starts_with("--") || word.contains('=') {
@@ -230,6 +242,41 @@ impl Invocation {
             && !self.refused(Switch::PrintDirectory)
             && (self.given(Switch::PrintDirectory)
                 || (!self.directories.is_empty() && !self.given(Switch::Silent)))
+    }
+}
+
+/// What `-O` synchronises, in GNU Make's own four names.
+#[derive(Clone, Copy)]
+enum OutputSync {
+    None,
+    Line,
+    Target,
+    Recurse,
+}
+
+impl OutputSync {
+    /// The type named after `-O` or `--output-sync=`, where naming none at all
+    /// is `target`. Only ever attached: `make -O line` is grouped output and a
+    /// goal called `line`.
+    fn parse(name: &[u8]) -> Result<Self, Error> {
+        Ok(match name {
+            b"" | b"target" => Self::Target,
+            b"none" => Self::None,
+            b"line" => Self::Line,
+            b"recurse" => Self::Recurse,
+            _ => return Err(CliError::InvalidParameter { option: "-O" }.into()),
+        })
+    }
+
+    /// How a sub-make is told, which is always the resolved name: GNU Make
+    /// writes `-Otarget` into `MAKEFLAGS` for a bare `-O`.
+    const fn spelling(self) -> &'static str {
+        match self {
+            Self::None => "-Onone",
+            Self::Line => "-Oline",
+            Self::Target => "-Otarget",
+            Self::Recurse => "-Orecurse",
+        }
     }
 }
 
@@ -336,6 +383,7 @@ fn usage() -> String {
             "  -W FILE  build as though FILE had just been modified\n",
             "  -j [N]   run N recipes at once, or as many as are ready\n",
             "  -l [N]   start no recipe while the load average is above N\n",
+            "  -O[TYPE] hold each recipe's output: none, line, target, recurse\n",
             "  -B       rebuild every target, whatever its timestamps say\n",
             "  -e       let the environment outrank the makefile's assignments\n",
             "  -i       ignore the status of every recipe line\n",
@@ -507,6 +555,8 @@ fn attached_long(
         invocation.jobs = Some(jobs_value(arguments, index, count)?);
     } else if let Some(load) = option.strip_prefix(b"--load-average=") {
         invocation.load = Some(load_value(arguments, index, load)?);
+    } else if let Some(kind) = option.strip_prefix(b"--output-sync=") {
+        invocation.output_sync = Some(OutputSync::parse(kind)?);
     } else {
         return Ok(false);
     }
@@ -542,6 +592,7 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
             // for the version that way before it will run anything at all.
             b"--version" | b"-v" => return Ok(Action::Immediate(reported(version()))),
             b"--help" => return Ok(Action::Immediate(reported(usage()))),
+            b"--output-sync" => invocation.output_sync = Some(OutputSync::Target),
             b"--jobs" => invocation.jobs = Some(jobs_value(arguments, &mut index, b"")?),
             b"--load-average" => invocation.load = Some(load_value(arguments, &mut index, b"")?),
             b"--file" | b"--makefile" => {
@@ -616,6 +667,10 @@ fn read_cluster(
                 let named = value(arguments, index, &argument[short..], "-W")?;
                 short = argument.len();
                 invocation.assumed_new.push(named);
+            }
+            b'O' => {
+                invocation.output_sync = Some(OutputSync::parse(&argument[short..])?);
+                short = argument.len();
             }
             b'f' | b'C' | b'I' => {
                 let named = value(
@@ -724,10 +779,15 @@ fn session_for(
         // What a diagnostic with no file and line leads with.
         program_name: program_at(level),
         // The evaluator declares what a Makefile may assume of the language;
-        // these two are about who runs the recipes, which is Ronin. Both are
+        // these three are about who runs the recipes, which is Ronin. All are
         // real: Make mode serves the jobserver as well as consuming it, in the
-        // named-pipe form GNU Make 4.4 introduced.
-        extra_features: vec!["jobserver".to_owned(), "jobserver-fifo".to_owned()],
+        // named-pipe form GNU Make 4.4 introduced, and `-O` holds a recipe's
+        // output and releases it as one block.
+        extra_features: vec![
+            "jobserver".to_owned(),
+            "jobserver-fifo".to_owned(),
+            "output-sync".to_owned(),
+        ],
         include_dirs: invocation.include_dirs.clone(),
         ..Flags::default()
     };
@@ -889,6 +949,12 @@ fn flag_environment(invocation: &Invocation) -> Vec<(&'static str, OsString)> {
     // hands them back in name order rather than in the order they were typed.
     assignments.sort_unstable();
     let mut makeflags = letters.clone();
+    // Between the letter group and the long options, which is where GNU Make
+    // writes it: `k -Oline --no-print-directory`.
+    if let Some(sync) = invocation.output_sync {
+        makeflags.push(' ');
+        makeflags.push_str(sync.spelling());
+    }
     for withdrawn in invocation.withdrawn() {
         makeflags.push(' ');
         makeflags.push_str(withdrawn);
@@ -974,6 +1040,29 @@ fn make_named_invocation(arguments: &[BString], executable: &Path) -> PathBuf {
         .unwrap_or(program)
 }
 
+/// The pair `-O` brackets each held block with, in place of the one pair
+/// around the whole build — so a build that has this announces nothing itself.
+///
+/// `None` where the build would not have announced the directory at all: GNU
+/// Make brackets a block only where it would have bracketed the build.
+fn output_group(
+    invocation: &Invocation,
+    options: &BuildOptions,
+    directory: &Path,
+) -> Option<OutputGroup> {
+    // GNU Make withdraws `-O` when nothing runs in parallel — a serial build has
+    // nothing to interleave with — and `none` and `recurse` hold nothing here.
+    let holding = job_count(options) != 1
+        && matches!(
+            invocation.output_sync,
+            Some(OutputSync::Line | OutputSync::Target)
+        );
+    (holding && invocation.announcing()).then(|| OutputGroup {
+        entering: terminated(announcement("Entering", directory)),
+        leaving: terminated(announcement("Leaving", directory)),
+    })
+}
+
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.recursive-invocation]
@@ -992,7 +1081,17 @@ pub(crate) fn run(
     let invoked_as = make_named_invocation(arguments, &runner.executable);
     let mut reported = String::new();
     let directory = enter_directories(&invocation.directories)?;
-    let announcing = invocation.announcing();
+    let working_directory = crate::os::WorkingDirectory::new(&directory)
+        .map_err(|source| CliError::CurrentDirectory { source })?;
+    let level = runner
+        .makelevel
+        .as_deref()
+        .and_then(|level| level.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    let (mut options, forced) = build_options(&invocation, runner, working_directory, level)?;
+    let group = output_group(&invocation, &options, &directory);
+    let announcing = invocation.announcing() && group.is_none();
+    options.output_group = group;
     if announcing {
         say(
             &mut output,
@@ -1000,8 +1099,10 @@ pub(crate) fn run(
             &announcement("Entering", &directory),
         )?;
     }
-    let working_directory = crate::os::WorkingDirectory::new(&directory)
-        .map_err(|source| CliError::CurrentDirectory { source })?;
+    // After the directory announcement, which is where GNU Make puts it.
+    if let Some(forced) = forced {
+        say(&mut diagnostics, &mut reported, &forced)?;
+    }
 
     let Some(makefile) = invocation
         .makefile
@@ -1011,16 +1112,6 @@ pub(crate) fn run(
         return Ok(no_makefile(reported, announcing, &directory));
     };
 
-    let level = runner
-        .makelevel
-        .as_deref()
-        .and_then(|level| level.trim().parse::<usize>().ok())
-        .unwrap_or(0);
-    let (options, warning) = build_options(&invocation, runner, working_directory, level)?;
-    // After the directory announcement, which is where GNU Make puts it.
-    if let Some(warning) = warning {
-        say(&mut diagnostics, &mut reported, &warning)?;
-    }
     let mut session = session_for(
         &invocation,
         &makefile,
@@ -1031,7 +1122,6 @@ pub(crate) fn run(
     );
     record_invocation_variables(&mut session, &invocation, level)?;
 
-    let mut options = options;
     let mut graph = match evaluated(session, &reported) {
         Ok(loaded) => adopt(&mut options, loaded),
         Err(result) => return Ok(result),

@@ -4258,6 +4258,21 @@ children (
                         title "Group a recipe's output under -O instead of interleaving it"
                         priority 3
                         kind @feat
+                        log (
+                            {
+                                at 2026-08-08T01:46:30.485892217Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T02:19:49.262995017Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Done. Every rule below was read off GNU Make 4.4.1 side by side, not from the manual, and two of them contradict what the node assumed.\n\n`-Ojob` does not exist. 4.4.1 accepts none, line, target, recurse and says `*** unknown output-sync type 'job'.  Stop.` for anything else. And `-O` is withdrawn entirely when nothing runs in parallel — main.c sets `output_sync = OUTPUT_SYNC_NONE` when `job_slots == 1`, so `make -w -Otarget` with no `-j` is an ordinary build with one directory pair.\n\nWhat `-O` actually changes is smaller than it looks here, because Ronin already holds a child's stdout and stderr in full and writes them when the command finishes. Target-granularity grouping is the behaviour with no flag at all, and a sub-make's whole output is one such block, so `target` and `recurse` were already produced and `none` asks for an interleaving Ronin's supervisor cannot do. The one observable difference is the bracket: under an active sync GNU Make moves the `Entering`/`Leaving` pair from around the whole build to around each block it releases, and prints no outer pair. Confirmed on eight shapes, including that a block is bracketed only when the command left something in it — a silent recipe that succeeded gets nothing, a silent recipe that failed gets a pair around the error line.\n\nSo the build side is one field on BuildOptions carrying the two lines the front end already knows how to write, and `command_finished` opening and closing around the held bytes. `output_group` is `Some` only where `announcing()` was already true, which is Ronin's spelling of `should_print_dir`.\n\n`-Oline` is honestly coarser than GNU's: Ronin runs a recipe as one shell script, so there are no per-line boundaries to group at. That is make-recipe-one-shell-per-line's ground and the `recipe-interleave` family already names it.\n\n`.FEATURES` now claims output-sync, through `extra_features` rather than the evaluator's list — it is a statement about who runs the recipes. That is what unblocked features/output-sync, which had been returning -1 and appearing as N/A rather than as failures.\n\nMeasured: option-refused 93 to 77, capability 126 to 110. All 24 diffs carrying an `-O` refusal are gone; 16 became countable and 8 still refuse another option in the same command line (`--debug=b`, `--trace`). Against that, features/output-sync went from uncounted to 17 failing cases, so the total rose 1332 to 1349. semantic 767 to 794, narration 439 to 445 — the whole of both rises is those 33 newly countable cases.\n\nTwo things the 17 turned up that belong elsewhere. GNU's `should_print_dir` is `!silent && (makelevel > 0 || directories)`, so a sub-make announces its directory without being given `-C` or `-w`; `announcing()` has only the `-C` half, which costs four of these and is directory-announce's 39. And output written while the makefiles are read — `$(info)`, `$(shell)` stderr — is a sync block of its own in GNU Make, dumped with its own bracket even when sync is then withdrawn; Ronin's evaluator writes it straight through.\n\nNot done, deliberately: the cross-process lock. GNU passes `--sync-mutex=fnm:/tmp/…` so two makes sharing a descriptor interleave at block granularity. Ronin's sub-makes have their output captured by the parent rather than writing to the shared descriptor, so there is nothing for the lock to arbitrate."
+                            }
+                        )
                     }
 
                     {
