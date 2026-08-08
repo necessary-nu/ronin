@@ -5010,6 +5010,7 @@ children (
                 title "Call a Make target up to date on its timestamps alone"
                 priority 0
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-08T09:28:01.524638529Z
@@ -5030,6 +5031,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "What the build log is for in Make mode: it is read for what Ronin itself recorded, and its silence is not evidence.\n\nAn output the log names carries a command hash and a build-time mtime, and Ronin acts on both: a recipe whose text changed rebuilds, and an input newer than the mtime the build recorded rebuilds. An output the log does not name says nothing at all, and the question falls back to GNU Make's rule — a file newer than its prerequisites is up to date.\n\nThis is the whole of the fix. `refresh_command_hash` treated a missing entry as a changed command, which is Ninja's rule and correct in Ninja: there the log is the only record of what produced an output, so silence means the command is unknown, and an unknown command is a changed one. Make has no build log, so there is nothing for an output to be absent from, and reading absence as evidence made the first Ronin run in any tree GNU Make had built redo the entire build.\n\nRejected: dropping the command hash in Make mode as well, so that dirtiness is timestamps and nothing else. It is the tidier rule and it is what GNU Make does, but it throws away knowledge Ronin holds — that the recipe it recorded is not the recipe it is about to run — to reproduce a limitation nobody defends. `StatePlacement::OutsideTheTree` already says in as many words that the state is kept precisely for \"the two things GNU Make cannot do at all — noticing a changed command, and carrying a compiler's header dependencies to the next build\"; deleting the first of those would leave the state being kept for half a reason. A stale artifact after a recipe edit is a wrong build, and a wrong build is worse than an extra one.\n\nRejected: seeding the log from the tree on a first run, so that the missing-entry rule could stay. That would mean writing a command hash for a command Ronin never observed — a fabricated record, which would then make the second run's recipe-change check lie in the other direction.\n\nRejected: reading `StatePlacement::OutsideTheTree` as \"this graph came from a Makefile\" and hanging the dirtiness rule off it. Two unrelated consequences sharing one field is how a field stops meaning what its name says. The graph carries each consequence under its own name.\n\nNote the asymmetry this leaves, deliberately: whether a recipe change rebuilds depends on whether Ronin built that output before. That is not a rule GNU Make has and not one Ninja has, but it is the honest statement of what Ronin knows — it acts on positive knowledge and declines to guess from silence.\n\nThe port gate cannot see the second half of this. A case runs the tool once over a tree its `setup` script built, so there is never a log entry when Ronin is measured against the oracle, and a divergence that needs two Ronin runs is structurally invisible. `recipe-changed-without-log` pins the half the gate can hold: no entry plus a changed recipe is up to date, the same answer GNU Make gives."
+                    }
+
+                    {
+                        at 2026-08-08T11:09:00.325995641Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
