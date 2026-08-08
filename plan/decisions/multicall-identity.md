@@ -7,8 +7,7 @@ scope {
     elements ([arch:ronin:cli] [arch:ronin:execution])
     rules (
         [spec:ronin:req:product.make-identity]
-        [spec:ronin:req:make.recursive-invocation]
-        [spec:ronin:req:make.jobserver]
+        [spec:ronin:req:make.recursive-invocation+1]
     )
 }
 author "brendan@necessary.nu"
@@ -29,8 +28,7 @@ alternatives (
 consequences {
     accepted (
         "The invoked program name selects the front end and nothing else does. The whole name must be make or gmake, so a make.old left by a package upgrade is not a request for Make mode."
-        "In Make mode the MAKE variable is one word: the make-named path the invocation arrived through. Switches and command-line assignments reach a sub-make through MAKEFLAGS instead, which is where GNU Make puts them and where the reader already looks."
-        "Make mode serves the jobserver as well as consuming it, so a recursive tree shares one job budget. Ronin already parses the named-pipe form as a client; the server side is new."
+        "In Make mode the MAKE variable is one word: the make-named path the invocation arrived through. When kati recognizes its recursive use, switches, assignments, goals, and directory changes become inputs to a child compilation whose graph is composed as subninja."
         "Make mode reports itself as Ronin in diagnostics. The only place it claims a GNU Make version is the Makefile-visible version variable, where a Makefile may branch on it."
     )
     rejected (
@@ -43,8 +41,7 @@ edges {
 }
 codifies (
     [spec:ronin:req:product.make-identity]
-    [spec:ronin:req:make.recursive-invocation]
-    [spec:ronin:req:make.jobserver]
+    [spec:ronin:req:make.recursive-invocation+1]
 )
 affects ([arch:ronin:cli])
 ---
@@ -54,8 +51,8 @@ affects ([arch:ronin:cli])
 The existing product boundary says Ronin owns the product identity while Ninja
 owns the compatibility vocabulary. Make mode extends that with a second
 vocabulary and does not change the rule: Makefile syntax, variable semantics,
-and the jobserver protocol are GNU Make's and keep their spelling; the tool
-reporting the diagnostics is still Ronin.
+and command-line options keep GNU Make's spelling; the graph engine and the
+tool reporting diagnostics are still Ronin.
 
 Selecting on the invoked name is how every multi-call binary does this, and it
 is honest in a way that sniffing the directory is not. A user who invokes
@@ -72,8 +69,8 @@ software execs `$(MAKE)` directly. Reached by name alone, `MAKE` is a path,
 which is all GNU Make ever made it. Availability is the packaging problem it
 always was, and it is cheaper to solve there than in the value of `MAKE`.
 
-The jobserver is the part that pays for itself immediately. Ronin already
-speaks the client side including the named-pipe form GNU Make 4.4 introduced.
-Adding the server side means a recursive Make tree converges on one job budget
-instead of one per level, which is the oversubscription every recursive build
-currently works around by hand.
+The path remains useful even though recursion is compiled rather than executed.
+It is the Makefile-visible identity that lets kati recognize a recursive
+invocation. Once recognized, the invocation's directory, goals, assignments,
+and relevant flags describe another compilation unit. Its graph is included as
+`subninja`; no child Make process or recursive jobserver transport is needed.

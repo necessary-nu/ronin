@@ -1,7 +1,7 @@
 ---
 id [dec:ronin:make-compatibility-oracle]
 epitome "Verify Make mode against two oracles: GNU Make 4.4.1 for semantics, and the emitted manifest for graph construction."
-state @decided
+state @obsolesced
 category @executive
 scope {
     elements ([arch:ronin:verification] [arch:ronin:make-frontend])

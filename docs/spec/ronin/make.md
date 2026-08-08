@@ -1,20 +1,23 @@
 # Ronin Make subsumption contract
 
-Ronin subsumes GNU Make. A Makefile is evaluated into the same dependency
-graph a Ninja manifest produces, and is then built by the same scheduler,
-persistence, and process supervision. Make becomes a second front end over
-Ronin's existing engine rather than a second build tool sharing a binary.
+Ronin subsumes the Make interface by compiling it, not by becoming GNU Make.
+A Makefile is source code, kati is its compiler, and a valid Ninja-semantic
+graph is the compiler output. That graph is built by the same scheduler,
+persistence, and process supervision as a parsed Ninja manifest. Make is a
+second front end over Ronin's existing engine, never a second build tool
+sharing the binary.
 
 The Make front end is Ronin's fork of kati, vendored as a submodule at
 `kati/`. Upstream kati converts a Makefile into a `build.ninja` file and stops;
 Ronin's fork retains that emission as a debugging and verification artifact and
 builds the graph directly for execution.
 
-Make evaluation has no counterpart in Ninja and is not subject to the Ninja
-compatibility contract. Where the two contracts meet — the dependency graph,
-command execution, persistent state, and exit status — the Ninja contract in
-`compatibility.md` governs, because a Makefile-derived graph is built by
-exactly the machinery a manifest-derived graph is.
+Make evaluation has no counterpart in Ninja, so GNU Make remains the oracle
+for the build intent the source language expresses. At the compilation
+boundary and beyond — graph construction, command execution, persistent state,
+and build outcome — the Ninja contract in `compatibility.md` governs, because
+a Makefile-derived graph is built by exactly the machinery a
+manifest-derived graph is.
 
 ## Graph construction
 
@@ -28,6 +31,14 @@ exactly the machinery a manifest-derived graph is.
 > [spec:ronin:req:make.graph-direct]
 > Make mode constructs the dependency graph in memory. No serialized manifest
 > is written, read, or reparsed on the path from Makefile to execution.
+
+> [spec:ronin:req:make.compiler-boundary]
+> Kati compiles a Makefile invocation into a valid Ninja-semantic graph. Every
+> Make construct that affects the build is represented by graph structure,
+> edge command text, or another existing Ninja execution control before the
+> graph reaches the engine. The scheduler, dirtiness model, persistence,
+> process supervision, and reporter contain no Make-specific execution
+> semantics.
 
 > [spec:ronin:req:make.phony-always-dirty]
 > A `.PHONY` target is never up to date. The edge it produces is out of date
@@ -97,6 +108,14 @@ exactly the machinery a manifest-derived graph is.
 > identifies itself as Ronin in its own diagnostics and does not claim to be
 > GNU Make except where a Makefile-visible variable requires a version string.
 
+> [spec:ronin:req:make.interface-compatibility]
+> Make mode accepts every option spelling and argument shape exposed by GNU
+> Make 4.4.1, including options received through `MAKEFLAGS`. Acceptance is an
+> interface guarantee, not a promise to reproduce GNU Make's runner. Each
+> option is classified as a kati compiler input, a mapping to an existing
+> Ninja execution control, or an accepted no-op; no option introduces a
+> Make-only scheduler, persistence, jobserver, or reporting path.
+
 > [spec:ronin:req:make.question-status]
 > Make mode's `-q` answers whether the goals are already up to date and runs
 > nothing at all, and it answers in the exit status alone: zero when nothing
@@ -113,22 +132,29 @@ exactly the machinery a manifest-derived graph is.
 > byte for byte, so it is read for what a Makefile evaluated to rather than
 > for how the build was announced. See `make-upstream-suite`.
 
-> [spec:ronin:req:make.recursive-invocation]
-> In Make mode `MAKE` is a single word: the make-named path this invocation
-> arrived through, so recursive invocation re-enters Ronin rather than any
-> other Make on the path, and a consumer that execs the value rather than
-> running it through a shell succeeds. Switches and command-line assignments
-> reach a sub-make through `MAKEFLAGS`, never through `MAKE`.
+> [spec:ronin:req:make.recursive-invocation+1]
+> A recursive invocation through `$(MAKE)` compiles as `subninja`. Kati
+> evaluates the child Makefile using its requested directory, Makefile, goals,
+> assignments, and graph-affecting flags, then composes the resulting graph
+> into the parent graph before execution. `subninja` names this semantic graph
+> inclusion even when the direct in-memory path emits no manifest text. It is
+> not a nested Make process or executor.
 
-> [spec:ronin:req:make.jobserver]
-> Make mode participates in the GNU Make jobserver protocol as both client and
-> server, including the named-pipe form, so that a recursive Make tree shares
-> one job budget instead of one budget per level.
+> [spec:ronin:req:make.jobserver+1]
+> Ronin does not create a GNU Make jobserver for recursive Make execution. A
+> parent graph and every compiled subninja share one Ninja scheduler and one
+> job limit. Jobserver-related option spellings and authentication tokens are
+> accepted at the Make interface; the outer invocation may map a usable
+> inherited budget onto the Ninja scheduler or ignore it, but it does not
+> introduce a second scheduling mechanism.
 
 ## Verification
 
-> [spec:ronin:req:make.semantics]
-> Make evaluation semantics are verified differentially against GNU Make
-> 4.4.1. The pinned oracle version is a deliberate compatibility choice:
-> changing it requires rerunning the corpus and reclassifying any case whose
-> result moves.
+> [spec:ronin:req:make.semantics+1]
+> GNU Make 4.4.1 is the oracle for the build intent expressed by Makefile
+> evaluation and the accepted command-line interface. Verification compares
+> the compiled graph, selected work, normal build outcome, and filesystem
+> effects. GNU Make's stdout, stderr, scheduling, idle and diagnostic wording,
+> recursive banners, jobserver choreography, and runner-specific status
+> distinctions are not conformance criteria. Moving the pin requires rerunning
+> the corpus and reclassifying changes in build intent.

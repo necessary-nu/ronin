@@ -5349,9 +5349,10 @@ children (
 
             {
                 id make-nothing-to-be-done
-                title "Say what Make says when a build had nothing to do"
+                title "Review no-work reporting under Ninja narration"
                 priority 0
-                kind @feat
+                kind @refactor
+                deps (make-compile-to-ninja-refactor)
                 log (
                     {
                         at 2026-08-08T12:11:23.186128875Z
@@ -5433,6 +5434,32 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Two corners where kati reads an assignment differently from GNU Make, both already a wrong build, both found by `make-private-variables` and left because they are the parser's rather than the variable table's.\n\nGNU treats `override`, `export`, `private` and `undefine` as **literal words**, not as the result of expansion. `a: $(P) F = 1` with `P=private`: GNU refuses, Ronin builds — before that node it made a variable named `private F`, after it a private `F`. Neither is right.\n\nBeside it, `a: X Y = 1` — the one-word variable-name rule was applied to global assignments and not to target-specific ones, so a two-word target-specific name is still accepted.\n\nAlso here, from `make-parser-parity`'s residue: `$(flavor)` on a `!=` variable says `simple` where GNU says `recursive`; `$(origin .RECIPEPREFIX)` says `undefined` where GNU says `default`; a command-line variable removed by `override undefine` is back inside a recipe in GNU; and `.SHELLSTATUS` cannot be read inside a rule.\n\nNeither of the two main corners is reachable without a variable expanding to a keyword, which is why they survived this long — but both are wrong builds rather than refusals, and that ranks them.\n\n`kati/src-rs/parser.rs`, `kati/src-rs/stmt.rs`, `kati/src-rs/strutil.rs`, `kati/src-rs/func.rs`. Other lanes own `dep.rs`, `eval.rs` and `ninja.rs` this wave."
+                    }
+                )
+            }
+
+            {
+                id make-compile-to-ninja-refactor
+                title "Refactor Make-like runtime emulation into Kati-to-Ninja compilation"
+                priority 0
+                kind @refactor
+                implements {
+                    target-impl (
+                        [spec:ronin:req:make.compiler-boundary]
+                        [spec:ronin:req:make.interface-compatibility]
+                        [spec:ronin:req:make.recursive-invocation+1]
+                        [spec:ronin:req:make.jobserver+1]
+                        [spec:ronin:req:make.semantics+1]
+                        [spec:ronin:req:make.narration]
+                    )
+                }
+                deps (kati-graph-sink make-graph-equivalence)
+                log (
+                    {
+                        at 2026-08-08T13:42:29.048553633Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "This is the corrective boundary gate for [dec:ronin:make-compiles-to-ninja]. Audit every Make-mode change and open node against one question: does it help kati compile the invocation into the faithful Ninja graph, or does it make Ronin's executor behave like GNU Make?\n\nKeep and complete Makefile evaluation semantics that affect targets, prerequisites, ordering, variables, recipes, default goals, and generated build effects. Accept the complete GNU Make 4.4.1 flag surface, then record each flag as a compiler input, a mapping to an existing Ninja control, or an accepted no-op. Interface acceptance must be tested independently of behavioral parity.\n\nRefactor or remove Make-specific branches in scheduling, dirtiness, persistence, process supervision, failure reporting, idle narration, and jobserver service. Recursive $(MAKE) is compiled as subninja graph composition using the child directory, Makefile, goals, assignments, and graph-affecting flags; it is not a child Make executor and does not form a recursive jobserver tree.\n\nRewrite the compatibility gate around compiled graph shape, selected commands/work, normal build outcome, and filesystem effects. GNU Make output, recursive banners, exact status ceremony, timing, and scheduler behavior are discovery data rather than pass criteria. Review the existing Make-like backlog under this rule, retiring behavior-only nodes and rewriting mixed nodes around graph compilation before implementation."
                     }
                 )
             }

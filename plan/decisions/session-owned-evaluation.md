@@ -14,7 +14,7 @@ author "brendan@necessary.nu"
 alternatives (
     {
         option "Leave the globals and run one evaluation per process."
-        rejected_because "It makes the process the unit of isolation, which forecloses in-process recursive Make, forces the differential harness to fork for every case, and leaves the direct and emitted graph paths unable to run in one process where comparing them is cheapest."
+        rejected_because "It makes the process the unit of isolation, which forces recursive subninja compilation and the differential harness to fork for every evaluation, and leaves the direct and emitted graph paths unable to run in one process where comparing them is cheapest."
     }
     {
         option "Keep the globals but guard them with a reentrancy lock."
@@ -62,8 +62,9 @@ its node counter, command results, and the statistics registry.
 
 Each of them is individually defensible in a program that runs once and exits.
 Together they make the process the unit of evaluation, and this integration
-needs the session to be the unit instead. In-process recursive Make needs it.
-The manifest-equivalence property needs it, because the cheapest way to compare
+needs the session to be the unit instead. Composing a recursive Makefile as a
+subninja graph needs it. The manifest-equivalence property needs it, because
+the cheapest way to compare
 the direct graph against the emitted one is to build both without forking. The
 differential corpus needs it, because three hundred cases forking a process
 each is a harness that nobody will run often enough to trust.
