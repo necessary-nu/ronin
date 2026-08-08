@@ -1,21 +1,23 @@
-//! Classify what GNU Make's own test suite says about Ronin's Make mode.
+//! Classify what GNU Make's own test suite can teach us about Ronin's Make
+//! compiler.
 //!
 //! The suite compares stdout byte for byte against GNU Make's, and Ronin is not
 //! trying to produce GNU Make's output — it narrates a build the way Ninja does,
-//! because that is the product. So its pass rate is not the measure of anything
-//! and chasing it would be chasing a number we have decided not to want.
+//! because that is the product. Its pass rate and exact runner residue are
+//! therefore discovery data, not a conformance result.
 //!
-//! What the suite is good for is the other question: given the same Makefile,
-//! did we evaluate it to the same thing, run the same recipes, and finish with
-//! the same status? That is a semantic question, and the narration sits on top
-//! of it as noise. This separates the two.
+//! What the suite is good for is finding places to investigate. Known parser,
+//! evaluator, rule-search and Makefile-selection shapes become compiler
+//! candidates. Refused options and `MAKEFLAGS` differences are interface
+//! observations. Product narration is identified separately. Everything else
+//! stays explicitly unclassified, because an exact-output diff cannot decide
+//! whether its residue came from graph intent or from the GNU Make runner.
 //!
-//! The method is subtraction rather than pattern-matching the whole diff. Each
-//! side has its own narration — ours is Ninja's progress line and `FAILED:`
-//! block, Make's is its own name in front of a diagnostic — so both are removed
-//! and whatever remains is compared. A case whose residue matches differs only
-//! in how the two tools talk. A case whose residue does not is a defect, and
-//! that count is the number worth reporting.
+//! A discovery becomes a compatibility failure only after a focused reproducer
+//! compares graph shape, selected work, normal outcome, or filesystem effects.
+//! Inventory drift still fails this program so every newly-shaped observation
+//! is reviewed and recorded; it does not make the inventory itself a gate on
+//! GNU Make runner parity.
 //!
 //! Usage: `make_upstream --work DIR [--inventory FILE] [--update]`
 
@@ -23,29 +25,33 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// How much a difference matters, worst first.
+const ORACLE_VERSION: &str = "GNU Make 4.4.1";
+const ORACLE_COMMIT: &str = "d66a65ad5a0e31b287f53930b0f09e31801f1613";
+
+/// What kind of follow-up an exact-output difference can justify.
 ///
-/// A case is classified by the worst thing in it: a diff that shows both a
-/// progress line and a wrong variable value is a defect, because the wrong
-/// value is still wrong once the progress line is accounted for.
+/// A case is classified by its strongest evidence. `Unclassified` sorts last
+/// so residue that still needs human triage cannot disappear under a narration
+/// family, not because it is presumed to be a defect.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Class {
-    /// Ronin says it differently on purpose. Not a defect and never will be.
+    /// Ronin says it differently on purpose.
     Narration,
-    /// A Make feature Ronin does not have yet. A defect, but a known-shaped one
-    /// that is somebody's node rather than a mystery.
-    Capability,
-    /// The Makefile evaluated to something else, or the build did something
-    /// else. This is the number that matters.
-    Semantic,
+    /// An accepted/refused invocation spelling or compatibility variable.
+    Interface,
+    /// A known parser, evaluator, rule-search, or Makefile-selection shape.
+    Compiler,
+    /// Residue whose graph-vs-runner origin has not been established.
+    Unclassified,
 }
 
 impl Class {
     const fn name(self) -> &'static str {
         match self {
             Self::Narration => "narration",
-            Self::Capability => "capability",
-            Self::Semantic => "semantic",
+            Self::Interface => "interface",
+            Self::Compiler => "compiler",
+            Self::Unclassified => "unclassified",
         }
     }
 }
@@ -100,18 +106,18 @@ const FAMILIES: [Family; 18] = [
     },
     Family {
         name: "option-refused",
-        class: Class::Capability,
-        reason: "Ronin refused an option the test passed and GNU Make accepted.",
+        class: Class::Interface,
+        reason: "interface observation: Ronin refused an option spelling the test passed and GNU Make accepted.",
     },
     Family {
         name: "unsupported-feature",
-        class: Class::Capability,
-        reason: "the evaluator says outright that it does not support a construct the makefile used; .SECONDEXPANSION is most of it.",
+        class: Class::Compiler,
+        reason: "compiler candidate: the evaluator says outright that it does not support a Makefile construct.",
     },
     Family {
         name: "no-rule-to-make",
-        class: Class::Semantic,
-        reason: "Ronin cannot find a rule for a target GNU Make built, so a rule that should have matched did not: an implicit rule, a vpath search, or a suffix rule.",
+        class: Class::Compiler,
+        reason: "compiler candidate: Ronin found no rule for a target GNU Make built; reproduce the rule-search graph before treating it as a defect.",
     },
     Family {
         name: "shared-refusal",
@@ -125,8 +131,8 @@ const FAMILIES: [Family; 18] = [
     },
     Family {
         name: "no-makefile-found",
-        class: Class::Semantic,
-        reason: "Ronin found no makefile to read where GNU Make found one.",
+        class: Class::Compiler,
+        reason: "compiler candidate: Ronin found no Makefile to read where GNU Make found one.",
     },
     Family {
         name: "io-error-text",
@@ -135,18 +141,18 @@ const FAMILIES: [Family; 18] = [
     },
     Family {
         name: "makeflags-content",
-        class: Class::Semantic,
-        reason: "a makefile read MAKEFLAGS and got a different set of switches from the one GNU Make puts there.",
+        class: Class::Interface,
+        reason: "interface observation: a Makefile read MAKEFLAGS and saw different switches; runner-only flags may deliberately be absent.",
     },
     Family {
         name: "parse-failure",
-        class: Class::Semantic,
-        reason: "Ronin could not parse a makefile GNU Make read: missing separator is most of it.",
+        class: Class::Compiler,
+        reason: "compiler candidate: Ronin could not parse a Makefile GNU Make read.",
     },
     Family {
         name: "evaluation",
-        class: Class::Semantic,
-        reason: "the Makefile evaluated to something else, or the build did something else: a different value, a different rule, a different file, a different status.",
+        class: Class::Unclassified,
+        reason: "unclassified residue: exact output cannot distinguish graph intent from runner behavior; reproduce it through the build-intent gate.",
     },
 ];
 
@@ -446,10 +452,9 @@ fn recipe_of(diff: &Path, tests: &Path) -> Vec<String> {
 /// Every family a case exhibits, and the class it therefore belongs to.
 ///
 /// Narration is established by subtraction: strip each side's own narration and
-/// compare what is left. Anything remaining is a real difference, whatever the
-/// narration around it looked like — which is the whole point, because a case
-/// can show a progress line and a wrong value at once and only the second one
-/// is worth anybody's time.
+/// compare what is left. Anything remaining is discovery residue, whatever the
+/// narration around it looked like. It is not called a compiler defect until a
+/// graph/build-effect reproducer establishes that classification.
 struct Verdict {
     families: Vec<&'static str>,
     class: Class,
@@ -515,7 +520,7 @@ fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
         // supposed to mean "we do not know why".
         return Verdict {
             families: vec!["option-refused"],
-            class: Class::Capability,
+            class: Class::Interface,
             expected: Vec::new(),
             actual: Vec::new(),
         };
@@ -610,10 +615,9 @@ struct Config {
     work: PathBuf,
     inventory: PathBuf,
     update: bool,
-    /// Show the residue of this many semantic cases: what was left over once
-    /// both narrations were subtracted, which is the evidence for calling them
-    /// defects and the raw material for splitting `evaluation` into families
-    /// that name something.
+    /// Show the residue of this many compiler-candidate or unclassified cases:
+    /// raw material for focused graph/build-effect reproducers and for splitting
+    /// `evaluation` into families that name something.
     explain: usize,
 }
 
@@ -675,9 +679,15 @@ fn diffs(work: &Path) -> Result<Vec<(String, PathBuf)>, String> {
 
 /// Say what the run found, worst class first and families ranked by weight.
 fn report(cases: usize, by_class: &BTreeMap<Class, usize>, by_family: &BTreeMap<&str, usize>) {
-    println!("failing cases: {cases}");
+    println!("discovery differences: {cases}");
+    println!("(not a GNU Make runner-conformance result)");
     println!("by class:");
-    for class in [Class::Semantic, Class::Capability, Class::Narration] {
+    for class in [
+        Class::Unclassified,
+        Class::Compiler,
+        Class::Interface,
+        Class::Narration,
+    ] {
         println!(
             "  {:<12} {}",
             class.name(),
@@ -696,10 +706,11 @@ fn report(cases: usize, by_class: &BTreeMap<Class, usize>, by_family: &BTreeMap<
     }
 }
 
-/// The inventory as it should be on disk: the families, then a row per case.
+/// The inventory as it should be on disk: its oracle, the families, then cases.
 fn record(rows: &[String]) -> String {
     use std::fmt::Write as _;
     let mut inventory = String::new();
+    let _ = writeln!(inventory, "oracle\t{ORACLE_VERSION}\t{ORACLE_COMMIT}");
     for family in &FAMILIES {
         let _ = writeln!(
             inventory,
@@ -753,7 +764,9 @@ fn main() -> std::process::ExitCode {
             verdict.class.name(),
             verdict.families.join("+")
         ));
-        if verdict.class == Class::Semantic && explained < config.explain {
+        if matches!(verdict.class, Class::Compiler | Class::Unclassified)
+            && explained < config.explain
+        {
             explained += 1;
             println!("--- {id}");
             for line in &verdict.expected {
@@ -804,8 +817,8 @@ fn main() -> std::process::ExitCode {
 /// of the suite's cases arrange for exactly that — features/parallelism has
 /// three recipes rendezvous through files under -j4, and they have to overlap
 /// to finish at all — so which lands first is the scheduler's and not a
-/// property of the code being measured. Recording a coin flip and then failing
-/// when it lands the other way makes the gate report noise.
+/// property of the code being observed. Recording a coin flip and then failing
+/// when it lands the other way makes the discovery inventory report noise.
 ///
 /// Only this family, and only within a class: a case that changed what it is
 /// still fails. This was taken out once when .WAIT stopped being the only
@@ -821,10 +834,19 @@ fn settled(inventory: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{classify, echoes, normalise, read_divergence, settled, Class, Divergence, Side};
+    use super::{
+        classify, echoes, normalise, read_divergence, record, settled, Class, Divergence, Side,
+    };
 
     fn lines(text: &[&str]) -> Vec<String> {
         text.iter().map(|line| (*line).to_owned()).collect()
+    }
+
+    #[test]
+    fn inventory_names_the_pinned_oracle() {
+        assert!(record(&[]).starts_with(
+            "oracle\tGNU Make 4.4.1\td66a65ad5a0e31b287f53930b0f09e31801f1613\nfamily\t"
+        ));
     }
 
     /// A case that races decides its own family, so the comparison ignores that
@@ -835,14 +857,14 @@ mod tests {
         let without = "case\tfeatures/parallelism\tnarration\tninja-progress";
         assert_eq!(settled(with), settled(without));
 
-        let changed = "case\tfeatures/parallelism\tsemantic\tninja-progress";
+        let changed = "case\tfeatures/parallelism\tcompiler\tninja-progress";
         assert_ne!(settled(with), settled(changed));
     }
 
-    /// Refusing is only a defect when Make built the thing. When Make refused
-    /// too, the difference is the wording.
+    /// When both tools refused, the residue is narration. If GNU Make built the
+    /// target, the missing rule is a compiler candidate pending reproduction.
     #[test]
-    fn a_refusal_both_tools_made_is_not_a_defect() {
+    fn shared_refusal_is_narration() {
         let refused = |theirs: &str| {
             classify(
                 &Divergence {
@@ -868,7 +890,7 @@ mod tests {
         assert!(attributed.families.contains(&"refusal-attribution"));
 
         let ours_alone = refused("built hello");
-        assert_eq!(ours_alone.class, Class::Semantic);
+        assert_eq!(ours_alone.class, Class::Compiler);
         assert!(ours_alone.families.contains(&"no-rule-to-make"));
     }
 
@@ -909,7 +931,7 @@ mod tests {
             expected: lines(&["make: *** No rule to make target 'x'.  Stop."]),
             actual: lines(&["ronin: *** something else entirely.  Stop."]),
         };
-        assert_eq!(classify(&different, &[]).class, Class::Semantic);
+        assert_eq!(classify(&different, &[]).class, Class::Unclassified);
     }
 
     /// A refused option explains the whole of a diff, because the build never
@@ -922,7 +944,7 @@ mod tests {
             actual: lines(&["ronin: invalid option -- 'I'", "usage: ronin [options]"]),
         };
         let verdict = classify(&refused, &[]);
-        assert_eq!(verdict.class, Class::Capability);
+        assert_eq!(verdict.class, Class::Interface);
         assert_eq!(verdict.families, vec!["option-refused"]);
     }
 
@@ -992,7 +1014,7 @@ mod tests {
             actual: lines(&["f.mk:2: kati doesn't support .SECONDEXPANSION"]),
         };
         let verdict = classify(&unsupported, &[]);
-        assert_eq!(verdict.class, Class::Capability);
+        assert_eq!(verdict.class, Class::Compiler);
         assert!(verdict.families.contains(&"unsupported-feature"));
         assert!(!verdict.families.contains(&"evaluation"));
     }
@@ -1007,7 +1029,7 @@ mod tests {
             actual: lines(&["-S", "-k"]),
         };
         let verdict = classify(&flags, &[]);
-        assert_eq!(verdict.class, Class::Semantic);
+        assert_eq!(verdict.class, Class::Interface);
         assert!(verdict.families.contains(&"makeflags-content"));
 
         assert!(super::is_flag_list("-S"));

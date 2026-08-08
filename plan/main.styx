@@ -3787,7 +3787,23 @@ children (
             {
                 id make-conformance-corpus
                 title "Use the GNU Make corpus to discover compiler gaps"
+                kind @test
                 deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-08T22:04:45.746413879Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T22:13:44.928672929Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Reframed GNU Make's exact-output suite as discovery input, never a runner-conformance score. The classifier now separates 614 unclassified residues, 74 compiler-shaped candidates, 112 interface observations, and 549 deliberate narration differences across 1,349 cases. A candidate becomes a compatibility defect only through a focused build-intent reproducer comparing graph shape, selected work, normal outcome, or filesystem effects. The inventory and harness are pinned to GNU Make 4.4.1 commit d66a65ad5a0e31b287f53930b0f09e31801f1613."
+                    }
+                )
             }
 
             {

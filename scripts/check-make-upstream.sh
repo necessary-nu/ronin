@@ -1,10 +1,12 @@
 #!/bin/sh
-# Run GNU Make's own test suite against Ronin's Make mode.
+# Run GNU Make's own test suite as discovery input for Ronin's Make compiler.
 #
-# This is the unbiased measure. The vendored corpus under kati/testcase was
-# written by kati's authors to describe kati, so it can only ever say how well
-# Ronin matches what kati already did. This suite was written by GNU Make's
-# authors to describe GNU Make, and nobody involved in it has heard of us.
+# This is broad, independently-authored input. The vendored corpus under
+# kati/testcase was written by kati's authors to describe kati, so it can only
+# ever say how well Ronin matches what kati already did. This suite was written
+# by GNU Make's authors to describe GNU Make, and nobody involved in it has
+# heard of us. Its exact-output pass rate is not a compatibility score: GNU
+# Make's runner is not the product Ronin is implementing.
 #
 # The suite is GPLv3 and is not vendored. `reference/gnumake` is a pinned
 # checkout, gitignored, fetched with:
@@ -36,11 +38,18 @@ repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
 suite=$repo_root/reference/gnumake
+expected_suite=d66a65ad5a0e31b287f53930b0f09e31801f1613
 if [ ! -d "$suite/tests/scripts" ]; then
     echo "check-make-upstream: no suite at $suite." >&2
     echo "Clone it: git clone https://git.savannah.gnu.org/git/make.git \\" >&2
     echo "    reference/gnumake" >&2
     echo "It is GPLv3 and deliberately not vendored." >&2
+    exit 1
+fi
+actual_suite=$(git -C "$suite" rev-parse HEAD)
+if [ "$actual_suite" != "$expected_suite" ]; then
+    echo "check-make-upstream: expected GNU Make 4.4.1 at $expected_suite," >&2
+    echo "but reference/gnumake is at $actual_suite." >&2
     exit 1
 fi
 
@@ -86,13 +95,15 @@ fi
     cd "$suite/tests"
     # The driver's exit status counts failures, and its own summary is not the
     # result: Ronin narrates a build the way Ninja does and is not trying to
-    # produce GNU Make's output, so most of what it counts is a difference we
-    # chose. The classifier below is the reading that means something.
+    # produce GNU Make's output. The classifier below turns the raw output into
+    # a discovery inventory rather than treating the driver's count as a gate.
     perl ./run_make_tests.pl -make "$bin/make" "$@" || true
 )
 
-# Semantic differences are the number. Narration is what we decided to look
-# like; capability is a Make feature that is somebody's node already.
+# The classifier inventories compiler-shaped candidates, interface
+# observations, narration, and residue that still needs a focused reproducer.
+# Inventory drift fails for review; none of these exact runner-output classes is
+# itself the build-intent conformance gate.
 exec "$repo_root/target/release/examples/make_upstream" \
     --work "$suite/tests/work" \
     --inventory "$repo_root/tests/make_upstream_inventory.tsv" \

@@ -278,6 +278,7 @@ assertions (
     {id make-recipe-failure-line, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:56:34.37591408Z}
     {id make-switch-precedence, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:56:34.515784999Z}
     {id make-makelike-audit, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:22:49.921372177Z}
+    {id make-conformance-corpus, kind @doing, author "brendan@necessary.nu", at 2026-08-08T22:04:45.746413879Z}
 )
 
 impl_evidence (
