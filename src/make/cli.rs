@@ -977,10 +977,7 @@ pub(crate) fn run(
 
     let mut options = options;
     let mut graph = match evaluated(session, &reported) {
-        Ok(loaded) => {
-            options.environment.extend(loaded.exported);
-            loaded.graph
-        }
+        Ok(loaded) => adopt(&mut options, loaded),
         Err(result) => return Ok(result),
     };
     if invocation.given(Switch::AlwaysMake) {
@@ -1069,6 +1066,13 @@ fn evaluated(session: Session, reported: &str) -> Result<crate::make::Loaded, Ru
         stderr: terminated(failure.to_string()),
         exit_code: ABANDONED,
     })
+}
+
+/// What the Makefile said about running it, rather than about what to build.
+fn adopt(options: &mut BuildOptions, loaded: crate::make::Loaded) -> crate::frontend::BuildGraph {
+    options.environment.extend(loaded.exported);
+    options.serial = loaded.serial;
+    loaded.graph
 }
 
 /// A build Make could not carry out — a goal with no rule is the usual one.

@@ -66,6 +66,11 @@ pub(crate) struct BuildOptions {
     pub(crate) color: ColorChoice,
     pub(crate) terminal: TerminalContext,
     pub(crate) maxload: f64,
+    /// Make's `.NOTPARALLEL`: one recipe at a time here, whatever budget this
+    /// build holds or hands on. Local like `maxload`, not a smaller budget —
+    /// clamping the budget would stop a jobserver being served at all, and a
+    /// sub-make is meant to keep the full one.
+    pub(crate) serial: bool,
     pub(crate) jobserver: Option<crate::jobserver::Transport>,
     /// Whether this build may create a jobserver of its own.
     ///
@@ -106,6 +111,7 @@ impl Default for BuildOptions {
             color: ColorChoice::Auto,
             terminal: TerminalContext::default(),
             maxload: 0.0,
+            serial: false,
             jobserver: None,
             serve_jobserver: false,
             environment: Vec::new(),
@@ -1591,7 +1597,9 @@ impl<'a> Builder<'a> {
                 failures = failure_limit;
                 last_error = Some(BuildError::Interrupted { status: None });
             }
-            let maxjobs = if self.options.maxload > 0.0 && load.current() > self.options.maxload {
+            let maxjobs = if self.options.serial
+                || (self.options.maxload > 0.0 && load.current() > self.options.maxload)
+            {
                 1
             } else {
                 match self.options.jobs {

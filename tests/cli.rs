@@ -1360,6 +1360,78 @@ fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `.NOTPARALLEL` serialises this Makefile's own recipes and leaves what it
+/// hands a sub-make alone. Every CMake-generated Makefile declares it at the
+/// top and still expects the levels below to run wide.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_serialises_only_the_makefile_that_declared_notparallel() {
+    const UNITS: usize = 6;
+    const JOBS: usize = 4;
+
+    let directory = test_directory("make-notparallel");
+    let served = directory.join("jobservers");
+    fs::create_dir_all(&served).unwrap();
+    let log = directory.join("units");
+    let stamp = directory.join("unit.sh");
+    fs::write(
+        &stamp,
+        "#!/bin/sh\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    let units = (0..UNITS)
+        .map(|unit| format!("u{unit}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let work = format!(
+        "all: {units}\n{units}:\n\t@{} $@\n.PHONY: all {units}\n",
+        stamp.display()
+    );
+    fs::write(directory.join("work.mk"), &work).unwrap();
+    fs::write(
+        directory.join("recurse.mk"),
+        ".NOTPARALLEL:\nall:\n\t@$(MAKE) -f work.mk all\n.PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(directory.join("flat.mk"), format!(".NOTPARALLEL:\n{work}")).unwrap();
+
+    let program = invoked_as(&directory, "make");
+    let measure = |makefile: &str| {
+        let _ = fs::remove_file(&log);
+        let output = make_command(&program, &directory)
+            .args([&format!("-j{JOBS}"), "-f", makefile])
+            .env("LOG", &log)
+            .env("TMPDIR", &served)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let (peak, ran) = peak_concurrency(&fs::read_to_string(&log).unwrap());
+        assert_eq!(ran, UNITS);
+        peak
+    };
+
+    assert_eq!(
+        measure("flat.mk"),
+        1,
+        "the declaring Makefile ran in parallel"
+    );
+    // The budget is not what was clamped: a smaller one would stop a jobserver
+    // being served at all and take the whole tree below with it.
+    assert_eq!(
+        measure("recurse.mk"),
+        JOBS,
+        "the sub-make lost the budget its parent only declined for itself"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Without `.ONESHELL` each recipe line is isolated; with it they share one
 /// shell, so a `cd` carries and a failing line does not stop the rest.
 // [spec:ronin:req:make.semantics/test]

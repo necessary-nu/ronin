@@ -997,8 +997,8 @@ case	targets/SILENT.diff.1	narration	ninja-progress
 case	targets/SILENT.diff.2	semantic	ninja-progress+evaluation
 case	targets/WAIT.diff	semantic	ninja-progress+ninja-failure-block+evaluation
 case	targets/WAIT.diff.1	semantic	ninja-progress+ninja-failure-block+evaluation
-case	targets/WAIT.diff.10	capability	ninja-progress+unsupported-feature
-case	targets/WAIT.diff.11	capability	ninja-progress+unsupported-feature
+case	targets/WAIT.diff.10	narration	ninja-progress
+case	targets/WAIT.diff.11	narration	ninja-progress+recipe-interleave
 case	targets/WAIT.diff.12	capability	option-refused
 case	targets/WAIT.diff.13	narration	ninja-progress
 case	targets/WAIT.diff.2	semantic	ninja-progress+ninja-failure-block+evaluation

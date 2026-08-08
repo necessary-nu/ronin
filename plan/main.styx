@@ -4798,6 +4798,21 @@ children (
                     }
                 )
             }
+
+            {
+                id make-notparallel-target
+                title "Run this makefile's own targets serially under .NOTPARALLEL"
+                priority 0
+                kind @feat
+                log (
+                    {
+                        at 2026-08-08T01:01:26.318535741Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
+            }
         )
     }
 )

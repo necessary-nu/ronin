@@ -123,11 +123,16 @@ pub fn load_makefile(session: Session) -> Result<Loaded, MakeError> {
     graph.state_placement = StatePlacement::OutsideTheTree;
     emitted.map_err(|error| MakeError::evaluate(&error))?;
     let exported = exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+    let serial = ev.session.flags.not_parallel;
     ev.finish().map_err(|error| MakeError::evaluate(&error))?;
-    Ok(Loaded { graph, exported })
+    Ok(Loaded {
+        graph,
+        exported,
+        serial,
+    })
 }
 
-/// A Makefile read: the graph it describes, and what it exported.
+/// A Makefile read: the graph it describes, and what it said about running it.
 pub struct Loaded {
     /// What the Makefile builds.
     pub graph: BuildGraph,
@@ -135,6 +140,8 @@ pub struct Loaded {
     /// took out of it. Values are evaluated here because the evaluator that
     /// can answer for them does not outlive this call.
     pub exported: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+    /// `.NOTPARALLEL`: run this Makefile's own recipes one at a time.
+    pub serial: bool,
 }
 
 fn exported_environment(
