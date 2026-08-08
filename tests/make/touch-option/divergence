@@ -1,5 +1,0 @@
-Under -t, Ronin touches in.txt where GNU Make leaves it alone: in.txt exists and
-has no prerequisites, so Make calls it up to date and touches only what is not.
-The same cause as up-to-date-without-log — an output with no build-log entry is
-dirty here — and -t reaches it because make-option-touch-and-what-if routes the
-touch through finish_edge to get the log entry written.

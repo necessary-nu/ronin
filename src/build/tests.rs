@@ -1866,6 +1866,74 @@ fn ninja_build_log_rebuilds_output_not_in_log() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Make's reading of the log, which the ported corpus can only half reach: a
+/// case there runs the tool once over a tree its setup script built, so there
+/// is never an entry to have recorded anything.
+fn make_options() -> BuildOptions {
+    BuildOptions {
+        unrecorded_output: crate::frontend::UnrecordedOutput::SaysNothing,
+        ..BuildOptions::default()
+    }
+}
+
+/// The tree `ninja_build_log_rebuilds_output_not_in_log` rebuilds, left alone
+/// on its timestamps.
+#[test]
+fn make_leaves_an_output_not_in_the_log_alone() {
+    let (mut graph, directory) = build_fixture(
+        "make-log-not-present",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in\n",
+    );
+    fs::write(directory.join("in"), "hello").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(directory.join("out"), "hello").unwrap();
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut log = crate::log::BuildLog::open(Some(&directory)).unwrap();
+    {
+        let mut builder = Builder::with_build_log(&mut graph, make_options(), &mut log);
+        builder.add_target(&target).unwrap();
+        assert!(builder.already_up_to_date());
+    }
+    assert!(crate::log::logentry(&log, &target).is_none());
+    log.finish().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The other half of the same decision: an entry that does say something is
+/// acted on, so a recipe this build recorded and then changed rebuilds.
+#[test]
+fn make_rebuilds_for_a_command_the_log_recorded_differently() {
+    let (mut graph, directory) = build_fixture(
+        "make-log-command-changed",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in\n",
+    );
+    fs::write(directory.join("in"), "hello").unwrap();
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut log = crate::log::BuildLog::open(Some(&directory)).unwrap();
+    {
+        let mut builder = Builder::with_build_log(&mut graph, make_options(), &mut log);
+        builder.add_target(&target).unwrap();
+        builder.build().unwrap();
+        assert_eq!(builder.commands_ran.len(), 1);
+    }
+    assert!(crate::log::logentry(&log, &target).is_some());
+
+    fs::write(
+        directory.join("build.ninja"),
+        "rule copy\n  command = cat $in > $out\nbuild $dir/out: copy $dir/in\n"
+            .replace("$dir", &directory.to_string_lossy()),
+    )
+    .unwrap();
+    let mut changed = parse_fixture(&directory);
+    {
+        let mut builder = Builder::with_build_log(&mut changed, make_options(), &mut log);
+        builder.add_target(&target).unwrap();
+        assert!(!builder.already_up_to_date());
+    }
+    log.finish().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn ninja_build_log_generator_rebuilds_for_newer_implicit_input() {
     let (mut graph, directory) = build_fixture(

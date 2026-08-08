@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| all: made.txt
+| made.txt:
+| 	echo fresh > $@
+file made.txt kept 1
+| original

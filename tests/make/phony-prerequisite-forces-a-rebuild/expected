@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| .PHONY: force
+| out: force
+| 	cat body > $@
+| force:
+file body kept 1
+| body
+file out touched 1
+| body

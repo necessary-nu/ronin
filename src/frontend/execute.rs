@@ -43,6 +43,25 @@ pub(crate) enum StatePlacement {
     OutsideTheTree,
 }
 
+/// What an output the build log does not name says about whether it is current.
+///
+/// The other half of the contract [`StatePlacement`] states, and on the graph
+/// for the same reason: a front end says what its log's silence means, because
+/// only the front end knows whether there was ever meant to be a log.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum UnrecordedOutput {
+    /// Ninja's rule: the log names the command that produced each output, so
+    /// one it does not name was produced by a command this build cannot
+    /// compare against, and rebuilding is the only way to learn anything.
+    #[default]
+    OutOfDate,
+    /// Make's rule: there is no build log to be absent from, so absence from
+    /// one carries nothing. A file newer than its prerequisites is up to date
+    /// whether or not this tool has ever seen it, and the first run in a tree
+    /// GNU Make built has no entry for anything in it.
+    SaysNothing,
+}
+
 /// Where a caller may put Ronin's own state, overriding the platform's answer.
 const STATE_HOME_ENV: &str = "RONIN_STATE_HOME";
 
@@ -453,11 +472,14 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
         let Self {
             graph,
             persistence,
-            options,
+            mut options,
             output,
             diagnostics,
             invocation_errors,
         } = self;
+        // The graph's front end decides what its log's silence means, not the
+        // caller that filled in the rest of these.
+        options.unrecorded_output = graph.unrecorded_output;
         let mut builder = Builder::from_parts(
             graph.arenas_mut(),
             options,

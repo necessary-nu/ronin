@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| out: in.txt
+| 	echo rebuilt > $@
+file in.txt kept 1
+| data
+file out kept 1
+| original
