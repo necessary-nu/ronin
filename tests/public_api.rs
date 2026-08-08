@@ -36,11 +36,11 @@ fn public_api_preserves_manifest_io_causes() {
     .unwrap_err();
 
     assert_eq!(error.kind(), ErrorKind::Manifest);
-    assert!(error.source().is_some());
+    let cause = error.source().expect("the I/O failure is the cause");
     assert_eq!(
-        error.source().unwrap().to_string(),
         error.to_string(),
-        "Ninja-facing text should remain the underlying I/O diagnostic"
+        cause.to_string().replace(" (os error 2)", ""),
+        "Ninja-facing text should remain the underlying I/O diagnostic, as strerror renders it"
     );
 }
 

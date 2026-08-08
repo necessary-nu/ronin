@@ -248,8 +248,8 @@ case	features/jobserver.diff.11	semantic	parse-failure
 case	features/jobserver.diff.12	capability	option-refused
 case	features/jobserver.diff.13	semantic	no-work-line+evaluation
 case	features/jobserver.diff.14	narration	no-work-line
-case	features/jobserver.diff.15	narration	product-name+io-error-text
-case	features/jobserver.diff.16	narration	product-name+io-error-text
+case	features/jobserver.diff.15	semantic	product-name+evaluation
+case	features/jobserver.diff.16	semantic	product-name+evaluation
 case	features/jobserver.diff.2	semantic	ninja-progress+evaluation
 case	features/jobserver.diff.3	semantic	ninja-progress+evaluation
 case	features/jobserver.diff.4	semantic	product-name+parse-failure
@@ -353,7 +353,7 @@ case	features/patternrules.diff.38	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.39	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.4	semantic	ninja-progress+evaluation
 case	features/patternrules.diff.40	narration	ninja-progress+no-work-line
-case	features/patternrules.diff.41	narration	product-name+no-work-line+io-error-text
+case	features/patternrules.diff.41	semantic	product-name+no-work-line+evaluation
 case	features/patternrules.diff.42	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.43	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.44	narration	ninja-progress+no-work-line
@@ -366,13 +366,13 @@ case	features/patternrules.diff.5	semantic	product-name+no-rule-to-make
 case	features/patternrules.diff.50	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.51	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.52	narration	ninja-progress+no-work-line
-case	features/patternrules.diff.53	narration	product-name+no-work-line+io-error-text
+case	features/patternrules.diff.53	semantic	product-name+no-work-line+evaluation
 case	features/patternrules.diff.54	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.55	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.56	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.57	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.58	semantic	product-name+no-work-line+no-rule-to-make
-case	features/patternrules.diff.59	narration	product-name+no-work-line+io-error-text
+case	features/patternrules.diff.59	semantic	product-name+no-work-line+evaluation
 case	features/patternrules.diff.6	semantic	product-name+no-rule-to-make
 case	features/patternrules.diff.60	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.61	narration	ninja-progress+no-work-line
@@ -386,7 +386,7 @@ case	features/patternrules.diff.68	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.69	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.7	semantic	product-name+no-rule-to-make
 case	features/patternrules.diff.70	semantic	product-name+no-work-line+no-rule-to-make
-case	features/patternrules.diff.71	narration	product-name+no-work-line+io-error-text
+case	features/patternrules.diff.71	semantic	product-name+no-work-line+evaluation
 case	features/patternrules.diff.8	semantic	product-name+evaluation
 case	features/patternrules.diff.9	narration	ninja-progress
 case	features/quoting.diff	narration	ninja-progress
@@ -493,7 +493,7 @@ case	features/statipattrules.diff.14	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.15	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.16	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.17	narration	ninja-progress+no-work-line
-case	features/statipattrules.diff.18	narration	product-name+no-work-line+io-error-text
+case	features/statipattrules.diff.18	semantic	product-name+no-work-line+evaluation
 case	features/statipattrules.diff.19	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.2	narration	ninja-progress
 case	features/statipattrules.diff.20	narration	ninja-progress+no-work-line
@@ -503,7 +503,7 @@ case	features/statipattrules.diff.23	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.24	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.25	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.26	narration	ninja-progress+no-work-line
-case	features/statipattrules.diff.27	narration	product-name+no-work-line+io-error-text
+case	features/statipattrules.diff.27	semantic	product-name+no-work-line+evaluation
 case	features/statipattrules.diff.28	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.29	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.3	semantic	evaluation
@@ -513,7 +513,7 @@ case	features/statipattrules.diff.32	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.33	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.34	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.35	narration	ninja-progress+no-work-line
-case	features/statipattrules.diff.36	narration	product-name+no-work-line+io-error-text
+case	features/statipattrules.diff.36	semantic	product-name+no-work-line+evaluation
 case	features/statipattrules.diff.37	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.38	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.39	narration	ninja-progress+no-work-line
@@ -523,7 +523,7 @@ case	features/statipattrules.diff.41	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.42	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.43	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.44	narration	ninja-progress+no-work-line
-case	features/statipattrules.diff.45	narration	product-name+no-work-line+io-error-text
+case	features/statipattrules.diff.45	semantic	product-name+no-work-line+evaluation
 case	features/statipattrules.diff.46	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.47	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.48	narration	ninja-progress+no-work-line
@@ -533,7 +533,7 @@ case	features/statipattrules.diff.50	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.51	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.52	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.53	narration	ninja-progress+no-work-line
-case	features/statipattrules.diff.54	narration	product-name+no-work-line+io-error-text
+case	features/statipattrules.diff.54	semantic	product-name+no-work-line+evaluation
 case	features/statipattrules.diff.55	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.56	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.57	narration	ninja-progress+no-work-line
@@ -543,7 +543,7 @@ case	features/statipattrules.diff.6	semantic	parse-failure
 case	features/statipattrules.diff.60	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.61	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.62	narration	ninja-progress+no-work-line
-case	features/statipattrules.diff.63	narration	product-name+no-work-line+io-error-text
+case	features/statipattrules.diff.63	semantic	product-name+no-work-line+evaluation
 case	features/statipattrules.diff.64	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.65	narration	ninja-progress+no-work-line
 case	features/statipattrules.diff.66	semantic	no-work-line+evaluation
