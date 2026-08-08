@@ -284,6 +284,7 @@ assertions (
     {id make-diagnostic-prefix, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:45:20.264158794Z}
     {id make-features-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:46:36.696066472Z}
     {id make-prerequisite-globbing, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:47:45.308464139Z}
+    {id make-variable-is-one-word, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:48:37.306379932Z}
 )
 
 impl_evidence (

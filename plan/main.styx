@@ -4243,13 +4243,36 @@ children (
             {
                 id make-variable-is-one-word
                 title "Expose MAKE as one compiler-recognizable invocation path"
+                kind @fix
                 deps (make-subninja-recursion)
+                sealed true
                 log (
                     {
                         at 2026-08-05T17:11:02.581433822Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "One defect, and it is worth roughly the whole upstream score.\n\nGNU Make's suite scored Ronin at 65 assertions of 543, eleven per cent. That number is almost meaningless as a measure of Make support: 243 of 261 categories died before a single assertion passed, and they died for one reason. The driver asks make for $(MAKE), adopts the answer as the path for every later invocation, and execs it — as a path, not through a shell. GNU Make answers /usr/bin/make, one word. Ronin answers three: the executable, --make, and whatever switches propagate. Every exec then fails with \"Cannot execute /home/.../ronin --make -s: No such file or directory\", before the test runs.\n\nConfirmed rather than inferred: functions/if produces byte-identical output to GNU Make when its makefile is run by hand, in both the symlinked and the explicit-flag form, and still logs nothing under the driver. Running one category with -verbose prints the ENOENT.\n\nThe multi-word MAKE was a deliberate choice by make-mode-cli and the reasoning holds for what it was about: switches cannot go in MAKEFLAGS because that variable is carrying the jobserver budget a child draws on, and rewriting it would cost the child the budget. What it did not weigh is that MAKE is not only read by recursive makefiles, which tolerate several words, but by anything treating it as the make program's location — of which upstream's own suite is the most demanding example.\n\nThe fix that matches GNU Make is for MAKE to name a single executable that already selects Make mode by its name, so no flag has to ride along. When the invocation arrived through a make-named path, that path is the obvious answer, and the current code discards it: recursive_command uses current_exe, which resolves the symlink back to a ronin-named binary and therefore needs --make to undo the resolution. Reporting the invoked path instead would make recursion re-enter by name exactly as GNU Make does. The case with no such path — someone running `ronin --make` directly — still needs an answer, and shipping a make-named symlink beside the binary is the obvious one.\n\nDo this before quoting any upstream number. Until it is fixed the suite measures one defect 243 times, and the eleven per cent will move a long way for reasons that have nothing to do with the Make language."
+                    }
+
+                    {
+                        at 2026-08-08T22:48:01.459303702Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T22:48:37.228282836Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The compatibility defect was delivered by bf4d549951d73ed086c3900573b6a872c3306b7f, which carries this node's nplan-id under the retired `done:` type, and was tightened by b60d5c6da881755b960090d0dc5e9ee949cab7d7 so Make mode is reached only through a make-named path. The node itself omitted a change kind; it is explicitly `fix` because a multi-word MAKE breaks consumers that exec it as a program path. Current make_variable_is_invoked_path and recursive_make_compiles_as_subninja tests pass, and both 1,349-case upstream discovery runs completed through the one-word path. Switches and assignments remain interface inputs in MAKEFLAGS; recursive work compiles as semantic subninja rather than spawning a Make executor."
+                    }
+
+                    {
+                        at 2026-08-08T22:48:37.306379932Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
