@@ -31,8 +31,8 @@ use std::num::NonZeroUsize;
 mod execute;
 
 pub use crate::parse::{load_manifest, Manifest, ManifestOptions};
-pub(crate) use execute::StatePlacement;
 pub use execute::{Build, Jobs, Outcome, Persistence, Planned};
+pub(crate) use execute::{StatePlacement, UnrecordedOutput};
 
 /// A path interned in a graph.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -222,6 +222,10 @@ pub struct BuildGraph {
     /// second build incremental. Ninja's contract puts it beside the build and
     /// that is what a graph carries until a front end says otherwise.
     pub(crate) state_placement: StatePlacement,
+    /// What this graph's front end means by an output the build log does not
+    /// name. Ninja means a command it cannot compare against; a graph carries
+    /// that until a front end says otherwise.
+    pub(crate) unrecorded_output: UnrecordedOutput,
 }
 
 impl Default for BuildGraph {
@@ -242,6 +246,7 @@ impl BuildGraph {
             defaults: Vec::new(),
             canonical: Vec::new(),
             state_placement: StatePlacement::default(),
+            unrecorded_output: UnrecordedOutput::default(),
         }
     }
 

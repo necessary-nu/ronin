@@ -45,7 +45,7 @@ pub use sink::GraphSink;
 // [spec:ronin:req:product.make-identity]
 pub const MAKE_VERSION: &str = "4.4.1";
 
-use crate::frontend::{BuildGraph, FrontendError, StatePlacement};
+use crate::frontend::{BuildGraph, FrontendError, StatePlacement, UnrecordedOutput};
 use kati::evaluate::{evaluate, Evaluated};
 use kati::ninja::emit_build;
 use kati::session::Session;
@@ -109,6 +109,9 @@ impl MakeError {
 /// Makefile put there, so the state that makes the next build incremental is
 /// kept outside it. Ninja's contract says the opposite and a manifest's graph
 /// says so too, which is why the graph is what says it rather than the caller.
+/// The graph says what that state's silence means for the same reason: an
+/// output the build log does not name is one Make judges on its timestamps
+/// alone, because Make has no build log for it to have been absent from.
 ///
 /// # Errors
 ///
@@ -126,6 +129,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
     let emitted = emit_build(&nodes, &mut ev, &mut sink);
     let mut graph = sink.into_graph().map_err(MakeError::Construct)?;
     graph.state_placement = StatePlacement::OutsideTheTree;
+    graph.unrecorded_output = UnrecordedOutput::SaysNothing;
     emitted.map_err(|error| MakeError::evaluate(&error))?;
     let exported = exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
     let serial = ev.session.flags.not_parallel;

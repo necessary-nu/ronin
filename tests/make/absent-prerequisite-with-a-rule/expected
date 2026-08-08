@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| out: mid
+| 	cat $< > $@
+| mid: src
+| 	cat $< > $@
+file mid touched 1
+| body
+file out touched 1
+| body
+file src kept 1
+| body

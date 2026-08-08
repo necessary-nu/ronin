@@ -185,10 +185,22 @@ impl Builder<'_> {
             (!command.rspfile_content.is_empty()).then_some(command.rspfile_content.as_bstr()),
         );
         let generator = command.generator;
+        // The log is read for what it recorded, and its silence is not
+        // evidence: an output it names carries the command that produced it and
+        // a changed one rebuilds, while an output it does not name is a
+        // question only the front end can answer. Ninja's answer is that the
+        // command is unknown and therefore changed; Make's is that there was
+        // never a log, so the timestamps decide alone.
+        let unrecorded_is_dirty =
+            self.options.unrecorded_output == crate::frontend::UnrecordedOutput::OutOfDate;
         let command_dirty = !generator
             && self.graph.edge(edge).out.iter().any(|output| {
                 let logged = self.runtime.node(*output).logged_command_hash();
-                logged.is_missing() || logged != hash
+                if logged.is_missing() {
+                    unrecorded_is_dirty
+                } else {
+                    logged != hash
+                }
             });
         self.runtime.edge_mut(edge).set_command_dirty(command_dirty);
         Ok(())

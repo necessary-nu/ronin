@@ -103,6 +103,10 @@ pub(crate) struct BuildOptions {
     /// the recipe's status in one, and says nothing further. `None` leaves the
     /// Ninja shape, which is what a manifest build gets.
     pub(crate) recipe_failure: Option<String>,
+    /// What an output the build log does not name says about whether it is
+    /// current. The graph's front end decides it; [`crate::frontend::Build`]
+    /// carries it here, and nothing else sets it.
+    pub(crate) unrecorded_output: crate::frontend::UnrecordedOutput,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -133,6 +137,7 @@ impl Default for BuildOptions {
             environment: Vec::new(),
             output_group: None,
             recipe_failure: None,
+            unrecorded_output: crate::frontend::UnrecordedOutput::default(),
             working_directory: crate::os::WorkingDirectory::default(),
         }
     }
