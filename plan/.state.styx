@@ -280,6 +280,7 @@ assertions (
     {id make-makelike-audit, kind @complete, author "brendan@necessary.nu", at 2026-08-08T14:22:49.921372177Z}
     {id make-conformance-corpus, kind @doing, author "brendan@necessary.nu", at 2026-08-08T22:04:45.746413879Z}
     {id make-deferred-output-portability, kind @doing, author "brendan@necessary.nu", at 2026-08-08T22:15:42.2258627Z}
+    {id make-upstream-clean-worktree, kind @doing, author "brendan@necessary.nu", at 2026-08-08T22:34:40.338332867Z}
 )
 
 impl_evidence (

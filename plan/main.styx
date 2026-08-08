@@ -4115,6 +4115,35 @@ children (
                             }
                         )
                     }
+
+                    {
+                        id make-upstream-clean-worktree
+                        title "Run GNU Make discovery from a clean disposable worktree"
+                        priority 0
+                        kind @test
+                        log (
+                            {
+                                at 2026-08-08T22:34:10.887883343Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "The discovery driver mutates its working tree and failed cases leave outputs behind. Reusing reference/gnumake/tests made subsequent runs observe stale targets: tests/foo.q suppressed one target-variable recipe and ignored tests/xxx.o turned a missing-rule case into no work. A clean detached GNU Make 4.4.1 worktree moved 28 of 1,349 inventory rows and changed class totals from 614/74/112/549 to 606/74/110/559 (unclassified/compiler/interface/narration). Run every discovery pass in a disposable checkout at the pinned commit; generate config-flags.pm there, classify that work directory, and remove the checkout afterward. Never clean the user's persistent reference checkout."
+                            }
+
+                            {
+                                at 2026-08-08T22:34:40.338332867Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T22:41:42.044782457Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Verified the isolation end to end twice. An --update run and a second comparison-only run each created a distinct detached GNU Make 4.4.1 worktree, classified exactly 1,349 cases as 606 unclassified / 74 compiler / 110 interface / 559 narration, exited zero, and left neither a target/make-upstream.* directory nor a registered auxiliary worktree. The clean inventory differs from the formerly polluted baseline by 28 removed and 28 added rows. cargo test --workspace --all-targets, the 12 focused classifier tests, sh -n, git diff --check, nplan lint, and spec validation pass. The repository's broader Clippy baseline is independently red under Clippy 1.97 on untouched code (the release command also applies pedantic lints to the Kati path dependency); no lint findings point at this shell/inventory change."
+                            }
+                        )
+                    }
                 )
                 log (
                     {
