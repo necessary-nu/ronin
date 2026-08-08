@@ -23,6 +23,7 @@
 pub use kati;
 
 pub(crate) mod cli;
+mod report;
 mod sink;
 
 #[cfg(test)]
