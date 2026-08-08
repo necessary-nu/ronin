@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| %.o: %.c ; echo made $@ > $@
+file x.c kept 1
+| source
+file x.o touched 1
+| made x.o

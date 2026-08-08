@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| out: | o*
+| 	echo "$|" > $@
+file o1 kept 0
+file o2 kept 0
+file out touched 1
+| o1 o2

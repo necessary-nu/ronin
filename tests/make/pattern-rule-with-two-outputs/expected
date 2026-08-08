@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| all: x.1 x.15
+| %.1 %.15: ; echo $* > $*.1 && echo $* > $*.15
+file x.1 touched 1
+| x
+file x.15 touched 1
+| x

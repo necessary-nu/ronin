@@ -263,6 +263,7 @@ assertions (
     {id make-notparallel-target, kind @doing, author "brendan@necessary.nu", at 2026-08-08T01:01:26.318535741Z}
     {id make-jobserver-explicit-under-parent, kind @complete, author "brendan@necessary.nu", at 2026-08-08T02:15:17.536561966Z}
     {id make-io-error-wording, kind @doing, author "brendan@necessary.nu", at 2026-08-08T08:44:23.239321847Z}
+    {id make-prerequisite-globbing, kind @doing, author "brendan@necessary.nu", at 2026-08-08T10:38:33.159661668Z}
 )
 
 impl_evidence (

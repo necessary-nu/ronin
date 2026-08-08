@@ -1,0 +1,2 @@
+out: z.one*
+	echo "$^" > $@
