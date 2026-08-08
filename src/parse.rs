@@ -503,6 +503,8 @@ fn parseedge(
             // dependency on a path nothing produces, which a manifest can
             // already say.
             always_dirty: false,
+            intermediate: false,
+            disposable: false,
             bindings,
         })
         .map_err(|error| manifest_error(scanner, Anchor::Token, construction_problem(error)))?;

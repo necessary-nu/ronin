@@ -499,6 +499,21 @@ impl Planned<'_> {
         self.builder.already_up_to_date()
     }
 
+    /// The files this plan will create only to complete a chain of implicit
+    /// rules, which GNU Make deletes once it has finished with them.
+    ///
+    /// Asked before the build rather than after it: what makes a file eligible
+    /// is that the build set out to create it, and once it exists there is
+    /// nothing left to tell it from a file that was already there.
+    #[must_use]
+    pub fn disposable(&self) -> Vec<Vec<u8>> {
+        self.builder
+            .disposable_outputs()
+            .into_iter()
+            .map(Into::into)
+            .collect()
+    }
+
     /// Runs the plan to completion.
     ///
     /// # Errors
@@ -638,6 +653,8 @@ mod tests {
                     order_only_inputs: &[],
                     validations: &[],
                     always_dirty: false,
+                    intermediate: false,
+                    disposable: false,
                     bindings: Vec::new(),
                 })
                 .unwrap();

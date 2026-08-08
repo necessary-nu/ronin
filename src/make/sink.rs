@@ -318,6 +318,8 @@ impl BuildSink for GraphSink {
             order_only_inputs: &order_only_inputs,
             validations: &validations,
             always_dirty: edge.always_dirty,
+            intermediate: edge.intermediate,
+            disposable: edge.disposable,
             bindings,
         };
         match self.graph.add_edge(spec) {

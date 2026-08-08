@@ -23,7 +23,8 @@ use crate::cli::{RunResult, Runner, PRODUCT_NAME};
 use crate::error::CliError;
 use crate::frontend::{Build, Persistence};
 use crate::make::report::{
-    abandoned, announcement, answered, departed, finished, no_makefile, say, ABANDONED,
+    abandoned, announcement, answered, departed, discard_intermediates, finished, no_makefile, say,
+    ABANDONED,
 };
 use crate::make::Shuffle;
 use crate::util::{terminated, BString, ByteSlice};
@@ -1226,11 +1227,8 @@ pub(crate) fn run(
     let directory = enter_directories(&invocation.directories)?;
     let working_directory = crate::os::WorkingDirectory::new(&directory)
         .map_err(|source| CliError::CurrentDirectory { source })?;
-    let level = runner
-        .makelevel
-        .as_deref()
-        .and_then(|level| level.trim().parse::<usize>().ok())
-        .unwrap_or(0);
+    let level = runner.makelevel.as_deref().unwrap_or_default();
+    let level: usize = level.trim().parse().unwrap_or(0);
     let (mut options, forced) = build_options(&invocation, runner, working_directory, level)?;
     let group = output_group(&invocation, &options, &directory, level);
     let announcing = (invocation.announcing(level) && group.is_none()).then_some(level);
@@ -1295,11 +1293,11 @@ pub(crate) fn run(
         ));
     }
     let outcome = planned.and_then(|planned| {
-        let up_to_date = planned.already_up_to_date();
-        planned.run().map(|outcome| (up_to_date, outcome))
+        let ending = (planned.already_up_to_date(), planned.disposable());
+        planned.run().map(|outcome| (ending, outcome))
     });
     let flushed = persistence.finish();
-    let (up_to_date, outcome) = match outcome {
+    let ((up_to_date, disposable), outcome) = match outcome {
         Ok(outcome) => outcome,
         Err(failure) => {
             return Ok(departed(
@@ -1310,13 +1308,15 @@ pub(crate) fn run(
         }
     };
     flushed?;
+    let silent = invocation.given(Switch::Silent);
+    let removed = discard_intermediates(
+        &disposable,
+        invocation.given(Switch::Touch),
+        invocation.given(Switch::DryRun),
+        invocation.given(Switch::Silent),
+    );
     Ok(departed(
-        finished(
-            reported,
-            up_to_date,
-            &outcome,
-            invocation.given(Switch::Silent),
-        ),
+        finished(reported, up_to_date, &outcome, silent, &removed),
         announcing,
         &directory,
     ))

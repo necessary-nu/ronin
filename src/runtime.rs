@@ -140,6 +140,7 @@ impl EdgeRuntimeFlags {
     const COMMAND_DIRTY: u8 = 1 << 2;
     const RESTAT_CLEAN: u8 = 1 << 3;
     const COMMAND_HASH_VALID: u8 = 1 << 4;
+    const ABSENT_INTERMEDIATE: u8 = 1 << 5;
 
     const fn contains(self, flag: u8) -> bool {
         self.0 & flag != 0
@@ -220,6 +221,19 @@ impl EdgeRuntime {
 
     pub(crate) const fn set_command_dirty(&mut self, dirty: bool) {
         self.flags.set(EdgeRuntimeFlags::COMMAND_DIRTY, dirty);
+    }
+
+    /// Whether the last scan excused this edge's outputs for not being there,
+    /// because they are intermediate: nothing reading them was called out of
+    /// date for their absence, so anything that has to be rebuilt anyway must
+    /// ask for them explicitly.
+    pub(crate) const fn absent_intermediate(self) -> bool {
+        self.flags.contains(EdgeRuntimeFlags::ABSENT_INTERMEDIATE)
+    }
+
+    pub(crate) const fn set_absent_intermediate(&mut self, absent: bool) {
+        self.flags
+            .set(EdgeRuntimeFlags::ABSENT_INTERMEDIATE, absent);
     }
 
     pub(crate) const fn restat_clean(self) -> bool {

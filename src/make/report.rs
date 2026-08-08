@@ -152,6 +152,7 @@ pub(super) fn finished(
     up_to_date: bool,
     outcome: &Outcome,
     silent: bool,
+    removed: &[u8],
 ) -> RunResult {
     let mut stdout = terminated(reported);
     stdout.extend_from_slice(outcome.output());
@@ -164,6 +165,9 @@ pub(super) fn finished(
     } else if up_to_date && stdout.is_empty() && !silent {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: no work to do.\n").as_bytes());
     }
+    // Last of everything the build itself said, which is where GNU Make says
+    // what it threw away.
+    stdout.extend_from_slice(removed);
     RunResult {
         stdout,
         stderr: Vec::new(),
@@ -177,4 +181,42 @@ pub(super) fn finished(
             ABANDONED
         },
     }
+}
+
+/// Throw away the files the build invented to complete a chain of implicit
+/// rules, and say so in GNU Make's words.
+///
+/// Last of everything the build does, and it happens whether the build finished
+/// or gave up: what was invented on the way is rubbish either way. `-t` made
+/// files by touching them rather than by running anything, so it leaves them
+/// alone; `-n` ran nothing, so it names what it would have removed and removes
+/// nothing.
+pub(super) fn discard_intermediates(
+    disposable: &[Vec<u8>],
+    touching: bool,
+    pretending: bool,
+    silent: bool,
+) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if disposable.is_empty() || touching {
+        return Vec::new();
+    }
+    let mut removed = Vec::new();
+    for path in disposable {
+        if pretending || std::fs::remove_file(Path::new(std::ffi::OsStr::from_bytes(path))).is_ok()
+        {
+            removed.push(path);
+        }
+    }
+    if removed.is_empty() || silent {
+        return Vec::new();
+    }
+    let mut said = b"rm".to_vec();
+    for path in removed {
+        said.push(b' ');
+        said.extend_from_slice(path);
+    }
+    said.push(b'\n');
+    said
 }
