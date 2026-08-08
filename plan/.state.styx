@@ -265,6 +265,10 @@ assertions (
     {id make-io-error-wording, kind @doing, author "brendan@necessary.nu", at 2026-08-08T08:44:23.239321847Z}
     {id make-timestamp-dirtiness, kind @complete, author "brendan@necessary.nu", at 2026-08-08T11:09:00.325995641Z}
     {id make-parser-parity, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:47:40.569061171Z}
+    {id make-ignore-errors-status, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:56:34.086473391Z}
+    {id make-private-variables, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:56:34.226011276Z}
+    {id make-recipe-failure-line, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:56:34.37591408Z}
+    {id make-switch-precedence, kind @complete, author "brendan@necessary.nu", at 2026-08-08T12:56:34.515784999Z}
 )
 
 impl_evidence (

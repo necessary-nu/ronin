@@ -5177,6 +5177,20 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-08T12:56:34.304555477Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "A later multi-lane merge kept this node's append-only completion log and close commit but reverted plan/.state.styx to Todo while resolving the generated ledger. Restore the ledger state; the implementation and verification remain on main."
+                    }
+
+                    {
+                        at 2026-08-08T12:56:34.37591408Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -5185,6 +5199,7 @@ children (
                 title "Read the private keyword on a variable assignment"
                 priority 1
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-08T10:36:07.460550581Z
@@ -5213,6 +5228,20 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-08T12:56:34.158238848Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "A later multi-lane merge kept this node's append-only completion log and close commit but reverted plan/.state.styx to Todo while resolving the generated ledger. Restore the ledger state; the implementation and verification remain on main."
+                    }
+
+                    {
+                        at 2026-08-08T12:56:34.226011276Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -5221,6 +5250,7 @@ children (
                 title "Keep a recipe's status when its errors are ignored"
                 priority 1
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-08T10:36:14.813157958Z
@@ -5249,6 +5279,20 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-08T12:56:34.015951118Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "A later multi-lane merge kept this node's append-only completion log and close commit but reverted plan/.state.styx to Todo while resolving the generated ledger. Restore the ledger state; the implementation and verification remain on main."
+                    }
+
+                    {
+                        at 2026-08-08T12:56:34.086473391Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -5257,6 +5301,7 @@ children (
                 title "Let the command line outrank an inherited MAKEFLAGS"
                 priority 1
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-08T10:36:21.372364297Z
@@ -5284,6 +5329,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-08T12:56:34.445375239Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "A later multi-lane merge kept this node's append-only completion log and close commit but reverted plan/.state.styx to Todo while resolving the generated ledger. Restore the ledger state; the implementation and verification remain on main."
+                    }
+
+                    {
+                        at 2026-08-08T12:56:34.515784999Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
