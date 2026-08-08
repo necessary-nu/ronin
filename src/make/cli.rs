@@ -157,6 +157,19 @@ impl Invocation {
         }
     }
 
+    /// Add a directory `-I` named, or forget the ones before it.
+    ///
+    /// GNU Make reads `-I -` as a restart rather than as a directory called
+    /// `-`, which is how a makefile that wants only its own search path says so.
+    fn include_dir(&mut self, named: &[u8]) -> Result<(), Error> {
+        if named == b"-" {
+            self.include_dirs.clear();
+        } else {
+            self.include_dirs.push(path_of(named)?);
+        }
+        Ok(())
+    }
+
     const fn withdraw(&mut self, switch: Switch) {
         self.switches &= !switch.bit();
         self.negated |= switch.bit();
@@ -631,7 +644,7 @@ fn attached_long(
     } else if let Some(named) = option.strip_prefix(b"--directory=") {
         invocation.directories.push(path_of(named)?);
     } else if let Some(named) = option.strip_prefix(b"--include-dir=") {
-        invocation.include_dirs.push(path_of(named)?);
+        invocation.include_dir(named)?;
     } else if let Some(named) = option
         .strip_prefix(b"--what-if=")
         .or_else(|| option.strip_prefix(b"--new-file="))
@@ -716,7 +729,7 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
             }
             b"--include-dir" => {
                 let named = value(arguments, &mut index, b"", "--include-dir")?;
-                invocation.include_dirs.push(path_of(named.as_bytes())?);
+                invocation.include_dir(named.as_bytes())?;
             }
             b"--what-if" | b"--new-file" | b"--assume-new" => {
                 invocation
@@ -800,11 +813,12 @@ fn read_cluster(
                     },
                 )?;
                 short = argument.len();
-                let named = path_of(named.as_bytes())?;
-                match option {
-                    b'f' => invocation.makefile = Some(named),
-                    b'I' => invocation.include_dirs.push(named),
-                    _ => invocation.directories.push(named),
+                if option == b'I' {
+                    invocation.include_dir(named.as_bytes())?;
+                } else if option == b'f' {
+                    invocation.makefile = Some(path_of(named.as_bytes())?);
+                } else {
+                    invocation.directories.push(path_of(named.as_bytes())?);
                 }
             }
             _ => {

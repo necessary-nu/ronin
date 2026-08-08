@@ -911,6 +911,135 @@ fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `.RECIPEPREFIX` decides what introduces a recipe line, from where it is
+/// written until it is cleared, and a tab is an ordinary character in between.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_reads_a_recipe_introduced_by_the_declared_prefix() {
+    let directory = test_directory("make-recipeprefix");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".RECIPEPREFIX = >\n\
+         all: one two\n\
+         one:\n\
+         > @echo made $@\n\
+         .RECIPEPREFIX =\n\
+         two:\n\
+         \t@echo made $@\n\
+         .PHONY: all one two\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("made one"), "{stdout}");
+    assert!(stdout.contains("made two"), "{stdout}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `undefine` removes a variable rather than emptying it, and reaches no
+/// further than the makefile unless it says `override`.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_undefines_a_variable() {
+    let directory = test_directory("make-undefine");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "a = one\n\
+         b := two\n\
+         n = a\n\
+         undefine $(n)\n\
+         undefine b\n\
+         undefine c\n\
+         override undefine d\n\
+         $(info [$(flavor a)][$(flavor b)][$(flavor c)][$(flavor d)][$(c)])\n\
+         all: ; @echo done\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("c=kept")
+        .arg("d=gone")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("[undefined][undefined][recursive][undefined][kept]"),
+        "{stdout}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `!=` runs its right-hand side and keeps what the command printed, folding
+/// every newline into a space and dropping one at the end.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_assigns_what_a_shell_command_printed() {
+    let directory = test_directory("make-shell-assignment");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "one!=printf 'a\\nb\\n'\n\
+         two != printf 'c\\n\\n\\n'\n\
+         all: ; @echo \"<$(one)> <$(two)>\"\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("<a b> <c  >"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A variable name is one word, so `x y = 1` is not an assignment at all and
+/// the line is read as a rule, which has no separator.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
+    let directory = test_directory("make-spaced-name");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join("Makefile"), "x y = 1\nall: ; @echo built\n").unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Makefile:1: *** missing separator."),
+        "{stderr}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -1281,6 +1410,40 @@ fn make_mode_searches_the_include_directories() {
     // `first` has neither, and the working directory outranks the search.
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("[second][local]"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `-I -` is a restart of the search path, not a directory called `-`.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_forgets_the_include_directories_before_a_bare_dash() {
+    let directory = test_directory("make-include-dir-reset");
+    fs::create_dir_all(directory.join("first")).unwrap();
+    fs::create_dir_all(directory.join("second")).unwrap();
+    fs::write(directory.join("first").join("extra.mk"), "V = first\n").unwrap();
+    fs::write(directory.join("second").join("extra.mk"), "V = second\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "include extra.mk\n\
+         all: ; @echo \"[$(V)]\"\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .args(["-I", "first", "-I", "-", "-Isecond"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("[second]"),
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
