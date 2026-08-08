@@ -4084,6 +4084,20 @@ children (
                                 kind @status
                                 text "Doing → Done (nplan complete)"
                             }
+
+                            {
+                                at 2026-08-08T12:47:40.457044365Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "A later multi-lane merge kept this node's append-only completion log and implementation commit but reverted plan/.state.styx to Todo while resolving the generated ledger. Commit a913530 and the current node log prove it was completed; restore the derived ledger state so the P0 frontier reflects the work already landed."
+                            }
+
+                            {
+                                at 2026-08-08T12:47:40.569061171Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Done (nplan complete)"
+                            }
                         )
                     }
                 )
