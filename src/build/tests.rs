@@ -974,6 +974,46 @@ fn ronin_build_prints_failure_context_before_child_output() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// GNU Make's account of a failed recipe, word for word: where the recipe was
+/// written, the target, and the status it left — after the output the recipe
+/// produced, which is where Make puts it.
+// [spec:ronin:req:product.make-identity/test]
+#[test]
+fn make_build_names_the_makefile_line_the_target_and_the_status() {
+    let (mut graph, directory) = build_fixture(
+        "make-failure-line",
+        "rule fail\n  command = printf child; false\n  description = failing action\nbuild $dir/out: fail\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut output = Vec::new();
+    {
+        let options = BuildOptions {
+            recipe_failure: Some("ronin[1]".to_owned()),
+            ..BuildOptions::default()
+        };
+        let mut builder = Builder::with_output(&mut graph, options, &mut output);
+        builder.add_target(&target).unwrap();
+        let node = nodeget(builder.graph, target.as_bytes()).unwrap();
+        let edge = builder.graph.node(node).gen.unwrap();
+        let name = builder
+            .graph
+            .names_mut()
+            .intern(BStr::new(super::RECIPE_LOCATION));
+        builder
+            .graph
+            .edge_mut(edge)
+            .bindings
+            .insert(name, BString::from("Makefile:7"));
+        assert!(builder.build().is_err());
+    }
+    let output = String::from_utf8(output).unwrap();
+    let line = format!("ronin[1]: *** [Makefile:7: {target}] Error 1\n");
+    assert!(output.ends_with(&line), "{output:?}");
+    assert!(!output.contains("FAILED:"), "{output:?}");
+    assert!(output.find("child").unwrap() < output.find(&line).unwrap());
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn ninja_build_interrupted_command_cleans_only_changed_outputs() {

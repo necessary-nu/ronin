@@ -96,6 +96,13 @@ pub(crate) struct BuildOptions {
     /// Set when Make's `-O` asked for each command's held output to be
     /// bracketed with the directory it was produced in.
     pub(crate) output_group: Option<OutputGroup>,
+    /// The name a failed recipe's own line leads with, carrying the level.
+    ///
+    /// Make mode only. Ninja narrates a failure with the `FAILED:` block and a
+    /// stopped line at the end; Make names the makefile line, the target and
+    /// the recipe's status in one, and says nothing further. `None` leaves the
+    /// Ninja shape, which is what a manifest build gets.
+    pub(crate) recipe_failure: Option<String>,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -125,6 +132,7 @@ impl Default for BuildOptions {
             serve_jobserver: false,
             environment: Vec::new(),
             output_group: None,
+            recipe_failure: None,
             working_directory: crate::os::WorkingDirectory::default(),
         }
     }

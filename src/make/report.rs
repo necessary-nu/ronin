@@ -143,6 +143,10 @@ pub(super) fn answered(reported: String, question: Result<bool, Error>) -> RunRe
 /// stdout after the build's own output, and the status left with is the
 /// failing recipe's own. That is Ninja's contract rather than Make's exit 2,
 /// and where the two contracts meet the Ninja one governs.
+///
+/// A build the recipes themselves stopped says nothing here: each failure has
+/// already named its makefile line, its target and its status the way Make
+/// does, and a summary after them is Ninja's shape, not Make's.
 pub(super) fn finished(
     reported: String,
     up_to_date: bool,
@@ -151,7 +155,11 @@ pub(super) fn finished(
 ) -> RunResult {
     let mut stdout = terminated(reported);
     stdout.extend_from_slice(outcome.output());
-    if let Some(reason) = outcome.stopped() {
+    if let Some((reason, _)) = outcome
+        .stopped
+        .as_ref()
+        .filter(|(reason, _)| !reason.is_recipe_failure())
+    {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: build stopped: {reason}.\n").as_bytes());
     } else if up_to_date && stdout.is_empty() && !silent {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: no work to do.\n").as_bytes());

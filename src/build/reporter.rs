@@ -455,6 +455,32 @@ fn ninja_status(
     out.push(b'\n');
 }
 
+/// Render `make: *** [Makefile:3: all] Error 1`, as GNU Make 4.4 words it.
+///
+/// Make's counterpart to the `FAILED:` block, and the whole of what it says
+/// about a failed recipe: the place the recipe was written, the target it was
+/// making, and the status the recipe left. Only the name in front is Ronin's.
+///
+/// The place is the recipe's first line, where GNU Make names the line that
+/// actually failed. The two agree for every one-line recipe and for every
+/// recipe whose first line is the one that fails; naming the other lines needs
+/// a shell per line, which is `make-recipe-one-shell-per-line`'s ground.
+// [spec:ronin:req:product.make-identity]
+pub(super) fn make_failure(
+    out: &mut Vec<u8>,
+    name: &str,
+    location: &[u8],
+    target: &[u8],
+    exit_code: i32,
+) {
+    out.extend_from_slice(name.as_bytes());
+    out.extend_from_slice(b": *** [");
+    out.extend_from_slice(location);
+    out.extend_from_slice(b": ");
+    out.extend_from_slice(target);
+    let _ = writeln!(out, "] Error {exit_code}");
+}
+
 fn ninja_failure(
     out: &mut Vec<u8>,
     graph: &Graph,

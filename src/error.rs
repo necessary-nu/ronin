@@ -892,6 +892,19 @@ impl BuildStop {
             other => Self::Failed(Box::new(other)),
         }
     }
+
+    /// Whether the recipes that stopped the build have already reported
+    /// themselves.
+    ///
+    /// Make names the makefile line, the target and the status as each recipe
+    /// fails, so these two have nothing left to add. The rest are the engine's
+    /// own account of a stop no command described.
+    pub(crate) const fn is_recipe_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::SubcommandFailed { .. } | Self::CannotMakeProgress
+        )
+    }
 }
 
 impl BuildError {
