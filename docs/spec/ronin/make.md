@@ -72,31 +72,13 @@ manifest-derived graph is.
 
 ## Persistent state
 
-> [spec:ronin:req:make.state-outside-the-tree]
-> A Make-mode build writes nothing of its own into the tree it builds: the
-> directory holds exactly what the Makefile's recipes put there, as it does
-> after a GNU Make build. The state that makes the next build incremental is
-> relocated rather than discarded, because the build log is what notices a
-> changed command and the dependency log is what carries a compiler's reported
-> headers to the next build, and GNU Make can do neither. Both keep Ninja's
-> formats and Ninja's names, in a per-tree entry under Ronin's state home:
-> `$RONIN_STATE_HOME` when it names an absolute path, otherwise
-> `$XDG_CACHE_HOME/ronin`, otherwise the platform's per-user cache directory,
-> which is `$HOME/.cache/ronin` and `$HOME/Library/Caches/ronin` on macOS. A
-> build with none of those to work from is refused, naming them, rather than
-> falling back into the tree.
->
-> The entry is keyed by the identity of the directory the build runs in, which
-> is that directory's resolved absolute path together with its inode: two
-> checkouts of one project never share an entry, and a tree that was moved or
-> replaced since it was last built starts from nothing rather than inheriting
-> what the directory recorded before. Losing usable state is the preferred
-> failure, because a build that rebuilds more than it had to is slow and one
-> that rebuilds less is wrong. Each entry names the tree it belongs to, and an
-> entry claimed by a different tree is refused rather than read.
->
-> Ninja mode is unaffected. A manifest's `.ninja_log` and `.ninja_deps` stay in
-> its build directory, where `compat.persistent-state` requires them.
+> [spec:ronin:req:make.state-outside-the-tree+1]
+> A Makefile-derived graph uses the same Ninja build-log and dependency-log
+> placement, formats, names, and dirtiness interpretation as an equivalent
+> manifest-derived graph. Front-end provenance does not select an external
+> Make namespace, suppress state beside the build, or change what absence from
+> the build log means. If state placement is configurable for Ninja graphs,
+> that ordinary Ninja control is available uniformly to every front end.
 
 ## Product surface
 

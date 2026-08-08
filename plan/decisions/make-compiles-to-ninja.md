@@ -14,6 +14,7 @@ scope {
     rules (
         [spec:ronin:req:make.compiler-boundary]
         [spec:ronin:req:make.interface-compatibility]
+        [spec:ronin:req:make.state-outside-the-tree+1]
         [spec:ronin:req:make.recursive-invocation+1]
         [spec:ronin:req:make.jobserver+1]
         [spec:ronin:req:make.semantics+1]
@@ -61,6 +62,7 @@ edges {
 codifies (
     [spec:ronin:req:make.compiler-boundary]
     [spec:ronin:req:make.interface-compatibility]
+    [spec:ronin:req:make.state-outside-the-tree+1]
     [spec:ronin:req:make.recursive-invocation+1]
     [spec:ronin:req:make.jobserver+1]
     [spec:ronin:req:make.semantics+1]

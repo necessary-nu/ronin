@@ -3742,11 +3742,11 @@ children (
 
             {
                 id make-mode-cli
-                title "Select the Make front end from the invoked name and Make command line"
+                title "Select the Make compiler front end and translate its command line"
                 implements {
-                    target-impl ([spec:ronin:req:product.make-identity] [spec:ronin:req:make.recursive-invocation])
+                    target-impl ([spec:ronin:req:product.make-identity])
                 }
-                deps (kati-graph-sink kati-global-state)
+                deps (make-interface-surface)
                 log (
                     {
                         at 2026-08-06T19:36:51.697008623Z
@@ -3759,34 +3759,9 @@ children (
             }
 
             {
-                id make-jobserver-server
-                title "Serve the jobserver protocol so a recursive Make tree shares one job budget"
-                implements {
-                    target-impl ([spec:ronin:req:make.jobserver])
-                }
-                log (
-                    {
-                        at 2026-08-05T08:24:19.659100336Z
-                        author "brendan@necessary.nu"
-                        kind @status
-                        text "Todo → Doing (nplan start)"
-                    }
-
-                    {
-                        at 2026-08-05T09:09:36.972920628Z
-                        author "brendan@necessary.nu"
-                        kind @decision
-                        text "Transport: the named-pipe form, created and owned by Ronin, not the anonymous pipe the jobserver crate's Client::new produces.\n\nThe crate can only create the descriptor form, and its only publication path for that form, Client::configure, installs a pre_exec closure to clear FD_CLOEXEC in the child. A pre_exec closure disqualifies Rust's Command from posix_spawn. Verified by strace on this tree: a plain spawn issues clone3(CLONE_VM|CLONE_VFORK|CLONE_CLEAR_SIGHAND), and the same spawn with a pre_exec closure issues clone(CLONE_CHILD_CLEARTID|CLONE_CHILD_SETTID|SIGCHLD). That is precisely the fallback .cargo/config.toml exists to prevent, and it would have been paid on every command of every build, not only recursive ones. Measured, best of five over 4,000 spawn+wait of /bin/true on a quiet host: 580.4 us with nothing published, 634.0 us publishing a fifo through three environment variables, 783.9 us publishing a pipe through Client::configure. The fifo costs 53.6 us per spawn against 203.5 for the pipe, and the whole of its 53.6 is Rust's per-Command environment capture, which the first variable set on a Command triggers regardless of how many follow: 27 us for one variable and 8 us for the next two.\n\nThe fifo is also what GNU Make 4.4.1 itself publishes on Linux — observed --jobserver-auth=fifo:/tmp/GMfifo<pid>, mode 0600 — and a path survives an intermediate process that does not pass descriptors down, which is the reason upstream moved. Ronin's server writes /tmp/ronin-jobserver-<pid>-<n>, mode 0600, opened O_RDWR|O_NONBLOCK so it never sees end of file and an empty pool is an answer rather than a stall.\n\nAccounting: Ronin serves jobs-1 tokens and takes the protocol's implicit slot for itself, so its own commands spend the budget it hands out rather than running beside it. The scheduler tries available_slot, then try_acquire_implicit, then a non-blocking read of the fifo; failing all three it defers the edge. No helper thread on the served path, because Ronin can only want a token while one of its own commands already holds the implicit slot, which means a process is running and the next completion retries anyway. The only wake that can be missed is a child returning a token in the middle of Ronin's own long commands, and a 2 ms timeout on the supervisor wait bounds that, applied only while starved. The inherited path keeps its helper thread and its external-event wake unchanged.\n\nServing is skipped where GNU Make also publishes nothing: -j1, -j0, dry runs, and — this one is Ronin's own — a plan with no command edge, so an up-to-date tree creates no fifo at all. Confirmed by strace: zero jobserver syscalls on a no-op build, exactly one mknodat(S_IFIFO|0600) on a build with work.\n\nA jobserver already named in the environment is never shadowed, even when Ronin declines to draw on it. An explicit -j under a parent Make keeps Ronin's own limit but leaves MAKEFLAGS alone, so the commands still reach the parent's budget.\n\nMeasured on the recursive fixture (four sub-makes, eight 0.25 s units each, peak overlap computed from start/end stamps): ronin -j8 peaks at 8 against GNU Make -j8's 8 on the same tree; -j4 peaks at 4, -j1 at 1. The control, the same tree with the auth stripped so each level gets its own -j8, peaks at 32. Inherited: under make -jN with eight sibling units of make's own, the whole 40-unit tree peaks at exactly N."
-                    }
-                )
-            }
-
-            {
                 id make-conformance-corpus
-                title "Run the Make corpus differentially against GNU Make 4.4.1"
-                implements {
-                    target-impl ([spec:ronin:req:make.semantics])
-                }
+                title "Use the GNU Make corpus to discover compiler gaps"
+                deps (make-build-intent-gate)
             }
 
             {
@@ -3950,23 +3925,6 @@ children (
             }
 
             {
-                id make-state-outside-the-tree
-                title "Keep Ronin's build state out of a Makefile's directory"
-                implements {
-                    target-impl ([spec:ronin:req:make.state-outside-the-tree])
-                }
-                deps (make-mode-cli)
-                log (
-                    {
-                        at 2026-08-05T11:22:14.760953783Z
-                        author "brendan@necessary.nu"
-                        kind @decision
-                        text "Decided: nothing Ronin writes for its own bookkeeping may appear in a Makefile's directory. GNU Make leaves no state behind, so a build that drops .ninja_log and .ninja_deps beside a Makefile fails compatibility in the most visible way there is — it changes what the tree looks like afterwards, which shows up in version control, in packaging, and in any script that lists a directory.\n\nMake mode currently writes both to the Makefile's own directory, because that is Ninja's default location and nothing had decided Make mode should differ.\n\nWhat is not decided, and is this node's real question: whether the state moves or stops existing. Stopping is the simplest reading of compatibility and it is expensive — the build log is what detects a changed command, and the dependency log is what makes header dependencies survive between runs. Both are things GNU Make cannot do at all, and they are most of the reason a Makefile is worth building with Ronin rather than with Make. Throwing them away to match Make's directory listing would be matching the wrong thing.\n\nSo the shape to aim for is relocation: keep the persistence, put it somewhere a tree never sees, keyed by the identity of the build rather than by its location. A cache directory under the user's XDG cache root is the obvious candidate. The problems to solve before committing to it are the interesting part rather than an afterthought — two checkouts of the same project must not share an entry, a moved or renamed tree must not silently inherit a stale one, and there has to be an answer for how a user clears it, since `make clean` will not.\n\nNote the Ninja side must not move. build.ninja's log lives beside the manifest by contract and 425 upstream tests depend on it; this is a Make-mode-only relocation, and the persistence boundary decision is written about Ninja's file formats rather than their location, so check whether it needs a sentence."
-                    }
-                )
-            }
-
-            {
                 id make-option-coverage
                 title "Support the Make options whose machinery already exists"
                 deps (make-mode-cli)
@@ -3985,17 +3943,25 @@ children (
                         kind @status
                         text "Todo → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-08T14:21:31.101015155Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "This delivery is historical option-acceptance evidence, not the compatibility contract. make-interface-surface now owns a complete GNU Make 4.4.1 spelling/argument matrix and classifies every option as compiler input, Ninja mapping, or accepted no-op. Any runtime emulation introduced here is removed by the refactor chain."
+                        after_done true
+                    }
                 )
             }
 
             {
                 id make-upstream-suite
-                title "Measure Make support against GNU Make's own test suite"
+                title "Use GNU Make's suite to discover compiler gaps"
                 deps (make-mode-cli make-conformance-corpus)
                 children (
                     {
                         id make-refusal-wording-is-narration
-                        title "Classify a shared refusal as narration, not as a semantic difference"
+                        title "Record shared refusal wording as discovery data, not semantics"
                         priority 1
                         kind @fix
                         log (
@@ -4024,7 +3990,7 @@ children (
 
                     {
                         id make-io-error-wording
-                        title "Word a refusal both tools share the way Make words it"
+                        title "Report Makefile I/O failures through ordinary Ronin diagnostics"
                         kind @fix
                         log (
                             {
@@ -4053,6 +4019,13 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Measured. 12 cases moved and every one of them moved from narration to semantic, which is the intended shape of this change rather than a regression.\n\nClassifier transition, both runs on this branch with the same suite checkout:\n\n  io-error-text      53 → 41\n  shared-refusal     23 → 23   unchanged by decision\n  evaluation        576 → 588\n  narration         522 → 510\n  semantic          772 → 784\n  capability         54 → 54\n  failing cases    1348 → 1348\n\nThe 12 by name: features/jobserver 15 and 16, features/patternrules 41, 53, 59, 71, features/statipattrules 18, 27, 36, 45, 54, 63. Each was a case where Ronin abandoned a build GNU Make finished, wearing a narration label because one Rust suffix sat in the diff. Removing the suffix took the label off and the defect underneath is now counted where it belongs. No case moved the other way and no case outside the 12 moved at all; recipe-interleave went 2 to 1 on its own and `settled()` already ignores that one for exactly this reason.\n\nWhat is left in io-error-text is 41 and it is not ours:\n\n  35  kati/src-rs/eval.rs:958-966, the include-glob failure\n   5  kati/src-rs/file.rs:36, a file found but unreadable, plus $(file >...)\n   1  misc/close_stdout, src/main.rs:62\n\nThe last of those is left deliberately. `system_message` is pub(crate) and src/main.rs is the binary crate, so reaching it means widening the library's public API for one string; and the case fails on the sentence rather than on the suffix — the suite wants `/^ronin: write error/` where we say `writing terminal output:` — so stripping it there would change the wording without changing the count.\n\nTwo defects the change exposed, both real and neither this node's:\n\n  features/jobserver.16. GNU Make cannot open the inherited jobserver, says so, warns `jobserver unavailable: using -j1`, and finishes the build. Ronin says the same thing and exits 1. Verified against GNU Make 4.4.1 side by side. That is make-jobserver-server or make-recursive-jobserver-reach.\n\n  patternrules and statipattrules, 10 cases. A stem longer than NAME_MAX reaches a stat and Ronin abandons on ENAMETOOLONG where GNU Make builds the target. Ronin's own, GraphError::Stat.\n\nAnd one that is nobody's node yet: Ronin's Ninja mode answers a missing manifest with `ronin: No such file or directory` where upstream Ninja says `ninja: error: loading 'build.ninja': No such file or directory`. The suffix is gone now; the missing `error: loading '<path>': ` context is a separate Ninja-compatibility gap that the 425 pinned tests do not reach."
+                            }
+
+                            {
+                                at 2026-08-08T14:21:46.869590908Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "The earlier GNU Make wording target is superseded. Preserve the I/O error and its source/path through Ronin's ordinary diagnostic surface; do not add Make reporter ceremony."
                             }
                         )
                     }
@@ -4150,6 +4123,13 @@ children (
                         kind @note
                         text "Second source of gate flap seen, and unlike the first it is not settled.\n\nfeatures/grouped_targets cases 15 and 18 swapped families with each other on one run — 15 took `ninja-progress+evaluation` where 18 had it and vice versa — then held steady across four more runs. Both are semantic in either reading, so the class did not move and the gate's contract is intact; only the family list flipped.\n\nTwo candidates and it was not chased: two grouped-target builds racing, or the suite's per-script diff numbering shifting when an earlier case in the same script changes outcome. The exact swap, each taking the other's families, points at the second.\n\nWorth knowing before someone reads a one-case family change in grouped_targets as a result."
                     }
+
+                    {
+                        at 2026-08-08T14:21:33.05985455Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "GNU Make's suite is discovery input for language and graph gaps. Exact runner output, scheduling, statuses, directory banners, recursion, and jobserver choreography are never a conformance gate."
+                    }
                 )
             }
 
@@ -4169,8 +4149,8 @@ children (
 
             {
                 id make-variable-is-one-word
-                title "Report MAKE as a single executable path"
-                deps (make-mode-cli)
+                title "Expose MAKE as one compiler-recognizable invocation path"
+                deps (make-subninja-recursion)
                 log (
                     {
                         at 2026-08-05T17:11:02.581433822Z
@@ -4183,9 +4163,9 @@ children (
 
             {
                 id make-diagnostic-prefix
-                title "Prefix Make-mode diagnostics with the product name, in GNU Make's wording"
+                title "Attach product identity and Makefile locations to compiler diagnostics"
                 kind @fix
-                deps (make-mode-cli)
+                deps (make-interface-surface)
             }
 
             {
@@ -4197,13 +4177,13 @@ children (
 
             {
                 id make-fatal-diagnostic-shape
-                title "Give every fatal diagnostic the program name and the Stop. suffix"
+                title "Identify fatal Makefile evaluation diagnostics as compiler errors"
                 kind @fix
                 deps (make-diagnostic-prefix)
                 children (
                     {
                         id make-diagnostic-identity
-                        title "Route Make's own diagnostics through the session so they carry the name"
+                        title "Route Kati diagnostics through the evaluation session's source identity"
                         kind @fix
                         log (
                             {
@@ -4226,14 +4206,14 @@ children (
                                 kind @note
                                 text "Measured together with make-diagnostic-stop and make-abandon-exit-status, because none of the three can move the corpus alone: the same cases carry all three differences, so fixing one leaves the case differing on the other two and the count does not budge. Doing all three took the corpus from 227 identical of 386 to 293, and from 159 differing to 93.\n\nThe families the corpus names moved as follows. identity-prefix 43 to 9, stop-suffix 84 to 18, exit-status 98 to 32.\n\nWhat is left in identity-prefix is the residue the classification decision predicted: sites raising through the bare error! macro that are kati refusing rather than Make failing, and one that is Make failing but cannot reach the flags — var.rs assign takes an Interner rather than a Context, and readonly variables are a kati extension GNU Make has no counterpart to, so the signature was left alone rather than widened for a message nothing can measure against.\n\nOne thing the work turned up that was not visible from the corpus. Ronin's Make mode does not use kati's exec path at all: \"no rule to make target\" and the recipe-failure line come from Ronin's own scheduler with Ninja's wording. So the kati changes here are measured by the corpus, which runs rkati, and Ronin's Make mode needed its own fix for the same defect. Anything that reasons about Make-mode output from the corpus alone is reasoning about the wrong binary."
                             }
-                        )
-                    }
 
-                    {
-                        id make-diagnostic-stop
-                        title "End a fatal diagnostic with Stop., and only where Make ends one"
-                        kind @fix
-                        deps (make-diagnostic-identity)
+                            {
+                                at 2026-08-08T14:21:32.540980993Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Only evaluation-time compiler identity and Makefile source locations belong here. Stop. suffixes, recursive level prefixes, and GNU Make runner wording are excluded."
+                            }
+                        )
                     }
                 )
                 log (
@@ -4247,30 +4227,8 @@ children (
             }
 
             {
-                id make-abandon-exit-status
-                title "Exit 2 when a build is abandoned, as GNU Make does"
-                kind @fix
-                deps (make-mode-cli)
-                log (
-                    {
-                        at 2026-08-05T18:37:55.149571206Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "The largest single family in the Make corpus: 98 of 159 differing cases, and for a dozen of them it is now the only difference left.\n\nGNU Make exits 2 when it abandons a build — a makefile it cannot parse, a target it cannot make, a fatal diagnostic of any kind. Ronin's Make mode and rkati both exit 1. The status is documented and scripts branch on it, so this is not cosmetic.\n\nRonin's side is src/make/cli.rs, where the load_makefile failure path returns 1, or 2 when -q was given. That -q special case is right for a different reason — make.question-status says an unanswerable question is 2 — and it should not be the only way to get a 2.\n\nCare is needed not to overreach: 2 is for abandoning, not for every non-zero exit. A recipe that fails under -k still ends with GNU Make exiting 2, but `-q` answering \"out of date\" is 1, and a successful build is 0. Ronin's own build-outcome statuses are governed by compatibility.md and are not in question here.\n\nWorth doing after make-fatal-diagnostic-shape rather than before, so the cases that differ on both collapse in one measurable step instead of half-moving twice."
-                    }
-
-                    {
-                        at 2026-08-06T13:15:51.075918696Z
-                        author "brendan@necessary.nu"
-                        kind @decision
-                        text "Make mode answers with Make's status, and it had to stop letting the failure escape to do it.\n\nEvery way of not building is two: an option Make does not know, no makefile to read, a makefile that will not evaluate, a goal with no rule, a recipe that failed. Verified against GNU Make 4.4.1 for all four, which is what settled that this is one status rather than a family of them. One is not a failure in Make's vocabulary at all — it is the answer -q gives to a question — so the old -q special case was not a special case but the only correct use of 1 in the whole front end.\n\nTwo paths needed more than a constant. A failed recipe reached RunResult through outcome.exit_code(), which is the failing command's own status: right for Ninja, wrong for Make, since a recipe exiting 3 makes Make exit 2. And a goal with no rule left run() as an Error, which the process boundary answers with Ninja's status — fixed at one for every failure alike by product.build-outcome. Make mode now catches that and renders it, so the Ninja contract at main.rs is untouched and Ninja mode still exits 1.\n\nChecked rather than assumed: Ninja mode with no manifest still exits 1 after the change."
-                    }
-                )
-            }
-
-            {
                 id make-option-parity
-                title "Accept the Make options the upstream suite actually passes"
+                title "Implement graph-affecting GNU Make option inputs"
                 kind @feat
                 children (
                     {
@@ -4333,98 +4291,11 @@ children (
                     }
 
                     {
-                        id make-option-output-sync
-                        title "Group a recipe's output under -O instead of interleaving it"
-                        priority 3
-                        kind @feat
-                        log (
-                            {
-                                at 2026-08-08T01:46:30.485892217Z
-                                author "brendan@necessary.nu"
-                                kind @status
-                                text "Todo → Doing (nplan start)"
-                            }
-
-                            {
-                                at 2026-08-08T02:19:49.262995017Z
-                                author "brendan@necessary.nu"
-                                kind @decision
-                                text "Done. Every rule below was read off GNU Make 4.4.1 side by side, not from the manual, and two of them contradict what the node assumed.\n\n`-Ojob` does not exist. 4.4.1 accepts none, line, target, recurse and says `*** unknown output-sync type 'job'.  Stop.` for anything else. And `-O` is withdrawn entirely when nothing runs in parallel — main.c sets `output_sync = OUTPUT_SYNC_NONE` when `job_slots == 1`, so `make -w -Otarget` with no `-j` is an ordinary build with one directory pair.\n\nWhat `-O` actually changes is smaller than it looks here, because Ronin already holds a child's stdout and stderr in full and writes them when the command finishes. Target-granularity grouping is the behaviour with no flag at all, and a sub-make's whole output is one such block, so `target` and `recurse` were already produced and `none` asks for an interleaving Ronin's supervisor cannot do. The one observable difference is the bracket: under an active sync GNU Make moves the `Entering`/`Leaving` pair from around the whole build to around each block it releases, and prints no outer pair. Confirmed on eight shapes, including that a block is bracketed only when the command left something in it — a silent recipe that succeeded gets nothing, a silent recipe that failed gets a pair around the error line.\n\nSo the build side is one field on BuildOptions carrying the two lines the front end already knows how to write, and `command_finished` opening and closing around the held bytes. `output_group` is `Some` only where `announcing()` was already true, which is Ronin's spelling of `should_print_dir`.\n\n`-Oline` is honestly coarser than GNU's: Ronin runs a recipe as one shell script, so there are no per-line boundaries to group at. That is make-recipe-one-shell-per-line's ground and the `recipe-interleave` family already names it.\n\n`.FEATURES` now claims output-sync, through `extra_features` rather than the evaluator's list — it is a statement about who runs the recipes. That is what unblocked features/output-sync, which had been returning -1 and appearing as N/A rather than as failures.\n\nMeasured: option-refused 93 to 77, capability 126 to 110. All 24 diffs carrying an `-O` refusal are gone; 16 became countable and 8 still refuse another option in the same command line (`--debug=b`, `--trace`). Against that, features/output-sync went from uncounted to 17 failing cases, so the total rose 1332 to 1349. semantic 767 to 794, narration 439 to 445 — the whole of both rises is those 33 newly countable cases.\n\nTwo things the 17 turned up that belong elsewhere. GNU's `should_print_dir` is `!silent && (makelevel > 0 || directories)`, so a sub-make announces its directory without being given `-C` or `-w`; `announcing()` has only the `-C` half, which costs four of these and is directory-announce's 39. And output written while the makefiles are read — `$(info)`, `$(shell)` stderr — is a sync block of its own in GNU Make, dumped with its own bracket even when sync is then withdrawn; Ronin's evaluator writes it straight through.\n\nNot done, deliberately: the cross-process lock. GNU passes `--sync-mutex=fnm:/tmp/…` so two makes sharing a descriptor interleave at block granularity. Ronin's sub-makes have their output captured by the parent rather than writing to the shared descriptor, so there is nothing for the lock to arbitrate."
-                            }
-                        )
-                    }
-
-                    {
-                        id make-option-debug-and-trace
-                        title "Answer --debug, -d and --trace with what Make reports"
-                        priority 4
-                        kind @feat
-                        log (
-                            {
-                                at 2026-08-08T02:00:20.872612954Z
-                                author "brendan@necessary.nu"
-                                kind @status
-                                text "Todo → Doing (nplan start)"
-                            }
-
-                            {
-                                at 2026-08-08T02:21:11.66012783Z
-                                author "brendan@necessary.nu"
-                                kind @note
-                                text "Done as far as Ronin can answer, and the boundary is sharp.\n\nEvery value here was read off GNU Make 4.4.1 rather than reasoned about, including the whole of `decode_debug_flags`: only the first letter of each comma- or space-separated word is looked at, so `--debug=basic` and `--debug=b` are one thing; `i`, `m` and `v` each carry the basic level as well as their own; `n` is a reset rather than a facet, so `-d --debug=n` reports nothing and hands a child no `d` either. `-d` is every facet, `--trace` is print and why, bare `--debug` is `basic`, and an unknown letter is refused with GNU's own wording.\n\nMAKEFLAGS round-trips exactly, checked side by side once per spelling: `-d` is a letter in the group, `--debug=<arg>` and `--trace` follow it as long options in GNU's switch-table order — before `--no-print-directory`, which is where its table puts them — and a `--debug` arriving from both the command line and a parent's MAKEFLAGS is handed on once, as GNU Make deduplicates it. `adopt_inherited` had to learn the two long spellings by name, since it skips any word with `--` or an `=` in it and both would otherwise be lost.\n\nWhat is reported, and why only this much. `--trace`/`--debug=w` is now Make's line word for word — `Makefile:3: update target 'dep' due to: target does not exist` — with all four of Make's reasons in Make's order: `.PHONY`, target missing, the `$?` list, the prerequisites still absent. That needed the rule's own place, which kati already hands the sink as `SinkEdge::loc` and nothing was reading; it now crosses as an edge binding, the same way the `+`-line command does, and the `recipe-error-line` family will want it next. `--debug=p` maps onto the build's verbose command lines. `--debug=b` prints the banner, `Reading makefiles...` and `Updating goal targets....`.\n\nDeliberately not printed: `Updating makefiles....`. GNU Make's marker is for the pass that remakes the makefiles themselves and there is no such pass here — a phase marker for a phase that does not happen would report something that did not occur, and three MAKEFLAGS tests wanting it need makefile-set MAKEFLAGS anyway, which is a different node.\n\nWhat genuinely needs kati, precisely. Everything `-d` says between those two markers narrates the dependency search: `Considering target file 'x'.`, `Looking for an implicit rule for 'x'.`, `Trying pattern rule '%: %.c' with stem 'x'.`, `Trying implicit prerequisite 'x.c'.`, `Not found 'x.c'.`, `Finished prerequisites of target file 'x'.`, `File 'x' does not exist.`, `Must remake target 'x'.`, `Successfully remade target file 'x'.` — that is `--debug=i` and `--debug=v` whole, and the bulk of `--debug=b`. It is a report from the search in kati's dep.rs and cannot be written from here; the front end sees the finished graph, by which time every rule that was tried and rejected is gone. `--debug=j` is the other one: `Putting child 0x… (all) PID … on the chain.` describes GNU Make's chain of children, a data structure Ronin's process supervision does not have, and inventing a pointer for it would be narration pretending to be a fact.\n\nThe measurement, and it is the parent node's pattern again rather than a regression. capability 126 to 98, option-refused 93 to 65 — 28 cases moved, every one of them from capability to semantic, and semantic went 767 to 795 by exactly that 28. Narration did not move at all. options/dash-d passes outright."
-                            }
-                        )
-                    }
-
-                    {
                         id make-option-eval-and-warnings
-                        title "Evaluate --eval text and warn on an undefined variable when asked"
+                        title "Compile --eval text and accept warning controls"
                         priority 5
                         kind @feat
-                    }
-
-                    {
-                        id make-option-shuffle
-                        title "Shuffle goal and prerequisite order under --shuffle"
-                        priority 6
-                        kind @feat
-                        log (
-                            {
-                                at 2026-08-08T02:31:10.577207994Z
-                                author "brendan@necessary.nu"
-                                kind @status
-                                text "Todo → Doing (nplan start)"
-                            }
-
-                            {
-                                at 2026-08-08T02:45:09.805260404Z
-                                author "brendan@necessary.nu"
-                                kind @note
-                                text "Done, and it turned out to be a smaller change than expected because of where the order actually lives.\n\nThe thing worth writing down: in Ronin the build order of equally ready edges is the order the edges were minted, because the ready set breaks ties on the lowest edge id. Edges are minted by the walk kati's emitter does over the dependency nodes. So reordering that walk — the goal list, and each node's `deps` and `order_onlys` — is what reorders the build, and nothing in the scheduler has to know shuffling exists. The first attempt permuted `flags.targets` instead and changed nothing observable: that list names which targets are default, not the order they are taken in.\n\nDoing it before the graph is cut also settles the thing the upstream test is most particular about. GNU Make reorders what is built and not what a recipe is handed, so `$^` and `$<` keep the order the Makefile wrote — `arg_4 arg_3 arg_2 arg_1` built, `bld foo_ arg_1 arg_3 arg_2 arg_4` run. Here that is free rather than careful: kati has already expanded the recipes by this point, so there is nothing left for a reordering to disturb.\n\n`.WAIT` needs no exception, where GNU Make refuses to shuffle any list holding one. The evaluator has already turned each barrier into order-only prerequisites, so what `.WAIT` asked for is in the graph rather than in the list and survives being reordered. `.NOTPARALLEL` does need one, and has it.\n\nEvery mode and every MAKEFLAGS value was read off GNU Make 4.4.1 side by side rather than reasoned about: `reverse`, `identity`, `none`, `random`, or a bare decimal seed, compared without regard to case; `none` alone travels as nothing; `--shuffle` sits last of all the long options, after the withdrawals; and what travels is the seed the run settled on rather than the word `random` that asked for one, which is the whole reproducibility story. A sub-make reads it back the same way. The brief's `random.SEED` spelling does not exist in 4.4.1 — that form is rejected as an invalid mode, and the wording of the refusal is GNU's.\n\nTwo known divergences, both understood.\n\nOrder-only prerequisites under `--shuffle=reverse`. GNU reverses one combined dep list, so `a_: b_ c_ | d_ e_` gives `e_ d_ c_ b_`; Ninja's edge holds explicit and order-only inputs in separate partitions in that fixed order, so reversing within each gives `c_ b_ e_ d_`. Same two groups, group order swapped. Matching it would mean letting order-only inputs precede explicit ones in the edge, which is not something the partitions can say and not something worth saying — both orders are a shuffle, and the constraint the partitions express is the part that matters. One upstream case turns on it.\n\n`--shuffle=-1` is refused where GNU accepts it, because GNU parses the seed with `strtoul` and takes what wraps out. Refusing an argument nobody writes is the safe side of that.\n\nThe measurement: capability 98 to 87, option-refused 65 to 54 — all 11 shuffle cases moved out, 8 to narration and 3 to semantic, semantic 795 to 798 and narration 439 to 447. options/shuffle went from 0/12 passing to 2/12, and the three that now error rather than differ are not about shuffling at all: one is a circular dependency GNU drops and Ronin refuses, and two reach a named goal that only a `%_` pattern rule can make, which is the no-rule-to-make family and somebody else's node."
-                            }
-                        )
-                    }
-
-                    {
-                        id make-option-touch-and-what-if
-                        title "Pretend at timestamps for -t and -W without running recipes"
-                        priority 7
-                        kind @feat
-                        log (
-                            {
-                                at 2026-08-08T01:46:51.639599947Z
-                                author "brendan@necessary.nu"
-                                kind @status
-                                text "Todo → Doing (nplan start)"
-                            }
-
-                            {
-                                at 2026-08-08T02:20:38.992731978Z
-                                author "brendan@necessary.nu"
-                                kind @decision
-                                text "Both done, and every rule below was read off GNU Make 4.4.1 side by side rather than reasoned about — six of the answers would not have been guessed.\n\n`-W` is the smaller change and the one the node described correctly. GNU Make sets the named file's mtime to the maximum representable timestamp and changes nothing else, so Ronin does the same: the graph carries a list of assumed-new nodes and `RuntimeState::reset` seeds each with a `FileTime::NEWEST` before any stat. The scan already skips a node the runtime has a time for, so the pretence holds for the whole build without a second notion of dirtiness. A `-W` path no node holds is silently nothing, which is right — nothing reads it. `-W` does not travel in MAKEFLAGS; GNU Make's option table leaves it out, and a sub-make is told which switches were asked for rather than which files to pretend about.\n\n`-t` needed the recipe runner after all, for a reason the node did not anticipate. Ronin's dirtiness includes \"the command changed since the log said\", and an output with no log entry is dirty whatever its mtime — so a `-t` that only touched files would be undone by the very next build. It has to record the log entry too. That put it through `finish_edge`, which already hashes the command, stats the outputs and writes the entry, and made the whole implementation three conditions rather than a second scheduler: the spawn site treats `-t` exactly as `-n` (nothing runs but the `+` lines), `finish_edge` touches the outputs just before it stats them, and the touch says `touch NAME` in Make's own words. `make -t` then `make` now reports no work, as GNU reports up to date.\n\nThe five interactions, each measured:\n\n  -n -t   the line is said and the file is left alone; touch_file returns early\n  -s -t   the file is touched and the line is not said\n  -q -t   `-t` outranks `-q` outright: it touches, prints, exits 0, and brackets\n          the build with Entering/Leaving where `-q` alone says nothing at all\n  -B -t   everything is touched\n  .PHONY  not touched, and its recipe does not run: \"Nothing to be done\"\n\nThat last one cost the only piece of machinery here. Ronin spells `.PHONY` as `always_dirty` and `-B` spells itself with the same bit, so reading the bit at touch time would have made `-B -t` touch nothing. The declaration is therefore snapshotted before `-B` widens it, which is what `spare_phony_from_touch` is for and why `pretend_at` fixes the order of the three switches that argue with timestamps.\n\nA recipe with a `+` line runs it under `-t` as it does under `-n`, and is then touched — unless every line is recursive, in which case GNU Make touches nothing and neither does Ronin. Detected by the dry-run command being byte-identical to the full one, which is exactly what \"every line was a `+` line\" produces.\n\nThe measurement. 1332 cases before and after; option-refused 93 to 83, capability 126 to 116. Of the ten that moved, five became semantic and five became narration — and the five narration ones are the point: both `-t` cases and three of the `-W` cases now differ from GNU Make only by Ronin's `[N/M]` line. Four MAKEFLAGS cases also stopped being makeflags-content, because `t` now travels in the letter group where GNU Make puts it (between `s` and `w`, so `-Beikqrstw` gives `Beikqrstw`).\n\nThree things found and left, none of them this node:\n\nkati marks a recipe line recursive only for a leading `+`. GNU Make also marks one containing `$(MAKE)` or `${MAKE}`, which is why `make -t` on a tree that recurses through a bare `$(MAKE) -C sub` line recurses there and does not here. It costs `-n` the same thing and is a kati change.\n\nGNU Make prints `touch X` twice for a recipe that mixes `+` and ordinary lines — its own double notify_finished_file, once from the job reaper and once from the exhausted command list. Ronin prints it once and that is deliberate.\n\n`options/dash-t` test 0 still fails on order: GNU Make walks depth-first per goal (interm-a, final-a, interm-b, final-b) and Ronin's ready queue interleaves (interm-a, interm-b, final-a, final-b). The same case shows kati collapsing the four `::` entries into two edges. Both belong elsewhere."
-                            }
-                        )
+                        deps (make-interface-surface)
                     }
                 )
                 log (
@@ -4433,6 +4304,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "202 of the 1338 failing tests in GNU Make's suite refuse an option the test passed and GNU Make accepted, printing usage and abandoning. Ranked by failing tests, from the diffs rather than from the logs — the logs are per-category and overwritten, so they undercount badly, which is what made this look like eight cases on first inspection instead of two hundred:\n\n  --no-print-directory 45, -I 31, -R 28, -O 20, --debug=* 17, --no-silent 12,\n  --shuffle=* 11, -W 7, --warn-undefined-variables 7, -S 5, --trace 4, -d 4,\n  -t 3, --eval 3, -E 2.\n\nThis was invisible before `$(MAKE)` became one word. The suite never got far enough to pass these options at all, so the whole family was hidden behind a defect counted 243 times. It is the second thing that has behaved that way and it will not be the last: read the residue only after the thing in front of it is gone.\n\nChildren are ranked by how many failing tests each would reach, so the frontier offers the biggest first. That ranking is a starting order and not a claim about difficulty — `--no-print-directory` leads on count and is nearly free, while `-O` is worth twenty and needs output grouping in the scheduler.\n\nDepends on make-recipe-echo-line for measurement rather than for mechanism. An option can be implemented at any time, but until the progress line is gone every one of these diffs also contains it, so a test fixed here will still fail and nobody can tell whether the option work was right.\n\n`make-option-coverage` is Done and is not this: it took the options whose machinery already existed. These are the ones that need machinery."
+                    }
+
+                    {
+                        at 2026-08-08T14:21:32.856436054Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "This container now covers only graph-affecting compiler inputs. The authoritative complete interface table and every accepted no-op are owned by make-interface-surface."
                     }
                 )
             }
@@ -4461,7 +4339,7 @@ children (
 
             {
                 id make-recipe-dry-run
-                title "Print recipes under -n without running them, including the plus exception"
+                title "Map Make dry-run spellings onto Ninja dry-run execution"
                 priority 2
                 kind @fix
                 log (
@@ -4477,6 +4355,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Done for the `+` exception, and it moved nothing in GNU Make's suite — no case there exercises `-n` with a `+` line. It was a real defect regardless: `make -n` silently did nothing where GNU Make runs the line, so a Makefile using `+$(MAKE) -C sub` to recurse under `-n` saw an empty answer.\n\nProbed against 4.4.1 first, which is what set the shape:\n\n  plain recipe        neither tool runs it\n  `@` prefixed        both still print it — `-n` overrides `@`\n  `+` prefixed        GNU runs it, we did not\n  mixed lines         GNU runs ONLY the `+` line and prints all three\n\nThat last one ruled out the cheap version. Running the whole recipe when any line is `+` would have created the two files GNU leaves alone, and a wrong build under the one flag whose entire purpose is to touch nothing is the worst place to take that shortcut.\n\nSo the `+` subset is assembled as its own script beside the full one, in the same pass and with the same joining, and carried as a rule binding named `dryrun_command`. Under `-n` an edge that has one runs it instead of being skipped; every other edge is skipped as before. A Ninja manifest never binds the name, so `graph.names().lookup` answers None and nothing changes for Ninja — no plumbing through BuildOptions was needed.\n\nTwo things left, both separate:\n\n`$(MAKE)` gets the same exception in GNU Make, and this does not give it. Make decides by scanning the *unexpanded* recipe line for `$(MAKE)` or `${MAKE}`; kati has already expanded the recipe by the time it has lines, so the information is gone. Verified the distinction is real rather than incidental: `MAKE_ALIAS = $(MAKE)` then `$(MAKE_ALIAS) --version` is printed and NOT run by GNU Make, so it is the reference that matters and not the value. Doing it properly means walking the recipe Value for a VarRef to the MAKE symbol before expansion.\n\nWhat `-n` prints is still ours rather than Make's: `/bin/sh -c \"(a ) && (b )\"` where Make prints each line as written. That is make-recipe-one-shell-per-line, and this node deliberately left it alone."
+                    }
+
+                    {
+                        at 2026-08-08T14:21:32.376052063Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Dry-run spellings are interface controls mapped onto the ordinary Ninja dry-run path. Plus-prefixed recursive Make lines are compiler inputs for subninja composition, not an exception that launches a child Make during dry-run."
                     }
                 )
             }
@@ -4909,7 +4794,7 @@ children (
 
             {
                 id make-real-project-gate
-                title "Build a real Makefile project with Make mode, as a gate"
+                title "Build real Makefile projects through the compiled Ninja graph"
                 priority 0
                 kind @test
                 log (
@@ -4925,6 +4810,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "scripts/check-make-project.sh builds Ninja from its own CMake-generated Unix Makefile with Make mode, and checks the artefacts exist and run rather than trusting the exit status.\n\nIt works: exit 0, `ninja` and `ninja_test` both linked, `./ninja --version` answers 1.14.0.git. So Make mode builds a real project — 541 recursive `$(MAKE)` lines, a `.NOTPARALLEL`, generated dependency files, a hundred-odd compiles.\n\nThe subject is reference/ninja, which the Ninja conformance gate already pins and which lives in the checkout rather than in /tmp. The build tree is generated once and kept: configuring is CMake's work and doing it per run would time the wrong tool.\n\nTwo findings in the first run, neither of which GNU Make's suite can see:\n\nThe job budget does not reach a recursive sub-make. GNU 22.9s at -j8 against our 64.4s, from an identical 89s serial — make-recursive-jobserver-reach has the evidence. This is now the most valuable open item and it was nowhere near the top of the queue an hour ago.\n\n`.NOTPARALLEL` is declared by every CMake-generated Makefile. It was sized at seven suite cases and P2 on make-ignore-errors-target; it is in the first real Makefile anyone tried.\n\nWhich is the argument for the gate. Ranking by suite case count put `--shuffle` and `-S` above both of these."
+                    }
+
+                    {
+                        at 2026-08-08T14:21:32.206322774Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "This gate compares selected work, normal outcome, and filesystem effects after compilation. GNU Make wording, scheduling order, recursive banners, jobserver behavior, and private exit-status distinctions cannot make it pass or fail."
                     }
                 )
             }
@@ -4963,12 +4855,20 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-08T14:21:31.252589109Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Recursive Make process coordination is no longer the architecture. make-subninja-recursion composes the child graph before execution, and make-single-ninja-scheduler removes the recursive jobserver path."
+                        after_done true
+                    }
                 )
             }
 
             {
                 id make-notparallel-target
-                title "Run this makefile's own targets serially under .NOTPARALLEL"
+                title "Compile .NOTPARALLEL into Ninja graph scheduling constraints"
                 priority 0
                 kind @feat
                 log (
@@ -4977,6 +4877,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T14:21:32.053728957Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The accepted implementation is a graph-level Ninja scheduling constraint, such as a compiler-created pool/order relation. Passing Loaded::serial into BuildOptions is Make provenance in the executor and does not satisfy this node."
                     }
                 )
             }
@@ -5015,20 +4922,29 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-08T14:21:31.420692308Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Publishing a replacement jobserver to child Make processes is obsolete. The composed parent and subninja graphs use one Ninja scheduler; an outer inherited budget may constrain that scheduler but is never republished as a nested Make runtime."
+                        after_done true
+                    }
                 )
             }
 
             {
                 id make-ported-correctness-suite
-                title "Port GNU Make's behaviour into cases this repository owns"
+                title "Port GNU Make build-intent scenarios into repository-owned cases"
                 priority 0
                 kind @test
                 children (
                     {
                         id make-corpus-features
-                        title "Port GNU Make's feature scenarios into owned cases"
+                        title "Port Make language-feature intent into owned graph and effect cases"
                         priority 1
                         kind @test
+                        deps (make-build-intent-gate)
                         log (
                             {
                                 at 2026-08-08T12:12:13.65782247Z
@@ -5041,9 +4957,10 @@ children (
 
                     {
                         id make-corpus-functions
-                        title "Port GNU Make's function and variable scenarios into owned cases"
+                        title "Port Make function and variable intent into owned graph and effect cases"
                         priority 1
                         kind @test
+                        deps (make-build-intent-gate)
                         log (
                             {
                                 at 2026-08-08T12:12:18.611844281Z
@@ -5056,9 +4973,10 @@ children (
 
                     {
                         id make-corpus-targets
-                        title "Port GNU Make's target and rule scenarios into owned cases"
+                        title "Port Make target and rule intent into owned graph and effect cases"
                         priority 1
                         kind @test
+                        deps (make-build-intent-gate)
                         log (
                             {
                                 at 2026-08-08T12:12:24.679244313Z
@@ -5112,33 +5030,13 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
-                )
-            }
-
-            {
-                id make-directory-announce-level
-                title "Announce the directory at every level GNU Make does, carrying the level"
-                kind @fix
-                log (
-                    {
-                        at 2026-08-08T08:29:06.966837222Z
-                        author "brendan@necessary.nu"
-                        kind @status
-                        text "Todo → Doing (nplan start)"
-                    }
 
                     {
-                        at 2026-08-08T08:48:53.590045045Z
+                        at 2026-08-08T14:21:31.578962876Z
                         author "brendan@necessary.nu"
-                        kind @decision
-                        text "Both halves of GNU Make's directory announcement, read off 4.4.1's own source and then measured against the binary rather than taken from the node's description.\n\n`should_print_dir` in main.c is two rules, not one:\n\n    if (print_directory_flag >= 0) return print_directory_flag;\n    return !silent_flag && (makelevel > 0 || directories != NULL);\n\n`announcing()` had the `directories` half and not the `makelevel` half, so a sub-make reached by `cd sub && $(MAKE)` — no `-C`, no `-w` — announced nothing where GNU announces at every level. That is the first defect and it is one clause: `(level > 0 || !directories.is_empty()) && !silent`.\n\n`log_working_directory` in output.c picks its format string on `makelevel == 0`, writing `%s: ` at the top and `%s[%u]: ` below it. Ronin said `ronin:` at every depth. `program_at` already computes exactly that string for the forced-jobserver warning, so the second defect is calling it from `announcement` instead of writing PRODUCT_NAME.\n\nThe level travels as the value that decides there is a pair at all: `announcing` becomes `Option<usize>` rather than a `bool` beside a `usize`. An Entering with no Leaving leaves every parser resolving paths against a directory the build has already left, and the two halves are now unable to disagree about whether they exist or what depth they name — one value opens and closes them, through `departed`, so `no_makefile`, `abandoned` and `answered` get it by construction. It also keeps `run()` inside the 100-line limit, which the extra argument had breached.\n\n`-q` keeps its gate, and that is deliberate rather than overlooked. GNU has no question-mode rule here: `should_print_dir` never mentions it. What suppresses the pair under `-q` is that GNU is lazy — `output_start` prints Entering on the first output and `output_close` prints Leaving only if it did — and `-q` produces no output. `make -w -q` in a directory with no recursion prints nothing from either tool. Where GNU does print it under `-q`, the cause is that a recipe line holding `$(MAKE)` runs even in question mode, and Ronin does not run those either; that is kati's `+`-only recursion test and a separate node. Removing the gate would print a pair GNU does not print, so the gate stays until the laziness is the thing being fixed.\n\nVerified side by side against /usr/bin/make 4.4.1 through a make-named symlink, on a five-level recursive tree rather than one level. Every announcement line agrees byte for byte at every depth, in: `-C` at each level and `cd` at each level; `-w`, `-s`, `--no-print-directory`, `-s -w` at the top; `--no-print-directory` and `-s` introduced partway down; a recipe failing at the bottom, with and without `-k`; a level with no makefile at all; the forced-jobserver warning, which still lands directly after Entering and now carries the same `[N]`; and MAKELEVEL arriving from the environment as 0, 1, 3, 12, empty and non-numeric.\n\nThree divergences found while measuring, all confirmed present before this change by building the tree without it, and all belonging elsewhere.\n\nAn inherited MAKEFLAGS outranks the command line. `make --no-print-directory` at the top, `$(MAKE) -w -C b` two levels down: GNU announces, Ronin does not. GNU decodes the environment's MAKEFLAGS first and then decodes the command line again, so the command line wins; `adopt_inherited` runs after `parse` and overwrites it. That is switch precedence for every switch, not the announcement.\n\n`-Otarget -j4` brackets levels GNU leaves unbracketed. GNU gives a recursive job the shared descriptor rather than a held block, so only the deepest level — the one running a real command — is bracketed; Ronin brackets each level. make-option-output-sync's ground.\n\nA `-C` into a directory that does not exist announces nothing. GNU prints the pair around the directory it stayed in and refuses with `*** nosuch: No such file or directory.  Stop.`; Ronin prints Ninja's `fatal: chdir to 'nosuch' - ...` and no pair. The wording is a recorded Ninja-parity decision, so the pair cannot be added without deciding whose words go between them."
-                    }
-
-                    {
-                        at 2026-08-08T08:58:07.103303257Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "Done. Two clauses of code, and every value below read off GNU Make 4.4.1 side by side through a make-named symlink rather than reasoned about.\n\n`announcing()` gained the `makelevel > 0` half of `should_print_dir` and now takes the level; `announcement()` leads with `program_at(level)` instead of `PRODUCT_NAME`. `announcing` became `Option<usize>` so the level travels as the same value that decides the pair exists — one value opens it in `run()` and closes it in `departed()`, which is what gets `no_makefile`, `abandoned` and `answered` right without three separate arguments to keep in step. It also kept `run()` inside the 100-line limit that the extra argument had breached: clippy caught it at 102 and the Option form gave the three lines back.\n\nThe transition, on the whole upstream suite before and after:\n\n                 before   after\n  semantic          772     772\n  capability         54      54\n  narration         522     522\n  counted         1,348   1,348\n  directory-announce 39      24\n\nNo case changed class; 15 cases dropped the `directory-announce` family outright and nothing gained it. That is the honest shape of this node — every one of the 39 was already counted, because a bracket in the wrong place is narration and narration is subtracted before a case is judged. What moved is which cases still carry the family, and the 15 are spread across features/jobserver, features/output-sync, options/print-directory, targets/DEFAULT, variables/GNUMAKEFLAGS, variables/MAKE and eight of variables/MAKEFLAGS.\n\nOne case, features/parallelism.diff.2, appeared to gain `recipe-interleave` on the first measured run. It is a `-j4` race between three recipes handshaking through thelp.pl, it holds no directory line at all, and three isolated re-runs of that category produced it none of the three times. The re-recorded inventory does not contain it. Host noise, not this change.\n\nVerified byte for byte against /usr/bin/make on a five-level recursive tree: `-C` at each level and `cd` at each level; `-w`, `-s`, `--no-print-directory`, `-s -w` at the top; `--no-print-directory` and `-s` introduced partway down; a recipe failing at the bottom with and without `-k`; a level with no makefile; the forced-jobserver warning, which still lands directly after Entering and now carries the same `[N]`; and MAKELEVEL arriving from the environment as 0, 1, 3, 12, empty and non-numeric — all six agree, so a level Ronin did not set itself is read the way GNU reads it.\n\nTests: `a_sub_make_announces_its_directory_without_being_asked` and `the_announcement_carries_the_level_it_was_made_at` for the two clauses, and `a_sub_make_announces_the_directory_it_is_in_and_the_depth_it_is_at` in tests/cli.rs for the wiring, because the level crosses a process boundary in MAKELEVEL and no unit test can see that. It uses `cd` rather than `-C` on purpose: that is the shape that announced nothing before.\n\nGates: 466 unit, 56 integration, clippy --all-targets --release silent, fmt clean, check-make-upstream stable against the re-recorded inventory.\n\nA fourth handoff, found after the decision was written: a front-end refusal below the top of the tree does not carry the level either. `make -C a` where a/ has no makefile gives `make[1]: *** No rule to make target 'all'.  Stop.` from GNU and `ronin: *** No targets specified and no makefile found.  Stop.` from Ronin — two defects in one line, the level and the wording, and the wording is why the level was not simply added here. `program_at` is `pub(super)` now and `no_makefile` and `abandoned` are the two callers it wants."
+                        kind @errata
+                        text "Make-specific unrecorded-output dirtiness violates the compiler boundary. make-executor-boundary restores ordinary Ninja dirtiness for every graph and removes frontend-selected timestamp semantics."
+                        after_done true
                     }
                 )
             }
@@ -5190,6 +5088,14 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-08T14:21:31.740028378Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "GNU Make recipe-failure wording is execution narration, not build intent. make-ninja-narration removes this reporter branch so a Makefile-derived graph fails in the ordinary Ninja shape."
+                        after_done true
                     }
                 )
             }
@@ -5293,6 +5199,14 @@ children (
                         kind @status
                         text "Todo → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-08T14:21:31.90277727Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The source-language meaning remains valid only when compiled into edge command semantics. No Make-specific status branch may remain in the executor; make-executor-boundary removes any such provenance."
+                        after_done true
+                    }
                 )
             }
 
@@ -5348,41 +5262,11 @@ children (
             }
 
             {
-                id make-nothing-to-be-done
-                title "Review no-work reporting under Ninja narration"
-                priority 0
-                kind @refactor
-                deps (make-compile-to-ninja-refactor)
-                log (
-                    {
-                        at 2026-08-08T12:11:23.186128875Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "Ronin says `ronin: no work to do.` where GNU Make says `make: 'out' is up to date.` for a named goal and `make: Nothing to be done for 'all'.` for a target with no recipe.\n\n`make-timestamp-dirtiness` made this the common path rather than a rare one: a first run in a tree GNU Make has already built now always takes it, so it is what somebody meets first.\n\nThis needs a decision before code, and the decision is not obvious. `[spec:ronin:req:make.narration]` says Make mode reports in the manifest front end's shape rather than reproducing GNU Make's wording, and calls that a product decision rather than a gap. `make-io-error-wording` read that rule and correctly refused to reword a shared refusal because of it.\n\nBut these two lines are not a refusal's wording. They are Make's answer to \"what did you do\", they name the target, and a script that greps for them is reading a fact rather than a brand. Weigh that against the rule as written, decide, and if the answer supersedes `make.narration` in part, say which part and leave the rest standing.\n\nAlso here, from `make-directory-announce-level`: a front-end refusal below the top carries no level — `ronin: *** No targets specified...` where GNU says `make[1]:`. `program_at` already formats it and `no_makefile`/`abandoned` are the two callers that want it.\n\nThe port gate cannot see any of this — it compares observable effect, not output — so whatever lands needs `tests/cli.rs` coverage instead."
-                    }
-                )
-            }
-
-            {
-                id make-keep-going-report
-                title "Report the goals a keep-going build could not remake"
-                priority 1
-                kind @feat
-                log (
-                    {
-                        at 2026-08-08T12:11:27.751145324Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "Two lines a keep-going build says and Ronin does not, found by `make-recipe-failure-line`:\n\n`make: Target 'x' not remade because of errors.` — 18 diffs. GNU says it **per goal, at the point that goal finishes**, not as a summary appended at the end. So it needs the goal list inside the build loop rather than a line added after it, which is why the node exists rather than it being three lines.\n\n`make: *** Waiting for unfinished jobs....` — 1 diff, said when a parallel build has failed and is draining.\n\nVerify both against /usr/bin/make 4.4.1: which goals count, what happens under `-k` with several failures, what a phony goal does, and whether the line appears when the failure was ignored (`make-ignore-errors-status` just changed what \"failed\" means here).\n\n`src/build.rs` and `src/build/reporter.rs`."
-                    }
-                )
-            }
-
-            {
                 id make-option-carrying
-                title "Carry every option a sub-make should inherit, as Make writes it"
+                title "Carry graph-affecting invocation inputs into subninja compilation"
                 priority 2
                 kind @fix
+                deps (make-subninja-recursion)
                 log (
                     {
                         at 2026-08-08T12:11:34.418431875Z
@@ -5395,9 +5279,10 @@ children (
 
             {
                 id make-refusal-reaches-further
-                title "Refuse only where GNU Make refuses, and name the file when doing it"
+                title "Preserve compiler refusals and source locations without Make runner wording"
                 priority 2
                 kind @fix
+                deps (make-executor-boundary)
                 log (
                     {
                         at 2026-08-08T12:11:47.03355994Z
@@ -5450,12 +5335,34 @@ children (
                         priority 0
                         kind @chore
                         deps (kati-graph-sink make-graph-equivalence)
+                        sealed true
                         log (
                             {
                                 at 2026-08-08T14:08:20.792415437Z
                                 author "brendan@necessary.nu"
                                 kind @decision
                                 text "Inventory every landed Make-mode code path and every open Make WBS node. Classify each as (1) kati/compiler semantics required to produce the faithful graph, (2) a Make interface control mapped to an existing Ninja control, (3) an accepted no-op, or (4) GNU Make runtime emulation to remove or retire. Record the classification and update the affected WBS nodes before completing this manual leaf. Graph-affecting language work stays; scheduler, persistence, reporting, recursive-process, and jobserver imitation does not."
+                            }
+
+                            {
+                                at 2026-08-08T14:10:51.105634679Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T14:19:33.89859405Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "The durable classification is docs/make-compiler-boundary-audit.md. Retire behavior-only leaves make-jobserver-server, make-diagnostic-stop, make-abandon-exit-status, make-option-output-sync, make-option-debug-and-trace, make-option-shuffle, make-option-touch-and-what-if, make-directory-announce-level, make-nothing-to-be-done, and make-keep-going-report. Their accepted option spellings move to make-interface-surface; their GNU Make runtime behavior does not remain in the implementation."
+                            }
+
+                            {
+                                at 2026-08-08T14:22:49.921372177Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -5542,7 +5449,7 @@ children (
                         priority 0
                         kind @refactor
                         implements {
-                            target-impl ([spec:ronin:req:make.compiler-boundary])
+                            target-impl ([spec:ronin:req:make.compiler-boundary] [spec:ronin:req:make.state-outside-the-tree+1])
                         }
                         deps (make-single-ninja-scheduler make-ninja-narration)
                         log (
