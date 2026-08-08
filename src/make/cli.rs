@@ -200,7 +200,7 @@ impl Invocation {
         level
     }
 
-    /// Take on the switches a parent make put in `MAKEFLAGS`.
+    /// Take on what a parent make put in `MAKEFLAGS`.
     ///
     /// GNU Make reads that variable as though it were typed on the command
     /// line, which is what makes `-s` and `-k` reach the whole tree from the
@@ -208,19 +208,22 @@ impl Invocation {
     /// this is the only way a switch reaches a sub-make, since `$(MAKE)` is a
     /// path and carries nothing.
     ///
-    /// Only the switches. Everything else in there belongs to somebody else —
-    /// the assignments are `session_for`'s and the jobserver's auth token is
-    /// the transport's, and a long option is skipped whole rather than read
-    /// letter by letter, since `--jobserver-auth` is full of letters that name
-    /// switches. The two long withdrawals are recognised by name before that
-    /// skip, having no letter to travel as.
+    /// Read before the command line rather than after it, which is what lets
+    /// the command line outrank it: GNU Make decodes this variable first and
+    /// the arguments second, so whichever spoke last about a switch is the one
+    /// that settles it, and the arguments always speak last. A switch nobody
+    /// typed keeps whatever arrived here.
+    ///
+    /// The switches and the assignments, and nothing else: the jobserver's
+    /// auth token is the transport's and goes with the rest of the long
+    /// options, which are skipped whole rather than read letter by letter,
+    /// since `--jobserver-auth` is full of letters that name switches. The two
+    /// long withdrawals are recognised by name before that skip, having no
+    /// letter to travel as.
     // [spec:ronin:req:make.recursive-invocation]
     fn adopt_inherited(&mut self, inherited: Option<&str>) {
-        for word in inherited
-            .unwrap_or_default()
-            .split_ascii_whitespace()
-            .take_while(|word| *word != "--")
-        {
+        let mut words = inherited.unwrap_or_default().split_ascii_whitespace();
+        for word in words.by_ref().take_while(|word| *word != "--") {
             if let Some(switch) = Switch::long_negation(word.as_bytes()) {
                 self.withdraw(switch);
                 continue;
@@ -244,10 +247,11 @@ impl Invocation {
                 continue;
             }
             // One word carrying a name, not a cluster: read letter by letter it
-            // would turn on -e and -r. The command line outranks it.
+            // would turn on -e and -r. A name this does not know is left to the
+            // one already settled rather than clearing it.
             if let Some(kind) = word.strip_prefix("-O") {
-                if self.output_sync.is_none() {
-                    self.output_sync = OutputSync::parse(kind.as_bytes()).ok();
+                if let Ok(sync) = OutputSync::parse(kind.as_bytes()) {
+                    self.output_sync = Some(sync);
                 }
                 continue;
             }
@@ -262,6 +266,11 @@ impl Invocation {
                 }
             }
         }
+        // What follows the `--`, and read before the command line as the
+        // switches are, so a name assigned again here outranks the one that
+        // arrived.
+        self.variables
+            .extend(words.map(|word| Bytes::from(word.as_bytes().to_vec())));
     }
 
     /// The switches a sub-make has to be told about again.
@@ -271,30 +280,35 @@ impl Invocation {
     /// the other. They were once appended to `$(MAKE)` instead, on the belief
     /// that `MAKEFLAGS` was the jobserver's alone; that made `$(MAKE)` several
     /// words, and a consumer that treats the answer as a path cannot exec it.
+    ///
+    /// In GNU Make's own switch-table order, which is the order it writes them
+    /// in: the one negating letter sits at its own place in the group rather
+    /// than after it, so `make -i -S -w` hands a child `MAKEFLAGS=iSw`.
     fn propagated(&self) -> Vec<OsString> {
         let mut propagated = Vec::new();
-        for (switch, spelling) in [
-            (Switch::AlwaysMake, "-B"),
-            (Switch::Debug, "-d"),
-            (Switch::EnvironmentOverrides, "-e"),
-            (Switch::IgnoreErrors, "-i"),
-            (Switch::KeepGoing, "-k"),
-            (Switch::DryRun, "-n"),
-            (Switch::Question, "-q"),
-            (Switch::NoBuiltinRules, "-r"),
-            (Switch::NoBuiltinVariables, "-R"),
-            (Switch::Silent, "-s"),
-            (Switch::Touch, "-t"),
-            (Switch::PrintDirectory, "-w"),
+        for (switch, spelling, asserted) in [
+            (Switch::AlwaysMake, "-B", true),
+            (Switch::Debug, "-d", true),
+            (Switch::EnvironmentOverrides, "-e", true),
+            (Switch::IgnoreErrors, "-i", true),
+            (Switch::KeepGoing, "-k", true),
+            (Switch::DryRun, "-n", true),
+            (Switch::Question, "-q", true),
+            (Switch::NoBuiltinRules, "-r", true),
+            (Switch::NoBuiltinVariables, "-R", true),
+            (Switch::Silent, "-s", true),
+            (Switch::KeepGoing, "-S", false),
+            (Switch::Touch, "-t", true),
+            (Switch::PrintDirectory, "-w", true),
         ] {
-            if self.given(switch) {
+            let spoken = if asserted {
+                self.given(switch)
+            } else {
+                self.refused(switch)
+            };
+            if spoken {
                 propagated.push(OsString::from(spelling));
             }
-        }
-        // The one negating letter, and it travels with the rest: `make -k -S`
-        // hands a child `MAKEFLAGS=S`.
-        if self.refused(Switch::KeepGoing) {
-            propagated.push(OsString::from("-S"));
         }
         propagated
     }
@@ -666,10 +680,12 @@ fn attached_long(
     Ok(true)
 }
 
-/// Read one Make command line.
+/// Read one Make command line, over whatever a parent make put in `MAKEFLAGS`.
 // [spec:ronin:req:product.make-identity]
-fn parse(arguments: &[BString]) -> Result<Action, Error> {
+// [spec:ronin:req:make.recursive-invocation]
+fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error> {
     let mut invocation = Invocation::new();
+    invocation.adopt_inherited(inherited);
     let mut index = 1;
     let mut options_enabled = true;
     while index < arguments.len() {
@@ -876,19 +892,9 @@ fn session_for(
     makefile: &Path,
     jobs: usize,
     invoked_as: &Path,
-    inherited: Option<&str>,
     level: usize,
 ) -> Session {
     let mut session = Session::new();
-    // A parent's command-line assignments arrive in MAKEFLAGS, after the
-    // switches: those are the words with an `=` that are not options.
-    let mut variables = inherited
-        .into_iter()
-        .flat_map(str::split_ascii_whitespace)
-        .filter(|word| !word.starts_with('-') && word.contains('='))
-        .map(|word| Bytes::from(word.as_bytes().to_vec()))
-        .collect::<Vec<_>>();
-    variables.extend(invocation.variables.iter().cloned());
     session.flags = Flags {
         makefile: Some(makefile.as_os_str().to_owned()),
         num_jobs: jobs,
@@ -901,7 +907,9 @@ fn session_for(
         no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
         environment_overrides: invocation.given(Switch::EnvironmentOverrides),
         ignore_errors: invocation.given(Switch::IgnoreErrors),
-        cl_vars: variables,
+        // A parent's assignments and this invocation's own, in that order,
+        // which is the order Make applies them.
+        cl_vars: invocation.variables.clone(),
         // One word, and that word is a path. GNU Make answers `$(MAKE)` this
         // way and a great deal of software execs the answer rather than running
         // it through a shell — upstream's own suite adopts it as the program for
@@ -1061,7 +1069,8 @@ const fn job_count(options: &BuildOptions) -> usize {
 /// dash, and the job count and jobserver token follow — an empty group shows as
 /// the leading space children already tolerate, so this writes only the letters
 /// and lets the publication append the rest. Command-line assignments go here
-/// too, which is where `session_for` already reads a parent's.
+/// too, a parent's among them: they reached this invocation the same way and a
+/// tree three deep loses one that stops here.
 ///
 /// `MFLAGS` is the same switches spelled as a command line rather than as a
 /// bare group, and carries no assignments: GNU Make keeps those in
@@ -1079,14 +1088,15 @@ fn flag_environment(invocation: &Invocation) -> Vec<(&'static str, OsString)> {
         .iter()
         .filter_map(|switch| switch.to_str().and_then(|switch| switch.strip_prefix('-')))
         .collect();
-    let mut assignments = invocation
+    // GNU Make holds these in MAKEOVERRIDES, which is a variable table: one
+    // entry per name, holding the last assignment to it, handed back in name
+    // order rather than in the order they were typed.
+    let assignments = invocation
         .variables
         .iter()
         .filter_map(|assignment| assignment.to_str().ok())
-        .collect::<Vec<_>>();
-    // GNU Make holds these in MAKEOVERRIDES, which is a variable table and so
-    // hands them back in name order rather than in the order they were typed.
-    assignments.sort_unstable();
+        .filter_map(|assignment| Some((assignment.split_once('=')?.0, assignment)))
+        .collect::<std::collections::BTreeMap<_, _>>();
     let mut makeflags = letters.clone();
     // Between the letter group and the long options, which is where GNU Make
     // writes it: `k -Oline --debug=b --trace --no-print-directory`.
@@ -1126,7 +1136,7 @@ fn flag_environment(invocation: &Invocation) -> Vec<(&'static str, OsString)> {
         // GNU Make ends the switches at a `--` before the assignments, so that
         // one beginning with a dash cannot be read as another switch.
         makeflags.push_str(" -- ");
-        makeflags.push_str(&assignments.join(" "));
+        makeflags.push_str(&assignments.into_values().collect::<Vec<_>>().join(" "));
     }
     let mut environment = vec![("MAKEFLAGS", OsString::from(makeflags))];
     if !letters.is_empty() {
@@ -1216,12 +1226,10 @@ pub(crate) fn run(
     mut output: Option<&mut dyn Write>,
     mut diagnostics: Option<&mut dyn Write>,
 ) -> Result<RunResult, Error> {
-    let mut invocation = match parse(arguments)? {
+    let invocation = match parse(arguments, runner.makeflags.as_deref())? {
         Action::Immediate(result) => return Ok(result),
         Action::Execute(invocation) => *invocation,
     };
-    // Before anything reads a switch, and `announcing` reads one immediately.
-    invocation.adopt_inherited(runner.makeflags.as_deref());
     let invoked_as = make_named_invocation(arguments, &runner.executable);
     let mut reported = String::new();
     let directory = enter_directories(&invocation.directories)?;
@@ -1259,7 +1267,6 @@ pub(crate) fn run(
         &makefile,
         job_count(&options),
         &invoked_as,
-        runner.makeflags.as_deref(),
         level,
     );
     record_invocation_variables(&mut session, &invocation, level)?;
@@ -1422,7 +1429,9 @@ fn narrate(
 
 #[cfg(test)]
 mod tests {
-    use super::{announcement, parse, Action, Invocation, Shuffle, Switch, PRODUCT_NAME};
+    use super::{
+        announcement, parse, Action, Invocation, OutputSync, Shuffle, Switch, PRODUCT_NAME,
+    };
     use crate::build::JobLimit;
     use crate::util::BString;
     use std::path::{Path, PathBuf};
@@ -1432,7 +1441,7 @@ mod tests {
             .iter()
             .map(|argument| BString::from(*argument))
             .collect::<Vec<_>>();
-        match parse(&arguments).unwrap() {
+        match parse(&arguments, None).unwrap() {
             Action::Execute(invocation) => *invocation,
             Action::Immediate(_) => panic!("these arguments describe a build"),
         }
@@ -1502,19 +1511,67 @@ mod tests {
     /// path and carries nothing. The long option is in here because its spelling
     /// contains `s`, `e`, `r` and `i`, and reading it letterwise would silence a
     /// build that asked for no such thing.
+    ///
+    /// It is read before the command line, which is what settles the two
+    /// against each other: what was typed has the last word on a switch the
+    /// parent had already spoken about, in either direction, and a switch only
+    /// the parent named still takes effect.
     // [spec:ronin:req:make.recursive-invocation/test]
     #[test]
     fn a_sub_make_takes_on_the_switches_its_parent_recorded() {
-        let mut invocation = parsed(&["make", "all"]);
-        invocation.adopt_inherited(Some("ks -- FOO=bar"));
-        assert!(invocation.given(super::Switch::KeepGoing));
-        assert!(invocation.given(super::Switch::Silent));
+        // The same read `parsed` does, with something for it to read over.
+        let under = |inherited: Option<&str>, arguments: &[&str]| {
+            let arguments = arguments
+                .iter()
+                .map(|argument| BString::from(*argument))
+                .collect::<Vec<_>>();
+            match parse(&arguments, inherited).unwrap() {
+                Action::Execute(invocation) => *invocation,
+                Action::Immediate(_) => panic!("these arguments describe a build"),
+            }
+        };
 
-        let mut invocation = parsed(&["make", "all"]);
-        invocation.adopt_inherited(Some("w -j4 --jobserver-auth=fifo:/tmp/x"));
-        assert!(invocation.given(super::Switch::PrintDirectory));
-        assert!(!invocation.given(super::Switch::Silent));
-        assert!(!invocation.given(super::Switch::NoBuiltinRules));
+        let invocation = under(Some("ks -- FOO=bar"), &["make", "all"]);
+        assert!(invocation.given(Switch::KeepGoing));
+        assert!(invocation.given(Switch::Silent));
+
+        let invocation = under(Some("w -j4 --jobserver-auth=fifo:/tmp/x"), &["make", "all"]);
+        assert!(invocation.given(Switch::PrintDirectory));
+        assert!(!invocation.given(Switch::Silent));
+        assert!(!invocation.given(Switch::NoBuiltinRules));
+
+        // Asserted here, withdrawn there, and the other way about.
+        assert!(under(Some("w"), &["make", "--no-print-directory"]).refused(Switch::PrintDirectory));
+        assert!(under(Some("--no-print-directory"), &["make", "-w"]).given(Switch::PrintDirectory));
+        assert!(under(Some("k"), &["make", "-S"]).refused(Switch::KeepGoing));
+        assert!(under(Some("S"), &["make", "-k"]).given(Switch::KeepGoing));
+
+        // Only there, only here, and both agreeing.
+        assert!(under(Some("i"), &["make"]).given(Switch::IgnoreErrors));
+        assert!(under(None, &["make", "-i"]).given(Switch::IgnoreErrors));
+        assert!(under(Some("i"), &["make", "-i"]).given(Switch::IgnoreErrors));
+
+        // The switches carrying a value follow the same rule: the last word on
+        // one wins, and `--debug` accumulates in the order the two were read,
+        // so a `--debug=n` typed here takes back what the parent asked for.
+        let sync = |invocation: Invocation| invocation.output_sync.map(OutputSync::spelling);
+        assert_eq!(sync(under(Some("-Oline"), &["make"])), Some("-Oline"));
+        assert_eq!(
+            sync(under(Some("-Oline"), &["make", "-Otarget"])),
+            Some("-Otarget")
+        );
+        assert_eq!(
+            under(Some("--shuffle=reverse"), &["make", "--shuffle=none"]).shuffle,
+            Shuffle::None
+        );
+        assert_eq!(
+            under(Some("--debug=a"), &["make", "--debug=n"]).debugging(),
+            0
+        );
+        assert_ne!(
+            under(Some("--debug=n"), &["make", "--debug=b"]).debugging(),
+            0
+        );
     }
 
     /// Switches and assignments go to MAKEFLAGS, not into `$(MAKE)`. MFLAGS
@@ -1545,7 +1602,7 @@ mod tests {
             .iter()
             .map(|argument| BString::from(*argument))
             .collect::<Vec<_>>();
-        match parse(&arguments).unwrap() {
+        match parse(&arguments, None).unwrap() {
             Action::Immediate(result) => {
                 // An option Make does not know is a build it will not attempt,
                 // and GNU Make abandons with two whatever the reason.
@@ -1633,6 +1690,8 @@ mod tests {
         // Read off GNU Make 4.4.1, once per spelling.
         assert_eq!(makeflags(&["-S"]), "S");
         assert_eq!(makeflags(&["-k", "-S"]), "S");
+        // In the group at its own place, not after it.
+        assert_eq!(makeflags(&["-i", "-S", "-w", "-B", "-r"]), "BirSw");
         assert_eq!(
             makeflags(&["--no-print-directory"]),
             " --no-print-directory"

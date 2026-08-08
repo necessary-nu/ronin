@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 8
+| # The switches that carry something rather than only being given: what reaches
+| # a sub-make is a value, and one it settles on itself replaces that value.
+| all:
+| 	@OUT=inherited $(MAKE) -f sub.mk
+| 	@OUT=other-sync $(MAKE) -Otarget -f sub.mk
+| 	@OUT=more-debug $(MAKE) --debug=j -f sub.mk
+| 	@OUT=no-debug $(MAKE) --debug=n -f sub.mk
+| 	@OUT=no-shuffle $(MAKE) --shuffle=none -f sub.mk
+file inherited touched 1
+|  -Oline --debug=b --shuffle=reverse
+file more-debug touched 1
+|  -Oline --debug=b --debug=j --shuffle=reverse
+file no-debug touched 1
+|  -Oline --debug=b --debug=n --shuffle=reverse
+file no-shuffle touched 1
+|  -Oline --debug=b
+file other-sync touched 1
+|  -Otarget --debug=b --shuffle=reverse
+file sub.mk kept 1
+| all: ; @printf '%s\n' "$$MAKEFLAGS" > $$OUT
