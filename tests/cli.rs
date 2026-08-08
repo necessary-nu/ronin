@@ -992,6 +992,116 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// A pattern rule is chosen by whether its prerequisites are there, so under
+/// `.SECONDEXPANSION` the expansion is part of the search: `%.o` must build
+/// `named.o` where `named.c` exists and decline where it does not.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_expands_a_pattern_rules_prerequisites_again() {
+    let directory = test_directory("make-second-expansion-pattern");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".SECONDEXPANSION:\n\
+         all: named.o\n\
+         %.o: $$*.c $$@.flags ; @echo built $@ from $^\n",
+    )
+    .unwrap();
+    fs::write(directory.join("named.c"), "").unwrap();
+    fs::write(directory.join("named.o.flags"), "").unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("named.o")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("built named.o from named.c named.o.flags"),
+        "{stdout}"
+    );
+
+    let missing = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("absent.o")
+        .output()
+        .unwrap();
+    assert!(!missing.status.success());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The prerequisite patterns after a static pattern rule's second colon get the
+/// same treatment, with `%` standing for the stem in what the expansion left.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_expands_a_static_pattern_rules_prerequisites_again() {
+    let directory = test_directory("make-second-expansion-statpat");
+    fs::create_dir_all(&directory).unwrap();
+    // `$<` and `$^` are worth what the rule above recorded, and `%` is the stem.
+    fs::write(
+        directory.join("Makefile"),
+        ".SECONDEXPANSION:\n\
+         one.o: first.c\n\
+         one.o: %.o: $$(addsuffix .$$*,$$^) %.h ; @echo built $@ from $^\n",
+    )
+    .unwrap();
+    for name in ["first.c", "first.c.one", "one.h"] {
+        fs::write(directory.join(name), "").unwrap();
+    }
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("one.o")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("built one.o from first.c first.c.one one.h"),
+        "{stdout}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A `|` ends the word it falls in, so the order-only list can arrive from the
+/// expansion rather than from what was written.
+// [spec:ronin:req:make.semantics/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_reads_an_order_only_marker_out_of_an_expansion() {
+    let directory = test_directory("make-second-expansion-order-only");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".SECONDEXPANSION:\n\
+         PRE = dep|after\n\
+         all: $$(PRE) ; @echo all from [$^] and [$|]\n\
+         dep after: ; @echo made $@\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("all")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("all from [dep] and [after]"), "{stdout}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
