@@ -851,6 +851,9 @@ fn parse_run_arguments(
 ///
 /// `unshared` is the limit for a build that named none and found no jobserver
 /// to join, which is the one answer the two front ends give differently.
+///
+/// Reports the job count an explicit `-j` forced over an inherited budget, zero
+/// for an unbounded one, which is what GNU Make warns about in a sub-make.
 // [spec:ronin:req:compat.process-integration]
 pub(crate) fn normalize_runtime_options(
     options: &mut BuildOptions,
@@ -859,13 +862,10 @@ pub(crate) fn normalize_runtime_options(
     terminal: crate::build::TerminalContext,
     connect_jobserver: impl FnOnce() -> Result<jobserver::Client, crate::error::ProcessError>,
     unshared: JobLimit,
-) -> CliResult<()> {
+) -> CliResult<Option<usize>> {
     let config = crate::jobserver::parse_makeflags_value(makeflags)?;
-    // A jobserver named in the environment is one this build must not shadow,
-    // whether or not it draws on it: an explicit `-j` under a parent Make
-    // declines the shared budget for Ronin's own commands, but the commands
-    // still reach the parent's jobserver the way every other child does.
     let inheritable = config.has_mode() && config.is_native();
+    let mut forced = None;
     if options.jobs == JobLimit::Auto {
         if inheritable {
             options.jobs = JobLimit::Unlimited;
@@ -876,13 +876,24 @@ pub(crate) fn normalize_runtime_options(
         } else {
             options.jobs = unshared;
         }
+    } else if inheritable {
+        // An explicit `-j` declines the inherited budget, and declining it is
+        // what puts this build back in charge of one: it serves its own, sized
+        // to what it was asked for, so the count reaches the levels below
+        // rather than stopping here. GNU Make resets the mode the same way.
+        forced = Some(match options.jobs {
+            JobLimit::Fixed(jobs) => jobs.get(),
+            JobLimit::Auto | JobLimit::Unlimited => 0,
+        });
     }
-    options.serve_jobserver = !inheritable;
+    // A build serves a budget unless it is spending one, which is what keeps
+    // the two mutually exclusive without asking who is at the top of the tree.
+    options.serve_jobserver = options.jobserver.is_none();
     if let Some(status) = status_format {
         status.clone_into(&mut options.statusfmt);
     }
     options.terminal = terminal;
-    Ok(())
+    Ok(forced)
 }
 
 fn default_target_names(graph: &BuildGraph) -> Vec<BString> {
@@ -1611,6 +1622,8 @@ pub(crate) fn run_bytes<'sink>(
         enter_directory(&mut invocation.working_directory, &directory)?;
     }
     invocation.build_options.working_directory = invocation.working_directory.clone();
+    // The forced job count goes unread: Ninja ignores an inherited jobserver
+    // under `-j` silently, having no server of its own to announce resetting.
     normalize_runtime_options(
         &mut invocation.build_options,
         runner.makeflags.as_deref(),
@@ -1989,13 +2002,13 @@ mod tests {
     #[cfg(unix)]
     #[test]
     // [spec:ronin:req:make.jobserver/test]
-    fn rust_cli_serves_a_jobserver_only_at_the_top_of_the_tree() {
-        let normalize = |makeflags| {
+    fn rust_cli_serves_a_jobserver_unless_it_is_spending_one() {
+        let normalize = |jobs, makeflags| {
             let mut options = BuildOptions {
-                jobs: JobLimit::fixed(4).unwrap(),
+                jobs,
                 ..BuildOptions::default()
             };
-            normalize_runtime_options(
+            let forced = normalize_runtime_options(
                 &mut options,
                 makeflags,
                 None,
@@ -2004,18 +2017,35 @@ mod tests {
                 JobLimit::fixed(default_jobs()).expect("the default job count is nonzero"),
             )
             .unwrap();
-            options.serve_jobserver
+            (options.serve_jobserver, forced)
         };
+        let four = JobLimit::fixed(4).unwrap();
 
         // Nothing in the environment names a jobserver, so this build is the
         // top of its tree and owns the budget its children share.
-        assert!(normalize(None));
-        assert!(normalize(Some("-k")));
-        // A parent already published one. Declining to draw on it is not a
-        // reason to replace it: the commands still reach the parent's budget,
-        // and a second budget beside it would be spent alongside the first.
-        assert!(!normalize(Some(" -j8 --jobserver-auth=fifo:/tmp/parent")));
-        assert!(!normalize(Some(" -j8 --jobserver-auth=3,4")));
+        assert_eq!(normalize(four, None), (true, None));
+        assert_eq!(normalize(four, Some("-k")), (true, None));
+        // A parent published one and this build declined it, which is what an
+        // explicit `-j` is. The count has to reach the levels below here too,
+        // and serving it is the only way it gets there — GNU Make resets the
+        // mode the same way, and says so.
+        assert_eq!(
+            normalize(four, Some(" -j8 --jobserver-auth=fifo:/tmp/parent")),
+            (true, Some(4))
+        );
+        assert_eq!(
+            normalize(four, Some(" -j8 --jobserver-auth=3,4")),
+            (true, Some(4))
+        );
+        // An unbounded `-j` is not a budget anything can serve, and GNU Make
+        // warns about it as `-j0`.
+        assert_eq!(
+            normalize(
+                JobLimit::Unlimited,
+                Some(" -j8 --jobserver-auth=fifo:/tmp/parent")
+            ),
+            (true, Some(0))
+        );
     }
 
     #[cfg(unix)]
@@ -2038,6 +2068,7 @@ mod tests {
         .unwrap();
         assert_eq!(options.jobs, JobLimit::Unlimited);
         assert!(options.jobserver.is_some());
+        assert!(!options.serve_jobserver);
 
         let mut explicit = BuildOptions {
             jobs: JobLimit::fixed(2).unwrap(),

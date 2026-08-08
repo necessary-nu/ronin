@@ -2318,3 +2318,96 @@ fn a_recursive_makefile_tree_shares_one_job_budget() {
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// A sub-make given its own `-j` declines the budget it inherited and serves
+/// that count instead, so the levels below it get it rather than running one
+/// recipe at a time. GNU Make resets the mode the same way and warns in these
+/// words.
+#[cfg(all(unix, feature = "make"))]
+// [spec:ronin:req:make.jobserver/test]
+#[test]
+fn a_forced_job_count_replaces_the_budget_a_sub_make_inherited() {
+    const LEVELS: [&str; 3] = ["a", "b", "c"];
+    const UNITS: usize = 6;
+    /// Larger than the budget the top of the tree serves, so a level below the
+    /// forced one running at the parent's count is a different measurement.
+    const FORCED: usize = 4;
+
+    let directory = test_directory("make-forced-budget");
+    let served = directory.join("jobservers");
+    fs::create_dir_all(&served).unwrap();
+    let log = directory.join("units");
+    let stamp = directory.join("unit.sh");
+    fs::write(
+        &stamp,
+        "#!/bin/sh\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    // The forcing level is the first, and the work is two hops below it, so
+    // what is measured is the budget reaching the bottom rather than the
+    // forcing level spending its own implicit slot.
+    fs::write(
+        directory.join("Makefile"),
+        format!(
+            "all:\n\t@$(MAKE) -j{FORCED} -f {}.mk all\n.PHONY: all\n",
+            LEVELS[0]
+        ),
+    )
+    .unwrap();
+    let (deepest, delegating) = LEVELS.split_last().expect("the tree has levels");
+    for (index, level) in delegating.iter().enumerate() {
+        fs::write(
+            directory.join(format!("{level}.mk")),
+            format!(
+                "all:\n\t@$(MAKE) -f {}.mk all\n.PHONY: all\n",
+                LEVELS[index + 1]
+            ),
+        )
+        .unwrap();
+    }
+    let units = (0..UNITS)
+        .map(|unit| format!("{deepest}{unit}"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    fs::write(
+        directory.join(format!("{deepest}.mk")),
+        format!(
+            "all: {units}\n{units}:\n\t@{} $@\n.PHONY: all {units}\n",
+            stamp.display()
+        ),
+    )
+    .unwrap();
+
+    let program = invoked_as(&directory, "make");
+    let output = make_command(&program, &directory)
+        .arg("-j2")
+        .env("LOG", &log)
+        .env("TMPDIR", &served)
+        .output()
+        .unwrap();
+    // Both streams: the forcing level is a recipe, and a recipe's diagnostics
+    // reach the run through the captured output its parent replays.
+    let said = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{said}");
+    let (peak, ran) = peak_concurrency(&fs::read_to_string(&log).unwrap());
+    assert_eq!(ran, UNITS);
+    // Exactly the forced count: the ceiling alone is met by a tree running one
+    // recipe at a time, which is what the inherited budget stopping at the
+    // forcing level looks like.
+    assert_eq!(
+        peak, FORCED,
+        "-j{FORCED} forced two levels up ran {peak} recipes at the bottom"
+    );
+    assert!(
+        said.contains(&format!(
+            "warning: -j{FORCED} forced in submake: resetting jobserver mode."
+        )),
+        "{said}"
+    );
+
+    assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
+    fs::remove_dir_all(directory).unwrap();
+}
