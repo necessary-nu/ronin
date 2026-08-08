@@ -262,6 +262,7 @@ assertions (
     {id make-recursive-jobserver-reach, kind @complete, author "brendan@necessary.nu", at 2026-08-07T02:09:17.462787007Z}
     {id make-notparallel-target, kind @doing, author "brendan@necessary.nu", at 2026-08-08T01:01:26.318535741Z}
     {id make-option-debug-and-trace, kind @doing, author "brendan@necessary.nu", at 2026-08-08T02:00:20.872612954Z}
+    {id make-option-shuffle, kind @doing, author "brendan@necessary.nu", at 2026-08-08T02:31:10.577207994Z}
 )
 
 impl_evidence (

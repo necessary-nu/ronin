@@ -22,6 +22,7 @@ use crate::build::{BuildOptions, JobLimit};
 use crate::cli::{RunResult, Runner, PRODUCT_NAME};
 use crate::error::CliError;
 use crate::frontend::{Build, Outcome, Persistence};
+use crate::make::Shuffle;
 use crate::util::{terminated, BString, ByteSlice};
 use crate::Error;
 use kati::bytes::Bytes;
@@ -107,6 +108,9 @@ struct Invocation {
     /// Each `--debug` argument as it was written. Kept as words rather than as
     /// the facets they mean, because a sub-make is handed them unchanged.
     debug: Vec<BString>,
+    /// What `--shuffle` settled on, already resolved to a permutation rather
+    /// than left as the word that asked for one.
+    shuffle: Shuffle,
     jobs: Option<JobLimit>,
     /// The load average above which no further recipe starts. `-l` with no
     /// number lifts the limit rather than imposing one, which is what a limit
@@ -131,6 +135,7 @@ impl Invocation {
             goals: Vec::new(),
             variables: Vec::new(),
             debug: Vec::new(),
+            shuffle: Shuffle::None,
             jobs: None,
             load: None,
             switches: 0,
@@ -211,6 +216,14 @@ impl Invocation {
             }
             if word == "--trace" {
                 self.add(Switch::Trace);
+                continue;
+            }
+            // A parent settled the seed, so this reads a permutation rather than
+            // a request and the whole tree shuffles the same way.
+            if let Some(spec) = word.strip_prefix("--shuffle=") {
+                if let Some(mode) = Shuffle::requested(spec.as_bytes()) {
+                    self.shuffle = mode;
+                }
                 continue;
             }
             if word.starts_with("--") || word.contains('=') {
@@ -407,6 +420,7 @@ fn usage() -> String {
             "  -d       report what Make is doing, as --debug=a does\n",
             "  --debug[=FLAGS]  report the workings FLAGS names: a b i j m n p v w\n",
             "  --trace  report why each recipe is running, as --debug=p,w does\n",
+            "  --shuffle[=MODE]  build in another order: SEED, random, reverse, none\n",
             "  -v       print the version, as --version does\n",
             "  --no-print-directory, --no-silent\n",
             "  --version, --help\n",
@@ -607,6 +621,17 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
                     )));
                 }
                 invocation.debug.push(BString::from(spec));
+            }
+            // GNU Make's argument is optional and its default is `random`.
+            option if option == b"--shuffle" || option.starts_with(b"--shuffle=") => {
+                let spec = option.strip_prefix(b"--shuffle=").unwrap_or(b"random");
+                let Some(mode) = Shuffle::requested(spec) else {
+                    return Ok(refuse(format_args!(
+                        "invalid shuffle mode: Invalid value: '{}'",
+                        spec.to_str_lossy()
+                    )));
+                };
+                invocation.shuffle = mode;
             }
             b"--jobs" => invocation.jobs = Some(jobs_value(arguments, &mut index, b"")?),
             b"--load-average" => invocation.load = Some(load_value(arguments, &mut index, b"")?),
@@ -958,6 +983,12 @@ fn flag_environment(invocation: &Invocation) -> Vec<(&'static str, OsString)> {
         makeflags.push(' ');
         makeflags.push_str(withdrawn);
     }
+    // Last, where GNU Make's switch table puts it, and carrying the seed this
+    // run settled on so that a child reproduces the same order.
+    if let Some(mode) = invocation.shuffle.spelling() {
+        makeflags.push_str(" --shuffle=");
+        makeflags.push_str(&mode);
+    }
     if !assignments.is_empty() {
         // GNU Make ends the switches at a `--` before the assignments, so that
         // one beginning with a dash cannot be read as another switch.
@@ -1094,7 +1125,7 @@ pub(crate) fn run(
     record_invocation_variables(&mut session, &invocation, level)?;
 
     let mut options = options;
-    let mut graph = match evaluated(session, &reported) {
+    let mut graph = match evaluated(session, invocation.shuffle, &reported) {
         Ok(loaded) => adopt(&mut options, loaded),
         Err(result) => return Ok(result),
     };
@@ -1179,8 +1210,12 @@ fn record_invocation_variables(
 /// wrote it, because the evaluator already put the program's name in front of
 /// it; naming it again here would say it twice.
 // [spec:ronin:req:make.recursive-invocation]
-fn evaluated(session: Session, reported: &str) -> Result<crate::make::Loaded, RunResult> {
-    crate::make::load_makefile(session).map_err(|failure| RunResult {
+fn evaluated(
+    session: Session,
+    shuffle: Shuffle,
+    reported: &str,
+) -> Result<crate::make::Loaded, RunResult> {
+    crate::make::load_makefile(session, shuffle).map_err(|failure| RunResult {
         stdout: terminated(reported),
         stderr: terminated(failure.to_string()),
         exit_code: ABANDONED,
@@ -1341,7 +1376,7 @@ fn finished(reported: String, up_to_date: bool, outcome: &Outcome, silent: bool)
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Action, Invocation, Switch};
+    use super::{parse, Action, Invocation, Shuffle, Switch};
     use crate::build::JobLimit;
     use crate::util::BString;
     use std::path::PathBuf;
@@ -1563,6 +1598,28 @@ mod tests {
         // `-d` is a letter in the group; the two options that carry a facet
         // follow it, before the withdrawals, which is where GNU Make's switch
         // table puts them. A `--debug` said twice is handed on once.
+        // `--shuffle` is last of all, and carries the seed this run settled on
+        // rather than the word that asked for one.
+        assert_eq!(makeflags(&["--shuffle=reverse"]), " --shuffle=reverse");
+        assert_eq!(makeflags(&["--shuffle=identity"]), " --shuffle=identity");
+        assert_eq!(makeflags(&["--shuffle=12345"]), " --shuffle=12345");
+        assert_eq!(makeflags(&["--shuffle=none"]), "");
+        assert_eq!(
+            makeflags(&["-k", "--shuffle=reverse"]),
+            "k --shuffle=reverse"
+        );
+        assert_eq!(
+            makeflags(&["--no-print-directory", "--shuffle=reverse"]),
+            " --no-print-directory --shuffle=reverse"
+        );
+        let seeded = makeflags(&["--shuffle"]);
+        assert!(
+            seeded
+                .strip_prefix(" --shuffle=")
+                .is_some_and(|seed| seed.parse::<u32>().is_ok()),
+            "{seeded}"
+        );
+
         assert_eq!(makeflags(&["-d"]), "d");
         assert_eq!(makeflags(&["--debug"]), " --debug=basic");
         assert_eq!(
@@ -1586,7 +1643,8 @@ mod tests {
         // And the two long spellings back again, which the letterwise read
         // would otherwise lose.
         let mut adopted = parsed(&["make", "--debug=b"]);
-        adopted.adopt_inherited(Some("k --debug=b --trace"));
+        adopted.adopt_inherited(Some("k --debug=b --trace --shuffle=12345"));
+        assert_eq!(adopted.shuffle, Shuffle::Seed(12345));
         assert_eq!(
             adopted.debugging(),
             super::DB_BASIC | super::DB_PRINT | super::DB_WHY
@@ -1597,7 +1655,7 @@ mod tests {
                 .find(|(name, _)| *name == "MAKEFLAGS")
                 .map(|(_, value)| value.to_string_lossy().into_owned())
                 .as_deref(),
-            Some("k --debug=b --trace")
+            Some("k --debug=b --trace --shuffle=12345")
         );
     }
 

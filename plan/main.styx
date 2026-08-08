@@ -4294,6 +4294,21 @@ children (
                         title "Shuffle goal and prerequisite order under --shuffle"
                         priority 6
                         kind @feat
+                        log (
+                            {
+                                at 2026-08-08T02:31:10.577207994Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T02:45:09.805260404Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Done, and it turned out to be a smaller change than expected because of where the order actually lives.\n\nThe thing worth writing down: in Ronin the build order of equally ready edges is the order the edges were minted, because the ready set breaks ties on the lowest edge id. Edges are minted by the walk kati's emitter does over the dependency nodes. So reordering that walk — the goal list, and each node's `deps` and `order_onlys` — is what reorders the build, and nothing in the scheduler has to know shuffling exists. The first attempt permuted `flags.targets` instead and changed nothing observable: that list names which targets are default, not the order they are taken in.\n\nDoing it before the graph is cut also settles the thing the upstream test is most particular about. GNU Make reorders what is built and not what a recipe is handed, so `$^` and `$<` keep the order the Makefile wrote — `arg_4 arg_3 arg_2 arg_1` built, `bld foo_ arg_1 arg_3 arg_2 arg_4` run. Here that is free rather than careful: kati has already expanded the recipes by this point, so there is nothing left for a reordering to disturb.\n\n`.WAIT` needs no exception, where GNU Make refuses to shuffle any list holding one. The evaluator has already turned each barrier into order-only prerequisites, so what `.WAIT` asked for is in the graph rather than in the list and survives being reordered. `.NOTPARALLEL` does need one, and has it.\n\nEvery mode and every MAKEFLAGS value was read off GNU Make 4.4.1 side by side rather than reasoned about: `reverse`, `identity`, `none`, `random`, or a bare decimal seed, compared without regard to case; `none` alone travels as nothing; `--shuffle` sits last of all the long options, after the withdrawals; and what travels is the seed the run settled on rather than the word `random` that asked for one, which is the whole reproducibility story. A sub-make reads it back the same way. The brief's `random.SEED` spelling does not exist in 4.4.1 — that form is rejected as an invalid mode, and the wording of the refusal is GNU's.\n\nTwo known divergences, both understood.\n\nOrder-only prerequisites under `--shuffle=reverse`. GNU reverses one combined dep list, so `a_: b_ c_ | d_ e_` gives `e_ d_ c_ b_`; Ninja's edge holds explicit and order-only inputs in separate partitions in that fixed order, so reversing within each gives `c_ b_ e_ d_`. Same two groups, group order swapped. Matching it would mean letting order-only inputs precede explicit ones in the edge, which is not something the partitions can say and not something worth saying — both orders are a shuffle, and the constraint the partitions express is the part that matters. One upstream case turns on it.\n\n`--shuffle=-1` is refused where GNU accepts it, because GNU parses the seed with `strtoul` and takes what wraps out. Refusing an argument nobody writes is the safe side of that.\n\nThe measurement: capability 98 to 87, option-refused 65 to 54 — all 11 shuffle cases moved out, 8 to narration and 3 to semantic, semantic 795 to 798 and narration 439 to 447. options/shuffle went from 0/12 passing to 2/12, and the three that now error rather than differ are not about shuffling at all: one is a circular dependency GNU drops and Ronin refuses, and two reach a named goal that only a `%_` pattern rule can make, which is the no-rule-to-make family and somebody else's node."
+                            }
+                        )
                     }
 
                     {
