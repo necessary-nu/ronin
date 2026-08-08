@@ -1,4 +1,4 @@
-use super::reporter::Rendering;
+use super::reporter::{make_failure, Rendering};
 use super::{status, Builder};
 use crate::error::{BuildError, BuildOperation};
 use crate::graph::{edgehash, EdgeId, Graph, PathStyle};
@@ -314,10 +314,21 @@ impl Builder<'_> {
                 edge,
                 exit_code,
                 command,
-            } => {
-                self.reporter
-                    .failure(&mut line, self.graph, edge, exit_code, command);
-            }
+            } => match (
+                self.options.recipe_failure.as_deref(),
+                self.graph.edge(edge).out.first().copied(),
+            ) {
+                (Some(name), Some(target)) => make_failure(
+                    &mut line,
+                    name,
+                    &self.recipe_location(edge),
+                    self.graph.node_path(target).as_bytes(),
+                    exit_code,
+                ),
+                _ => self
+                    .reporter
+                    .failure(&mut line, self.graph, edge, exit_code, command),
+            },
         }
         let result = self.emit(&line);
         self.status_scratch = line;
@@ -385,20 +396,24 @@ impl Builder<'_> {
         let Some(output) = self.graph.edge(edge).out.first().copied() else {
             return Ok(());
         };
-        let written = self
-            .graph
-            .names()
-            .lookup(bstr::BStr::new(RECIPE_LOCATION))
-            .and_then(|binding| crate::env::edgevar(self.graph, edge, binding, PathStyle::Raw))
-            .filter(|written| !written.is_empty())
-            .unwrap_or_else(|| BString::from(&b"<builtin>"[..]));
         let line = format!(
             "{}: update target '{}' due to: {}\n",
-            written.to_str_lossy(),
+            self.recipe_location(edge).to_str_lossy(),
             self.graph.node_path(output).to_str_lossy(),
             self.update_reason(edge, output),
         );
         self.emit(line.as_bytes())
+    }
+
+    /// Where the recipe this edge runs was written, or Make's word for a rule
+    /// nobody wrote down.
+    fn recipe_location(&self, edge: EdgeId) -> BString {
+        self.graph
+            .names()
+            .lookup(bstr::BStr::new(RECIPE_LOCATION))
+            .and_then(|binding| crate::env::edgevar(self.graph, edge, binding, PathStyle::Raw))
+            .filter(|written| !written.is_empty())
+            .unwrap_or_else(|| BString::from(&b"<builtin>"[..]))
     }
 
     /// Which of Make's reasons this edge is running for.
@@ -473,15 +488,18 @@ impl Builder<'_> {
         if held {
             self.emit_boundary(true)?;
         }
-        if let Some(exit_code) = failure_code {
-            self.emit_rendered(Rendering::Failure {
-                edge,
-                exit_code,
-                command,
-            })?;
+        // Ninja opens the block with its banner and shows the output under it;
+        // Make's account of the failure closes the block, after the output the
+        // recipe left.
+        let closing = self.options.recipe_failure.is_some();
+        if let Some(exit_code) = failure_code.filter(|_| !closing) {
+            self.emit_failure(edge, exit_code, command)?;
         }
         if !output.is_empty() {
             self.emit_below_bar(output)?;
+        }
+        if let Some(exit_code) = failure_code.filter(|_| closing) {
+            self.emit_failure(edge, exit_code, command)?;
         }
         if held {
             self.emit_boundary(false)?;
@@ -491,6 +509,19 @@ impl Builder<'_> {
             self.flush_sinks()?;
         }
         Ok(())
+    }
+
+    fn emit_failure(
+        &mut self,
+        edge: EdgeId,
+        exit_code: i32,
+        command: &CommandSpec,
+    ) -> BuildResult<()> {
+        self.emit_rendered(Rendering::Failure {
+            edge,
+            exit_code,
+            command,
+        })
     }
 
     /// Open or close the directory bracket around one held block.

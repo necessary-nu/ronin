@@ -61,7 +61,7 @@ const FAMILIES: [Family; 18] = [
     Family {
         name: "recipe-error-line",
         class: Class::Narration,
-        reason: "Make names the makefile line, the target and the recipe's status in one line; Ronin reports a failure Ninja's way.",
+        reason: "Make named the makefile line, the target and the recipe's status in one line, and Ronin's own line for that failure is missing or names something else.",
     },
     Family {
         name: "ninja-progress",

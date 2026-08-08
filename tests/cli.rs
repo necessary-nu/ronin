@@ -2473,3 +2473,40 @@ fn a_forced_job_count_replaces_the_budget_a_sub_make_inherited() {
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// GNU Make 4.4's account of a failed recipe, and nothing after it.
+///
+/// The makefile line comes from the rule the evaluator read, the level from
+/// this invocation's place in the tree, and the status from the recipe. Only
+/// the name in front is Ronin's.
+// [spec:ronin:req:product.make-identity/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_names_the_makefile_line_the_target_and_the_status_when_a_recipe_fails() {
+    let directory = test_directory("make-failure-line");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t@$(MAKE) --no-print-directory -C sub\n",
+    )
+    .unwrap();
+    fs::write(directory.join("sub").join("Makefile"), "all:\n\t@false\n").unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{said}");
+    assert!(
+        said.contains("ronin[1]: *** [Makefile:2: all] Error 1\n"),
+        "{said}"
+    );
+    assert!(
+        said.contains("ronin: *** [Makefile:2: all] Error 2\n"),
+        "{said}"
+    );
+    assert!(!said.contains("FAILED:"), "{said}");
+    assert!(!said.contains("build stopped"), "{said}");
+    fs::remove_dir_all(directory).unwrap();
+}

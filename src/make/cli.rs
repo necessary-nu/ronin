@@ -991,6 +991,9 @@ fn build_options(
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
         maxload: invocation.load.unwrap_or_default(),
+        // A failed recipe reports itself the way Make does, led by this
+        // invocation's name and level.
+        recipe_failure: Some(program_at(level)),
         working_directory,
         ..BuildOptions::default()
     };
