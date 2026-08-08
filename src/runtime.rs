@@ -14,6 +14,9 @@ impl FileTime {
 
     pub(crate) const UNOBSERVED: Self = Self(Self::UNOBSERVED_RAW);
     pub(crate) const MISSING: Self = Self(0);
+    /// Newer than any time a filesystem reports, which is what GNU Make's `-W`
+    /// gives the file it was told to assume new.
+    pub(crate) const NEWEST: Self = Self(i64::MAX);
 
     pub(crate) const fn observed(raw: i64) -> Self {
         debug_assert!(raw >= 0, "observed filesystem timestamps are nonnegative");
@@ -253,6 +256,11 @@ impl RuntimeState {
             if let Some(dyndep) = graph.edge(edge).dyndep {
                 self.node_mut(dyndep).set_dyndep_pending(true);
             }
+        }
+        // Ahead of every stat, because a node the runtime already has a time
+        // for is never stat'ed again.
+        for node in &graph.assumed_new {
+            self.node_mut(*node).set_mtime(FileTime::NEWEST);
         }
     }
 

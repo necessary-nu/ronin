@@ -198,6 +198,43 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// Whether `-t` gives this edge's outputs a timestamp rather than leaving
+    /// them as the declined recipe left them.
+    ///
+    /// Not a target with no file behind it, and not a recipe that is nothing
+    /// but `+` lines: that one ran rather than being declined.
+    pub(super) fn touching(&self, edge: EdgeId, command: &CommandSpec) -> bool {
+        self.options.touch
+            && !self.graph.edge(edge).untouchable
+            && command.dry_run_command.as_ref() != Some(&command.command)
+    }
+
+    /// Mark an edge's outputs up to date instead of remaking them, which is
+    /// GNU Make's `-t`, and say so in Make's own words.
+    ///
+    /// Two switches qualify it and each takes back a different half. `-n`
+    /// outranks the touch — the line is still said and the file is left alone
+    /// — and `-s` withdraws the line while the file is still touched.
+    pub(super) fn touch_outputs(&mut self, edge: EdgeId) -> BuildResult<()> {
+        for output in self.graph.edge(edge).out.clone() {
+            let path = self.graph.node_path(output).to_owned();
+            if !self.options.quiet {
+                let mut line = BString::from("touch ");
+                line.extend_from_slice(path.as_bytes());
+                line.push(b'\n');
+                self.emit(&line)?;
+            }
+            if !self.options.dryrun {
+                self.disk
+                    .touch(path.to_path().expect("byte paths are valid on Unix"))
+                    .map_err(|source| {
+                        BuildError::io(BuildOperation::TouchOutput, Some(path), Some(edge), source)
+                    })?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn record_child_output(&mut self, bytes: &[u8]) {
         if self.output_sink.is_none() {
             self.command_output.extend_from_slice(bytes);

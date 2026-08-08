@@ -741,6 +741,7 @@ pub(crate) enum BuildOperation {
     WriteOutput,
     WriteDiagnostic,
     StatOutput,
+    TouchOutput,
 }
 
 #[allow(
