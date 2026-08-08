@@ -26,7 +26,11 @@ pub(super) const ABANDONED: i32 = 2;
 /// The announcement is a pair or it is nothing: an Entering with no Leaving
 /// leaves every parser reading them resolving paths against a directory the
 /// build has already left.
-pub(super) fn no_makefile(reported: String, announcing: bool, directory: &Path) -> RunResult {
+pub(super) fn no_makefile(
+    reported: String,
+    announcing: Option<usize>,
+    directory: &Path,
+) -> RunResult {
     departed(
         RunResult {
             stdout: terminated(reported),
@@ -60,10 +64,16 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
 ///
 /// Every error parser that inherited the convention reads this pair to resolve
 /// the relative paths a compiler then prints, so the wording and the quoting
-/// are Make 4.4's rather than Ninja's; only the name in front is Ronin's.
+/// are Make 4.4's rather than Ninja's; only the name in front is Ronin's. The
+/// depth rides in front too, because a tree announces the same directory from
+/// several levels and the level is what tells them apart.
 // [spec:ronin:req:product.make-identity]
-pub(super) fn announcement(verb: &str, directory: &Path) -> String {
-    format!("{PRODUCT_NAME}: {verb} directory '{}'", directory.display())
+pub(super) fn announcement(verb: &str, directory: &Path, level: usize) -> String {
+    format!(
+        "{}: {verb} directory '{}'",
+        super::cli::program_at(level),
+        directory.display()
+    )
 }
 
 /// Put a line where the caller will see it, in the order the build saw it.
@@ -89,11 +99,17 @@ pub(super) fn say(
 ///
 /// Last of everything the invocation says, which is where GNU Make puts it and
 /// where a parser reading the pair stops resolving paths against the directory.
-pub(super) fn departed(mut result: RunResult, announcing: bool, directory: &Path) -> RunResult {
-    if announcing {
+/// `announcing` is the level the opening line carried, so the same value that
+/// decided there was one decides how this one is named.
+pub(super) fn departed(
+    mut result: RunResult,
+    announcing: Option<usize>,
+    directory: &Path,
+) -> RunResult {
+    if let Some(level) = announcing {
         result
             .stdout
-            .extend_from_slice(&terminated(announcement("Leaving", directory)));
+            .extend_from_slice(&terminated(announcement("Leaving", directory, level)));
     }
     result
 }

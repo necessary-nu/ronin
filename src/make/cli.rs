@@ -314,13 +314,15 @@ impl Invocation {
     /// GNU Make's rule, which every option here is a part of: `-w` asks for the
     /// pair outright, `-C` asks for it by implication because the paths a
     /// recipe prints are about to stop resolving against the caller's
-    /// directory, `-s` withdraws the implication but not the request, and `-q`
-    /// prints nothing at all because its whole answer is a status.
-    const fn announcing(&self) -> bool {
+    /// directory, being a sub-make asks for it by the same implication because
+    /// the parent's directory is not this one either, `-s` withdraws the
+    /// implication but not the request, and `-q` prints nothing at all because
+    /// its whole answer is a status.
+    const fn announcing(&self, level: usize) -> bool {
         !self.questioning()
             && !self.refused(Switch::PrintDirectory)
             && (self.given(Switch::PrintDirectory)
-                || (!self.directories.is_empty() && !self.given(Switch::Silent)))
+                || ((level > 0 || !self.directories.is_empty()) && !self.given(Switch::Silent)))
     }
 }
 
@@ -917,7 +919,7 @@ fn session_for(
 
 /// What a diagnostic from this invocation leads with: GNU Make names itself
 /// and, below the top of the tree, the level too.
-fn program_at(level: usize) -> String {
+pub(super) fn program_at(level: usize) -> String {
     if level == 0 {
         PRODUCT_NAME.to_owned()
     } else {
@@ -1172,6 +1174,7 @@ fn output_group(
     invocation: &Invocation,
     options: &BuildOptions,
     directory: &Path,
+    level: usize,
 ) -> Option<OutputGroup> {
     // GNU Make withdraws `-O` when nothing runs in parallel — a serial build has
     // nothing to interleave with — and `none` and `recurse` hold nothing here.
@@ -1180,9 +1183,9 @@ fn output_group(
             invocation.output_sync,
             Some(OutputSync::Line | OutputSync::Target)
         );
-    (holding && invocation.announcing()).then(|| OutputGroup {
-        entering: terminated(announcement("Entering", directory)),
-        leaving: terminated(announcement("Leaving", directory)),
+    (holding && invocation.announcing(level)).then(|| OutputGroup {
+        entering: terminated(announcement("Entering", directory, level)),
+        leaving: terminated(announcement("Leaving", directory, level)),
     })
 }
 
@@ -1212,14 +1215,14 @@ pub(crate) fn run(
         .and_then(|level| level.trim().parse::<usize>().ok())
         .unwrap_or(0);
     let (mut options, forced) = build_options(&invocation, runner, working_directory, level)?;
-    let group = output_group(&invocation, &options, &directory);
-    let announcing = invocation.announcing() && group.is_none();
+    let group = output_group(&invocation, &options, &directory, level);
+    let announcing = (invocation.announcing(level) && group.is_none()).then_some(level);
     options.output_group = group;
-    if announcing {
+    if let Some(level) = announcing {
         say(
             &mut output,
             &mut reported,
-            &announcement("Entering", &directory),
+            &announcement("Entering", &directory, level),
         )?;
     }
     // After the directory announcement, which is where GNU Make puts it.
@@ -1402,10 +1405,10 @@ fn narrate(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse, Action, Invocation, Shuffle, Switch};
+    use super::{announcement, parse, Action, Invocation, Shuffle, Switch, PRODUCT_NAME};
     use crate::build::JobLimit;
     use crate::util::BString;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn parsed(arguments: &[&str]) -> Invocation {
         let arguments = arguments
@@ -1582,20 +1585,20 @@ mod tests {
 
         assert!(!parsed(&["make", "-k", "-S"]).given(Switch::KeepGoing));
         assert!(parsed(&["make", "-S", "-k"]).given(Switch::KeepGoing));
-        assert!(!parsed(&["make", "-w", "--no-print-directory"]).announcing());
-        assert!(parsed(&["make", "--no-print-directory", "-w"]).announcing());
+        assert!(!parsed(&["make", "-w", "--no-print-directory"]).announcing(0));
+        assert!(parsed(&["make", "--no-print-directory", "-w"]).announcing(0));
     }
 
     /// GNU Make's help: "Turn off -w, even if it was turned on implicitly".
     // [spec:ronin:req:product.make-identity/test]
     #[test]
     fn refusing_to_print_the_directory_withdraws_what_dash_c_implied() {
-        assert!(parsed(&["make", "-C", "."]).announcing());
-        assert!(!parsed(&["make", "-C", ".", "--no-print-directory"]).announcing());
+        assert!(parsed(&["make", "-C", "."]).announcing(0));
+        assert!(!parsed(&["make", "-C", ".", "--no-print-directory"]).announcing(0));
         // Silent withdraws the implication and not the request, which is a
         // different rule and still holds.
-        assert!(!parsed(&["make", "-C", ".", "-s"]).announcing());
-        assert!(parsed(&["make", "-C", ".", "-s", "-w"]).announcing());
+        assert!(!parsed(&["make", "-C", ".", "-s"]).announcing(0));
+        assert!(parsed(&["make", "-C", ".", "-s", "-w"]).announcing(0));
     }
 
     // [spec:ronin:req:make.recursive-invocation/test]
@@ -1665,7 +1668,7 @@ mod tests {
         assert!(adopted.refused(Switch::KeepGoing));
         assert!(adopted.refused(Switch::PrintDirectory));
         assert!(adopted.refused(Switch::Silent));
-        assert!(!adopted.announcing());
+        assert!(!adopted.announcing(0));
 
         // And the two long spellings back again, which the letterwise read
         // would otherwise lose.
@@ -1743,14 +1746,42 @@ mod tests {
     // [spec:ronin:req:product.make-identity/test]
     #[test]
     fn the_announcement_is_asked_for_by_w_and_implied_by_c() {
-        assert!(!parsed(&["make"]).announcing());
-        assert!(parsed(&["make", "-w"]).announcing());
-        assert!(parsed(&["make", "-C", "sub"]).announcing());
+        assert!(!parsed(&["make"]).announcing(0));
+        assert!(parsed(&["make", "-w"]).announcing(0));
+        assert!(parsed(&["make", "-C", "sub"]).announcing(0));
         // -s withdraws what -C implied but not what -w asked for outright,
         // and -q says nothing at all because its answer is a status.
-        assert!(!parsed(&["make", "-s", "-C", "sub"]).announcing());
-        assert!(parsed(&["make", "-s", "-w"]).announcing());
-        assert!(!parsed(&["make", "-w", "-q"]).announcing());
+        assert!(!parsed(&["make", "-s", "-C", "sub"]).announcing(0));
+        assert!(parsed(&["make", "-s", "-w"]).announcing(0));
+        assert!(!parsed(&["make", "-w", "-q"]).announcing(0));
+    }
+
+    /// The other half of GNU Make's `should_print_dir`: below the top of the
+    /// tree the pair is implied by depth alone, and withdrawn by the same two
+    /// things that withdraw what `-C` implied.
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn a_sub_make_announces_its_directory_without_being_asked() {
+        assert!(parsed(&["make"]).announcing(1));
+        assert!(!parsed(&["make", "-s"]).announcing(1));
+        assert!(!parsed(&["make", "--no-print-directory"]).announcing(1));
+        assert!(parsed(&["make", "-s", "-w"]).announcing(1));
+    }
+
+    /// GNU Make's `log_working_directory` writes `%s[%u]` below the top and a
+    /// bare `%s` at it, so the pair names the depth every other diagnostic from
+    /// the same invocation names.
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn the_announcement_carries_the_level_it_was_made_at() {
+        assert_eq!(
+            announcement("Entering", Path::new("/sub"), 0),
+            format!("{PRODUCT_NAME}: Entering directory '/sub'")
+        );
+        assert_eq!(
+            announcement("Leaving", Path::new("/sub"), 2),
+            format!("{PRODUCT_NAME}[2]: Leaving directory '/sub'")
+        );
     }
 
     /// The group and its order are GNU Make 4.4.1's own, read off a makefile
@@ -1806,8 +1837,8 @@ mod tests {
     fn touching_outranks_the_question_it_would_otherwise_have_answered() {
         assert!(parsed(&["make", "-q"]).questioning());
         assert!(!parsed(&["make", "-q", "-t"]).questioning());
-        assert!(!parsed(&["make", "-w", "-q"]).announcing());
-        assert!(parsed(&["make", "-w", "-q", "-t"]).announcing());
+        assert!(!parsed(&["make", "-w", "-q"]).announcing(0));
+        assert!(parsed(&["make", "-w", "-q", "-t"]).announcing(0));
     }
 
     /// Read off GNU Make 4.4.1's own `decode_debug_flags`: only the first

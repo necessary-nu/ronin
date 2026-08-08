@@ -262,6 +262,7 @@ assertions (
     {id make-recursive-jobserver-reach, kind @complete, author "brendan@necessary.nu", at 2026-08-07T02:09:17.462787007Z}
     {id make-notparallel-target, kind @doing, author "brendan@necessary.nu", at 2026-08-08T01:01:26.318535741Z}
     {id make-jobserver-explicit-under-parent, kind @complete, author "brendan@necessary.nu", at 2026-08-08T02:15:17.536561966Z}
+    {id make-directory-announce-level, kind @doing, author "brendan@necessary.nu", at 2026-08-08T08:29:06.966837222Z}
 )
 
 impl_evidence (
