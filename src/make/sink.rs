@@ -33,7 +33,6 @@ struct Bindings {
     pool: Binding,
     tags: Binding,
     dry_run_command: Binding,
-    recipe_location: Binding,
     ignore_errors: Binding,
     /// `$out`, for the two bindings whose value is per edge rather than per
     /// rule. kati mints one rule per edge, so this expands to that edge's own
@@ -54,7 +53,6 @@ impl Bindings {
             pool: graph.binding(b"pool"),
             tags: graph.binding(b"tags"),
             dry_run_command: graph.binding(crate::build::DRY_RUN_COMMAND),
-            recipe_location: graph.binding(crate::build::RECIPE_LOCATION),
             ignore_errors: graph.binding(crate::build::IGNORE_ERRORS),
             out: graph.binding(b"out"),
         }
@@ -721,16 +719,6 @@ impl BuildSink for GraphSink {
                 bindings.push((self.bindings.pool, pool.clone()));
             }
         }
-        // Where the rule was written. Make leads the diagnostics that are about
-        // the rule rather than about the file with it, and nothing else an edge
-        // carries can say where it came from.
-        if let Some(loc) = edge.loc {
-            bindings.push((
-                self.bindings.recipe_location,
-                loc.display(names).to_string().into_bytes(),
-            ));
-        }
-
         if let Some(id) = edge.rule {
             if let Some(rule) = self.subninja_rules.remove(&id) {
                 self.unit.subninjas.push(PendingSubninja {

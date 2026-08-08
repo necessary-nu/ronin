@@ -915,43 +915,6 @@ fn ronin_build_explain_reports_the_dirty_reason_before_status() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// GNU Make's `--trace` line, word for word: where the rule was written, the
-/// target, and the reason it is being remade.
-// [spec:ronin:req:product.make-identity/test]
-#[test]
-fn ronin_build_trace_names_the_rule_and_the_reason_before_the_recipe() {
-    let (mut graph, directory) = build_fixture(
-        "make-trace",
-        "rule emit\n  command = touch $out\n  description = create output\nbuild $dir/out: emit\n",
-    );
-    let target = directory.join("out").to_string_lossy().into_owned();
-    let mut output = Vec::new();
-    {
-        let options = BuildOptions {
-            trace: true,
-            ..BuildOptions::default()
-        };
-        let mut builder = Builder::with_output(&mut graph, options, &mut output);
-        builder.add_target(&target).unwrap();
-        let node = nodeget(builder.graph, target.as_bytes()).unwrap();
-        let edge = builder.graph.node(node).gen.unwrap();
-        let name = builder
-            .graph
-            .names_mut()
-            .intern(BStr::new(super::RECIPE_LOCATION));
-        builder
-            .graph
-            .edge_mut(edge)
-            .bindings
-            .insert(name, BString::from("Makefile:7"));
-        builder.build().unwrap();
-    }
-    let output = String::from_utf8(output).unwrap();
-    let trace = format!("Makefile:7: update target '{target}' due to: target does not exist\n");
-    assert!(output.starts_with(&trace), "{output:?}");
-    fs::remove_dir_all(directory).unwrap();
-}
-
 #[test]
 fn ronin_build_prints_failure_context_before_child_output() {
     let (mut graph, directory) = build_fixture(
@@ -974,52 +937,11 @@ fn ronin_build_prints_failure_context_before_child_output() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// GNU Make's account of a failed recipe, word for word: where the recipe was
-/// written, the target, and the status it left — after the output the recipe
-/// produced, which is where Make puts it.
-// [spec:ronin:req:product.make-identity/test]
+/// An ignored status is still narrated by the ordinary Ninja reporter; the
+/// graph binding changes only whether the build carries on.
+// [spec:ronin:req:make.compiler-boundary/test]
 #[test]
-fn make_build_names_the_makefile_line_the_target_and_the_status() {
-    let (mut graph, directory) = build_fixture(
-        "make-failure-line",
-        "rule fail\n  command = printf child; false\n  description = failing action\nbuild $dir/out: fail\n",
-    );
-    let target = directory.join("out").to_string_lossy().into_owned();
-    let mut output = Vec::new();
-    {
-        let options = BuildOptions {
-            recipe_failure: Some("ronin[1]".to_owned()),
-            ..BuildOptions::default()
-        };
-        let mut builder = Builder::with_output(&mut graph, options, &mut output);
-        builder.add_target(&target).unwrap();
-        let node = nodeget(builder.graph, target.as_bytes()).unwrap();
-        let edge = builder.graph.node(node).gen.unwrap();
-        let name = builder
-            .graph
-            .names_mut()
-            .intern(BStr::new(super::RECIPE_LOCATION));
-        builder
-            .graph
-            .edge_mut(edge)
-            .bindings
-            .insert(name, BString::from("Makefile:7"));
-        assert!(builder.build().is_err());
-    }
-    let output = String::from_utf8(output).unwrap();
-    let line = format!("ronin[1]: *** [Makefile:7: {target}] Error 1\n");
-    assert!(output.ends_with(&line), "{output:?}");
-    assert!(!output.contains("FAILED:"), "{output:?}");
-    assert!(output.find("child").unwrap() < output.find(&line).unwrap());
-    fs::remove_dir_all(directory).unwrap();
-}
-
-/// A recipe whose errors Make was told to ignore: the status is reported and
-/// the build carries on, which is the only use the status is of. The ported
-/// suite cannot hold this half, since it compares effect rather than output.
-// [spec:ronin:req:product.make-identity/test]
-#[test]
-fn make_build_reports_an_ignored_status_and_carries_on() {
+fn ignored_status_uses_ninja_reporter() {
     let (mut graph, directory) = build_fixture(
         "make-ignored-failure",
         "rule fail\n  command = exit 3\nbuild $dir/out: fail\n",
@@ -1027,23 +949,10 @@ fn make_build_reports_an_ignored_status_and_carries_on() {
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut output = Vec::new();
     {
-        let options = BuildOptions {
-            recipe_failure: Some("ronin".to_owned()),
-            ..BuildOptions::default()
-        };
-        let mut builder = Builder::with_output(&mut graph, options, &mut output);
+        let mut builder = Builder::with_output(&mut graph, BuildOptions::default(), &mut output);
         builder.add_target(&target).unwrap();
         let node = nodeget(builder.graph, target.as_bytes()).unwrap();
         let edge = builder.graph.node(node).gen.unwrap();
-        let name = builder
-            .graph
-            .names_mut()
-            .intern(BStr::new(super::RECIPE_LOCATION));
-        builder
-            .graph
-            .edge_mut(edge)
-            .bindings
-            .insert(name, BString::from("Makefile:2"));
         let name = builder
             .graph
             .names_mut()
@@ -1056,8 +965,9 @@ fn make_build_reports_an_ignored_status_and_carries_on() {
         assert!(builder.build().is_ok(), "an ignored error is not a failure");
     }
     let output = String::from_utf8(output).unwrap();
-    let line = format!("ronin: [Makefile:2: {target}] Error 3 (ignored)\n");
-    assert!(output.ends_with(&line), "{output:?}");
+    assert!(output.contains("FAILED: [code=3]"), "{output:?}");
+    assert!(output.contains(&target), "{output:?}");
+    assert!(output.contains("exit 3"), "{output:?}");
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1913,43 +1823,8 @@ fn ninja_build_log_rebuilds_output_not_in_log() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// Make's reading of the log, which the ported corpus can only half reach: a
-/// case there runs the tool once over a tree its setup script built, so there
-/// is never an entry to have recorded anything.
-fn make_options() -> BuildOptions {
-    BuildOptions {
-        unrecorded_output: crate::frontend::UnrecordedOutput::SaysNothing,
-        ..BuildOptions::default()
-    }
-}
-
-/// The tree `ninja_build_log_rebuilds_output_not_in_log` rebuilds, left alone
-/// on its timestamps.
 #[test]
-fn make_leaves_an_output_not_in_the_log_alone() {
-    let (mut graph, directory) = build_fixture(
-        "make-log-not-present",
-        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in\n",
-    );
-    fs::write(directory.join("in"), "hello").unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    fs::write(directory.join("out"), "hello").unwrap();
-    let target = directory.join("out").to_string_lossy().into_owned();
-    let mut log = crate::log::BuildLog::open(Some(&directory)).unwrap();
-    {
-        let mut builder = Builder::with_build_log(&mut graph, make_options(), &mut log);
-        builder.add_target(&target).unwrap();
-        assert!(builder.already_up_to_date());
-    }
-    assert!(crate::log::logentry(&log, &target).is_none());
-    log.finish().unwrap();
-    fs::remove_dir_all(directory).unwrap();
-}
-
-/// The other half of the same decision: an entry that does say something is
-/// acted on, so a recipe this build recorded and then changed rebuilds.
-#[test]
-fn make_rebuilds_for_a_command_the_log_recorded_differently() {
+fn build_log_rebuilds_changed_command() {
     let (mut graph, directory) = build_fixture(
         "make-log-command-changed",
         "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in\n",
@@ -1958,7 +1833,7 @@ fn make_rebuilds_for_a_command_the_log_recorded_differently() {
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut log = crate::log::BuildLog::open(Some(&directory)).unwrap();
     {
-        let mut builder = Builder::with_build_log(&mut graph, make_options(), &mut log);
+        let mut builder = Builder::with_build_log(&mut graph, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
         assert_eq!(builder.commands_ran.len(), 1);
@@ -1973,7 +1848,7 @@ fn make_rebuilds_for_a_command_the_log_recorded_differently() {
     .unwrap();
     let mut changed = parse_fixture(&directory);
     {
-        let mut builder = Builder::with_build_log(&mut changed, make_options(), &mut log);
+        let mut builder = Builder::with_build_log(&mut changed, BuildOptions::default(), &mut log);
         builder.add_target(&target).unwrap();
         assert!(!builder.already_up_to_date());
     }

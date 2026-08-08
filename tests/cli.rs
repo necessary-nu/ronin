@@ -1931,12 +1931,7 @@ fn make_command(program: &std::path::Path, directory: &std::path::Path) -> Comma
         .env_remove("MAKEFLAGS")
         .env_remove("MFLAGS")
         .env_remove("CARGO_MAKEFLAGS")
-        .env_remove("MAKELEVEL")
-        // Make mode keeps its build state outside the tree, which means the
-        // developer's own cache unless a test says otherwise. Every case here
-        // builds in a directory named after its process, so without this each
-        // run would leave an entry behind that nothing ever collects.
-        .env("RONIN_STATE_HOME", directory.join("state"));
+        .env_remove("MAKELEVEL");
     command
 }
 
@@ -2075,10 +2070,10 @@ fn make_case(label: &str, makefile: &str) -> PathBuf {
     directory
 }
 
-// [spec:ronin:req:product.make-identity/test]
+// [spec:ronin:req:make.interface-compatibility/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn always_make_rebuilds_what_is_already_up_to_date() {
+fn always_make_is_interface_noop() {
     let directory = make_case(
         "make-always-make",
         "out.txt: in.txt\n\tcat in.txt >> out.txt\n",
@@ -2101,7 +2096,7 @@ fn always_make_rebuilds_what_is_already_up_to_date() {
         "line\n"
     );
 
-    // Nothing changed, so an ordinary build runs nothing and -B runs it anyway.
+    // Runner-only flags are accepted but leave Ninja dirtiness unchanged.
     run(&[]);
     assert_eq!(
         fs::read_to_string(directory.join("out.txt")).unwrap(),
@@ -2110,12 +2105,12 @@ fn always_make_rebuilds_what_is_already_up_to_date() {
     run(&["-B"]);
     assert_eq!(
         fs::read_to_string(directory.join("out.txt")).unwrap(),
-        "line\nline\n"
+        "line\n"
     );
     run(&["--always-make"]);
     assert_eq!(
         fs::read_to_string(directory.join("out.txt")).unwrap(),
-        "line\nline\nline\n"
+        "line\n"
     );
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2146,8 +2141,8 @@ fn question_mode_answers_in_the_status_and_builds_nothing() {
     // Now it is up to date, in both spellings.
     assert_eq!(ask(&["-q"]).0, Some(0));
     assert_eq!(ask(&["--question"]).0, Some(0));
-    // -B makes the same question answer that everything would run again.
-    assert_eq!(ask(&["-q", "-B"]).0, Some(1));
+    // An accepted runner no-op does not change Ninja's answer.
+    assert_eq!(ask(&["-q", "-B"]).0, Some(0));
 
     // A question that cannot be answered is neither of the two answers.
     let (code, said) = ask(&["-q", "nothing-declares-this"]);

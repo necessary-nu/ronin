@@ -292,16 +292,6 @@ fn public_api_builds_a_makefile_through_ronins_scheduler() {
     ));
     let _ = std::fs::remove_dir_all(&directory);
     std::fs::create_dir_all(&directory).unwrap();
-    // Make mode keeps its state outside the tree, which means the developer's
-    // own cache unless a test says otherwise. This one builds in a directory
-    // named after its process, so without this every run would leave an entry
-    // behind that nothing ever collects.
-    //
-    // SAFETY: the suite is single-threaded per test binary here, and this runs
-    // before the build that reads it.
-    unsafe {
-        std::env::set_var("RONIN_STATE_HOME", directory.join("state"));
-    }
     std::fs::write(directory.join("in"), b"source\n").unwrap();
     let at = |name: &str| directory.join(name).to_string_lossy().into_owned();
     let makefile = directory.join("Makefile");

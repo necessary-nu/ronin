@@ -131,16 +131,12 @@ pub(super) fn finished(
 /// rules without adding Make's `rm ...` narration.
 ///
 /// Last of everything the build does, and it happens whether the build finished
-/// or gave up: what was invented on the way is rubbish either way. `-t` made
-/// files by touching them rather than by running anything, so it leaves them
-/// alone; `-n` ran nothing, so it removes nothing.
-pub(super) fn discard_intermediates(disposable: &[Vec<u8>], touching: bool, pretending: bool) {
+/// or gave up: what was invented on the way is rubbish either way. `-n` ran
+/// nothing, so it removes nothing.
+pub(super) fn discard_intermediates(disposable: &[Vec<u8>], pretending: bool) {
     use std::os::unix::ffi::OsStrExt;
 
-    if disposable.is_empty() || touching {
-        return;
-    }
-    if pretending {
+    if disposable.is_empty() || pretending {
         return;
     }
     for path in disposable {

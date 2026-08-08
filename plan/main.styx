@@ -5520,6 +5520,20 @@ children (
                                 kind @decision
                                 text "Remove Make provenance from scheduling, dirtiness, persistence, process supervision, pools, depfiles, restat, console handling, and failure propagation. After graph construction, graph structure, edge bindings, and ordinary Ninja execution options are the only channels by which kati can affect execution. Delete Make-mode branches or move their legitimate build meaning into kati's graph/command construction. Verify that equivalent graphs execute identically regardless of frontend."
                             }
+
+                            {
+                                at 2026-08-08T21:15:32.912525239Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T21:40:16.832647203Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Completed the boundary as graph compilation, not a second Make executor. Removed frontend-selected state placement and missing-log semantics, Make-only scheduler/reporter/process options, touch and what-if dirtiness hooks, and relocated-state infrastructure. Root and recursive exports plus MAKELEVEL now compile into edge command templates; .NOTPARALLEL remains a graph pool. Runner-only flags remain accepted but do not enter command hashes. Make and manifest graphs now share in-tree .ninja_log/.ninja_deps and identical unlogged-output dirtiness. Verified equivalent frontend effects, full workspace tests, nplan checks, and strict all-feature Clippy."
+                            }
                         )
                     }
 

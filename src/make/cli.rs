@@ -1,14 +1,14 @@
 //! The Make front end's command line.
 //!
-//! GNU Make's options, mapped onto the settings Ronin's scheduler already has:
-//! `-j` is the job limit, `-k` the failure limit, `-n` the dry run, `-C` the
-//! directory the build runs in, `-f` the makefile, bare words are goals, and a
-//! word with an `=` in it is a command-line variable, which outranks both the
-//! makefile's own assignments and the environment.
+//! GNU Make's options are accepted at this boundary. Graph-affecting inputs go
+//! to kati; controls with a Ninja counterpart configure the ordinary runner;
+//! the rest are interface-compatible no-ops. `-C` selects the compilation and
+//! build directory, `-f` the Makefile, bare words are goals, and a word with an
+//! `=` is a command-line variable.
 //!
-//! Everything an invocation says about the build it says through
-//! [`BuildOptions`], the same value the Ninja front end fills in, so a Makefile
-//! and a manifest reach one scheduler rather than two configurations of it.
+//! The executor receives only ordinary [`BuildOptions`] and the compiled graph,
+//! so a Makefile and a manifest reach one scheduler rather than two modes of
+//! execution.
 //!
 //! `-C` is the one place Ronin moves the process working directory. Make
 //! evaluation reads that directory directly — `$(shell)`, `$(wildcard)`,
@@ -304,10 +304,6 @@ struct Invocation {
     directories: Vec<PathBuf>,
     /// Where `-I` says to look for an `include`, in the order given.
     include_dirs: Vec<PathBuf>,
-    /// The files `-W` says to build as though they had just been modified.
-    /// Paths rather than filenames, because the graph names its nodes by path
-    /// and this pretence is about a node.
-    assumed_new: Vec<BString>,
     makefile: Option<PathBuf>,
     goals: Vec<BString>,
     /// `VAR=value` in command-line order, which is the order Make applies them.
@@ -343,7 +339,6 @@ impl Invocation {
         Self {
             directories: Vec::new(),
             include_dirs: Vec::new(),
-            assumed_new: Vec::new(),
             makefile: None,
             goals: Vec::new(),
             variables: Vec::new(),
@@ -469,10 +464,10 @@ impl Invocation {
     /// Whether this invocation answers a question rather than carrying out a
     /// build.
     ///
-    /// `-t` outranks `-q`: GNU Make decides to touch before a recipe is ever
-    /// reached, and question mode has nothing to answer about once it has.
+    /// Runner-only compatibility flags are accepted but do not change the
+    /// Ninja question operation.
     const fn questioning(&self) -> bool {
-        self.given(Switch::Question) && !self.given(Switch::Touch)
+        self.given(Switch::Question)
     }
 }
 
@@ -851,12 +846,12 @@ fn attached_long(
         invocation.directories.push(path_of(named)?);
     } else if let Some(named) = option.strip_prefix(b"--include-dir=") {
         invocation.include_dir(named)?;
-    } else if let Some(named) = option
+    } else if option
         .strip_prefix(b"--what-if=")
         .or_else(|| option.strip_prefix(b"--new-file="))
         .or_else(|| option.strip_prefix(b"--assume-new="))
+        .is_some()
     {
-        invocation.assumed_new.push(BString::from(named));
     } else if let Some(eval) = option.strip_prefix(b"--eval=") {
         invocation.evals.push(Bytes::from(eval.to_vec()));
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
@@ -972,9 +967,7 @@ fn parse_arguments(
                 invocation.evals.push(Bytes::from(eval.to_vec()));
             }
             b"--what-if" | b"--new-file" | b"--assume-new" => {
-                invocation
-                    .assumed_new
-                    .push(value(arguments, &mut index, b"", "--what-if")?);
+                let _ = value(arguments, &mut index, b"", "--what-if")?;
             }
             option if option.starts_with(b"--") => {
                 if !attached_long(invocation, option, arguments, &mut index)?
@@ -1034,9 +1027,8 @@ fn read_cluster(
                 short = argument.len();
             }
             b'W' => {
-                let named = value(arguments, index, &argument[short..], "-W")?;
+                let _ = value(arguments, index, &argument[short..], "-W")?;
                 short = argument.len();
-                invocation.assumed_new.push(named);
             }
             b'O' => {
                 invocation.output_sync = Some(OutputSync::parse(&argument[short..])?);
@@ -1179,7 +1171,6 @@ fn build_options(
     invocation: &Invocation,
     runner: &Runner,
     working_directory: crate::os::WorkingDirectory,
-    level: usize,
 ) -> Result<BuildOptions, Error> {
     let mut options = BuildOptions {
         jobs: invocation.jobs.unwrap_or(JobLimit::Auto),
@@ -1191,11 +1182,10 @@ fn build_options(
             1
         },
         dryrun: invocation.given(Switch::DryRun),
-        touch: invocation.given(Switch::Touch),
         // Make's `-n` maps onto Ninja's dry run and therefore uses Ninja's
         // ordinary verbose dry-run rendering. Debug and trace are accepted
         // interface no-ops and never install a Make narrator.
-        verbose: invocation.given(Switch::DryRun) && !invocation.given(Switch::Touch),
+        verbose: invocation.given(Switch::DryRun),
         quiet: invocation.given(Switch::Silent),
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
@@ -1222,15 +1212,6 @@ fn build_options(
     // An inherited outer transport remains attached above and may bound the
     // same scheduler.
     options.serve_jobserver = false;
-    options.environment.push((
-        MAKELEVEL.into(),
-        Some(OsString::from(level.saturating_add(1).to_string())),
-    ));
-    options.environment.extend(
-        flag_environment(invocation)
-            .into_iter()
-            .map(|(name, value)| (OsString::from(name), Some(value))),
-    );
     Ok(options)
 }
 
@@ -1393,7 +1374,7 @@ pub(crate) fn run(
         .map_err(|source| CliError::CurrentDirectory { source })?;
     let level = runner.makelevel.as_deref().unwrap_or_default();
     let level: usize = level.trim().parse().unwrap_or(0);
-    let mut options = build_options(&invocation, runner, working_directory, level)?;
+    let options = build_options(&invocation, runner, working_directory)?;
 
     let Some(makefile) = invocation
         .makefile
@@ -1420,10 +1401,9 @@ pub(crate) fn run(
         compilation,
         &reported,
     ) {
-        Ok(loaded) => adopt(&mut options, loaded),
+        Ok(loaded) => loaded.graph,
         Err(result) => return Ok(result),
     };
-    pretend_at(&mut graph, &invocation);
     let (mut persistence, warning) = Persistence::open(&mut graph, &directory)?;
     reported.push_str(warning.as_deref().unwrap_or_default());
     let targets = graph.default_targets();
@@ -1454,11 +1434,7 @@ pub(crate) fn run(
     };
     flushed?;
     let silent = invocation.given(Switch::Silent);
-    discard_intermediates(
-        &disposable,
-        invocation.given(Switch::Touch),
-        invocation.given(Switch::DryRun),
-    );
+    discard_intermediates(&disposable, invocation.given(Switch::DryRun));
     Ok(finished(reported, up_to_date, &outcome, silent))
 }
 
@@ -1483,6 +1459,10 @@ fn compilation_context(
     level: usize,
     session: &Session,
 ) -> crate::make::CompilationContext {
+    let recipe_environment = vec![(
+        OsString::from(MAKELEVEL),
+        Some(OsString::from(level.saturating_add(1).to_string())),
+    )];
     crate::make::CompilationContext {
         root_directory: directory.clone(),
         directory,
@@ -1494,7 +1474,7 @@ fn compilation_context(
             .invocation_environment
             .clone()
             .unwrap_or_else(|| std::env::vars_os().collect()),
-        recipe_environment: Vec::new(),
+        recipe_environment,
     }
 }
 
@@ -1555,31 +1535,6 @@ fn evaluated(
         stderr: ordinary_diagnostic(failure),
         exit_code: ABANDONED,
     })
-}
-
-/// The switches that argue with the timestamps rather than with the build:
-/// `-t` touches instead of remaking, `-B` calls every recipe out of date, `-W`
-/// calls one file just modified.
-///
-/// `-t`'s exemption is read first, because `-B` sets the same bit that tells a
-/// `.PHONY` target from one with a file behind it.
-fn pretend_at(graph: &mut crate::frontend::BuildGraph, invocation: &Invocation) {
-    if invocation.given(Switch::Touch) {
-        graph.spare_phony_from_touch();
-    }
-    if invocation.given(Switch::AlwaysMake) {
-        graph.rebuild_everything();
-    }
-    for assumed in &invocation.assumed_new {
-        graph.assume_new(assumed.as_bytes());
-    }
-}
-
-/// What the Makefile said about running it, rather than about what to build.
-fn adopt(options: &mut BuildOptions, loaded: crate::make::Loaded) -> crate::frontend::BuildGraph {
-    options.environment.extend(loaded.exported);
-    options.serial = loaded.serial;
-    loaded.graph
 }
 
 #[cfg(test)]
@@ -1914,7 +1869,7 @@ mod tests {
         let runner = crate::cli::Runner::new(&directory).unwrap();
         let options = |arguments: &[&str]| {
             let working = crate::os::WorkingDirectory::new(&directory).unwrap();
-            super::build_options(&parsed(arguments), &runner, working, 0).unwrap()
+            super::build_options(&parsed(arguments), &runner, working).unwrap()
         };
         assert!((options(&["make", "-l", "2.5"]).maxload - 2.5).abs() < f64::EPSILON);
         // Zero is what the scheduler reads as no ceiling, and it is what an
@@ -1932,7 +1887,7 @@ mod tests {
         let directory = std::env::temp_dir();
         let options = |runner: &crate::cli::Runner, arguments: &[&str]| {
             let working = crate::os::WorkingDirectory::new(&directory).unwrap();
-            super::build_options(&parsed(arguments), runner, working, 0).unwrap()
+            super::build_options(&parsed(arguments), runner, working).unwrap()
         };
 
         let root = crate::cli::Runner::new(&directory).unwrap();
@@ -1985,23 +1940,16 @@ mod tests {
             arguments.extend_from_slice(spelling);
             arguments.push("all");
             let invocation = parsed(&arguments);
-            assert_eq!(
-                invocation.assumed_new,
-                vec![BString::from("b.x")],
-                "{spelling:?}"
-            );
             assert_eq!(invocation.goals, vec![BString::from("all")], "{spelling:?}");
         }
     }
 
-    /// `-t` outranks `-q`, which is what GNU Make does and not an ordering
-    /// chosen here: the touch is decided before a recipe is ever reached, so
-    /// question mode never gets its say and the invocation speaks after all.
+    /// Accepted runner no-ops do not change Ninja's question operation.
     // [spec:ronin:req:make.question-status/test]
     #[test]
-    fn touch_overrides_question_mode() {
+    fn touch_does_not_override_question_mode() {
         assert!(parsed(&["make", "-q"]).questioning());
-        assert!(!parsed(&["make", "-q", "-t"]).questioning());
+        assert!(parsed(&["make", "-q", "-t"]).questioning());
     }
 
     /// Read off GNU Make 4.4.1's own `decode_debug_flags`: only the first

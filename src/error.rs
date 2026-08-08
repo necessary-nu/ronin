@@ -753,7 +753,6 @@ pub(crate) enum BuildOperation {
     WriteOutput,
     WriteDiagnostic,
     StatOutput,
-    TouchOutput,
 }
 
 #[allow(
@@ -1033,7 +1032,6 @@ impl From<crate::dyndep::DyndepError> for BuildError {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PersistenceOperation {
     CreateBuildDirectory,
-    OpenStateDirectory,
     OpenBuildLog,
     LoadBuildLog,
     FlushBuildLog,
@@ -1139,16 +1137,6 @@ impl fmt::Display for PersistenceError {
                 source,
                 ..
             } => write!(formatter, "failed recompaction: {}", system_message(source)),
-            Self::Io {
-                operation: PersistenceOperation::OpenStateDirectory,
-                path,
-                source,
-            } => write!(
-                formatter,
-                "build state {}: {}",
-                path.display(),
-                system_message(source)
-            ),
             Self::Io { source, .. } => formatter.write_str(&system_message(source)),
         }
     }

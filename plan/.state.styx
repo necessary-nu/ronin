@@ -303,7 +303,13 @@ impl_evidence (
         {id make.scope-separation, version 0}
     )}
     {id make-build-intent-gate}
-    {id make-executor-boundary}
+    {id make-executor-boundary, covered_rules (
+        make.compiler-boundary
+        make.state-outside-the-tree
+    ), covered_claims (
+        {impl_name target-impl, rule make.compiler-boundary}
+        {impl_name target-impl, rule make.state-outside-the-tree}
+    )}
     {id make-graph-equivalence, covered_rules (
         make.manifest-equivalence
     ), covered_claims (

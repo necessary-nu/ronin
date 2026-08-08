@@ -19,12 +19,12 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use self::command::{CommandSpec, DepsType, PreparedEdge, ResponseFile};
 use self::reporter::Reporter;
-pub(crate) use self::reporter::{ColorChoice, OutputGroup, OutputStyle, TerminalContext};
+pub(crate) use self::reporter::{ColorChoice, OutputStyle, TerminalContext};
 pub(crate) use self::status::BuildState;
 
 type BuildResult<T> = Result<T, BuildError>;
 
-pub(crate) use command::{DRY_RUN_COMMAND, IGNORE_ERRORS, RECIPE_LOCATION};
+pub(crate) use command::{DRY_RUN_COMMAND, IGNORE_ERRORS};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum JobLimit {
@@ -58,12 +58,7 @@ pub(crate) struct BuildOptions {
     pub(crate) keepdepfile: bool,
     pub(crate) keeprsp: bool,
     pub(crate) dryrun: bool,
-    /// Make's `-t`: give each output a fresh timestamp instead of running the
-    /// recipe that would have produced it.
-    pub(crate) touch: bool,
     pub(crate) quiet: bool,
-    /// Make's `--trace`: name the rule and the reason before each recipe runs.
-    pub(crate) trace: bool,
     pub(crate) statusfmt: String,
     pub(crate) status_from_cli: bool,
     pub(crate) shell: crate::subprocess::ShellMode,
@@ -71,38 +66,11 @@ pub(crate) struct BuildOptions {
     pub(crate) color: ColorChoice,
     pub(crate) terminal: TerminalContext,
     pub(crate) maxload: f64,
-    /// Make's `.NOTPARALLEL`: one recipe at a time in the compilation unit that
-    /// declared it. The Make graph normally expresses this with a local pool;
-    /// this executor-wide fallback remains for graphs that request it directly.
-    pub(crate) serial: bool,
     pub(crate) jobserver: Option<crate::jobserver::Transport>,
     /// Whether this manifest build may publish its fixed limit as a jobserver
     /// for recipe children. Makefile compilation disables this: recursive Make
     /// units are already inside the graph and use this scheduler directly.
     pub(crate) serve_jobserver: bool,
-    /// Variables the front end imposes on every command it runs, beside
-    /// whatever the jobserver publishes.
-    ///
-    /// Make mode counts recursion with one: a recipe is handed a `MAKELEVEL`
-    /// one deeper than the makefile it came from, which is how a sub-make
-    /// knows it is one.
-    /// `None` removes the name instead of binding it, which is Make's
-    /// `unexport` of a variable that arrived from outside.
-    pub(crate) environment: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
-    /// Set when Make's `-O` asked for each command's held output to be
-    /// bracketed with the directory it was produced in.
-    pub(crate) output_group: Option<OutputGroup>,
-    /// The name a failed recipe's own line leads with, carrying the level.
-    ///
-    /// Make mode only. Ninja narrates a failure with the `FAILED:` block and a
-    /// stopped line at the end; Make names the makefile line, the target and
-    /// the recipe's status in one, and says nothing further. `None` leaves the
-    /// Ninja shape, which is what a manifest build gets.
-    pub(crate) recipe_failure: Option<String>,
-    /// What an output the build log does not name says about whether it is
-    /// current. The graph's front end decides it; [`crate::frontend::Build`]
-    /// carries it here, and nothing else sets it.
-    pub(crate) unrecorded_output: crate::frontend::UnrecordedOutput,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -117,9 +85,7 @@ impl Default for BuildOptions {
             keepdepfile: false,
             keeprsp: false,
             dryrun: false,
-            touch: false,
             quiet: false,
-            trace: false,
             statusfmt: "[%f/%t] ".into(),
             status_from_cli: false,
             shell: crate::subprocess::ShellMode::default(),
@@ -127,13 +93,8 @@ impl Default for BuildOptions {
             color: ColorChoice::Auto,
             terminal: TerminalContext::default(),
             maxload: 0.0,
-            serial: false,
             jobserver: None,
             serve_jobserver: false,
-            environment: Vec::new(),
-            output_group: None,
-            recipe_failure: None,
-            unrecorded_output: crate::frontend::UnrecordedOutput::default(),
             working_directory: crate::os::WorkingDirectory::default(),
         }
     }
@@ -1270,12 +1231,6 @@ impl<'a> Builder<'a> {
             self.command_finished(edge, &command, None, &[])?;
         }
 
-        // Before the outputs are stat'ed, so the time `-t` just gave them is
-        // the time this run records.
-        if self.touching(edge, &command) {
-            self.touch_outputs(edge)?;
-        }
-
         let disk = self.disk.clone();
         let mut new_mtimes = Vec::new();
         let output_ids = self.graph.edge(edge).out.clone();
@@ -1605,10 +1560,10 @@ impl<'a> Builder<'a> {
         } else {
             None
         };
-        let mut environment = self.options.environment.clone();
-        // The jobserver publication and the Make switches both belong in
-        // MAKEFLAGS, which is how GNU Make writes it: the single-letter group
-        // leads, then the job count and the auth token.
+        let mut environment = Vec::new();
+        // A generic inherited or manifest-served jobserver remains process
+        // environment, as it is for Ninja. Frontend variables are already in
+        // graph command text and never reach this executor boundary.
         if let Some(transport) = transport.as_ref() {
             transport.publish_into(&mut environment);
         }
@@ -1637,9 +1592,7 @@ impl<'a> Builder<'a> {
                 failures = failure_limit;
                 last_error = Some(BuildError::Interrupted { status: None });
             }
-            let maxjobs = if self.options.serial
-                || (self.options.maxload > 0.0 && load.current() > self.options.maxload)
-            {
+            let maxjobs = if self.options.maxload > 0.0 && load.current() > self.options.maxload {
                 1
             } else {
                 match self.options.jobs {
@@ -1695,15 +1648,15 @@ impl<'a> Builder<'a> {
                 });
                 match prepared {
                     Ok(prepared) => {
-                        // Make's `+` lines run even under -n, and under -t for
-                        // the same reason. Nothing else on the edge does, so
-                        // the command becomes just those and the run stops
-                        // pretending for this one.
-                        let pretending = self.options.dryrun || self.options.touch;
-                        let dry_run_only = pretending
+                        // Make's `+` lines run even under -n. Nothing else on
+                        // the edge does, so the command becomes just those and
+                        // the run stops pretending for this one.
+                        let dry_run_only = self
+                            .options
+                            .dryrun
                             .then(|| prepared.command.dry_run_command.clone())
                             .flatten();
-                        let dryrun = pretending && dry_run_only.is_none();
+                        let dryrun = self.options.dryrun && dry_run_only.is_none();
                         let command =
                             dry_run_only.unwrap_or_else(|| prepared.command.command.clone());
                         match processes.spawn(edge, command, use_console, dryrun) {

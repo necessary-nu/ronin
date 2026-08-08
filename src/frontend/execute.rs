@@ -13,63 +13,9 @@
 use super::{BuildGraph, Node};
 use crate::build::{BuildOptions, Builder, JobLimit};
 use crate::error::{BuildError, BuildStop, Error, PersistenceError, PersistenceOperation};
-use crate::htab::rapidhashv1;
-use std::io::{self, Write};
+use std::io::Write;
 use std::num::NonZeroUsize;
-use std::path::{Path, PathBuf};
-
-/// Where a graph's front end keeps the state that makes a build incremental.
-///
-/// A statement of the front end's own compatibility contract rather than a
-/// caller's preference, which is why it travels on the graph: the graph is the
-/// one thing both front ends hand to [`Persistence::open`].
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum StatePlacement {
-    /// In the build directory, which is Ninja's contract: `.ninja_log` and
-    /// `.ninja_deps` sit where Ninja itself, and anything else reading them,
-    /// looks for them.
-    #[default]
-    BesideTheBuild,
-    /// Outside the tree, keyed by the tree the build runs in, which is Make's.
-    ///
-    /// GNU Make leaves nothing behind, so a Makefile's directory has to look
-    /// the same after a build as it did before one: state dropped beside a
-    /// Makefile is visible in version control, in packaging, and to anything
-    /// that lists the directory. Discarding the state instead would cost the
-    /// two things GNU Make cannot do at all — noticing a changed command, and
-    /// carrying a compiler's header dependencies to the next build — so the
-    /// same two files, in the same formats, move rather than stop existing.
-    // [spec:ronin:req:make.state-outside-the-tree]
-    OutsideTheTree,
-}
-
-/// What an output the build log does not name says about whether it is current.
-///
-/// The other half of the contract [`StatePlacement`] states, and on the graph
-/// for the same reason: a front end says what its log's silence means, because
-/// only the front end knows whether there was ever meant to be a log.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) enum UnrecordedOutput {
-    /// Ninja's rule: the log names the command that produced each output, so
-    /// one it does not name was produced by a command this build cannot
-    /// compare against, and rebuilding is the only way to learn anything.
-    #[default]
-    OutOfDate,
-    /// Make's rule: there is no build log to be absent from, so absence from
-    /// one carries nothing. A file newer than its prerequisites is up to date
-    /// whether or not this tool has ever seen it, and the first run in a tree
-    /// GNU Make built has no entry for anything in it.
-    SaysNothing,
-}
-
-/// Where a caller may put Ronin's own state, overriding the platform's answer.
-const STATE_HOME_ENV: &str = "RONIN_STATE_HOME";
-
-/// The state root's subdirectory for trees built from a Makefile.
-const MAKE_STATE: &str = "make";
-
-/// The file naming the tree an entry belongs to.
-const TREE_MARKER: &str = "tree";
+use std::path::Path;
 
 /// The state that makes a second build incremental.
 ///
@@ -86,11 +32,8 @@ pub struct Persistence {
 impl Persistence {
     /// Opens both logs for a build in `directory`, creating what is not there.
     ///
-    /// `directory` is the build directory for a graph whose front end keeps its
-    /// state beside the build, and the tree the build runs in for one that
-    /// keeps it outside; a Makefile's graph is the second kind and its logs go
-    /// to a per-tree entry under Ronin's state home instead. Either way the two
-    /// files are the same files, under the same names, in the same formats.
+    /// `directory` is the build directory. Every front end uses the same two
+    /// files there, under Ninja's names and in Ninja's formats.
     ///
     /// The dependency log names paths, so reading it interns them into `graph`;
     /// this is why it takes the graph the builds will run over rather than
@@ -106,17 +49,10 @@ impl Persistence {
     ///
     /// # Errors
     ///
-    /// Returns an [`Error`] when the directory cannot be created, when a graph
-    /// keeping its state outside the tree has nowhere to keep it or finds an
-    /// entry belonging to another tree, or when either log exists and cannot be
-    /// read or reopened for appending.
-    // [spec:ronin:req:make.state-outside-the-tree]
+    /// Returns an [`Error`] when the directory cannot be created or when either
+    /// log exists and cannot be read or reopened for appending.
+    // [spec:ronin:req:make.state-outside-the-tree+1]
     pub fn open(graph: &mut BuildGraph, directory: &Path) -> Result<(Self, Option<String>), Error> {
-        let relocated = match graph.state_placement {
-            StatePlacement::BesideTheBuild => None,
-            StatePlacement::OutsideTheTree => Some(state_directory(directory)?),
-        };
-        let directory = relocated.as_deref().unwrap_or(directory);
         std::fs::create_dir_all(directory).map_err(|source| {
             PersistenceError::io(
                 PersistenceOperation::CreateBuildDirectory,
@@ -167,169 +103,6 @@ impl Persistence {
         deps_log?;
         Ok(())
     }
-}
-
-/// The absolute path `name` holds in the environment.
-///
-/// A relative one is ignored rather than resolved, which is what the XDG base
-/// directory specification says to do with it and the only reading that does
-/// not make the state's location depend on where a build was started from.
-fn absolute_environment_path(name: &str) -> Option<PathBuf> {
-    let path = PathBuf::from(std::env::var_os(name)?);
-    path.is_absolute().then_some(path)
-}
-
-/// The directory Ronin keeps its own state under.
-///
-/// `RONIN_STATE_HOME` first, so a caller that needs the state somewhere it
-/// controls — a container, a CI job, a `clean` rule that has to remove it —
-/// says so once and knows exactly where it went. Otherwise the platform's
-/// cache convention, which is what a build's memory of itself is: losing it
-/// costs a rebuild and nothing else.
-fn state_home() -> Option<PathBuf> {
-    if let Some(home) = absolute_environment_path(STATE_HOME_ENV) {
-        return Some(home);
-    }
-    if let Some(cache) = absolute_environment_path("XDG_CACHE_HOME") {
-        return Some(cache.join(crate::cli::PRODUCT_NAME));
-    }
-    let home = absolute_environment_path("HOME")?;
-    let cache = if cfg!(target_os = "macos") {
-        home.join("Library").join("Caches")
-    } else {
-        home.join(".cache")
-    };
-    Some(cache.join(crate::cli::PRODUCT_NAME))
-}
-
-/// Everything that distinguishes one tree from another, as bytes.
-///
-/// The resolved path separates two checkouts of one project, and separates a
-/// tree from the one it was moved away from. The inode separates a tree from
-/// whatever previously stood where it stands. Both together mean the two
-/// failures left are a moved tree and a recreated one, and both of those lose
-/// good state rather than inherit stale state: a build that rebuilds more than
-/// it had to is slow, and one that rebuilds less is wrong.
-// [spec:ronin:req:make.state-outside-the-tree]
-fn tree_identity(tree: &Path) -> io::Result<Vec<u8>> {
-    let metadata = std::fs::metadata(tree)?;
-    // Relocated state outlives the tree it belongs to, which is the one hazard
-    // moving it introduces: a directory deleted and recreated at the same path
-    // is a different tree and must not inherit what the old one recorded. An
-    // inode says that where a path cannot. Platforms without one contribute
-    // nothing and fall back to the path alone.
-    #[cfg(unix)]
-    let distinct = std::os::unix::fs::MetadataExt::ino(&metadata);
-    #[cfg(not(unix))]
-    let distinct = 0_u64;
-    let _ = &metadata;
-
-    let mut identity = tree.as_os_str().as_encoded_bytes().to_vec();
-    identity.push(b'\n');
-    identity.extend_from_slice(distinct.to_string().as_bytes());
-    identity.push(b'\n');
-    Ok(identity)
-}
-
-/// The name of the entry a tree's state lives in.
-///
-/// A hash of the tree's identity, so no two trees share one, behind the tree's
-/// own last component, so that a person reading the cache can tell the entries
-/// apart without opening them.
-fn entry_name(tree: &Path, identity: &[u8]) -> String {
-    let mut label = tree
-        .file_name()
-        .unwrap_or_default()
-        .as_encoded_bytes()
-        .iter()
-        .take(40)
-        .map(|byte| match byte {
-            b'0'..=b'9' | b'A'..=b'Z' | b'a'..=b'z' | b'.' | b'-' => char::from(*byte),
-            _ => '_',
-        })
-        .skip_while(|character| *character == '.')
-        .collect::<String>();
-    if label.is_empty() {
-        label.push_str("tree");
-    }
-    format!("{label}-{:016x}", rapidhashv1(identity))
-}
-
-/// Records which tree an entry belongs to, and refuses one that is another's.
-///
-/// An entry is named by a hash, and a hash can collide. The identity it was
-/// made from is written beside the logs so that a collision is a refusal
-/// somebody can act on rather than a build quietly reading another tree's
-/// history. It is also what makes the state legible from outside: the entry to
-/// remove for a given tree is the one whose `tree` file names it.
-fn claim_entry(entry: &Path, identity: &[u8]) -> Result<(), PersistenceError> {
-    let marker = entry.join(TREE_MARKER);
-    let unusable = |path: PathBuf, source| {
-        PersistenceError::io(PersistenceOperation::OpenStateDirectory, path, source)
-    };
-    match std::fs::read(&marker) {
-        Ok(recorded) if recorded == identity => Ok(()),
-        Ok(recorded) => {
-            let claimed = recorded.split(|byte| *byte == b'\n').next().unwrap_or(&[]);
-            Err(unusable(
-                entry.to_owned(),
-                io::Error::other(format!(
-                    "already holds the state of {}; remove it to start over",
-                    String::from_utf8_lossy(claimed)
-                )),
-            ))
-        }
-        // Written the way the logs beside it are rewritten, so that a build
-        // starting in this tree while another is claiming it reads either
-        // nothing or the whole claim, never half of one.
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            crate::persistence::atomic_rewrite(&marker, |writer| writer.write_all(identity))
-                .map(drop)
-                .map_err(|source| unusable(marker, source))
-        }
-        Err(error) => Err(unusable(marker, error)),
-    }
-}
-
-/// The entry under `home` that holds the state of builds run in `tree`.
-// [spec:ronin:req:make.state-outside-the-tree]
-fn entry_in(home: &Path, tree: &Path) -> Result<PathBuf, PersistenceError> {
-    let identity = tree_identity(tree).map_err(|source| {
-        PersistenceError::io(
-            PersistenceOperation::OpenStateDirectory,
-            tree.to_owned(),
-            source,
-        )
-    })?;
-    let entry = home.join(MAKE_STATE).join(entry_name(tree, &identity));
-    std::fs::create_dir_all(&entry).map_err(|source| {
-        PersistenceError::io(
-            PersistenceOperation::CreateBuildDirectory,
-            entry.clone(),
-            source,
-        )
-    })?;
-    claim_entry(&entry, &identity)?;
-    Ok(entry)
-}
-
-/// The entry outside `tree` that holds the state of builds run in it.
-// [spec:ronin:req:make.state-outside-the-tree]
-fn state_directory(tree: &Path) -> Result<PathBuf, Error> {
-    // A path the process was handed rather than one it read from the kernel
-    // may still contain a symlink, and two names for one tree are one tree.
-    let tree = std::fs::canonicalize(tree).unwrap_or_else(|_| tree.to_owned());
-    let home = state_home().ok_or_else(|| {
-        PersistenceError::io(
-            PersistenceOperation::OpenStateDirectory,
-            tree.clone(),
-            io::Error::other(format!(
-                "nowhere to keep build state outside the tree; set {STATE_HOME_ENV}, \
-                 XDG_CACHE_HOME, or HOME"
-            )),
-        )
-    })?;
-    Ok(entry_in(&home, &tree)?)
 }
 
 /// How many commands a build runs at once.
@@ -472,14 +245,13 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
         let Self {
             graph,
             persistence,
-            mut options,
+            options,
             output,
             diagnostics,
             invocation_errors,
         } = self;
-        // The graph's front end decides what its log's silence means, not the
-        // caller that filled in the rest of these.
-        options.unrecorded_output = graph.unrecorded_output;
+        // Every frontend reaches the same Ninja dirtiness and persistence
+        // semantics once its graph crosses this boundary.
         let mut builder = Builder::from_parts(
             graph.arenas_mut(),
             options,
@@ -753,60 +525,6 @@ mod tests {
         // The first edge ran and failed, so the second never started.
         assert!(!directory.path().join("out").exists());
         persistence.finish().unwrap();
-    }
-
-    // [spec:ronin:req:make.state-outside-the-tree/test]
-    #[test]
-    fn a_tree_is_told_apart_from_its_copies_from_its_replacement_and_from_itself_moved() {
-        let root = tempfile::tempdir().unwrap();
-        let home = root.path().join("state");
-        let tree = root.path().join("checkout");
-        let sibling = root.path().join("other-checkout");
-        std::fs::create_dir(&tree).unwrap();
-        std::fs::create_dir(&sibling).unwrap();
-
-        let first = entry_in(&home, &tree).unwrap();
-        // Nothing was written where the build runs; the entry is elsewhere and
-        // says which tree it holds.
-        assert_eq!(std::fs::read_dir(&tree).unwrap().count(), 0);
-        assert!(first.starts_with(home.join(MAKE_STATE)));
-        let claimed = std::fs::read(first.join(TREE_MARKER)).unwrap();
-        assert!(claimed.starts_with(tree.as_os_str().as_encoded_bytes()));
-        // Asking again for the same tree is the same entry, which is the whole
-        // reason a second build has anything to read.
-        assert_eq!(entry_in(&home, &tree).unwrap(), first);
-        // A second checkout of the same project is a different tree.
-        assert_ne!(entry_in(&home, &sibling).unwrap(), first);
-
-        // A tree replaced at the path it stood at is a different tree, and
-        // starts from nothing rather than reading what its predecessor left.
-        std::fs::remove_dir(&tree).unwrap();
-        std::fs::create_dir(&tree).unwrap();
-        assert_ne!(entry_in(&home, &tree).unwrap(), first);
-        // So is one that moved away from where it was built.
-        let moved = root.path().join("moved");
-        std::fs::rename(&tree, &moved).unwrap();
-        assert_ne!(entry_in(&home, &moved).unwrap(), first);
-    }
-
-    // [spec:ronin:req:make.state-outside-the-tree/test]
-    #[test]
-    fn an_entry_another_tree_claimed_is_refused_rather_than_read() {
-        let root = tempfile::tempdir().unwrap();
-        let home = root.path().join("state");
-        let tree = root.path().join("checkout");
-        std::fs::create_dir(&tree).unwrap();
-        let entry = entry_in(&home, &tree).unwrap();
-
-        // Only a hash collision produces this, so it is provoked rather than
-        // waited for. A build reading another tree's history would be wrong in
-        // the one way persistence must never be wrong.
-        std::fs::write(entry.join(TREE_MARKER), b"/somewhere/else\n1\n").unwrap();
-        let refused = entry_in(&home, &tree).unwrap_err().to_string();
-        assert!(
-            refused.contains("already holds the state of /somewhere/else"),
-            "{refused}"
-        );
     }
 
     // [spec:ronin:req:frontend.graph-construction/test]

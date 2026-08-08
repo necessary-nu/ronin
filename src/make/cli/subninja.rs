@@ -1,9 +1,8 @@
 //! Turn one statically expanded `$(MAKE)` command into a child compilation.
 
 use super::{
-    compilation_key, default_makefile, flag_environment, parse, path_of,
-    prepend_command_line_evals, propagated_makeflags, record_invocation_variables, session_for,
-    Action, MAKELEVEL,
+    compilation_key, default_makefile, parse, path_of, prepend_command_line_evals,
+    propagated_makeflags, record_invocation_variables, session_for, Action, MAKELEVEL,
 };
 use crate::make::{Compilation, CompilationContext, MakeError};
 use crate::util::{BString, ByteSlice};
@@ -97,9 +96,6 @@ pub(in crate::make) fn compile(
         OsString::from(MAKELEVEL),
         Some(OsString::from(level.saturating_add(1).to_string())),
     );
-    for (name, value) in flag_environment(&invocation) {
-        set_recipe_environment(&mut recipe_environment, OsString::from(name), Some(value));
-    }
     let environment = session
         .invocation_environment
         .clone()

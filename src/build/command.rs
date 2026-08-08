@@ -1,9 +1,8 @@
-use super::reporter::{make_failure, Rendering};
+use super::reporter::Rendering;
 use super::{status, Builder};
 use crate::error::{BuildError, BuildOperation};
 use crate::graph::{edgehash, EdgeId, Graph, PathStyle};
 use crate::names::Names;
-use crate::runtime::FileTime;
 use crate::util::{BString, ByteSlice};
 use std::fs;
 
@@ -11,13 +10,6 @@ type BuildResult<T> = Result<T, BuildError>;
 
 /// The binding a Makefile's `+`-prefixed recipe lines are assembled into.
 pub(crate) const DRY_RUN_COMMAND: &[u8] = b"dryrun_command";
-
-/// Where the recipe an edge runs was written, as `file:line`.
-///
-/// Only a Makefile has such a place, so only the Make front end binds it and a
-/// manifest's edges answer nothing. Make names it in the diagnostics that are
-/// about the rule rather than about the file it builds.
-pub(crate) const RECIPE_LOCATION: &[u8] = b"recipe_location";
 
 /// The recipe's errors are Make's to ignore: `-` on every line, `-i`, `.IGNORE`.
 ///
@@ -206,22 +198,10 @@ impl Builder<'_> {
             (!command.rspfile_content.is_empty()).then_some(command.rspfile_content.as_bstr()),
         );
         let generator = command.generator;
-        // The log is read for what it recorded, and its silence is not
-        // evidence: an output it names carries the command that produced it and
-        // a changed one rebuilds, while an output it does not name is a
-        // question only the front end can answer. Ninja's answer is that the
-        // command is unknown and therefore changed; Make's is that there was
-        // never a log, so the timestamps decide alone.
-        let unrecorded_is_dirty =
-            self.options.unrecorded_output == crate::frontend::UnrecordedOutput::OutOfDate;
         let command_dirty = !generator
             && self.graph.edge(edge).out.iter().any(|output| {
                 let logged = self.runtime.node(*output).logged_command_hash();
-                if logged.is_missing() {
-                    unrecorded_is_dirty
-                } else {
-                    logged != hash
-                }
+                logged.is_missing() || logged != hash
             });
         self.runtime.edge_mut(edge).set_command_dirty(command_dirty);
         Ok(())
@@ -235,43 +215,6 @@ impl Builder<'_> {
             output.write_all(bytes).map_err(|source| {
                 BuildError::io(BuildOperation::WriteOutput, None, None, source)
             })?;
-        }
-        Ok(())
-    }
-
-    /// Whether `-t` gives this edge's outputs a timestamp rather than leaving
-    /// them as the declined recipe left them.
-    ///
-    /// Not a target with no file behind it, and not a recipe that is nothing
-    /// but `+` lines: that one ran rather than being declined.
-    pub(super) fn touching(&self, edge: EdgeId, command: &CommandSpec) -> bool {
-        self.options.touch
-            && !self.graph.edge(edge).untouchable
-            && command.dry_run_command.as_ref() != Some(&command.command)
-    }
-
-    /// Mark an edge's outputs up to date instead of remaking them, which is
-    /// GNU Make's `-t`, and say so in Make's own words.
-    ///
-    /// Two switches qualify it and each takes back a different half. `-n`
-    /// outranks the touch — the line is still said and the file is left alone
-    /// — and `-s` withdraws the line while the file is still touched.
-    pub(super) fn touch_outputs(&mut self, edge: EdgeId) -> BuildResult<()> {
-        for output in self.graph.edge(edge).out.clone() {
-            let path = self.graph.node_path(output).to_owned();
-            if !self.options.quiet {
-                let mut line = BString::from("touch ");
-                line.extend_from_slice(path.as_bytes());
-                line.push(b'\n');
-                self.emit(&line)?;
-            }
-            if !self.options.dryrun {
-                self.disk
-                    .touch(path.to_path().expect("byte paths are valid on Unix"))
-                    .map_err(|source| {
-                        BuildError::io(BuildOperation::TouchOutput, Some(path), Some(edge), source)
-                    })?;
-            }
         }
         Ok(())
     }
@@ -347,22 +290,9 @@ impl Builder<'_> {
                 edge,
                 exit_code,
                 command,
-            } => match (
-                self.options.recipe_failure.as_deref(),
-                self.graph.edge(edge).out.first().copied(),
-            ) {
-                (Some(name), Some(target)) => make_failure(
-                    &mut line,
-                    name,
-                    &self.recipe_location(edge),
-                    self.graph.node_path(target).as_bytes(),
-                    exit_code,
-                    command.ignore_errors,
-                ),
-                _ => self
-                    .reporter
-                    .failure(&mut line, self.graph, edge, exit_code, command),
-            },
+            } => self
+                .reporter
+                .failure(&mut line, self.graph, edge, exit_code, command),
         }
         let result = self.emit(&line);
         self.status_scratch = line;
@@ -416,78 +346,11 @@ impl Builder<'_> {
         self.emit_rendered(Rendering::Status(command))
     }
 
-    /// GNU Make's `--trace`: name the rule about to run and say what for.
-    ///
-    /// Make's own line, word for word, because everything that reads `--trace`
-    /// reads it as Make's — the place the recipe was written, the target, and
-    /// one of Make's four reasons in Make's order: a target with no file behind
-    /// it, a target that is not there, the prerequisites newer than it, and the
-    /// prerequisites still missing.
-    fn trace_update(&mut self, edge: EdgeId) -> BuildResult<()> {
-        if !self.options.trace {
-            return Ok(());
-        }
-        let Some(output) = self.graph.edge(edge).out.first().copied() else {
-            return Ok(());
-        };
-        let line = format!(
-            "{}: update target '{}' due to: {}\n",
-            self.recipe_location(edge).to_str_lossy(),
-            self.graph.node_path(output).to_str_lossy(),
-            self.update_reason(edge, output),
-        );
-        self.emit(line.as_bytes())
-    }
-
-    /// Where the recipe this edge runs was written, or Make's word for a rule
-    /// nobody wrote down.
-    fn recipe_location(&self, edge: EdgeId) -> BString {
-        self.graph
-            .names()
-            .lookup(bstr::BStr::new(RECIPE_LOCATION))
-            .and_then(|binding| crate::env::edgevar(self.graph, edge, binding, PathStyle::Raw))
-            .filter(|written| !written.is_empty())
-            .unwrap_or_else(|| BString::from(&b"<builtin>"[..]))
-    }
-
-    /// Which of Make's reasons this edge is running for.
-    fn update_reason(&self, edge: EdgeId, output: crate::graph::NodeId) -> String {
-        if self.graph.edge(edge).always_dirty {
-            return "target is .PHONY".to_owned();
-        }
-        let target = self.runtime.node(output).mtime();
-        if target.is_missing() {
-            return "target does not exist".to_owned();
-        }
-        let named = |inputs: &[crate::graph::NodeId], keep: &dyn Fn(FileTime) -> bool| {
-            inputs
-                .iter()
-                .filter(|input| keep(self.runtime.node(**input).mtime()))
-                .map(|input| self.graph.node_path(*input).to_str_lossy().into_owned())
-                .collect::<Vec<_>>()
-                .join(" ")
-        };
-        // `$?`, which is what Make itself prints here.
-        let newer = named(self.graph.edge(edge).non_order_only_inputs(), &|mtime| {
-            mtime > target
-        });
-        if !newer.is_empty() {
-            return newer;
-        }
-        let absent = named(&self.graph.edge(edge).input, &FileTime::is_missing);
-        if absent.is_empty() {
-            "unknown reasons".to_owned()
-        } else {
-            absent
-        }
-    }
-
     pub(super) fn command_started(
         &mut self,
         edge: EdgeId,
         command: &CommandSpec,
     ) -> BuildResult<()> {
-        self.trace_update(edge)?;
         self.progress.started += 1;
         self.reporter.started(&self.options, command);
         if command.use_console {
@@ -516,27 +379,11 @@ impl Builder<'_> {
         if !command.use_console {
             self.emit_status(edge, command)?;
         }
-        // GNU Make releases a block only when the command left something in it,
-        // so a silent recipe that succeeded is bracketed by nothing.
-        let held = failure_code.is_some() || !output.is_empty();
-        if held {
-            self.emit_boundary(true)?;
-        }
-        // Ninja opens the block with its banner and shows the output under it;
-        // Make's account of the failure closes the block, after the output the
-        // recipe left.
-        let closing = self.options.recipe_failure.is_some();
-        if let Some(exit_code) = failure_code.filter(|_| !closing) {
+        if let Some(exit_code) = failure_code {
             self.emit_failure(edge, exit_code, command)?;
         }
         if !output.is_empty() {
             self.emit_below_bar(output)?;
-        }
-        if let Some(exit_code) = failure_code.filter(|_| closing) {
-            self.emit_failure(edge, exit_code, command)?;
-        }
-        if held {
-            self.emit_boundary(false)?;
         }
         let repainted = self.repaint()?;
         if wrote_batch || repainted {
@@ -556,32 +403,6 @@ impl Builder<'_> {
             exit_code,
             command,
         })
-    }
-
-    /// Open or close the directory bracket around one held block.
-    ///
-    /// Nothing at all unless `-O` asked for it, which is why the pair is an
-    /// option rather than a flag: the lines are the front end's own wording.
-    fn emit_boundary(&mut self, opening: bool) -> BuildResult<()> {
-        if self.options.output_group.is_none() {
-            return Ok(());
-        }
-        let mut line = std::mem::take(&mut self.status_scratch);
-        line.clear();
-        self.reporter.clear(&mut line);
-        let group = self
-            .options
-            .output_group
-            .as_ref()
-            .expect("the group was checked above");
-        line.extend_from_slice(if opening {
-            &group.entering
-        } else {
-            &group.leaving
-        });
-        let result = self.emit(&line);
-        self.status_scratch = line;
-        result
     }
 
     /// Write bytes the reporter did not render, displacing the bar first.

@@ -45,7 +45,7 @@ pub use sink::GraphSink;
 // [spec:ronin:req:product.make-identity]
 pub const MAKE_VERSION: &str = "4.4.1";
 
-use crate::frontend::{BuildGraph, FrontendError, Node, Scope, StatePlacement, UnrecordedOutput};
+use crate::frontend::{BuildGraph, FrontendError, Node, Scope};
 use kati::evaluate::{evaluate, Evaluated};
 use kati::ninja::emit_build;
 use kati::session::Session;
@@ -107,14 +107,10 @@ impl MakeError {
 /// [`Persistence`](crate::frontend::Persistence) makes incremental, with the
 /// Makefile's own default goal recorded as the graph's default target.
 ///
-/// The graph also carries the half of Make's compatibility contract that
-/// persistence answers to: a build leaves the tree holding exactly what the
-/// Makefile put there, so the state that makes the next build incremental is
-/// kept outside it. Ninja's contract says the opposite and a manifest's graph
-/// says so too, which is why the graph is what says it rather than the caller.
-/// The graph says what that state's silence means for the same reason: an
-/// output the build log does not name is one Make judges on its timestamps
-/// alone, because Make has no build log for it to have been absent from.
+/// The returned graph is complete execution input. The engine does not receive
+/// Make provenance beside it: recipe environments and every other
+/// graph-affecting Make construct are compiled into the graph before this
+/// function returns, and persistence applies ordinary Ninja semantics.
 ///
 /// # Errors
 ///
@@ -123,7 +119,8 @@ impl MakeError {
 /// [`MakeError::Construct`] for one that evaluates but describes a graph the
 /// engine cannot hold, such as two rules generating one output.
 // [spec:ronin:req:make.graph-direct]
-// [spec:ronin:req:make.state-outside-the-tree]
+// [spec:ronin:req:make.compiler-boundary]
+// [spec:ronin:req:make.state-outside-the-tree+1]
 pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeError> {
     let directory = std::env::current_dir().map_err(|error| {
         MakeError::Evaluate(format!(
@@ -149,18 +146,23 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             .find(|(candidate, _)| candidate == name)
             .map(|(_, value)| value.to_string_lossy().into_owned())
     };
+    let level = environment_value("MAKELEVEL")
+        .and_then(|level| level.parse().ok())
+        .unwrap_or(0usize);
+    let recipe_environment = vec![(
+        OsString::from("MAKELEVEL"),
+        Some(OsString::from(level.saturating_add(1).to_string())),
+    )];
     let compilation = Compilation {
         context: CompilationContext {
             root_directory: directory.clone(),
             directory,
             path_prefix: PathBuf::new(),
             makeflags: environment_value("MAKEFLAGS").unwrap_or_default(),
-            level: environment_value("MAKELEVEL")
-                .and_then(|level| level.parse().ok())
-                .unwrap_or(0),
+            level,
             jobs: session.flags.num_jobs.max(1),
             environment,
-            recipe_environment: Vec::new(),
+            recipe_environment,
         },
         session,
         shuffle,
@@ -198,12 +200,12 @@ pub(crate) struct Compilation {
 
 struct CompiledUnit {
     targets: Vec<Node>,
-    exported: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
 }
 
 /// Evaluate a root Makefile and every recursive `$(MAKE)` recipe into one
 /// shared graph before returning it to the executor.
 // [spec:ronin:req:make.recursive-invocation+1]
+// [spec:ronin:req:make.compiler-boundary]
 pub(crate) fn load_with_subninjas<F>(root: Compilation, mut resolve: F) -> Result<Loaded, MakeError>
 where
     F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
@@ -211,8 +213,7 @@ where
     let mut sink = GraphSink::new_at(&root.context.root_directory);
     let mut cache = HashMap::new();
     let mut compiling = HashSet::new();
-    let root_key = root.cache_key.clone();
-    let compiled = compile_unit(
+    compile_unit(
         root,
         &mut sink,
         None,
@@ -220,17 +221,8 @@ where
         &mut cache,
         &mut compiling,
     )?;
-    cache.insert(root_key, compiled.targets.clone());
-    let mut graph = sink.into_graph().map_err(MakeError::Construct)?;
-    graph.state_placement = StatePlacement::OutsideTheTree;
-    graph.unrecorded_output = UnrecordedOutput::SaysNothing;
-    Ok(Loaded {
-        graph,
-        exported: compiled.exported,
-        // `.NOTPARALLEL` is a per-compilation-unit graph pool. It is never a
-        // provenance flag for the one executor running the composed graph.
-        serial: false,
-    })
+    let graph = sink.into_graph().map_err(MakeError::Construct)?;
+    Ok(Loaded { graph })
 }
 
 fn compile_unit<F>(
@@ -253,7 +245,6 @@ where
     let context = compilation.context.clone();
     let session = compilation.session;
     let shuffle = compilation.shuffle;
-    let is_root = parent_scope.is_none();
     let evaluated = in_directory(&context.directory, || {
         let Evaluated { mut ev, mut nodes } =
             evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
@@ -269,9 +260,7 @@ where
         }
         sink.serialise_unit(ev.session.flags.not_parallel);
         let mut recipe_environment = context.recipe_environment.clone();
-        if !is_root {
-            apply_recipe_environment(&mut recipe_environment, &exported);
-        }
+        apply_recipe_environment(&mut recipe_environment, &exported);
         sink.set_recipe_environment(recipe_environment);
         if let Err(error) = emit_build(&nodes, &mut ev, sink) {
             if let Some(failure) = sink.construction_failure() {
@@ -293,9 +282,7 @@ where
 
     let mut descendant_context = context;
     apply_exported_environment(&mut descendant_context.environment, &exported);
-    if !is_root {
-        apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
-    }
+    apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
     for pending in unit.subninjas {
         let mut child_target_groups = Vec::with_capacity(pending.invocations.len());
         for invocation in &pending.invocations {
@@ -318,7 +305,6 @@ where
     compiling.remove(&compilation_key);
     Ok(CompiledUnit {
         targets: unit.targets,
-        exported,
     })
 }
 
@@ -526,16 +512,10 @@ fn reorder(shuffle: Shuffle, not_parallel: bool, nodes: &mut [kati::dep::NamedDe
     }
 }
 
-/// A Makefile read: the graph it describes, and what it said about running it.
+/// A Makefile compiled into the complete graph the engine executes.
 pub struct Loaded {
     /// What the Makefile builds.
     pub graph: BuildGraph,
-    /// What `export` put in every recipe's environment, and what `unexport`
-    /// took out of it. Values are evaluated here because the evaluator that
-    /// can answer for them does not outlive this call.
-    pub exported: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
-    /// `.NOTPARALLEL`: run this Makefile's own recipes one at a time.
-    pub serial: bool,
 }
 
 fn exported_environment(

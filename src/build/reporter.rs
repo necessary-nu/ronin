@@ -70,18 +70,6 @@ pub(crate) enum ColorChoice {
     Never,
 }
 
-/// The two lines a held block is bracketed with, already terminated.
-///
-/// GNU Make's `-O` moves the directory announcement from around the whole
-/// build to around each block it releases, so a reader still knows what the
-/// paths inside one resolve against. The pair is fixed for the build, so it is
-/// formatted once by whoever knows the directory rather than per block.
-#[derive(Clone)]
-pub(crate) struct OutputGroup {
-    pub(crate) entering: Vec<u8>,
-    pub(crate) leaving: Vec<u8>,
-}
-
 /// What the process knows about its own output, captured once at startup.
 ///
 /// A build writes through a `dyn Write` that may be a terminal, a pipe, or a
@@ -453,38 +441,6 @@ fn ninja_status(
         out.extend_from_slice(description);
     }
     out.push(b'\n');
-}
-
-/// Render `make: *** [Makefile:3: all] Error 1`, as GNU Make 4.4 words it.
-///
-/// Make's counterpart to the `FAILED:` block, and the whole of what it says
-/// about a failed recipe: the place the recipe was written, the target it was
-/// making, and the status the recipe left. Only the name in front is Ronin's.
-///
-/// The place is the recipe's first line, where GNU Make names the line that
-/// actually failed. The two agree for every one-line recipe and for every
-/// recipe whose first line is the one that fails; naming the other lines needs
-/// a shell per line, which is `make-recipe-one-shell-per-line`'s ground.
-///
-/// A failure the Makefile said to ignore drops the stars and gains the reason,
-/// `make: [Makefile:3: all] Error 1 (ignored)`, which is Make saying the target
-/// was made anyway.
-// [spec:ronin:req:product.make-identity]
-pub(super) fn make_failure(
-    out: &mut Vec<u8>,
-    name: &str,
-    location: &[u8],
-    target: &[u8],
-    exit_code: i32,
-    ignored: bool,
-) {
-    out.extend_from_slice(name.as_bytes());
-    out.extend_from_slice(if ignored { b": [" } else { b": *** [" });
-    out.extend_from_slice(location);
-    out.extend_from_slice(b": ");
-    out.extend_from_slice(target);
-    let _ = write!(out, "] Error {exit_code}");
-    out.extend_from_slice(if ignored { b" (ignored)\n" } else { b"\n" });
 }
 
 fn ninja_failure(

@@ -32,7 +32,6 @@ mod execute;
 
 pub use crate::parse::{load_manifest, Manifest, ManifestOptions};
 pub use execute::{Build, Jobs, Outcome, Persistence, Planned};
-pub(crate) use execute::{StatePlacement, UnrecordedOutput};
 
 /// A path interned in a graph.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -229,14 +228,6 @@ pub struct BuildGraph {
     defaults: Vec<NodeId>,
     /// One buffer for canonicalizing the paths that are not canonical already.
     canonical: Vec<u8>,
-    /// Where the front end that built this graph keeps the state that makes a
-    /// second build incremental. Ninja's contract puts it beside the build and
-    /// that is what a graph carries until a front end says otherwise.
-    pub(crate) state_placement: StatePlacement,
-    /// What this graph's front end means by an output the build log does not
-    /// name. Ninja means a command it cannot compare against; a graph carries
-    /// that until a front end says otherwise.
-    pub(crate) unrecorded_output: UnrecordedOutput,
 }
 
 impl Default for BuildGraph {
@@ -256,8 +247,6 @@ impl BuildGraph {
             state,
             defaults: Vec::new(),
             canonical: Vec::new(),
-            state_placement: StatePlacement::default(),
-            unrecorded_output: UnrecordedOutput::default(),
         }
     }
 
@@ -319,17 +308,6 @@ impl BuildGraph {
         let mut canonical = path.to_vec();
         canonpath(&mut canonical);
         nodeget(&self.arenas, &canonical).map(Node)
-    }
-
-    /// Builds as though `path` had just been modified, which is GNU Make's
-    /// `-W`.
-    ///
-    /// A path no node holds is not an error: nothing reads it, so there is
-    /// nothing the pretence could change.
-    pub fn assume_new(&mut self, path: &[u8]) {
-        if let Some(node) = self.lookup(path) {
-            self.arenas.assumed_new.push(node.0);
-        }
     }
 
     /// The edge that generates `node`, absent for a file nothing builds.
@@ -589,33 +567,6 @@ impl BuildGraph {
     /// Records `node` as a target to build when none are named.
     pub fn add_default(&mut self, node: Node) {
         self.defaults.push(node.0);
-    }
-
-    /// Makes every edge one that is out of date whenever it is reached.
-    ///
-    /// GNU Make's `-B`: every recipe the goals reach runs, whatever the
-    /// outputs' timestamps say and whatever the last build recorded. That is
-    /// the property `.PHONY` gives one edge, asked of all of them, so it is
-    /// stated the same way rather than by a second notion of dirtiness the
-    /// scheduler would have to consult.
-    // [spec:ronin:req:make.phony-always-dirty]
-    pub fn rebuild_everything(&mut self) {
-        for edge in self.arenas.edge_ids() {
-            self.arenas.edge_mut(edge).always_dirty = true;
-        }
-    }
-
-    /// Spares from `-t` the targets GNU Make gives no timestamp to: a `.PHONY`
-    /// one, which has no file behind it.
-    ///
-    /// Read before [`Self::rebuild_everything`], which spells `-B` with the
-    /// same bit and would otherwise make every target look phony.
-    pub fn spare_phony_from_touch(&mut self) {
-        for edge in self.arenas.edge_ids() {
-            if self.arenas.edge(edge).always_dirty {
-                self.arenas.edge_mut(edge).untouchable = true;
-            }
-        }
     }
 
     // [spec:ronin:def:parse.defaultnodes-fn]

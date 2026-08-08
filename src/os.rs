@@ -323,21 +323,6 @@ impl RealDiskInterface {
     pub(crate) fn symlink_metadata(&self, path: &Path) -> io::Result<std::fs::Metadata> {
         std::fs::symlink_metadata(self.resolve(path))
     }
-
-    /// Gives the file the current time, creating an empty one if it is absent.
-    ///
-    /// GNU Make's `-t` rewrites the first byte to move the timestamp; asking
-    /// the kernel for the timestamp instead leaves the contents alone even for
-    /// the moment that trick does not.
-    pub(crate) fn touch(&self, path: &Path) -> io::Result<()> {
-        let times = std::fs::FileTimes::new().set_modified(std::time::SystemTime::now());
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(self.resolve(path))?
-            .set_times(times)
-    }
 }
 
 /// How many threads this process may usefully run, resolved once.
