@@ -1,15 +1,10 @@
-//! What a Make invocation says about how it went.
-//!
-//! Separated from the command line because the two answer different questions:
-//! [`super::cli`] reads what was asked for, and this turns what happened into
-//! the status and the words GNU Make would have used.
+//! Translation from Make-front-end outcomes into Ronin's ordinary CLI result.
 
 use crate::cli::{RunResult, PRODUCT_NAME};
-use crate::error::CliError;
 use crate::frontend::Outcome;
 use crate::util::terminated;
 use crate::Error;
-use std::io::Write;
+use std::fmt::Display;
 use std::path::Path;
 
 /// What GNU Make exits with when it abandons a build instead of finishing one.
@@ -23,26 +18,40 @@ pub(super) const ABANDONED: i32 = 2;
 
 /// What an invocation with nothing to read reports.
 ///
-/// The announcement is a pair or it is nothing: an Entering with no Leaving
-/// leaves every parser reading them resolving paths against a directory the
-/// build has already left.
-pub(super) fn no_makefile(
-    reported: String,
-    announcing: Option<usize>,
-    directory: &Path,
-) -> RunResult {
-    departed(
-        RunResult {
-            stdout: terminated(reported),
-            stderr: format!(
-                "{PRODUCT_NAME}: *** No targets specified and no makefile found.  Stop.\n"
-            )
-            .into_bytes(),
-            exit_code: ABANDONED,
-        },
-        announcing,
-        directory,
-    )
+/// Absence of a Makefile is a front-end diagnostic, not a reason to recreate
+/// GNU Make's `***` and `Stop.` ceremony.
+pub(super) fn no_makefile() -> RunResult {
+    RunResult {
+        stdout: Vec::new(),
+        stderr: ordinary_diagnostic("no targets specified and no makefile found"),
+        exit_code: ABANDONED,
+    }
+}
+
+/// Render a compiler rejection through Ronin's ordinary diagnostic shape.
+///
+/// Kati identifies Makefile locations correctly, but its standalone reporter
+/// decorates fatal messages with GNU Make's recursive prefix, stars, and
+/// `Stop.` suffix. Those are runner narration, not compiler information.
+// [spec:ronin:req:make.narration]
+pub(super) fn ordinary_diagnostic(failure: impl Display) -> Vec<u8> {
+    let mut diagnostic = failure.to_string();
+    if let Some(rest) = diagnostic.strip_prefix(PRODUCT_NAME).and_then(|rest| {
+        rest.strip_prefix(": ").or_else(|| {
+            rest.strip_prefix('[')
+                .and_then(|rest| rest.split_once(": ").map(|(_, message)| message))
+        })
+    }) {
+        diagnostic = rest.to_owned();
+    }
+    diagnostic = diagnostic.replace(": *** ", ": ");
+    if let Some(rest) = diagnostic.strip_prefix("*** ") {
+        diagnostic = rest.to_owned();
+    }
+    if let Some(message) = diagnostic.strip_suffix("  Stop.") {
+        diagnostic.truncate(message.len());
+    }
+    format!("{PRODUCT_NAME}: {diagnostic}\n").into_bytes()
 }
 
 /// What an invocation that could not go on reports.
@@ -58,60 +67,6 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
         stderr: terminated(crate::util::diagnostic(PRODUCT_NAME, failure)),
         exit_code: ABANDONED,
     }
-}
-
-/// One half of GNU Make's directory announcement, in GNU Make's own words.
-///
-/// Every error parser that inherited the convention reads this pair to resolve
-/// the relative paths a compiler then prints, so the wording and the quoting
-/// are Make 4.4's rather than Ninja's; only the name in front is Ronin's. The
-/// depth rides in front too, because a tree announces the same directory from
-/// several levels and the level is what tells them apart.
-// [spec:ronin:req:product.make-identity]
-pub(super) fn announcement(verb: &str, directory: &Path, level: usize) -> String {
-    format!(
-        "{}: {verb} directory '{}'",
-        super::cli::program_at(level),
-        directory.display()
-    )
-}
-
-/// Put a line where the caller will see it, in the order the build saw it.
-///
-/// A caller that gave a sink is watching the build happen and gets the line as
-/// it is said; a caller that did not is handed it back with the result.
-pub(super) fn say(
-    output: &mut Option<&mut dyn Write>,
-    reported: &mut String,
-    line: &str,
-) -> Result<(), Error> {
-    if let Some(sink) = output.as_deref_mut() {
-        writeln!(sink, "{line}").map_err(CliError::write_output)?;
-        sink.flush().map_err(CliError::write_output)?;
-    } else {
-        reported.push_str(line);
-        reported.push('\n');
-    }
-    Ok(())
-}
-
-/// Close the directory announcement this invocation opened.
-///
-/// Last of everything the invocation says, which is where GNU Make puts it and
-/// where a parser reading the pair stops resolving paths against the directory.
-/// `announcing` is the level the opening line carried, so the same value that
-/// decided there was one decides how this one is named.
-pub(super) fn departed(
-    mut result: RunResult,
-    announcing: Option<usize>,
-    directory: &Path,
-) -> RunResult {
-    if let Some(level) = announcing {
-        result
-            .stdout
-            .extend_from_slice(&terminated(announcement("Leaving", directory, level)));
-    }
-    result
 }
 
 /// What `-q` reports, which is a status and nothing else.
@@ -139,35 +94,24 @@ pub(super) fn answered(reported: String, question: Result<bool, Error>) -> RunRe
 
 /// What the invocation reports about a build that ran.
 ///
-/// A build that stopped is a result rather than a diagnostic: it is said on
-/// stdout after the build's own output, and the status left with is the
-/// failing recipe's own. That is Ninja's contract rather than Make's exit 2,
-/// and where the two contracts meet the Ninja one governs.
+/// A build that stopped is reported after its own output with Ninja's ordinary
+/// summary. Exit-status translation remains isolated here until the Make
+/// executor boundary is retired.
 ///
-/// A build the recipes themselves stopped says nothing here: each failure has
-/// already named its makefile line, its target and its status the way Make
-/// does, and a summary after them is Ninja's shape, not Make's.
+// [spec:ronin:req:make.narration]
 pub(super) fn finished(
     reported: String,
     up_to_date: bool,
     outcome: &Outcome,
     silent: bool,
-    removed: &[u8],
 ) -> RunResult {
     let mut stdout = terminated(reported);
     stdout.extend_from_slice(outcome.output());
-    if let Some((reason, _)) = outcome
-        .stopped
-        .as_ref()
-        .filter(|(reason, _)| !reason.is_recipe_failure())
-    {
+    if let Some((reason, _)) = outcome.stopped.as_ref() {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: build stopped: {reason}.\n").as_bytes());
     } else if up_to_date && stdout.is_empty() && !silent {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: no work to do.\n").as_bytes());
     }
-    // Last of everything the build itself said, which is where GNU Make says
-    // what it threw away.
-    stdout.extend_from_slice(removed);
     RunResult {
         stdout,
         stderr: Vec::new(),
@@ -184,39 +128,22 @@ pub(super) fn finished(
 }
 
 /// Throw away the files the build invented to complete a chain of implicit
-/// rules, and say so in GNU Make's words.
+/// rules without adding Make's `rm ...` narration.
 ///
 /// Last of everything the build does, and it happens whether the build finished
 /// or gave up: what was invented on the way is rubbish either way. `-t` made
 /// files by touching them rather than by running anything, so it leaves them
-/// alone; `-n` ran nothing, so it names what it would have removed and removes
-/// nothing.
-pub(super) fn discard_intermediates(
-    disposable: &[Vec<u8>],
-    touching: bool,
-    pretending: bool,
-    silent: bool,
-) -> Vec<u8> {
+/// alone; `-n` ran nothing, so it removes nothing.
+pub(super) fn discard_intermediates(disposable: &[Vec<u8>], touching: bool, pretending: bool) {
     use std::os::unix::ffi::OsStrExt;
 
     if disposable.is_empty() || touching {
-        return Vec::new();
+        return;
     }
-    let mut removed = Vec::new();
+    if pretending {
+        return;
+    }
     for path in disposable {
-        if pretending || std::fs::remove_file(Path::new(std::ffi::OsStr::from_bytes(path))).is_ok()
-        {
-            removed.push(path);
-        }
+        let _ = std::fs::remove_file(Path::new(std::ffi::OsStr::from_bytes(path)));
     }
-    if removed.is_empty() || silent {
-        return Vec::new();
-    }
-    let mut said = b"rm".to_vec();
-    for path in removed {
-        said.push(b' ');
-        said.extend_from_slice(path);
-    }
-    said.push(b'\n');
-    said
 }

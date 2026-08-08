@@ -1021,6 +1021,7 @@ fn make_mode_assigns_what_a_shell_command_printed() {
 /// A variable name is one word, so `x y = 1` is not an assignment at all and
 /// the line is read as a rule, which has no separator.
 // [spec:ronin:req:make.semantics/test]
+// [spec:ronin:req:make.narration/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
@@ -1034,9 +1035,10 @@ fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("Makefile:1: *** missing separator."),
+        stderr.contains("ronin: Makefile:1: missing separator."),
         "{stderr}"
     );
+    assert!(!stderr.contains("***"), "{stderr}");
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -1904,7 +1906,6 @@ fn make_mode_claims_only_the_features_it_has() {
             "jobserver",
             "jobserver-fifo",
             "order-only",
-            "output-sync",
             "shortest-stem",
             "target-specific",
         ]
@@ -2250,106 +2251,39 @@ fn no_builtin_rules_withdraws_the_rules_nobody_wrote() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:product.make-identity/test]
+// [spec:ronin:req:make.narration/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn print_directory_brackets_the_build_with_the_directory_it_ran_in() {
-    let directory = make_case("make-print-directory", "all:\n\t@echo built\n.PHONY: all\n");
+fn make_narration_flags_are_accepted_noops() {
+    let directory = make_case("make-narration-noops", "all:\n\t@echo built\n.PHONY: all\n");
     let make = invoked_as(&directory, "make");
-    let said = |arguments: &[&str]| {
-        let output = make_command(&make, &directory)
-            .args(arguments)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).into_owned()
-    };
-    let here = directory.canonicalize().unwrap();
-    let entering = format!("ronin: Entering directory '{}'", here.display());
-    let leaving = format!("ronin: Leaving directory '{}'", here.display());
-
-    // Nothing moved, so nothing is announced.
-    assert!(!said(&[]).contains("directory"));
-
-    for spelling in ["-w", "--print-directory"] {
-        let reported = said(&[spelling]);
-        let lines = reported.lines().collect::<Vec<_>>();
-        assert_eq!(
-            lines.first(),
-            Some(&entering.as_str()),
-            "{spelling}: {reported}"
-        );
-        assert_eq!(
-            lines.last(),
-            Some(&leaving.as_str()),
-            "{spelling}: {reported}"
-        );
-        assert!(reported.contains("built"), "{spelling}: {reported}");
-    }
-    fs::remove_dir_all(directory).unwrap();
-}
-
-/// `-O` brackets each recipe's held output with the directory instead of
-/// bracketing the whole build, and settles on a type a sub-make can read.
-// [spec:ronin:req:product.make-identity/test]
-#[cfg(all(unix, feature = "make"))]
-#[test]
-fn output_sync_brackets_each_recipes_block_rather_than_the_whole_build() {
-    let directory = make_case(
-        "make-output-sync",
-        "all: a b\n\
-         a: ; @echo a1; echo a2\n\
-         b: ; @echo b1\n\
-         flags: ; @echo \"[$(MAKEFLAGS)]\"\n\
-         .PHONY: all a b flags\n",
-    );
-    let make = invoked_as(&directory, "make");
-    let said = |arguments: &[&str]| {
-        let output = make_command(&make, &directory)
-            .args(arguments)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).into_owned()
-    };
-    let blocks = |reported: &str| {
-        reported
-            .lines()
-            .filter(|line| line.contains("Entering directory"))
-            .count()
-    };
-
-    for spelling in ["-O", "-Otarget", "--output-sync", "--output-sync=target"] {
-        let reported = said(&["-w", "-j2", spelling]);
-        assert_eq!(blocks(&reported), 2, "{spelling}: {reported}");
-        for held in ["a1", "a2", "b1"] {
-            assert!(reported.contains(held), "{spelling}: {reported}");
-        }
-    }
-
-    // The types that hold nothing, and a build with nothing to interleave,
-    // keep the one pair a whole build is bracketed with.
     for arguments in [
-        ["-w", "-j2", "-Onone"].as_slice(),
-        ["-w", "-j2", "-Orecurse"].as_slice(),
-        ["-w", "-j1", "-Otarget"].as_slice(),
+        ["-w"].as_slice(),
+        ["--print-directory"].as_slice(),
+        ["-Otarget"].as_slice(),
+        ["--output-sync=line"].as_slice(),
+        ["--debug=a"].as_slice(),
+        ["--trace"].as_slice(),
     ] {
-        let reported = said(arguments);
-        assert_eq!(blocks(&reported), 1, "{arguments:?}: {reported}");
-    }
-
-    // What a sub-make is told, which is the resolved type and not the spelling.
-    for (spelling, told) in [("-O", "[ -Otarget]"), ("--output-sync=line", "[ -Oline]")] {
-        let reported = said(&[spelling, "flags"]);
-        assert!(reported.contains(told), "{spelling}: {reported}");
+        let output = make_command(&make, &directory)
+            .args(arguments)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{arguments:?}: {said}");
+        assert!(said.contains("built"), "{arguments:?}: {said}");
+        for make_only in [
+            "Entering directory",
+            "Leaving directory",
+            "Reading makefiles",
+            "Updating goal",
+            "ronin[",
+            "***",
+            "Stop.",
+        ] {
+            assert!(!said.contains(make_only), "{arguments:?}: {said}");
+        }
     }
     fs::remove_dir_all(directory).unwrap();
 }
@@ -2438,16 +2372,14 @@ fn a_recursive_makefile_re_enters_ronin_with_no_make_on_the_path() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// GNU Make's `should_print_dir` is `!silent && (makelevel > 0 || directories)`,
-/// so depth alone asks for the pair — this tree reaches its sub-make with `cd`
-/// rather than `-C`, and neither invocation is given `-w`. The level crosses a
-/// process boundary in `MAKELEVEL`, which is why it is measured through one.
-// [spec:ronin:req:product.make-identity/test]
+/// A recursive process is still temporary executor behaviour, but it may not
+/// install GNU Make's directory or recursion narrator around its output.
+// [spec:ronin:req:make.narration/test]
 // [spec:ronin:req:make.recursive-invocation/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn a_sub_make_announces_the_directory_it_is_in_and_the_depth_it_is_at() {
-    let directory = test_directory("make-announce-level");
+fn recursive_make_uses_ninja_narration() {
+    let directory = test_directory("make-recursive-narration");
     fs::create_dir_all(directory.join("sub")).unwrap();
     fs::write(
         directory.join("Makefile"),
@@ -2459,13 +2391,10 @@ fn a_sub_make_announces_the_directory_it_is_in_and_the_depth_it_is_at() {
         "all:\n\t@echo bottom\n.PHONY: all\n",
     )
     .unwrap();
-    let here = directory.canonicalize().unwrap();
-    let top = here.display().to_string();
-    let below = here.join("sub").display().to_string();
-
-    let announced = |arguments: &[&str]| {
+    let invocations: &[&[&str]] = &[&[], &["-w"]];
+    for arguments in invocations {
         let output = make_command(&invoked_as(&directory, "make"), &directory)
-            .args(arguments)
+            .args(*arguments)
             .output()
             .unwrap();
         assert!(
@@ -2473,37 +2402,16 @@ fn a_sub_make_announces_the_directory_it_is_in_and_the_depth_it_is_at() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|line| line.contains(" directory '"))
-            .map(str::to_owned)
-            .collect::<Vec<_>>()
-    };
-
-    // The top of the tree moved nowhere and was asked for nothing, so it says
-    // nothing; the level below announces without being asked, and the pair
-    // names the depth rather than the bare product name.
-    assert_eq!(
-        announced(&[]),
-        [
-            format!("ronin[1]: Entering directory '{below}'"),
-            format!("ronin[1]: Leaving directory '{below}'"),
-        ]
-    );
-    // -s withdraws what the depth implied, the way it withdraws what -C
-    // implies, and reaches the sub-make through MAKEFLAGS.
-    assert_eq!(announced(&["-s"]), [] as [String; 0]);
-    // -w asks outright for the pair the top of the tree does not imply, and
-    // the level below still counts itself one deeper.
-    assert_eq!(
-        announced(&["-w"]),
-        [
-            format!("ronin: Entering directory '{top}'"),
-            format!("ronin[1]: Entering directory '{below}'"),
-            format!("ronin[1]: Leaving directory '{below}'"),
-            format!("ronin: Leaving directory '{top}'"),
-        ]
-    );
+        let said = String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(said.contains("bottom"), "{arguments:?}: {said}");
+        assert!(
+            !said.contains("Entering directory"),
+            "{arguments:?}: {said}"
+        );
+        assert!(!said.contains("Leaving directory"), "{arguments:?}: {said}");
+        assert!(!said.contains("ronin["), "{arguments:?}: {said}");
+    }
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2695,26 +2603,17 @@ fn a_forced_job_count_replaces_the_budget_a_sub_make_inherited() {
         peak, FORCED,
         "-j{FORCED} forced two levels up ran {peak} recipes at the bottom"
     );
-    assert!(
-        said.contains(&format!(
-            "warning: -j{FORCED} forced in submake: resetting jobserver mode."
-        )),
-        "{said}"
-    );
+    assert!(!said.contains("resetting jobserver mode"), "{said}");
 
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// GNU Make 4.4's account of a failed recipe, and nothing after it.
-///
-/// The makefile line comes from the rule the evaluator read, the level from
-/// this invocation's place in the tree, and the status from the recipe. Only
-/// the name in front is Ronin's.
-// [spec:ronin:req:product.make-identity/test]
+/// A Makefile-compiled graph fails in the same shape as a manifest graph.
+// [spec:ronin:req:make.narration/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn make_mode_names_the_makefile_line_the_target_and_the_status_when_a_recipe_fails() {
+fn make_recipe_failure_uses_ninja_narration() {
     let directory = test_directory("make-failure-line");
     fs::create_dir_all(directory.join("sub")).unwrap();
     fs::write(
@@ -2730,15 +2629,30 @@ fn make_mode_names_the_makefile_line_the_target_and_the_status_when_a_recipe_fai
     let said = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(2), "{said}");
-    assert!(
-        said.contains("ronin[1]: *** [Makefile:2: all] Error 1\n"),
-        "{said}"
-    );
-    assert!(
-        said.contains("ronin: *** [Makefile:2: all] Error 2\n"),
-        "{said}"
-    );
-    assert!(!said.contains("FAILED:"), "{said}");
-    assert!(!said.contains("build stopped"), "{said}");
+    assert!(said.contains("FAILED:"), "{said}");
+    assert!(said.contains("build stopped: subcommand failed."), "{said}");
+    for make_only in ["***", "Stop.", "ronin["] {
+        assert!(!said.contains(make_only), "{said}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Compiler diagnostics keep their Makefile source without borrowing GNU
+/// Make's fatal-error decorations.
+// [spec:ronin:req:make.narration/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_evaluation_uses_ordinary_diagnostics() {
+    let directory = make_case("make-evaluation-diagnostic", "$(error broken)\n");
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    let diagnostic = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{diagnostic}");
+    assert!(diagnostic.starts_with("ronin: Makefile:1:"), "{diagnostic}");
+    assert!(diagnostic.contains("broken"), "{diagnostic}");
+    for make_only in ["***", "Stop.", "ronin["] {
+        assert!(!diagnostic.contains(make_only), "{diagnostic}");
+    }
     fs::remove_dir_all(directory).unwrap();
 }

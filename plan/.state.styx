@@ -523,4 +523,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule make.interface-compatibility}
     )}
+    {id make-ninja-narration, covered_rules (
+        make.narration
+    ), covered_claims (
+        {impl_name target-impl, rule make.narration}
+    )}
 )

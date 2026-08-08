@@ -18,12 +18,12 @@
 //! is why Make mode is entered from the executable rather than from
 //! [`Runner`]'s library path, which never moves it.
 
-use crate::build::{BuildOptions, JobLimit, OutputGroup};
+use crate::build::{BuildOptions, JobLimit};
 use crate::cli::{RunResult, Runner, PRODUCT_NAME};
 use crate::error::CliError;
 use crate::frontend::{Build, Persistence};
 use crate::make::report::{
-    abandoned, announcement, answered, departed, discard_intermediates, finished, no_makefile, say,
+    abandoned, answered, discard_intermediates, finished, no_makefile, ordinary_diagnostic,
     ABANDONED,
 };
 use crate::make::Shuffle;
@@ -329,8 +329,8 @@ struct Invocation {
     /// what would let a spelling and a meaning drift apart.
     switches: u16,
     /// One bit per [`Switch`] the command line took back. Not the complement of
-    /// `switches`: `--no-print-directory` withdraws the announcement `-C`
-    /// implies, so refusing differs from never having asked.
+    /// `switches`: a negation must still survive into `MAKEFLAGS`, even where
+    /// the switch controls no Ronin behaviour.
     negated: u16,
     /// What `-O` asked for, which is not a switch: it has four values and the
     /// one it settles on travels to a sub-make by name.
@@ -472,22 +472,6 @@ impl Invocation {
     /// reached, and question mode has nothing to answer about once it has.
     const fn questioning(&self) -> bool {
         self.given(Switch::Question) && !self.given(Switch::Touch)
-    }
-
-    /// Whether this invocation brackets its build with the directory it ran in.
-    ///
-    /// GNU Make's rule, which every option here is a part of: `-w` asks for the
-    /// pair outright, `-C` asks for it by implication because the paths a
-    /// recipe prints are about to stop resolving against the caller's
-    /// directory, being a sub-make asks for it by the same implication because
-    /// the parent's directory is not this one either, `-s` withdraws the
-    /// implication but not the request, and `-q` prints nothing at all because
-    /// its whole answer is a status.
-    const fn announcing(&self, level: usize) -> bool {
-        !self.questioning()
-            && !self.refused(Switch::PrintDirectory)
-            && (self.given(Switch::PrintDirectory)
-                || ((level > 0 || !self.directories.is_empty()) && !self.given(Switch::Silent)))
     }
 }
 
@@ -1131,7 +1115,6 @@ fn session_for(
     makefile: &Path,
     jobs: usize,
     invoked_as: &Path,
-    level: usize,
 ) -> Session {
     let mut session = Session::new();
     session.flags = Flags {
@@ -1156,18 +1139,13 @@ fn session_for(
         // already names Make mode: that is the whole point of selecting the
         // front end by name. Switches and assignments travel in MAKEFLAGS.
         subkati_args: vec![invoked_as.as_os_str().to_owned()],
-        // What a diagnostic with no file and line leads with.
-        program_name: program_at(level),
-        // The evaluator declares what a Makefile may assume of the language;
-        // these three are about who runs the recipes, which is Ronin. All are
-        // real: Make mode serves the jobserver as well as consuming it, in the
-        // named-pipe form GNU Make 4.4 introduced, and `-O` holds a recipe's
-        // output and releases it as one block.
-        extra_features: vec![
-            "jobserver".to_owned(),
-            "jobserver-fifo".to_owned(),
-            "output-sync".to_owned(),
-        ],
+        // Compiler diagnostics retain their Makefile source, but never acquire
+        // a recursive Make runner identity.
+        program_name: PRODUCT_NAME.to_owned(),
+        // The evaluator declares what a Makefile may assume of the language.
+        // Jobserver participation is real; Make's output-sync feature is not
+        // advertised because `-O` is an accepted interface no-op.
+        extra_features: vec!["jobserver".to_owned(), "jobserver-fifo".to_owned()],
         include_dirs: invocation.include_dirs.clone(),
         ..Flags::default()
     };
@@ -1177,16 +1155,6 @@ fn session_for(
         .map(|goal| session.intern(goal.to_vec()))
         .collect();
     session
-}
-
-/// What a diagnostic from this invocation leads with: GNU Make names itself
-/// and, below the top of the tree, the level too.
-pub(super) fn program_at(level: usize) -> String {
-    if level == 0 {
-        PRODUCT_NAME.to_owned()
-    } else {
-        format!("{PRODUCT_NAME}[{level}]")
-    }
 }
 
 /// Tell the makefile what the invocation it is being read by looks like.
@@ -1223,15 +1191,14 @@ fn record_invocation(
         })
 }
 
-/// The scheduler settings this invocation asks for, and GNU Make's warning
-/// where an explicit `-j` replaced a budget this invocation inherited.
-// [spec:ronin:req:product.make-identity]
+/// The scheduler settings this invocation maps onto Ninja's controls.
+// [spec:ronin:req:make.narration]
 fn build_options(
     invocation: &Invocation,
     runner: &Runner,
     working_directory: crate::os::WorkingDirectory,
     level: usize,
-) -> Result<(BuildOptions, Option<String>), Error> {
+) -> Result<BuildOptions, Error> {
     let mut options = BuildOptions {
         jobs: invocation.jobs.unwrap_or(JobLimit::Auto),
         // GNU Make's -k has no count: it stops when nothing is left that could
@@ -1243,25 +1210,18 @@ fn build_options(
         },
         dryrun: invocation.given(Switch::DryRun),
         touch: invocation.given(Switch::Touch),
-        // Make's `-n` exists to show the recipes rather than to run them, so it
-        // asks for the commands themselves and not for the descriptions a
-        // build would otherwise report, and `--debug=p` asks for the same of a
-        // build that does run them. Under `-t` the recipe is not what would
-        // happen, so there is nothing there worth showing.
-        verbose: (invocation.given(Switch::DryRun) && !invocation.given(Switch::Touch))
-            || invocation.debugging() & DB_PRINT != 0,
+        // Make's `-n` maps onto Ninja's dry run and therefore uses Ninja's
+        // ordinary verbose dry-run rendering. Debug and trace are accepted
+        // interface no-ops and never install a Make narrator.
+        verbose: invocation.given(Switch::DryRun) && !invocation.given(Switch::Touch),
         quiet: invocation.given(Switch::Silent),
-        trace: invocation.debugging() & DB_WHY != 0,
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
         maxload: invocation.load.unwrap_or_default(),
-        // A failed recipe reports itself the way Make does, led by this
-        // invocation's name and level.
-        recipe_failure: Some(program_at(level)),
         working_directory,
         ..BuildOptions::default()
     };
-    let forced = crate::cli::normalize_runtime_options(
+    let _forced = crate::cli::normalize_runtime_options(
         &mut options,
         runner.makeflags.as_deref(),
         // NINJA_STATUS is the Ninja front end's name for its own rendering, and
@@ -1283,15 +1243,7 @@ fn build_options(
             .into_iter()
             .map(|(name, value)| (OsString::from(name), Some(value))),
     );
-    Ok((
-        options,
-        forced.map(|jobs| {
-            format!(
-                "{}: warning: -j{jobs} forced in submake: resetting jobserver mode.",
-                program_at(level)
-            )
-        }),
-    ))
+    Ok(options)
 }
 
 /// How many recipes at once, for the pool the evaluator declares for itself.
@@ -1432,38 +1384,15 @@ fn make_named_invocation(arguments: &[BString], executable: &Path) -> PathBuf {
         .unwrap_or(program)
 }
 
-/// The pair `-O` brackets each held block with, in place of the one pair
-/// around the whole build — so a build that has this announces nothing itself.
-///
-/// `None` where the build would not have announced the directory at all: GNU
-/// Make brackets a block only where it would have bracketed the build.
-fn output_group(
-    invocation: &Invocation,
-    options: &BuildOptions,
-    directory: &Path,
-    level: usize,
-) -> Option<OutputGroup> {
-    // GNU Make withdraws `-O` when nothing runs in parallel — a serial build has
-    // nothing to interleave with — and `none` and `recurse` hold nothing here.
-    let holding = job_count(options) != 1
-        && matches!(
-            invocation.output_sync,
-            Some(OutputSync::Line | OutputSync::Target)
-        );
-    (holding && invocation.announcing(level)).then(|| OutputGroup {
-        entering: terminated(announcement("Entering", directory, level)),
-        leaving: terminated(announcement("Leaving", directory, level)),
-    })
-}
-
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.recursive-invocation]
+// [spec:ronin:req:make.narration]
 pub(crate) fn run(
     runner: &Runner,
     arguments: &[BString],
-    mut output: Option<&mut dyn Write>,
-    mut diagnostics: Option<&mut dyn Write>,
+    output: Option<&mut dyn Write>,
+    diagnostics: Option<&mut dyn Write>,
 ) -> Result<RunResult, Error> {
     let invocation = match parse(arguments, runner.makeflags.as_deref())? {
         Action::Immediate(result) => return Ok(result),
@@ -1476,38 +1405,17 @@ pub(crate) fn run(
         .map_err(|source| CliError::CurrentDirectory { source })?;
     let level = runner.makelevel.as_deref().unwrap_or_default();
     let level: usize = level.trim().parse().unwrap_or(0);
-    let (mut options, forced) = build_options(&invocation, runner, working_directory, level)?;
-    let group = output_group(&invocation, &options, &directory, level);
-    let announcing = (invocation.announcing(level) && group.is_none()).then_some(level);
-    options.output_group = group;
-    if let Some(level) = announcing {
-        say(
-            &mut output,
-            &mut reported,
-            &announcement("Entering", &directory, level),
-        )?;
-    }
-    // After the directory announcement, which is where GNU Make puts it.
-    if let Some(forced) = forced {
-        say(&mut diagnostics, &mut reported, &forced)?;
-    }
-    narrate(&invocation, &mut output, &mut reported, Phase::Reading)?;
+    let mut options = build_options(&invocation, runner, working_directory, level)?;
 
     let Some(makefile) = invocation
         .makefile
         .clone()
         .or_else(|| default_makefile(&directory))
     else {
-        return Ok(no_makefile(reported, announcing, &directory));
+        return Ok(no_makefile());
     };
 
-    let mut session = session_for(
-        &invocation,
-        &makefile,
-        job_count(&options),
-        &invoked_as,
-        level,
-    );
+    let mut session = session_for(&invocation, &makefile, job_count(&options), &invoked_as);
     record_invocation_variables(&mut session, &invocation, level)?;
 
     let mut graph = match evaluated(session, &invocation.evals, invocation.shuffle, &reported) {
@@ -1517,8 +1425,6 @@ pub(crate) fn run(
     pretend_at(&mut graph, &invocation);
     let (mut persistence, warning) = Persistence::open(&mut graph, &directory)?;
     reported.push_str(warning.as_deref().unwrap_or_default());
-    narrate(&invocation, &mut output, &mut reported, Phase::Updating)?;
-
     let targets = graph.default_targets();
     let mut build = Build::with_options(&mut graph, &mut persistence, options);
     if let Some(sink) = output {
@@ -1532,11 +1438,7 @@ pub(crate) fn run(
         let question = planned.map(|planned| planned.already_up_to_date());
         let flushed = persistence.finish();
         let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
-        return Ok(departed(
-            answered(reported, question),
-            announcing,
-            &directory,
-        ));
+        return Ok(answered(reported, question));
     }
     let outcome = planned.and_then(|planned| {
         let ending = (planned.already_up_to_date(), planned.disposable());
@@ -1546,26 +1448,17 @@ pub(crate) fn run(
     let ((up_to_date, disposable), outcome) = match outcome {
         Ok(outcome) => outcome,
         Err(failure) => {
-            return Ok(departed(
-                abandoned(reported, failure),
-                announcing,
-                &directory,
-            ))
+            return Ok(abandoned(reported, failure));
         }
     };
     flushed?;
     let silent = invocation.given(Switch::Silent);
-    let removed = discard_intermediates(
+    discard_intermediates(
         &disposable,
         invocation.given(Switch::Touch),
         invocation.given(Switch::DryRun),
-        invocation.given(Switch::Silent),
     );
-    Ok(departed(
-        finished(reported, up_to_date, &outcome, silent, &removed),
-        announcing,
-        &directory,
-    ))
+    Ok(finished(reported, up_to_date, &outcome, silent))
 }
 
 /// What the makefile is told about the invocation reading it.
@@ -1602,13 +1495,13 @@ fn evaluated(
     if let Err(failure) = prepend_command_line_evals(&mut session, evals) {
         return Err(RunResult {
             stdout: terminated(reported),
-            stderr: terminated(failure.to_string()),
+            stderr: ordinary_diagnostic(failure),
             exit_code: ABANDONED,
         });
     }
     crate::make::load_makefile(session, shuffle).map_err(|failure| RunResult {
         stdout: terminated(reported),
-        stderr: terminated(failure.to_string()),
+        stderr: ordinary_diagnostic(failure),
         exit_code: ABANDONED,
     })
 }
@@ -1638,52 +1531,16 @@ fn adopt(options: &mut BuildOptions, loaded: crate::make::Loaded) -> crate::fron
     loaded.graph
 }
 
-/// The two points in a run that `--debug`'s basic level marks.
-#[derive(Clone, Copy)]
-enum Phase {
-    /// The makefiles are about to be read. Ronin says who is answering where
-    /// GNU Make prints its own banner.
-    Reading,
-    /// The goals are about to be brought up to date.
-    Updating,
-}
-
-/// Say where the run has got to, in Make's words.
-///
-/// GNU Make separates the two with a third marker, `Updating makefiles....`,
-/// for the pass that remakes the makefiles themselves; there is no such pass
-/// here, and a marker for one would report something that did not happen. What
-/// GNU Make says between them — which target it is considering, which pattern
-/// rule it is trying — narrates the dependency search, which the evaluator runs
-/// rather than this front end.
-fn narrate(
-    invocation: &Invocation,
-    output: &mut Option<&mut dyn Write>,
-    reported: &mut String,
-    phase: Phase,
-) -> Result<(), Error> {
-    if invocation.debugging() & DB_BASIC == 0 {
-        return Ok(());
-    }
-    match phase {
-        Phase::Reading => {
-            say(output, reported, version().trim_end())?;
-            say(output, reported, "Reading makefiles...")
-        }
-        Phase::Updating => say(output, reported, "Updating goal targets...."),
-    }
-}
-
 #[cfg(test)]
 mod interface_tests;
 
 #[cfg(test)]
 mod tests {
     use super::interface_tests::{parsed, parsed_under, refused};
-    use super::{announcement, Invocation, OutputSync, Shuffle, Switch, PRODUCT_NAME};
+    use super::{Invocation, OutputSync, Shuffle, Switch};
     use crate::build::JobLimit;
     use crate::util::BString;
-    use std::path::{Path, PathBuf};
+    use std::path::PathBuf;
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
@@ -1869,20 +1726,8 @@ mod tests {
 
         assert!(!parsed(&["make", "-k", "-S"]).given(Switch::KeepGoing));
         assert!(parsed(&["make", "-S", "-k"]).given(Switch::KeepGoing));
-        assert!(!parsed(&["make", "-w", "--no-print-directory"]).announcing(0));
-        assert!(parsed(&["make", "--no-print-directory", "-w"]).announcing(0));
-    }
-
-    /// GNU Make's help: "Turn off -w, even if it was turned on implicitly".
-    // [spec:ronin:req:product.make-identity/test]
-    #[test]
-    fn directory_negation_overrides_chdir() {
-        assert!(parsed(&["make", "-C", "."]).announcing(0));
-        assert!(!parsed(&["make", "-C", ".", "--no-print-directory"]).announcing(0));
-        // Silent withdraws the implication and not the request, which is a
-        // different rule and still holds.
-        assert!(!parsed(&["make", "-C", ".", "-s"]).announcing(0));
-        assert!(parsed(&["make", "-C", ".", "-s", "-w"]).announcing(0));
+        assert!(parsed(&["make", "-w", "--no-print-directory"]).refused(Switch::PrintDirectory));
+        assert!(parsed(&["make", "--no-print-directory", "-w"]).given(Switch::PrintDirectory));
     }
 
     // [spec:ronin:req:make.recursive-invocation/test]
@@ -1953,7 +1798,6 @@ mod tests {
         assert!(adopted.refused(Switch::KeepGoing));
         assert!(adopted.refused(Switch::PrintDirectory));
         assert!(adopted.refused(Switch::Silent));
-        assert!(!adopted.announcing(0));
 
         // And the two long spellings back again, which the letterwise read
         // would otherwise lose.
@@ -2019,56 +1863,13 @@ mod tests {
         let runner = crate::cli::Runner::new(&directory).unwrap();
         let options = |arguments: &[&str]| {
             let working = crate::os::WorkingDirectory::new(&directory).unwrap();
-            super::build_options(&parsed(arguments), &runner, working, 0)
-                .unwrap()
-                .0
+            super::build_options(&parsed(arguments), &runner, working, 0).unwrap()
         };
         assert!((options(&["make", "-l", "2.5"]).maxload - 2.5).abs() < f64::EPSILON);
         // Zero is what the scheduler reads as no ceiling, and it is what an
         // invocation that never mentioned one leaves behind.
         assert!(options(&["make"]).maxload.abs() < f64::EPSILON);
         assert!(options(&["make", "-l"]).maxload.abs() < f64::EPSILON);
-    }
-
-    // [spec:ronin:req:product.make-identity/test]
-    #[test]
-    fn maps_directory_announcement_switches() {
-        assert!(!parsed(&["make"]).announcing(0));
-        assert!(parsed(&["make", "-w"]).announcing(0));
-        assert!(parsed(&["make", "-C", "sub"]).announcing(0));
-        // -s withdraws what -C implied but not what -w asked for outright,
-        // and -q says nothing at all because its answer is a status.
-        assert!(!parsed(&["make", "-s", "-C", "sub"]).announcing(0));
-        assert!(parsed(&["make", "-s", "-w"]).announcing(0));
-        assert!(!parsed(&["make", "-w", "-q"]).announcing(0));
-    }
-
-    /// The other half of GNU Make's `should_print_dir`: below the top of the
-    /// tree the pair is implied by depth alone, and withdrawn by the same two
-    /// things that withdraw what `-C` implied.
-    // [spec:ronin:req:product.make-identity/test]
-    #[test]
-    fn recursion_implies_directory_announcement() {
-        assert!(parsed(&["make"]).announcing(1));
-        assert!(!parsed(&["make", "-s"]).announcing(1));
-        assert!(!parsed(&["make", "--no-print-directory"]).announcing(1));
-        assert!(parsed(&["make", "-s", "-w"]).announcing(1));
-    }
-
-    /// GNU Make's `log_working_directory` writes `%s[%u]` below the top and a
-    /// bare `%s` at it, so the pair names the depth every other diagnostic from
-    /// the same invocation names.
-    // [spec:ronin:req:product.make-identity/test]
-    #[test]
-    fn directory_announcement_carries_level() {
-        assert_eq!(
-            announcement("Entering", Path::new("/sub"), 0),
-            format!("{PRODUCT_NAME}: Entering directory '/sub'")
-        );
-        assert_eq!(
-            announcement("Leaving", Path::new("/sub"), 2),
-            format!("{PRODUCT_NAME}[2]: Leaving directory '/sub'")
-        );
     }
 
     /// The group and its order are GNU Make 4.4.1's own, read off a makefile
@@ -2124,8 +1925,6 @@ mod tests {
     fn touch_overrides_question_mode() {
         assert!(parsed(&["make", "-q"]).questioning());
         assert!(!parsed(&["make", "-q", "-t"]).questioning());
-        assert!(!parsed(&["make", "-w", "-q"]).announcing(0));
-        assert!(parsed(&["make", "-w", "-q", "-t"]).announcing(0));
     }
 
     /// Read off GNU Make 4.4.1's own `decode_debug_flags`: only the first

@@ -137,7 +137,7 @@ fn eval_fragments_reach_compilation() {
     let makefile = directory.path().join("Makefile");
     std::fs::write(&makefile, "").unwrap();
     let invoked_as = Path::new("make");
-    let session = super::session_for(&invocation, &makefile, 1, invoked_as, 0);
+    let session = super::session_for(&invocation, &makefile, 1, invoked_as);
     let loaded = super::evaluated(session, &invocation.evals, Shuffle::None, "")
         .expect("the goal supplied only by --eval must compile into the graph");
     let target = loaded

@@ -5447,6 +5447,20 @@ children (
                                 kind @decision
                                 text "Delete or bypass Make-specific execution narration: idle messages, directory enter/leave banners, recursive level prefixes, per-recipe Make failure lines, keep-going summaries, Stop. suffixes, and other GNU reporter ceremony. A graph built from a Makefile uses the same progress, failure, and diagnostic shape as a manifest-built graph. Front-end parse/evaluation diagnostics may still identify Makefile source; they do not justify Make behavior in the graph reporter."
                             }
+
+                            {
+                                at 2026-08-08T14:56:42.765497302Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T15:12:29.536212398Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Removed Make directory banners, recursive prefixes, debug/trace narration, output-sync grouping, forced-jobserver warnings, per-recipe Make failure lines, intermediate-file rm narration, and fatal `***`/`Stop.` decoration from the Make front end. Make-only narration flags remain accepted and propagated as interface no-ops. Makefile evaluation retains source locations through Ronin's ordinary diagnostic prefix; compiled graph progress and failures use the common Ninja reporter. Verified by the full all-feature test suite and strict all-target Clippy."
+                            }
                         )
                     }
 
