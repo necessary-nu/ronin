@@ -71,18 +71,14 @@ pub(crate) struct BuildOptions {
     pub(crate) color: ColorChoice,
     pub(crate) terminal: TerminalContext,
     pub(crate) maxload: f64,
-    /// Make's `.NOTPARALLEL`: one recipe at a time here, whatever budget this
-    /// build holds or hands on. Local like `maxload`, not a smaller budget —
-    /// clamping the budget would stop a jobserver being served at all, and a
-    /// sub-make is meant to keep the full one.
+    /// Make's `.NOTPARALLEL`: one recipe at a time in the compilation unit that
+    /// declared it. The Make graph normally expresses this with a local pool;
+    /// this executor-wide fallback remains for graphs that request it directly.
     pub(crate) serial: bool,
     pub(crate) jobserver: Option<crate::jobserver::Transport>,
-    /// Whether this build may create a jobserver of its own.
-    ///
-    /// Set when this build is not spending an inherited budget, which covers
-    /// the top of a tree and a build that declined one — an explicit `-j`
-    /// under a parent Make, which asks for that count below here as well and
-    /// has to serve it to get it there.
+    /// Whether this manifest build may publish its fixed limit as a jobserver
+    /// for recipe children. Makefile compilation disables this: recursive Make
+    /// units are already inside the graph and use this scheduler directly.
     pub(crate) serve_jobserver: bool,
     /// Variables the front end imposes on every command it runs, beside
     /// whatever the jobserver publishes.

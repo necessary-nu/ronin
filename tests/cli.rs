@@ -707,7 +707,6 @@ fn peak_concurrency(log: &str) -> (usize, usize) {
 }
 
 #[cfg(unix)]
-// [spec:ronin:req:make.jobserver/test]
 #[test]
 fn a_recursive_make_tree_shares_one_job_budget() {
     use std::fmt::Write as _;
@@ -839,8 +838,8 @@ fn makefile_tree(label: &str) -> PathBuf {
 /// gets a construct that only works if the feature does, and a Makefile that
 /// branches on `.FEATURES` is entitled to exactly this much.
 ///
-/// `jobserver` and `jobserver-fifo` are also claimed and are covered by
-/// `make_mode_serves_a_jobserver_to_its_recipes`, which watches the tokens.
+/// `jobserver` and `jobserver-fifo` remain interface claims: Make mode accepts
+/// their spellings and can map an inherited budget onto its Ninja scheduler.
 // [spec:ronin:req:make.semantics/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -1697,8 +1696,8 @@ fn make_mode_serialises_only_the_makefile_that_declared_notparallel() {
         1,
         "the declaring Makefile ran in parallel"
     );
-    // The budget is not what was clamped: a smaller one would stop a jobserver
-    // being served at all and take the whole tree below with it.
+    // `.NOTPARALLEL` became a pool local to the declaring compilation unit; it
+    // did not replace the root scheduler limit inherited by the composed child.
     assert_eq!(
         measure("recurse.mk"),
         JOBS,
@@ -2595,7 +2594,7 @@ fn recursive_make_uses_ninja_narration() {
 }
 
 #[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.jobserver/test]
+// [spec:ronin:req:make.jobserver+1/test]
 // [spec:ronin:req:make.recursive-invocation+1/test]
 #[test]
 fn recursive_make_tree_uses_one_budget() {
@@ -2610,7 +2609,7 @@ fn recursive_make_tree_uses_one_budget() {
     let stamp = directory.join("unit.sh");
     fs::write(
         &stamp,
-        "#!/bin/sh\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
+        "#!/bin/sh\nset -- \"$TMPDIR\"/ronin-jobserver-*\n[ ! -e \"$1\" ] || printf 'JOBSERVER\\n' >> \"$LOG\"\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
     )
     .unwrap();
     std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
@@ -2663,7 +2662,12 @@ fn recursive_make_tree_uses_one_budget() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        let (peak, units) = peak_concurrency(&fs::read_to_string(&log).unwrap());
+        let events = fs::read_to_string(&log).unwrap();
+        assert!(
+            !events.lines().any(|line| line == "JOBSERVER"),
+            "Make mode created a recursive GNU Make jobserver"
+        );
+        let (peak, units) = peak_concurrency(&events);
         assert_eq!(units, UNITS);
         peak
     };
@@ -2685,7 +2689,7 @@ fn recursive_make_tree_uses_one_budget() {
 /// A child `-j` remains accepted interface data; it cannot create another
 /// scheduler inside the graph the parent already owns.
 #[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.jobserver/test]
+// [spec:ronin:req:make.jobserver+1/test]
 #[test]
 fn child_jobs_keep_one_scheduler() {
     const LEVELS: [&str; 3] = ["a", "b", "c"];

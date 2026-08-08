@@ -170,7 +170,6 @@ pub(crate) enum Transport {
     Served(Arc<ServedJobserver>),
 }
 
-// [spec:ronin:req:make.jobserver]
 impl Transport {
     /// Creates a jobserver sized to `jobs`, where the platform has one to make.
     ///
@@ -191,9 +190,9 @@ impl Transport {
 
     /// Joins a jobserver a parent published, keeping how it was named.
     ///
-    /// A sub-make is handed a MAKEFLAGS built from its own switches, which
-    /// replaces the one this budget arrived in. So the words naming the budget
-    /// have to be written again, or it reaches exactly one level down.
+    /// A front end may give recipes a rewritten `MAKEFLAGS`, replacing the one
+    /// this budget arrived in. The words naming the inherited transport are
+    /// retained so the outer budget can still be mapped through that boundary.
     pub(crate) fn inherit(client: jobserver::Client, makeflags: Option<&str>) -> Self {
         let budget = makeflags
             .unwrap_or_default()
@@ -282,7 +281,6 @@ pub(crate) struct ServedJobserver {
 }
 
 #[cfg(unix)]
-// [spec:ronin:req:make.jobserver]
 impl ServedJobserver {
     fn create(jobs: NonZeroUsize) -> ProcessResult<Self> {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -512,7 +510,6 @@ pub(crate) struct JobserverClient {
 }
 
 // [spec:ronin:req:runtime.jobserver-resource-safety]
-// [spec:ronin:req:make.jobserver]
 impl JobserverClient {
     pub(crate) fn new(
         transport: Transport,
@@ -768,7 +765,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:ronin:req:make.jobserver/test]
     fn ronin_serves_the_named_pipe_form_gnu_make_publishes() {
         let jobs = NonZeroUsize::new(4).unwrap();
         let served = ServedJobserver::create(jobs).unwrap();
@@ -809,7 +805,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:ronin:req:make.jobserver/test]
     fn a_served_budget_counts_ronins_own_jobs_against_the_slots_it_shares() {
         const JOBS: usize = 4;
 
@@ -851,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    // [spec:ronin:req:make.jobserver/test]
+    // [spec:ronin:req:make.jobserver+1/test]
     // [spec:ronin:req:make.recursive-invocation+1/test]
     fn an_inherited_jobserver_survives_a_rewritten_makeflags() {
         let inherit =
@@ -876,8 +871,8 @@ mod tests {
         let transport = inherit("ks -j4 --jobserver-auth=fifo:/tmp/x --no-print-directory");
         assert!(published(&transport, &mut Vec::new()).is_empty());
 
-        // A sub-make is handed MAKEFLAGS built from its own switches, which
-        // would drop the budget one level below where it was found.
+        // A front end may hand a recipe MAKEFLAGS built from interface switches,
+        // which would otherwise replace the inherited transport description.
         let mut rewritten = vec![
             (
                 OsString::from("MAKEFLAGS"),

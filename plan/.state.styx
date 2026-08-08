@@ -333,7 +333,11 @@ impl_evidence (
         {id make.narration, version 0}
         {id product.make-identity, version 0}
     )}
-    {id make-single-ninja-scheduler}
+    {id make-single-ninja-scheduler, covered_rules (
+        make.jobserver
+    ), covered_claims (
+        {impl_name target-impl, rule make.jobserver}
+    )}
     {id make-subninja-recursion, covered_rules (
         make.recursive-invocation
     ), covered_claims (

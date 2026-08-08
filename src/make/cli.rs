@@ -1143,9 +1143,9 @@ fn session_for(
         // Compiler diagnostics retain their Makefile source, but never acquire
         // a recursive Make runner identity.
         program_name: PRODUCT_NAME.to_owned(),
-        // The evaluator declares what a Makefile may assume of the language.
-        // Jobserver participation is real; Make's output-sync feature is not
-        // advertised because `-O` is an accepted interface no-op.
+        // The evaluator declares what a Makefile may assume of the interface.
+        // An inherited jobserver can still bound the outer Ninja scheduler;
+        // Make's output-sync feature is not advertised because `-O` is a no-op.
         extra_features: vec!["jobserver".to_owned(), "jobserver-fifo".to_owned()],
         include_dirs: invocation.include_dirs.clone(),
         ..Flags::default()
@@ -1174,6 +1174,7 @@ fn record_invocation(session: &mut Session, name: &'static str, value: String) {
 
 /// The scheduler settings this invocation maps onto Ninja's controls.
 // [spec:ronin:req:make.narration]
+// [spec:ronin:req:make.jobserver+1]
 fn build_options(
     invocation: &Invocation,
     runner: &Runner,
@@ -1202,7 +1203,7 @@ fn build_options(
         working_directory,
         ..BuildOptions::default()
     };
-    let _forced = crate::cli::normalize_runtime_options(
+    crate::cli::normalize_runtime_options(
         &mut options,
         runner.makeflags.as_deref(),
         // NINJA_STATUS is the Ninja front end's name for its own rendering, and
@@ -1215,6 +1216,12 @@ fn build_options(
         // Makefile.
         JobLimit::Fixed(std::num::NonZeroUsize::MIN),
     )?;
+    // Recursive Make invocations have already compiled into this graph. Its
+    // fixed limit therefore belongs directly to the Ninja scheduler; creating
+    // a GNU Make token server beside it would be a second scheduling mechanism.
+    // An inherited outer transport remains attached above and may bound the
+    // same scheduler.
+    options.serve_jobserver = false;
     options.environment.push((
         MAKELEVEL.into(),
         Some(OsString::from(level.saturating_add(1).to_string())),
@@ -1914,6 +1921,32 @@ mod tests {
         // invocation that never mentioned one leaves behind.
         assert!(options(&["make"]).maxload.abs() < f64::EPSILON);
         assert!(options(&["make", "-l"]).maxload.abs() < f64::EPSILON);
+    }
+
+    /// `-j` is a limit on the one scheduler that runs the compiled graph. Even
+    /// when an outer jobserver token is accepted as interface data, an explicit
+    /// child limit cannot make Make mode serve another token pool.
+    // [spec:ronin:req:make.jobserver+1/test]
+    #[test]
+    fn make_jobs_use_one_ninja_scheduler() {
+        let directory = std::env::temp_dir();
+        let options = |runner: &crate::cli::Runner, arguments: &[&str]| {
+            let working = crate::os::WorkingDirectory::new(&directory).unwrap();
+            super::build_options(&parsed(arguments), runner, working, 0).unwrap()
+        };
+
+        let root = crate::cli::Runner::new(&directory).unwrap();
+        let root_options = options(&root, &["make", "-j4"]);
+        assert_eq!(root_options.jobs, JobLimit::fixed(4).unwrap());
+        assert!(root_options.jobserver.is_none());
+        assert!(!root_options.serve_jobserver);
+
+        let mut under_parent = crate::cli::Runner::new(&directory).unwrap();
+        under_parent.makeflags = Some(" -j8 --jobserver-auth=fifo:/tmp/parent".to_owned());
+        let child_options = options(&under_parent, &["make", "-j2"]);
+        assert_eq!(child_options.jobs, JobLimit::fixed(2).unwrap());
+        assert!(child_options.jobserver.is_none());
+        assert!(!child_options.serve_jobserver);
     }
 
     /// The group and its order are GNU Make 4.4.1's own, read off a makefile

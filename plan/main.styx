@@ -5461,6 +5461,13 @@ children (
                                 kind @decision
                                 text "Remove the recursive GNU Make jobserver server/tree once subninja composition supplies one graph. The composed graph is scheduled once by Ronin's Ninja scheduler with one job limit. Jobserver option spellings and authentication values remain accepted interface data; an inherited outer budget may be mapped to the existing scheduler or ignored, but no second scheduler, token server, or per-level process budget remains."
                             }
+
+                            {
+                                at 2026-08-08T21:05:20.584773645Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
                         )
                     }
 
