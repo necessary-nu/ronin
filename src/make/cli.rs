@@ -51,6 +51,47 @@ const MAKELEVEL: &str = "MAKELEVEL";
 /// it. Scripts branch on the difference.
 const ABANDONED: i32 = 2;
 
+/// The workings GNU Make's `--debug` selects, in the bits GNU Make holds them
+/// in. `a` is every one of them and `n` is none.
+const DB_BASIC: u16 = 0x001;
+const DB_VERBOSE: u16 = 0x002;
+const DB_JOBS: u16 = 0x004;
+const DB_IMPLICIT: u16 = 0x008;
+const DB_PRINT: u16 = 0x010;
+const DB_WHY: u16 = 0x020;
+const DB_MAKEFILES: u16 = 0x100;
+const DB_ALL: u16 = 0xfff;
+
+/// One `--debug` argument folded into what is already selected.
+///
+/// GNU Make reads the first letter of each comma- or space-separated word and
+/// skips the rest of it, so `--debug=basic` and `--debug=b` are one thing.
+/// Three letters imply the basic narration as well as their own, and `n` takes
+/// back whatever came before it. `None` for a letter GNU Make does not know.
+fn debug_facets(mut level: u16, spec: &[u8]) -> Option<u16> {
+    for word in spec
+        .split(|byte| *byte == b',' || *byte == b' ')
+        .filter(|word| !word.is_empty())
+    {
+        level |= match word[0].to_ascii_lowercase() {
+            b'a' => DB_ALL,
+            b'b' => DB_BASIC,
+            b'i' => DB_BASIC | DB_IMPLICIT,
+            b'j' => DB_JOBS,
+            b'm' => DB_BASIC | DB_MAKEFILES,
+            b'n' => {
+                level = 0;
+                continue;
+            }
+            b'p' => DB_PRINT,
+            b'v' => DB_BASIC | DB_VERBOSE,
+            b'w' => DB_WHY,
+            _ => return None,
+        };
+    }
+    Some(level)
+}
+
 /// What one Make invocation asks for.
 struct Invocation {
     /// The directories `-C` named, in order. GNU Make enters each in turn, so
@@ -63,6 +104,9 @@ struct Invocation {
     goals: Vec<BString>,
     /// `VAR=value` in command-line order, which is the order Make applies them.
     variables: Vec<Bytes>,
+    /// Each `--debug` argument as it was written. Kept as words rather than as
+    /// the facets they mean, because a sub-make is handed them unchanged.
+    debug: Vec<BString>,
     jobs: Option<JobLimit>,
     /// The load average above which no further recipe starts. `-l` with no
     /// number lifts the limit rather than imposing one, which is what a limit
@@ -86,6 +130,7 @@ impl Invocation {
             makefile: None,
             goals: Vec::new(),
             variables: Vec::new(),
+            debug: Vec::new(),
             jobs: None,
             load: None,
             switches: 0,
@@ -117,6 +162,22 @@ impl Invocation {
         self.negated & switch.bit() != 0
     }
 
+    /// Which of Make's own workings this invocation asked to be told about.
+    ///
+    /// GNU Make settles this after the whole command line is read rather than
+    /// as it goes: `-d` is every facet and `--trace` is the two it names,
+    /// whatever their position, and the `--debug` words fold in over the top.
+    fn debugging(&self) -> u16 {
+        let mut level = if self.given(Switch::Debug) { DB_ALL } else { 0 };
+        if self.given(Switch::Trace) {
+            level |= DB_PRINT | DB_WHY;
+        }
+        for spec in &self.debug {
+            level = debug_facets(level, spec.as_bytes()).unwrap_or(level);
+        }
+        level
+    }
+
     /// Take on the switches a parent make put in `MAKEFLAGS`.
     ///
     /// GNU Make reads that variable as though it were typed on the command
@@ -140,6 +201,16 @@ impl Invocation {
         {
             if let Some(switch) = Switch::long_negation(word.as_bytes()) {
                 self.withdraw(switch);
+                continue;
+            }
+            // The two long options that carry a facet rather than a letter, and
+            // so would be lost to the skip below.
+            if let Some(spec) = word.strip_prefix("--debug=") {
+                self.debug.push(BString::from(spec));
+                continue;
+            }
+            if word == "--trace" {
+                self.add(Switch::Trace);
                 continue;
             }
             if word.starts_with("--") || word.contains('=') {
@@ -166,6 +237,7 @@ impl Invocation {
         let mut propagated = Vec::new();
         for (switch, spelling) in [
             (Switch::AlwaysMake, "-B"),
+            (Switch::Debug, "-d"),
             (Switch::EnvironmentOverrides, "-e"),
             (Switch::IgnoreErrors, "-i"),
             (Switch::KeepGoing, "-k"),
@@ -226,6 +298,7 @@ impl Invocation {
 #[derive(Clone, Copy)]
 enum Switch {
     AlwaysMake,
+    Debug,
     DryRun,
     EnvironmentOverrides,
     IgnoreErrors,
@@ -235,6 +308,7 @@ enum Switch {
     PrintDirectory,
     Question,
     Silent,
+    Trace,
 }
 
 impl Switch {
@@ -242,6 +316,7 @@ impl Switch {
     const fn short(letter: u8) -> Option<Self> {
         Some(match letter {
             b'B' => Self::AlwaysMake,
+            b'd' => Self::Debug,
             b'e' => Self::EnvironmentOverrides,
             b'i' => Self::IgnoreErrors,
             b'k' => Self::KeepGoing,
@@ -286,6 +361,7 @@ impl Switch {
             b"--print-directory" => Self::PrintDirectory,
             b"--question" => Self::Question,
             b"--silent" | b"--quiet" => Self::Silent,
+            b"--trace" => Self::Trace,
             _ => return None,
         })
     }
@@ -328,6 +404,9 @@ fn usage() -> String {
             "  -s       do not report what is being built\n",
             "  -w       announce the directory the build runs in\n",
             "  -S       stop at the first failure, taking back -k\n",
+            "  -d       report what Make is doing, as --debug=a does\n",
+            "  --debug[=FLAGS]  report the workings FLAGS names: a b i j m n p v w\n",
+            "  --trace  report why each recipe is running, as --debug=p,w does\n",
             "  -v       print the version, as --version does\n",
             "  --no-print-directory, --no-silent\n",
             "  --version, --help\n",
@@ -516,6 +595,19 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
             // for the version that way before it will run anything at all.
             b"--version" | b"-v" => return Ok(Action::Immediate(reported(version()))),
             b"--help" => return Ok(Action::Immediate(reported(usage()))),
+            // GNU Make's argument is optional and its default is the basic
+            // level, which is also what the group of letters is read against.
+            b"--debug" => invocation.debug.push(BString::from(&b"basic"[..])),
+            option if option.starts_with(b"--debug=") => {
+                let spec = &option["--debug=".len()..];
+                if debug_facets(0, spec).is_none() {
+                    return Ok(refuse(format_args!(
+                        "unknown debug level specification '{}'",
+                        spec.to_str_lossy()
+                    )));
+                }
+                invocation.debug.push(BString::from(spec));
+            }
             b"--jobs" => invocation.jobs = Some(jobs_value(arguments, &mut index, b"")?),
             b"--load-average" => invocation.load = Some(load_value(arguments, &mut index, b"")?),
             b"--file" | b"--makefile" => {
@@ -547,6 +639,11 @@ fn parse(arguments: &[BString]) -> Result<Action, Error> {
             }
         }
         index += 1;
+    }
+    // GNU Make forgets -d once the words have had their say, so a `--debug=n`
+    // after it leaves nothing for a sub-make to inherit either.
+    if invocation.debugging() == 0 {
+        invocation.switches &= !Switch::Debug.bit();
     }
     Ok(Action::Execute(Box::new(invocation)))
 }
@@ -762,9 +859,11 @@ fn build_options(
         dryrun: invocation.given(Switch::DryRun),
         // Make's `-n` exists to show the recipes rather than to run them, so it
         // asks for the commands themselves and not for the descriptions a
-        // build would otherwise report.
-        verbose: invocation.given(Switch::DryRun),
+        // build would otherwise report. `--debug=p` asks for the same thing of
+        // a build that does run them.
+        verbose: invocation.given(Switch::DryRun) || invocation.debugging() & DB_PRINT != 0,
         quiet: invocation.given(Switch::Silent),
+        trace: invocation.debugging() & DB_WHY != 0,
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
         maxload: invocation.load.unwrap_or_default(),
@@ -837,6 +936,24 @@ fn flag_environment(invocation: &Invocation) -> Vec<(&'static str, OsString)> {
     // hands them back in name order rather than in the order they were typed.
     assignments.sort_unstable();
     let mut makeflags = letters.clone();
+    // The requests with no letter to travel as, which GNU Make writes after the
+    // group and before the withdrawals, in its own switch table's order.
+    // Deduplicated as GNU Make deduplicates them: the same `--debug` can arrive
+    // from the command line and from a parent's `MAKEFLAGS` at once, and a
+    // letter in the group cannot say a thing twice.
+    let mut long = Vec::new();
+    for spec in &invocation.debug {
+        let option = format!(" --debug={}", spec.to_str_lossy());
+        if !long.contains(&option) {
+            long.push(option);
+        }
+    }
+    if invocation.given(Switch::Trace) {
+        long.push(" --trace".to_owned());
+    }
+    for option in long {
+        makeflags.push_str(&option);
+    }
     for withdrawn in invocation.withdrawn() {
         makeflags.push(' ');
         makeflags.push_str(withdrawn);
@@ -950,6 +1067,7 @@ pub(crate) fn run(
     }
     let working_directory = crate::os::WorkingDirectory::new(&directory)
         .map_err(|source| CliError::CurrentDirectory { source })?;
+    narrate(&invocation, &mut output, &mut reported, Phase::Reading)?;
 
     let Some(makefile) = invocation
         .makefile
@@ -987,6 +1105,7 @@ pub(crate) fn run(
     if let Some(warning) = warning {
         reported.push_str(&warning);
     }
+    narrate(&invocation, &mut output, &mut reported, Phase::Updating)?;
 
     let targets = graph.default_targets();
     let mut build = Build::with_options(&mut graph, &mut persistence, options);
@@ -1098,6 +1217,42 @@ fn abandoned(reported: String, failure: Error) -> RunResult {
 // [spec:ronin:req:product.make-identity]
 fn announcement(verb: &str, directory: &Path) -> String {
     format!("{PRODUCT_NAME}: {verb} directory '{}'", directory.display())
+}
+
+/// The two points in a run that `--debug`'s basic level marks.
+#[derive(Clone, Copy)]
+enum Phase {
+    /// The makefiles are about to be read. Ronin says who is answering where
+    /// GNU Make prints its own banner.
+    Reading,
+    /// The goals are about to be brought up to date.
+    Updating,
+}
+
+/// Say where the run has got to, in Make's words.
+///
+/// GNU Make separates the two with a third marker, `Updating makefiles....`,
+/// for the pass that remakes the makefiles themselves; there is no such pass
+/// here, and a marker for one would report something that did not happen. What
+/// GNU Make says between them — which target it is considering, which pattern
+/// rule it is trying — narrates the dependency search, which the evaluator runs
+/// rather than this front end.
+fn narrate(
+    invocation: &Invocation,
+    output: &mut Option<&mut dyn Write>,
+    reported: &mut String,
+    phase: Phase,
+) -> Result<(), Error> {
+    if invocation.debugging() & DB_BASIC == 0 {
+        return Ok(());
+    }
+    match phase {
+        Phase::Reading => {
+            say(output, reported, version().trim_end())?;
+            say(output, reported, "Reading makefiles...")
+        }
+        Phase::Updating => say(output, reported, "Updating goal targets...."),
+    }
 }
 
 /// Put a line where the caller will see it, in the order the build saw it.
@@ -1405,6 +1560,21 @@ mod tests {
             "k --no-print-directory"
         );
         assert_eq!(makeflags(&["-k", "--no-silent", "-S"]), "S --no-silent");
+        // `-d` is a letter in the group; the two options that carry a facet
+        // follow it, before the withdrawals, which is where GNU Make's switch
+        // table puts them. A `--debug` said twice is handed on once.
+        assert_eq!(makeflags(&["-d"]), "d");
+        assert_eq!(makeflags(&["--debug"]), " --debug=basic");
+        assert_eq!(
+            makeflags(&["--debug=b", "--debug=j"]),
+            " --debug=b --debug=j"
+        );
+        assert_eq!(makeflags(&["-k", "--trace"]), "k --trace");
+        assert_eq!(makeflags(&["-d", "--debug=n"]), " --debug=n");
+        assert_eq!(
+            makeflags(&["--trace", "--no-print-directory"]),
+            " --trace --no-print-directory"
+        );
 
         let mut adopted = parsed(&["make", "all"]);
         adopted.adopt_inherited(Some("S --no-print-directory --no-silent"));
@@ -1412,6 +1582,23 @@ mod tests {
         assert!(adopted.refused(Switch::PrintDirectory));
         assert!(adopted.refused(Switch::Silent));
         assert!(!adopted.announcing());
+
+        // And the two long spellings back again, which the letterwise read
+        // would otherwise lose.
+        let mut adopted = parsed(&["make", "--debug=b"]);
+        adopted.adopt_inherited(Some("k --debug=b --trace"));
+        assert_eq!(
+            adopted.debugging(),
+            super::DB_BASIC | super::DB_PRINT | super::DB_WHY
+        );
+        assert_eq!(
+            super::flag_environment(&adopted)
+                .into_iter()
+                .find(|(name, _)| *name == "MAKEFLAGS")
+                .map(|(_, value)| value.to_string_lossy().into_owned())
+                .as_deref(),
+            Some("k --debug=b --trace")
+        );
     }
 
     // [spec:ronin:req:product.make-identity/test]
@@ -1494,6 +1681,43 @@ mod tests {
         );
     }
 
+    /// Read off GNU Make 4.4.1's own `decode_debug_flags`: only the first
+    /// letter of each word is looked at, three letters imply the basic level as
+    /// well as their own, and `n` takes back whatever preceded it.
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn a_debug_argument_selects_the_facets_gnu_make_reads_out_of_it() {
+        let level = |arguments: &[&str]| {
+            let mut all = vec!["make"];
+            all.extend_from_slice(arguments);
+            parsed(&all).debugging()
+        };
+        assert_eq!(level(&["-d"]), super::DB_ALL);
+        assert_eq!(level(&["--debug=a"]), super::DB_ALL);
+        assert_eq!(level(&["--trace"]), super::DB_PRINT | super::DB_WHY);
+        assert_eq!(level(&["--debug=print,why"]), level(&["--trace"]));
+        assert_eq!(level(&["--debug"]), super::DB_BASIC);
+        assert_eq!(level(&["--debug=basic"]), level(&["--debug=b"]));
+        assert_eq!(
+            level(&["--debug=i"]),
+            super::DB_BASIC | super::DB_IMPLICIT,
+            "an implicit-rule account carries the basic one"
+        );
+        assert_eq!(level(&["--debug=n"]), 0);
+        assert_eq!(level(&["-d", "--debug=n"]), 0);
+        assert_eq!(level(&["--debug=n", "-d"]), 0);
+        assert_eq!(
+            level(&["--debug=b", "--debug=j"]),
+            super::DB_BASIC | super::DB_JOBS
+        );
+
+        let diagnostic = refused(&["make", "--debug=x"]).expect("a level Make does not have");
+        assert!(
+            diagnostic.starts_with("ronin: unknown debug level specification 'x'"),
+            "{diagnostic}"
+        );
+    }
+
     // [spec:ronin:req:product.make-identity/test]
     #[test]
     fn an_option_no_front_end_has_is_refused_by_name() {
@@ -1521,7 +1745,7 @@ mod tests {
                 "{diagnostic}"
             );
         }
-        for option in ["--touch", "--old-file", "--what-if", "--debug"] {
+        for option in ["--touch", "--old-file", "--what-if"] {
             let diagnostic = refused(&["make", option, "x"])
                 .unwrap_or_else(|| panic!("{option} cannot describe a build"));
             assert!(

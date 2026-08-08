@@ -4265,6 +4265,21 @@ children (
                         title "Answer --debug, -d and --trace with what Make reports"
                         priority 4
                         kind @feat
+                        log (
+                            {
+                                at 2026-08-08T02:00:20.872612954Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-08T02:21:11.66012783Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Done as far as Ronin can answer, and the boundary is sharp.\n\nEvery value here was read off GNU Make 4.4.1 rather than reasoned about, including the whole of `decode_debug_flags`: only the first letter of each comma- or space-separated word is looked at, so `--debug=basic` and `--debug=b` are one thing; `i`, `m` and `v` each carry the basic level as well as their own; `n` is a reset rather than a facet, so `-d --debug=n` reports nothing and hands a child no `d` either. `-d` is every facet, `--trace` is print and why, bare `--debug` is `basic`, and an unknown letter is refused with GNU's own wording.\n\nMAKEFLAGS round-trips exactly, checked side by side once per spelling: `-d` is a letter in the group, `--debug=<arg>` and `--trace` follow it as long options in GNU's switch-table order — before `--no-print-directory`, which is where its table puts them — and a `--debug` arriving from both the command line and a parent's MAKEFLAGS is handed on once, as GNU Make deduplicates it. `adopt_inherited` had to learn the two long spellings by name, since it skips any word with `--` or an `=` in it and both would otherwise be lost.\n\nWhat is reported, and why only this much. `--trace`/`--debug=w` is now Make's line word for word — `Makefile:3: update target 'dep' due to: target does not exist` — with all four of Make's reasons in Make's order: `.PHONY`, target missing, the `$?` list, the prerequisites still absent. That needed the rule's own place, which kati already hands the sink as `SinkEdge::loc` and nothing was reading; it now crosses as an edge binding, the same way the `+`-line command does, and the `recipe-error-line` family will want it next. `--debug=p` maps onto the build's verbose command lines. `--debug=b` prints the banner, `Reading makefiles...` and `Updating goal targets....`.\n\nDeliberately not printed: `Updating makefiles....`. GNU Make's marker is for the pass that remakes the makefiles themselves and there is no such pass here — a phase marker for a phase that does not happen would report something that did not occur, and three MAKEFLAGS tests wanting it need makefile-set MAKEFLAGS anyway, which is a different node.\n\nWhat genuinely needs kati, precisely. Everything `-d` says between those two markers narrates the dependency search: `Considering target file 'x'.`, `Looking for an implicit rule for 'x'.`, `Trying pattern rule '%: %.c' with stem 'x'.`, `Trying implicit prerequisite 'x.c'.`, `Not found 'x.c'.`, `Finished prerequisites of target file 'x'.`, `File 'x' does not exist.`, `Must remake target 'x'.`, `Successfully remade target file 'x'.` — that is `--debug=i` and `--debug=v` whole, and the bulk of `--debug=b`. It is a report from the search in kati's dep.rs and cannot be written from here; the front end sees the finished graph, by which time every rule that was tried and rejected is gone. `--debug=j` is the other one: `Putting child 0x… (all) PID … on the chain.` describes GNU Make's chain of children, a data structure Ronin's process supervision does not have, and inventing a pointer for it would be narration pretending to be a fact.\n\nThe measurement, and it is the parent node's pattern again rather than a regression. capability 126 to 98, option-refused 93 to 65 — 28 cases moved, every one of them from capability to semantic, and semantic went 767 to 795 by exactly that 28. Narration did not move at all. options/dash-d passes outright."
+                            }
+                        )
                     }
 
                     {

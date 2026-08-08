@@ -915,6 +915,43 @@ fn ronin_build_explain_reports_the_dirty_reason_before_status() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// GNU Make's `--trace` line, word for word: where the rule was written, the
+/// target, and the reason it is being remade.
+// [spec:ronin:req:product.make-identity/test]
+#[test]
+fn ronin_build_trace_names_the_rule_and_the_reason_before_the_recipe() {
+    let (mut graph, directory) = build_fixture(
+        "make-trace",
+        "rule emit\n  command = touch $out\n  description = create output\nbuild $dir/out: emit\n",
+    );
+    let target = directory.join("out").to_string_lossy().into_owned();
+    let mut output = Vec::new();
+    {
+        let options = BuildOptions {
+            trace: true,
+            ..BuildOptions::default()
+        };
+        let mut builder = Builder::with_output(&mut graph, options, &mut output);
+        builder.add_target(&target).unwrap();
+        let node = nodeget(builder.graph, target.as_bytes()).unwrap();
+        let edge = builder.graph.node(node).gen.unwrap();
+        let name = builder
+            .graph
+            .names_mut()
+            .intern(BStr::new(super::RECIPE_LOCATION));
+        builder
+            .graph
+            .edge_mut(edge)
+            .bindings
+            .insert(name, BString::from("Makefile:7"));
+        builder.build().unwrap();
+    }
+    let output = String::from_utf8(output).unwrap();
+    let trace = format!("Makefile:7: update target '{target}' due to: target does not exist\n");
+    assert!(output.starts_with(&trace), "{output:?}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn ronin_build_prints_failure_context_before_child_output() {
     let (mut graph, directory) = build_fixture(
