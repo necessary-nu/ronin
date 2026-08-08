@@ -4259,6 +4259,29 @@ children (
                 title "Attach product identity and Makefile locations to compiler diagnostics"
                 kind @fix
                 deps (make-interface-surface)
+                sealed true
+                log (
+                    {
+                        at 2026-08-08T22:42:23.209869682Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-08T22:45:20.194159933Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "This leaf was already delivered by de9abee6fa9675908c31a44cfb7c6cb459e16e66, whose trailers name make-diagnostic-prefix, and later architecture cleanup in 9dc66fdc preserves the valid compiler behavior while removing GNU Make runner decorations. Current tests make_evaluation_uses_ordinary_diagnostics and make_mode_refuses_an_assignment_whose_name_is_two_words assert the surviving contract: Ronin product identity plus Makefile line, without ***, Stop., or recursive Make identity. The node resurfaced because de9abee used the retired `done:` commit type rather than its declared `fix` kind. Treat this as historical delivery/provenance repair; do not duplicate or revert the implementation."
+                    }
+
+                    {
+                        at 2026-08-08T22:45:20.264158794Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {
