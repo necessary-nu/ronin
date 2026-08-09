@@ -1671,6 +1671,7 @@ children (
                     {
                         id ronin-index-growth-rehash
                         title "Grow the node index without rehashing paths"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T14:08:23.184995185Z
@@ -1685,12 +1686,20 @@ children (
                                 kind @decision
                                 text "Done, and it came out of profiling the load-factor knob that ronin-index-probe-locality left behind. The knob turned out to be the wrong question, and answering it properly exposed a far larger cost sitting next to it.\n\nThe load factor was measured directly, four variants (1/2, 5/8, 3/4, 7/8) built from the same tree and compared at 25,000, 60,000, 100,000 and 150,000 statements, randomised order, with two copies of the identical binary included as an inline noise control. Two things emerged. First, the noise floor is about 3% — the two identical binaries read 239.32 and 245.96 ms at minimum-of-25 — so anything under that is not a result. Second, and this is the real point, the load factor is not a continuous knob at all. The table is a power of two, so the load factor only changes behaviour where it changes which power of two the node count lands on. At 100,000 statements (200,001 nodes) the 1/2, 5/8 and 3/4 variants all finish on a 524,288-slot table at 38% occupancy — bit-identical final state, differing only in how full the intermediate tables got during the fill — while 7/8 finishes on 262,144 slots at 76%, half the memory and one fewer doubling. That made 7/8 15% faster at 100,000 and 12% slower at 60,000, where it saves no doubling and only lengthens probe runs. A knob whose sign flips with graph size is not a knob worth tuning.\n\nWhat the sweep actually pointed at was the doubling. Instrumenting grow showed 15 of them for a 100,000-statement manifest, rehashing 24, 48, 96 … 196,608 entries — 393,192 rehashes in total, against 200,001 nodes finally stored. Growth was re-hashing nearly twice as many entries as the table ends up holding, and each rehash was precisely the dependent-random-read pattern the fingerprint had just removed from lookups: a random read into `nodes` for the span, a random read into `paths` for the bytes, and a hash of those bytes. The fingerprint fixed the lookup path and left the growth path doing the same thing 393,192 times.\n\nCeiling first, to size the prize before designing: a build with INITIAL_SLOTS pinned to 524,288 so no growth ever happens ran cycles 1,014,381,980 to 822,008,894, cache misses 5,048,456 to 2,252,651, dTLB load misses 860,399 to 431,380, wall minimum 238.19 to 197.52 ms. So growth was roughly a sixth of the entire parse-and-evaluate run and over half of all misses.\n\nThe fix keeps the slot at eight bytes and needs no size estimate. The slot now stores the low half of the path hash rather than the high half. The high half filtered marginally better, but the low half is the half the slot index is drawn from, so growth can place an entry by masking a value it has already read — no hash, no arena access, no touching the graph at all. Placement order does not matter, because every entry still lands in the first vacancy at or after its home slot, which is the whole invariant linear probing requires. The filtering given up is small: the index consumes log2(slots) of the thirty-two bits, leaving thirteen at a 524,288-slot table, so all but one collision in eight thousand is still rejected from the slot array, and a false positive merely costs the byte comparison that used to happen unconditionally.\n\nMeasured at 100,000 statements against the immediately preceding commit: cycles 1,014,381,980 to 786,076,050 (−22.5%), instructions 1,271,604,529 to 1,207,566,990 (−5.0%), cache misses 5,048,456 to 2,603,195 (−48.4%), dTLB load misses 860,399 to 373,127 (−56.6%), wall minimum-of-20 238.19 to 196.17 ms (−17.6%). That matches the presize ceiling — 196.17 against 197.52 — so the growth cost is gone rather than reduced, and without the manifest-size heuristic presizing would have needed. On the suite, large-manifest-parse median 292.113 to 212.524 ms against C samurai's 312.929, which is 0.68x where it was 0.89x.\n\nWith growth cheap, the load factor was re-measured on top of the change, same four variants rebuilt on the new base. The spread collapses into the noise floor and stops ranking consistently: 7/8 best at 25,000 and 100,000, 1/2 best at 60,000, 3/4 best at 150,000, with the full range 1.4% to 5% at every size. Keep 3/4. The knob was only ever a proxy for growth cost, and with that paid directly it is worth nothing.\n\nThe lesson generalises the one from ronin-index-probe-locality rather than repeating it. That node found the cost in the dependent random reads on the lookup path; this one found the same reads on the maintenance path, where nobody had looked because growth is amortised and amortised is usually read as cheap. It is not cheap when each amortised unit is a cache miss and a TLB miss. 369 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0."
                             }
+
+                            {
+                                at 2026-08-09T17:13:13.195785739Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-stat-directory-contention
                         title "Split stat chunks on directory boundaries"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T14:21:43.302893344Z
@@ -1705,12 +1714,20 @@ children (
                                 kind @decision
                                 text "Done. This is the first of the three remaining workloads where ronin trailed C samurai, and the cause turned out to be a regression this programme introduced two nodes ago rather than anything inherited from the port.\n\ndeep-graph-evaluation is a chain of phony edges — `build node/i: phony node/i-1` — so every path lives in one directory and none of them exists on disk. Profiled at 50,000 links, ronin burned 967,749,907 cycles against samurai's 473,366,676 while executing *fewer* instructions, 563,005,026 against 584,084,925. Instructions per cycle 0.58 against 1.23. Cache misses were only 84% higher and branch misses were identical to three digits, so neither accounts for a doubling of cycles. The symbol profile did: 45.53% of the run in `__pv_queued_spin_lock_slowpath`, plus another 9.5% across `__raw_callee_save___pv_queued_spin_unlock` and `_raw_spin_lock`. Half the run was kernel spinlock contention, and the contending threads were ours — the batched stat fan-out from ronin-stat-batch-cpu-cost.\n\nThe mechanism is negative dentry instantiation. A lookup that finds a file can be served from the dentry cache under RCU with no exclusive lock. A lookup that finds nothing has to record that absence in the parent directory, which takes that directory's lock. Four threads looking up absent names in the *same* directory therefore serialize on one lock and pay the contention on top. Isolated cleanly by taking the identical 50,000-path single-directory fixture and touching every file so the paths exist: with the files present, fanning out to four costs 148.49 ms of task-clock against 108.85 serial, +36%, the ordinary price of parallelism; with the same paths absent it costs 270.14 against 115.07, +135%, and cycles go 1,052,470,227 against 451,937,109. Same paths, same directory, same thread count — presence alone is worth a factor of two.\n\nThat case is not exotic. Every output of a build that has not run yet is an absent path, so this is the first build of any tree, and the clean-tree fixture that motivated the fan-out never showed it because its files all exist by construction. Both fixtures were needed to see the shape; either alone gives the wrong answer, which is the same lesson the clean-tree node recorded from the other direction.\n\nThe fix keeps the fan-out and removes the sharing: chunk boundaries now slide forward from the ideal split to the next point where the parent directory changes, so one directory is one worker's business. Cost is one pass comparing adjacent parents as raw `OsStr` bytes rather than as `Path` components, which is nothing against a syscall each. A graph spread over many directories still fans out; a graph confined to one produces no split at all and runs on the calling thread, which is where it belongs. The remainder chunk deliberately runs inline rather than spawning, so the single-directory case starts no threads whatsoever.\n\nMeasured at 50,000 links: task-clock 269.94 to 111.01 ms against a serial build's 111.28 and samurai's 114.01 — contention gone, not reduced, and now marginally ahead of the C reference on CPU. Wall median 124.162 to 118.932 against samurai's 113.606. At the suite's 2,000 links, wall median 6.706 to 5.992 against samurai's 5.601, so the gap closes from 1.20x to 1.07x. Crucially the clean-tree win is untouched, because alternating `out/` and `src/` paths mean a directory change at nearly every index and the split still lands where it used to: at 20,000 edges, 57.793 to 57.502 ms median against samurai's 91.472, and at the suite's 2,000, 7.712 to 7.451 against 9.550.\n\nWhat remains on this workload is roughly 7% at suite size and 5% at 50,000, which at 2.2 microseconds per stat is the syscall itself rather than anything above it. 370 tests pass including a new one asserting a chunk never splits a directory, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
                             }
+
+                            {
+                                at 2026-08-09T17:13:16.335047111Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-startup-floor
                         title "Trace the small-workload gap to process startup"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T14:35:39.247658116Z
@@ -1732,12 +1749,20 @@ children (
                                 kind @note
                                 text "Superseded in part: the static-linking rejection recorded above was reversed by ronin-static-startup, which shipped it. The measurement behind the rejection was sound — static linking really did cost 65% on scheduler-barrier — but the cause was not chased, and it was ours. Ronin set a `cwd` on every child that the child already had; that makes Rust's `Command` reach for the weak `posix_spawn_file_actions_addchdir_np`, and a static link does not supply it, so every spawn fell back from `posix_spawn` to `fork`. Removing the redundant `cwd` removes the fallback, after which static and dynamic spawn identically and the startup win is free. The diagnosis in this node — that the workload's deficit is process startup rather than dependency logs — still stands, and is what made the second attempt worth making."
                             }
+
+                            {
+                                at 2026-08-09T17:13:17.980015256Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-dispatch-syscall-cost
                         title "Cut avoidable syscalls off the job dispatch loop"
+                        sealed true
                         log (
                             {
                                 at 2026-07-31T14:48:11.699444839Z
@@ -1759,12 +1784,20 @@ children (
                                 kind @note
                                 text "Syscall itemisation re-taken at HEAD on a quiet host — the previous table predates both the output-pipe change and the reap-interval fix. Parent process only, 128 `touch` edges at -j8, `strace -c` without `-f`, so this counts what the supervisor does per job and not what `touch` does.\n\n  syscall            ronin  samurai   ninja   ronin/job\n  prlimit64            770      641     897        6.02\n  close                524      261     390        4.09\n  fcntl                389      258     258        3.04\n  epoll_ctl            294        0       0        2.30\n  write                258      258     257        2.02\n  rt_sigprocmask       256      256     258        2.00\n  pipe2                128      129     128        1.00\n  read                  16      131     134        0.12\n  epoll_pwait           16        0       0        0.12\n  poll                   1       20       0        0.01\n\nRonin issues more syscalls per job than either and is now faster than both on this workload (38.090 ms against samurai 38.262 and Ninja 45.691 in the catalog run alongside). The count is not the cost, and the table says why: 16 `epoll_pwait` calls cover 128 completions, eight per wake, where samurai does 131 reads and 20 polls and Ninja 134 reads. Ronin waits once and collects a batch; they ask repeatedly. The 294 `epoll_ctl` calls are the price of that — one add and one delete per child — and they buy the batching.\n\nWhere Ronin is genuinely doing more work for nothing: 4.09 `close` per job against samurai's 2.04, and 3.04 `fcntl` against 2.02. Both smell like descriptor handling around the child's pipe that could be set up once rather than adjusted per spawn. `prlimit64` at 6.02 per job is the largest single count but is Rust's `Command` machinery rather than anything Ronin asks for, and Ninja does more of it than we do.\n\nNothing here is worth acting on yet: the workload it would improve is one Ronin already leads, and the reap fix that landed today is worth an order of magnitude more than trimming a `close`. Recorded so the numbers are current rather than stale, and so the `close`/`fcntl` excess is written down somewhere before it is forgotten again."
                             }
+
+                            {
+                                at 2026-08-09T17:13:25.809150464Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-static-startup
                         title "Stop paying the dynamic loader on every invocation"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T14:16:56.048668119Z
@@ -1779,12 +1812,20 @@ children (
                                 kind @decision
                                 text "Done, and it reverses a rejection recorded a few hours earlier in ronin-startup-floor. That node measured static linking as decisive on startup and then rejected it because the performance gate caught it regressing scheduler-barrier by 65%. The rejection was correct on the evidence available; what was missing was the cause, and once found it turned out to be ours and removable.\n\nThe cause is a weak symbol. Rust's `Command` can only use `posix_spawn` when it can resolve `posix_spawn_file_actions_addchdir_np`, which it looks up weakly; a static link does not supply it, so `nm` shows it present but undefined and the standard library silently falls back to `fork` and `exec`. That is page tables copied per spawn instead of shared: measured at 128 jobs, `clone` at 127 microseconds a call against `clone3` at 74. The fallback only triggers because ronin was setting a `cwd` on every child — and it was setting one that every child already had.\n\nThe library deliberately lets several runners share a process with different roots, which is why a child's directory is set per spawn rather than by moving the process; that is what keeps tests isolated. But the binary's root comes from `Runner::from_process`, so outside a `-C` it *is* the process's own directory, and imposing it is asking for what is already true. `directory_to_impose` now compares the two and returns an empty path when they match, which is every invocation from a shell. A runner rooted elsewhere still moves its children, so isolation is untouched, and `-C` still imposes a directory and still takes the slow spawn path under a static link — correct, and rare enough to leave.\n\nWith that in place static linking is no longer a trade. Spawn-heavy work is indistinguishable between the two: 1,024 jobs at -j 8, median 320.686 ms dynamic against 321.287 static; 128 jobs, 41.456 against 40.614. The syscall confirms it directly — the static build issues `clone3`, at 46 microseconds a call against the dynamic build's 65, because a static image has fewer mappings to set up.\n\nWhat it buys is the whole startup floor, on every invocation of every workload. Empty manifest 1.372 to 0.980 ms median against C samurai's 0.962. dependency-log-load 3.184 to 2.578 against samurai's 2.622 — the gap that node traced entirely to startup is closed and reversed, and the full gate agrees at 3.468 against 3.995. deep-graph 5.957 to 5.814 against 5.422. clean-tree 7.919 to 7.480, widening a lead. Peak RSS falls rather than rises, by 15 to 30 percent across the catalog. The binary grows about 70%, which for a tool run thousands of times a day is the right way round.\n\nTwo caveats worth carrying. The config lives outside the published crate, so `cargo install ronin` builds dynamically and gets the startup cost back; anyone shipping a package should apply the same flag. And the two halves are load-bearing together — remove the `directory_to_impose` check and static linking silently costs 65% on spawning, remove the static link and the check does nothing measurable. Both files say so.\n\nThe methodological point is worth more than the milliseconds. The gate rejected this change on a real measurement, and the right response to a real measurement is not always to accept the verdict — it is to find the mechanism. Here the mechanism was a fallback nobody had asked for, triggered by a redundant argument, and once named it cost one function to remove. A rejection with a number but no mechanism is provisional. 371 tests pass including one asserting a child is only moved to a directory it is not already in, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0."
                             }
+
+                            {
+                                at 2026-08-09T17:13:27.513447437Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-musl-static-build
                         title "Measure a static musl build against static glibc"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T14:25:15.810716904Z
@@ -1799,12 +1840,20 @@ children (
                                 kind @decision
                                 text "Rejected on measurement. musl wins the thing ronin-static-startup was chasing and loses everything else by more.\n\nBuilt for x86_64-unknown-linux-musl, which is static by default so the crt-static flag in .cargo/config.toml does not apply to it. The binary is 1,555,000 bytes against static glibc's 2,462,792, a 37% saving, and it spawns correctly: musl's `posix_spawn` issues `clone` with CLONE_VM and CLONE_VFORK rather than glibc's `clone3`, which is the same address-space-sharing behaviour and not the page-table-copying fork that the weak-symbol fallback produced, at 56 microseconds a call against static glibc's 46.\n\nOn startup it is the best of the three. Empty manifest, minimum-of-51 interleaved: musl 0.676 ms minimum and 0.997 median, static glibc 0.777 and 1.085, C samurai 0.678 and 0.998. So musl lands exactly on samurai's floor and takes another 8% off what static glibc achieved.\n\nThen it gives all of that back many times over on anything that does work. Instruction counts settle it independently of machine load, which matters because a large external rustc build pushed load average to 31 during this session and inflated every wall figure taken here. Parsing and evaluating 100,000 statements: musl 1,429,671,885 instructions against static glibc's 1,205,457,312, up 18.6%, and 1,120,134,608 cycles against 862,228,746, up 29.9%. Wall ratios reproduced consistently across two very different load levels — deep-graph +31% and +32%, the 25,000-statement parse +24% and +21% — so the ordering is not a load artifact even though the absolute milliseconds are.\n\nThe symbol profile names both causes. musl spends 5.12% of the run in `__libc_malloc_impl` and 3.13% in `__libc_free`, so 8.25% in the allocator; on static glibc neither appears above the 2% reporting threshold at all. And musl spends 7.86% in `memcpy` plus 6.88% in `memmove`, 14.74% together, where static glibc spends 3.96% in `__memmove_avx_unaligned_erms` — glibc keeps its IFUNC dispatch to AVX2 and ERMS string routines even when statically linked, and musl's portable implementations are roughly 3.7 times the share of the run. A workload built on path interning, arena appends and string building moves a great many bytes, so that difference is not incidental to it.\n\nNet: musl buys about 0.09 ms of startup and costs 11 to 31 percent of everything above it. Wrong trade, and not a close one. Static glibc stays.\n\nTwo things worth keeping from this. First, the glibc allocator is not a bottleneck here — it does not register in the profile — so the recurring temptation to swap in mimalloc or jemalloc has no evidence behind it on this workload and should not be attempted without some. Second, the reason musl loses is largely IFUNC-dispatched string routines, which is a good reminder that \"statically linked\" does not mean \"loses the optimised libc\": static glibc keeps them, and that is a large part of why the ronin-static-startup change was free rather than a compromise.\n\nNo repository change: the musl target was installed for the experiment and nothing in the tree depends on it."
                             }
+
+                            {
+                                at 2026-08-09T17:13:29.247810972Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-mimalloc-allocator
                         title "Measure mimalloc against the system allocator on both libcs"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T18:12:29.990935447Z
@@ -1826,12 +1875,20 @@ children (
                                 kind @decision
                                 text "Clean-machine numbers landed (load 3.78 at start, 3.63 at finish, against 30-40 for the measurement above). They confirm the rejection and correct one claim in it that was wrong in the way this programme keeps getting caught.\n\nThe correction first. The entry above says musl+mimalloc is \"roughly glibc parity\" and offers it as the configuration to reach for if static portability or binary size ever matters. That was inferred from instruction counts, and instruction counts are exactly the arbiter this programme has now been burned by three times. On a quiet machine musl+mimalloc parses 100,000 statements in 236.606 ms minimum against glibc's 191.029 — 24% slower, not parity — while executing *fewer* instructions, 1,188,444,945 against 1,204,504,324. Cycles explain it: 1,005,553,198 against 838,134,125, so instructions per cycle are 1.18 against 1.44. musl+mimalloc does less work and takes 20% more cycles to do it, because musl's portable memcpy and memmove move fewer bytes per instruction than glibc's AVX routines and mimalloc faults in more pages. The gap holds at every real size: 25,000-statement parse 61.911 against 46.976 (+32%), clean-tree at 20,000 edges 61.406 against 53.271 (+15%). It is not parity and it is not close, and the offer to ship it should be read with that correction attached — it would cost 15 to 32 percent on anything that parses.\n\nEverything else stands and is sharper. On glibc, mimalloc loses on wall clock at every size despite fewer instructions at scale: 100,000-statement parse 199.336 ms minimum against 191.029, 25,000 against 46.976 at 52.115, clean-tree 59.300 against 53.271, deep-graph 5.228 against 4.945. At 100,000 statements it executes 3.8% fewer instructions (1,158,537,536) for 1.9% more cycles (854,155,123) and 12% more cache misses. On musl it does help — 100,000-statement parse 248.024 to 236.606, deep-graph 6.392 to 5.197 — but never enough to reach glibc. And it damages startup on both, which is the measurement that matters most for a tool usually invoked with nothing to do: empty manifest minimum 0.665 to 0.969 ms on glibc and 0.652 to 0.789 on musl.\n\nOne genuinely new result the loaded run had obscured: plain musl has the best startup of anything measured, including C samurai. Empty manifest, minimum-of-51 interleaved: musl 0.652 ms minimum and 0.815 median, glibc 0.665 and 0.916, samurai 0.674 and 0.917. So musl is 11% better than both on median startup. It is still the wrong choice overall because it gives that back many times over on work, but the startup floor is not where its problem lies, and if a future change ever makes parsing cheap enough that startup dominates the catalog, this number is why musl would deserve re-measuring.\n\nJob dispatch is indifferent to all of it, as expected of a workload that is neither allocating nor copying: 128 jobs at -j 8, minimums of 38.676, 38.245, 37.699 and 37.662 ms across the four builds against samurai's 35.955.\n\nShipped configuration is unchanged: glibc with the system allocator, which wins every workload here that does any work. The standing lesson is now stated three ways in this plan and should be taken as settled — instruction count is not a proxy for time. Judge allocator and libc changes on cycles, page faults and wall clock."
                             }
+
+                            {
+                                at 2026-08-09T17:13:31.872433791Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-scanner-bulk-runs
                         title "Cross runs of ordinary bytes in one step"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T19:10:55.421626119Z
@@ -1846,12 +1903,20 @@ children (
                                 kind @decision
                                 text "Done, and it reverses two earlier rejections and one answer I gave on the first question of this whole programme.\n\n`scanstring` walked one byte at a time: a bounds-checked read, a match testing up to seven alternatives, and an index bump, repeated across every path and every command in the manifest. At 100,000 statements it was the largest symbol in the profile at 15.87%. It now crosses each run of ordinary bytes in a single step, stopping only where something needs handling.\n\nWhat makes this safe rather than fiddly is that the loop kept no per-byte state at all. `advance_within_line` is exactly `column += 1; index += 1`, and a run cannot contain a line ending because a line ending would end it — so advancing by the whole run is not an approximation of the old loop, it is the same arithmetic done once. The terminator sets fall out of the match directly: a value ends at `$`, carriage return or newline; a path additionally ends at any of `:`, `|`, space or tab, with tab present so it can be rejected, since Ninja forbids one there and the scan has to stop to say so.\n\nChoosing how to search that set is where this got interesting, and the honest record is that a microbenchmark led me wrong. A standalone harness comparing byte-at-a-time, a 256-entry membership table, `bstr`'s byte-set search and three overlapping `memchr3` calls ranked them inconsistently between runs of the same binary — the byte-set search measured 17.97 ns on one run and 35.72 ns on the next for identical input, with the table moving the opposite way. Rather than tune the harness, both candidates were built into the tool and measured there. Parsing 100,000 statements: 787.9 million cycles before, 744.6 with the byte-set search, 722.6 with the table. At 25,000: 209.2, 185.3, 173.2. The table also executes the fewest instructions of the three, which the byte-set search does not, because that one rebuilds its set on every call and most runs here are short. The table wins at every size and is what shipped.\n\nOne near-miss worth recording. The clean-tree fixture appeared to regress with both variants — cycles 42.8 million to 45.0 — and it would have been easy to build a size-conditional fast path around that. It is not real: clean-tree runs the batched stat fan-out, cycles and task-clock sum across threads, and the same run reported task-clock of 22.46 against 11.11 for two builds of the same workload. Wall clock, minimum-of-41 interleaved, is 6.654 ms before and 6.664 after at 2,000 edges, and 55.530 against 55.124 at 20,000 — no change either way. This programme recorded that threading defeats summed CPU counters twice before, and it nearly caught me a third time.\n\nMeasured, on an idle machine. 100,000-statement parse: cycles 787,935,952 to 722,562,720 (−8.3%), instructions 1,204,552,749 to 1,125,280,172 (−6.6%), wall minimum-of-21 181.237 to 169.893 ms and median 203.020 to 190.875, against C samurai's 286.482 and 301.848. 25,000 statements: cycles 209,189,966 to 173,191,797 (−17.2%). Deep graph: 20,210,978 to 19,526,858 (−3.4%). `scanstring` falls from 15.87% of the profile to 6.44%. On the suite, large-manifest-parse median 190.528 ms against samurai's 317.304, which is 0.60x, and deep-graph-evaluation moves ahead of samurai for the first time — 6.702 against 7.053.\n\nThe corrections this owes. The first question asked in this programme was \"simd?\", and the answer given was that vectorised scanning was not the gap. That was true of the fixtures being measured then — 4,000 edges with ten-byte paths — and false at the scale the tool is meant for. Both `ronin-memchr-scanner` and `ronin-streamed-path-scanning` were rejected on instruction counts at that same small scale, and a later node reaffirmed the rejections on the grounds that `scanstring` was compute-bound rather than stall-bound. That reasoning was sound for a locality fix and beside the point for this one: being compute-bound is precisely the condition under which doing less work per byte pays. The lesson is narrower than \"instruction counts mislead\", which this plan already says three times — it is that a rejection is only valid at the scale and shape it was measured on, and the fixtures this programme judged the scanner against were an order of magnitude too small to see it.\n\n372 tests pass including one asserting the bulk skip leaves the column exactly where stepping would, for values, paths, tabs inside values, and a rejected tab inside a path. Clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0."
                             }
+
+                            {
+                                at 2026-08-09T17:13:33.582489272Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-byte-class-tables
                         title "Classify path bytes by table, and reject arena presizing"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T19:22:22.208283217Z
@@ -1866,12 +1931,20 @@ children (
                                 kind @decision
                                 text "This node was opened to presize the graph arenas and that idea is dead on measurement. What shipped instead is the byte-class technique from ronin-scanner-bulk-runs applied where the profile said it still paid.\n\nThe presizing premise was that growing by doubling touches about twice the memory it keeps, since each doubling allocates afresh — the kernel zeroing every new page — and copies everything so far. `clear_page_rep` was 8.4% of the run, so it looked like a target. A reservation derived from the manifest size was added for nodes, edges and the path arena, sized to cover the 100,000-statement fixture exactly. It did nothing: cycles 775.1 million to 784.6, instructions 1,130.2 million to 1,128.7, page faults 29,927 to 29,903.\n\nThe reason is `mremap`. glibc's `realloc` extends a large mapping in place, or moves it without copying pages, so a `Vec` past a few hundred kilobytes grows for the cost of one syscall and no page traffic at all. Counted directly, the unreserved build issues 19 `mremap` calls over the run and the reserved one issues 2 — the doubling was already nearly free, and had been all along. The premise was simply false for allocations this size, and reverted.\n\nTwo further things were checked before abandoning the direction, both already done. The adjacency lists are not a source of allocation: `IdVec` has been `SmallVec<[T; 4]>` since earlier in this programme, so up to four identifiers cost no allocation and no extra footprint, and `Node` is 72 bytes and `Edge` 136. And the remaining 800,227 allocation requests at 100,000 statements — 8.0 per build statement — are parse-time temporaries rather than graph structure, with `malloc` and `free` together under 3% of the profile. So `clear_page_rep` is first-touch of memory the tool genuinely writes to, and the only way to reduce it is to want less memory, not to ask for it more cleverly.\n\nWhat did pay was `shell_escape_path`, which every interned path passes through to decide whether quoting would change it. The test was `!byte.is_ascii_alphanumeric() && !b\"_+-./\".contains(byte)` — three range checks and then a *linear search of a five-byte string*, per byte, over every path in the manifest. Replaced with a 256-entry membership table, exactly as the scanner's terminator sets. Measured at 100,000 statements: cycles 773,298,348 to 751,588,888 (−2.8%), instructions 1,125,703,750 to 1,077,457,353 (−4.3%). The function has dropped out of the profile entirely, from 5.13% to below the 1.8% reporting threshold.\n\nThe profile that remains at 100,000 statements, for whoever picks this up: `NodeIndex::probe` 10.43%, `clear_page_rep` 9.53%, `scanstring` 7.98%, `node_for` 5.27%, page faults 3.44%, `memmove` 3.36%, `parse` 3.26%, `wide_hash` 3.13%, `canonpath` 3.03%, `append_variable` 3.02%, `list_del` 2.35%, `scan::space` 2.14%. The memory system is now the largest category at roughly 15% and is, per the above, not addressable by allocation strategy. `canonpath` and `scan::space` are the two remaining per-byte loops and are worth perhaps two percent between them.\n\n372 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0."
                             }
+
+                            {
+                                at 2026-08-09T17:13:35.294360734Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-dispatch-residual-gap
                         title "Account for the last of the dispatch gap and stop"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T19:59:56.891630269Z
@@ -1893,12 +1966,20 @@ children (
                                 kind @note
                                 text "The residual this node left unexplained is accounted for. It was the supervisor's reap latency, recorded on ronin-reap-latency.\n\nThis node measured Ronin's completion-to-dispatch window at 1.501 ms against C samurai's 1.654 ms and could not reconcile a faster window with lower occupancy, leaving ~2.2% unexplained. The window was measured from the completion being *noticed*, so it never contained the fixed ten millisecond sleep that delayed noticing — the gap was in front of the thing being measured, which is why looking harder at the thing being measured did not find it.\n\nRemoving that sleep is worth 22.7% of scheduler-barrier at -j8 on this host. In the catalog run taken alongside, scheduler-barrier is Ronin 38.090 ms against C samurai 38.262 ms and Ninja 45.691 ms — the one workload Ronin had never won."
                             }
+
+                            {
+                                at 2026-08-09T17:13:40.247972986Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-output-pipe-not-socketpair
                         title "Give each child a pipe rather than a socket pair"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T20:23:15.859046379Z
@@ -1913,12 +1994,20 @@ children (
                                 kind @decision
                                 text "Done, and it exists because ronin-dispatch-residual-gap stopped one step too early. That node itemised the dispatch gap as syscalls and concluded every one was load-bearing. The itemisation was right and the conclusion was wrong, because it costed syscalls by count rather than by what they do.\n\nThe arithmetic that exposed it: at -j 1 the per-job difference against C samurai is about 37 microseconds, and the 5.4 extra syscalls per job explain nowhere near that. Measured directly, a bare syscall on this host costs 85 nanoseconds — mitigations are on, but retpolines and the rest do not make a syscall expensive in these terms — so 5.4 of them is under half a microsecond. The gap had to be somewhere else.\n\nMeasuring the supervising process alone, with children excluded, found it. Over 128 jobs ronin's parent executed 17.5 million instructions against samurai's 14.5 — about 23,400 more per job, which is real work rather than syscall entry overhead. The parent's profile pointed at kernel object allocation, `memset_orig` and `__memcg_slab_post_alloc_hook` prominent, and the difference in what the two tools allocate per job is exactly one thing: ronin created a socket pair for the child's output where samurai creates a pipe.\n\nThat was never needed. Output travels one way, so the second direction of a `UnixStream::pair` was dead from the start, and two `AF_UNIX` sockets carry far more kernel state than a pipe's single buffer. Measured in isolation, creating and closing a non-blocking socket pair costs about 4.9 microseconds against 2.3 for a pipe and the duplicate its writer needs. Switched to `std::io::pipe`, which is stable well below the toolchain in use and needs no dependency. Only the read end is made non-blocking, through `rustix::fs::fcntl_setfl`, because the drain loop reads until it would block while the child's end must stay blocking — a command writing faster than this process reads has to wait rather than fail with `EAGAIN`, which is why the flag cannot go to `pipe2`, since that sets it on both ends.\n\nMeasured over 128 jobs: parent instructions 17,511,983 to 16,796,921, down 4.2%, and the per-job socket pair is gone from the trace — 129 `socketpair` calls become 1, that one being signal-hook's wake pipe at startup. Wall clock is a smaller and noisier story, median 42.005 to 41.515 ms against samurai's 39.896, so about a percent; the change is worth taking on the instruction count and on being the right structure, not on the wall figure alone.\n\nIt also relocates the rest of the gap, which is the more useful result. With the socket pair gone the two parent profiles are dominated by the same kernel symbols in the same proportions — `sched_balance_find_dst_group`, `memset_orig`, `__memcg_slab_post_alloc_hook`, `clear_page_rep`, `kmem_cache_alloc_noprof`, `copy_process` — which is the process-spawn path, and identical work for both tools. The only ronin-specific entries left are our own: `Builder::build` at 2.77% and `Builder::finish_edge` at 1.59%. So the remaining roughly 17,000 instructions per job are dispatch bookkeeping in the build loop, not the poller, not the event registration, and not the syscalls that the previous node concluded were load-bearing. Whoever picks this up should start at `finish_edge`.\n\nThe correction worth carrying: costing a difference by syscall count assumes syscalls are the unit of cost, and here they were not — an 85-nanosecond syscall and a 5-microsecond one look identical in a `strace -c` tally. Count what the kernel allocates, not how often it is entered.\n\n372 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0."
                             }
+
+                            {
+                                at 2026-08-09T17:13:43.571692195Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-supervisor-bookkeeping
                         title "Stop zeroing a buffer and SipHashing edge ids per job"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T20:44:14.515650388Z
@@ -1947,12 +2036,20 @@ children (
                                 kind @note
                                 text "The wall figure this node said must be re-taken before the change was quoted as a speedup has now been taken on a quiet host, and it does not support the claim.\n\n  128-edge stamp fixture, interleaved, randomised per repetition\n  -j8   before min 36 med 37   after min 35 med 38   1.029x  (-2.8%)\n  -j1   before min 172 med 178  after min 172 med 178  1.000x  (+0.0%)\n\nLoad 0.77 at the start and 1.10 at the end, minimum of 31 at -j8 and 21 at -j1, outputs and build log removed between every run, both binaries built beforehand so nothing compiled inside the window. Binaries are 3fff453 and 6f7604c built from worktrees, so the only difference between them is this change.\n\nThe -j8 minimum improved 2.8% while the median moved the other way, 37 to 38. That is not a speedup, that is noise with a favourable minimum. At -j1 the two are identical to the millisecond. The instruction count was real — 17,222,188 to 16,441,578, and nothing here disputes it — but it did not become time.\n\nThe reason is arithmetic that should have been done before committing. Those instructions are the supervisor's own bookkeeping, and the supervisor's CPU is a small fraction of what a job costs in wall terms: the rest is `clone`, `execve`, the child's own work, and waiting. Removing 4.5% of a small share of the total is not visible against it. An instruction count answers \"did this code get cheaper\", which it did; it does not answer \"did the build get faster\", which is what the node claimed by putting the figure in a Done note.\n\nNothing is being reverted. Zeroing a 16 KB buffer per drain and SipHashing keys the process mints itself were both worth removing on their own terms, the change is smaller and clearer than what it replaced, and it costs nothing. What is being corrected is the claim: this was a cleanup, not a 4.5% improvement, and the Done note should be read that way.\n\nRecorded because the alternative is that the instruction-count figure stands unqualified in the log and gets quoted later as a performance result. This is the second measurement this session to contradict what was shipped on a proxy metric — the other being the command launcher, which a per-spawn microbenchmark said was 51% faster and a build said was 7.7x slower. The pattern is the same both times: a number measured on the part that changed, presented as a number about the whole."
                             }
+
+                            {
+                                at 2026-08-09T17:13:49.070133483Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-ninja-reference-unpinned
                         title "Record that the Ninja reference build is unpinned"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T21:31:18.359150972Z
@@ -1967,12 +2064,20 @@ children (
                                 kind @decision
                                 text "Recorded, not fixed, because fixing it means re-recording the project's reference numbers and that is not a change to make unilaterally.\n\nThe host rebooted and `/tmp` is tmpfs, so both reference builds the harnesses depend on were destroyed: `/tmp/ronin-samu-reference` and the pinned Ninja at `/tmp/ninja` and `/tmp/ninja-build`. Rebuilding them exposed the defect. The harness is strict about Ninja's *source* — `examples/conformance.rs` runs `git rev-parse HEAD` and refuses any revision other than b51a1e37c2fb89bbefa600bd155e1ce13983f09d — and silent about how it is *built*. benchmarks/README.md documents the exact compiler invocation for the C samurai reference, `cc -O2 -std=c99 ...`, and for Ninja documents only where the binary should be found.\n\nRebuilt with `cmake -DCMAKE_BUILD_TYPE=Release`, Ninja is roughly two and a half times faster than the recorded baseline assumes, and the performance gate failed: clean-tree-noop's Ronin/Ninja ratio \"regressed\" to 0.66x from a recorded 0.37x, with Ronin unchanged. Rebuilt with plain `cmake` and no build type — which Ninja's CMakeLists does not default for, so no optimisation flags at all — it reproduces the record closely: clean-tree-noop 29.913 ms against a recorded 29.729, manifest-command-evaluation 41.809 against the 42.8 seen in gate output through this programme, large-manifest-parse 1020.393 against 1154.622. Binary sizes tell the same story, 430,528 bytes optimised against 1,464,216 unoptimised. So the recorded baseline was made against an unoptimised Ninja, and every Ronin-versus-Ninja ratio this project has quoted is flattering by roughly that factor. Against a Release Ninja the honest figures are clean-tree-noop 7.473 ms against 11.705 rather than against 30, and large-manifest-parse 187.378 against 333.578 rather than against 1020.\n\nThree things limit the damage. The C samurai comparison is unaffected: its build is pinned by the documented `-O2` recipe and it reproduces across both runs, 10.030 and 11.059 ms on clean-tree-noop against a recorded 11.408. Every conclusion this programme has drawn about Ronin against samurai therefore stands untouched, and samurai has been the arbiter for all of it. Ronin's own absolute numbers are stable across the reboot and independent of any reference. And Ninja is not used as a correctness oracle by this defect — the conformance suite runs Ninja's own test binary, which passes regardless of optimisation.\n\nLeft in place for now: the gate has been restored to the unoptimised Ninja so it matches the record and exits 0, which is what allowed the outstanding verification on ronin-supervisor-bookkeeping to be completed. That is deliberately preserving a flattering comparison, and it should not stand.\n\nWhat a fix looks like, for whoever takes it. Pin the Ninja build the way the samurai build is pinned — put the cmake invocation in benchmarks/README.md and, better, have the harness record the reference binary's build configuration alongside the revision it already records, so a mismatch is visible in the CSV rather than silent. Then re-record baseline-v1.csv against a Release Ninja and accept that every historical ratio in the record shifts. Two smaller adjacent problems are worth folding in: `examples/baseline.rs` defaults the samurai reference to /tmp/ronin-samu-reference and drops the samurai-c comparison silently when the file is absent, so a wiped /tmp degrades the gate without any complaint; and both references living in tmpfs means this recurs on every reboot."
                             }
+
+                            {
+                                at 2026-08-09T17:13:50.905665478Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-intern-single-probe
                         title "Intern a new path with one probe rather than two"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T21:54:44.785221608Z
@@ -1994,12 +2099,20 @@ children (
                                 kind @decision
                                 text "Correction to the closing advice above, which said to target the miss rather than the count and pointed at batched prefetching. That was written from a false reading of this host's cache and should not be followed without the evidence below.\n\nThe false reading first. `lscpu` reports \"L3 cache: 512 MiB (32 instances)\" on this machine, which is a guest artifact — it multiplies the presented 16 MB by the vCPU count. sysfs gives the truth: L1d 64K, L2 512K, L3 16,384K shared across cpus 0-31, and the underlying part is a Threadripper 2950X whose real L3 is 8 MB per CCX. I had concluded from the inflated figure that the whole working set was cache-resident and never reached DRAM, which is doubly wrong: the number was fictional, and the same run had already measured 2,047,212 last-level misses, which is not \"never reaches DRAM\".\n\nMeasured properly, across three sizes spanning the L3 boundary, with working sets of 6.6, 26.6 and 53.2 MB — slot array plus node arena plus path arena — at 25,000, 100,000 and 200,000 statements. Cycles 158,073,067, 661,330,758 and 1,384,072,719, which is 6,323, 6,613 and 6,920 per statement: 9.4% growth across an eightfold size range. Last-level misses 546,293, 2,156,029 and 4,357,313, which is 21.9, 21.6 and 21.8 per statement — flat.\n\nFlat misses per statement across a working set that goes from comfortably inside L3 to three times outside it is the signature of compulsory misses rather than capacity misses. The cost is touching each new node, each new path and each manifest byte once, and that is proportional to the manifest regardless of how much cache the machine has. Capacity pressure would show as a climb past the boundary; there is none. Consistent with this, probe accounts for 6.97% of the run's misses against 10.31% of its cycles, so it is not where the misses are either.\n\nThe practical consequence is that prefetching the slot array, and the SwissTable-style SIMD group probe that would usually accompany it, are both aimed at a problem this workload does not appear to have. Probe runs average 2.23 slots, eight slots fit in a cache line, and a slot carries its identifier and hash adjacently — so a run is usually one line, and splitting control bytes into a separate array to enable a sixteen-wide compare would add a line per hit to save instructions in a loop that is already short.\n\nOne limit on all of this, stated plainly because it is the obvious objection and a fair one: everything here was measured on a single host, and one presenting a flat 16 MB L3 rather than the real per-CCX 8 MB. A machine with a genuinely smaller or differently shaped last level could behave differently. What makes me willing to rest on it anyway is that the flatness already spans both regimes — 6.6 MB at 25,000 statements sits inside even an 8 MB cache, and 53.2 MB at 200,000 sits far outside one — so the character of the access pattern is visible from both sides of that line. Anyone who does have contrary evidence from smaller hardware should reopen this; the measurement to repeat is misses per statement across sizes, which takes minutes and settles it."
                             }
+
+                            {
+                                at 2026-08-09T17:13:52.566874441Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-node-validation-side-table
                         title "Charge validation lists only to the nodes that use them"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T22:28:32.825215899Z
@@ -2014,12 +2127,20 @@ children (
                                 kind @decision
                                 text "Done, and it follows directly from the scaling measurement in ronin-intern-single-probe: last-level misses run at a flat 21.7 per statement across an eightfold size range, which is the signature of compulsory misses. Compulsory misses are proportional to bytes touched, so the way to reduce them is to touch fewer bytes, and the largest structure a big manifest builds is the node arena — 14.4 MB of a 26.6 MB working set at 100,000 statements.\n\n`Node` was 72 bytes: an eight-byte path span, a twelve-byte optional shell-quoted span, a four-byte optional generating edge, and two twenty-four-byte inline lists — `uses` and `validation_uses`. A third of every node was `validation_uses`, holding the edges that name it in a Ninja `|@` validation clause. Validations are a 1.11-era feature that almost nothing uses; no node in the 100,000-statement fixture has one, and the field was costing 4.8 MB of arena there to store nothing at all.\n\nIt now lives in a rapid-hashed side map on the graph, keyed by node, reached through `node_validation_uses` — which returns an empty slice for the nodes that have none — and `add_validation_use`. The feature is unchanged: six call sites across parse, build, the graph tool and compdb moved from field access to accessor, and the validation conformance tests pass untouched. `Node` is 48 bytes, down a third, and the node arena falls from 14.4 to 9.6 MB at 100,000 statements.\n\nMeasured, on a quiet host. At 100,000 statements: cycles 693,714,726 to 674,798,024 (−2.7%), cache misses 2,085,913 to 1,942,504 (−6.9%), instructions −0.6%, wall minimum-of-21 162.014 to 154.156 ms. At 200,000: cycles 1,369,836,966 to 1,323,037,612 (−3.4%), cache misses 4,064,116 to 3,863,720 (−4.9%), wall minimum-of-11 335.893 to 324.476 ms. The gain growing with size — 2.7% at 100,000 against 3.4% at 200,000 — is what a footprint change should do and is the best evidence that the mechanism is the one claimed. On the suite, large-manifest-parse 163.652 ms against C samurai's 314.060.\n\nTwo things deliberately not done, with reasons, so nobody re-derives them.\n\n`shellpath` is `Option<PathSpan>` at twelve bytes, where `PathSpan` is two plain `u32`s with no niche. Storing the path's own span instead of `None` would make it eight and remove a branch from `node_shellpath`. On its own it saves nothing: with `uses` still twenty-four bytes and eight-aligned, the struct pads straight back to 48. Worth doing only alongside a smaller `uses`.\n\n`uses` is the other twenty-four-byte list and most nodes hold zero or one entry, so a compressed layout — one flat edge vector plus an eight-byte span per node — would take `Node` to roughly 28 bytes. It is rejected for now because `uses` is not write-once: `nodeuse` appends during parse, and dyndep adds inputs to edges at build time, after any post-parse compaction would have run. Making that safe needs either a fallback for late additions or a rebuild step, and neither is worth it before the cheaper wins above are exhausted.\n\n372 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip, performance gate exit 0 with no regression."
                             }
+
+                            {
+                                at 2026-08-09T17:13:54.051884769Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-uses-compaction
                         title "Reject compacting the node use lists"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T22:53:39.808920801Z
@@ -2034,12 +2155,20 @@ children (
                                 kind @decision
                                 text "Rejected after reading the mutation sites. ronin-node-validation-side-table left `uses` as the last fat field in `Node` — twenty-four bytes of forty-eight, mostly holding zero or one entry — and named a compressed layout as the way to take the struct to thirty-two. That plan does not survive contact with how `uses` is actually written.\n\nThe sketch assumed `uses` is appended during parse and thereafter effectively read-only, so a flat edge vector plus an eight-byte span per node would work, with the rare late addition going to a small overflow map. Two things falsify it.\n\nFirst, most entries do not arrive during parse at all. `nodeuse` is reached from `edgeadddeps`, and `edgeadddeps` is called from `deps.rs` when the dependency log is read, from `build.rs` when a depfile is read, and from `dyndep.rs`. The first two are the ordinary path of any C or C++ build: a source with two hundred headers contributes roughly two hundred `nodeuse` calls at build time against about two at parse time. The overflow map would therefore hold the majority of the adjacency, not its tail, and the \"compacted\" representation would be a small prefix in front of a hash map — worse than what it replaced.\n\nSecond, `uses` supports removal. `parse.rs` retains against an edge when a later build statement redefines an output and the earlier edge's self-input has to be undone. A compressed row layout does not support removal without either tombstones or a rebuild.\n\nSo the structure is a genuinely mutable adjacency list with random-access insertion at two separate phases and occasional deletion, which is what `SmallVec` is already a reasonable answer to.\n\nWhat remains possible, recorded so the option is not lost. `IdVec` is `SmallVec<[T; 4]>`, whose capacity field is a `usize`, which makes it eight-aligned and twenty-four bytes. A hand-written inline vector storing a `u32` length and three inline identifiers, spilling to an index into a side arena rather than to a pointer, would be sixteen bytes and four-aligned. `Node` would fall from forty-eight to forty; and only then would packing `PathSpan` into a `NonZeroU64` pay, because the struct would no longer be padded to an eight-byte boundary — taking it to thirty-six, a further twenty-five percent off the node arena.\n\nThat is not being done now, and the reason is proportion rather than difficulty. The measured return on the previous thirty-three percent reduction of `Node` was 2.7% at 100,000 statements and 3.4% at 200,000, so a further twenty-five percent is worth perhaps two. Against that it means writing a custom container with its own spill arena, and putting it on a path that is mutated during both parse and build and that the dependency-log and depfile readers hammer — replacing a well-tested `SmallVec` on exactly the code where a subtle bug would corrupt the build graph rather than merely slow it. The trade is poor at this point and should only be revisited if the node arena is again shown to be the binding constraint.\n\nA correction to my own earlier note while here: ronin-node-validation-side-table says the `uses` compaction is blocked because \"dyndep adds inputs to edges at build time\". That understates it — dyndep is the rare case; the dependency log and depfiles are the common one, and they are what makes the overflow design unworkable."
                             }
+
+                            {
+                                at 2026-08-09T17:13:55.816662228Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
                     {
                         id ronin-real-project-validation
                         title "Validate against real cmake-generated projects"
+                        sealed true
                         log (
                             {
                                 at 2026-08-01T23:06:33.426419063Z
@@ -2060,6 +2189,13 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Three-way comparison re-taken on a quiet host, against the pinned `.ninja_log` snapshots, tools interleaved in randomised order with the log restored before every run. Minimum of 21. Load 0.77 at the start, 1.10 at the end.\n\n  the Ninja project (224 build statements), ms\n    no-op rebuild      ronin 17.225   samurai 15.023   ninja 19.854\n    -t commands all    ronin  2.716   samurai  3.355   ninja  7.784\n\n  abseil (917 build statements), ms\n    no-op rebuild      ronin 11.126   samurai 13.224   ninja 32.115\n    -t commands all    ronin  5.227   samurai  7.998   ninja 21.187\n\nRonin is ahead of Ninja on all four and ahead of C samurai on three. The exception is the Ninja project's no-op rebuild, where it trails samurai by 15%.\n\nThe shape of that exception is the interesting part, and it is not the one I would have guessed: the *smaller* project has the slower no-op. 224 statements take 17.2 ms while 917 take 11.1 ms. So the cost being measured is not proportional to the manifest, which means it is not parsing or graph construction — it is the dependency log and the stat traffic behind it. The Ninja project's tree carries recorded header dependencies for a C++ build; abseil's is a fresh configure whose deps log covers far less. That points at `.ninja_deps` loading and the stats it implies as the thing to look at, not at anything the earlier no-op work touched.\n\nNot chased here. Recorded so the next person looking at no-op performance starts from the right end: a bigger manifest is not automatically a slower no-op, and the Ninja project tree is the one that shows the cost.\n\nThe earlier run of this comparison was contaminated by a `find` at 60% CPU and should not be compared against these numbers."
+                            }
+
+                            {
+                                at 2026-08-09T17:13:58.206399842Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -3045,6 +3181,7 @@ children (
                 id ronin-progress-bar
                 title "Pin a throttled progress bar to the terminal"
                 deps (ronin-cargo-output-style)
+                sealed true
                 log (
                     {
                         at 2026-08-02T00:18:24.987937513Z
@@ -3066,6 +3203,13 @@ children (
                         kind @note
                         text "Wall clock confirms the bar is not slower than Ninja's rendering, which was the question.\n\nSynthetic worst case, 2048-edge dry run with 4096 events, 101 interleaved randomised repetitions on a quiet host (load 0.51 at start, 0.55 at end), `.ninja_log` reset before every run: minimum 14.45 ms for Ninja's rendering, 14.51 for Cargo's, 14.44 with the bar. Medians 15.72, 15.82 and 16.08. The minima are indistinguishable and the median spread is a third of a millisecond on a workload whose event rate no real build approaches.\n\nOn a real build the difference is not resolvable at all, and cannot be: six interleaved full clean rebuilds of the Ninja project per rendering came out 13,640 ms minimum for Ninja's and 13,248 for the bar's, which would make the bar faster — it does not, there is no mechanism, and the within-rendering spread of 783 ms is three times the difference. That run was also taken with the host under load average 13 to 18 and should not be quoted. The bound it establishes is that any real difference is under six percent of a 13.6-second build, against a predicted effect of about 0.15 ms, so it neither confirms nor refutes anything. The high-event-rate figures above are the ones that answer the question."
                     }
+
+                    {
+                        at 2026-08-09T17:14:06.920828213Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
         )
@@ -3075,6 +3219,7 @@ children (
         id ronin-dryrun-log-divergence
         title "Stop the dry run appending to the build log"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-02T00:11:57.602191042Z
@@ -3096,6 +3241,13 @@ children (
                 kind @decision
                 text "Fixed. The dry run no longer writes to `.ninja_log`, and now matches Ninja byte for byte on a recompacted log: abseil's stays at 20,225 bytes through `ronin -n` where it previously grew to 40,315.\n\nThe write was one unguarded call in `finish_edge`. The deps-log writes immediately above it were already inside `if !self.options.dryrun`, and the build-log write simply was not — so this is the guard the surrounding code already establishes, applied to the one site that missed it. The in-memory mtime and dirty-state updates are deliberately left outside the guard, because the rest of the dry run's planning depends on them: an edge the run pretends to have built has to make its dependents plan correctly.\n\nWhat this does not change is worth stating, because it bounds how much the bug mattered. A dry run never produced a wrong build. The failure mode to worry about was a dry run recording the new command hash for an edge, so that a later real build compared the manifest against a log that already agreed and skipped the work — that was tested directly before the fix, by building an output, changing the rule's command, dry running, then building for real, and the rebuild happened. What the bug actually cost was unbounded log growth: one entry per planned edge, every time, so any workflow that dry-runs often inflated the log without limit and every subsequent invocation of any tool paid to load it. That is not hypothetical — repeated dry runs during this session took abseil's log from 20 KB to 6.7 MB, which doubled its dry-run time and invalidated two rounds of measurement before the cause was found.\n\nC samurai has the same behaviour, so the port inherited it rather than introducing it. The oracle is Ninja, so it is still a divergence.\n\nThe open question from the original report is answered and the answer is unwelcome: all 425 upstream tests passed both before and after, so the pinned suite does not cover this. The differential harness is the right place for a case, and it is not added here — this commit is the fix, and the harness gap is a separate piece of work. A regression test is in place at the unit level: a dry run leaves no log entry and produces no output file, and a real build immediately after still runs the command and does record it.\n\n398 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
             }
+
+            {
+                at 2026-08-09T17:14:08.615467849Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3103,6 +3255,7 @@ children (
         id ronin-retire-c-corpus
         title "Retire the C samurai corpus from the repository"
         kind @chore
+        sealed true
         log (
             {
                 at 2026-08-02T00:57:11.953556275Z
@@ -3117,6 +3270,13 @@ children (
                 kind @decision
                 text "Done. The 4,637 lines of C that Ronin was ported from are out of the repository — twenty-six sources and headers, the Makefile, and the `samu.1` manual page.\n\nThe interesting part is what it did to spec coverage, which improved rather than degraded. The nspec configuration carried two impls: `source-impl`, tracking the original C symbols across `**/*.c **/*.h` in `@impl-only` mode, and `target-impl` for the Rust in `@both` mode. Deleting the C would have orphaned 331 `[spec:ronin:def:…]` and `[spec:ronin:sem:…]` annotations, so `source-impl` went with it. Coverage moved from 201 of 205 rules covered with 2 stale to 201 of 201 covered with none stale, and the two long-standing unplanned symbols, `samu.main-fn` and `samu.parseenvargs-fn`, are gone. Those four rules described the C entry point and its environment parsing, which Ronin deliberately does not implement — `product.no-samuflags` is the requirement that says so. They were only ever covered because the C that satisfied them was sitting in the tree.\n\nSo the requirement text is still the specification and the Rust still has to implement and verify every rule; what has been dropped is a second implementation of the same spec that nobody was going to change again.\n\nTwo things had to move with it. The performance harness built its C samurai reference from these sources, so `benchmarks/README.md` now clones upstream samurai instead; `examples/baseline.rs` needed no change, since it only looks for the binary at `/tmp/ronin-samu-reference` and already omits the `samurai-c` rows when it is absent — which is a silent degradation the harness has been warned about before and still has. And `src/port_tests.rs` stays: despite the name it is pure Rust behaviour tests carrying the `/test` annotations for a large share of the spec, with no build-time dependency on the C at all.\n\nThe LICENSE keeps every notice it had. Ronin is a translation of samurai rather than an independent implementation, and htab and tree descend further back through Myrddin and musl, so the ISC, Apache-2.0 and both MIT grants still govern the Rust sources whether or not the C is distributed beside them. A copyright line for the Rust work was added above them, and a sentence saying explicitly why the rest is retained, so that the next person to look does not read the removal of the C as licence to prune the notices.\n\n398 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip — the last of which matters most here, because it proves compatibility is still being demonstrated against the pinned Ninja oracle rather than against the C corpus that just left."
             }
+
+            {
+                at 2026-08-09T17:14:10.078280803Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3124,6 +3284,7 @@ children (
         id ronin-spec-namespace
         title "Rename the spec namespace from samurai to ronin"
         kind @chore
+        sealed true
         log (
             {
                 at 2026-08-02T11:15:44.663345192Z
@@ -3138,6 +3299,13 @@ children (
                 kind @decision
                 text "Done. The spec namespace is `ronin`, so rules read `[spec:ronin:req:compat.scheduling]` rather than `[spec:samurai:req:…]`. 1,063 annotations across 65 files, plus the nspec spec name and the plan name.\n\nMechanical, but with one judgement call in it. The rewrite matched the exact token `spec:samurai:` rather than the word `samurai`, because the two are different things now: the namespace was the last place the port's origin leaked into the product's own vocabulary, while every prose mention of samurai in the benchmark records refers to the actual C tool that Ronin is still compared against. Those are untouched and must stay — `benchmarks/README.md`, the alloc-metrics and baseline records, and the two performance-validation CSVs all name samurai as a measured competitor, not as an ancestor.\n\nNode logs were rewritten along with everything else. A historical note referring to `[spec:samurai:req:x]` refers to the rule that is now `[spec:ronin:req:x]` — same rule, renamed — so leaving the old spelling would have left dangling references in the record rather than preserving anything true.\n\nOne non-obvious site: `scripts/check-release.sh` greps `docs/spec` for stale requirement annotations with a literal pattern, which the rewrite caught because it contained the same token. Had it been spelled differently the release gate would have silently stopped finding anything and passed for the wrong reason.\n\nVerified rather than assumed: coverage is unchanged at 201 of 201 rules covered, 182 tested, none stale; `nplan_audit` reports no orphan references, and shipping is back `on_ref` now that the plan's ref follows the branch rename to `main`. 398 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
             }
+
+            {
+                at 2026-08-09T17:14:12.119270364Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3145,6 +3313,7 @@ children (
         id ronin-eta-prediction
         title "Record edge durations and predict progress the way Ninja does"
         kind @feat
+        sealed true
         log (
             {
                 at 2026-08-02T13:47:41.16237236Z
@@ -3159,6 +3328,13 @@ children (
                 kind @decision
                 text "Done, and the advertised compatibility level is 1.14.0. Brendan asked whether we could just bump the version token; the answer was no, and finding out why turned up two defects rather than one.\n\nThe question came out of an audit. Every feature the pinned 1.14 manual marks as post-1.9 was checked against Ninja directly: dyndep, `-t cleandead` and `-t restat` from 1.10; validations, `-t inputs` and `-t missingdeps` from 1.11; the `%E %w %W %P` status codes from 1.12; `-t multi-inputs` from 1.13; the `$^` newline escape and `-t restat --builddir` from 1.14. All implemented, all matching — except the 1.12 status codes, which were an edge-count approximation of something Ninja does quite differently.\n\nNinja weights progress by how long each edge took *last time*. `RecalculateProgressPrediction` maintains the split between edges the build log has timed and edges it has not, and reports `%P` as `cpu_time_millis_ / total_cpu_time_millis` rather than finished-over-total. `%E` and `%W` then scale elapsed time by that fraction. Ronin counted edges. The two agree only when there is no history to weight with, which is why the first comparison looked clean — the harness was deleting `.ninja_log` between runs, so both tools were in their degenerate case. With history present, on one 0.8-second edge followed by three instant ones, Ninja reported 99% and an ETA of 6 ms where Ronin reported 25% and 2.4 seconds. Ronin was wrong in the direction people notice: it claims a quarter done when the expensive quarter is already behind it.\n\nThe second defect is why the first could not simply be fixed in the formatter. Ronin was passing literal zeroes for the start and end fields of every `.ninja_log` entry, so there was no history to weight with, ever. Ninja writes millisecond offsets from the start of the build — `0 305`, `305 608` — and reads them back through `ParsePreviousElapsedTimes`. Ronin wrote `0 0` for everything. That is a cross-tool defect and not just an internal one: Ninja reading a log Ronin wrote lost its own prediction and silently fell back to counting edges, which the persistence round-trip test never caught because it checks structure rather than the time fields.\n\nBoth are fixed. Edges now carry their launch offset from preparation through to completion, and the recorded entries match Ninja's shape. The prediction is a translation of Ninja's algorithm including the parts that look like superstition and are not: it will not trust the previous build's timings until fifteen seconds and five percent of edges have passed, and then only if this build's average edge is within a factor of ten of last build's — the case that guards against is a ccache hit last time and a miss this time, where a stale prediction is worse than no prediction.\n\nOne ordering bug on the way, worth recording because the symptom was so specific. The first working version reported `0% 99% 99% 99%` against Ninja's `99% 99% 99% 100%` — every value shifted one edge late. Retirement was happening in `finish_edge` after `command_finished` had already rendered the status line, so each line described the state before its own edge landed. Ninja accounts for the edge and then prints. Moving the accounting to the top of `finish_edge` fixed it, and it has to be there rather than later for a second reason: the previous duration must be read before this run's entry overwrites last run's in the log.\n\nVerified against Ninja in all three regimes: with history `%P` is 99/99/99/100 for both and `%E` agrees to within timing jitter; without history both give 25/50/75/100 and matching ETAs; in a dry run both give 0% and `?`, which is the case Ronin previously answered with 100% and 0.000. Interop is bidirectional — Ninja reading a Ronin-written log now predicts 99%, and Ronin reading a Ninja-written log does too.\n\nWith that, the bump is honest. `NINJA_COMPAT_VERSION` is 1.14.0 and the `ninja_required_version` gate derives from the same constant, which is what let the two drift apart in the first place: the parser refused everything past 1.9 while the implementation had grown through 1.14. The consequence was sharper than a stale number. Ronin already implemented `$^` *and* its rule that using it requires declaring 1.14 — so the feature was unreachable, because declaring 1.14 was itself refused. A test now asserts the reported token and the gate agree.\n\nNot changed, and recorded rather than fixed: Ronin's too-new-version diagnostic is samurai's wording, `ninja_required_version 1.15 is newer than 1.14`, where Ninja says `ninja version (1.14.0.git) incompatible with build file ninja_required_version version (1.15)`. That divergence predates this work, is specified in docs/spec/port/parse.md, and is not covered by the differential harness. It should be settled deliberately rather than folded into a version bump.\n\nAlso recorded: `tests/performance_baseline.rs` pinned Ronin's rows in the recorded validation CSV by the literal `ronin,1.9.0,` prefix. The recorded measurements are still the ones the gate compares against, so the assertion now matches on tool and workload and leaves the recorded data untouched rather than rewriting history to suit a new constant.\n\n399 tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
             }
+
+            {
+                at 2026-08-09T17:14:14.560334593Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3166,6 +3342,7 @@ children (
         id ronin-version-diagnostics
         title "Match Ninja's wording for the version-check diagnostics"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-02T17:09:47.062827392Z
@@ -3180,6 +3357,13 @@ children (
                 kind @decision
                 text "Done. The `ninja_required_version` diagnostics are Ninja's, word for word, and the check has the branch it was missing.\n\nThe wording was samurai's: `ninja_required_version 1.15 is newer than 1.14`, where Ninja says `ninja version (1.14.0.git) incompatible with build file ninja_required_version version (1.15).` A manifest asking for too new a Ninja is something generators and CI logs read about, so inheriting the port's phrasing was a compatibility gap rather than a stylistic one. Both now match apart from the product name and the version token, which are Ronin-owned under `[dec:ronin:product-boundary]` — `ronin: fatal: ninja version (1.14.0) incompatible …` against `ninja: fatal: ninja version (1.14.0.git) incompatible …`.\n\nReading Ninja's `CheckNinjaVersion` to get the wording right turned up a branch Ronin did not implement at all. Ninja has three outcomes, not two: fatal when the manifest wants a newer version, silence when the versions are compatible, and a *warning* when the supported major is greater than the requested one — `ninja executable version (…) greater than build file ninja_required_version (0.9); versions may be incompatible.` A manifest written for Ninja 0.x builds, and says so. Ronin accepted those in silence.\n\nImplementing that needed something Ronin did not have: any way to emit a warning. There is no warning channel in the codebase — `-w dupbuild=warn` suppresses an error rather than raising a warning, and `-w phonycycle=warn` is parsed and then ignored entirely. So this adds one, shaped by where the constraint actually is. The parser cannot write warnings itself, because a manifest may be read through a library caller's sink or through no sink at all; where a diagnostic goes is the invocation's decision. So the parser collects them and the CLI drains them, streaming to the diagnostic sink when the invocation has one — so a warning appears while the build runs, as Ninja's does — and buffering into the result's stderr when it does not.\n\nThat channel is the reusable part of this change. The two accepted-and-ignored warning flags now have somewhere to report to, and neither is wired up here; they are separate behaviour with their own upstream semantics and should be done deliberately rather than smuggled in behind a version-check fix.\n\nVerified against Ninja on all three branches: `0.9` warns and builds in both, `1.5` is silent in both, `1.15` and `2.0` are fatal in both with matching text. Two tests pin it end to end through the public `Runner`, one asserting the fatal message and one asserting the warning reaches stderr with a zero exit code. The requirement text in docs/spec/port/parse.md now describes all three branches rather than the two the port had.\n\n399 tests plus 9 CLI tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
             }
+
+            {
+                at 2026-08-09T17:14:17.192239616Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3187,6 +3371,7 @@ children (
         id ronin-warning-flags
         title "Make the -w warning flags do what Ninja does"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-03T11:38:47.360166743Z
@@ -3201,6 +3386,13 @@ children (
                 kind @decision
                 text "Done. Both `-w` flags now behave as Ninja's do, where before one was silently wrong and the other did nothing at all.\n\n`dupbuild` was the wrong one. Ronin carried samurai's behaviour: `dupbuild=warn` suppressed the duplicate-output error and built anyway. Ninja deprecated the flag — both spellings now emit `deprecated warning 'dupbuild'` and change nothing, because duplicate outputs have been unconditionally fatal since. So the `dupbuildwarn` option is gone rather than renamed: there is no mode in which a duplicate is tolerated, and keeping a switch for it would preserve a divergence. The parser test that asserted the manifest was accepted now asserts it is rejected, which is a behaviour change worth stating plainly — a manifest that built under `-w dupbuild=warn` before this will fail after it, and would have failed under Ninja all along.\n\n`phonycycle` was the one that did nothing: the flag was parsed, matched, and explicitly skipped. Ronin already filtered self-referencing phony statements — the CMake 2.8.12 and 3.0 shape — but silently, and `=err` had no effect at all. Now the filter runs only under `=warn`, which is the default and reports `phony target 'a' names itself as an input; ignoring [-w phonycycle=warn]` byte-for-byte with Ninja, and `=err` leaves the self-edge in place so cycle detection sees it and the build fails as it should.\n\nNinja's shape restriction came across with it, deliberately: the diagnostic applies only to a phony edge with exactly one output, no implicit outputs and no implicit inputs, because that is the form old CMake emitted. A phony that mentions itself in any other shape is a genuine cycle and is not filtered.\n\nOrdering matters and cost a fix. Command-line warnings are emitted before the manifest is read, as Ninja's are, rather than being seeded into the parser's list — the first attempt did the latter and the deprecation warning vanished whenever the manifest then failed to parse, which is exactly the case where `-w dupbuild=warn` is most likely to be passed.\n\nOne gap left open and recorded rather than half-closed. Under `=err` Ronin now fails, but says `dependency cycle` where Ninja says `dependency cycle: a -> a [-w phonycycle=err]`. Reporting the path requires an active-node stack threaded through `DirtyEvaluator::evaluate`, which is the iterative dirty-evaluation loop this programme has optimised repeatedly; adding a push and pop per edge to it for a diagnostic is not a change to make casually or without measuring. It belongs with the broader manifest-message parity work, where the same question is asked about every other diagnostic at once.\n\nVerified against Ninja: `=warn` matches exactly, `=err` fails in both where it previously passed in Ronin, and the deprecation warning matches. Four new CLI tests cover both flags in both modes through the public `Runner`. 399 tests plus 11 CLI tests, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
             }
+
+            {
+                at 2026-08-09T17:14:19.300078459Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3208,6 +3400,7 @@ children (
         id ronin-manifest-diagnostic-shape
         title "Render manifest diagnostics in Ninja's located shape"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-03T11:48:05.315557083Z
@@ -3222,6 +3415,13 @@ children (
                 kind @decision
                 text "Manifest diagnostics now have Ninja's shape: a located header, the offending source line, and a caret beneath it.\n\nBefore, a scan error read `build.ninja:2:24: invalid $ escape` and a parse problem read `undefined rule 'nosuchrule'` with no location at all — even though the span was right there in the error, unused, because `ManifestError`'s `Display` matched `Self::Problem { problem, .. }` and threw the span away. Both now read as Ninja does:\n\n    error: build.ninja:3: undefined rule 'nosuchrule'\n    build o: nosuchrule\n             ^ near here\n\nThe rules came from `Lexer::Error` rather than from taste, and several are non-obvious enough to be worth writing down: the header carries the line but not the column; the context block is omitted entirely when the column is zero or at least seventy-two; a line longer than seventy-two characters is cut there and marked with an ellipsis; and the caret sits under a column counted from zero, where Ronin counts from one.\n\nOne diagnostic is deliberately exempt. A too-new `ninja_required_version` goes through Ninja's `Fatal` rather than through the lexer, so it carries no file, line or caret — it reads `fatal: ninja version (1.14.0) incompatible with build file …` and nothing else. The first cut routed it through the located renderer and produced `error: build.ninja:2: fatal: …`, which is two severities and a location Ninja does not print; the CLI test written for that message caught it.\n\nTwo parity gaps remain open, and both are larger than they look.\n\nThe anchor is wrong. Ninja positions a diagnostic at `last_token_`, the start of the most recently read token; Ronin positions it at the scanner's current index. For `build o: nosuchrule` that puts our caret past the end of the token instead of under its first character, and for a rule variable it reports the line after the one at fault, because the trailing newline has already been consumed and the line counter has moved on. That inaccuracy is not new — the spans were always computed at that point — but it was invisible until the location started being printed, and printing a wrong line number is worse than printing none. Fixing it means the scanner recording the start of each token, which is three stores per token across every scan entry point, on code this programme has optimised twice. Cheap in principle, invasive in practice, and it wants measuring rather than assuming.\n\nThe wording is also not Ninja's. `undefined rule` against `unknown build rule`; `unexpected rule variable` against `unexpected variable`; `build has no outputs` against `expected path`; `multiple rules generate 'o'` against the same without quotes. That is roughly twenty `ManifestProblem` variants plus the `ScanError` kinds, each needing its Ninja counterpart found and verified rather than guessed. It is a bounded piece of work and a tedious one, and it belongs with the anchor because the same test would cover both.\n\nFour of Ronin's own tests pinned the old un-located text and were updated; where the located header now embeds a temporary directory, they assert the message tail rather than the whole string. 399 tests plus 11 CLI tests pass, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases and the persistence round trip."
             }
+
+            {
+                at 2026-08-09T17:14:30.499768059Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3229,6 +3429,7 @@ children (
         id ronin-log-content-check
         title "Compare build-log content, not just its signature"
         kind @test
+        sealed true
         log (
             {
                 at 2026-08-03T11:57:51.080570854Z
@@ -3243,6 +3444,13 @@ children (
                 kind @decision
                 text "The conformance harness now compares what goes into `.ninja_log`, not just the signature on its first line. Two real defects had already walked past the old check.\n\n`verify_state_signatures` read the file, confirmed it began `# ninja log v7`, and stopped. Under that, Ronin recorded every command with zeroed start and end times — costing Ninja its progress prediction whenever it read one of our logs — and a dry run appended a full set of entries for commands it had not run. Both files had perfectly good signatures.\n\nThe new check builds the same fixture from clean with each tool and compares the records: same outputs, same command hashes, in the same order. Timing values cannot match between two runs and are not compared to each other; what is checked is that they are coherent — no command ending before it began, and not every duration zero, which is precisely the shape the old bug had. The mtime column is dropped entirely, since it is the output's real modification time and differs between runs for reasons that say nothing about compatibility.\n\nThen it asserts a dry run changes nothing.\n\nThat last part is the piece worth recording, because the first version of it passed with the bug deliberately put back. The check ran its dry run on the tree the clean build had just left up to date, so nothing was planned, nothing was written, and every tool passed trivially — including a Ronin patched to log on dry runs. The check was asserting that a no-op is a no-op. It now deletes two outputs first so there is real work to plan, and refuses to draw any conclusion if the tool plans nothing, on the grounds that a check which cannot fail is worse than no check because it reads as coverage.\n\nBoth branches were then verified by reintroducing each defect and watching the harness reject it: `Ronin recorded no command durations at all` for the zeroed timings, and `changed the build log during a dry run` for the other. The dry-run defect is also caught earlier and more cheaply by the unit test added when it was fixed — which is why the first attempt at verifying it here proved nothing, since `cargo test` failed before the harness ran. Checking the harness in isolation, against a binary built with the bug, is what exposed that the harness itself was not doing its job.\n\nConformance now reports five lines rather than four: 425 upstream tests, 10 differential cases, the persistence round trip, and build-log records with dry-run inertness."
             }
+
+            {
+                at 2026-08-09T17:14:32.435729725Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3250,6 +3458,7 @@ children (
         id ronin-no-work-predicate
         title "Judge an all-phony plan up to date as Ninja does"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-03T13:40:32.746834534Z
@@ -3264,6 +3473,13 @@ children (
                 kind @decision
                 text "Fixed: a plan holding only phony work is up to date, so `ronin: no work to do.` is printed where Ninja prints it.\n\nFound while setting up the three-way comparison, not while looking for it. On abseil-cpp a no-op build printed nothing at all — Ninja said `ninja: no work to do.`, C samurai said its equivalent, Ronin said nothing and exited zero. On the Ninja project's own build directory Ronin printed the message correctly, which is what made it look like a project-specific oddity rather than a semantic difference.\n\nIt is a semantic difference. `already_up_to_date` tested `self.plan.is_empty()`, which is the wanted-edge count; Ninja's `Plan::more_to_do` is `wanted_edges_ > 0 && command_edges_ > 0`. The two agree except on a plan that wants edges but has no commands behind them, which is exactly what abseil's `default all` produces — a phony over phonies, with every real output already up to date. Ronin concluded there was work, ran none, and suppressed the message on the grounds that it was not up to date. The Ninja project's graph never leaves a wanted phony behind in that state, so it never showed there.\n\nWorth noting what this was not: Ronin planned zero commands in both cases and did no extra work, so the three-way comparison taken alongside it stays valid. The divergence was confined to the message.\n\nThe fix uses `command_edge_count`, which already existed for the progress total, so the predicate now reads the same two quantities Ninja reads. A regression test builds a manifest that is nothing but phony edges and asserts the plan is up to date.\n\nThis is the second compatibility defect this session that a real project surfaced and the fixture-based suite did not, after the dry-run build-log writes. Both are the same shape: a graph feature the hand-written fixtures happen not to contain. The differential harness fixture has one phony edge (`build all: phony result`) but that phony sits over a real command, so it never reaches the state that matters. Widening it to include a phony-over-phony default would cost nothing and is worth doing when the manifest-message parity work touches that harness anyway.\n\n400 tests, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases, the persistence round trip and the log-content checks."
             }
+
+            {
+                at 2026-08-09T17:14:41.706892996Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3271,6 +3487,7 @@ children (
         id ronin-command-launcher
         title "Separate command interpretation from process spawning"
         kind @refactor
+        sealed true
         log (
             {
                 at 2026-08-03T14:37:28.701326341Z
@@ -3292,6 +3509,13 @@ children (
                 kind @note
                 text "Correction to the decision above. The wall-clock measurement it left outstanding has been taken, and it first said the change was a 7.7x regression, not a speedup.\n\n128 stamp edges at -j1 took 1369 ms without a shell against 177 ms with one. The 51%-per-spawn figure quoted above was a microbenchmark of two spawns, and it did not survive contact with a build. Shipping on it was the mistake; the note's own admission that the wall figure was missing should have been a reason to wait rather than a footnote.\n\nThe cause was not this change. It is recorded on ronin-reap-latency: the supervisor waited a fixed ten milliseconds to re-ask whether a child could be reaped after its output pipe closed, and running under `sh -c` had been accidentally winning that race, because dash forks and waits and so leaves the parent asking about a process already well into exiting. Executing directly removed the delay that was hiding the ten millisecond floor. With that fixed the launcher does what it claimed:\n\n  128 stamps, -j1    shell 174 ms   direct  90 ms   1.93x  (-48.3%)\n  128 stamps, -j8    shell  36 ms   direct  34 ms   1.06x  (-5.6%)\n  1024 stamps, -j8   shell 272 ms   direct 262 ms   1.04x  (-3.7%)\n\nMeasured as one binary against itself via `--compat`, interleaved and randomised per repetition, minimum of 31/21/11, on a quiet host with load recorded at both ends.\n\nThe serial number matches the per-spawn measurement. The parallel ones do not, and that is the correction this node needs: with cores to spare the shell process overlaps with real work, so most of the saving is hidden. The claim worth making is that the launcher halves a serial stamp pipeline and is worth a few percent on an unsaturated machine — not that it is worth 51% of a build."
             }
+
+            {
+                at 2026-08-09T17:14:51.920443461Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3299,6 +3523,7 @@ children (
         id ronin-failure-surface-parity
         title "Match Ninja's build-failure and directory-change surface"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-03T22:49:13.631639708Z
@@ -3313,6 +3538,13 @@ children (
                 kind @decision
                 text "Done. What Ronin does when a build fails, and what `-C` announces, now match Ninja byte for byte across 22 measured scenarios.\n\nThis began as two divergences found in five minutes while the host was too loaded to measure anything. Enumerating the surface rather than fixing them one at a time turned up twelve, and then more: the final count is five distinct defects plus one deliberate reversal.\n\nThe enumeration is the part worth keeping. Rather than fix what was in front of me, I wrote a script that runs Ninja and Ronin over a scenario list and diffs exit status and each stream separately, without stopping at the first mismatch. Twelve of fourteen scenarios differed. Every one of them was in a shape the existing harness already checks — `compare_case` compares rc, stdout and stderr byte for byte — but the corpus was ten `-t` tool invocations over a fixture with no failing rule, never run with `-C`. The harness was sound and under-asked. That is the same finding as the last two sessions: the fixtures do not contain the graph or the failure the real world does. This time the fix is corpus rather than a single case.\n\nThe defects:\n\n**Exit status was thrown away.** `exit 7` gave 7 from Ninja and 1 from Ronin. C samurai also exits 1, so it was inherited. Ninja's contract, read out of `ParseExitStatus` and then measured: a child that exited reports its own code; a child killed by SIGINT, SIGTERM or SIGHUP reports 130; anything else reports the *raw wait status* plus 128 — not the signal plus 128. That distinction is visible: a dumping SIGQUIT reports `FAILED: [code=259]`, which the OS then truncates to 3 on exit. It is Ninja's arithmetic and it is in the output, so it is reproduced rather than corrected, with the reason written down where someone will otherwise fix it.\n\n**An interrupted command was reported as a failed one.** Ninja tests for the interrupt before it finishes the command, so a build cut short by SIGTERM prints no `FAILED:` line at all. Ronin printed one and then said `subcommand failed`. Ronin also treated SIGQUIT as an interrupt, which Ninja does not — Ronin handles SIGQUIT arriving at itself, but in a child it is an ordinary failure.\n\n**`build stopped:` went to the wrong stream with the wrong words.** Ninja prints `ninja: build stopped: REASON.` on stdout after the build's own output; Ronin printed `ronin: subcommand failed: <the command>` on stderr. The reason is not read off the last error but off how much failure allowance was left: exhausting it says the build was cut off (`subcommand failed`, plural above `-k 1`), having some left says everything remaining depended on something already broken (`cannot make progress due to previous errors`).\n\n**`-C` announced nothing.** Zero occurrences of \"Entering directory\" in the whole tree. That line is not decoration: Emacs compile-mode and every error parser that inherited GNU Make's convention read it to resolve the relative paths a compiler prints, which is why Ninja's comment calls out the funny quotes. Without it, jump-to-error lands in the wrong file. It goes to stdout, before the move is attempted so a directory that cannot be entered is still named, and is suppressed for tool modes and `--quiet`. The failure message was wrong too — `No such file or directory (os error 2)` against Ninja's `fatal: chdir to 'x' - No such file or directory`; Rust appends an error number to the text Ninja quotes from `strerror`, so the suffix it added is removed again.\n\n**`-C` composed when Ninja's does not.** Ninja keeps one `working_dir` that each `-C` overwrites, so `-C a -C b` resolves `b` against the invocation directory and fails if it is not there. Ronin resolved it against `a` and succeeded. C samurai chdirs sequentially and Ronin followed it; there was a test asserting the samurai behaviour, which is now inverted. The move is also deferred until the whole command line is read, as Ninja defers it, which is what lets the announcement know whether a tool was selected.\n\n**A failing manifest regeneration is not a build outcome.** Ninja reports `error: rebuilding 'build.ninja': subcommand failed` on stderr and exits 1, dropping the command's status. This one is worth recording carefully: the scenario for it *passed* before the fix existed, because a generator edge with no dirty input is already up to date and never ran. It was asserting that nothing is nothing. Giving it a dirty input exposed the divergence immediately. That is the second time in three sessions a check has passed vacuously; the pattern to distrust is a fixture that has to reach a state, rather than one that starts in it.\n\n**The reversal, which deserves an argument.** An interrupted Ninja exits 130. C samurai re-raises the signal so it dies by SIGINT, and Ronin followed samurai — deliberately, recorded on ronin-signal-handling as \"shell-compatible re-raise semantics\". Making the build path match Ninja left Ronin inconsistent with itself: an interrupt during the build exited 130, an interrupt before it still re-raised. Re-raising is the better convention — it is how a shell learns the user interrupted a loop rather than that one iteration failed — but the contract is Ninja's, and the inconsistency was not defensible either way. Both paths now exit 130. This is written down as a rule rather than left in a commit message, because it reverses a decision someone made on purpose.\n\nTwo departures from Ninja are deliberate and stated in `product.build-outcome`. A plan that can make no progress without having recorded a failure returns success from Ninja — it reads its accumulated exit code, which is still zero — while printing `stuck [this is a bug]`. A build that did not finish must not report that it did, so Ronin leaves with a failure. And Ninja's raw-wait-status arithmetic is reproduced rather than corrected, since it is observable.\n\nOne thing found and left alone: Ninja returns immediately when it cannot *finish* a command (a bad depfile, a stat failure), where Ronin counts it as a keep-going failure and carries on. I could not produce a case where the two differ — the obvious one, a missing depfile under `-k 0`, behaves identically in both — so I did not restructure the scheduler on a hypothesis. It is written here so the next person looking has the map.\n\nThe corpus is now 18 cases in the harness, covering exit status through the process, the four signal dispositions, keep-going with and without allowance left, console-pool failure, missing input, manifest regeneration, and six `-C` behaviours. It normalises exactly two things: the temporary path, and the product name at line start with its colon — so a stray \"ninja\" inside a path or a message stays a real difference.\n\n408 unit tests, 15 integration tests, clippy clean, fmt clean. Conformance green at 425 upstream tests, 10 differential cases, 18 build-outcome cases, the persistence round trip and the log-content checks. Spec coverage 203 of 203.\n\nNot measured: nothing here should move wall time — it is diagnostics and exit paths — but the launcher measurement from the previous node is still outstanding, and the host has been at load 40 all evening from an external clang/rustc build."
             }
+
+            {
+                at 2026-08-09T17:14:53.660146796Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3320,6 +3552,7 @@ children (
         id ronin-cycle-path
         title "Name a dependency cycle by the path around it"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-03T22:59:50.032134012Z
@@ -3334,6 +3567,13 @@ children (
                 kind @decision
                 text "Done. A cycle is now reported as `dependency cycle: a -> b -> c -> a` rather than `dependency cycle`, which said only that one exists.\n\nThe known case was `-w phonycycle=err`, where Ninja appends the flag name so the reader knows which setting turned a warning into an error. Checking it first showed the gap is general: no cycle of any kind reported its path, phony or not. Telling someone their graph has a cycle without saying where is close to useless on a manifest with tens of thousands of edges, which is the only size at which this happens by accident.\n\nNinja assembles the path from its DFS stack, and two details in it are easy to get wrong and were worth reading rather than guessing:\n\nThe cycle is reported from the node that *closes* it, not from whichever node happened to enter the shared edge. Ninja overwrites the stack entry (`*start = node`) with a comment giving the exact case: building `b` where `build a b: cat c` and `build c: cat a` must report `a -> c -> a`, not `b -> c -> a`. A multi-output edge can be entered through any of its outputs, and naming the one that was asked for instead of the one in the cycle points at the wrong place.\n\nThe `[-w phonycycle=err]` suffix is narrower than it looks. It appears only when the cycle is a single node *and* the edge is phony with exactly one output, no implicit outputs and no implicit inputs. Ninja's comment says why: CMake 2.8.12 and 3.0 emitted `build a: phony … a …`, and the flag exists for that shape alone. Any other cycle is an ordinary one, and mentioning a flag that would not have suppressed it would be misdirection.\n\nRonin's evaluator is an iterative worklist rather than recursion, so there was no call stack to read the path off. It now keeps a `path` vector alongside: one entry per active edge, holding the node that edge was reached through, pushed where `Work::Finish` is pushed and popped where it is handled. That is exactly the set of edges on the way down, because `Finish` is pushed before an edge's inputs and popped only after all of them are done.\n\nBoth cycle-detection sites feed it. The third construction site, in the missing-deps root scan, reports that every output is used by something and never walked a path; it keeps the pathless message, which is what Ninja prints there too.\n\nVerified against real Ninja on five shapes: the phony self-cycle with the flag, a two-node phony cycle, a three-node cycle through real rules, a cycle through a multi-output edge asked for by the other output, and the same through phony. All five match byte for byte. Four are now in the conformance corpus, which is up to 22 cases, plus a binary-level test that asserts the rendered text without needing Ninja present.\n\n408 unit tests, 16 integration tests, clippy clean, fmt clean, conformance green."
             }
+
+            {
+                at 2026-08-09T17:15:40.100980798Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3341,6 +3581,7 @@ children (
         id ronin-diagnostic-anchor
         title "Point a manifest diagnostic at the token it is about"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-03T23:05:33.927661259Z
@@ -3354,6 +3595,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @decision
                 text "Done. A manifest diagnostic now names the line the reader has to go and fix.\n\nThe recorded symptom was a caret in the wrong column. Checking it showed the line number was wrong too, and that it was wrong in the way that matters most: an unexpected binding inside a rule was reported against line 4 when the offending line was 3, because by the time the parser rejected the binding the scanner had already read the `build` keyword on the next line. Being told the wrong line is worse than being told no line, since it sends the reader somewhere that looks fine.\n\nOne cause. Ninja's lexer keeps `last_token_`, the start of the token it is reading, and every diagnostic is computed from it — line, column, and whether any source context is shown at all. Ronin computed all three from the current scan position, which by the time an error is raised has usually moved past the token and often onto the next line. `Scanner` now keeps the same mark, set where each token begins, and both error constructors read it instead of the position.\n\nThat one change fixed three symptoms at once, which is the sign it was the right level to fix it at. The line number, because the mark is on the token rather than past it. The caret column, likewise. And *whether there is any context at all* — Ninja emits the source line and caret only when the column is greater than zero, so `unexpected indent`, whose token starts at column zero, has never had a caret in Ninja. Ronin printed one. The rendering code already implemented that rule correctly, including the 72-column truncation; it was being handed a position that made the rule produce the wrong answer. Ronin now also prints none, and the initial mark sits at offset zero so a diagnostic raised before any token behaves the same way.\n\nOne case needed reading Ninja rather than reasoning about it. A complaint about a rule binding lands on the character that *ended* the value, not on the value: `nonsense = x` puts the caret one past the `x`. That is not a designed choice, it falls out of `ReadEvalString` marking each chunk as it consumes it, so after a value the mark sits on the newline that stopped it. I had anchored at the value's start, which is more defensible and does not match. The scanner now marks again at the end of a value scan, before trailing whitespace is eaten, with a comment saying why so it does not read as a mistake.\n\nVerified against Ninja on the unexpected rule binding, the unexpected pool binding, an unknown build rule, a missing colon, and an unexpected indent: every location, caret column and presence-of-context now agrees. A binary-level test pins the anchoring without needing Ninja present.\n\nNot fixed here, and now the only remaining difference on every one of those cases: the message wording. Ronin says `unexpected rule variable` where Ninja says `unexpected variable`, `undefined rule` for `unknown build rule`, and `expected ':'` for `expected ':', got newline ($ also escapes ':')`. Worse, `duplicate rule` carries no location at all, because it is raised as a graph error rather than a manifest one and never reaches the located renderer. That is the next node, and it is the reason no manifest-diagnostic cases were added to the conformance corpus yet: they would compare wording that is still known to differ.\n\n408 unit tests, 17 integration tests, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases, 22 build-outcome cases, the persistence round trip and the log-content checks."
+            }
+
+            {
+                at 2026-08-09T17:15:41.691713088Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
@@ -3383,6 +3631,7 @@ children (
         id ronin-windows-launcher
         title "Make the Windows build compile and launch as Ninja does"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-03T23:27:18.600512368Z
@@ -3397,6 +3646,13 @@ children (
                 kind @decision
                 text "The Windows build did not compile. That is the finding; the launcher backend it was opened for is the smaller half of it.\n\nThe node was to give Windows a direct-spawn backend, since `shell_command` reached for `/bin/sh` on every platform. Before writing one I installed the `x86_64-pc-windows-gnu` target to type check what is there — and it does not build. Two errors, one of them mine: `spawn` on the non-Unix path still called `shell_command` with the two arguments it took before the command launcher gave it a third, so that work broke the Windows build the day it landed and nothing said so. The other was older: the parallel stat warms a shared directory descriptor that only exists on Unix.\n\nThat is worth more than the backend. A platform with no host to run on and no check to compile for it does not degrade loudly, it degrades silently, and the answer is not care but a check. `scripts/check-ninja-conformance.sh` now type checks the Windows target when it is installed, and says out loud when it is skipping because it is not. It takes seconds and it says nothing whatsoever about behaviour — only that the code still compiles, which is the bar that was being missed.\n\nOn the launcher itself, the interesting part is what Windows must *not* inherit. Ninja on Windows has no shell in this position at all: it hands the whole command line to `CreateProcess` with no program argument and lets Windows find the program in it. So `--compat`, which on Unix means \"always spawn a shell\", has nothing to fall back to and asks for what already happens. More sharply, the POSIX word splitting the Unix direct path uses would be actively wrong there — it splits on spaces, and would cut `\"C:\\Program Files\\x\\cl.exe\" /c a.c` in half at the space inside the quoted path, producing a program named `\"C:\\Program`. Applying the Unix rule to Windows would have been worse than the `/bin/sh` it replaced, because it would fail quietly on exactly the paths Windows users have.\n\nRust's `Command` insists on a program separate from its arguments, so the split Windows would have done is done here instead: a quoted program ends at its closing quote, an unquoted one at the first space, an unterminated quote runs to the end of the line. That rule is a pure function of the bytes, so it is compiled and tested on every platform rather than only where it runs — five cases including the quoted path that motivates it, passing here on Linux.\n\nWhat is emphatically not verified: any of this actually spawning anything. There is no Windows machine and no CI, so the backend is type checked and its one piece of real logic is unit tested, and nothing more can honestly be claimed. Anyone with a Windows host should run the differential corpus there before trusting it. The `--shell` seam remains how a shell that runs on Windows gets used, which is where Brendan's dash port lands.\n\n409 unit tests, 17 integration tests, clippy clean on the host target, the Windows target compiles, fmt clean, conformance green at 425 upstream tests, 10 differential cases, 32 build-outcome cases, the persistence round trip and the log-content checks."
             }
+
+            {
+                at 2026-08-09T17:15:43.454789883Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3404,6 +3660,7 @@ children (
         id ronin-reference-in-checkout
         title "Keep the comparison references where a reboot cannot delete them"
         kind @test
+        sealed true
         log (
             {
                 at 2026-08-03T23:43:21.953539012Z
@@ -3418,6 +3675,13 @@ children (
                 kind @decision
                 text "The comparison references now live in `reference/` in the checkout instead of `/tmp`, and a missing one fails the run instead of shrinking it.\n\n`/tmp` is tmpfs here, so every reboot destroyed the pinned Ninja checkout, the Ninja build, the C samurai binary and both real-project build trees — 140 MB that takes a clone and two builds to replace. That had already cost a gate run this session. Moving them is the obvious half.\n\nThe half worth recording is what the move exposed. `baseline` defaulted its samurai path with `.exists().then_some(…)`, so when the binary was gone the comparison did not fail — it dropped to two tools, printed a perfectly well-formed table, and exited zero. Every row in it was true. What was false was the thing a reader takes from a three-way comparison table, which is that three things were compared. That is the same shape as the Windows build compiling nowhere and the dry-run log check asserting that a no-op is a no-op: not a wrong answer, an answer to a question nobody asked, wearing the clothes of the one they did.\n\nThe reference is now demanded rather than detected. `tool()` already refused a path that does not exist, so making the default unconditional was enough: a missing binary now prints `samurai-c binary does not exist: …` and exits 1. Verified by hiding the binary and checking both the message and the status. `--without-samurai` remains, so a two-way comparison is still available — as something asked for, not as something that happens.\n\n`conformance`, `check-release.sh`, the README and the benchmarks recipe all point at `reference/` now, which means both gates run with no arguments at all; the recipe in `benchmarks/README.md` builds everything into place. The directory is gitignored — it holds a Ninja checkout with its own `.git`, a 5 MB build tree and two CMake project trees, none of which belong in history.\n\nConformance green from the new location with no arguments: 425 upstream tests, 10 differential cases, 32 build-outcome cases, the persistence round trip and the log-content checks. A one-repetition baseline reports all three tools. 409 tests, clippy clean, fmt clean.\n\nStill unmeasured, unchanged by this: the command launcher's wall-clock effect, the supervisor-bookkeeping wall figure, the scheduler-barrier syscall itemisation at this revision, and the real-project three-way. Load has been between 11 and 40 all evening."
             }
+
+            {
+                at 2026-08-09T17:15:45.167726092Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -3425,6 +3689,7 @@ children (
         id ronin-reap-latency
         title "Stop sleeping ten milliseconds through every child's exit"
         kind @perf
+        sealed true
         log (
             {
                 at 2026-08-04T12:15:08.371600823Z
@@ -3438,6 +3703,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @decision
                 text "The supervisor slept ten milliseconds through the exit of nearly every child. Removing that is 22.7% of scheduler-barrier at -j8 and 93.1% of it at -j1.\n\nFound by finally taking the measurement this session owed. The first result was that the command launcher had made things *worse* — 128 stamp edges at -j1 took 1369 ms without a shell against 177 ms with one, a 7.7× regression from a change measured beforehand at 51% faster per spawn. Quoting the microbenchmark and shipping was wrong; the build-level number said the opposite.\n\nThe cause is not the launcher. When a child's output pipe reports end of file the supervisor tries a non-blocking `waitpid`, and if the child is not yet reapable it becomes a reap candidate and the next poll is given a fixed ten millisecond timeout. But a child that has closed its descriptors is already inside `do_exit`: it becomes waitable one scheduler hop later, on the order of tens of microseconds. The parent lost that race and then slept through the resolution, once per job.\n\nWhy it only appeared without a shell is the part worth keeping. Under `sh -c`, dash forks and waits, so two processes hold the pipe's write end and the parent is doing its non-blocking `waitpid` against a process that has already been sitting in the exit path while its own child was reaped. It won the race essentially every time. Executing the command directly removed that accidental delay, and the ten millisecond floor underneath it — which had been there the whole time — became the dominant cost. The launcher did not introduce this; it took away the thing that was hiding it.\n\nThe fix is to ask again quickly rather than to ask once, late. The interval starts at 50 microseconds — sized to the gap it is actually covering — and doubles to a ten millisecond ceiling, reset whenever a new candidate appears. A child that closes its output and keeps running is still only asked about occasionally, which is what the fixed interval was protecting; a child that is simply on its way out is collected almost immediately. Confirmed by bisecting the constant before writing anything: dropping ten milliseconds to one took the -j1 case from 1405 ms to 225 ms, which is the shape of a per-job timeout and not of anything else.\n\nMeasured, interleaved and randomised per repetition, minimum of 21, outputs and log removed between every run, on a quiet host (load 1.2–1.7 throughout, recorded at both ends):\n\n  scheduler-barrier -j8   before   44 ms   after   34 ms   1.29x  (-22.7%)\n  scheduler-barrier -j1  before 1396 ms   after   97 ms  14.39x  (-93.1%)\n\nThis reconciles something ronin-dispatch-residual-gap left open. That node recorded that Ronin's completion-to-dispatch window was *faster* than C samurai's — 1.501 ms against 1.654 ms — while its occupancy was somehow lower, and called the remaining ~2.2% unexplained. The window was measured from the completion being noticed, so it never contained the sleep that delayed noticing. The gap was in front of the thing being measured. In the catalog run just taken, scheduler-barrier is Ronin 38.090 ms against C samurai 38.262 ms and Ninja 45.691 ms — the workload Ronin had never won.\n\nWith that out of the way the launcher delivers what it promised, measured as one binary against itself so no compiler or layout difference can be in it — `--compat` forces a shell for every command, the default skips it where the shell provably has nothing to do:\n\n  128 stamps, -j1    shell 174 ms   direct  90 ms   1.93x  (-48.3%)\n  128 stamps, -j8    shell  36 ms   direct  34 ms   1.06x  (-5.6%)\n  1024 stamps, -j8   shell 272 ms   direct 262 ms   1.04x  (-3.7%)\n\nThe serial figure matches the 51% per-spawn measurement almost exactly, which is the right check on it. With eight jobs on a host with cores to spare the extra process overlaps with real work and most of the saving disappears — so the honest claim for the launcher is that it halves a serial stamp pipeline and is worth a few percent when the machine is not saturated, not that it is worth 51% of a build.\n\n409 tests, clippy clean, fmt clean, conformance green at 425 upstream tests, 10 differential cases, 32 build-outcome cases, the persistence round trip and the log-content checks.\n\nPossible follow-up, not done: a `pidfd` registered with the poller would make this exact rather than approximate on Linux, at the cost of a path that does not exist on macOS. The backoff is portable and closes the gap; the remaining error is bounded by 50 microseconds per job."
+            }
+
+            {
+                at 2026-08-09T17:15:47.209022792Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
@@ -4006,6 +4278,7 @@ children (
                         title "Record shared refusal wording as discovery data, not semantics"
                         priority 1
                         kind @fix
+                        sealed true
                         log (
                             {
                                 at 2026-08-06T17:59:53.88843468Z
@@ -4026,6 +4299,13 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @decision
                                 text "26 cases, exactly as measured before the work: semantic 722 to 696, no-rule-to-make 168 to 142.\n\nTwo families rather than one, because the 26 are not all the same thing. 22 refuse the same target and differ only in wording — shared-refusal. In 4, GNU Make walks further into a broken chain before giving up: it names `hello` needed by `hello.tsk` where we name `hello.tsk` needed by `all`. Both refuse the same build for the same reason and only the link named differs, which is narration by the same argument and is the shape the kati corpus already calls dependent-attribution. Keeping them apart means the attribution question stays visible instead of being absorbed.\n\nThe decision is made against the raw divergence rather than the residue, because the target name is what distinguishes the two cases and normalisation is free to drop the line that carries it.\n\nWhat is left in no-rule-to-make is 142, and all of it is a target GNU Make actually built."
+                            }
+
+                            {
+                                at 2026-08-09T17:16:00.112676477Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -4121,6 +4401,7 @@ children (
                         title "Run GNU Make discovery from a clean disposable worktree"
                         priority 0
                         kind @test
+                        sealed true
                         log (
                             {
                                 at 2026-08-08T22:34:10.887883343Z
@@ -4141,6 +4422,13 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Verified the isolation end to end twice. An --update run and a second comparison-only run each created a distinct detached GNU Make 4.4.1 worktree, classified exactly 1,349 cases as 606 unclassified / 74 compiler / 110 interface / 559 narration, exited zero, and left neither a target/make-upstream.* directory nor a registered auxiliary worktree. The clean inventory differs from the formerly polluted baseline by 28 removed and 28 added rows. cargo test --workspace --all-targets, the 12 focused classifier tests, sh -n, git diff --check, nplan lint, and spec validation pass. The repository's broader Clippy baseline is independently red under Clippy 1.97 on untouched code (the release command also applies pedantic lints to the Kati path dependency); no lint findings point at this shell/inventory change."
+                            }
+
+                            {
+                                at 2026-08-09T17:16:01.849358615Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -4209,6 +4497,7 @@ children (
                 title "Emit deferred info, warning and error output portably"
                 kind @fix
                 deps (kati-graph-sink)
+                sealed true
                 log (
                     {
                         at 2026-08-05T14:20:56.100464105Z
@@ -4236,6 +4525,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Validation exposed a separate upstream-harness reproducibility defect. scripts/check-make-upstream.sh runs in the persistent reference checkout; leftover outputs such as tests/foo.q and tests/xxx.o changed 28 case rows between the recorded inventory and a clean detached 4.4.1 worktree. Clean-run counts were unclassified 606, compiler 74, interface 110, narration 559. This does not alter the deferred-output fix or the build-intent gate; record it as a separate harness-isolation node rather than mixing it into this compiler commit."
+                    }
+
+                    {
+                        at 2026-08-09T17:16:05.136970432Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -4347,6 +4643,7 @@ children (
                         id make-diagnostic-identity
                         title "Route Kati diagnostics through the evaluation session's source identity"
                         kind @fix
+                        sealed true
                         log (
                             {
                                 at 2026-08-06T12:46:36.8908699Z
@@ -4375,6 +4672,13 @@ children (
                                 kind @decision
                                 text "Only evaluation-time compiler identity and Makefile source locations belong here. Stop. suffixes, recursive level prefixes, and GNU Make runner wording are excluded."
                             }
+
+                            {
+                                at 2026-08-09T17:16:08.181512296Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
                 )
@@ -4398,6 +4702,7 @@ children (
                         title "Answer the negating spellings of switches Make mode already has"
                         priority 0
                         kind @feat
+                        sealed true
                         log (
                             {
                                 at 2026-08-06T14:07:49.200538015Z
@@ -4419,6 +4724,13 @@ children (
                                 kind @decision
                                 text "Done, and every value in the tests was read off GNU Make 4.4.1 rather than reasoned about: a makefile printing `$(MAKEFLAGS)`, run once per spelling. Three of the answers would not have been guessed.\n\n`-S` is a letter and travels in the letter group, so `make -k -S` hands a child `MAKEFLAGS=S` with no `k` left to argue with. `--no-print-directory` and `--no-silent` have no letter and follow the group: `make -k --no-print-directory` gives `k --no-print-directory`. And `-C .` alone gives an empty MAKEFLAGS, so the announcement it implies is not propagated as a flag — a child gets the implication from its own `-C` or not at all.\n\nThe shape needed a second bitset rather than clearing the first. Refusing a switch is not the same state as never having asked for it, because `-w` is asked for by `-C` as well as by name and GNU Make's help is explicit — \"Turn off -w, even if it was turned on implicitly\". So `add` and `withdraw` each clear the other's bit, which is also what makes the last spelling win in both directions.\n\nAll fourteen shapes now answer as GNU Make does, checked side by side including the Entering/Leaving pairs, with only the progress line differing.\n\nThe measurement, and it is the pattern this suite keeps producing rather than a regression. option-refused 203 to 147, capability 316 to 265, and three tests now pass the suite outright. Semantic went 675 to 720 — every case that moved was capability before, 45 to semantic and 6 to narration, and nothing that was already narration or semantic got worse. The refusal had been standing in front of a difference; taking it away is what makes the difference countable.\n\nWhat is behind it, by script: variables/MAKEFLAGS 21, features/jobserver 6, options/print-directory 5, options/dash-s 4, options/dash-C 3. By family it is 35 evaluation, which is the unnamed bucket and wants the same --explain treatment the others got. Read that before assuming MAKEFLAGS content is one defect: makeflags-content is only 4 of them."
                             }
+
+                            {
+                                at 2026-08-09T17:16:10.019054316Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
@@ -4427,12 +4739,27 @@ children (
                         title "Search -I directories when resolving an include"
                         priority 1
                         kind @feat
+                        sealed true
                         log (
                             {
                                 at 2026-08-06T21:48:38.33303262Z
                                 author "brendan@necessary.nu"
                                 kind @status
                                 text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-09T17:12:04.233116154Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Done, closing retroactively after review — the work landed 2026-08-07 as 851d234 but no note was recorded. All four spellings (-I dir, -Idir, --include-dir=dir, --include-dir dir) search in GNU's order with the working directory first; a bare dash forgets accumulated directories. Tests make_mode_searches_the_include_directories and make_mode_forgets_the_include_directories_before_a_bare_dash in tests/cli.rs. 31 upstream suite cases moved."
+                            }
+
+                            {
+                                at 2026-08-09T17:16:13.113316581Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -4442,12 +4769,27 @@ children (
                         title "Withhold the built-in variables under -R as -r withholds the rules"
                         priority 2
                         kind @feat
+                        sealed true
                         log (
                             {
                                 at 2026-08-06T23:41:26.745183723Z
                                 author "brendan@necessary.nu"
                                 kind @status
                                 text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-09T17:12:06.260074351Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Done, closing retroactively after review — the work landed 2026-08-07 as 58b4ac4 but no note was recorded. -R withholds the built-in variables (CC/CXX/AR withheld, MAKE_VERSION kept), implies -r, and hands a child MAKEFLAGS=rR. Both spellings tested in tests/cli.rs. 27 upstream suite cases moved."
+                            }
+
+                            {
+                                at 2026-08-09T17:17:01.153755273Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -4505,6 +4847,7 @@ children (
                 title "Share one shell across a recipe under .ONESHELL"
                 priority 3
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-07T00:05:44.589481378Z
@@ -4518,6 +4861,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "The defect this node described does not exist, and the one next to it did. Retitled to match what was actually wrong.\n\nIt said a `cd` persists across the `&&`-joined script because Make runs each line in its own shell and we run one. That is not what happens: gen_shell_script already wraps every line of a multi-line recipe in `( )`, so the isolation is there. Seven shapes checked against 4.4.1 and all matched before any change — `cd`, a shell variable, `exit`, `set -x`, a failing line stopping the rest, and a syntax error in a later line still letting the earlier one run.\n\nWhat was missing is the opposite. `.ONESHELL` asks for the lines to share a shell and was being declined, so a Makefile that uses it got the isolation it had explicitly turned off. Under it: a `cd` carries, a variable set in one line is visible in the next, and a failing line does not stop the rest — only the script's final status counts.\n\nSo the implementation is three conditions on the flag rather than new machinery: no subshell, lines separated by a newline instead of ` && `, and no `; true` for `-` since the intermediate statuses stop mattering.\n\nTen cases moved, 6 capability to semantic and 4 to narration.\n\nLeft: the `-` prefix and `@` under `.ONESHELL` apply to the first line only in GNU Make, which is not modelled — every line still carries its own. It did not show up in any shape probed, because `@` is narration here and `-` stops mattering once the intermediate statuses do."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:03.02829473Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -4556,6 +4906,7 @@ children (
                 title "Search vpath and VPATH directories for a prerequisite"
                 priority 0
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-06T16:44:04.328704769Z
@@ -4577,6 +4928,13 @@ children (
                         kind @decision
                         text "Implemented, and the estimate on this node was wrong in a way worth recording.\n\nI claimed 117 cases. It moved six: semantic 710 to 704, parse-failure 41 to 35. The 117 counted makefiles that *mention* vpath or VPATH, not cases whose only problem was vpath, and those makefiles hit other gaps as well — GPATH, the `vpath+` form, and unsupported constructs the evaluator declines out loud. Counting the mentions of a feature is not counting the cases it blocks, and I will not make that inference again without checking a sample.\n\nThe feature itself is right, established against GNU Make 4.4.1 on four shapes: the directive, the variable, a colon-separated list with a miss before the hit, and the clearing form where both tools then refuse. features/vpath.diff and .2 are now classified narration — they differ from GNU Make only in the progress line we chose to print, which is as passed as a case can be under the narration rule.\n\nThree things about the implementation worth knowing.\n\nThe rewrite happens to the node's inputs, not only at the point of asking whether a file exists. The inputs are what `$<` and `$^` expand to and therefore what the recipe is handed, so a search that found the file and passed on the name as written would build with a path that is not there. That is the part a naive implementation gets wrong and it is why `resolve_vpaths` exists beside `exists`.\n\nResolution and interning are separate passes because the session is needed immutably to find the file and mutably to name the result. Symtab has no non-interning lookup, so there is no way to do both at once.\n\nOrder is the semantics, which is why the paths are a list of pairs rather than a map: the first pattern matching a name decides which directories are searched, a repeated pattern extends rather than replaces, and `VPATH` is consulted only for a name no pattern matched."
                     }
+
+                    {
+                        at 2026-08-09T17:17:05.231528665Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4585,6 +4943,7 @@ children (
                 title "Stop warning about .SUFFIXES declarations that work"
                 priority 2
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-06T16:44:17.361364795Z
@@ -4598,6 +4957,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T17:12:09.053480846Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Done, closing retroactively after review — the work landed 2026-08-06 as e10225a but no note was recorded. The commit corrected this node's premise: behaviour only matched GNU Make because every `.x.y:` target was treated as a suffix rule regardless of .SUFFIXES, so the declared suffix list is now read in order rather than the warning merely deleted. Test make_mode_reads_the_declared_suffix_list in tests/cli.rs. 19 cases moved."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:06.966600994Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -4667,6 +5040,7 @@ children (
                 title "Expand prerequisites a second time under .SECONDEXPANSION"
                 priority 1
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-06T17:59:09.273978944Z
@@ -4688,6 +5062,13 @@ children (
                         kind @decision
                         text "Explicit rules only, and the boundary was found by the first attempt going wrong rather than by planning.\n\nThe mechanism is cheaper than it looks. GNU Make's first expansion already turns `$$(PRE)` into `$(PRE)` — nothing has to be kept unexpanded through the parser. So the rule keeps the once-expanded prerequisite text, and dep.rs expands that text again at fill time with `@` bound as a scoped simple variable, then reads the result as prerequisites. `$@` is unbound during dep building because the AutoCommandVar table is not registered until CommandEvaluator::new, so a scoped binding is enough and none of that machinery is needed.\n\n`.SECONDEXPANSION` applies only below its own declaration, so the flag lives on the Evaluator and is read as each rule is evaluated, not gathered afterwards like the other special targets.\n\nWhere it stopped: deferring a pattern rule's prerequisites leaves it with none, and a pattern rule with no prerequisites matches anything. The probe built `foo.o` out of nothing where GNU Make refuses — a wrong build in place of a refusal, which is worse than the gap. So rule.rs defers only when output_patterns is empty, and make-second-expansion-patterns has the rest.\n\nMeasured: 14 cases genuinely fixed — 10 capability to narration, 3 semantic to narration, 1 now passing the suite outright. 32 more moved capability to semantic, which is the warning no longer standing in front of them; most of that is the pattern half.\n\nFour shapes verified against 4.4.1: `$$(VAR)`, `$$@.dep`, an order-only `| $$(VAR)`, and a rule written above the declaration correctly not getting it."
                     }
+
+                    {
+                        at 2026-08-09T17:17:08.792369908Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4696,6 +5077,7 @@ children (
                 title "Stop denying support for special targets that already behave"
                 priority 1
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-06T17:59:17.119777603Z
@@ -4717,6 +5099,13 @@ children (
                         kind @decision
                         text "Three of the six turned out to be noise, not seven as this node estimated. Each was probed against GNU Make 4.4.1 rather than assumed:\n\n  .SILENT               no-op here, we never echo a recipe            warning removed\n  .PRECIOUS             neither tool deletes a target whose recipe\n                        failed; all four combinations of the\n                        declaration leave the partial file            warning removed\n  .LOW_RESOLUTION_TIME  obsolete and ignored in 4.x too               warning removed\n  .IGNORE               we abandon where GNU Make continues           kept\n  .NOTPARALLEL          ignored under -j                              kept\n  .EXPORT_ALL_VARIABLES recipe sees nothing                           kept\n\nSo half of what this node called noise is a real gap wearing a warning, which is the correct outcome for a node whose whole job was to establish which was which. .IGNORE, .NOTPARALLEL and .EXPORT_ALL_VARIABLES want nodes of their own.\n\nThe naming half is done for every message the Make front end can emit: the text takes Flags::program_name rather than the literal `kati`, so a program called ronin says so. rkati's own Entering/Leaving line in main.rs still says `kati` and is left alone — that is rkati's binary rather than the product.\n\nMeasured: four cases moved, all from capability. Two to narration and two to semantic.\n\nWorth passing on: both of the semantic ones are a classifier gap rather than a Ronin defect. targets/SILENT declares `.SILENT: b` on `a b: ; echo $@`, so GNU Make echoes `echo a` and not `echo b`; we echo neither, by the narration decision. The residue is therefore a recipe echo, which `recipe-echo` exists to name, and it landed in `evaluation` instead — the family reads the makefile to recognise the echo and does not see through `$@`."
                     }
+
+                    {
+                        at 2026-08-09T17:17:13.257325738Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4725,6 +5114,7 @@ children (
                 title "Fall back to .DEFAULT for a target with no rule"
                 priority 2
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-06T17:59:25.834455191Z
@@ -4746,6 +5136,13 @@ children (
                         kind @decision
                         text "Implemented as Make's step 7, after the implicit search and only for a target with no rule of its own that is not already on disk. Five shapes checked against 4.4.1 and all five now match semantically:\n\n  a target with no rule                 takes it\n  a rule with no recipe                 does not — Make says Nothing to be done\n  a file that exists                    does not\n  a later bare `.DEFAULT:`              cancels the earlier one\n  a failed implicit search              falls through to it\n\nThe cancelling form is why the rule is read as \"the last `.DEFAULT` that has a recipe\" rather than as a merge.\n\n26 cases moved: 13 to narration, 12 from semantic to capability, 1 the other way. The twelve are the pattern this suite keeps producing — the build now gets past `.DEFAULT` and reaches the next declined feature, so an unexplained difference becomes a named one."
                     }
+
+                    {
+                        at 2026-08-09T17:17:15.155683557Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4754,6 +5151,7 @@ children (
                 title "Answer the order-only automatic variable"
                 priority 2
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-06T17:59:30.678380981Z
@@ -4768,6 +5166,20 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-09T17:12:10.715496549Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Done, closing retroactively after review — the work landed 2026-08-06 as 44b130f but no note was recorded. Bare `$|` answers the order-only prerequisite list from actual_order_only_inputs; `$(|D)`/`$(|F)` deliberately unregistered to match 4.4.1. Test make_mode_answers_the_order_only_automatic_variable in tests/cli.rs. 19 cases moved."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:16.771559622Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4777,6 +5189,7 @@ children (
                 priority 3
                 kind @feat
                 deps (make-dot-prefixed-target-nodes)
+                sealed true
                 log (
                     {
                         at 2026-08-06T17:59:43.801508867Z
@@ -4797,6 +5210,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Implemented, and the semantics question was settled by upstream's own comment rather than by preference. GNU Make's suite says, beside the test that pins it:\n\n  \"In the current implementation, .WAIT waits only between two prerequisites in\n  a given target. These same two targets might be run in a different order if\n  they appear as prerequisites of another target. This is the way other\n  implementations of .WAIT work. I personally think it's gross and makes .WAIT\n  just a toy when it comes to ordering, but it's much simpler to implement than\n  creating an actual edge in the DAG to represent .WAIT.\"\n\nSo the ordering GNU Make gives is a property of walking one rule's prerequisite list, not of the graph, and it deliberately does not hold when another rule wants the same prerequisite. Ronin has only the graph.\n\nThe rule taken: add the edge exactly where it cannot say something Make would not. Where the later prerequisite has a single consumer, no other walk can start it early and the two readings agree. Where it has several, Make lets the other consumer win, and an edge would order what Make leaves free. On upstream's own case that is not a theoretical difference — `one: pre1 .WAIT pre2` beside `two: pre2 pre1`, with pre1 and pre2 rendezvousing through files, deadlocks under a graph edge and times out after ten seconds. Verified by building it and running it.\n\nSo this orders less than Make on a shared prerequisite and exactly as much everywhere else. Ordering less is what already happened.\n\nTaking the marker out is the other half and is unambiguous. `.WAIT` names no file, and the suite checks that `$^` on `all: .WAIT pre1 .WAIT pre2` is `pre1 pre2`. It is removed in build_plan before the recursion, so no node is ever made for it, and `.WAIT` joined the directive list so a `.WAIT:` rule cannot become an edge either. Each marker waits for everything to its left rather than for the group since the previous marker — checked against 4.4.1 on `all: pre1 pre2 .WAIT post1 post2`, where both posts wait for both pres.\n\nTwo diagnostics came with it, matching GNU Make's wording: `.WAIT should not have prerequisites` and `.WAIT should not have commands`. The bare `.WAIT:` form is not warned about, because that is what Makefiles write to stay compatible with a make too old to know the marker.\n\nMeasurement, and it is smaller than it looks for a reason worth recording: only two cases moved class, 677 semantic to 675. The ordering cases were already narration, because the classifier reads the same lines in a different order as `recipe-interleave` and calls that narration. So the suite scored a real ordering defect as a difference we chose. Every `recipe-interleave` case was this one, and the family now explains nothing — which also removed the gate's flakiness and let the tolerance added for it come back out.\n\nLeft undone: the general case needs per-consumer readiness in the scheduler, where a node is permitted to run as soon as any one of the rules wanting it has no unmet barrier in front of it. That is expressible but it is a real change to Plan, and it buys one adversarial test."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:18.481977811Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -4857,6 +5277,7 @@ children (
                 title "Apply target-specific variables in the order the Makefile wrote them"
                 priority 2
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-06T18:58:16.479619979Z
@@ -4878,6 +5299,13 @@ children (
                         kind @decision
                         text "The defect this node was opened for is fixed, and it was not the one recorded on it.\n\nThe earlier note said `+=` onto a recursive variable expands eagerly where Make appends unexpanded text, and predicted a Makefile that appends before assigning would be answered wrongly. Every shape built to demonstrate that matched GNU Make 4.4.1 already, including the exact one predicted to fail. So the note was wrong about the mechanism, and the sorted order committed with it was hiding nothing.\n\nWhat is actually wrong needs the appended-to variable to have a prior value, which is the case the eager branch is guarded on:\n\n  A = start\n  Z = zed\n  all: A += $(Z)\n  all: Z = changed\n  all: ; @echo \"[$(A)]\"\n\nGNU says `[start changed]`, we said `[start zed]`. The append was expanded while the target's own scope was half built, so `$(Z)` read the Z outside the rule rather than the one the rule sets. Flavour has nothing to do with it: `A := start` gives the same answer on both tools, because a target-specific `+=` resolves when the target is built and by then the target's own Z is in scope.\n\nSo `+=` is applied after everything else on the target, and the sort is now two keys: by name for reproducibility, then appends last. Checked on five shapes, including two appends to one name and the case where the append is written above the assignment it reads.\n\nNo suite case moved. Still a defect.\n\nLeft alone, and no longer believed to be a defect without evidence: whether a target-specific `:=` is expanded when applied or when used. `B := two` beside `A := $(B)` answers `two` on both tools, which is the right answer, and the mechanism was not established."
                     }
+
+                    {
+                        at 2026-08-09T17:17:25.014134007Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4887,6 +5315,7 @@ children (
                 priority 1
                 kind @feat
                 deps (make-implicit-rule-chaining)
+                sealed true
                 log (
                     {
                         at 2026-08-06T18:58:24.881624201Z
@@ -4915,6 +5344,20 @@ children (
                         kind @note
                         text "Landed on lane/intermediate-files (kati 59363ca on lane1/kati). The recorded shape was right in every part, including the warning that half of it is worse than none.\n\nThe three behaviours, as built.\n\nA file is intermediate when the search invented its name. `can_pick_implicit_rule` records a prerequisite only when it arrived through a `%` and no explicit rule writes the name down anywhere — which is GNU Make's `is_explicit`, from implicit.c 794-814, phrased as \"the Makefile says the name\". A deferred prerequisite list is one string until it is expanded and cannot say which word the `%` was in, so nothing from one is recorded; that is an under-approximation and it belongs to second expansion rather than here.\n\nAbsence is excused in `recompute_edge_dirty_with`: an intermediate edge whose outputs are all missing hands each of them the newest input's mtime and is dirty only if an input was, which is check_dep's else branch. The substitution is *recorded* on the edge runtime, not merely done, because a build scans the same edge more than once — `load_depfiles_for` runs the whole walk before the dirty scan does — and an output holding an input's timestamp no longer looks absent. That bug cost an hour: the first scan was right and the second undid it.\n\nThe second pass is `push_intermediates`, at the end of `DirtyEvaluator::evaluate`. It walks down from the target through every edge that is going to run and marks the intermediates whose absence was excused. That is remake.c 674-736, and it is needed exactly as the earlier note said: without it the plan runs a recipe against a file that is not there.\n\nDeletion has a Ronin-side owner, and it is small: `Planned::disposable()` names the intermediate outputs the plan is going to create — asked before the build, because afterwards nothing tells a file the build made from one that was already there, which is GNU Make's `update_status == us_none` test — and `discard_intermediates` in make/cli.rs unlinks them and says `rm a b`. `-t` deletes nothing, `-n` says what it would have removed and removes nothing, `-s` removes silently. All four checked against 4.4.1.\n\n.INTERMEDIATE, .SECONDARY and .NOTINTERMEDIATE came with it rather than after it, because the warning was the only thing standing between the suite and a measurement. .NOTINTERMEDIATE takes patterns; the three fatal pairs are diagnosed. Two bits cross the sink, not one: the deletion is separable, and .SECONDARY is intermediate without it, as is a goal.\n\nMeasured, GNU Make's suite, twice per side from a reset state because the classifier drifts a dozen cases with the build log's warmth:\n\n  semantic     772 -> 795\n  capability    54 ->  20\n  narration    522 -> 530\n  failing     1348 -> 1345\n\nThe rise in semantic is a blocker removed, not a regression: 34 cases stopped being refusals, of which 3 now pass, 5 became narration and 26 became countable differences. Separately the base case moved 3 cases semantic -> narration, se_implicit sv 60188 subtests 1 and 2 among them — the pair make-second-expansion-patterns recorded as moving the wrong way and correctly attributed here. Nothing outside those families moved.\n\nOf the 26, most are behaviourally identical and read as evaluation only because Ronin prints `[N/M] build x` where Make echoes the recipe: `rm foo.e`, `rm foo.e bar.e`, `rm test.int` and `rm 1.b 2.b` all appear, in Make's own order in three of the four.\n\nLeft standing, and none of it is this node:\n\n  A cold tree rebuilds everything. Make mode keeps a Ninja build log, and Ninja treats an output with no log entry as dirty; GNU Make has no such notion and decides on mtimes alone. So a first build in a fresh tree runs every recipe, and that is what still hides this fix in patternrules sv 60188 group 2 subtest 1 and in SECONDARY test 7 — both are right on a second run and wrong on the first. It caps several families and wants its own node.\n\n  A pattern rule with two output patterns (`%.1 %.15: ; touch $*.1 $*.15`) builds only the first: the second is entered in `done` against the first's node without becoming an implicit output, so nothing generates it and the plan refuses. Pre-existing, reachable now that chaining exists, and the same shape as the grouped-target gap se_implicit 24 records.\n\n  Make builds the non-intermediate prerequisites of a rule before the intermediate ones, because until they are built it does not know whether the intermediate is needed. We order by critical path, so `%.tsk: %.z test.z` builds hello.z first where Make builds test.z first. Same set, different order.\n\n  An intermediate that exists is treated ordinarily rather than by check_dep's rule, which hides its own staleness from its consumer. Only reachable through .SECONDARY and .INTERMEDIATE on a file that is already there, and the divergence is towards building rather than towards skipping."
                     }
+
+                    {
+                        at 2026-08-09T17:13:02.562644336Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Correction to the closing note's provenance line, which is stale: kati 59363ca does not exist in the submodule — the lane was rebased and landed as 19a9534 (with 3da928c for .INTERMEDIATE/.SECONDARY/.NOTINTERMEDIATE), both ancestors of the pinned gitlink. Main-repo work merged as 176bc71. The work itself is complete: src/graph/intermediate.rs, push_intermediates, Planned::disposable/discard_intermediates, and the five tests/make/intermediate-* and secondary/notintermediate cases."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:28.657565512Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4924,6 +5367,7 @@ children (
                 priority 1
                 kind @feat
                 deps (make-second-expansion)
+                sealed true
                 log (
                     {
                         at 2026-08-06T21:15:19.860819532Z
@@ -4938,6 +5382,27 @@ children (
                         kind @note
                         text "Landed on lane/second-expansion-patterns (ronin b60b14d, kati f9fadf1 on lane1/kati). The recorded shape was right — the expansion belongs inside the candidate loop — but it was one of five things, and the other four were what actually made the tests move.\n\nThe mechanism, as built. can_pick_implicit_rule expands the deferred text once the output pattern has matched and the stem is known, uses the result for the existence test that decides the rule, and hands it to the chosen rule so fill_dep_node reads it. implicit_chain_exists does the same, so the chaining probe no longer treats a deferred rule as one with no prerequisites. Static pattern rules keep coming through the merger and read their stem off the rule's own output pattern.\n\nFour things underneath it, each found by a probe against 4.4.1 rather than by reading:\n\nA prerequisite list is deferred only when it still contains a `$`. GNU Make's read.c does exactly this (`second_expansion && strchr (depstr, '$')`), and it is not an optimisation: a list held back is invisible to the automatic variables a later list reads, so deferring `15.x: 5.z 6.z 5.z` left `$<` empty where Make has a value. Deferring everything was the single largest source of wrong answers.\n\n`%` becomes `$*` before the expansion rather than the stem itself, per implicit.c's comment, so a stem containing `$` is not expanded a third time.\n\nThe rule-specific variable test used a plain memchr for `=`, so `%.x: $$(info a=b)` read as an assignment once the first expansion had turned `$$(` into `$(`. It uses find_outside_paren now — the same helper the parser already uses for the same decision. This alone was blocking every `$$(info @=$$@,...)` subtest in se_implicit and se_statpat, which is most of them.\n\n`$<`, `$^`, `$+`, `$|` are bound from what the target already recorded — for the pattern search, the explicit rules for that target; for an explicit rule, the node so far. A `::` rule stands alone and gets nothing, which is upstream's se_explicit subtest 6 and was a regression until it was.\n\nThree more, in the same family and cheap enough to take here: a special target's own prerequisites are expanded before what they declare is read (a `.PHONY` under `.SECONDEXPANSION` declared nothing); the expansion is memoised per rule and target, because pick_rule makes two passes and can_be_made_implicitly probes a rule the search then uses, and upstream checks the count of side effects; and `|` ends the word it falls in, so `p1|p2` is a prerequisite and an order-only prerequisite rather than one oddly named file — that one bit the ordinary path too, where `%.o: %.c|bar.h` was silently falling through to the built-in rule.\n\nMeasured, GNU Make's suite: semantic 767 -> 702, capability 126 -> 127, narration 439 -> 502. 65 cases semantic to narration, one passing outright, none newly failing. 2 moved narration to semantic — se_implicit sv 60188 subtests 1 and 2 — and they are the intermediate-file gap, not this: a four-line probe with no second expansion in it rebuilds hello.z where Make does nothing. They were narration by accident, because the rule never matched.\n\nLeft standing, and none of it is this node:\n\n  A makefile whose only rules are pattern rules refuses with `*** No targets.` even when a goal was named. build() reads first_rule before it looks at whether targets is empty. Three upstream cases (se_implicit 9, 12, 27) cannot be measured until it moves. Pre-existing, four lines, and it shifts goal selection across every family, so it wants its own node.\n\n  Stem splitting: Make retries a pattern match with the directory prefix stripped and prepends it to the prerequisites, so `%.o` against `d/tmp/bar.o` can find `d/tmp/foo/bar.c` from `foo/%.c`. se_implicit 3 and 4. Nothing to do with second expansion.\n\n  Target- and pattern-specific variables are not in scope during the expansion: `foo.%: $$(%_a)` beside `foo.x: x_a := bar` reads nothing. GNU Make calls initialize_file_variables before expanding. Our rule-var scope is built after fill_dep_node, which is after the search. se_implicit 1 and se_statpat 1.\n\n  Grouped targets in an implicit rule (`%.x %.xx&:`) build only the first. se_implicit 24, se_explicit 14.\n\n  The parse error from a bad expansion carries the makefile location for both kinds; Make omits it for a pattern rule and keeps it for a static pattern rule."
                     }
+
+                    {
+                        at 2026-08-09T17:12:31.302749084Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Done, closing retroactively after review — this node was never started in the plan, but the work landed 2026-08-08: ronin b60b14d on main, kati f9fadf1 in the pinned submodule HEAD. can_pick_implicit_rule and implicit_chain_exists expand deferred prerequisites once the stem is known; a list is deferred only when it still contains `$` (matching read.c), `%` becomes `$*` before expansion, and the rule-specific variable test no longer misreads `$$(info a=b)` as an assignment. The follow-up note 463b468 records what it took and left: no explicit-rule residue except the unrelated grouped-target gap."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:42.745354509Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T17:17:47.851925543Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4946,6 +5411,7 @@ children (
                 title "Honour .IGNORE, .NOTPARALLEL and .EXPORT_ALL_VARIABLES"
                 priority 2
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-06T21:48:31.665372748Z
@@ -4967,6 +5433,20 @@ children (
                         kind @note
                         text "`.IGNORE` done, both forms, checked against 4.4.1: bare it is `-i` the Makefile asked for, and with prerequisites it is that for those targets alone while every other target still fails. It rides on DepNode beside is_restat, which is the same shape `.KATI_RESTAT` already had, and command evaluation starts each recipe from it.\n\nOne suite case moved, capability to semantic.\n\nThe other two are not done and the reason for one of them is worth having.\n\n.EXPORT_ALL_VARIABLES is blocked, and not on itself: `export` does not work at all in Make mode. `export FOO` with `FOO = bar` gives GNU `[bar]` and us `[]`. That is make-export-to-recipes, and .EXPORT_ALL_VARIABLES is that plus a flag, so it cannot be done first.\n\n.NOTPARALLEL is still open. It is a job limit of one imposed by the Makefile rather than the command line, discovered during dep building, so it needs a flag on Session that Make mode reads back after evaluation and before it builds BuildOptions."
                     }
+
+                    {
+                        at 2026-08-09T17:12:54.279756111Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Correction to the final note of 2026-08-06, which is stale: it left .EXPORT_ALL_VARIABLES and .NOTPARALLEL undone, and both have since landed — .EXPORT_ALL_VARIABLES with make-export-to-recipes (e189237, 2026-08-07, \"this plus a flag\"), .NOTPARALLEL as the per-unit Ninja pool under make-subninja-recursion (bcd200e, 2026-08-08). .IGNORE itself landed here as ad8573a, both forms, compiled as an ignore_errors edge binding. All three special targets in this node's title are honoured."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:30.821971067Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -4975,6 +5455,7 @@ children (
                 title "Put an exported variable in the recipe's environment"
                 priority 1
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-06T22:36:13.258751667Z
@@ -4996,6 +5477,13 @@ children (
                         kind @decision
                         text "Done, and `.EXPORT_ALL_VARIABLES` came with it since it is this plus a flag.\n\nFive shapes against 4.4.1, all matching now: `export FOO`, `export FOO = bar`, a variable nobody exported staying unset, `unexport` of a name the caller's environment supplied, and `.EXPORT_ALL_VARIABLES`.\n\nThat last one has a boundary worth recording, because it was checked rather than assumed: it covers what the Makefile defined and not the built-in defaults. With it declared, GNU Make still leaves `CC` unset in a recipe. So the set is the globals whose origin is File, unioned with whatever `export` named.\n\nThe values are evaluated in load_makefile, before ev.finish, because the evaluator that can answer for them does not outlive that call. Loaded now carries them beside the graph.\n\nBuildOptions::environment went from `Vec<(&'static str, OsString)>` to `Vec<(OsString, Option<OsString>)>`. Owned names because an exported name comes from the Makefile rather than from a literal, and the option because `unexport` has to remove a name the caller's environment supplied, which is env_remove rather than a binding.\n\nEight suite cases moved semantic to narration and one capability to semantic.\n\nA correction on the way: features/parallelism started flapping between `ninja-progress` and `ninja-progress+recipe-interleave`. That case has three recipes rendezvous through files under -j4 and they must overlap to finish at all, so which lands first is the scheduler's. The tolerance for that family was removed when .WAIT landed on the grounds that nothing used it any more; that was wrong. The cause is any case that asks for concurrency, and .WAIT was only the one that happened to be flapping then. It is back, with the reason generalised."
                     }
+
+                    {
+                        at 2026-08-09T17:17:32.585792306Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -5004,6 +5492,7 @@ children (
                 title "Build real Makefile projects through the compiled Ninja graph"
                 priority 0
                 kind @test
+                sealed true
                 log (
                     {
                         at 2026-08-07T00:53:37.398690019Z
@@ -5024,6 +5513,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "This gate compares selected work, normal outcome, and filesystem effects after compilation. GNU Make wording, scheduling order, recursive banners, jobserver behavior, and private exit-status distinctions cannot make it pass or fail."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:34.276351635Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -5078,6 +5574,7 @@ children (
                 title "Compile .NOTPARALLEL into Ninja graph scheduling constraints"
                 priority 0
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-08T01:01:26.318535741Z
@@ -5091,6 +5588,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "The accepted implementation is a graph-level Ninja scheduling constraint, such as a compiler-created pool/order relation. Passing Loaded::serial into BuildOptions is Make provenance in the executor and does not satisfy this node."
+                    }
+
+                    {
+                        at 2026-08-09T17:12:20.893379758Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Done, closing after review. The accepted implementation this node's 2026-08-08 decision demanded — a compiler-created per-unit Ninja pool rather than executor Make-provenance — landed the same day in bcd200e under nplan-id make-subninja-recursion: serialise_unit mints make_serial_N pools of depth 1 in src/make/sink.rs and binds them onto the unit's command edges, asserted by the .NOTPARALLEL cases in tests/cli.rs. The rejected executor clamp from af345fb is gone from src/make/cli.rs. Residual explicitly not claimed: the narrow `.NOTPARALLEL: targets` form."
+                    }
+
+                    {
+                        at 2026-08-09T17:17:36.211250665Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
