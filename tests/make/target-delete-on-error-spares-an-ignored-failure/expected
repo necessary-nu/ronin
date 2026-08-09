@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| .DELETE_ON_ERROR:
+| all: out
+| out: ; -echo body > $@ ; exit 1
+file out touched 1
+| body

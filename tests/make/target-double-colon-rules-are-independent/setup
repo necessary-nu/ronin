@@ -1,0 +1,6 @@
+: > dep1
+: > dep2
+echo seed > out
+touch -d '2020-01-01 00:00' dep1
+touch -d '2020-01-02 00:00' out
+touch -d '2020-01-03 00:00' dep2

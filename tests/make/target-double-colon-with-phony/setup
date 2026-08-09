@@ -1,0 +1,4 @@
+: > dep
+echo already > all
+touch -d '2020-01-01 00:00' dep
+touch -d '2020-01-02 00:00' all

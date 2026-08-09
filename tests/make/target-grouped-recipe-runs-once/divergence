@@ -1,0 +1,1 @@
+Kati emits separate recipes instead of one multi-output edge for grouped targets; no dedicated WBS node yet.

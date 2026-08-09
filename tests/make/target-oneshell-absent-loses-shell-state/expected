@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| all:
+| 	v=body
+| 	echo "[$$v]" > out
+file out touched 1
+| []

@@ -1,0 +1,1 @@
+out:: ; echo body >> $@

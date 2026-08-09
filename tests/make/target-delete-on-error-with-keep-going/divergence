@@ -1,0 +1,1 @@
+Ronin does not remove a failed target under .DELETE_ON_ERROR when keep-going is active; no dedicated WBS node yet.

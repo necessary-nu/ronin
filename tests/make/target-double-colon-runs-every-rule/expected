@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| all:: ; echo one > one
+| all:: ; echo two > two
+file one touched 1
+| one
+file two touched 1
+| two

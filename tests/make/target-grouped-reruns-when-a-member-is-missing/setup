@@ -1,0 +1,4 @@
+echo body > src
+echo stale > a
+touch -d '2020-01-01 00:00' src
+touch -d '2020-01-02 00:00' a

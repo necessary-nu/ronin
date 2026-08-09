@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| all: a b
+| a b &: ; echo ran >> log ; echo x > a ; echo x > b
+file a touched 1
+| x
+file b touched 1
+| x
+file log touched 1
+| ran

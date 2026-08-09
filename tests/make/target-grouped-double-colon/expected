@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| all: c
+| a b c &:: ; echo X >> log ; touch a b c
+| c d e &:: ; echo Y >> log ; touch c d e
+file a touched 0
+file b touched 0
+file c touched 0
+file d touched 0
+file e touched 0
+file log touched 2
+| X
+| Y

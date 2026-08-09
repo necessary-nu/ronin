@@ -5235,6 +5235,20 @@ children (
                                 kind @note
                                 text "One of three lanes growing `tests/make/` from GNU Make's own scenarios. This one takes `reference/gnumake/tests/scripts/targets/` and `misc/`.\n\nThe point is coverage of behaviour we already claim, not finding new defects — though it will find some. Every case is a makefile written here from behaviour probed off /usr/bin/make 4.4.1, never copied: upstream's scripts are GPLv3 and `reference/gnumake` is a pinned checkout for exactly that reason (`make-licence-position`).\n\nCase names take a `target-` prefix so three lanes writing concurrently cannot collide.\n\nThis is the best-suited of the three sets, because a special target's whole effect is on what gets built and what is left behind — which is exactly what the harness compares. `tests/make/intermediate-is-removed` and `tests/make/secondary-is-kept` are the shape.\n\nWatch for the ones already covered: `.PHONY`, `.DEFAULT`, `.INTERMEDIATE`, `.SECONDARY`, `.NOTINTERMEDIATE`, `.IGNORE`, `.NOTPARALLEL`, `.SUFFIXES`, `.EXPORT_ALL_VARIABLES` and `.WAIT` all have cases already. Extend rather than duplicate, and prefer the combinations — a special target's interaction with another is where the gaps are.\n\nWhere a case fails, record a `divergence` file naming the defect and, if one exists, the node. Do not fix code — that is another lane's ground this wave."
                             }
+
+                            {
+                                at 2026-08-09T13:16:36.196612499Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-09T13:19:21.8341315Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Ported 49 repository-owned GNU Make 4.4.1 build-intent cases covering targets, rules, and special-target interactions, taking the corpus from 208 to 257 cases. Thirty-two already compile to matching Ninja work. Seventeen expose compiler gaps and carry bidirectional divergence markers: existing owners are make-ignore-errors-status, make-intermediate-files, and make-option-no-builtin-variables; thirteen cases in the delete-on-error, double-colon, grouped-target, POSIX-default, and static-pattern families explicitly record that no dedicated WBS leaf exists yet. The cases compare normal success/failure and filesystem effects, never GNU Make runner narration. The complete 257-case release run passes, including the rule that a fixed recorded divergence must have its marker removed."
+                            }
                         )
                     }
                 )

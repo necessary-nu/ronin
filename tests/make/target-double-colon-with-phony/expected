@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| .PHONY: all
+| all:: dep ; echo one > one
+| all:: dep ; echo two > two
+file all kept 1
+| already
+file dep kept 0
+file one touched 1
+| one
+file two touched 1
+| two

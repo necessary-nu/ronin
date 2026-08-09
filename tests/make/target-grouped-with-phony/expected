@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| .PHONY: all a b
+| all: a b
+| a b &: ; echo ran >> log
+file a kept 1
+| already
+file b kept 1
+| already
+file log touched 1
+| ran
