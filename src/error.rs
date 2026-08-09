@@ -337,22 +337,26 @@ pub(crate) enum FoundToken {
     Indent,
     Eof,
     Character(char),
+    /// A dependency separator, which is one token however many bytes it is.
+    Separator(SeparatorKind),
+    /// A byte no token starts with, which Ninja reports as having read its
+    /// error token rather than as having read anything in particular.
+    LexingError,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ScanErrorKind {
-    ExpectedNewlineAfterCarriageReturn,
     TabsNotAllowed,
+    LexingError,
     ExpectedName(NameKind),
-    UnexpectedIndent,
+    UnexpectedToken(FoundToken),
     InvalidVariableName,
     CaretEscapeRequiresVersion,
     InvalidDollarEscape,
     ExpectedAsciiToken,
     ExpectedCharacter { expected: char, found: FoundToken },
-    UnexpectedSeparator(SeparatorKind),
-    UnexpectedEof { after_continuation: bool },
-    ExpectedNewline,
+    UnexpectedEof,
+    ExpectedNewline(FoundToken),
 }
 
 impl fmt::Display for FoundToken {
@@ -363,6 +367,8 @@ impl fmt::Display for FoundToken {
             Self::Indent => formatter.write_str("indent"),
             Self::Eof => formatter.write_str("eof"),
             Self::Character(found) => write!(formatter, "'{found}'"),
+            Self::Separator(found) => write!(formatter, "'{found}'"),
+            Self::LexingError => formatter.write_str("lexing error"),
         }
     }
 }
@@ -370,17 +376,20 @@ impl fmt::Display for FoundToken {
 impl fmt::Display for ScanErrorKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ExpectedNewlineAfterCarriageReturn => {
-                formatter.write_str("expected '\\n' after '\\r'")
-            }
+            // What Ninja says about a byte no token can start with. It names
+            // the tab because a tab where a statement belongs is nearly always
+            // a Makefile habit, and says nothing else about anything else.
             Self::TabsNotAllowed => formatter.write_str("tabs are not allowed, use spaces"),
+            Self::LexingError => formatter.write_str("lexing error"),
             Self::ExpectedName(kind) => formatter.write_str(match kind {
                 NameKind::Pool => "expected pool name",
                 NameKind::Rule => "expected rule name",
                 NameKind::Variable => "expected variable name",
                 NameKind::BuildCommand => "expected build command name",
             }),
-            Self::UnexpectedIndent => formatter.write_str("unexpected indent"),
+            // A token that reads fine and belongs somewhere else. Ninja names
+            // it and says no more, an indent included.
+            Self::UnexpectedToken(found) => write!(formatter, "unexpected {found}"),
             // Ninja reports every malformed `$` the same way, terminated or not.
             Self::InvalidVariableName | Self::InvalidDollarEscape => {
                 formatter.write_str("bad $-escape (literal $ must be written as $$)")
@@ -399,16 +408,11 @@ impl fmt::Display for ScanErrorKind {
                 }
                 Ok(())
             }
-            Self::UnexpectedSeparator(separator) => {
-                write!(formatter, "unexpected '{separator}'")
-            }
-            Self::UnexpectedEof {
-                after_continuation: true,
-            } => formatter.write_str("unexpected EOF after continuation"),
-            Self::UnexpectedEof {
-                after_continuation: false,
-            } => formatter.write_str("unexpected EOF"),
-            Self::ExpectedNewline => formatter.write_str("expected newline"),
+            // Ninja does not distinguish an end of file reached after a line
+            // continuation from any other, and neither does this.
+            Self::UnexpectedEof => formatter.write_str("unexpected EOF"),
+            // Names what it found, as every other token Ninja expected does.
+            Self::ExpectedNewline(found) => write!(formatter, "expected newline, got {found}"),
         }
     }
 }
@@ -427,11 +431,7 @@ impl ScanError {
 
 impl fmt::Display for ScanError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if matches!(self.kind, ScanErrorKind::UnexpectedEof { .. }) {
-            write!(formatter, "error: {}", self.kind)
-        } else {
-            write_located(formatter, &self.span, &self.kind)
-        }
+        write_located(formatter, &self.span, &self.kind)
     }
 }
 
@@ -446,14 +446,13 @@ pub(crate) enum ManifestProblem {
     BuildWithoutOutputs,
     UndefinedRule { name: String },
     DuplicateOutput { path: BString },
+    RepeatedOutput { path: BString },
     DyndepNotInput { path: BString },
-    ExpectedIncludePath,
     ExpectedTargetName,
     UnknownTarget { path: BString },
     UnexpectedPoolVariable { name: String },
     InvalidPoolDepth { value: BString },
     PoolWithoutDepth,
-    InvalidRequiredVersion,
     RequiredVersionTooNew { version: BString },
     DuplicateRule { name: BString },
     DuplicatePool { name: BString },
@@ -476,15 +475,19 @@ impl fmt::Display for ManifestProblem {
             Self::EmptyPath => formatter.write_str("empty path"),
             Self::BuildWithoutOutputs => formatter.write_str("expected path"),
             Self::UndefinedRule { name } => write!(formatter, "unknown build rule '{name}'"),
-            // Unquoted, as Ninja writes it.
+            // Unquoted, as Ninja writes it. Two build statements generating one
+            // path and one statement naming it twice are separate complaints:
+            // the second is a typo in the line being read, not a conflict with
+            // something elsewhere, and Ninja says so.
             Self::DuplicateOutput { path } => write!(formatter, "multiple rules generate {path}"),
+            Self::RepeatedOutput { path } => {
+                write!(formatter, "{path} is defined as an output multiple times")
+            }
             Self::DyndepNotInput { path } => write!(formatter, "dyndep '{path}' is not an input"),
-            Self::ExpectedIncludePath => formatter.write_str("expected include path"),
             Self::ExpectedTargetName => formatter.write_str("expected target name"),
             Self::UnknownTarget { path } => write!(formatter, "unknown target '{path}'"),
             Self::InvalidPoolDepth { .. } => formatter.write_str("invalid pool depth"),
             Self::PoolWithoutDepth => formatter.write_str("expected 'depth =' line"),
-            Self::InvalidRequiredVersion => formatter.write_str("invalid ninja_required_version"),
             Self::DuplicateRule { name } => write!(formatter, "duplicate rule '{name}'"),
             Self::DuplicatePool { name } => write!(formatter, "duplicate pool '{name}'"),
             Self::UnknownPoolName { name } => write!(formatter, "unknown pool name '{name}'"),
@@ -1606,7 +1609,9 @@ mod tests {
     }
 
     #[test]
-    fn scan_error_retains_source_span_when_display_omits_it() {
+    fn scan_error_locates_an_unexpected_eof() {
+        // Ninja raises this one through the lexer like the rest, so it carries
+        // a file, a line and a caret rather than standing alone.
         let error = ScanError {
             span: SourceSpan::new(
                 crate::source::Source::from_bytes("build.ninja", b"source bytes".to_vec()),
@@ -1615,11 +1620,12 @@ mod tests {
                 7,
                 3,
             ),
-            kind: ScanErrorKind::UnexpectedEof {
-                after_continuation: false,
-            },
+            kind: ScanErrorKind::UnexpectedEof,
         };
-        assert_eq!(error.to_string(), "error: unexpected EOF");
+        assert_eq!(
+            error.to_string(),
+            "error: build.ninja:7: unexpected EOF\nurce bytes\n  ^ near here"
+        );
         assert_eq!(error.span.path(), std::path::Path::new("build.ninja"));
         assert_eq!((error.span.line, error.span.column), (7, 3));
     }

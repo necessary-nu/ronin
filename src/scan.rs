@@ -93,7 +93,6 @@ pub(crate) struct Scanner<'source> {
     /// than against the scan position, which by the time an error is raised has
     /// usually moved on to the following token.
     last_token: ByteSpan,
-    continuation_at_eof: bool,
     manifest_version_major: i32,
     manifest_version_minor: i32,
 }
@@ -117,7 +116,6 @@ impl<'source> Scanner<'source> {
                 line: 1,
                 column: 1,
             },
-            continuation_at_eof: false,
             manifest_version_major: 1,
             manifest_version_minor: 9,
         }
@@ -194,6 +192,14 @@ pub(crate) fn scanerror(scanner: &Scanner<'_>, kind: ScanErrorKind) -> ScanError
     }
 }
 
+/// The same, against a position the caller kept rather than the last token.
+fn scanerror_at(scanner: &Scanner<'_>, span: ByteSpan, kind: ScanErrorKind) -> ScanError {
+    ScanError {
+        span: scanner.source_span(span),
+        kind,
+    }
+}
+
 // [spec:ronin:def:scan.next-fn]
 // [spec:ronin:sem:scan.next-fn]
 fn next(scanner: &mut Scanner<'_>) {
@@ -224,9 +230,12 @@ const fn advance_within_line(scanner: &mut Scanner<'_>) {
 const VALUE_ENDS: [bool; 256] = ends_table(b"$\r\n");
 
 /// The same, for a path, which additionally ends at any of the separators that
-/// divide one path from the next. A tab is included so it can be rejected:
-/// Ninja does not allow one here, and the scan has to stop to say so.
-const PATH_ENDS: [bool; 256] = ends_table(b"$\r\n:| \t");
+/// divide one path from the next.
+///
+/// A tab is not one of them. Ninja's lexer reads a tab as ordinary text inside
+/// an evaluation string, so `build a\tb: r` names a file whose path contains a
+/// tab, and only a tab where a *statement* belongs is an error.
+const PATH_ENDS: [bool; 256] = ends_table(b"$\r\n:| ");
 
 /// A membership table, rather than a match over the bytes or a byte-set search.
 ///
@@ -266,11 +275,16 @@ const fn isvar(byte: u8) -> bool {
 fn newline(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     match scanner.current() {
         Some(b'\r') => {
+            // Only the pair is a line ending. A carriage return on its own is
+            // a byte nothing in the grammar starts with, wherever it turns up,
+            // and Ninja says so in the same words it uses for any other.
+            let carriage_return = scanner.position();
             next(scanner);
             if scanner.current() != Some(b'\n') {
-                return Err(scanerror(
+                return Err(scanerror_at(
                     scanner,
-                    ScanErrorKind::ExpectedNewlineAfterCarriageReturn,
+                    carriage_return,
+                    ScanErrorKind::LexingError,
                 ));
             }
             next(scanner);
@@ -286,20 +300,24 @@ fn newline(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
 
 // [spec:ronin:def:scan.singlespace-fn]
 // [spec:ronin:sem:scan.singlespace-fn]
+/// Crosses one unit of whitespace: a space, or a line ending escaped by `$`.
+///
+/// A tab is not whitespace here. Ninja's lexer eats runs of spaces and nothing
+/// else, so a tab never indents a block and never separates two paths — it
+/// simply ends the run, which ends the block. Only a tab where a statement
+/// belongs is an error, and [`scankeyword`] is where that is raised.
 fn singlespace(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     match scanner.current() {
         Some(b' ') => {
             advance_within_line(scanner);
             Ok(true)
         }
-        Some(b'\t') => Err(scanerror(scanner, ScanErrorKind::TabsNotAllowed)),
         Some(b'$') => {
             let index = scanner.index;
             let line = scanner.line;
             let column = scanner.column;
             next(scanner);
             if newline(scanner)? {
-                scanner.continuation_at_eof = scanner.current().is_none();
                 Ok(true)
             } else {
                 scanner.index = index;
@@ -363,10 +381,20 @@ pub(crate) fn scankeyword<'source>(
     loop {
         match scanner.current() {
             None => return Ok(None),
-            Some(b' ' | b'\t') => {
+            // The one position where a tab is wrong rather than ordinary.
+            // Ninja's lexer has no rule that matches it, so reading a statement
+            // here yields its error token, and the message names the byte.
+            Some(b'\t') => {
+                scanner.begin_token();
+                return Err(scanerror(scanner, ScanErrorKind::TabsNotAllowed));
+            }
+            Some(b' ') => {
                 space(scanner)?;
                 if !comment(scanner)? && !newline(scanner)? {
-                    return Err(scanerror(scanner, ScanErrorKind::UnexpectedIndent));
+                    return Err(scanerror(
+                        scanner,
+                        ScanErrorKind::UnexpectedToken(FoundToken::Indent),
+                    ));
                 }
             }
             Some(b'#') => {
@@ -374,6 +402,19 @@ pub(crate) fn scankeyword<'source>(
             }
             Some(b'\r' | b'\n') => {
                 newline(scanner)?;
+            }
+            // A token that reads perfectly well and belongs in the middle of a
+            // statement rather than at the start of one — and, failing even
+            // that, a byte no token begins with at all.
+            Some(byte) if !isvar(byte) => {
+                scanner.begin_token();
+                return Err(scanerror(
+                    scanner,
+                    match byte {
+                        b'=' | b':' | b'|' => ScanErrorKind::UnexpectedToken(found_token(scanner)),
+                        _ => ScanErrorKind::LexingError,
+                    },
+                ));
             }
             _ => {
                 let lexeme = name(scanner, NameKind::Variable)?;
@@ -416,9 +457,17 @@ fn push_literal<'source>(
 // [spec:ronin:sem:scan.addstringpart-fn]
 // [spec:ronin:def:scan.escape-fn]
 // [spec:ronin:sem:scan.escape-fn]
+/// Read what follows a `$`, which `dollar` locates.
+///
+/// A malformed escape is reported against the `$` itself, because that is the
+/// byte the reader has to go and fix and because it is where Ninja's lexer
+/// marks the token it failed on. The version complaint about `$^` is the one
+/// exception, and deliberately so: Ninja raises that one without marking
+/// anything, so it still points at whatever token was read before the value.
 fn escape<'source>(
     scanner: &mut Scanner<'source>,
     parts: &mut ScannedParts<'source>,
+    dollar: ByteSpan,
 ) -> ScanResult<()> {
     let source = scanner.source;
     match scanner.current() {
@@ -434,16 +483,28 @@ fn escape<'source>(
                 next(scanner);
             }
             if scanner.current() != Some(b'}') {
-                return Err(scanerror(scanner, ScanErrorKind::InvalidVariableName));
+                return Err(scanerror_at(
+                    scanner,
+                    dollar,
+                    ScanErrorKind::InvalidVariableName,
+                ));
             }
             let variable = BStr::new(&source.bytes()[start..scanner.index]);
             next(scanner);
             parts.push(ScannedEvalPart::Variable(variable));
         }
         Some(b'\r' | b'\n') => {
-            newline(scanner)?;
+            // Only a `$` immediately before a complete line ending continues a
+            // line; a carriage return with nothing behind it is just a byte the
+            // escape does not name, like any other.
+            if newline(scanner).is_err() {
+                return Err(scanerror_at(
+                    scanner,
+                    dollar,
+                    ScanErrorKind::InvalidDollarEscape,
+                ));
+            }
             space(scanner)?;
-            scanner.continuation_at_eof = scanner.current().is_none();
         }
         Some(b'^') => {
             if scanner.manifest_version_major < 1
@@ -463,7 +524,11 @@ fn escape<'source>(
                 next(scanner);
             }
             if scanner.index == start {
-                return Err(scanerror(scanner, ScanErrorKind::InvalidDollarEscape));
+                return Err(scanerror_at(
+                    scanner,
+                    dollar,
+                    ScanErrorKind::InvalidDollarEscape,
+                ));
             }
             let variable = BStr::new(&source.bytes()[start..scanner.index]);
             parts.push(ScannedEvalPart::Variable(variable));
@@ -479,7 +544,10 @@ pub(crate) fn scanstring<'source>(
     path: bool,
 ) -> ScanResult<Option<ScannedEvalString<'source>>> {
     let source = scanner.source;
-    scanner.begin_token();
+    // No mark is taken here. Ninja's lexer marks an evaluation string only
+    // where it ends, so while one is being read the mark still names the token
+    // before it — which is where the `$^` version complaint lands, that being
+    // the one error in here Ninja raises without marking anything first.
     let mut parts = ScannedParts::new();
     let start = scanner.index;
     let mut literal_start = start;
@@ -496,7 +564,6 @@ pub(crate) fn scanstring<'source>(
             .position(|byte| terminators[*byte as usize])
             .unwrap_or(rest.len());
         if run > 0 {
-            scanner.continuation_at_eof = false;
             scanner.column += run;
             scanner.index += run;
         }
@@ -504,12 +571,17 @@ pub(crate) fn scanstring<'source>(
             Some(b'$') => {
                 escaped = true;
                 push_literal(&mut parts, source, literal_start, scanner.index);
+                let dollar = scanner.position();
                 next(scanner);
-                escape(scanner, &mut parts)?;
+                escape(scanner, &mut parts, dollar)?;
                 literal_start = scanner.index;
             }
-            Some(b'\t') if path => {
-                return Err(scanerror(scanner, ScanErrorKind::TabsNotAllowed));
+            // A carriage return ends a value only as half of a line ending;
+            // on its own it is a byte the grammar has no rule for, and saying
+            // the value ended here would hide that.
+            Some(b'\r') if scanner.bytes.get(scanner.index + 1) != Some(&b'\n') => {
+                scanner.begin_token();
+                return Err(scanerror(scanner, ScanErrorKind::LexingError));
             }
             // A separator when scanning a path, a line ending, or the end of
             // the source; everything else was consumed by the skip above.
@@ -523,6 +595,13 @@ pub(crate) fn scanstring<'source>(
     // the binding points there rather than at the value, and this is where
     // that difference is reproduced.
     scanner.begin_token();
+    // Nothing ends an evaluation string at the end of the file: Ninja's lexer
+    // has a rule for the terminating nul and that rule is an error, so a
+    // manifest whose last line has no newline stops here rather than wherever
+    // the caller next looks for one.
+    if scanner.current().is_none() {
+        return Err(scanerror(scanner, ScanErrorKind::UnexpectedEof));
+    }
     if !escaped {
         // Nothing was expanded, so the run of source bytes is the whole value.
         if path {
@@ -574,7 +653,13 @@ fn found_token(scanner: &Scanner<'_>) -> FoundToken {
     match scanner.current() {
         None => FoundToken::Eof,
         Some(b'\r' | b'\n') => FoundToken::Newline,
-        Some(b' ' | b'\t') => FoundToken::Indent,
+        Some(b' ') => FoundToken::Indent,
+        // Ninja has no token for a tab, so what it reports having found is the
+        // error token, which it names rather than describes.
+        Some(b'\t') => FoundToken::LexingError,
+        // A pipe is one token with the byte after it, so what was found is
+        // `||` or `|@` rather than a `|` with something unexplained behind it.
+        Some(b'|') => FoundToken::Separator(separator_at(scanner).0.into()),
         Some(byte) if isvar(byte) => FoundToken::Identifier,
         Some(byte) => FoundToken::Character(char::from(byte)),
     }
@@ -595,6 +680,16 @@ impl From<Separator> for SeparatorKind {
             Separator::OrderOnly => Self::OrderOnly,
             Separator::Validation => Self::Validation,
         }
+    }
+}
+
+/// The separator beginning at a `|` the caller has already seen, and how many
+/// bytes it spans.
+fn separator_at(scanner: &Scanner<'_>) -> (Separator, usize) {
+    match scanner.bytes.get(scanner.index + 1) {
+        Some(b'|') => (Separator::OrderOnly, 2),
+        Some(b'@') => (Separator::Validation, 2),
+        _ => (Separator::Implicit, 1),
     }
 }
 
@@ -620,6 +715,14 @@ impl AllowedSeparators {
 
 // [spec:ronin:def:scan.scanpipe-fn]
 // [spec:ronin:sem:scan.scanpipe-fn]
+/// Read the separator at the scan position, if it is one this position takes.
+///
+/// A separator this position does not take is *left where it is* rather than
+/// rejected here. Ninja only ever peeks for the one separator it wants next,
+/// and a peek that fails puts the token back — so the complaint about `build a
+/// || b: r` comes from the colon that was expected instead, naming the `||` it
+/// found. Consuming it to complain about it here would say something Ninja
+/// never says, and would say it about a token the reader can see is a pipe.
 pub(crate) fn scanpipe(
     scanner: &mut Scanner<'_>,
     allowed: AllowedSeparators,
@@ -627,23 +730,12 @@ pub(crate) fn scanpipe(
     if scanner.current() != Some(b'|') {
         return Ok(None);
     }
-    next(scanner);
-    let separator = match scanner.current() {
-        Some(b'|') => {
-            next(scanner);
-            Separator::OrderOnly
-        }
-        Some(b'@') => {
-            next(scanner);
-            Separator::Validation
-        }
-        _ => Separator::Implicit,
-    };
+    let (separator, width) = separator_at(scanner);
     if !allowed.contains(separator) {
-        return Err(scanerror(
-            scanner,
-            ScanErrorKind::UnexpectedSeparator(separator.into()),
-        ));
+        return Ok(None);
+    }
+    for _ in 0..width {
+        advance_within_line(scanner);
     }
     space(scanner)?;
     Ok(Some(separator))
@@ -665,26 +757,16 @@ pub(crate) fn scanindent(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
 pub(crate) fn scannewline(scanner: &mut Scanner<'_>) -> ScanResult<()> {
     scanner.begin_token();
     if newline(scanner)? {
-        scanner.continuation_at_eof = false;
         Ok(())
-    } else if scanner.current().is_none() {
-        if scanner.continuation_at_eof {
-            Err(scanerror(
-                scanner,
-                ScanErrorKind::UnexpectedEof {
-                    after_continuation: true,
-                },
-            ))
-        } else {
-            Err(scanerror(
-                scanner,
-                ScanErrorKind::UnexpectedEof {
-                    after_continuation: false,
-                },
-            ))
-        }
     } else {
-        Err(scanerror(scanner, ScanErrorKind::ExpectedNewline))
+        // The end of the file is a token here rather than a failure to read
+        // one: Ninja asks for a newline and names whatever it got, and at the
+        // end of a file that is `eof`. Running off the end *inside* a value is
+        // the other thing, and `scanstring` has already raised it by now.
+        Err(scanerror(
+            scanner,
+            ScanErrorKind::ExpectedNewline(found_token(scanner)),
+        ))
     }
 }
 
@@ -696,12 +778,13 @@ mod tests {
     fn crossing_a_run_of_ordinary_bytes_leaves_the_column_where_stepping_would() {
         // The bulk skip advances the column by the whole run at once, so the
         // position it reports has to match what a byte-at-a-time walk gave.
-        // A tab is ordinary inside a value and forbidden inside a path.
+        // A tab is ordinary inside a value and inside a path alike.
         for (bytes, path, expected_column) in [
             (&b"abcdef ghi\n"[..], false, 11),
             // A path stops at the space, then `scanstring` eats the separator.
             (&b"abcdef ghi\n"[..], true, 8),
             (&b"a\tb\n"[..], false, 4),
+            (&b"a\tb\n"[..], true, 4),
             (&b"obj/x.o: cc\n"[..], true, 8),
             (&b"|| dep\n"[..], true, 1),
         ] {
@@ -717,13 +800,27 @@ mod tests {
             assert_eq!(scanner.line, 1, "an ordinary run never crosses a line");
         }
 
-        // A tab inside a path is rejected rather than crossed.
-        let source = Source::from_bytes("build.ninja", b"obj/\tx.o\n".to_vec());
+        // A tab inside a path is part of it, exactly as Ninja reads it.
+        let source = Source::from_bytes("build.ninja", b"obj/\tx.o out\n".to_vec());
         let mut scanner = Scanner::new(&source);
-        assert!(matches!(
-            scanstring(&mut scanner, true).unwrap_err().kind,
-            ScanErrorKind::TabsNotAllowed
-        ));
+        assert_eq!(
+            scanstring(&mut scanner, true).unwrap(),
+            Some(ScannedEvalString::Plain(b"obj/\tx.o"))
+        );
+
+        // A tab where a statement belongs is the one place it is an error, and
+        // it is reported against the tab rather than against whatever token was
+        // read last.
+        let source = Source::from_bytes("build.ninja", b"rule r\n\tcommand = c\n".to_vec());
+        let mut scanner = Scanner::new(&source);
+        scankeyword(&mut scanner).unwrap();
+        scanname(&mut scanner, NameKind::Rule).unwrap();
+        scannewline(&mut scanner).unwrap();
+        // The tab does not indent, so the rule's block is already over.
+        assert!(!scanindent(&mut scanner).unwrap());
+        let error = scankeyword(&mut scanner).unwrap_err();
+        assert_eq!(error.kind, ScanErrorKind::TabsNotAllowed);
+        assert_eq!((error.span.line, error.span.column), (2, 1));
     }
 
     // [spec:ronin:req:runtime.borrowed-span-frontend/test]

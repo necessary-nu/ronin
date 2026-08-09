@@ -7,7 +7,7 @@
 //! located here, against the manifest token that asked for it.
 
 use crate::error::{ManifestError, ManifestProblem, NameKind};
-use crate::frontend::{BuildGraph, EdgeSpec, FrontendError, Node, Scope, Template};
+use crate::frontend::{BuildGraph, FrontendError, Node, Scope, Template};
 use crate::scan::{
     scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
     AllowedSeparators, ScannedEvalPart, ScannedEvalString, Scanner, Separator, Source, TokenKind,
@@ -24,10 +24,11 @@ enum Anchor {
     Token,
     /// Where scanning has reached.
     ///
-    /// A few of Ninja's checks run only once a statement's indented block is
-    /// over — a rule with no `command`, a pool with no `depth`. By then its
-    /// lexer has read past the block, so the diagnostic names the line after it
-    /// and carries no source context, the column being zero.
+    /// Several of Ninja's checks run only once a statement's indented block is
+    /// over — a rule with no `command`, a pool with no `depth`, and everything
+    /// a build statement's own bindings can change. By then its lexer has read
+    /// past the block, so the diagnostic names the line after it and carries no
+    /// source context, the column being zero.
     AfterBlock,
 }
 
@@ -125,6 +126,24 @@ pub(crate) fn load_manifest_in(
     working_directory: crate::os::WorkingDirectory,
     options: ManifestOptions,
 ) -> ManifestResult<Manifest> {
+    let mut warnings = Vec::new();
+    let graph = load_manifest_reporting(manifest, working_directory, options, &mut warnings)?;
+    Ok(Manifest { graph, warnings })
+}
+
+/// The same, keeping the warnings raised before a failure that stopped it.
+///
+/// Ninja writes a warning the moment it raises one, so a manifest that warns
+/// about its third statement and then fails on its fourth prints both. Ronin's
+/// parser collects rather than writes, because where a diagnostic goes is the
+/// invocation's decision — which means the collection has to outlive the
+/// failure for the invocation to have anything left to decide about.
+pub(crate) fn load_manifest_reporting(
+    manifest: impl AsRef<Path>,
+    working_directory: crate::os::WorkingDirectory,
+    options: ManifestOptions,
+    warnings: &mut Vec<String>,
+) -> ManifestResult<BuildGraph> {
     let mut graph = BuildGraph::new();
     let mut parser = Parser {
         options,
@@ -132,19 +151,22 @@ pub(crate) fn load_manifest_in(
         working_directory,
     };
     let root = graph.root();
-    parse(manifest, &mut graph, &mut parser, root)?;
-    Ok(Manifest {
-        graph,
-        warnings: parser.warnings,
-    })
+    let result = parse(manifest, &mut graph, &mut parser, root);
+    warnings.append(&mut parser.warnings);
+    result?;
+    Ok(graph)
 }
 
-/// Locate a construction failure at the manifest token that asked for it.
+/// Restate a construction failure as the manifest problem it is, so the caller
+/// can locate it where Ninja locates that particular one.
 fn construction_problem(error: FrontendError) -> ManifestProblem {
     match error {
         FrontendError::EmptyPath => ManifestProblem::EmptyPath,
         FrontendError::EdgeWithoutOutputs => ManifestProblem::BuildWithoutOutputs,
         FrontendError::DuplicateOutput { path } => ManifestProblem::DuplicateOutput {
+            path: BString::from(path),
+        },
+        FrontendError::RepeatedOutput { path } => ManifestProblem::RepeatedOutput {
             path: BString::from(path),
         },
         FrontendError::DuplicateRule { name } => ManifestProblem::DuplicateRule {
@@ -184,11 +206,37 @@ fn parse_assignment<'source>(
     Ok(value)
 }
 
-/// Expand one scanned value against `scope`, appending to `out`.
+/// What a scanned value expands against.
+///
+/// Almost everything expands against a scope alone. A build statement's paths
+/// do not: Ninja evaluates them against a scope holding the statement's own
+/// bindings, so `build $stem.o: cc $stem.c` sees a `stem` the statement itself
+/// declares — which is why they cannot be expanded until its block is read.
+#[derive(Clone, Copy)]
+struct Env {
+    scope: Scope,
+    /// The statement whose bindings are searched first, for the paths of a
+    /// build statement that has declared some.
+    edge: Option<crate::frontend::Edge>,
+}
+
+impl Env {
+    const fn scoped(scope: Scope) -> Self {
+        Self { scope, edge: None }
+    }
+
+    fn variable<'graph>(self, graph: &'graph BuildGraph, name: &BStr) -> Option<&'graph [u8]> {
+        self.edge
+            .and_then(|edge| graph.edge_binding(edge, name))
+            .or_else(|| graph.variable(self.scope, name))
+    }
+}
+
+/// Expand one scanned value against `env`, appending to `out`.
 ///
 /// A value the scanner found no `$` in is its own expansion, which is the
 /// shape almost every path in a real manifest has.
-fn expand_into(graph: &BuildGraph, scope: Scope, value: &ScannedEvalString<'_>, out: &mut Vec<u8>) {
+fn expand_into(graph: &BuildGraph, env: Env, value: &ScannedEvalString<'_>, out: &mut Vec<u8>) {
     let parts = match value {
         ScannedEvalString::Plain(bytes) => {
             out.extend_from_slice(bytes);
@@ -201,7 +249,7 @@ fn expand_into(graph: &BuildGraph, scope: Scope, value: &ScannedEvalString<'_>, 
         .map(|part| match part {
             ScannedEvalPart::Literal(literal) => literal.len(),
             ScannedEvalPart::EscapedByte(_) => 1,
-            ScannedEvalPart::Variable(name) => graph.variable(scope, name).map_or(0, <[u8]>::len),
+            ScannedEvalPart::Variable(name) => env.variable(graph, name).map_or(0, <[u8]>::len),
         })
         .sum();
     out.reserve(capacity);
@@ -210,7 +258,7 @@ fn expand_into(graph: &BuildGraph, scope: Scope, value: &ScannedEvalString<'_>, 
             ScannedEvalPart::Literal(literal) => out.extend_from_slice(literal),
             ScannedEvalPart::EscapedByte(byte) => out.push(*byte),
             ScannedEvalPart::Variable(name) => {
-                if let Some(value) = graph.variable(scope, name) {
+                if let Some(value) = env.variable(graph, name) {
                     out.extend_from_slice(value);
                 }
             }
@@ -222,7 +270,7 @@ fn expand_into(graph: &BuildGraph, scope: Scope, value: &ScannedEvalString<'_>, 
 // [spec:ronin:sem:env.enveval-fn]
 fn expand(graph: &BuildGraph, scope: Scope, value: &ScannedEvalString<'_>) -> BString {
     let mut out = Vec::new();
-    expand_into(graph, scope, value, &mut out);
+    expand_into(graph, Env::scoped(scope), value, &mut out);
     BString::from(out)
 }
 
@@ -334,7 +382,14 @@ fn evaluated_path(
     Ok(value)
 }
 
-/// Expand one path reference and intern it, reusing `scratch`.
+/// A failure the graph reported about a build statement, located where Ninja
+/// stands once that statement's bindings have been read.
+fn edge_problem(scanner: &Scanner<'_>, error: FrontendError) -> ManifestError {
+    manifest_error(scanner, Anchor::AfterBlock, construction_problem(error))
+}
+
+/// Expand one of a build statement's path references and intern it, reusing
+/// `scratch`.
 ///
 /// Most references name a path that is already interned, so expanding into a
 /// shared buffer and interning from bytes leaves the common case allocating
@@ -344,49 +399,18 @@ fn node_for(
     scanner: &Scanner<'_>,
     graph: &mut BuildGraph,
     path: &ScannedEvalString<'_>,
-    scope: Scope,
+    env: Env,
     scratch: &mut Vec<u8>,
 ) -> ManifestResult<Node> {
     let interned = match path {
         ScannedEvalString::Plain(bytes) => graph.node(bytes),
         ScannedEvalString::Parts(_) => {
             scratch.clear();
-            expand_into(graph, scope, path, scratch);
+            expand_into(graph, env, path, scratch);
             graph.node(scratch)
         }
     };
-    interned.map_err(|error| manifest_error(scanner, Anchor::Token, construction_problem(error)))
-}
-
-/// Expand and intern a run of scanned path references into `nodes`.
-fn nodes_for(
-    scanner: &Scanner<'_>,
-    graph: &mut BuildGraph,
-    paths: &[ScannedEvalString<'_>],
-    scope: Scope,
-    scratch: &mut Vec<u8>,
-    nodes: &mut Vec<Node>,
-) -> ManifestResult<()> {
-    nodes.clear();
-    nodes.reserve(paths.len());
-    for path in paths {
-        let node = node_for(scanner, graph, path, scope, scratch)?;
-        nodes.push(node);
-    }
-    Ok(())
-}
-
-/// The buffers every build statement in one manifest reuses.
-///
-/// A statement's paths and its interned nodes are the same shape for every
-/// statement in a file, so holding them here leaves the common case allocating
-/// only what the graph keeps.
-#[derive(Default)]
-struct EdgeScratch {
-    path: Vec<u8>,
-    outputs: Vec<Node>,
-    inputs: Vec<Node>,
-    validations: Vec<Node>,
+    interned.map_err(|error| edge_problem(scanner, error))
 }
 
 // [spec:ronin:def:parse.parseedge-fn]
@@ -400,7 +424,7 @@ fn parseedge(
     graph: &mut BuildGraph,
     scope: Scope,
     parser: &mut Parser,
-    scratch: &mut EdgeScratch,
+    scratch: &mut Vec<u8>,
 ) -> ManifestResult<()> {
     let mut output_paths = scanpaths(scanner)?;
     let explicit_output_count = output_paths.len();
@@ -445,76 +469,55 @@ fn parseedge(
     };
     scannewline(scanner)?;
 
-    let mut scanned_bindings = Vec::new();
+    let mut bindings = Vec::new();
     while scanindent(scanner)? {
-        scanned_bindings.push(parselet(scanner)?);
-    }
-
-    // Ninja rejects a duplicate output as soon as it interns that output,
-    // before it has looked at the inputs at all, so a statement that is wrong
-    // in both ways is reported the way Ninja reports it. `add_edge` rejects the
-    // same statement, but only once it has been handed a whole one.
-    scratch.outputs.clear();
-    scratch.outputs.reserve(output_paths.len());
-    for path in &output_paths {
-        let output = node_for(scanner, graph, path, scope, &mut scratch.path)?;
-        if graph.generator(output).is_some() || scratch.outputs.contains(&output) {
-            return Err(manifest_error(
-                scanner,
-                Anchor::Token,
-                ManifestProblem::DuplicateOutput {
-                    path: BString::from(graph.path(output)),
-                },
-            ));
-        }
-        scratch.outputs.push(output);
-    }
-    nodes_for(
-        scanner,
-        graph,
-        &input_paths,
-        scope,
-        &mut scratch.path,
-        &mut scratch.inputs,
-    )?;
-    nodes_for(
-        scanner,
-        graph,
-        &validation_paths,
-        scope,
-        &mut scratch.path,
-        &mut scratch.validations,
-    )?;
-    let mut bindings = Vec::with_capacity(scanned_bindings.len());
-    for (name, value) in scanned_bindings {
+        let (name, value) = parselet(scanner)?;
+        // Ninja expands each binding against the scope around the statement
+        // rather than against the statement, so the bindings cannot see each
+        // other however they are ordered.
         let value = expand(graph, scope, &value);
         bindings.push((graph.binding(name), Vec::from(value)));
     }
 
-    let edge = graph
-        .add_edge(EdgeSpec {
-            scope,
-            rule,
-            explicit_outputs: &scratch.outputs[..explicit_output_count],
-            implicit_outputs: &scratch.outputs[explicit_output_count..],
-            explicit_inputs: &scratch.inputs[..explicit_input_count],
-            implicit_inputs: &scratch.inputs[explicit_input_count..non_order_only_input_count],
-            order_only_inputs: &scratch.inputs[non_order_only_input_count..],
-            validations: &scratch.validations,
-            // A manifest has no syntax for an edge that is never up to date,
-            // and needs none: Ninja's own answer to the question is a
-            // dependency on a path nothing produces, which a manifest can
-            // already say.
-            always_dirty: false,
-            intermediate: false,
-            disposable: false,
-            bindings,
-        })
-        .map_err(|error| manifest_error(scanner, Anchor::Token, construction_problem(error)))?;
+    // Everything still unchecked about the statement needs a value its own
+    // bindings can change, so this is where Ninja checks all of it: the pool
+    // it names, the paths it expands to, and the dyndep among them. Its lexer
+    // has read past the block by now, which is why each of these diagnostics
+    // names the line *after* the statement and shows no source context — the
+    // column is zero there — and why they are anchored past the block rather
+    // than at the token that raised them.
+    //
+    // The order is Ninja's and it is observable, because a statement wrong in
+    // two ways is reported by whichever it reaches first.
+    let edge = graph.begin_edge(scope, rule, bindings);
+    let env = Env {
+        scope,
+        edge: Some(edge),
+    };
+    graph
+        .resolve_pool(edge)
+        .map_err(|error| edge_problem(scanner, error))?;
+    for path in &output_paths {
+        let output = node_for(scanner, graph, path, env, scratch)?;
+        graph
+            .attach_output(edge, output)
+            .map_err(|error| edge_problem(scanner, error))?;
+    }
+    graph.set_explicit_outputs(edge, explicit_output_count);
+    for path in &input_paths {
+        let input = node_for(scanner, graph, path, env, scratch)?;
+        graph.attach_input(edge, input);
+    }
+    graph.set_input_partitions(edge, explicit_input_count, non_order_only_input_count);
+    for path in &validation_paths {
+        let validation = node_for(scanner, graph, path, env, scratch)?;
+        graph.attach_validation(edge, validation);
+    }
 
     // Only warn mode filters the self-reference; under `=err` it is left in
     // place so cycle detection reports it, which is the whole point of the
-    // flag.
+    // flag. Ninja filters before it resolves the dyndep, so a phony statement
+    // whose dyndep is its own output is rejected rather than accepted.
     if parser.options.phony_cycle_warns {
         if let Some(output) = graph.drop_phony_self_reference(edge) {
             parser.warnings.push(format!(
@@ -523,6 +526,9 @@ fn parseedge(
             ));
         }
     }
+    graph
+        .resolve_dyndep(edge)
+        .map_err(|error| edge_problem(scanner, error))?;
     Ok(())
 }
 
@@ -535,14 +541,15 @@ fn parseinclude(
     scope: Scope,
     newscope: bool,
 ) -> ManifestResult<()> {
-    let path = scanstring(scanner, true)?.ok_or_else(|| {
-        manifest_error(scanner, Anchor::Token, ManifestProblem::ExpectedIncludePath)
-    })?;
+    // An `include` that names nothing is not a syntax error. Ninja evaluates
+    // whatever it read and tries to open it, so a bare `include` fails as a
+    // file that is not there — under the empty name it asked for.
+    let path = scanstring(scanner, true)?.unwrap_or_default();
     // Taken before the newline is read, so a file that cannot be loaded is
     // reported against the line that asked for it.
     let asked_at = scanner.source_span(scanner.last_token());
     scannewline(scanner)?;
-    let path = evaluated_path(scanner, graph, &path, scope)?;
+    let path = expand(graph, scope, &path);
     let scope = if newscope {
         graph.child_scope(scope)
     } else {
@@ -640,49 +647,39 @@ fn parsepool(
 
 // [spec:ronin:def:parse.checkversion-fn]
 // [spec:ronin:sem:parse.checkversion-fn]
-fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i32)> {
-    let bytes = version.as_bytes();
-    let major_end = bytes
+/// The leading digits of `bytes` as a number, or zero when there are none.
+///
+/// This is C's `atoi`, which is what Ninja reads a version component with, and
+/// the reason a `ninja_required_version` cannot be malformed: anything that is
+/// not a number reads as zero, and a manifest requiring version zero is simply
+/// an old one. A component too large to hold saturates instead of wrapping, so
+/// an absurd requirement stays a requirement this cannot meet.
+fn version_component(bytes: &[u8]) -> i32 {
+    let digits = bytes
         .iter()
         .position(|byte| !byte.is_ascii_digit())
         .unwrap_or(bytes.len());
-    if major_end == 0 {
-        return Err(manifest_error(
-            scanner,
-            Anchor::Token,
-            ManifestProblem::InvalidRequiredVersion,
-        ));
+    if digits == 0 {
+        return 0;
     }
-    let major = std::str::from_utf8(&bytes[..major_end])
-        .unwrap()
-        .parse::<i32>()
-        .map_err(|_| {
-            manifest_error(
-                scanner,
-                Anchor::Token,
-                ManifestProblem::InvalidRequiredVersion,
-            )
-        })?;
-    let mut minor = 0;
-    if bytes.get(major_end) == Some(&b'.') {
-        let minor_bytes = &bytes[major_end + 1..];
-        let minor_end = minor_bytes
-            .iter()
-            .position(|byte| !byte.is_ascii_digit())
-            .unwrap_or(minor_bytes.len());
-        if minor_end != 0 {
-            minor = std::str::from_utf8(&minor_bytes[..minor_end])
-                .unwrap()
-                .parse::<i32>()
-                .map_err(|_| {
-                    manifest_error(
-                        scanner,
-                        Anchor::Token,
-                        ManifestProblem::InvalidRequiredVersion,
-                    )
-                })?;
-        }
-    }
+    std::str::from_utf8(&bytes[..digits])
+        .unwrap_or_default()
+        .parse()
+        .unwrap_or(i32::MAX)
+}
+
+fn checkversion(scanner: &Scanner<'_>, version: &BStr) -> ManifestResult<(i32, i32)> {
+    let bytes = version.as_bytes();
+    let (major, rest) = bytes
+        .iter()
+        .position(|byte| *byte == b'.')
+        .map_or((bytes, &[][..]), |dot| (&bytes[..dot], &bytes[dot + 1..]));
+    let major = version_component(major);
+    let minor_end = rest
+        .iter()
+        .position(|byte| *byte == b'.')
+        .unwrap_or(rest.len());
+    let minor = version_component(&rest[..minor_end]);
     if major > crate::cli::NINJA_COMPAT_MAJOR
         || major == crate::cli::NINJA_COMPAT_MAJOR && minor > crate::cli::NINJA_COMPAT_MINOR
     {
@@ -736,8 +733,10 @@ fn parse_at(
     })?;
     let source = Source::from_bytes(&path, input);
     let mut scanner = Scanner::new(&source);
-    // One set of buffers per manifest, reused by every statement in it.
-    let mut scratch = EdgeScratch::default();
+    // One expansion buffer per manifest, reused by every path in it, so a
+    // manifest of statements that need expanding allocates once rather than
+    // once per path.
+    let mut scratch = Vec::new();
     while let Some(token) = scankeyword(&mut scanner)? {
         match token.kind {
             TokenKind::Rule => parserule(&mut scanner, graph, scope)?,
@@ -896,10 +895,15 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_implicit_output_duplicate_error() {
+        // One statement naming an output twice is its own complaint: nothing
+        // elsewhere generates it, so "multiple rules generate" would be a lie.
         let error = parse_error(
             "rule cat\n  command = cat $in > $out\nbuild foo baz | foo baq foo: cat bar\n",
         );
-        assert!(error.contains("multiple rules generate foo"));
+        assert!(
+            error.ends_with(":4: foo is defined as an output multiple times\n"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1240,15 +1244,20 @@ mod ninja_manifest_tests {
 
     #[test]
     fn ninja_manifest_parser_rejects_unterminated_lines() {
-        assert_eq!(parse_error("x = 3"), "error: unexpected EOF");
-        assert_eq!(
-            parse_error("x = $\n"),
-            "error: unexpected EOF after continuation"
+        // Located like every other lexer diagnostic, and worded the same
+        // whether or not a line continuation is what ran off the end: Ninja
+        // reaches the same `unexpected EOF` from both.
+        let unterminated = parse_error("x = 3");
+        assert!(
+            unterminated.ends_with(":1: unexpected EOF\nx = 3\n     ^ near here"),
+            "{unterminated}"
         );
-        assert_eq!(
-            parse_error("x = a$\n b$\n $\n"),
-            "error: unexpected EOF after continuation"
-        );
+        // The continuation puts the end of the file on the line after it, where
+        // the column is zero and the context is dropped.
+        let continued = parse_error("x = $\n");
+        assert!(continued.ends_with(":2: unexpected EOF\n"), "{continued}");
+        let continued = parse_error("x = a$\n b$\n $\n");
+        assert!(continued.ends_with(":4: unexpected EOF\n"), "{continued}");
     }
 
     #[test]

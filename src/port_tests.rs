@@ -318,7 +318,20 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
         .to_string()
         .contains("bad $-escape (literal $ must be written as $$)"));
 
+    // Ninja's lexer reads `   \tfoobar` as an indent token and *then* an error
+    // token, so which of the two a manifest hears depends on where it stands.
+    // Ronin scans rather than tokenizes, so the two positions are checked
+    // separately: leading spaces are still an indent, and the tab is an error
+    // only where a statement was expected — with nothing in front of it.
     fs::write(&path, "   \tfoobar\n").unwrap();
+    let source = scan::Source::from_path(&path).unwrap();
+    let mut scanner = scan::Scanner::new(&source);
+    assert!(scan::scankeyword(&mut scanner)
+        .unwrap_err()
+        .to_string()
+        .contains("unexpected indent"));
+
+    fs::write(&path, "\tfoobar\n").unwrap();
     let source = scan::Source::from_path(&path).unwrap();
     let mut scanner = scan::Scanner::new(&source);
     assert!(scan::scankeyword(&mut scanner)

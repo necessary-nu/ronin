@@ -24,7 +24,7 @@ use crate::env::{
 };
 use crate::graph::{mkedge, mknode, nodeget, nodeuse, EdgeId, Graph, NodeId, PathStyle};
 use crate::names::{Names, VarId};
-use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, EvalPart, EvalString, IdVec};
+use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, EvalPart, EvalString};
 use std::fmt;
 use std::num::NonZeroUsize;
 
@@ -157,6 +157,11 @@ pub enum FrontendError {
         /// The output that is already generated elsewhere.
         path: Vec<u8>,
     },
+    /// One build statement names the same output twice.
+    RepeatedOutput {
+        /// The output the statement names more than once.
+        path: Vec<u8>,
+    },
     /// A scope already defines a rule of that name.
     DuplicateRule {
         /// The rule name asked for twice.
@@ -193,6 +198,11 @@ impl fmt::Display for FrontendError {
             Self::DuplicateOutput { path } => {
                 write!(formatter, "multiple rules generate {}", path.as_bstr())
             }
+            Self::RepeatedOutput { path } => write!(
+                formatter,
+                "{} is defined as an output multiple times",
+                path.as_bstr()
+            ),
             Self::DuplicateRule { name } => {
                 write!(formatter, "duplicate rule '{}'", name.as_bstr())
             }
@@ -391,71 +401,139 @@ impl BuildGraph {
     ///
     /// Returns [`FrontendError::EdgeWithoutOutputs`] for a statement that
     /// generates nothing, [`FrontendError::DuplicateOutput`] for an output
-    /// another edge already generates or this one names twice,
-    /// [`FrontendError::UnknownPool`] for a `pool` binding naming a pool that
-    /// was never defined, and [`FrontendError::DyndepNotInput`] for a `dyndep`
-    /// binding naming a path the edge does not depend on.
+    /// another edge already generates, [`FrontendError::RepeatedOutput`] for
+    /// one this statement names twice, [`FrontendError::UnknownPool`] for a
+    /// `pool` binding naming a pool that was never defined, and
+    /// [`FrontendError::DyndepNotInput`] for a `dyndep` binding naming a path
+    /// the edge does not depend on.
     // [spec:ronin:req:frontend.graph-construction]
     pub fn add_edge(&mut self, spec: EdgeSpec<'_>) -> Result<Edge, FrontendError> {
         if spec.explicit_outputs.is_empty() && spec.implicit_outputs.is_empty() {
             return Err(FrontendError::EdgeWithoutOutputs);
         }
-        let mut out =
-            IdVec::with_capacity(spec.explicit_outputs.len() + spec.implicit_outputs.len());
-        for output in spec.explicit_outputs.iter().chain(spec.implicit_outputs) {
-            if self.arenas.node(output.0).gen.is_some() || out.contains(&output.0) {
-                return Err(FrontendError::DuplicateOutput {
-                    path: self.arenas.node_path(output.0).to_vec(),
-                });
-            }
-            out.push(output.0);
-        }
-        let input = spec
-            .explicit_inputs
-            .iter()
-            .chain(spec.implicit_inputs)
-            .chain(spec.order_only_inputs)
-            .map(|node| node.0)
-            .collect::<IdVec<_>>();
-        let validation = spec
-            .validations
-            .iter()
-            .map(|node| node.0)
-            .collect::<IdVec<_>>();
-
-        let edge = mkedge(&mut self.arenas, spec.scope.0);
-        for output in &out {
-            self.arenas.node_mut(*output).gen = Some(edge);
-        }
-        for node in &input {
-            nodeuse(&mut self.arenas, *node, edge);
-        }
-        for node in &validation {
-            self.arenas.add_validation_use(*node, edge);
-        }
-        let explicit_inputs = spec.explicit_inputs.len();
-        let non_order_only_inputs = explicit_inputs + spec.implicit_inputs.len();
+        let edge = self.begin_edge(spec.scope, spec.rule, spec.bindings);
         {
-            let stored = self.arenas.edge_mut(edge);
-            stored.rule = Some(spec.rule.0);
-            stored.out = out;
-            stored.input = input;
-            stored.validation = validation;
-            stored.set_explicit_output_count(spec.explicit_outputs.len());
-            stored.set_input_partitions(explicit_inputs, non_order_only_inputs);
+            let stored = self.arenas.edge_mut(edge.0);
             stored.always_dirty = spec.always_dirty;
             stored.intermediate = spec.intermediate;
             stored.disposable = spec.disposable;
         }
-        for (name, value) in spec.bindings {
-            self.arenas
-                .edge_mut(edge)
-                .bindings
-                .insert(name.0, BString::from(value));
-        }
         self.resolve_pool(edge)?;
+        for output in spec.explicit_outputs.iter().chain(spec.implicit_outputs) {
+            self.attach_output(edge, *output)?;
+        }
+        self.set_explicit_outputs(edge, spec.explicit_outputs.len());
+        for input in spec
+            .explicit_inputs
+            .iter()
+            .chain(spec.implicit_inputs)
+            .chain(spec.order_only_inputs)
+        {
+            self.attach_input(edge, *input);
+        }
+        self.set_input_partitions(
+            edge,
+            spec.explicit_inputs.len(),
+            spec.explicit_inputs.len() + spec.implicit_inputs.len(),
+        );
+        for validation in spec.validations {
+            self.attach_validation(edge, *validation);
+        }
         self.resolve_dyndep(edge)?;
-        Ok(Edge(edge))
+        Ok(edge)
+    }
+
+    /// Creates an edge carrying its own bindings and nothing else.
+    ///
+    /// Ninja builds a build statement in this order rather than all at once,
+    /// and the order is observable: the statement's `pool` is resolved through
+    /// the edge before any path is interned, so a statement that names an
+    /// unknown pool *and* an output another statement already generates is
+    /// reported as the pool. A front end holding a whole statement calls
+    /// [`Self::add_edge`], which is these operations in that order; the
+    /// manifest parser calls them itself because it also has to say where each
+    /// failure happened.
+    pub(crate) fn begin_edge(
+        &mut self,
+        scope: Scope,
+        rule: Rule,
+        bindings: Vec<(Binding, Vec<u8>)>,
+    ) -> Edge {
+        let edge = mkedge(&mut self.arenas, scope.0);
+        let stored = self.arenas.edge_mut(edge);
+        stored.rule = Some(rule.0);
+        for (name, value) in bindings {
+            stored.bindings.insert(name.0, BString::from(value));
+        }
+        Edge(edge)
+    }
+
+    /// The value `edge`'s own bindings give `name`, before its rule or the
+    /// scope around it are consulted.
+    ///
+    /// Ninja evaluates a build statement's paths against a scope holding that
+    /// statement's bindings, so `build $stem.o: cc` sees a `stem` the statement
+    /// itself declares. The values were expanded against the enclosing scope
+    /// before they were stored, so they cannot see each other.
+    pub(crate) fn edge_binding(&self, edge: Edge, name: &[u8]) -> Option<&[u8]> {
+        let name = self.arenas.names().lookup(BStr::new(name))?;
+        self.arenas
+            .edge(edge.0)
+            .bindings
+            .get(name)
+            .map(|value| &value[..])
+    }
+
+    /// Records `output` as generated by `edge`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FrontendError::DuplicateOutput`] when another edge already
+    /// generates it and [`FrontendError::RepeatedOutput`] when this one does.
+    pub(crate) fn attach_output(&mut self, edge: Edge, output: Node) -> Result<(), FrontendError> {
+        if let Some(other) = self.arenas.node(output.0).gen {
+            let path = self.arenas.node_path(output.0).to_vec();
+            return Err(if other == edge.0 {
+                FrontendError::RepeatedOutput { path }
+            } else {
+                FrontendError::DuplicateOutput { path }
+            });
+        }
+        self.arenas.node_mut(output.0).gen = Some(edge.0);
+        self.arenas.edge_mut(edge.0).out.push(output.0);
+        Ok(())
+    }
+
+    /// Records how many of the outputs attached so far `$out` names.
+    pub(crate) fn set_explicit_outputs(&mut self, edge: Edge, count: usize) {
+        self.arenas
+            .edge_mut(edge.0)
+            .set_explicit_output_count(count);
+    }
+
+    /// Records `input` as one `edge` depends on.
+    pub(crate) fn attach_input(&mut self, edge: Edge, input: Node) {
+        nodeuse(&mut self.arenas, input.0, edge.0);
+        self.arenas.edge_mut(edge.0).input.push(input.0);
+    }
+
+    /// Records where the inputs attached so far stop being explicit and stop
+    /// making the outputs out of date.
+    pub(crate) fn set_input_partitions(
+        &mut self,
+        edge: Edge,
+        explicit: usize,
+        non_order_only: usize,
+    ) {
+        self.arenas
+            .edge_mut(edge.0)
+            .set_input_partitions(explicit, non_order_only);
+    }
+
+    /// Records `validation` as a target built alongside `edge`.
+    pub(crate) fn attach_validation(&mut self, edge: Edge, validation: Node) {
+        self.arenas.add_validation_use(validation.0, edge.0);
+        self.arenas.edge_mut(edge.0).validation.push(validation.0);
     }
 
     /// Make `edge` wait for additional order-only inputs.
@@ -498,8 +576,13 @@ impl BuildGraph {
         stored.disposable |= disposable;
     }
 
-    fn resolve_pool(&mut self, edge: EdgeId) -> Result<(), FrontendError> {
-        let Some(name) = edgevar(&self.arenas, edge, Names::POOL, PathStyle::ShellEscaped)
+    /// Resolves `edge`'s `pool` binding against the declared pools.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FrontendError::UnknownPool`] when it names one nobody declared.
+    pub(crate) fn resolve_pool(&mut self, edge: Edge) -> Result<(), FrontendError> {
+        let Some(name) = edgevar(&self.arenas, edge.0, Names::POOL, PathStyle::ShellEscaped)
             .filter(|name| !name.is_empty())
         else {
             return Ok(());
@@ -507,22 +590,28 @@ impl BuildGraph {
         let Ok(pool) = poolget(&self.state, BStr::new(name.as_slice())) else {
             return Err(FrontendError::UnknownPool { name: name.into() });
         };
-        self.arenas.edge_mut(edge).pool = Some(pool);
+        self.arenas.edge_mut(edge.0).pool = Some(pool);
         Ok(())
     }
 
-    fn resolve_dyndep(&mut self, edge: EdgeId) -> Result<(), FrontendError> {
-        let Some(mut path) = edgevar(&self.arenas, edge, Names::DYNDEP, PathStyle::Raw)
+    /// Resolves `edge`'s `dyndep` binding against its own inputs.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FrontendError::DyndepNotInput`] when it names a path the edge
+    /// does not depend on.
+    pub(crate) fn resolve_dyndep(&mut self, edge: Edge) -> Result<(), FrontendError> {
+        let Some(mut path) = edgevar(&self.arenas, edge.0, Names::DYNDEP, PathStyle::Raw)
             .filter(|path| !path.is_empty())
         else {
             return Ok(());
         };
         canonpath(&mut path);
         let dyndep = mknode(&mut self.arenas, path.as_slice());
-        if !self.arenas.edge(edge).input.contains(&dyndep) {
+        if !self.arenas.edge(edge.0).input.contains(&dyndep) {
             return Err(FrontendError::DyndepNotInput { path: path.into() });
         }
-        self.arenas.edge_mut(edge).dyndep = Some(dyndep);
+        self.arenas.edge_mut(edge.0).dyndep = Some(dyndep);
         Ok(())
     }
 
@@ -728,7 +817,7 @@ mod tests {
         let twice = nodes(&mut graph, &["twice", "twice"]);
         assert_eq!(
             graph.add_edge(spec(root, rule, &twice, &input)),
-            Err(FrontendError::DuplicateOutput {
+            Err(FrontendError::RepeatedOutput {
                 path: b"twice".to_vec()
             })
         );

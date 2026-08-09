@@ -719,6 +719,204 @@ const BUILD_CASES: &[BuildCase] = &[
         stale_manifest: false,
         status: 1,
     },
+    // Everything a build statement's own bindings can change is checked once
+    // that block is read, so Ninja's lexer has already moved past the statement
+    // and the diagnostic names the *following* line with no caret under it.
+    // Each of these is one of those, and the line number is the part that is
+    // both easy to get wrong and impossible to notice.
+    BuildCase {
+        name: "an empty output path is reported after the statement's block",
+        manifest: "rule r\n  command = c\nbuild $undefined: r source\nbuild b: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "an empty input path is reported after the statement's block",
+        manifest: "rule r\n  command = c\nbuild a: r $undefined\nbuild b: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a duplicate output is reported after the statement's block",
+        manifest: "rule r\n  command = c\nbuild a: r source\nbuild a: r other\nbuild b: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // The statement's own bindings sit between it and the line the
+        // diagnostic names, which is the shape a generated manifest has.
+        name: "a duplicate output names the line after the bindings, not the statement",
+        manifest: "rule r\n  command = c\nbuild a: r source\nbuild a: r other\n  x = 1\n  y = 2\n\
+                   build b: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // Not "multiple rules generate": nothing else generates it, the
+        // statement simply names it twice.
+        name: "one statement naming an output twice is its own complaint",
+        manifest: "rule r\n  command = c\nbuild a b | a: r source\nbuild c: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "an unknown pool is reported after the statement's block",
+        manifest: "rule r\n  command = c\nbuild a: r source\n  pool = nosuchpool\n\
+                   build b: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // The pool is resolved before any path is interned, so a statement
+        // wrong in both ways is reported as the pool.
+        name: "an unknown pool outranks a duplicate output in the same statement",
+        manifest: "rule r\n  command = c\nbuild a: r source\nbuild a: r other\n\
+                     pool = nosuchpool\nbuild b: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a dyndep that is not an input is reported after the statement's block",
+        manifest: "rule r\n  command = c\nbuild a: r source\n  dyndep = elsewhere\n\
+                   build b: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // A statement's paths see its own bindings, so this one names `sub/a`
+        // rather than failing on an empty path.
+        name: "a statement's paths expand against its own bindings",
+        manifest: "rule r\n  command = c\nbuild $dir/a: r source\n  dir = sub\n",
+        arguments: &["-C", "@DIR@", "-t", "targets", "all"],
+        extra: &[],
+        stale_manifest: false,
+        status: 0,
+    },
+    // A tab is ordinary text everywhere except where a statement belongs. It
+    // therefore never indents, which is why a tab-indented rule body is not a
+    // body at all and the rule is reported as having no command.
+    BuildCase {
+        name: "a tab-indented rule body leaves the rule without a command",
+        manifest: "rule r\n\tcommand = c\nbuild a: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a tab where a statement belongs is the lexing error",
+        manifest: "rule r\n  command = c\n\tx = 1\nbuild a: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a tab inside a path is part of the path",
+        manifest: "rule r\n  command = c\nbuild a: r so\turce\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "an unterminated last line is located like any other lexer failure",
+        manifest: "rule r\n  command = c\nbuild a: r source",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // A separator this position does not take is left where it is, so what
+        // complains is the colon that was expected — naming the whole `||`.
+        name: "a separator in the output position is what the colon says it found",
+        manifest: "rule r\n  command = c\nbuild a || b: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a name after a rule's own is what the newline says it found",
+        manifest: "rule r x\n  command = c\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // Nothing to include is not a syntax error: the empty name is opened
+        // and reported as the missing file it is.
+        name: "an include naming nothing fails on the empty name",
+        manifest: "include\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a malformed escape puts the caret on the dollar",
+        manifest: "x = a$!\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // This one does not, because Ninja raises it without marking the token
+        // first, so it still points at whatever was read before the value.
+        name: "the newline escape's version complaint points at the assignment",
+        manifest: "x = a$^b\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // Half a line ending is not a line ending. This is what a CRLF
+        // manifest looks like once something has eaten one of the newlines.
+        name: "a carriage return with no newline behind it is a lexing error",
+        manifest: "rule r\n  command = c\rbuild a: r source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a token that belongs mid-statement is named where a statement was due",
+        manifest: "= 1\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // The warning is raised while reading a statement the parser then gets
+        // past; the failure comes later. Both are printed, in that order.
+        name: "a warning raised before a fatal manifest error survives it",
+        manifest: "build a: phony a\nbuild b: nosuchrule\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
     BuildCase {
         name: "a failing manifest regeneration is an error against the manifest",
         manifest: "rule regen\n  command = exit 4\n  generator = 1\n\
@@ -1227,5 +1425,22 @@ mod tests {
     fn a_malformed_log_line_is_rejected_rather_than_skipped() {
         assert!(parse_log_records("0\t1\tobject\n").is_err());
         assert!(parse_log_records("x\t1\t9\tobject\taa\n").is_err());
+    }
+
+    /// `normalize` removes the product name and the temporary directory and
+    /// nothing else, so a case whose output carries the tool's *version*
+    /// can never match: Ninja calls itself 1.14.0.git and Ronin does not.
+    /// That is a property of the manifest, so it is checked here rather
+    /// than discovered as a mismatch that looks like a real difference.
+    // [spec:ronin:req:compat.upstream-conformance/test]
+    #[test]
+    fn build_cases_never_compare_the_tools_version() {
+        for case in BUILD_CASES {
+            assert!(
+                !case.manifest.contains("ninja_required_version"),
+                "build case '{}' would compare the tool's version",
+                case.name
+            );
+        }
     }
 }

@@ -1667,7 +1667,8 @@ pub(crate) fn run_bytes<'sink>(
     let mut parse_elapsed = std::time::Duration::ZERO;
     for _ in 0..100 {
         let parse_started = std::time::Instant::now();
-        let mut manifest = crate::parse::load_manifest_in(
+        let mut manifest_warnings = Vec::new();
+        let parsed = crate::parse::load_manifest_reporting(
             invocation
                 .manifest
                 .to_path()
@@ -1676,14 +1677,19 @@ pub(crate) fn run_bytes<'sink>(
                 })?,
             invocation.working_directory.clone(),
             invocation.parse_options,
-        )?;
+            &mut manifest_warnings,
+        );
         parse_count += 1;
         parse_elapsed += parse_started.elapsed();
+        // Before the failure is propagated, not after: Ninja writes a warning
+        // where it raises it, so one raised by an earlier statement survives a
+        // later statement that stops the parse.
         emit_warnings(
-            &mut manifest.warnings,
+            &mut manifest_warnings,
             build_diagnostics.as_deref_mut(),
             &mut warnings,
         )?;
+        let mut graph = parsed?;
 
         if let Some(tool) = invocation
             .selected_tool
@@ -1691,29 +1697,28 @@ pub(crate) fn run_bytes<'sink>(
         {
             return run_manifest_tool(
                 tool,
-                &manifest.graph,
+                &graph,
                 &invocation.tool_arguments,
                 ToolRunContext::new(&invocation.build_options, &invocation.working_directory),
             );
         }
 
-        let logical_builddir = manifest
-            .graph
-            .variable(manifest.graph.root(), b"builddir")
+        let logical_builddir = graph
+            .variable(graph.root(), b"builddir")
             .filter(|value| !value.is_empty())
             .map(|value| PathBuf::from(value.to_os_str().expect("byte strings are valid on Unix")));
         let builddir = logical_builddir.as_deref().map_or_else(
             || invocation.working_directory.as_path().to_owned(),
             |directory| invocation.working_directory.resolve(directory),
         );
-        let (mut persistence, warning) = Persistence::open(&mut manifest.graph, &builddir)?;
+        let (mut persistence, warning) = Persistence::open(&mut graph, &builddir)?;
         if let Some(warning) = warning {
             append_output(&mut output, &warning);
         }
         if let Some(tool) = invocation.selected_tool {
             let result = run_log_tool(
                 tool,
-                &manifest.graph,
+                &graph,
                 &mut persistence.build_log,
                 &mut persistence.deps_log,
                 &invocation.tool_arguments,
@@ -1726,7 +1731,7 @@ pub(crate) fn run_bytes<'sink>(
         }
 
         let manifest_result = rebuild_manifest(
-            &mut manifest.graph,
+            &mut graph,
             &mut persistence,
             &invocation.build_options,
             BuildIo {
@@ -1752,7 +1757,7 @@ pub(crate) fn run_bytes<'sink>(
         }
 
         let outcome = build_targets(
-            &mut manifest.graph,
+            &mut graph,
             &mut persistence,
             &invocation.build_options,
             BuildIo {

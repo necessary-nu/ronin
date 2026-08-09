@@ -18,8 +18,15 @@ impl WorkingDirectory {
         Ok(())
     }
 
+    /// Where `path` is, read from this directory.
+    ///
+    /// An empty path stays empty rather than becoming this directory. Ninja
+    /// works from a real process working directory, so a manifest asking for
+    /// the empty name asks the kernel for it and is told there is no such file
+    /// — not that it found a directory. Joining would answer the wrong
+    /// question and report the wrong reason for it.
     pub(crate) fn resolve(&self, path: &Path) -> PathBuf {
-        if path.is_absolute() || self.0.as_os_str().is_empty() {
+        if path.is_absolute() || path.as_os_str().is_empty() || self.0.as_os_str().is_empty() {
             path.to_owned()
         } else {
             self.0.join(path)
