@@ -303,6 +303,7 @@ assertions (
     {id make-unaddressable-phony-aliases, kind @complete, author "brendan@necessary.nu", at 2026-08-09T16:34:25.62515217Z}
     {id make-second-expansion-patterns, kind @complete, author "brendan@necessary.nu", at 2026-08-09T17:17:47.851925543Z}
     {id ronin-exit-status-parity, kind @complete, author "brendan@necessary.nu", at 2026-08-09T19:05:47.569973822Z}
+    {id make-makeflags-residue-classification, kind @complete, author "brendan@necessary.nu", at 2026-08-09T19:52:31.117510043Z}
 )
 
 impl_evidence (

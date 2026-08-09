@@ -63,7 +63,7 @@ struct Family {
     reason: &'static str,
 }
 
-const FAMILIES: [Family; 18] = [
+const FAMILIES: [Family; 19] = [
     Family {
         name: "recipe-error-line",
         class: Class::Narration,
@@ -98,6 +98,11 @@ const FAMILIES: [Family; 18] = [
         name: "no-work-line",
         class: Class::Narration,
         reason: "Ronin says it had nothing to do; Make says nothing at all.",
+    },
+    Family {
+        name: "up-to-date-line",
+        class: Class::Narration,
+        reason: "Make announced a goal was already up to date; Ronin either said nothing or counted the goal as a build step and printed its progress line.",
     },
     Family {
         name: "recipe-interleave",
@@ -230,7 +235,7 @@ enum Side {
 /// the name in front, so two tools saying the same thing about the same problem
 /// cancel out while two tools saying *different* things still show up. Deleting
 /// the whole line would hide a wrong message behind a right prefix.
-fn normalise(line: &str, side: Side, recipe: &[String]) -> (Option<&'static str>, Option<String>) {
+fn normalise(line: &str, side: Side, source: &Source) -> (Option<&'static str>, Option<String>) {
     let trimmed = line.trim_start();
     // The name comes off first, because every shape below can wear one and a
     // shape is not recognisable through it. The suite writes our name into its
@@ -271,13 +276,20 @@ fn normalise(line: &str, side: Side, recipe: &[String]) -> (Option<&'static str>
         if body.contains("Nothing to be done") {
             return (Some("no-work-line"), None);
         }
+        // Make's other way of saying it did nothing, for a goal that already
+        // exists or whose recipe expanded to no command at all. Ronin has no
+        // counterpart: it either says nothing or, having made an edge for the
+        // goal, counts it and prints `[1/1] build all`.
+        if up_to_date_line(body) {
+            return (Some("up-to-date-line"), None);
+        }
         // The recipe, echoed. Make prints each line before running it and Ronin
         // prints a progress line instead, so this is the counterpart of
         // `ninja-progress` and the reason it was invisible: nothing in a diff
         // says an unmatched line is the command's text rather than its output.
         // The makefile the test wrote does say, and it is on disk beside the
         // diff, so it is read rather than guessed at.
-        if recipe.iter().any(|line| echoes(line, body)) {
+        if source.recipe.iter().any(|line| echoes(line, body)) {
             return (Some("recipe-echo"), None);
         }
     }
@@ -404,49 +416,118 @@ fn diagnostic_body<'a>(line: &'a str, name: &str) -> Option<&'a str> {
     (!level.is_empty() && level.bytes().all(|byte| byte.is_ascii_digit())).then_some(body)
 }
 
+/// `'all' is up to date.` — Make saying it found nothing to do for a goal.
+fn up_to_date_line(line: &str) -> bool {
+    line.starts_with('\'') && line.ends_with("' is up to date.")
+}
+
+/// The argument-less short switches GNU Make runs together into one cluster.
+///
+/// `switches[]` in main.c, every `flag` or `flag_off` entry with a single-letter
+/// name that goes into the environment, in the order the table lists them:
+/// `-h` and `-v` are excluded there by `toenv`, and `-b`/`-m` are ignored
+/// switches with no state to report.
+const CLUSTER_SWITCHES: &str = "BdeikLnpqrRsStw";
+
+/// Whether a word could be that cluster.
+///
+/// Every letter is one of the switches and no letter repeats, which is what
+/// keeps `rR` and `erR` apart from most words a recipe might print — `keep` has
+/// the letters but says one twice. It is still a weak shape on its own, which
+/// is why the caller only offers it a word from a makefile that reads
+/// MAKEFLAGS.
+fn is_switch_cluster(word: &str) -> bool {
+    let mut seen = String::new();
+    for letter in word.chars() {
+        if !CLUSTER_SWITCHES.contains(letter) || seen.contains(letter) {
+            return false;
+        }
+        seen.push(letter);
+    }
+    !seen.is_empty()
+}
+
 /// Whether a line is only switches and command-line assignments.
 ///
 /// What `$(MAKEFLAGS)` expands to, and nothing a recipe is likely to print on
 /// its own: every word is either a switch or holds an `=`, and there is at
 /// least one word, so an empty line does not qualify.
-fn is_flag_list(line: &str) -> bool {
-    let mut words = line.split_ascii_whitespace().peekable();
-    words.peek().is_some()
-        && words.all(|word| word == "--" || word.starts_with('-') || word.contains('='))
+///
+/// GNU Make writes the value in two parts — `define_makeflags` in main.c, and
+/// measured on 4.4.1 rather than read off it: the argument-less short switches
+/// come first, run together with no dash in front of them, then the switches
+/// that carry an argument or have only a long name, each with its own dash,
+/// then ` -- ` and the command-line variable definitions. `-e -r -R FOO=bar`
+/// comes back as `erR -- FOO=bar`, and `-w` alone as `w`. That leading cluster
+/// is what this test used to reject, which sent the whole of variables/MAKEFLAGS
+/// into the residue that means "not recognised". It cannot be recognised safely
+/// on its own, so `cluster` is only true when the makefile the line came from
+/// reads MAKEFLAGS.
+fn is_flag_list(line: &str, cluster: bool) -> bool {
+    let mut words = 0usize;
+    for (index, word) in line.split_ascii_whitespace().enumerate() {
+        words += 1;
+        let recognised = word == "--"
+            || word.starts_with('-')
+            || word.contains('=')
+            // Only the first word: the cluster is written once, in front.
+            || (cluster && index == 0 && is_switch_cluster(word));
+        if !recognised {
+            return false;
+        }
+    }
+    words > 0
 }
 
-/// The recipe lines of the makefile a case ran, as the Makefile wrote them.
+/// What the makefile a case ran can tell the classifier about its output.
 ///
 /// The driver leaves a `.run` file beside each `.diff` holding the exact command
 /// line, which names the makefile with `-f`. That is how the makefile is found
 /// rather than guessed at from the case's name: one script writes several
 /// makefiles and the numbering of the two does not have to agree.
-fn recipe_of(diff: &Path, tests: &Path) -> Vec<String> {
-    let run = diff.to_string_lossy().replace(".diff", ".run");
-    let Ok(command) = fs::read_to_string(&run) else {
-        return Vec::new();
-    };
-    let mut words = command.split_ascii_whitespace();
-    let mut makefile = None;
-    while let Some(word) = words.next() {
-        if word == "-f" || word == "--file" || word == "--makefile" {
-            makefile = words.next();
-            break;
+#[derive(Default)]
+struct Source {
+    /// Its recipe lines, as the makefile wrote them.
+    recipe: Vec<String>,
+    /// Whether it reads `MAKEFLAGS`, which is what lets a residue of
+    /// option-shaped words be read as that variable's value rather than as
+    /// something a recipe printed.
+    reads_makeflags: bool,
+}
+
+impl Source {
+    fn read(diff: &Path, tests: &Path) -> Self {
+        let run = diff.to_string_lossy().replace(".diff", ".run");
+        let Ok(command) = fs::read_to_string(&run) else {
+            return Self::default();
+        };
+        let mut words = command.split_ascii_whitespace();
+        let mut makefile = None;
+        while let Some(word) = words.next() {
+            if word == "-f" || word == "--file" || word == "--makefile" {
+                makefile = words.next();
+                break;
+            }
+        }
+        let Some(makefile) = makefile else {
+            return Self::default();
+        };
+        let Ok(text) = fs::read_to_string(tests.join(makefile)) else {
+            return Self::default();
+        };
+        Self {
+            recipe: text
+                .lines()
+                .filter_map(|line| line.strip_prefix('\t'))
+                // The prefixes are Make's own and never reach the echoed line:
+                // `@` suppresses it, `-` ignores the status, `+` runs it even
+                // under -n.
+                .map(|line| line.trim_start_matches(['@', '-', '+']).to_owned())
+                .filter(|line| !line.trim().is_empty())
+                .collect(),
+            reads_makeflags: text.contains("MAKEFLAGS"),
         }
     }
-    let Some(makefile) = makefile else {
-        return Vec::new();
-    };
-    let Ok(text) = fs::read_to_string(tests.join(makefile)) else {
-        return Vec::new();
-    };
-    text.lines()
-        .filter_map(|line| line.strip_prefix('\t'))
-        // The prefixes are Make's own and never reach the echoed line: `@`
-        // suppresses it, `-` ignores the status, `+` runs it even under -n.
-        .map(|line| line.trim_start_matches(['@', '-', '+']).to_owned())
-        .filter(|line| !line.trim().is_empty())
-        .collect()
 }
 
 /// Every family a case exhibits, and the class it therefore belongs to.
@@ -485,7 +566,7 @@ fn quoted(line: &str) -> Option<&str> {
     rest.split_once('\'').map(|(name, _)| name)
 }
 
-fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
+fn classify(divergence: &Divergence, source: &Source) -> Verdict {
     let mut families = Vec::new();
     let mut note = |family: &'static str| {
         if !families.contains(&family) {
@@ -503,7 +584,7 @@ fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
             refused = true;
             continue;
         }
-        let (family, kept) = normalise(line, Side::Ours, recipe);
+        let (family, kept) = normalise(line, Side::Ours, source);
         if let Some(family) = family {
             note(family);
         }
@@ -528,7 +609,7 @@ fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
 
     let mut residual_expected = Vec::new();
     for line in &divergence.expected {
-        let (family, kept) = normalise(line, Side::Theirs, recipe);
+        let (family, kept) = normalise(line, Side::Theirs, source);
         if let Some(family) = family {
             note(family);
         }
@@ -568,7 +649,10 @@ fn classify(divergence: &Divergence, recipe: &[String]) -> Verdict {
     // A residue that is nothing but switches and assignments is a makefile
     // having printed MAKEFLAGS and got a different answer. Recognised by shape
     // rather than by the case's name, so it holds wherever it happens.
-    if !named_residue && residue().next().is_some() && residue().all(|line| is_flag_list(line)) {
+    if !named_residue
+        && residue().next().is_some()
+        && residue().all(|line| is_flag_list(line, source.reads_makeflags))
+    {
         note("makeflags-content");
         named_residue = true;
     }
@@ -753,8 +837,8 @@ fn main() -> std::process::ExitCode {
         let Ok(text) = fs::read_to_string(path) else {
             continue;
         };
-        let recipe = recipe_of(path, &config.work.join(".."));
-        let verdict = classify(&read_divergence(&text), &recipe);
+        let source = Source::read(path, &config.work.join(".."));
+        let verdict = classify(&read_divergence(&text), &source);
         for family in &verdict.families {
             *by_family.entry(*family).or_default() += 1;
         }
@@ -836,10 +920,25 @@ fn settled(inventory: &str) -> String {
 mod tests {
     use super::{
         classify, echoes, normalise, read_divergence, record, settled, Class, Divergence, Side,
+        Source,
     };
 
     fn lines(text: &[&str]) -> Vec<String> {
         text.iter().map(|line| (*line).to_owned()).collect()
+    }
+
+    /// A case whose makefile could not be read, which is what every test below
+    /// gets unless it says otherwise.
+    fn unread() -> Source {
+        Source::default()
+    }
+
+    /// A case whose makefile reads MAKEFLAGS, with no recipe lines.
+    fn reads_makeflags() -> Source {
+        Source {
+            recipe: Vec::new(),
+            reads_makeflags: true,
+        }
     }
 
     #[test]
@@ -873,7 +972,7 @@ mod tests {
                         "ronin: 'hello.c', needed by 'hello', missing and no known rule to make it",
                     ]),
                 },
-                &[],
+                &unread(),
             )
         };
 
@@ -900,14 +999,14 @@ mod tests {
     /// wearing one was kept as though it were a recipe's output.
     #[test]
     fn a_name_is_peeled_before_a_shape_is_read() {
-        let (family, kept) = normalise("ronin: [Makefile:3: all] Error 1", Side::Theirs, &[]);
+        let (family, kept) = normalise("ronin: [Makefile:3: all] Error 1", Side::Theirs, &unread());
         assert_eq!(family, Some("recipe-error-line"));
         assert_eq!(kept, None);
 
         let (family, kept) = normalise(
             "ronin: *** No rule to make target 'x'.  Stop.",
             Side::Ours,
-            &[],
+            &unread(),
         );
         assert_eq!(family, Some("product-name"));
         assert_eq!(
@@ -925,13 +1024,13 @@ mod tests {
             expected: lines(&["make: *** No rule to make target 'x'.  Stop."]),
             actual: lines(&["ronin: *** No rule to make target 'x'.  Stop."]),
         };
-        assert_eq!(classify(&same, &[]).class, Class::Narration);
+        assert_eq!(classify(&same, &unread()).class, Class::Narration);
 
         let different = Divergence {
             expected: lines(&["make: *** No rule to make target 'x'.  Stop."]),
             actual: lines(&["ronin: *** something else entirely.  Stop."]),
         };
-        assert_eq!(classify(&different, &[]).class, Class::Unclassified);
+        assert_eq!(classify(&different, &unread()).class, Class::Unclassified);
     }
 
     /// A refused option explains the whole of a diff, because the build never
@@ -943,7 +1042,7 @@ mod tests {
             expected: lines(&["hello", "world"]),
             actual: lines(&["ronin: invalid option -- 'I'", "usage: ronin [options]"]),
         };
-        let verdict = classify(&refused, &[]);
+        let verdict = classify(&refused, &unread());
         assert_eq!(verdict.class, Class::Interface);
         assert_eq!(verdict.families, vec!["option-refused"]);
     }
@@ -956,7 +1055,7 @@ mod tests {
             expected: lines(&["echo one", "one", "echo two", "two"]),
             actual: lines(&["echo one", "echo two", "one", "two"]),
         };
-        let verdict = classify(&shuffled, &[]);
+        let verdict = classify(&shuffled, &unread());
         assert_eq!(verdict.class, Class::Narration);
         assert!(verdict.families.contains(&"recipe-interleave"));
     }
@@ -985,10 +1084,10 @@ mod tests {
     #[test]
     fn a_shape_is_narration_only_on_the_side_that_makes_it() {
         assert_eq!(
-            normalise("[1/2] build all", Side::Ours, &[]).0,
+            normalise("[1/2] build all", Side::Ours, &unread()).0,
             Some("ninja-progress")
         );
-        let (family, kept) = normalise("[1/2] build all", Side::Theirs, &[]);
+        let (family, kept) = normalise("[1/2] build all", Side::Theirs, &unread());
         assert_eq!(family, None);
         assert_eq!(kept.as_deref(), Some("[1/2] build all"));
     }
@@ -1013,7 +1112,7 @@ mod tests {
             expected: lines(&["one"]),
             actual: lines(&["f.mk:2: kati doesn't support .SECONDEXPANSION"]),
         };
-        let verdict = classify(&unsupported, &[]);
+        let verdict = classify(&unsupported, &unread());
         assert_eq!(verdict.class, Class::Compiler);
         assert!(verdict.families.contains(&"unsupported-feature"));
         assert!(!verdict.families.contains(&"evaluation"));
@@ -1028,18 +1127,78 @@ mod tests {
             expected: Vec::new(),
             actual: lines(&["-S", "-k"]),
         };
-        let verdict = classify(&flags, &[]);
+        let verdict = classify(&flags, &unread());
         assert_eq!(verdict.class, Class::Interface);
         assert!(verdict.families.contains(&"makeflags-content"));
 
-        assert!(super::is_flag_list("-S"));
-        assert!(super::is_flag_list("-ks -- FOO=bar"));
+        assert!(super::is_flag_list("-S", false));
+        assert!(super::is_flag_list("-ks -- FOO=bar", false));
         // A recipe's output is not a flag list just for starting with a dash.
-        assert!(!super::is_flag_list("-n is what we printed"));
-        assert!(!super::is_flag_list(""));
-        // The bare letter group MAKEFLAGS leads with is deliberately not
-        // recognised: `ks` is indistinguishable from a word a recipe printed,
-        // and guessing there would swallow real output.
-        assert!(!super::is_flag_list("ks -- FOO=bar"));
+        assert!(!super::is_flag_list("-n is what we printed", false));
+        assert!(!super::is_flag_list("", false));
+    }
+
+    /// GNU Make writes the switches that take no argument as one dashless
+    /// cluster in front of everything else, which is the shape that used to
+    /// send the whole of variables/MAKEFLAGS into the unclassified residue.
+    /// Measured on 4.4.1: `-e -r -R FOO=bar` reads back as `erR -- FOO=bar`.
+    #[test]
+    fn a_dashless_cluster_needs_the_makefile() {
+        // Not on its own: `erR` is also a word, and guessing here would swallow
+        // whatever a recipe happened to print.
+        assert!(!super::is_flag_list("erR -- FOO=bar", false));
+        assert!(super::is_flag_list("erR -- FOO=bar", true));
+        assert!(super::is_flag_list("w", true));
+        assert!(super::is_flag_list(
+            "krR --no-print-directory -- hello:=world",
+            true
+        ));
+        // Only in front. A cluster after a dashed switch is not how the value
+        // is written, so a line like that is something else.
+        assert!(!super::is_flag_list("--trace erR", true));
+        // A word whose letters are not all switches, or that says one twice.
+        assert!(!super::is_flag_list("hello", true));
+        assert!(!super::is_flag_list("keep", true));
+
+        let cluster = Divergence {
+            expected: lines(&["erR -- hello:=world FOO=bar"]),
+            actual: lines(&["erR -- hello:=world FOO=bar --no-print-directory"]),
+        };
+        assert_eq!(classify(&cluster, &unread()).class, Class::Unclassified);
+        let verdict = classify(&cluster, &reads_makeflags());
+        assert_eq!(verdict.class, Class::Interface);
+        assert!(verdict.families.contains(&"makeflags-content"));
+    }
+
+    /// Make's other way of saying it did nothing. Measured on GNU Make 4.4.1: a
+    /// goal whose recipe expands to no command at all draws `'all' is up to
+    /// date.`, where Ronin makes an edge for it and prints `[1/1] build all`.
+    #[test]
+    fn up_to_date_is_narration() {
+        let (family, kept) = normalise("make: 'all' is up to date.", Side::Theirs, &unread());
+        assert_eq!(family, Some("up-to-date-line"));
+        assert_eq!(kept, None);
+
+        // Only on Make's side, like every other shape here: Ronin does not say
+        // it, so a line like this from us is something a recipe printed.
+        let (family, kept) = normalise("'all' is up to date.", Side::Ours, &unread());
+        assert_eq!(family, None);
+        assert_eq!(kept.as_deref(), Some("'all' is up to date."));
+
+        // It explains only itself. Output Ronin produced and Make did not still
+        // leaves the case unclassified rather than disappearing behind it.
+        let alone = Divergence {
+            expected: lines(&["make: 'all' is up to date."]),
+            actual: Vec::new(),
+        };
+        assert_eq!(classify(&alone, &unread()).class, Class::Narration);
+        let with_residue = Divergence {
+            expected: lines(&["make: 'all' is up to date."]),
+            actual: lines(&["something we built"]),
+        };
+        assert_eq!(
+            classify(&with_residue, &unread()).class,
+            Class::Unclassified
+        );
     }
 }
