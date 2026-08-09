@@ -1,0 +1,1 @@
+A prerequisite that expands to a bare `=` panics the evaluator at kati/src-rs/eval.rs:814; make-target-specific-separator-is-literal.

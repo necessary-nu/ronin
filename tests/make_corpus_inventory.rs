@@ -58,15 +58,21 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
-    // from 93 when `vpath` and `VPATH` were implemented: the corpus has one
-    // makefile for the directive, and all three of its cases now match GNU Make
-    // where before they were recorded as differing.
+    // from 90 when a missing `include` stopped being reported as a read that
+    // failed and started being reported the way GNU Make reports it, as a
+    // makefile there is no rule to make: `err_include.mk` became byte-identical
+    // and took the `io-error-text` family with it, being the only case that
+    // named it.
+    //
+    // Before that it moved from 93 when `vpath` and `VPATH` were implemented:
+    // the corpus has one makefile for the directive, and all three of its cases
+    // now match GNU Make where before they were recorded as differing.
     //
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 90);
-    assert_eq!(by_class["defect"], 44);
+    assert_eq!(cases.len(), 89);
+    assert_eq!(by_class["defect"], 43);
     assert_eq!(by_class["recorded"], 14);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);

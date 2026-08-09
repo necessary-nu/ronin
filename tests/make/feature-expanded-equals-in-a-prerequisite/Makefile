@@ -1,0 +1,9 @@
+# Whether a rule carries a target-specific assignment is decided on the line as
+# written. An `=` that only appears once a prerequisite has been expanded is
+# part of the name, so this rule has a prerequisite called `one=two` and a
+# recipe of its own that still has to run.
+EQ = =
+
+all: one$(EQ)two ; @printf '%s\n' goal > out
+
+one$(EQ)two: ; @printf '%s\n' prerequisite > dep-out

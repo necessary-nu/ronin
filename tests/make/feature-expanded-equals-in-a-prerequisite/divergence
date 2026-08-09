@@ -1,0 +1,1 @@
+An `=` produced by expanding a prerequisite is read as a target-specific assignment, so the goal recipe never runs; make-target-specific-separator-is-literal.

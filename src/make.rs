@@ -279,6 +279,7 @@ where
             regeneration_nodes,
         } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
         reorder(shuffle, ev.session.flags.not_parallel, &mut nodes);
+        let regeneration_symbols = admit_regeneration_roots(&mut nodes, regeneration_nodes);
         let exported =
             exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
         let command_line =
@@ -306,10 +307,6 @@ where
             }
             return Err(MakeError::evaluate(&error));
         }
-        let regeneration_symbols = regeneration_nodes
-            .iter()
-            .map(|(name, _)| *name)
-            .collect::<Vec<_>>();
         let unit_regenerations = sink
             .unit_nodes(&ev.session, &regeneration_symbols)
             .map_err(|error| {
@@ -524,6 +521,22 @@ impl Draw {
             }
         }
     }
+}
+
+/// Add the generated Makefiles to the roots the graph walk has to reach, and
+/// answer with the names by which the frontend asks for them back.
+///
+/// They are roots of the same graph as the goals and their edges have to be in
+/// it, but they are not goals: they come after them, so a generated include
+/// never displaces the default target, and asking for one is the frontend's
+/// separate decision to make.
+fn admit_regeneration_roots(
+    nodes: &mut Vec<kati::dep::NamedDepNode>,
+    regeneration_nodes: Vec<kati::dep::NamedDepNode>,
+) -> Vec<kati::symtab::Symbol> {
+    let symbols = regeneration_nodes.iter().map(|(name, _)| *name).collect();
+    nodes.extend(regeneration_nodes);
+    symbols
 }
 
 /// Reorder the goals, and each target's prerequisites, before the graph is cut.

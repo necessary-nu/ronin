@@ -406,10 +406,17 @@ fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
     let manifest_path = directory.join("build.ninja");
     let options = NinjaWriterOptions::from_flags(&session.flags);
 
-    let Evaluated { mut ev, nodes, .. } = match evaluate(session) {
+    let Evaluated {
+        mut ev,
+        mut nodes,
+        regeneration_nodes,
+    } = match evaluate(session) {
         Ok(evaluated) => evaluated,
         Err(error) => return Outcome::NotAccepted(format!("{error:#}")),
     };
+    // The two paths have to be handed the same roots, generated Makefiles
+    // included, or the comparison stops covering the edges that make them.
+    nodes.extend(regeneration_nodes);
     let mut sink = GraphSink::new();
     let mut semantics = EdgeSemantics::default();
     let emitted = {

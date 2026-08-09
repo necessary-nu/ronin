@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 11
+| # A pattern rule with several targets is a rule that can make any one of them,
+| # not a rule that makes them together, so two such rules may both offer %.elf.
+| # Make chooses one of them per goal and builds; it does not refuse a graph in
+| # which one name has two possible makers.
+| .SECONDARY:
+| 
+| all: a.elf a.dbg
+| 
+| %.elf %.lnk: %.c ; @printf '%s\n' elf-and-lnk >> log; touch $*.elf $*.lnk
+| 
+| %.elf %.dbg: %.lnk ; @printf '%s\n' elf-and-dbg >> log; touch $*.elf $*.dbg
+file a.c kept 1
+| source
+file a.dbg touched 0
+file a.elf touched 0
+file a.lnk touched 0
+file log touched 2
+| elf-and-lnk
+| elf-and-dbg

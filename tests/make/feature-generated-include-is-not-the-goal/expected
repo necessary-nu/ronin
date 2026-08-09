@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # A generated Makefile is made before the makefile means what it will mean, and
+| # making it does not make it the goal: a bare make still builds the first
+| # explicit rule, and the rule that generates the include is not it.
+| -include gen.mk
+| 
+| first: ; @printf '%s\n' '$(FROM_GENERATED)' > out
+| 
+| gen.mk: ; @printf 'FROM_GENERATED := generated\n' > $@
+file gen.mk touched 1
+| FROM_GENERATED := generated
+file out touched 1
+| generated
