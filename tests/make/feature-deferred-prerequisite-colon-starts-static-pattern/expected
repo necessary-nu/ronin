@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 4
+| .SECONDEXPANSION:
+| all: a.x
+| %.x: $$(subst :,x,dep) ; @printf 'built\n' > log; touch $*.x
+| dep:

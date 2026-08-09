@@ -6696,6 +6696,65 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-09T22:45:25.180476937Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Final review found that 0775006 over-normalizes deferred pattern-rule prerequisites by flattening names across the order-only marker. GNU Make compares parsed dependency names for immediately parsed rules, where `|` classification is ignored, but a `need_2nd_expansion` rule retains one deferred dependency string for `new_pattern_rule`: whitespace around its tokens is insignificant while the position of `|` remains part of candidate identity. Moving `$$(P)` from before to after `|` must therefore keep both rules and select the first, while the whitespace-only replacement case must still select the second. Follow-up work gives deferred rules a whitespace-normalized identity token sequence that preserves `|`, independently from the raw bytes used for actual second expansion."
+                        after_done true
+                    }
+                )
+            }
+
+            {
+                id make-pattern-rule-deferred-prerequisite-identity
+                title "Preserve order-only position in deferred pattern-rule identity"
+                kind @fix
+                deps (make-pattern-rule-prerequisite-names make-second-expansion-patterns)
+                sealed true
+                log (
+                    {
+                        at 2026-08-09T22:45:43.897994971Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T22:49:00.78053797Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Uncommitted review checkpoint: pattern-rule prerequisite identity is now an explicit two-variant representation. ParsedNames holds the existing immediate, glob-expanded dependency-name sequence without order-only classification; DeferredTokens holds first-expanded non-whitespace tokens and inserts `|` at its original position, while deferred_prerequisites still retains the untouched bytes for actual second expansion. The committed whitespace-only fixture remains the positive replacement contrast, and GNU 4.4.1 recorded feature-pattern-rule-replacement-preserves-deferred-order-only-position as the negative contrast. Before the correction, that new case was the sole 1/279 build-intent divergence (Kati selected second; GNU selected first); afterward all 279 pass. cargo fmt, Kati clippy with -D warnings, and Kati all-target tests (97 passed) are green. Node intentionally remains Doing pending review; no corrective commit has been created."
+                    }
+
+                    {
+                        at 2026-08-09T23:22:09.164016043Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Correction to the prior uncommitted checkpoint: a mode-tagged enum is incorrect because GNU Make compares one dependency-name chain across both paths. The review-ready diff uses one prerequisite_names vector. Immediate lists contribute parsed names with `.WAIT` and `|` omitted; deferred lists contribute one whole first-expanded dep string after outer trim and escaped-colon unescape, preserving internal whitespace and `|`. GNU-recorded cross-mode and whitespace contrasts pass in the 281-case gate. The node remains Doing and uncommitted for re-review."
+                    }
+
+                    {
+                        at 2026-08-09T23:31:52.225598054Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Final re-review checkpoint fixes two source-verified details in the uncommitted canonical-vector diff. Static-pattern detection now selects the first colon preceded by an even-length immediate backslash run; parentheses and braces do not hide colons. Immediate `.WAIT` identity is omitted only when the original pre-glob word is literally `.WAIT`, so a wildcard that expands to a file named `.WAIT` keeps that dependency name. GNU-recorded regressions failed exactly 2/283 before these changes and all 283 pass afterward. Kati all-target tests (99 passed), formatting, diff checks, and Kati clippy with -D warnings are green. The node remains Doing and no corrective commit exists pending final re-review."
+                    }
+
+                    {
+                        at 2026-08-09T23:36:35.039716429Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Approved implementation is vendored Kati commit be221aef2e9af0e7d7ae113c7b138c3f2a26602c. Pattern-rule replacement now compares GNU Make's single canonical dependency-name chain across immediate and second-expansion paths: immediate rules contribute parsed, glob-expanded names while omitting only a literal pre-glob `.WAIT`; deferred rules contribute the whole outer-trimmed, escaped-colon-normalized first-expanded string as one name and retain the same bytes for second expansion. Static-pattern parsing treats a colon as quoted only after an odd immediate backslash run. Five GNU-recorded contrasts cover cross-mode name counts, internal whitespace, order-only position, colons inside expansion syntax, and `.WAIT` glob identity. The owned build-intent gate is 283/283; Kati all-target tests are 99/99; formatting, diff checks, and clippy with `-D warnings` are green. Existing broader witnesses remain green for workspace tests (664 passed, 1 ignored), GNU/Kati conformance (386 runs, 43 pre-classified defects), and graph equivalence (296 makefiles, 272 graphs); `scripts/check-make-project.sh` remains independently red at exit 2 for its established recursive CMake collision, `multiple rules generate build/browse_py.h`."
+                    }
+
+                    {
+                        at 2026-08-09T23:36:40.460068917Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
         )

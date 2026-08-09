@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| all: a.x
+| %.x: .W* ; @printf 'first\n' > log; touch $*.x
+| %.x: .WAIT ; @printf 'second\n' > log; touch $*.x
+file a.x touched 0
+file log touched 1
+| first

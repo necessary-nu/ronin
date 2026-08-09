@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file $x kept 1
+| literal dollar name
+file Makefile kept 8
+| all: one.x two.y
+| 
+| %.x: $$x ; @printf 'one-immediate\n' >> log; touch $*.x
+| %.y: $$x tail ; @printf 'two-immediate\n' >> log; touch $*.y
+| 
+| .SECONDEXPANSION:
+| %.x: $$x ; @printf 'one-deferred\n' >> log; touch $*.x
+| %.y: $$x tail ; @printf 'two-deferred\n' >> log; touch $*.y
+file log touched 2
+| one-deferred
+| two-immediate
+file one.x touched 0
+file tail kept 1
+| tail
+file two.y touched 0

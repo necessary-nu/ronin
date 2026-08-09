@@ -308,6 +308,7 @@ assertions (
     {id kati-format-nit-blocks-the-fmt-gate, kind @complete, author "brendan@necessary.nu", at 2026-08-09T21:47:52.554127893Z}
     {id make-pattern-rule-candidate-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:18:18.599008024Z}
     {id make-pattern-rule-prerequisite-names, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:36:24.607059015Z}
+    {id make-pattern-rule-deferred-prerequisite-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:36:40.460068917Z}
 )
 
 impl_evidence (

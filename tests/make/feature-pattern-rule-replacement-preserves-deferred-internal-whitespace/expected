@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| .SECONDEXPANSION:
+| P = dep
+| all: a.x
+| 
+| %.x: fixed  $$(P) ; @printf 'first\n' > log; touch $*.x
+| %.x: fixed $$(P) ; @printf 'second\n' > log; touch $*.x
+file a.x touched 0
+file dep kept 1
+| dep
+file fixed kept 1
+| fixed
+file log touched 1
+| first
