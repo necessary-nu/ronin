@@ -6548,6 +6548,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-09T22:02:06.477857397Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Independent review on 2026-08-10 found two correctness gaps in kati 29933ef and outer a1aecfe. First, expanded_pattern_inputs caches by rule and requested output, but separate target-pattern candidates of one rule can have different stems and second-expanded prerequisites; an unsuccessful a%.x candidate can cache b.ok and poison a succeeding %.x candidate that requires the existing ab.ok. Second, repeats_rule uses exact target-vector equality instead of GNU new_pattern_rule replacement: with equal prerequisites, a later grouped %.x %.y rule containing an earlier single %.x target replaces that earlier rule, while 29933ef keeps and selects the first recipe. Follow-up make-pattern-rule-candidate-identity will key expansion by candidate identity and model target-subsumption replacement during rule population, with GNU-recorded regressions. The completed commits remain append-only history and must not ship without that correction."
+                        after_done true
+                    }
                 )
             }
 
@@ -6619,6 +6627,36 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Measured on make-makeflags-residue-classification, 2026-08-09, against GNU Make 4.4.1 (/usr/bin/make).\n\n  all:; @echo \"MAKEFLAGS=[$$MAKEFLAGS] MFLAGS=[$$MFLAGS] MAKELEVEL=[$$MAKELEVEL]\"\n\n    invocation          GNU Make 4.4.1                              Ronin\n    (none)              MAKEFLAGS=[] MFLAGS=[] MAKELEVEL=[1]        identical\n    -k V=1              MAKEFLAGS=[k -- V=1] MFLAGS=[-k]            MAKEFLAGS=[] MFLAGS=[]\n    env MAKEFLAGS=-r    MAKEFLAGS=[r] MFLAGS=[-r]                   MAKEFLAGS=[-r] MFLAGS=[]\n    -j2 -k V=1          MAKEFLAGS=[k -j2 --jobserver-auth=fifo:… -- V=1]\n                        MFLAGS=[-k -j2 --jobserver-auth=fifo:…]     MAKEFLAGS=[] MFLAGS=[]\n\nMAKELEVEL agrees everywhere; the other two agree only when there is nothing to say. Three differences: the invocation's own switches never reach the recipe, an inherited value is passed through raw rather than re-rendered (`-r` where GNU writes `r`), and MFLAGS is never set at all.\n\nMECHANISM\n`compilation_context` in src/make/cli.rs builds `recipe_environment` from MAKELEVEL alone. MAKEFLAGS and MFLAGS reach a recipe only through `publication_of` in src/jobserver.rs, which carries the budget words for a jobserver client and nothing else — and the -j2 row above shows that path did not fire here either. `compiler_flag_variables` already renders exactly the string that is wanted: it is what the makefile is told and what a semantic child is handed. It is simply not put in the recipe's environment.\n\nWHY IT MATTERS BEYOND SPELLING\nThis is the value a nested tool reads. libtool, cmake, autotools sub-builds and the kernel's scripts branch on `$MAKEFLAGS` from the environment rather than on `$(MAKEFLAGS)`, and a recipe that shells out to one of them is told nothing about -k, -n, -s or the command-line variables. `make-export-to-recipes`'s opening note assumed MAKELEVEL, MAKEFLAGS and MFLAGS were all literals already in BuildOptions::environment; only MAKELEVEL is.\n\nUPSTREAM SUITE\nExercised at tests/scripts/variables/MAKEFLAGS:54 (`\"\\$$MAKEFLAGS=$$MAKEFLAGS\"`) and :158 (`XX := $(shell echo \"$$MAKEFLAGS\")`). Both now land in makeflags-content, which is an interface observation; this node is the defect claim behind that share of it, and wants a focused reproducer on what a nested tool does differently rather than on the bytes."
+                    }
+                )
+            }
+
+            {
+                id make-pattern-rule-candidate-identity
+                title "Preserve pattern-rule candidate identity through selection"
+                kind @fix
+                deps (make-pattern-rule-output-overlap make-second-expansion-patterns)
+                sealed true
+                log (
+                    {
+                        at 2026-08-09T22:02:22.763697097Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T22:18:05.87148837Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Kati 6831eb6 preserves the identity GNU Make assigns to each target-pattern candidate. Second-expanded prerequisites are cached by the candidate's unique definition order and requested output, so two patterns from one rule retain their distinct stems and duplicate patterns retain distinct side-effect epochs. Pattern-rule replacement now happens while rules populate the live list: the new rule's prerequisites must match in GNU's stored dependency-name order, and one new target must equal every target of the old rule. The old Arc's candidates are removed from the trie and the new rule is appended; query-time exact-vector suppression is gone. GNU Make 4.4.1 recordings cover the rejected a%.x candidate followed by the successful %.x stem ab, and a later %.x %.y rule replacing an earlier %.x rule. Before the fix those were the only 2 failures among 277 owned cases; after it all 277 agree. Verification under scripts/sandboxed: nplan check green; kati clippy with warnings denied green; 386-run Make conformance green; direct/manifest equivalence green over 296 makefiles and 272 compared graphs. The first workspace run hit the already tracked ronin-manifest-mtime-test-margin race; its exact warm rerun passed and the complete workspace rerun passed 664 tests with 1 ignored. The real-project gate still stops at the separately recorded explicit duplicate build/browse_py.h."
+                    }
+
+                    {
+                        at 2026-08-09T22:18:18.599008024Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

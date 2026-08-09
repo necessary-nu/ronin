@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The two target patterns are distinct candidates for one rule. Their stems
+| # produce different second-expanded prerequisites, so rejecting the shorter
+| # stem must not cache its prerequisite for the candidate that can succeed.
+| .SECONDEXPANSION:
+| all: ab.x
+| 
+| %.x a%.x: $$(addsuffix .ok,$$*) ; @printf 'stem=%s\n' '$*' > log; touch ab.x
+file ab.ok kept 1
+| existing
+file ab.x touched 0
+file log touched 1
+| stem=ab
