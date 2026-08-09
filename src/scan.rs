@@ -8,6 +8,14 @@ use std::sync::Arc;
 
 type ScanResult<T> = Result<T, ScanError>;
 
+/// A scan position, kept so it can be returned to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Mark {
+    index: usize,
+    line: usize,
+    column: usize,
+}
+
 /// A byte range within one immutable source.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ByteSpan {
@@ -123,6 +131,40 @@ impl<'source> Scanner<'source> {
 
     pub(crate) fn current(&self) -> Option<u8> {
         self.bytes.get(self.index).copied()
+    }
+
+    /// The byte `offset` positions ahead of the scan position.
+    fn peek(&self, offset: usize) -> Option<u8> {
+        self.bytes.get(self.index + offset).copied()
+    }
+
+    /// The scan position, for a caller that may have to come back to it.
+    const fn mark(&self) -> Mark {
+        Mark {
+            index: self.index,
+            line: self.line,
+            column: self.column,
+        }
+    }
+
+    const fn rewind(&mut self, mark: Mark) {
+        self.index = mark.index;
+        self.line = mark.line;
+        self.column = mark.column;
+    }
+
+    /// Put back the token that was read, as Ninja's `UnreadToken` does.
+    ///
+    /// Ninja peeks for one token and rewinds to `last_token_` when it was not
+    /// the one wanted, so the scan position after a failed peek is the start of
+    /// the token that failed it — which is where the checks a closed block
+    /// defers are then located.
+    const fn unread_token(&mut self) {
+        self.rewind(Mark {
+            index: self.last_token.byte_start,
+            line: self.last_token.line,
+            column: self.last_token.column,
+        });
     }
 
     pub(crate) const fn line(&self) -> usize {
@@ -313,16 +355,12 @@ fn singlespace(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
             Ok(true)
         }
         Some(b'$') => {
-            let index = scanner.index;
-            let line = scanner.line;
-            let column = scanner.column;
+            let escape = scanner.mark();
             next(scanner);
             if newline(scanner)? {
                 Ok(true)
             } else {
-                scanner.index = index;
-                scanner.line = line;
-                scanner.column = column;
+                scanner.rewind(escape);
                 Ok(false)
             }
         }
@@ -340,16 +378,85 @@ fn space(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
     Ok(found)
 }
 
+/// What Ninja's lexer reads where a line begins.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LineStart {
+    /// A run of spaces no longer rule claimed.
+    Indent,
+    /// A line ending, with or without spaces in front of it.
+    Newline,
+    /// Neither, so the scan position is the first byte of some other token.
+    Other,
+}
+
 // [spec:ronin:def:scan.comment-fn]
 // [spec:ronin:sem:scan.comment-fn]
-fn comment(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
-    if scanner.current() != Some(b'#') {
-        return Ok(false);
+/// Read the token that begins a line, skipping whole comment lines.
+///
+/// Three of the lexer's rules can match here and re2c takes the longest match
+/// between them, which is the whole of what decides where an `unexpected
+/// indent` is raised:
+///
+/// ```text
+/// [ ]*"#"[^\000\n]*"\n"     skipped entirely
+/// [ ]*"\r\n" | [ ]*"\n"     one newline
+/// [ ]+                      an indent
+/// ```
+///
+/// Two consequences that reading the rules one at a time does not give. The
+/// comment rule wants a terminating newline, so a comment that runs to the end
+/// of the file matches nothing: `  # x` there is an *indent*, and `# x` there
+/// is the byte no token starts with. And a `$`-escaped line ending is part of
+/// none of the three — Ninja eats it *after* a token rather than before one —
+/// so a line holding only `  $` is an indent rather than a continuation of the
+/// line below it.
+///
+/// The token starts at the first space, which is why an unexpected indent
+/// names the indented line and carries no source context: its column is zero.
+fn linestart(scanner: &mut Scanner<'_>) -> LineStart {
+    /// What a run of spaces that no other rule claimed came to.
+    const fn matched(indented: bool) -> LineStart {
+        if indented {
+            LineStart::Indent
+        } else {
+            LineStart::Other
+        }
     }
-    while scanner.current().is_some() && !newline(scanner)? {
-        next(scanner);
+
+    loop {
+        scanner.begin_token();
+        let mut indented = false;
+        while scanner.current() == Some(b' ') {
+            advance_within_line(scanner);
+            indented = true;
+        }
+        let after_spaces = scanner.mark();
+        match scanner.current() {
+            Some(b'#') => {
+                while !matches!(scanner.current(), None | Some(b'\n')) {
+                    advance_within_line(scanner);
+                }
+                if scanner.current().is_none() {
+                    scanner.rewind(after_spaces);
+                    return matched(indented);
+                }
+                next(scanner);
+            }
+            Some(b'\n') => {
+                next(scanner);
+                return LineStart::Newline;
+            }
+            // A carriage return ends a line only as half of the pair. On its
+            // own it is an ordinary byte, so the spaces in front of it are all
+            // that matched.
+            Some(b'\r') if scanner.peek(1) == Some(b'\n') => {
+                advance_within_line(scanner);
+                next(scanner);
+                return LineStart::Newline;
+            }
+            _ => return matched(indented),
+        }
     }
-    Ok(true)
 }
 
 // [spec:ronin:def:scan.name-fn]
@@ -379,6 +486,19 @@ pub(crate) fn scankeyword<'source>(
     scanner: &mut Scanner<'source>,
 ) -> ScanResult<Option<Token<'source>>> {
     loop {
+        match linestart(scanner) {
+            LineStart::Newline => continue,
+            // Nothing a statement can begin with is indented, and the token
+            // that was read starts at the first of the spaces — which is what
+            // makes this name the indented line rather than the one above it.
+            LineStart::Indent => {
+                return Err(scanerror(
+                    scanner,
+                    ScanErrorKind::UnexpectedToken(FoundToken::Indent),
+                ))
+            }
+            LineStart::Other => {}
+        }
         match scanner.current() {
             None => return Ok(None),
             // The one position where a tab is wrong rather than ordinary.
@@ -387,21 +507,6 @@ pub(crate) fn scankeyword<'source>(
             Some(b'\t') => {
                 scanner.begin_token();
                 return Err(scanerror(scanner, ScanErrorKind::TabsNotAllowed));
-            }
-            Some(b' ') => {
-                space(scanner)?;
-                if !comment(scanner)? && !newline(scanner)? {
-                    return Err(scanerror(
-                        scanner,
-                        ScanErrorKind::UnexpectedToken(FoundToken::Indent),
-                    ));
-                }
-            }
-            Some(b'#') => {
-                comment(scanner)?;
-            }
-            Some(b'\r' | b'\n') => {
-                newline(scanner)?;
             }
             // A token that reads perfectly well and belongs in the middle of a
             // statement rather than at the start of one — and, failing even
@@ -743,13 +848,21 @@ pub(crate) fn scanpipe(
 
 // [spec:ronin:def:scan.scanindent-fn]
 // [spec:ronin:sem:scan.scanindent-fn]
+/// Whether the next line continues an indented block, consuming it if it does.
+///
+/// This is Ninja's `PeekToken(INDENT)`, and the putting-back matters as much
+/// as the reading: what a block's deferred checks name is wherever the failed
+/// peek left the scanner, which is the start of the line that ended the block.
+/// Consuming a `[ ]*"\n"` there instead would name the line below it.
 pub(crate) fn scanindent(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
-    loop {
-        let indent = space(scanner)?;
-        if !comment(scanner)? {
-            return Ok(indent && !newline(scanner)?);
-        }
+    if linestart(scanner) == LineStart::Indent {
+        // Ninja eats whitespace after every token but a newline, which is what
+        // carries a `$`-escaped line ending into the binding that follows.
+        space(scanner)?;
+        return Ok(true);
     }
+    scanner.unread_token();
+    Ok(false)
 }
 
 // [spec:ronin:def:scan.scannewline-fn]
@@ -821,6 +934,99 @@ mod tests {
         let error = scankeyword(&mut scanner).unwrap_err();
         assert_eq!(error.kind, ScanErrorKind::TabsNotAllowed);
         assert_eq!((error.span.line, error.span.column), (2, 1));
+    }
+
+    /// Read one `name = value` line, the way the parser's `parselet` does.
+    fn skip_binding(scanner: &mut Scanner<'_>) {
+        scanname(scanner, NameKind::Variable).unwrap();
+        scanchar(scanner, '=').unwrap();
+        scanstring(scanner, false).unwrap();
+        scannewline(scanner).unwrap();
+    }
+
+    // [spec:ronin:sem:scan.scankeyword-fn/test]
+    // [spec:ronin:sem:scan.comment-fn/test]
+    #[test]
+    fn indent_starts_at_its_first_space() {
+        // Every one of these was reported against the *preceding* token, so it
+        // named the line above and dragged that line's source context onto a
+        // diagnostic Ninja shows none for. The column is one — zero counting
+        // Ninja's way — which is exactly what suppresses the context.
+        for (bytes, line) in [
+            (&b"x = 1\n  y = 2\n"[..], 2),
+            (&b"x = 1\n\n  y = 2\n"[..], 3),
+            (&b"x = 1\n# c\n  y = 2\n"[..], 3),
+            // A `$`-escaped line ending is eaten after a token, never in front
+            // of one, so neither of these is a continuation of anything.
+            (&b"x = 1\n  $\nbuild a: phony\n"[..], 2),
+            (&b"x = 1\n  $\n\ny = 2\n"[..], 2),
+            // Half a line ending is not one: the spaces are the whole token.
+            (&b"x = 1\n  \ry = 2\n"[..], 2),
+            // The comment rule wants a terminating newline it never got.
+            (&b"x = 1\n  # c"[..], 2),
+        ] {
+            let source = Source::from_bytes("build.ninja", bytes.to_vec());
+            let mut scanner = Scanner::new(&source);
+            skip_binding(&mut scanner);
+            let error = scankeyword(&mut scanner).unwrap_err();
+            assert_eq!(
+                (error.kind, error.span.line, error.span.column),
+                (ScanErrorKind::UnexpectedToken(FoundToken::Indent), line, 1),
+                "scanning {:?}",
+                bstr::BStr::new(bytes)
+            );
+        }
+
+        // With no comment to run off the end of, a `#` where a statement
+        // belongs is simply a byte no token begins with.
+        let source = Source::from_bytes("build.ninja", b"x = 1\n# c".to_vec());
+        let mut scanner = Scanner::new(&source);
+        skip_binding(&mut scanner);
+        let error = scankeyword(&mut scanner).unwrap_err();
+        assert_eq!(error.kind, ScanErrorKind::LexingError);
+        assert_eq!((error.span.line, error.span.column), (2, 1));
+    }
+
+    // [spec:ronin:sem:scan.scanindent-fn/test]
+    #[test]
+    fn failed_indent_peek_puts_it_back() {
+        // What ends a block is where the block's deferred checks are reported,
+        // so the spaces of an indented blank line have to still be ahead of
+        // the scanner afterwards. Consuming the newline instead named the line
+        // below, one past where Ninja stands.
+        for bytes in [
+            &b"rule cc\n  depfile = y\n  \nbuild a: cc\n"[..],
+            &b"rule cc\n  depfile = y\n# c"[..],
+        ] {
+            let source = Source::from_bytes("build.ninja", bytes.to_vec());
+            let mut scanner = Scanner::new(&source);
+            scankeyword(&mut scanner).unwrap();
+            scanname(&mut scanner, NameKind::Rule).unwrap();
+            scannewline(&mut scanner).unwrap();
+            assert!(scanindent(&mut scanner).unwrap());
+            skip_binding(&mut scanner);
+            assert!(!scanindent(&mut scanner).unwrap());
+            assert_eq!(
+                (scanner.line, scanner.column),
+                (3, 1),
+                "after the block of {:?}",
+                bstr::BStr::new(bytes)
+            );
+        }
+
+        // An indented comment at the end of the file *is* an indent, so the
+        // block goes on and the binding's name is looked for at the `#`.
+        let source = Source::from_bytes("build.ninja", b"rule cc\n  command = x\n  # c".to_vec());
+        let mut scanner = Scanner::new(&source);
+        scankeyword(&mut scanner).unwrap();
+        scanname(&mut scanner, NameKind::Rule).unwrap();
+        scannewline(&mut scanner).unwrap();
+        assert!(scanindent(&mut scanner).unwrap());
+        skip_binding(&mut scanner);
+        assert!(scanindent(&mut scanner).unwrap());
+        let error = scanname(&mut scanner, NameKind::Variable).unwrap_err();
+        assert_eq!(error.kind, ScanErrorKind::ExpectedName(NameKind::Variable));
+        assert_eq!((error.span.line, error.span.column), (3, 3));
     }
 
     // [spec:ronin:req:runtime.borrowed-span-frontend/test]

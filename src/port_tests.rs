@@ -378,7 +378,16 @@ fn ninja_lexer_dotted_and_braced_variables() {
     let value = scan::scanstring(&mut scanner, false).unwrap().unwrap();
     assert_eq!(serialized_eval(&value), "[$bar][.dots ][$bar.dots]");
     scan::scannewline(&mut scanner).unwrap();
-    assert_eq!(scan::scankeyword(&mut scanner).unwrap(), None);
+    // Upstream's `Lexer.CommentEOF` expects the *error* token here, not the end
+    // of the file: the comment rule is `[ ]*"#"[^\000\n]*"\n"`, so a comment
+    // that runs off the end of the file matches nothing, and the `#` is left
+    // as a byte no token begins with. This assertion used to read `None`,
+    // which is what Ronin did and what the case it was adapted from says is
+    // wrong.
+    assert!(scan::scankeyword(&mut scanner)
+        .unwrap_err()
+        .to_string()
+        .contains("lexing error"));
     let _ = fs::remove_file(path);
 }
 

@@ -26,9 +26,12 @@ enum Anchor {
     ///
     /// Several of Ninja's checks run only once a statement's indented block is
     /// over — a rule with no `command`, a pool with no `depth`, and everything
-    /// a build statement's own bindings can change. By then its lexer has read
-    /// past the block, so the diagnostic names the line after it and carries no
-    /// source context, the column being zero.
+    /// a build statement's own bindings can change. By then its lexer has
+    /// peeked for one more indented line and put back what it found instead,
+    /// so scanning stands at the *start* of the line that ended the block —
+    /// its leading spaces included, which is why an indented blank line there
+    /// is named rather than the statement after it. The column is zero, so
+    /// these carry no source context.
     AfterBlock,
 }
 
@@ -483,7 +486,7 @@ fn parseedge(
     // bindings can change, so this is where Ninja checks all of it: the pool
     // it names, the paths it expands to, and the dyndep among them. Its lexer
     // has read past the block by now, which is why each of these diagnostics
-    // names the line *after* the statement and shows no source context — the
+    // names the line that *ended* the block and shows no source context — the
     // column is zero there — and why they are anchored past the block rather
     // than at the token that raised them.
     //

@@ -703,6 +703,162 @@ const BUILD_CASES: &[BuildCase] = &[
         stale_manifest: false,
         status: 1,
     },
+    // An indent is a token of its own and it starts at the first of its
+    // spaces, so an unexpected one names the *indented* line and never carries
+    // context — its column is zero. The case above is the one shape where
+    // reporting it against the line before gives the same answer, because
+    // there is no line before it. Each of these is a shape where it does not.
+    BuildCase {
+        name: "an unexpected indent names the indented line, not the one that closed the block",
+        manifest: "rule cc\n  command = x\ndepfile = y\n  deps = gcc\nbuild a: cc\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "an unexpected indent after a top-level binding names its own line",
+        manifest: "x = 1\n  y = 2\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "an unexpected indent after a blank line names its own line",
+        manifest: "x = 1\n\n  y = 2\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "an unexpected indent after a comment line names its own line",
+        manifest: "x = 1\n# comment\n  y = 2\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // Upstream's own parser case for this: the indented blank line ends
+        // the rule, so the binding under it belongs to nothing.
+        name: "an indented blank line ends a rule and the indent below it is unexpected",
+        manifest: "rule r\n  command = r\n  \n  generator = 1\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "an unexpected indent after a build statement's block names its own line",
+        manifest: "rule cc\n  command = x\nbuild a: cc\n  pool = console\nx = 1\n  y = 2\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // The line above is too long to quote, so *both* tools print no
+        // context and only the line number says which line is meant.
+        // Anchoring an indent at the line before it is invisible here.
+        name: "an unexpected indent below a line too long to quote still names its own line",
+        manifest:
+            "x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+                   \n  y = 2\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    // A `$`-escaped line ending is eaten *after* a token, never in front of
+    // one, so it cannot be part of an indent. A line holding nothing but
+    // spaces and a continuation is an indent in its own right.
+    BuildCase {
+        name: "a line holding only an indent and a continuation is an indent",
+        manifest: "x = 1\n  $\nbuild a: phony\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // The continuation lands on a blank line, so reading it as part of the
+        // whitespace leaves a manifest that parses. It is not one.
+        name: "an indent continued onto a blank line is still an indent",
+        manifest: "x = 1\n  $\n\ny = 2\nbuild a: phony\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // Inside a block the continuation *is* eaten, after the indent, so the
+        // binding's name is looked for on the line it reached.
+        name: "a continuation inside a block looks for the binding on the line it reached",
+        manifest: "rule cc\n  command = x\n  $\n  # comment\n  deps = gcc\nbuild a: cc\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    // A comment needs its terminating newline to be a comment at all: the
+    // lexer's rule is `[ ]*"#"[^\000\n]*"\n"`. One that runs off the end of
+    // the file matches nothing, and what is left is the spaces in front of it.
+    BuildCase {
+        name: "an indented comment at the end of the file is an indent",
+        manifest: "rule cc\n  command = x\n  # comment",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a comment at the end of the file is the byte no token begins with",
+        manifest: "x = 1\n# comment",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // Half a line ending is not one, so the spaces in front of it are all
+        // that matched: an indent, rather than the lexing error a carriage
+        // return is on its own.
+        name: "an indent in front of a lone carriage return is an indent",
+        manifest: "x = 1\n  \ry = 2\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    // A check a block defers is located where the peek for an indent put the
+    // scanner back, which is the start of the line that failed the peek —
+    // spaces included.
+    BuildCase {
+        name: "a rule's missing command is located at the indented blank line that ended it",
+        manifest: "rule cc\n  depfile = y\n  \nbuild a: cc\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a build statement's deferred check is located at the indented blank line",
+        manifest: "rule cc\n  command = x\nbuild a: cc\n  pool = nope\n  \nbuild b: phony\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        name: "a rule's missing command is located at a comment that ends the file",
+        manifest: "rule cc\n  depfile = y\n# c",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
     BuildCase {
         name: "a manifest that cannot be included names the file",
         manifest: "include nosuchfile.ninja\n",
