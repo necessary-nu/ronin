@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| LATE = before
+| value != printf '$$(LATE)\n'
+| LATE = after
+| all: ; @printf '%s|%s\n' '$(value)' '$(flavor value)' > out
+file out touched 1
+| after|recursive

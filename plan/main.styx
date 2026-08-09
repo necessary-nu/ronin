@@ -5608,12 +5608,27 @@ children (
                 title "Read an assignment's modifiers where GNU Make reads them"
                 priority 2
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-08T12:12:00.9362117Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Two corners where kati reads an assignment differently from GNU Make, both already a wrong build, both found by `make-private-variables` and left because they are the parser's rather than the variable table's.\n\nGNU treats `override`, `export`, `private` and `undefine` as **literal words**, not as the result of expansion. `a: $(P) F = 1` with `P=private`: GNU refuses, Ronin builds — before that node it made a variable named `private F`, after it a private `F`. Neither is right.\n\nBeside it, `a: X Y = 1` — the one-word variable-name rule was applied to global assignments and not to target-specific ones, so a two-word target-specific name is still accepted.\n\nAlso here, from `make-parser-parity`'s residue: `$(flavor)` on a `!=` variable says `simple` where GNU says `recursive`; `$(origin .RECIPEPREFIX)` says `undefined` where GNU says `default`; a command-line variable removed by `override undefine` is back inside a recipe in GNU; and `.SHELLSTATUS` cannot be read inside a rule.\n\nNeither of the two main corners is reachable without a variable expanding to a keyword, which is why they survived this long — but both are wrong builds rather than refusals, and that ranks them.\n\n`kati/src-rs/parser.rs`, `kati/src-rs/stmt.rs`, `kati/src-rs/strutil.rs`, `kati/src-rs/func.rs`. Other lanes own `dep.rs`, `eval.rs` and `ninja.rs` this wave."
+                    }
+
+                    {
+                        at 2026-08-09T14:22:58.959466882Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Assignment syntax remains compiler work. Kati now recognizes `::=` as immediate-simple and `:::=` as immediate-recursive, preserves the operator on `define` directives, applies append precedence before mutating a value, and captures target-specific modifiers from literal source words before expanding the variable name. Expanded text that happens to spell `private`, `override`, or `export` is therefore part of the name and a multiword target-specific name is refused. Shell assignments retain recursive flavor and expansion, `.RECIPEPREFIX` is a default-origin simple builtin, `.SHELLSTATUS` is readable during recipe compilation, and command-line bindings are retained in session-owned recipe-environment form so `override undefine` matches GNU Make without executor state. Kati commit e4c114c is pushed. All eight build-intent divergences owned by this node now match and their markers are removed. Six new expectations were recorded from `/usr/bin/make` GNU Make 4.4.1; all 263 cases pass. The 296-file direct-vs-manifest graph gate passes. `check-make-conformance.sh` still reports four generated-include inventory changes from the prior node and the intended `.SHELLSTATUS` corpus-shape change; its separately claimed `make-conformance-corpus` owner must reclassify those, so this node does not edit that inventory."
+                    }
+
+                    {
+                        at 2026-08-09T14:24:45.243432158Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

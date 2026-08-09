@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| SEEN := $(shell exit 7)
+| all: ; @printf '%s\n' '$(.SHELLSTATUS)' > out
+file out touched 1
+| 7

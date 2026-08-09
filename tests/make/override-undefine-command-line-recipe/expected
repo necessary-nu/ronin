@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| override undefine D
+| TOP := [$(D)]/$(origin D)/$(flavor D)
+| all: ; @printf '%s\n' '$(TOP)' '[$(D)]/$(origin D)/$(flavor D)' > out
+file out touched 2
+| []/undefined/undefined
+| [cli]/environment/recursive

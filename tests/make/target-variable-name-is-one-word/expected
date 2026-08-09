@@ -1,0 +1,5 @@
+oracle GNU Make 4.4.1
+status 2
+file Makefile kept 2
+| all: X Y = 1
+| all: ; @printf '%s\n' 'wrong build' > out
