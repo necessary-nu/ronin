@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| X1 := $(sort $(filter FOO BAR,$(.VARIABLES)))
+| FOO := foo
+| X2 := $(sort $(filter FOO BAR,$(.VARIABLES)))
+| BAR := bar
+| all: ; @printf '[%s]\n' '$(X1)' '$(X2)' '$(sort $(filter FOO BAR,$(.VARIABLES)))' > out
+file out touched 3
+| []
+| [FOO]
+| [BAR FOO]

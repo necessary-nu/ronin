@@ -5190,6 +5190,7 @@ children (
                         priority 1
                         kind @test
                         deps (make-build-intent-gate)
+                        sealed true
                         log (
                             {
                                 at 2026-08-08T12:12:18.611844281Z
@@ -5210,6 +5211,13 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @decision
                                 text "Ported 97 repository-owned GNU Make 4.4.1 build-intent cases covering functions and variables, taking the corpus from 111 to 208 cases. Seventy-one already compile to matching Ninja work. Twenty-six expose compiler gaps and carry bidirectional divergence markers: existing owners are make-assignment-modifiers, make-export-to-recipes, and make-refusal-reaches-further; the remaining newly concrete gaps explicitly record that no dedicated WBS leaf exists yet. The cases compare normal success/failure and filesystem effects, never GNU Make runner narration. Output-only diagnostic scenarios remain discovery input rather than build-intent gates. The complete 208-case release run passes, including the corpus rule that a fixed recorded divergence must have its marker removed."
+                            }
+
+                            {
+                                at 2026-08-09T13:13:53.794759723Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }

@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 9
+| recur = $\
+|   one$\
+|   two$\
+|   three
+| simple := $\
+|   four$\
+|   five$\
+|   six
+| all: ; @printf '%s\n' '$(recur)' '$(simple)' > out
+file out touched 2
+| onetwothree
+| fourfivesix

@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| alpha beta: ; @printf '%s\n' '$@: $(MAKECMDGOALS)' >> out
+file out touched 2
+| alpha: alpha beta
+| beta: alpha beta

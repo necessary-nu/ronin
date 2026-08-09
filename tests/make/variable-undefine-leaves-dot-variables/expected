@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| FOO := foo
+| BAR := bar
+| ONE := $(sort $(filter FOO BAR BAZ,$(.VARIABLES)))
+| undefine BAR
+| BAZ := baz
+| TWO := $(sort $(filter FOO BAR BAZ,$(.VARIABLES)))
+| all: ; @printf '[%s]\n' '$(ONE)' '$(TWO)' > out
+file out touched 2
+| [BAR FOO]
+| [BAZ FOO]

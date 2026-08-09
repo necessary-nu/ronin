@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| m1 := $(MAKEFILE_LIST)
+| include included.mk
+| m3 := $(MAKEFILE_LIST)
+| all: ; @printf '[%s]\n' '$(m1)' '$(m2)' '$(m3)' > out
+file included.mk kept 1
+| m2 := $(MAKEFILE_LIST)
+file out touched 3
+| [Makefile]
+| [Makefile included.mk]
+| [Makefile included.mk]

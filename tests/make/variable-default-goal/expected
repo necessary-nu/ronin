@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| foo: ; @printf '%s\n' 'goal=$(.DEFAULT_GOAL)' > out
+| bar: ; @printf '%s\n' 'bar ran' > bar.out
+file out touched 1
+| goal=foo

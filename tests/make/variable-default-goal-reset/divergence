@@ -1,0 +1,1 @@
+Kati does not honor resetting .DEFAULT_GOAL before selecting the graph root; no dedicated WBS node yet.

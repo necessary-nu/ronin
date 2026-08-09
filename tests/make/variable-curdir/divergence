@@ -1,0 +1,1 @@
+Kati's deferred shell expansion prevents CURDIR from being compared with the evaluation directory; no dedicated WBS node yet.

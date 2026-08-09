@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| foo: bar ; @printf '[%s]\n' '$?' > out
+| bar: ; @:
+file foo kept 0
+file out touched 1
+| [bar]

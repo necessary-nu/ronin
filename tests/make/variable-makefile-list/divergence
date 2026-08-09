@@ -1,0 +1,1 @@
+Kati prefixes MAKEFILE_LIST with an empty entry before recording parsed Makefiles; no dedicated WBS node yet.

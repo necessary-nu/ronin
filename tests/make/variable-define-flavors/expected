@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 11
+| FOO = foo
+| define recur =
+| @printf '%s\n' '$(FOO)' > recur.out
+| endef
+| define simple :=
+| @printf '%s\n' '$(FOO)' > simple.out
+| endef
+| FOO = there
+| all: r s
+| r: ; $(recur)
+| s: ; $(simple)
+file recur.out touched 1
+| there
+file simple.out touched 1
+| foo

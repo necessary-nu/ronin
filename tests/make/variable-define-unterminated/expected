@@ -1,0 +1,6 @@
+oracle GNU Make 4.4.1
+status 2
+file Makefile kept 3
+| all: ; @printf '%s\n' 'ran' > out
+| define NAME =
+| ouch

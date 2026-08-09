@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| foo = Hello
+| ugh = Goodbye
+| foo += $(bar)
+| bar = ${ugh}
+| ugh = Hello
+| all: ; @printf '%s\n' '$(foo)' > out
+file out touched 1
+| Hello Hello
