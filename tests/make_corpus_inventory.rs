@@ -58,8 +58,13 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
-    // from 90 when a missing `include` stopped being reported as a read that
-    // failed and started being reported the way GNU Make reports it, as a
+    // from 89 when expanded `=` stopped turning a prerequisite into a
+    // target-specific assignment: `equal_in_target.mk#test` became
+    // byte-identical and left the recorded corpus-TODO class.
+    //
+    // Before that it moved from 90 when a missing `include` stopped being
+    // reported as a read that failed and started being reported the way GNU
+    // Make reports it, as a
     // makefile there is no rule to make: `err_include.mk` became byte-identical
     // and took the `io-error-text` family with it, being the only case that
     // named it.
@@ -71,9 +76,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 89);
+    assert_eq!(cases.len(), 88);
     assert_eq!(by_class["defect"], 43);
-    assert_eq!(by_class["recorded"], 14);
+    assert_eq!(by_class["recorded"], 13);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);
 }

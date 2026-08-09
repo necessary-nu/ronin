@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # GNU Make expands source words only through the one that produces the rule's
+| # colon before deciding whether the rest is a target-specific assignment. The
+| # next source word is still literal then, so its expanded `=` is a prerequisite
+| # character even though the colon was also produced by expansion.
+| COLON = :
+| EQ = =
+| 
+| all$(COLON) one$(EQ)two ; @printf '%s\n' goal > out
+| 
+| one$(EQ)two: ; @printf '%s\n' prerequisite > dep-out
+file dep-out touched 1
+| prerequisite
+file out touched 1
+| goal

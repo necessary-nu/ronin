@@ -6564,12 +6564,27 @@ children (
                 title "Read the target-specific separator from the line as written"
                 kind @fix
                 deps (make-conformance-corpus)
+                sealed true
                 log (
                     {
                         at 2026-08-09T18:19:13.428803144Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Opened from the GNU Make corpus triage in make-conformance-corpus, with two reproducers already recorded and marked as known divergences: tests/make/feature-expanded-equals-in-a-prerequisite and tests/make/feature-expanded-equals-alone-in-a-prerequisite-list.\n\nWhether a rule line carries a target-specific assignment is decided by GNU Make on the line as written, before the prerequisites are expanded. Kati decides it afterwards, so an `=` that only exists because a variable expanded to one is read as an assignment operator:\n\n    EQ = =\n    all: one$(EQ)two ; @printf '%s\\n' goal > out\n    one$(EQ)two: ; @printf '%s\\n' prerequisite > dep-out\n\nGNU Make 4.4.1 writes both `out` and `dep-out`. Ronin writes only `dep-out`: the goal's own recipe never runs, and the run still exits 0, which is the worse half — a build that quietly did less than it was asked.\n\nThe second shape crashes rather than diverges. When the expansion produces a bare `=`, as `.PHONY: all $(EQ)` does, kati panics: `called Option::unwrap() on a None value` at kati/src-rs/eval.rs:814, in eval_rule_specific_assign, where an assignment with an empty right-hand side and no `;` recipe leaves `rhs` as None and it is unwrapped anyway. Even once the separator is read from the source line, that unwrap should not be there.\n\nThe suite's features/targetvars line 37 is where this was found — `.PHONY: one two ... ten $(EQ) one$(EQ)two` — and it is 21 of that script's residues. The area was last rewritten by make-assignment-modifiers (kati e4c114c), which moved the *modifier* words (`private`, `override`, `export`) onto the literal source text; the separator itself was left on the expanded text, and this is the rest of that job."
+                    }
+
+                    {
+                        at 2026-08-09T21:49:31.090093892Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Implemented GNU Make's partial-expansion boundary for rule-specific assignment classification: literal source text decides separators after a written colon; when the colon is expanded, only the remainder of that colon-bearing source word can contribute an expanded assignment operator. Added Kati unit/corpus coverage plus outer GNU-recorded fixtures for later-word expanded equals and literal equals after a prior prerequisite. The Make corpus is now 261 raw / 299 normalized exact of 387 with 88 classified differences, and upstream targetvars evaluation residues fell from 23 to 18. Verified workspace tests/check/fmt, Kati -D warnings clippy, focused make_port, conformance, and graph equivalence (274 compared, zero disagreements)."
+                    }
+
+                    {
+                        at 2026-08-09T21:49:39.782024318Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

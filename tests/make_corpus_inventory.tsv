@@ -46,7 +46,6 @@ case	delete_on_error.mk#test	recorded	evaluation+corpus-todo+exit-status	92054fe
 case	deprecated_export.mk#test	extension	kati-extension	6f76de783020faaf
 case	deprecated_var.mk#test	extension	kati-extension	4de2b58e33257f25
 case	empty_ninja_file.sh#script	extension	kati-extension	84fb5a3b281e691c
-case	equal_in_target.mk#test	recorded	evaluation+corpus-todo	3728b00be50c5387
 case	err_both_colon.mk#test	defect	exit-status+stop-suffix+quote-style	352bac18e2ed1b88
 case	err_export_override.mk#default	defect	exit-status+stop-suffix+identity-prefix	a51b9cb01fc96fc5
 case	err_extra_else.mk#default	defect	exit-status+stop-suffix+quote-style	f269f6da4204ac18

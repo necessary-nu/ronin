@@ -309,6 +309,7 @@ assertions (
     {id make-pattern-rule-candidate-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:18:18.599008024Z}
     {id make-pattern-rule-prerequisite-names, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:36:24.607059015Z}
     {id make-pattern-rule-deferred-prerequisite-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:36:40.460068917Z}
+    {id make-target-specific-separator-is-literal, kind @complete, author "brendan@necessary.nu", at 2026-08-09T21:49:39.782024318Z}
 )
 
 impl_evidence (

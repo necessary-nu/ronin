@@ -555,8 +555,8 @@ case	features/suffixrules.diff.6	unclassified	ninja-progress+product-name+evalua
 case	features/suffixrules.diff.7	unclassified	ninja-progress+evaluation
 case	features/suffixrules.diff.8	unclassified	no-work-line+up-to-date-line+evaluation
 case	features/suffixrules.diff.9	unclassified	ninja-progress+evaluation
-case	features/targetvars.diff	unclassified	product-name+evaluation
-case	features/targetvars.diff.1	unclassified	product-name+evaluation
+case	features/targetvars.diff	interface	ninja-progress+makeflags-content
+case	features/targetvars.diff.1	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.10	narration	ninja-progress
 case	features/targetvars.diff.11	narration	ninja-progress
 case	features/targetvars.diff.12	narration	ninja-progress
@@ -567,7 +567,7 @@ case	features/targetvars.diff.16	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.17	narration	ninja-progress
 case	features/targetvars.diff.18	narration	ninja-progress
 case	features/targetvars.diff.19	narration	ninja-progress
-case	features/targetvars.diff.2	unclassified	product-name+evaluation
+case	features/targetvars.diff.2	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.20	narration	ninja-progress
 case	features/targetvars.diff.21	narration	ninja-progress
 case	features/targetvars.diff.22	narration	ninja-progress
@@ -578,7 +578,7 @@ case	features/targetvars.diff.26	unclassified	ninja-progress+product-name+recipe
 case	features/targetvars.diff.27	narration	ninja-progress
 case	features/targetvars.diff.28	interface	ninja-progress+makeflags-content
 case	features/targetvars.diff.29	interface	ninja-progress+makeflags-content
-case	features/targetvars.diff.3	unclassified	product-name+evaluation
+case	features/targetvars.diff.3	narration	ninja-progress
 case	features/targetvars.diff.30	interface	ninja-progress+makeflags-content
 case	features/targetvars.diff.31	narration	ninja-progress
 case	features/targetvars.diff.32	interface	ninja-progress+makeflags-content
@@ -589,7 +589,7 @@ case	features/targetvars.diff.36	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.37	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.38	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.39	unclassified	ninja-progress+evaluation
-case	features/targetvars.diff.4	unclassified	product-name+evaluation
+case	features/targetvars.diff.4	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.40	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.41	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.42	narration	ninja-progress
@@ -597,10 +597,10 @@ case	features/targetvars.diff.43	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.44	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.45	narration	ninja-progress
 case	features/targetvars.diff.46	unclassified	ninja-progress+evaluation
-case	features/targetvars.diff.5	unclassified	product-name+evaluation
-case	features/targetvars.diff.6	unclassified	product-name+evaluation
-case	features/targetvars.diff.7	unclassified	product-name+evaluation
-case	features/targetvars.diff.8	unclassified	product-name+evaluation
+case	features/targetvars.diff.5	unclassified	ninja-progress+evaluation
+case	features/targetvars.diff.6	narration	ninja-progress
+case	features/targetvars.diff.7	narration	ninja-progress
+case	features/targetvars.diff.8	narration	ninja-progress
 case	features/targetvars.diff.9	narration	ninja-progress
 case	features/temp_stdin.diff	unclassified	evaluation
 case	features/temp_stdin.diff.1	interface	option-refused
