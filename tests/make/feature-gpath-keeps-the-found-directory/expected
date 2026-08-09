@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 8
+| # Without GPATH a target found along VPATH is rebuilt in the current directory;
+| # GPATH says to rebuild it where it was found.
+| VPATH = build
+| GPATH = build
+| 
+| all: out.o
+| 
+| out.o: out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+file build/out.o touched 1
+| build/out.o from out.c
+file out.c kept 1
+| source

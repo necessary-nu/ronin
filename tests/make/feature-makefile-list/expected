@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| # MAKEFILE_LIST names every makefile read so far, in the order they were read.
+| include extra.mk
+| 
+| all: ; @printf '%s\n' '$(MAKEFILE_LIST)' > out
+file extra.mk kept 1
+| # nothing but being included
+file out touched 1
+| Makefile extra.mk

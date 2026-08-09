@@ -1,0 +1,1 @@
+Ronin does not rebuild a VPATH-found target in its GPATH directory; make-vpath-search.

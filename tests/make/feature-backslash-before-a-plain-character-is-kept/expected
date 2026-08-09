@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| # A backslash that is not protecting anything special stays in the name.
+| all: sub\name
+| 
+| .DEFAULT: ; @printf '%s\n' '$@' > out
+file out touched 1
+| sub\name

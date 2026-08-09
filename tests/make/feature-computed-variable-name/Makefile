@@ -1,0 +1,9 @@
+# A reference may be nested: the inner expansions name the variable that the
+# outer one reads.
+x = variable1
+variable2 := hello
+y = $(subst 1,2,$(x))
+z = y
+a := $($($(z)))
+
+all: ; @printf '%s\n' '$(a)' > out

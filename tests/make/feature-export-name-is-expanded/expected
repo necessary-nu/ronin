@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 8
+| # The names on an export line are expanded first, so which variable is exported
+| # can be computed.
+| hello = world
+| NAME = hello
+| 
+| export $(NAME)
+| 
+| all: ; @printf 'hello=%s\n' "$$hello" > out
+file out touched 1
+| hello=world

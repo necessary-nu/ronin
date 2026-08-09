@@ -5159,6 +5159,13 @@ children (
                                 kind @note
                                 text "One of three lanes growing `tests/make/` from GNU Make's own scenarios. This one takes `reference/gnumake/tests/scripts/features/`.\n\nThe point is coverage of behaviour we already claim, not finding new defects — though it will find some. Every case is a makefile written here from behaviour probed off /usr/bin/make 4.4.1, never copied: upstream's scripts are GPLv3 and `reference/gnumake` is a pinned checkout for exactly that reason (`make-licence-position`).\n\nCase names take a `feature-` prefix so three lanes writing concurrently cannot collide.\n\nA case that means to test a value writes it to a file — the harness compares exit status and file effect, never output. That excludes any scenario whose whole content is a diagnostic; skip those and say which, rather than contorting a case around it.\n\nWhere a case fails, record a `divergence` file naming the defect and, if one exists, the node. Do not fix code — that is another lane's ground this wave, and a divergence file that turns out to be already-fixed is caught automatically, because the suite fails when a recorded divergence starts passing."
                             }
+
+                            {
+                                at 2026-08-09T12:58:39.585481114Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
                         )
                     }
 

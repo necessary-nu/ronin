@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| # A pattern rule with several target patterns already makes them together, so
+| # `&:` on one is accepted and changes nothing.
+| all: alpha.q beta.q
+| 
+| alpha.% beta.%&: ; @printf 'stem=%s\n' '$*' >> log; printf 'x\n' > alpha.q; printf 'y\n' > beta.q
+file alpha.q touched 1
+| x
+file beta.q touched 1
+| y
+file log touched 1
+| stem=q

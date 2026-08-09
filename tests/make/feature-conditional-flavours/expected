@@ -1,0 +1,48 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 43
+| # The conditional directives, in each form a makefile actually uses: the
+| # parenthesised and the quoted argument forms of ifeq, ifneq, and ifdef, which
+| # asks whether a name has a non-empty value rather than whether it was set.
+| one = first
+| two = second
+| also = second
+| empty =
+| 
+| result :=
+| 
+| ifeq ($(one),$(two))
+| result += eq-parens-yes
+| else
+| result += eq-parens-no
+| endif
+| 
+| ifeq '$(two)' "$(also)"
+| result += eq-quoted-yes
+| else
+| result += eq-quoted-no
+| endif
+| 
+| ifneq ($(one),$(two))
+| result += neq-yes
+| else
+| result += neq-no
+| endif
+| 
+| ifdef one
+| result += ifdef-one
+| endif
+| 
+| ifndef missing
+| result += ifndef-missing
+| endif
+| 
+| ifdef empty
+| result += ifdef-empty
+| else
+| result += ifndef-empty
+| endif
+| 
+| all: ; @printf '%s\n' '$(result)' > out
+file out touched 1
+| eq-parens-no eq-quoted-yes neq-yes ifdef-one ifndef-missing ifndef-empty

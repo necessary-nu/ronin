@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| # A backslash before a hash keeps it out of the comment, in a variable's value
+| # and in a target's name alike.
+| literal := a\#b
+| 
+| all: out\#name ; @printf '%s\n' '$(literal)' > out
+| 
+| out\#name: ; @printf '%s\n' '$@' > '$@'
+file out touched 1
+| a#b
+file out#name touched 1
+| out#name

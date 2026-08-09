@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| # When two pattern rules match, the one leaving the shorter stem wins, whatever
+| # order they were read in.
+| %.x: ; @printf '%s\n' plain > $@
+| %-mt.x: ; @printf '%s\n' suffixed > $@
+| 
+| all: foo.x foo-mt.x
+file foo-mt.x touched 1
+| suffixed
+file foo.x touched 1
+| plain

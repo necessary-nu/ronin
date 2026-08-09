@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| all: ; @printf '%s\n' capital-makefile > out
+file makefile kept 2
+| # With no GNUmakefile present, lowercase makefile is preferred to Makefile.
+| all: ; @printf '%s\n' lowercase-makefile > out
+file out touched 1
+| lowercase-makefile
