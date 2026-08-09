@@ -1,0 +1,3 @@
+printf 'one\n' > one.h
+printf 'two\n' > two.h
+printf 'base\n' > base.h

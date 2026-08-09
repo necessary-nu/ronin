@@ -1,0 +1,8 @@
+# .PRECIOUS names what to keep even so, and it matches a pattern as readily as
+# a name.
+.DELETE_ON_ERROR:
+.PRECIOUS: %.bar
+
+all: foo.bar
+
+%.bar: ; @printf '%s\n' partial > $@; exit 1

@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 8
+| # A target may be named by several rules; the prerequisites of all of them are
+| # collected, and at most one rule carries the recipe.
+| all: foo.out bar.out
+| 
+| foo.out: one.h
+| bar.out: one.h two.h
+| 
+| foo.out bar.out: base.h ; @printf '%s from %s\n' '$@' '$^' >> log; printf 'built\n' > $@
+file bar.out touched 1
+| built
+file base.h kept 1
+| base
+file foo.out touched 1
+| built
+file log touched 2
+| foo.out from base.h one.h
+| bar.out from base.h one.h two.h
+file one.h kept 1
+| one
+file two.h kept 1
+| two

@@ -1,0 +1,2 @@
+printf 'a\n' > a.src
+printf 'b\n' > b.src

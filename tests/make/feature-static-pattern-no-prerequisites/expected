@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| # A static pattern rule with an empty prerequisite pattern is legal, and the
+| # first of its targets is still the default goal.
+| foo.x bar.x: %.x: ; @printf '%s\n' '$*' > $@
+file foo.x touched 1
+| foo

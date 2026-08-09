@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| # A target-specific assignment can carry the export keyword, and then the name
+| # reaches the environment of that target's recipe alone.
+| all: base ; @printf 'BAZ=%s\n' "$$BAZ" > all-out
+| all: export BAZ = baz
+| 
+| base: ; @printf 'BAZ=%s\n' "$$BAZ" > base-out
+file all-out touched 1
+| BAZ=baz
+file base-out touched 1
+| BAZ=baz

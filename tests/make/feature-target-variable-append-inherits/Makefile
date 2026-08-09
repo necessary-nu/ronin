@@ -1,0 +1,11 @@
+# Appending in a target-specific assignment starts from the global value, and a
+# prerequisite inherits what its parent appended before appending its own.
+.PHONY: all one
+
+FOO = base
+
+all: FOO += from-all
+all: one ; @printf '%s\n' '$(FOO)' > all-out
+
+one: FOO += from-one
+one: ; @printf '%s\n' '$(FOO)' > one-out

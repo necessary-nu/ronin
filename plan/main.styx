@@ -5152,6 +5152,7 @@ children (
                         priority 1
                         kind @test
                         deps (make-build-intent-gate)
+                        sealed true
                         log (
                             {
                                 at 2026-08-08T12:12:13.65782247Z
@@ -5165,6 +5166,20 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @status
                                 text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-09T13:03:16.949335122Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Ported 60 repository-owned Make language-feature cases, taking the build-intent corpus from 51 to 111 cases. Each expected effect was recorded from /usr/bin/make GNU Make 4.4.1; the cases compare normal success/failure and filesystem effects, never GNU Make runner narration. Thirty-seven cases already compile to matching Ninja work. Twenty-three expose compiler gaps and carry bidirectional divergence markers: existing owners are make-vpath-search, make-include-semantics, make-option-carrying, make-assignment-modifiers, and make-export-to-recipes; fourteen newly concrete gaps have no dedicated WBS leaf yet. Output-only diagnostic scenarios remain discovery input under make-upstream-suite and are deliberately absent from this build-intent gate. The complete 111-case release run passes: an unrecorded divergence fails, and a fixed recorded divergence also fails until its marker is removed."
+                            }
+
+                            {
+                                at 2026-08-09T13:03:45.372237799Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }

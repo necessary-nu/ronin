@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 8
+| # override applies to a multi-line define as well, so the command line cannot
+| # replace the recipe body the makefile meant to use.
+| override define body
+| @printf '%s\n' one > out
+| @printf '%s\n' two >> out
+| endef
+| 
+| all: ; $(body)
+file out touched 2
+| one
+| two

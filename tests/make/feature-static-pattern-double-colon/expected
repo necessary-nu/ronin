@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| # The static pattern form works with a double colon too, and the stem is
+| # substituted into the prerequisite pattern just as for a single colon.
+| all: a.tgt b.tgt
+| 
+| a.tgt b.tgt:: %.tgt : %.src ; @cat $< > $@
+file a.src kept 1
+| a
+file a.tgt touched 1
+| a
+file b.src kept 1
+| b
+file b.tgt touched 1
+| b

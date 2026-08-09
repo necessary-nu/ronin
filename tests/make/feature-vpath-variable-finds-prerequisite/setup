@@ -1,0 +1,2 @@
+mkdir -p src
+printf 'x\n' > src/found.in

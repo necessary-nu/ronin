@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| # A static pattern rule applies a pattern to a listed set of targets only, so
+| # the stem comes from each named target rather than from a search.
+| files = foo.out bar.out
+| 
+| all: $(files)
+| 
+| $(files): %.out: %.in ; @printf '%s from %s\n' '$@' '$<' > $@
+file bar.in kept 1
+| bar
+file bar.out touched 1
+| bar.out from bar.in
+file foo.in kept 1
+| foo
+file foo.out touched 1
+| foo.out from foo.in

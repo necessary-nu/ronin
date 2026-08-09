@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| # ?= in a target-specific assignment sets the name only where it has no value
+| # already.
+| all: FOO ?= from-target
+| 
+| all: ; @printf '%s\n' '$(FOO)' > out
+file out touched 1
+| from-target

@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| # A vpath directive gives a search path for names matching a pattern, and the
+| # prerequisite the recipe is handed is the one that was found.
+| vpath %.in src
+| 
+| all: out
+| 
+| out: found.in ; @printf '%s\n' '$<' > $@
+file out touched 1
+| src/found.in
+file src/found.in kept 1
+| x

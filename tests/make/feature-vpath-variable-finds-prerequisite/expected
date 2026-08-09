@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| # VPATH is the same search path for every name rather than for a pattern.
+| VPATH = src
+| 
+| all: out
+| 
+| out: found.in ; @printf '%s\n' '$<' > $@
+file out touched 1
+| src/found.in
+file src/found.in kept 1
+| x

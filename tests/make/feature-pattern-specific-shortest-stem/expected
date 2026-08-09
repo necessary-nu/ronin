@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 8
+| # When two patterns match the same target, the one that leaves the shorter stem
+| # is the one whose value is used.
+| %-mt.x: which := longer-pattern
+| %.x: which := shorter-pattern
+| 
+| all: foo.x foo-mt.x
+| 
+| foo.x foo-mt.x: ; @printf '%s\n' '$(which)' > $@
+file foo-mt.x touched 1
+| longer-pattern
+file foo.x touched 1
+| shorter-pattern

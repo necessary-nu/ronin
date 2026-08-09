@@ -1,0 +1,7 @@
+# A wildcard reads the directory afresh, so a file created between two of them
+# by a function call is seen by the second.
+before := $(wildcard *.probe)
+$(shell printf 'x\n' > new.probe)
+after := $(wildcard *.probe)
+
+all: ; @printf '%s\n' '$(filter-out $(before),$(after))' > out

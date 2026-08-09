@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 12
+| # A variable can be set for every target matching a pattern, and a target's own
+| # setting, or a longer-matching pattern's, takes precedence.
+| all: one.x two.x
+| 
+| FOO = foo
+| BAR = bar
+| 
+| one.x: override FOO = one
+| %.x: BAR = two
+| t%.x: BAR = four
+| 
+| one.x two.x: ; @printf '%s %s\n' '$(FOO)' '$(BAR)' > $@
+file one.x touched 1
+| one two
+file two.x touched 1
+| foo four

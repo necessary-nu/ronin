@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| # -j changes when recipes run, not which: every prerequisite is still made.
+| all: a.out b.out c.out
+| 
+| a.out b.out c.out: ; @printf '%s\n' '$@' > $@
+file a.out touched 1
+| a.out
+file b.out touched 1
+| b.out
+file c.out touched 1
+| c.out

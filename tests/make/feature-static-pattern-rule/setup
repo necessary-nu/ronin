@@ -1,0 +1,2 @@
+printf 'foo\n' > foo.in
+printf 'bar\n' > bar.in

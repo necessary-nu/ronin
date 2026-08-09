@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+status 2
+file Makefile kept 6
+| # A pattern rule written again with no recipe withdraws the earlier one, so
+| # nothing knows how to make the target any more.
+| %.tex: %.w ; @printf '%s\n' built > $@
+| %.tex: %.w
+| 
+| all: foo.tex
+file foo.w kept 1
+| web

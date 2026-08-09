@@ -1,0 +1,6 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| ﻿all: ; @printf '%s\n' ok > out
+file out touched 1
+| ok
