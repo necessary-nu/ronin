@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| .SILENT: quiet
+| all: ; echo body > out
+| quiet: ; echo quiet > quiet
+file out touched 1
+| body

@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| all: a.o
+| a.c: ; echo from-c > $@
+| a.q: ; echo from-q > $@
+| %.o: %.q ; cat $< > $@
+| a.o: %.o: %.c ; cat $< > $@
+file a.c touched 1
+| from-c
+file a.o touched 1
+| from-c

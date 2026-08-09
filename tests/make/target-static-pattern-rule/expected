@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| objects = a.o b.o
+| all: $(objects)
+| a.c: ; echo a > $@
+| b.c: ; echo b > $@
+| $(objects): %.o: %.c ; cat $< > $@
+file a.c touched 1
+| a
+file a.o touched 1
+| a
+file b.c touched 1
+| b
+file b.o touched 1
+| b

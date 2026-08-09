@@ -288,7 +288,7 @@ assertions (
     {id make-option-eval-and-warnings, kind @complete, author "brendan@necessary.nu", at 2026-08-08T22:49:27.148448274Z}
     {id make-corpus-features, kind @complete, author "brendan@necessary.nu", at 2026-08-09T13:03:45.372237799Z}
     {id make-corpus-functions, kind @complete, author "brendan@necessary.nu", at 2026-08-09T13:13:53.794759723Z}
-    {id make-corpus-targets, kind @doing, author "brendan@necessary.nu", at 2026-08-09T13:16:36.196612499Z}
+    {id make-corpus-targets, kind @complete, author "brendan@necessary.nu", at 2026-08-09T13:21:09.11545306Z}
 )
 
 impl_evidence (

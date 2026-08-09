@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| .SUFFIXES:
+| .SUFFIXES: .in .mid .out
+| all: hello.out
+| hello.in: ; echo body > $@
+| .in.mid: ; cat $< > $@
+| .mid.out: ; cat $< > $@
+file hello.in touched 1
+| body
+file hello.out touched 1
+| body

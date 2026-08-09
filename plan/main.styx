@@ -5228,6 +5228,7 @@ children (
                         priority 1
                         kind @test
                         deps (make-build-intent-gate)
+                        sealed true
                         log (
                             {
                                 at 2026-08-08T12:12:24.679244313Z
@@ -5248,6 +5249,13 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @decision
                                 text "Ported 49 repository-owned GNU Make 4.4.1 build-intent cases covering targets, rules, and special-target interactions, taking the corpus from 208 to 257 cases. Thirty-two already compile to matching Ninja work. Seventeen expose compiler gaps and carry bidirectional divergence markers: existing owners are make-ignore-errors-status, make-intermediate-files, and make-option-no-builtin-variables; thirteen cases in the delete-on-error, double-colon, grouped-target, POSIX-default, and static-pattern families explicitly record that no dedicated WBS leaf exists yet. The cases compare normal success/failure and filesystem effects, never GNU Make runner narration. The complete 257-case release run passes, including the rule that a fixed recorded divergence must have its marker removed."
+                            }
+
+                            {
+                                at 2026-08-09T13:21:09.11545306Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }

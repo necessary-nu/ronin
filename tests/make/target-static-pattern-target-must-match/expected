@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| all: mismatch
+| mismatch: %.o: %.c ; printf 'stem=[%s] first=[%s] all=[%s]\n' '$*' '$<' '$^' > $@
+file mismatch touched 1
+| stem=[mismatch] first=[] all=[]

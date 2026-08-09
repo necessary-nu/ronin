@@ -1,0 +1,1 @@
+Kati does not let an explicit .SHELLFLAGS assignment override the .POSIX default; no dedicated WBS node yet.

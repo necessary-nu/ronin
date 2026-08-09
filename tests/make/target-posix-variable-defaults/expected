@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| .POSIX:
+| all: ; printf '%s\n' 'AR=$(AR)' 'ARFLAGS=$(ARFLAGS)' 'CC=$(CC)' 'CFLAGS=$(CFLAGS)' 'FC=$(FC)' 'FFLAGS=$(FFLAGS)' 'LDFLAGS=$(LDFLAGS)' 'LEX=$(LEX)' 'LFLAGS=$(LFLAGS)' 'YACC=$(YACC)' 'YFLAGS=$(YFLAGS)' 'SCCSGETFLAGS=$(SCCSGETFLAGS)' > out
+file out touched 12
+| AR=ar
+| ARFLAGS=-rvU
+| CC=c99
+| CFLAGS=-O1
+| FC=fort77
+| FFLAGS=-O1
+| LDFLAGS=
+| LEX=lex
+| LFLAGS=
+| YACC=yacc
+| YFLAGS=
+| SCCSGETFLAGS=-s

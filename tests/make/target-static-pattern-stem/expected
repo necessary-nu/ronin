@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| all: hello.o
+| hello.c: ; echo body > $@
+| hello.o: %.o: %.c ; printf '%s\n' 'stem=$*' 'first=$<' 'name=$@' > $@
+file hello.c touched 1
+| body
+file hello.o touched 3
+| stem=hello
+| first=hello.c
+| name=hello.o

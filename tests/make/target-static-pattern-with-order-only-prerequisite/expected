@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| all: a.o
+| a.c: ; echo body > $@
+| gate: ; echo gate > $@
+| a.o: %.o: %.c | gate ; cat $^ > $@
+file a.c touched 1
+| body
+file a.o touched 1
+| body
+file gate touched 1
+| gate
