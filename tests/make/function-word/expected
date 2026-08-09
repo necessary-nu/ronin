@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| list := alpha beta gamma delta
+| all: ; @printf '[%s]\n' '$(words $(list))' '$(word 1,$(list))' '$(word 4,$(list))' '$(word 9,$(list))' '$(firstword $(list))' '$(lastword $(list))' > out
+file out touched 6
+| [4]
+| [alpha]
+| [delta]
+| []
+| [alpha]
+| [delta]

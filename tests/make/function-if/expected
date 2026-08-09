@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| e =
+| all: ; @printf '[%s]\n' '$(if ,true,false)' '$(if ,true)' '$(if z,true,false)' '$(if z,true,fal,se)' '$(if ,true,fal,se)' '$(if $(e) ,true,false)' > out
+file out touched 6
+| [false]
+| []
+| [true]
+| [true]
+| [fal,se]
+| [false]

@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| $(warning heads up)
+| all: ; @printf '%s\n' 'ran' > out
+file out touched 1
+| ran

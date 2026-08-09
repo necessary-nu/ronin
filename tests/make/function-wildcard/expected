@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| all: ; @printf '[%s]\n' '$(sort $(wildcard example.*))' '$(sort $(wildcard example.?))' '$(sort $(wildcard example.[a-z0-9]))' > out
+file example.1 kept 0
+file example.3 kept 0
+file example._ kept 0
+file example.for kept 0
+file example.two kept 0
+file out touched 3
+| [example.1 example.3 example._ example.for example.two]
+| [example.1 example.3 example._]
+| [example.1 example.3]

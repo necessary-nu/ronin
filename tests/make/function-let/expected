@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| a = bad
+| b = news
+| x = $(let a b,1 2,$(a) $(b))
+| y = $(let a,1 2,$(a))
+| z = $(let a b,1,$(a) $(b))
+| all: ; @printf '[%s]\n' '$(a)' '$(b)' '$(x)' '$(y)' '$(z)' > out
+file out touched 5
+| [bad]
+| [news]
+| [1 2]
+| [1 2]
+| [1 ]

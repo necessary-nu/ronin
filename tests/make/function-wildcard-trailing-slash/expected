@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| all: ; @printf '[%s]\n' '$(sort $(wildcard hello*))' '$(sort $(wildcard hello*/))' '$(sort $(wildcard hellod/*))' '$(sort $(wildcard hellod/*/))' > out
+file hellod/worldd/kenf kept 0
+file hellod/worldf kept 0
+file hellof kept 0
+file out touched 4
+| [hellod hellof]
+| [hellod/]
+| [hellod/worldd hellod/worldf]
+| [hellod/worldd/]

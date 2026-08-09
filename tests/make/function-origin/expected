@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| override WHITE := BLACK
+| foo := bletch
+| all: ; @printf '%s\n' '$(origin nosuchvar)' '$(origin CC)' '$(origin MAKE)' '$(origin foo)' '$(origin CFLAGS)' '$(origin WHITE)' '$(origin @)' > out
+file out touched 7
+| undefined
+| default
+| default
+| file
+| command line
+| override
+| automatic

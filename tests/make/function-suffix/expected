@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| list := word.pl general.pl1 FORCE.pl /tmp.c/bar foo.baz/bar.c plain
+| all: ; @printf '[%s]\n' '$(suffix $(list))' '$(sort $(suffix $(list)))' > out
+file out touched 2
+| [.pl .pl1 .pl .c]
+| [.c .pl .pl1]

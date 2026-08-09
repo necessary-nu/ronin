@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| all: ; @printf '[%s]\n' '$(wildcard present.txt)' '$(wildcard absent.txt)' > out
+file out touched 2
+| [present.txt]
+| []
+file present.txt kept 0

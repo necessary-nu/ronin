@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| all: ; @printf '%s\n' '$(realpath /)' '$(if $(filter $(CURDIR),$(realpath .)),same,differ)' '$(if $(filter $(CURDIR),$(realpath ./)),same,differ)' '[$(realpath nosuchfile)]' > out
+file out touched 4
+| /
+| same
+| same
+| []

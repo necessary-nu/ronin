@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| foo := a.o b.o c.o
+| all: ; @printf '[%s]\n' '$(patsubst %.o,%.c,$(foo))' '$(patsubst Foo,Repl,FooFoo)' '$(patsubst %.c,%.o,x.c.c bar.c)' > out
+file out touched 3
+| [a.c b.c c.c]
+| [FooFoo]
+| [x.c.o bar.o]

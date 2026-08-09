@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| FOO = foo
+| recurse = FOO is $$FOO and $(FOO)
+| static := FOO is $(value FOO)
+| all: ; @printf '[%s]\n' '$(recurse)' '$(value recurse)' '$(static)' '$(value static)' > out
+file out touched 4
+| [FOO is $FOO and foo]
+| [FOO is $$FOO and $(FOO)]
+| [FOO is foo]
+| [FOO is foo]

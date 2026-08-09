@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| all: $(wildcard *.in) ; @printf '[%s]\n' '$(sort $^)' > out
+file out touched 1
+| [src1.in src2.in]
+file src1.in kept 0
+file src2.in kept 0

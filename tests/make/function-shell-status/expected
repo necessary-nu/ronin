@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 6
+| PRE := $(.SHELLSTATUS)
+| $(shell exit 0)
+| OK := $(.SHELLSTATUS)
+| $(shell exit 3)
+| BAD := $(.SHELLSTATUS)
+| all: ; @printf '%s\n' 'PRE=[$(PRE)]' 'OK=[$(OK)]' 'BAD=[$(BAD)]' > out
+file out touched 3
+| PRE=[]
+| OK=[0]
+| BAD=[3]

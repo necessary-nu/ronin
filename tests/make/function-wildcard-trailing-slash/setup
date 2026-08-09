@@ -1,0 +1,2 @@
+mkdir -p hellod/worldd
+touch hellof hellod/worldf hellod/worldd/kenf

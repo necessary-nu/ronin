@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| list := moon light days jazz days moon
+| all: ; @printf '%s\n' '$(sort $(list))' '$(words $(sort $(list)))' > out
+file out touched 2
+| days jazz light moon
+| 4

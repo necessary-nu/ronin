@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| E :=
+| padded := $E   try this     and	this   	$E
+| all: ; @printf '[%s]\n' '$(strip $(padded))' '$(strip )' > out
+file out touched 2
+| [try this and this]
+| []
