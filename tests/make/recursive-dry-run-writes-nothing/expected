@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| # -n over a recursive Makefile shows the whole tree's work and does none of it.
+| all: ; $(MAKE) -C sub
+file sub/Makefile kept 1
+| child: ; echo child > child

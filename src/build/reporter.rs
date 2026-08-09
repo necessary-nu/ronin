@@ -609,7 +609,6 @@ mod tests {
 
     fn spec(command: &str, description: &str) -> CommandSpec {
         CommandSpec {
-            dry_run_command: None,
             command: command.into(),
             description: description.into(),
             rspfile: None,

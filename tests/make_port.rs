@@ -44,8 +44,19 @@ const ORACLE_VERSION: &str = "GNU Make 4.4.1";
 /// effects of flags Ronin accepts as interface-compatible no-ops. Recursive
 /// Make invocations compile into one graph, so there is no child Make runner in
 /// which that choreography could occur.
-const DISCOVERY_ONLY_CASES: [&str; 13] = [
+///
+/// The two dry-run cases record what GNU Make 4.4.1 runs while told to run
+/// nothing: a `+`-prefixed line, and a line whose unexpanded text names
+/// `$(MAKE)`. It runs them because starting the child is the only way it can
+/// learn what the child would do. Ronin compiled the child instead, so its
+/// `-n` is Ninja's and writes nothing at all. The recordings stay because the
+/// classification they demonstrate is the one Ronin's compiler reads —
+/// `recursive-dry-run-writes-nothing` is the same question where the two tools
+/// agree, and it gates.
+const DISCOVERY_ONLY_CASES: [&str; 15] = [
     "always-make-option",
+    "dry-run-skips-a-make-reference-line",
+    "dry-run-skips-a-plus-line",
     "equal-timestamps-are-up-to-date",
     "intermediate-absent-is-not-rebuilt",
     "makeflags-keep-going-precedence",

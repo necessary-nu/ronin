@@ -8,9 +8,6 @@ use std::fs;
 
 type BuildResult<T> = Result<T, BuildError>;
 
-/// The binding a Makefile's `+`-prefixed recipe lines are assembled into.
-pub(crate) const DRY_RUN_COMMAND: &[u8] = b"dryrun_command";
-
 /// The recipe's errors are Make's to ignore: `-` on every line, `-i`, `.IGNORE`.
 ///
 /// Bound only where a nonzero status can mean nothing else, so the build reads
@@ -23,9 +20,6 @@ pub(crate) const IGNORE_ERRORS: &[u8] = b"ignore_errors";
 )]
 pub(super) struct CommandSpec {
     pub(super) command: BString,
-    /// What to run when the run is only pretending. `None` for every Ninja
-    /// edge and for a recipe with no `+` line.
-    pub(super) dry_run_command: Option<BString>,
     pub(super) description: BString,
     pub(super) rspfile: Option<BString>,
     pub(super) rspfile_content: BString,
@@ -69,17 +63,14 @@ impl CommandSpec {
     ///
     /// Only four of these are kept; the rest are inspected and discarded, so
     /// they share `scratch` rather than each allocating a result.
+    ///
+    /// There is no Make exception here and no place for one. A dry run prints
+    /// the commands the graph holds and runs none of them, whichever front end
+    /// built the graph; recursive Make reached the graph as composed child
+    /// edges, so a dry run already has them to print.
     fn evaluate(graph: &Graph, edge: EdgeId, scratch: &mut Vec<u8>) -> BuildResult<Self> {
         let command = crate::env::edgevar(graph, edge, Names::COMMAND, PathStyle::ShellEscaped)
             .unwrap_or_default();
-        // Make's `+` prefix: the part of a recipe that runs even under -n. Only
-        // a Makefile ever binds this, so a Ninja manifest never interned the
-        // name and the lookup answers None.
-        let dry_run_command = graph
-            .names()
-            .lookup(bstr::BStr::new(DRY_RUN_COMMAND))
-            .and_then(|binding| crate::env::edgevar(graph, edge, binding, PathStyle::ShellEscaped))
-            .filter(|command| !command.is_empty());
         let description =
             crate::env::edgevar(graph, edge, Names::DESCRIPTION, PathStyle::ShellEscaped)
                 .unwrap_or_default();
@@ -114,7 +105,6 @@ impl CommandSpec {
             });
         Ok(Self {
             command,
-            dry_run_command,
             description,
             rspfile,
             rspfile_content,

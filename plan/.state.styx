@@ -260,7 +260,7 @@ assertions (
     {id make-order-only-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-09T17:17:16.771559622Z}
     {id make-suffixes-with-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-09T17:17:06.966600994Z}
     {id make-option-include-path, kind @complete, author "brendan@necessary.nu", at 2026-08-09T17:16:13.113316581Z}
-    {id make-recipe-dry-run, kind @doing, author "brendan@necessary.nu", at 2026-08-06T22:10:10.717750281Z}
+    {id make-recipe-dry-run, kind @complete, author "brendan@necessary.nu", at 2026-08-09T18:12:53.216236028Z}
     {id make-ignore-errors-target, kind @complete, author "brendan@necessary.nu", at 2026-08-09T17:17:30.821971067Z}
     {id make-export-to-recipes, kind @complete, author "brendan@necessary.nu", at 2026-08-09T17:17:32.585792306Z}
     {id make-target-variable-order, kind @complete, author "brendan@necessary.nu", at 2026-08-09T17:17:25.014134007Z}

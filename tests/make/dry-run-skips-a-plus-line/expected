@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # GNU Make runs a `+` line under -n; Ronin's -n is Ninja's and runs nothing.
+| all:
+| 	echo plain > plain
+| 	+echo plus > plus
+file plus touched 1
+| plus

@@ -32,7 +32,6 @@ struct Bindings {
     rspfile_content: Binding,
     pool: Binding,
     tags: Binding,
-    dry_run_command: Binding,
     ignore_errors: Binding,
     /// `$out`, for the two bindings whose value is per edge rather than per
     /// rule. kati mints one rule per edge, so this expands to that edge's own
@@ -52,7 +51,6 @@ impl Bindings {
             rspfile_content: graph.binding(b"rspfile_content"),
             pool: graph.binding(b"pool"),
             tags: graph.binding(b"tags"),
-            dry_run_command: graph.binding(crate::build::DRY_RUN_COMMAND),
             ignore_errors: graph.binding(crate::build::IGNORE_ERRORS),
             out: graph.binding(b"out"),
         }
@@ -564,24 +562,17 @@ impl GraphSink {
     /// Bind the executor-facing half of a kati rule. Recursive invocations are
     /// deliberately absent: their child graphs are connected by
     /// [`Self::complete_subninja`] instead.
+    ///
+    /// No binding here describes a dry run. Make's `-n` is Ninja's `-n` on the
+    /// graph kati compiled, and the recursion GNU Make would have run a child
+    /// process to discover is already in that graph as composed child edges.
     fn executor_rule_bindings(
         &self,
         rule: &SinkRule<'_>,
         command: SinkCommand<'_>,
-        dry_run_command: &[u8],
         ignore_errors: bool,
     ) -> Vec<(Binding, Template)> {
         let mut bindings = self.command_bindings(rule.shell, rule.shell_flags, command);
-        if !dry_run_command.is_empty() {
-            let mut command = self.command_prefix();
-            command.push_literal(rule.shell);
-            command.push_literal(b" ");
-            command.push_literal(rule.shell_flags);
-            command.push_literal(b" \"");
-            command.push_literal(&escape_shell(&Bytes::copy_from_slice(dry_run_command)));
-            command.push_literal(b"\"");
-            bindings.push((self.bindings.dry_run_command, command));
-        }
         bindings.push((
             self.bindings.description,
             rule.description.map_or_else(
@@ -667,12 +658,8 @@ impl BuildSink for GraphSink {
             let residual_rule = rule
                 .residual_command
                 .map(|command| {
-                    let bindings = self.executor_rule_bindings(
-                        rule,
-                        command,
-                        rule.residual_dry_run_command,
-                        rule.residual_ignore_errors,
-                    );
+                    let bindings =
+                        self.executor_rule_bindings(rule, command, rule.residual_ignore_errors);
                     let name = format!("rule{}_residual", rule.id);
                     self.define_executor_rule(name.as_bytes(), bindings)
                 })
@@ -696,12 +683,7 @@ impl BuildSink for GraphSink {
             return Ok(());
         }
 
-        let bindings = self.executor_rule_bindings(
-            rule,
-            rule.command,
-            rule.dry_run_command,
-            rule.ignore_errors,
-        );
+        let bindings = self.executor_rule_bindings(rule, rule.command, rule.ignore_errors);
         let name = format!("rule{}", rule.id);
         let defined = self.define_executor_rule(name.as_bytes(), bindings)?;
         self.rules.insert(rule.id, defined);

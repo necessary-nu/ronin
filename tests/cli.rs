@@ -1411,11 +1411,17 @@ fn make_mode_ignores_recipe_failures_the_makefile_named() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-/// `-n` runs nothing, except the lines the Makefile prefixed `+`.
-// [spec:ronin:req:make.semantics+1/test]
+/// Every Make dry-run spelling is Ninja's dry run over the compiled graph, so
+/// the whole recipe is printed and no line of it runs — the `+` prefix
+/// included.
+///
+/// GNU Make 4.4.1 runs a `+` line under `-n` because running is the only way
+/// it can learn what the line would do. Nothing here needs that: the recipe is
+/// already compiled, and a run told to touch nothing touches nothing.
+// [spec:ronin:req:make.interface-compatibility/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn make_mode_runs_only_the_plus_lines_under_dry_run() {
+fn dry_run_spellings_run_nothing() {
     let directory = test_directory("make-dry-run");
     fs::create_dir_all(&directory).unwrap();
     fs::write(
@@ -1423,7 +1429,54 @@ fn make_mode_runs_only_the_plus_lines_under_dry_run() {
         "all:\n\
          \techo before > before\n\
          \t+echo plus > plus\n\
+         \techo mentioned $(MAKE) > mentioned\n\
          \techo after > after\n",
+    )
+    .unwrap();
+
+    let program = invoked_as(&directory, "make");
+    for spelling in ["-n", "--just-print", "--dry-run", "--recon"] {
+        let output = make_command(&program, &directory)
+            .arg(spelling)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{spelling}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let printed = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            printed.contains("echo plus > plus"),
+            "{spelling} did not print the recipe it declined to run: {printed}"
+        );
+        for skipped in ["before", "plus", "mentioned", "after"] {
+            assert!(
+                !directory.join(skipped).exists(),
+                "{spelling} ran {skipped}, which it was told not to"
+            );
+        }
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A dry run over a recursive Makefile prints the child's work too, because
+/// the child is part of the graph rather than a process this would have to
+/// start to find out.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn dry_run_shows_the_composed_child() {
+    let directory = test_directory("make-dry-run-recursive");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t+$(MAKE) -C sub\n\techo parent > parent\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("sub").join("Makefile"),
+        "child: ; echo child > child\n",
     )
     .unwrap();
 
@@ -1436,13 +1489,84 @@ fn make_mode_runs_only_the_plus_lines_under_dry_run() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(directory.join("plus").exists(), "the + line did not run");
-    for skipped in ["before", "after"] {
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        printed.contains("echo child > child"),
+        "the child graph was not in the dry run: {printed}"
+    );
+    assert!(
+        printed.contains("echo parent > parent"),
+        "the parent's own work was not in the dry run: {printed}"
+    );
+    for skipped in ["parent", "sub/child"] {
         assert!(
             !directory.join(skipped).exists(),
-            "-n ran {skipped}, which it was told not to"
+            "the dry run wrote {skipped}"
         );
     }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Splitting a recipe into child graphs is all or nothing, and the line GNU
+/// Make classifies recursive from its unexpanded text is how the compiler sees
+/// the recursion that no static invocation can be lifted out of. A recipe
+/// holding one of those is left whole rather than half-composed with a nested
+/// Make hidden in what remains.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn recursive_recipes_are_never_half_composed() {
+    let directory = test_directory("make-recursion-guard");
+    for child in ["a", "b"] {
+        fs::create_dir_all(directory.join(child)).unwrap();
+        fs::write(
+            directory.join(child).join("Makefile"),
+            format!("child: ; echo {child} > built\n"),
+        )
+        .unwrap();
+    }
+    let program = invoked_as(&directory, "make");
+
+    // The second invocation is real but sits behind a runtime test, so it is
+    // not one static child compilation. Composing only the first would leave
+    // it to start a nested Make beside the graph the first became.
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t$(MAKE) -C a\n\ttest -d b && $(MAKE) -C b\n",
+    )
+    .unwrap();
+    let mixed = make_command(&program, &directory).output().unwrap();
+    assert!(
+        !mixed.status.success(),
+        "a recipe was half-composed and the rest run as a nested Make"
+    );
+    let refusal = String::from_utf8_lossy(&mixed.stderr);
+    assert!(
+        refusal.contains("subninja"),
+        "the refusal did not name the compilation it could not do: {refusal}"
+    );
+    for child in ["a", "b"] {
+        assert!(
+            !directory.join(child).join("built").exists(),
+            "{child} was built despite the refusal"
+        );
+    }
+
+    // MAKE named as an argument is not a Make being started, and 4.4.1 runs
+    // the line under `-n` without recursing into anything either.
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t$(MAKE) -C a\n\ttest -d b && echo mentioned $(MAKE) > mentioned\n",
+    )
+    .unwrap();
+    let mentioned = make_command(&program, &directory).output().unwrap();
+    assert!(
+        mentioned.status.success(),
+        "naming MAKE in an argument was read as recursion: {}",
+        String::from_utf8_lossy(&mentioned.stderr)
+    );
+    assert!(directory.join("mentioned").exists());
+    assert!(directory.join("a").join("built").exists());
     fs::remove_dir_all(directory).unwrap();
 }
 
