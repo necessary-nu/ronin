@@ -6459,4 +6459,32 @@ children (
             }
         )
     }
+
+    {
+        id ronin-exit-status-parity
+        title "Exit with the status Ninja exits with when a command fails"
+        kind @fix
+        log (
+            {
+                at 2026-08-09T17:25:12.172102097Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Opened from the dangling referral on ronin-command-launcher's 2026-08-04 note: Ronin exits 1 where Ninja propagates the failing command's exit status. The claim about Ninja's behaviour must be verified against real Ninja before matching it — the oracle is Ninja, not the note. The failure-surface conformance scenarios from ronin-failure-surface-parity are the natural place for exit-status assertions."
+            }
+        )
+    }
+
+    {
+        id ronin-baseline-rerecord
+        title "Re-record the performance baseline against the pinned Release Ninja"
+        kind @chore
+        log (
+            {
+                at 2026-08-09T17:25:14.780156143Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Opened from the review of 2026-08-09: benchmarks/README.md pins the reference recipe to a Release Ninja (cmake -DCMAKE_BUILD_TYPE=Release, recorded by ronin-reference-in-checkout), but benchmarks/baseline-v1.csv has not been re-recorded since 553dc19 and still encodes the unoptimised Ninja that ronin-ninja-reference-unpinned identified — the gate compares against a stale ratio. Re-record on a quiet host; do not run alongside other work, per the wall-time discipline. Blocked on host quietness, not on any node."
+            }
+        )
+    }
 )
