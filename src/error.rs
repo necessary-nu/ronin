@@ -779,10 +779,26 @@ impl error::Error for GraphError {
     }
 }
 
+/// Which step of Ninja's `WriteFile` a failure came out of.
+///
+/// `WriteFile` is `fopen`, `fwrite`, `fclose`, and it names whichever of the
+/// three refused. The split is not cosmetic: stdio buffers the payload, so a
+/// response file shorter than the stream's buffer never reaches the disk until
+/// the close, and a full disk is reported against the close rather than the
+/// write. Anything at or past the buffer goes out of `fwrite` and is reported
+/// there. Both sentences are Ninja's, and which one a failure earns is part of
+/// what it says.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FileWriteStep {
+    Create,
+    Write,
+    Close,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum BuildOperation {
     CreateOutputDirectory,
-    WriteResponseFile,
+    WriteResponseFile(FileWriteStep),
     WriteOutput,
     WriteDiagnostic,
     StatOutput,
@@ -883,6 +899,17 @@ pub(crate) enum BuildStop {
     /// Something other than a command's exit status ended the build. Ninja
     /// reports that failure itself rather than a summary of the run.
     Failed(Box<BuildError>),
+    /// The failure has already been reported where it happened, so there is
+    /// nothing left to say here.
+    ///
+    /// Ninja's build loop carries one error string, and the failures that
+    /// print themselves through `Error()` never write to it. The summary line
+    /// is printed regardless and so carries an empty reason — `build stopped:
+    /// .` — rather than repeating the diagnostic. Reproduced rather than
+    /// improved on, because a caller reading Ninja's stdout is reading that
+    /// empty reason, and because Ninja's own manifest-regeneration path keys
+    /// off the string being empty.
+    Reported,
 }
 
 impl fmt::Display for BuildStop {
@@ -896,6 +923,7 @@ impl fmt::Display for BuildStop {
             Self::Stuck => formatter.write_str("stuck [this is a bug]"),
             Self::Interrupted => formatter.write_str("interrupted by user"),
             Self::Failed(error) => error.fmt(formatter),
+            Self::Reported => Ok(()),
         }
     }
 }
@@ -921,6 +949,14 @@ impl BuildStop {
                 plural: allowed > 1,
             },
             BuildError::SubcommandFailed { .. } => Self::CannotMakeProgress,
+            // `WriteFile` reports through `Error()` on stderr and returns
+            // false without touching the build loop's error string, so the
+            // failure has been named once, where it happened, and the summary
+            // that follows has nothing to add.
+            BuildError::Io {
+                operation: BuildOperation::WriteResponseFile(_),
+                ..
+            } => Self::Reported,
             other => Self::Failed(Box::new(other)),
         }
     }
@@ -1012,6 +1048,24 @@ impl fmt::Display for BuildError {
             Self::ManifestRebuild { path, reason } => {
                 write!(formatter, "error: rebuilding '{path}': {reason}")
             }
+            // Ninja names the call, the file it was given and the step that
+            // refused, because a bare errno does not say which of an edge's
+            // files could not be written.
+            Self::Io {
+                operation: BuildOperation::WriteResponseFile(step),
+                path: Some(path),
+                source,
+                ..
+            } => write!(
+                formatter,
+                "WriteFile({path}): {}. {}",
+                match step {
+                    FileWriteStep::Create => "Unable to create file",
+                    FileWriteStep::Write => "Unable to write to the file",
+                    FileWriteStep::Close => "Unable to close the file",
+                },
+                system_message(source)
+            ),
             Self::Io { source, .. } => formatter.write_str(&system_message(source)),
             Self::Clock { source } => source.fmt(formatter),
             Self::TargetContext { source } => write!(formatter, "error: {source}"),

@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 #[cfg(not(unix))]
 use std::time::UNIX_EPOCH;
 
+use crate::error::FileWriteStep;
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub(crate) struct WorkingDirectory(PathBuf);
 
@@ -319,8 +321,32 @@ impl RealDiskInterface {
         std::fs::read(self.resolve(path))
     }
 
-    pub(crate) fn write(&self, path: &Path, contents: impl AsRef<[u8]>) -> io::Result<()> {
-        std::fs::write(self.resolve(path), contents)
+    /// Writes `contents` to `path`, saying which step of the write refused.
+    ///
+    /// Ninja's `WriteFile` is stdio — `fopen`, `fwrite`, `fclose` — and it
+    /// names whichever of the three failed. Where a failure surfaces is
+    /// decided by the buffer glibc gives the stream, which is the file's
+    /// `st_blksize`: a payload shorter than that sits in the buffer until the
+    /// close, so a full disk is reported against the close, while a payload at
+    /// or past it is handed to the kernel by `fwrite` and reported there.
+    /// Buffering the same way earns the same failure the same sentence rather
+    /// than guessing at one.
+    pub(crate) fn write_response_file(
+        &self,
+        path: &Path,
+        contents: &[u8],
+    ) -> Result<(), (FileWriteStep, io::Error)> {
+        use std::io::Write as _;
+
+        let file = std::fs::File::create(self.resolve(path))
+            .map_err(|error| (FileWriteStep::Create, error))?;
+        let mut stream = std::io::BufWriter::with_capacity(stream_buffer_size(&file), file);
+        stream
+            .write_all(contents)
+            .map_err(|error| (FileWriteStep::Write, error))?;
+        stream
+            .flush()
+            .map_err(|error| (FileWriteStep::Close, error))
     }
 
     pub(crate) fn remove_file(&self, path: &Path) -> io::Result<()> {
@@ -329,6 +355,33 @@ impl RealDiskInterface {
 
     pub(crate) fn symlink_metadata(&self, path: &Path) -> io::Result<std::fs::Metadata> {
         std::fs::symlink_metadata(self.resolve(path))
+    }
+}
+
+/// The buffer glibc would give a stream opened on `file`.
+///
+/// `_IO_file_doallocate` takes the buffer from `st_blksize` when the stat
+/// succeeds and the block is non-zero, and falls back to `BUFSIZ` otherwise.
+/// Read from the open file rather than the path so a name that was replaced
+/// between the open and the stat cannot change the answer.
+fn stream_buffer_size(file: &std::fs::File) -> usize {
+    /// glibc's `BUFSIZ`, the fallback when there is no usable block size.
+    const BUFSIZ: usize = 8192;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+
+        file.metadata()
+            .ok()
+            .and_then(|metadata| usize::try_from(metadata.blksize()).ok())
+            .filter(|block| *block > 0)
+            .unwrap_or(BUFSIZ)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        BUFSIZ
     }
 }
 

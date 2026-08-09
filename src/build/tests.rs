@@ -1568,7 +1568,18 @@ fn ninja_build_makes_depfile_dir_only() {
     let out = directory.join("out").to_string_lossy().into_owned();
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
     builder.add_target(&out).unwrap();
-    assert!(builder.build().is_err());
+    // Ninja names the call, the file and the step that refused, and says so
+    // where it happened; the summary that follows carries an empty reason
+    // because the build loop's error string was never written to.
+    assert_eq!(builder.build().unwrap_err().to_string(), "build stopped: .");
+    assert_eq!(
+        String::from_utf8_lossy(&builder.build_output),
+        format!(
+            "ronin: error: WriteFile({}/absent/args.rsp): \
+             Unable to create file. No such file or directory\n",
+            directory.display()
+        )
+    );
     assert!(builder.commands_ran.is_empty());
     assert!(!directory.join("absent").exists());
     drop(builder);

@@ -4,7 +4,7 @@ mod runtime_options;
 
 use crate::build::{BuildOptions, ColorChoice, JobLimit, OutputStyle};
 use crate::error::{
-    BuildError, CliError, EncodingContext, PersistenceError, PersistenceOperation,
+    BuildError, BuildStop, CliError, EncodingContext, PersistenceError, PersistenceOperation,
     ToolAvailability, ToolError,
 };
 use crate::frontend::{Build, BuildGraph, ManifestOptions, Node, Persistence};
@@ -1513,7 +1513,16 @@ fn rebuild_manifest<'a>(
     // Failing to regenerate the manifest is not a build outcome: Ninja names
     // the manifest, reports it as an error, and leaves with a plain failure
     // rather than the command's own status.
+    //
+    // Except when the failure already reported itself. Ninja's caller asks
+    // `!err.empty()` before saying anything, so a regeneration that stopped
+    // with an empty reason is indistinguishable from one that had nothing to
+    // do: nothing further is printed, and the invocation goes on to build the
+    // targets it was asked for with the manifest it already has. Odd, and the
+    // contract — the diagnostic has been printed by then, so the run is not
+    // silent about it, only unstopped by it.
     match outcome.stopped {
+        Some((BuildStop::Reported, _)) => Ok(false),
         Some((reason, _)) => Err(BuildError::ManifestRebuild {
             path: manifest.clone(),
             reason,

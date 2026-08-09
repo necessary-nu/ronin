@@ -499,6 +499,79 @@ const BUILD_CASES: &[BuildCase] = &[
         status: 0,
     },
     BuildCase {
+        // The other half of that asymmetry, and the reason it is bearable:
+        // when the directory is missing the response file cannot be written,
+        // and Ninja names the call, the path and the step that refused. The
+        // diagnostic is on stderr, where it is printed the moment the write
+        // fails; stdout gets only the summary, whose reason is empty because
+        // the build loop's error string was never written to.
+        name: "a response file with nowhere to go names the write that failed",
+        manifest: "rule cc\n  command = touch $out\n  rspfile = absent/deeper/a.rsp\n\
+                   \x20 rspfile_content = arguments\nbuild a: cc\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // The same sentence with a different errno, so the case pins the
+        // shape of the message rather than one system message inside it.
+        name: "a response file that is a directory names the write that failed",
+        manifest: "rule cc\n  command = touch $out\n  rspfile = nested\n\
+                   \x20 rspfile_content = arguments\nbuild a: cc\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // Ninja leaves its build loop the moment an edge cannot be started,
+        // without consulting the failure allowance: `-k 0` keeps a build going
+        // past commands that ran and failed, not past a file the disk refused.
+        // Nothing after the first edge runs, so the run says only that.
+        name: "keep-going does not survive a response file that cannot be written",
+        manifest: "rule cc\n  command = touch $out\n  rspfile = absent/a.rsp\n\
+                   \x20 rspfile_content = arguments\nrule touch\n  command = touch $out\n\
+                   build a: cc\nbuild b: touch\nbuild c: touch\ndefault a b c\n",
+        arguments: &["-C", "@DIR@", "-k", "0", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // `WriteFile` is stdio, so a payload that fits the stream's buffer
+        // never reaches the device until the close and a full disk is reported
+        // against the close rather than the write.
+        name: "a short response file on a full device is reported against the close",
+        manifest: "rule cc\n  command = touch $out\n  rspfile = /dev/full\n\
+                   \x20 rspfile_content = arguments\nbuild a: cc\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // Past the buffer the payload is handed to the kernel by the write
+        // itself, which is where the same full device is reported instead.
+        // Built up through bindings because the size is the point: 8 KiB is
+        // clear of the 4 KiB block a device node reports.
+        name: "a long response file on a full device is reported against the write",
+        manifest: "sixtyfour = 0123456789abcdef0123456789abcdef\
+                   0123456789abcdef0123456789abcdef\n\
+                   kibibyte = $sixtyfour$sixtyfour$sixtyfour$sixtyfour\
+                   $sixtyfour$sixtyfour$sixtyfour$sixtyfour\
+                   $sixtyfour$sixtyfour$sixtyfour$sixtyfour\
+                   $sixtyfour$sixtyfour$sixtyfour$sixtyfour\n\
+                   payload = $kibibyte$kibibyte$kibibyte$kibibyte\
+                   $kibibyte$kibibyte$kibibyte$kibibyte\n\
+                   rule cc\n  command = touch $out\n  rspfile = /dev/full\n\
+                   \x20 rspfile_content = $payload\nbuild a: cc\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
         name: "a console command's status leaves with the build",
         manifest: "rule f\n  command = exit 111\n  pool = console\nbuild a: f\n",
         arguments: &["-C", "@DIR@"],
@@ -1526,6 +1599,43 @@ mod tests {
             assert!(
                 case.manifest.contains("$$$$"),
                 "case '{}' signals a pid the shell never expands",
+                case.name
+            );
+        }
+    }
+
+    /// The two `/dev/full` cases are one pair: the short payload has to stay
+    /// inside the stream's buffer so its failure is reported against the
+    /// close, and the long one has to clear the block a device reports so its
+    /// failure is reported against the write. The long payload is spelled as
+    /// nested bindings to keep the manifest readable, which is exactly how it
+    /// could quietly shrink back into being a second copy of the short case.
+    // [spec:ronin:req:compat.upstream-conformance/test]
+    #[test]
+    fn full_device_cases_straddle_a_block() {
+        let case = |name| {
+            BUILD_CASES
+                .iter()
+                .find(|case| case.name == name)
+                .unwrap_or_else(|| panic!("case '{name}' is in the table"))
+        };
+        let long = case("a long response file on a full device is reported against the write");
+        // `sixtyfour` is one 64-byte literal, and the two bindings above the
+        // payload multiply their references to it.
+        let expanded = 64
+            * long.manifest.matches("$sixtyfour").count()
+            * long.manifest.matches("$kibibyte").count();
+        assert!(expanded >= 8192, "the payload expands to {expanded} bytes");
+
+        let short = case("a short response file on a full device is reported against the close");
+        assert!(
+            short.manifest.contains("rspfile_content = arguments"),
+            "the short payload has to stay inside the buffer"
+        );
+        for case in [short, long] {
+            assert!(
+                case.manifest.contains("rspfile = /dev/full"),
+                "case '{}' no longer writes to a full device",
                 case.name
             );
         }

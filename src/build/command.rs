@@ -215,7 +215,7 @@ impl Builder<'_> {
         }
     }
 
-    fn emit_diagnostic(&mut self, bytes: &[u8]) -> BuildResult<()> {
+    pub(super) fn emit_diagnostic(&mut self, bytes: &[u8]) -> BuildResult<()> {
         let Some(output) = self.diagnostic_sink.as_deref_mut() else {
             return self.emit(bytes);
         };

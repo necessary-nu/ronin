@@ -1043,34 +1043,45 @@ impl<'a> Builder<'a> {
                 })?;
         }
 
-        let response_file = command.rspfile.as_ref().map(|path| ResponseFile {
-            path: self
-                .disk
-                .resolve(path.to_path().expect("byte paths are valid on Unix")),
-            remove_on_drop: !self.options.keeprsp,
-        });
-        if response_file.is_some() {
-            let logical_path = command
-                .rspfile
-                .as_ref()
-                .expect("response file guard follows a response file")
-                .clone();
-            self.disk
-                .write(
-                    logical_path
-                        .to_path()
-                        .expect("byte paths are valid on Unix"),
-                    command.rspfile_content.as_bytes(),
-                )
-                .map_err(|source| {
-                    BuildError::io(
-                        BuildOperation::WriteResponseFile,
+        let response_file = match command.rspfile.clone() {
+            None => None,
+            Some(logical_path) => {
+                let path = logical_path
+                    .to_path()
+                    .expect("byte paths are valid on Unix")
+                    .to_owned();
+                if let Err((step, source)) = self
+                    .disk
+                    .write_response_file(&path, command.rspfile_content.as_bytes())
+                {
+                    let error = BuildError::io(
+                        BuildOperation::WriteResponseFile(step),
                         Some(logical_path),
                         Some(edge),
                         source,
-                    )
-                })?;
-        }
+                    );
+                    // Ninja says this where it happens, on stderr, and carries
+                    // nothing out: `WriteFile` calls `Error()` itself and
+                    // returns false without writing to the build loop's error
+                    // string. The diagnostic is emitted here for the same
+                    // reason — the summary line that follows has only a status
+                    // left to report, and a status cannot name the file.
+                    self.emit_diagnostic(
+                        format!("{}: error: {error}\n", crate::cli::PRODUCT_NAME).as_bytes(),
+                    )?;
+                    return Err(error);
+                }
+                // Armed only once the write went through. Ninja removes the
+                // response file in `FinishCommand`, after the command it was
+                // written for has run, so a write that failed never reaches
+                // the removal — and a path that was never ours to write is not
+                // ours to delete either.
+                Some(ResponseFile {
+                    path: self.disk.resolve(&path),
+                    remove_on_drop: !self.options.keeprsp,
+                })
+            }
+        };
 
         let command_start_mtime = if self.options.dryrun {
             0
@@ -1723,7 +1734,14 @@ impl<'a> Builder<'a> {
                             edge,
                             EdgeResult::Failed,
                         )?;
-                        failures += 1;
+                        // An edge that could not be started ends the build
+                        // whatever `-k` still allowed: Ninja leaves its build
+                        // loop the moment `StartEdge` fails, without asking
+                        // how many failures were permitted. The allowance is
+                        // about commands that ran and said no; nothing ran
+                        // here, and the manifest asked for something the disk
+                        // will refuse just as firmly for every edge after it.
+                        failures = failure_limit;
                         last_error = Some(error);
                     }
                 }
