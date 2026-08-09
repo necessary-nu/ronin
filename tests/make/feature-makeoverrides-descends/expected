@@ -1,12 +1,14 @@
 oracle GNU Make 4.4.1
 status 0
-file Makefile kept 3
+file Makefile kept 5
 | # MAKEOVERRIDES holds what was assigned on the command line, and a sub-make
 | # reads the same list.
-| all: ; @printf '%s\n' '$(MAKEOVERRIDES)' > top; $(MAKE) --no-print-directory -f sub.mk
+| all:
+| 	@printf '%s\n' '$(MAKEOVERRIDES)|$(origin MAKEOVERRIDES)|$(flavor MAKEOVERRIDES)|$(origin MAKEFLAGS)|$(flavor MAKEFLAGS)' > top
+| 	$(MAKE) --no-print-directory -f sub.mk subgoal
 file sub touched 1
-| V=from-cli
+| V=from-cli|default|recursive|file|recursive
 file sub.mk kept 1
-| all: ; @printf '%s\n' '$(MAKEOVERRIDES)' > sub
+| subgoal: ; @printf '%s\n' '$(MAKEOVERRIDES)|$(origin MAKEOVERRIDES)|$(flavor MAKEOVERRIDES)|$(origin MAKEFLAGS)|$(flavor MAKEFLAGS)' > sub
 file top touched 1
-| V=from-cli
+| V=from-cli|default|recursive|file|recursive

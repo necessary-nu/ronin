@@ -1,0 +1,42 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 12
+| # Job and load flags stay visible while recursive Makefiles compile into one
+| # graph; a child spelling replaces what its parent exposed without adding a
+| # second scheduler.
+| ifeq ($(findstring -j3,$(MAKEFLAGS)),)
+| $(error root MAKEFLAGS lost -j3)
+| endif
+| ifeq ($(findstring -l2.5,$(MAKEFLAGS)),)
+| $(error root MAKEFLAGS lost -l2.5)
+| endif
+| all:
+| 	$(MAKE) --no-print-directory -f middle.mk middle
+| .PHONY: all
+file bottom.mk kept 11
+| ifeq ($(findstring -j2,$(MAKEFLAGS)),)
+| $(error child MAKEFLAGS lost -j2)
+| endif
+| ifneq ($(findstring -j3,$(MAKEFLAGS)),)
+| $(error child MAKEFLAGS retained -j3)
+| endif
+| ifeq ($(findstring -l4,$(MFLAGS)),)
+| $(error child MFLAGS lost -l4)
+| endif
+| bottom: ; @printf '%s\n' replaced > replaced
+| .PHONY: bottom
+file inherited touched 1
+| inherited
+file middle.mk kept 10
+| ifeq ($(findstring -j3,$(MAKEFLAGS)),)
+| $(error inherited MAKEFLAGS lost -j3)
+| endif
+| ifeq ($(findstring -l2.5,$(MFLAGS)),)
+| $(error inherited MFLAGS lost -l2.5)
+| endif
+| middle:
+| 	@printf '%s\n' inherited > inherited
+| 	$(MAKE) --no-print-directory -f bottom.mk bottom -j2 -l4
+| .PHONY: middle
+file replaced touched 1
+| replaced

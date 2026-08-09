@@ -1,1 +1,1 @@
-all: ; @printf '%s\n' '$(MAKEOVERRIDES)' > sub
+subgoal: ; @printf '%s\n' '$(MAKEOVERRIDES)|$(origin MAKEOVERRIDES)|$(flavor MAKEOVERRIDES)|$(origin MAKEFLAGS)|$(flavor MAKEFLAGS)' > sub

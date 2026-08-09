@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 
 mod interface;
 mod subninja;
-use interface::{makeflags_arguments, prepend_command_line_evals};
+use interface::{compiler_flag_variables, makeflags_arguments, prepend_command_line_evals};
 pub(super) use subninja::compile as compile_subninja;
 
 /// The makefiles GNU Make reads when no `-f` names one, in its own order.
@@ -316,11 +316,16 @@ struct Invocation {
     /// What `--shuffle` settled on, already resolved to a permutation rather
     /// than left as the word that asked for one.
     shuffle: Shuffle,
+    /// A `-j` written on this invocation's own command line. Kept apart from
+    /// the count inherited through `MAKEFLAGS`: only this value is an explicit
+    /// override of an outer jobserver, while the inherited count is a fallback
+    /// for the one Ninja scheduler when no usable jobserver arrived.
     jobs: Option<JobLimit>,
+    inherited_jobs: Option<JobLimit>,
     /// The load average above which no further recipe starts. `-l` with no
     /// number lifts the limit rather than imposing one, which is what a limit
     /// of zero already means to the scheduler.
-    load: Option<f64>,
+    load: Option<LoadLimit>,
     /// One bit per [`Switch`] the command line gave. Every switch here is
     /// answered the same way — it was given or it was not — and a field each is
     /// what would let a spelling and a meaning drift apart.
@@ -346,6 +351,7 @@ impl Invocation {
             debug: Vec::new(),
             shuffle: Shuffle::None,
             jobs: None,
+            inherited_jobs: None,
             load: None,
             switches: 0,
             negated: 0,
@@ -388,6 +394,21 @@ impl Invocation {
 
     const fn refused(&self, switch: Switch) -> bool {
         self.negated & switch.bit() != 0
+    }
+
+    /// The job count visible to this Make compilation unit.
+    const fn effective_jobs(&self) -> Option<JobLimit> {
+        match self.jobs {
+            Some(jobs) => Some(jobs),
+            None => self.inherited_jobs,
+        }
+    }
+
+    const fn set_jobs(&mut self, source: ArgumentSource, jobs: JobLimit) {
+        match source {
+            ArgumentSource::Inherited => self.inherited_jobs = Some(jobs),
+            ArgumentSource::CommandLine => self.jobs = Some(jobs),
+        }
     }
 
     /// Which of Make's own workings this invocation asked to be told about.
@@ -469,6 +490,17 @@ impl Invocation {
     const fn questioning(&self) -> bool {
         self.given(Switch::Question)
     }
+}
+
+/// What `-l` settled on, and whether GNU Make carries that spelling onward.
+///
+/// A bare `-l` lifts an inherited ceiling but disappears from `MAKEFLAGS`.
+/// `-l0` has the same scheduler value and remains visible, so one `f64` cannot
+/// represent both interface states.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LoadLimit {
+    ceiling: f64,
+    propagated: bool,
 }
 
 /// What `-O` synchronises, in GNU Make's own four names.
@@ -739,7 +771,11 @@ fn jobs_value(
 /// no load limit at all, so reading the next word unconditionally would swallow
 /// it. A bare `-l` lifts the limit, which is the zero the scheduler reads as
 /// "do not consult the load average".
-fn load_value(arguments: &[BString], index: &mut usize, attached: &[u8]) -> Result<f64, Error> {
+fn load_value(
+    arguments: &[BString],
+    index: &mut usize,
+    attached: &[u8],
+) -> Result<LoadLimit, Error> {
     let numeric = |argument: &&BString| {
         !argument.is_empty()
             && argument
@@ -748,18 +784,25 @@ fn load_value(arguments: &[BString], index: &mut usize, attached: &[u8]) -> Resu
     };
     let digits = if attached.is_empty() {
         let Some(next) = arguments.get(*index + 1).filter(numeric) else {
-            return Ok(0.0);
+            return Ok(LoadLimit {
+                ceiling: 0.0,
+                propagated: false,
+            });
         };
         *index += 1;
         next.clone()
     } else {
         BString::from(attached)
     };
-    digits
+    let ceiling = digits
         .to_str()
         .ok()
         .and_then(|digits| digits.parse::<f64>().ok())
-        .ok_or_else(|| CliError::InvalidParameter { option: "-l" }.into())
+        .ok_or(CliError::InvalidParameter { option: "-l" })?;
+    Ok(LoadLimit {
+        ceiling,
+        propagated: true,
+    })
 }
 
 /// Consume a deliberately ignored long option, including its required value.
@@ -833,6 +876,7 @@ fn accept_noop_short(
 /// one at all. Says whether the option was one of them.
 fn attached_long(
     invocation: &mut Invocation,
+    source: ArgumentSource,
     option: &[u8],
     arguments: &[BString],
     index: &mut usize,
@@ -855,7 +899,7 @@ fn attached_long(
     } else if let Some(eval) = option.strip_prefix(b"--eval=") {
         invocation.evals.push(Bytes::from(eval.to_vec()));
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
-        invocation.jobs = Some(jobs_value(arguments, index, count)?);
+        invocation.set_jobs(source, jobs_value(arguments, index, count)?);
     } else if let Some(load) = option
         .strip_prefix(b"--load-average=")
         .or_else(|| option.strip_prefix(b"--max-load="))
@@ -869,6 +913,13 @@ fn attached_long(
     Ok(true)
 }
 
+/// Which of Make's two option streams one word came from.
+#[derive(Clone, Copy)]
+enum ArgumentSource {
+    Inherited,
+    CommandLine,
+}
+
 /// Read one Make command line, over whatever a parent make put in `MAKEFLAGS`.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.interface-compatibility]
@@ -876,11 +927,14 @@ fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error
     let mut invocation = Invocation::new();
     if let Some(inherited) = inherited {
         let inherited = makeflags_arguments(inherited);
-        if let Some(action) = parse_arguments(&mut invocation, &inherited)? {
+        if let Some(action) =
+            parse_arguments(&mut invocation, &inherited, ArgumentSource::Inherited)?
+        {
             return Ok(action);
         }
     }
-    if let Some(action) = parse_arguments(&mut invocation, arguments)? {
+    if let Some(action) = parse_arguments(&mut invocation, arguments, ArgumentSource::CommandLine)?
+    {
         return Ok(action);
     }
     // GNU Make forgets -d once the words have had their say, so a `--debug=n`
@@ -895,6 +949,7 @@ fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error
 fn parse_arguments(
     invocation: &mut Invocation,
     arguments: &[BString],
+    source: ArgumentSource,
 ) -> Result<Option<Action>, Error> {
     let mut index = 1;
     let mut options_enabled = true;
@@ -946,7 +1001,9 @@ fn parse_arguments(
                 };
                 invocation.shuffle = mode;
             }
-            b"--jobs" => invocation.jobs = Some(jobs_value(arguments, &mut index, b"")?),
+            b"--jobs" => {
+                invocation.set_jobs(source, jobs_value(arguments, &mut index, b"")?);
+            }
             b"--load-average" | b"--max-load" => {
                 invocation.load = Some(load_value(arguments, &mut index, b"")?);
             }
@@ -970,7 +1027,7 @@ fn parse_arguments(
                 let _ = value(arguments, &mut index, b"", "--what-if")?;
             }
             option if option.starts_with(b"--") => {
-                if !attached_long(invocation, option, arguments, &mut index)?
+                if !attached_long(invocation, source, option, arguments, &mut index)?
                     && !accept_noop_long(option, arguments, &mut index)?
                 {
                     return Ok(Some(refuse(format_args!(
@@ -980,7 +1037,8 @@ fn parse_arguments(
                 }
             }
             _ => {
-                if let Some(immediate) = read_cluster(invocation, argument, arguments, &mut index)?
+                if let Some(immediate) =
+                    read_cluster(invocation, source, argument, arguments, &mut index)?
                 {
                     return Ok(Some(immediate));
                 }
@@ -995,6 +1053,7 @@ fn parse_arguments(
 /// argument — after which the rest of the word is that argument.
 fn read_cluster(
     invocation: &mut Invocation,
+    source: ArgumentSource,
     argument: &[u8],
     arguments: &[BString],
     index: &mut usize,
@@ -1019,7 +1078,7 @@ fn read_cluster(
                 invocation.evals.push(Bytes::from(eval.to_vec()));
             }
             b'j' => {
-                invocation.jobs = Some(jobs_value(arguments, index, &argument[short..])?);
+                invocation.set_jobs(source, jobs_value(arguments, index, &argument[short..])?);
                 short = argument.len();
             }
             b'l' => {
@@ -1110,6 +1169,7 @@ fn session_for(
     invoked_as: &Path,
 ) -> Session {
     let mut session = Session::new();
+    let compiler_flags = compiler_flag_variables(invocation);
     session.flags = Flags {
         makefile: Some(makefile.as_os_str().to_owned()),
         num_jobs: jobs,
@@ -1125,6 +1185,8 @@ fn session_for(
         // A parent's assignments and this invocation's own, in that order,
         // which is the order Make applies them.
         cl_vars: invocation.variables.clone(),
+        makeflags: Some(Bytes::from(compiler_flags.base.into_bytes())),
+        make_overrides: Some(Bytes::from(compiler_flags.overrides.into_bytes())),
         // One word, and that word is a path. GNU Make answers `$(MAKE)` this
         // way and a great deal of software execs the answer rather than running
         // it through a shell — upstream's own suite adopts it as the program for
@@ -1164,6 +1226,13 @@ fn record_invocation(session: &mut Session, name: &'static str, value: String) {
     environment.push((OsString::from(name), OsString::from(value)));
 }
 
+fn remove_invocation(session: &mut Session, name: &'static str) {
+    let environment = session
+        .invocation_environment
+        .get_or_insert_with(|| std::env::vars_os().collect());
+    environment.retain(|(candidate, _)| candidate != name);
+}
+
 /// The scheduler settings this invocation maps onto Ninja's controls.
 // [spec:ronin:req:make.narration]
 // [spec:ronin:req:make.jobserver+1]
@@ -1173,6 +1242,9 @@ fn build_options(
     working_directory: crate::os::WorkingDirectory,
 ) -> Result<BuildOptions, Error> {
     let mut options = BuildOptions {
+        // Only this argv's `-j` is an explicit override. A count inherited in
+        // MAKEFLAGS is the fallback below when no outer jobserver can constrain
+        // the one Ninja scheduler.
         jobs: invocation.jobs.unwrap_or(JobLimit::Auto),
         // GNU Make's -k has no count: it stops when nothing is left that could
         // run, which is what an unbounded failure limit means here.
@@ -1189,7 +1261,7 @@ fn build_options(
         quiet: invocation.given(Switch::Silent),
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
-        maxload: invocation.load.unwrap_or_default(),
+        maxload: invocation.load.map_or(0.0, |load| load.ceiling),
         working_directory,
         ..BuildOptions::default()
     };
@@ -1204,7 +1276,9 @@ fn build_options(
         // Make runs one recipe at a time unless it is told otherwise. Ninja's
         // guess at the machine would be a different tool's answer to the same
         // Makefile.
-        JobLimit::Fixed(std::num::NonZeroUsize::MIN),
+        invocation
+            .inherited_jobs
+            .unwrap_or(JobLimit::Fixed(std::num::NonZeroUsize::MIN)),
     )?;
     // Recursive Make invocations have already compiled into this graph. Its
     // fixed limit therefore belongs directly to the Ninja scheduler; creating
@@ -1221,88 +1295,6 @@ const fn job_count(options: &BuildOptions) -> usize {
         JobLimit::Fixed(jobs) => jobs.get(),
         JobLimit::Auto | JobLimit::Unlimited => usize::MAX,
     }
-}
-
-/// How a sub-make is told what this invocation was asked for.
-///
-/// GNU Make leads `MAKEFLAGS` with the group of single-letter switches, no
-/// dash, and the job count and jobserver token follow — an empty group shows as
-/// the leading space children already tolerate, so this writes only the letters
-/// and lets the publication append the rest. Command-line assignments go here
-/// too, a parent's among them: they reached this invocation the same way and a
-/// tree three deep loses one that stops here.
-///
-/// `MFLAGS` is the same switches spelled as a command line rather than as a
-/// bare group, and carries no assignments: GNU Make keeps those in
-/// `MAKEOVERRIDES`, which `MAKEFLAGS` expands and `MFLAGS` does not.
-///
-/// `CARGO_MAKEFLAGS` is deliberately absent. It exists so the Rust ecosystem's
-/// jobserver clients find this build's token budget, and the jobserver
-/// publication is what puts the budget there. Make's switches are not a budget,
-/// and writing them here would shadow an outer Cargo's auth with a value that
-/// has none.
-// [spec:ronin:req:make.recursive-invocation+1]
-fn flag_environment(invocation: &Invocation) -> Vec<(&'static str, OsString)> {
-    let letters: String = invocation
-        .propagated()
-        .iter()
-        .filter_map(|switch| switch.to_str().and_then(|switch| switch.strip_prefix('-')))
-        .collect();
-    // GNU Make holds these in MAKEOVERRIDES, which is a variable table: one
-    // entry per name, holding the last assignment to it, handed back in name
-    // order rather than in the order they were typed.
-    let assignments = invocation
-        .variables
-        .iter()
-        .filter_map(|assignment| assignment.to_str().ok())
-        .filter_map(|assignment| Some((assignment.split_once('=')?.0, assignment)))
-        .collect::<std::collections::BTreeMap<_, _>>();
-    let mut makeflags = letters.clone();
-    // Between the letter group and the long options, which is where GNU Make
-    // writes it: `k -Oline --debug=b --trace --no-print-directory`.
-    if let Some(sync) = invocation.output_sync {
-        makeflags.push(' ');
-        makeflags.push_str(sync.spelling());
-    }
-    // The requests with no letter to travel as, which GNU Make writes after the
-    // group and before the withdrawals, in its own switch table's order.
-    // Deduplicated as GNU Make deduplicates them: the same `--debug` can arrive
-    // from the command line and from a parent's `MAKEFLAGS` at once, and a
-    // letter in the group cannot say a thing twice.
-    let mut long = Vec::new();
-    for spec in &invocation.debug {
-        let option = format!(" --debug={}", spec.to_str_lossy());
-        if !long.contains(&option) {
-            long.push(option);
-        }
-    }
-    if invocation.given(Switch::Trace) {
-        long.push(" --trace".to_owned());
-    }
-    for option in long {
-        makeflags.push_str(&option);
-    }
-    for withdrawn in invocation.withdrawn() {
-        makeflags.push(' ');
-        makeflags.push_str(withdrawn);
-    }
-    // Last, where GNU Make's switch table puts it, and carrying the seed this
-    // run settled on so that a child reproduces the same order.
-    if let Some(mode) = invocation.shuffle.spelling() {
-        makeflags.push_str(" --shuffle=");
-        makeflags.push_str(&mode);
-    }
-    if !assignments.is_empty() {
-        // GNU Make ends the switches at a `--` before the assignments, so that
-        // one beginning with a dash cannot be read as another switch.
-        makeflags.push_str(" -- ");
-        makeflags.push_str(&assignments.into_values().collect::<Vec<_>>().join(" "));
-    }
-    let mut environment = vec![("MAKEFLAGS", OsString::from(makeflags))];
-    if !letters.is_empty() {
-        environment.push(("MFLAGS", OsString::from(format!("-{letters}"))));
-    }
-    environment
 }
 
 /// Enter the directories `-C` named, in order, and report where that landed.
@@ -1552,9 +1544,12 @@ pub(crate) fn run(
 // [spec:ronin:req:make.recursive-invocation+1]
 fn record_invocation_variables(session: &mut Session, invocation: &Invocation, level: usize) {
     record_invocation(session, MAKELEVEL, level.to_string());
-    for (name, value) in flag_environment(invocation) {
-        record_invocation(session, name, value.to_string_lossy().into_owned());
-    }
+    // Kati installs MAKEFLAGS as a file-origin recursive compiler variable.
+    // Leaving an inherited environment binding beside it would make `-e`
+    // incorrectly outrank that built-in definition.
+    remove_invocation(session, "MAKEFLAGS");
+    let flags = compiler_flag_variables(invocation);
+    record_invocation(session, "MFLAGS", flags.mflags);
 }
 
 /// The compiler context that a recursive recipe inherits from this unit.
@@ -1586,11 +1581,7 @@ fn compilation_context(
 
 /// The exact MAKEFLAGS value this compilation unit hands to a semantic child.
 fn propagated_makeflags(invocation: &Invocation) -> String {
-    flag_environment(invocation)
-        .into_iter()
-        .find(|(name, _)| *name == "MAKEFLAGS")
-        .map(|(_, value)| value.to_string_lossy().into_owned())
-        .unwrap_or_default()
+    compiler_flag_variables(invocation).makeflags
 }
 
 fn compilation_key(directory: &Path, makefile: &[u8], makeflags: &str) -> Vec<u8> {
@@ -1731,11 +1722,31 @@ mod tests {
         let invocation = under(Some("ks -- FOO=bar"), &["make", "all"]);
         assert!(invocation.given(Switch::KeepGoing));
         assert!(invocation.given(Switch::Silent));
+        assert_eq!(
+            invocation.variables,
+            [kati::bytes::Bytes::from_static(b"FOO=bar")]
+        );
+        assert_eq!(
+            super::compiler_flag_variables(&invocation).overrides,
+            "FOO=bar"
+        );
 
         let invocation = under(Some("w -j4 --jobserver-auth=fifo:/tmp/x"), &["make", "all"]);
         assert!(invocation.given(Switch::PrintDirectory));
         assert!(!invocation.given(Switch::Silent));
         assert!(!invocation.given(Switch::NoBuiltinRules));
+        assert_eq!(invocation.jobs, None);
+        assert_eq!(invocation.inherited_jobs, JobLimit::fixed(4));
+        assert_eq!(invocation.effective_jobs(), JobLimit::fixed(4));
+
+        let invocation = under(Some(" -j4 -l2.5"), &["make", "-j2", "-l4"]);
+        assert_eq!(invocation.jobs, JobLimit::fixed(2));
+        assert_eq!(invocation.inherited_jobs, JobLimit::fixed(4));
+        assert_eq!(invocation.effective_jobs(), JobLimit::fixed(2));
+        assert_eq!(
+            super::compiler_flag_variables(&invocation).makeflags,
+            " -j2 -l4"
+        );
 
         // Asserted here, withdrawn there, and the other way about.
         assert!(under(Some("w"), &["make", "--no-print-directory"]).refused(Switch::PrintDirectory));
@@ -1777,19 +1788,20 @@ mod tests {
     // [spec:ronin:req:make.recursive-invocation+1/test]
     #[test]
     fn exports_makeflags_and_mflags() {
-        let invocation = parsed(&["make", "-k", "-s", "FOO=bar", "all"]);
-        let environment = super::flag_environment(&invocation);
-        let value = |name: &str| {
-            environment
-                .iter()
-                .find(|(existing, _)| *existing == name)
-                .map(|(_, value)| value.to_string_lossy().into_owned())
-        };
-        assert_eq!(value("MAKEFLAGS").as_deref(), Some("ks -- FOO=bar"));
-        assert_eq!(value("MFLAGS").as_deref(), Some("-ks"));
-        // The Rust jobserver clients read this one first, and Make's switches
-        // are not a token budget. Writing it here would shadow a real one.
-        assert_eq!(value("CARGO_MAKEFLAGS"), None);
+        let invocation = parsed(&[
+            "make",
+            "-k",
+            "-s",
+            "FIRST=a b",
+            "SECOND=a\\b",
+            "FIRST=last",
+            "all",
+        ]);
+        let variables = super::compiler_flag_variables(&invocation);
+        assert_eq!(variables.base, "ks");
+        assert_eq!(variables.overrides, r"SECOND=a\\b FIRST=last");
+        assert_eq!(variables.makeflags, r"ks -- SECOND=a\\b FIRST=last");
+        assert_eq!(variables.mflags, "-ks");
     }
 
     // [spec:ronin:req:product.make-identity/test]
@@ -1848,11 +1860,7 @@ mod tests {
         let makeflags = |arguments: &[&str]| {
             let mut all = vec!["make"];
             all.extend_from_slice(arguments);
-            super::flag_environment(&parsed(&all))
-                .into_iter()
-                .find(|(name, _)| *name == "MAKEFLAGS")
-                .map(|(_, value)| value.to_string_lossy().into_owned())
-                .unwrap()
+            super::compiler_flag_variables(&parsed(&all)).makeflags
         };
         // Read off GNU Make 4.4.1, once per spelling.
         assert_eq!(makeflags(&["-S"]), "S");
@@ -1923,12 +1931,8 @@ mod tests {
             super::DB_BASIC | super::DB_PRINT | super::DB_WHY
         );
         assert_eq!(
-            super::flag_environment(&adopted)
-                .into_iter()
-                .find(|(name, _)| *name == "MAKEFLAGS")
-                .map(|(_, value)| value.to_string_lossy().into_owned())
-                .as_deref(),
-            Some("k --debug=b --trace --shuffle=12345")
+            super::compiler_flag_variables(&adopted).makeflags,
+            "k --debug=b --trace --shuffle=12345"
         );
     }
 
@@ -1950,7 +1954,13 @@ mod tests {
         // A bare -l lifts the limit rather than imposing one, and the word
         // after it is still a goal.
         let lifted = parsed(&["make", "-l", "all"]);
-        assert_eq!(lifted.load, Some(0.0));
+        assert_eq!(
+            lifted.load,
+            Some(super::LoadLimit {
+                ceiling: 0.0,
+                propagated: false,
+            })
+        );
         assert_eq!(lifted.goals, vec![BString::from("all")]);
 
         for spelling in [
@@ -1963,7 +1973,14 @@ mod tests {
             arguments.extend_from_slice(spelling);
             arguments.push("all");
             let invocation = parsed(&arguments);
-            assert_eq!(invocation.load, Some(2.5), "{spelling:?}");
+            assert_eq!(
+                invocation.load,
+                Some(super::LoadLimit {
+                    ceiling: 2.5,
+                    propagated: true,
+                }),
+                "{spelling:?}"
+            );
             assert_eq!(invocation.goals, vec![BString::from("all")], "{spelling:?}");
         }
     }
@@ -1993,7 +2010,8 @@ mod tests {
         let directory = std::env::temp_dir();
         let options = |runner: &crate::cli::Runner, arguments: &[&str]| {
             let working = crate::os::WorkingDirectory::new(&directory).unwrap();
-            super::build_options(&parsed(arguments), runner, working).unwrap()
+            let invocation = parsed_under(runner.makeflags.as_deref(), arguments);
+            super::build_options(&invocation, runner, working).unwrap()
         };
 
         let root = crate::cli::Runner::new(&directory).unwrap();
@@ -2003,6 +2021,11 @@ mod tests {
         assert!(!root_options.serve_jobserver);
 
         let mut under_parent = crate::cli::Runner::new(&directory).unwrap();
+        under_parent.makeflags = Some(" -j8".to_owned());
+        let inherited_options = options(&under_parent, &["make"]);
+        assert_eq!(inherited_options.jobs, JobLimit::fixed(8).unwrap());
+        assert!(inherited_options.jobserver.is_none());
+
         under_parent.makeflags = Some(" -j8 --jobserver-auth=fifo:/tmp/parent".to_owned());
         let child_options = options(&under_parent, &["make", "-j2"]);
         assert_eq!(child_options.jobs, JobLimit::fixed(2).unwrap());
@@ -2018,14 +2041,9 @@ mod tests {
     #[test]
     fn propagates_inherited_switches() {
         let invocation = parsed(&["make", "-Beikqrstw", "-W", "b.x", "all"]);
-        let environment = super::flag_environment(&invocation);
         assert_eq!(
-            environment
-                .iter()
-                .find(|(name, _)| *name == "MAKEFLAGS")
-                .map(|(_, value)| value.to_string_lossy().into_owned())
-                .as_deref(),
-            Some("Beikqrstw")
+            super::compiler_flag_variables(&invocation).makeflags,
+            "Beikqrstw"
         );
     }
 

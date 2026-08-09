@@ -5540,12 +5540,27 @@ children (
                 priority 2
                 kind @fix
                 deps (make-subninja-recursion)
+                sealed true
                 log (
                     {
                         at 2026-08-08T12:11:34.418431875Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Four ways a sub-make is told something GNU Make would have told it, or told it differently. All found by `make-switch-precedence` and `make-jobserver-explicit-under-parent` while doing adjacent work, and all deliberately left.\n\n`-l` is neither adopted from an inherited MAKEFLAGS nor written into a child's. Unlike `-j`, there is no reason for it — `-j` travels through the jobserver transport on purpose, and adopting it would make every sub-make look like it forced its own.\n\n`-j`'s inherited count is not read at all. The clean shape, if wanted, is to map it onto `normalize_runtime_options`'s `unshared` argument — exactly GNU's `arg_job_slots = env_slots` fallback — which leaves `make-jobserver-explicit-under-parent`'s warning keyed on the command line alone. That decision is recorded there; do not undo it.\n\nA propagated assignment's value is not escaped: GNU writes `FOO=a\\ b`, Ronin writes `FOO=a b`, so a value with a space arrives as two words.\n\n`splice` appends the budget after the long switches — `--no-print-directory -j3 --jobserver-auth=...` where GNU writes `-j3 --jobserver-auth=... --no-print-directory`. Children parse either; the suite compares strings. Three lines in `jobserver.rs`.\n\n`src/make/cli.rs` and `src/jobserver.rs`."
+                    }
+
+                    {
+                        at 2026-08-09T15:20:37.311220711Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Make invocation variables are compiler inputs for semantic subninja composition, not a recursive Make runtime. Ronin now distinguishes explicit `-j` from a count inherited through MAKEFLAGS: the explicit count overrides the outer Ninja scheduler, while the inherited count is only the unshared fallback when no usable outer jobserver exists. `-j` and propagated `-l` spellings remain visible to child Makefile evaluation, including the distinct interface states of bare `-l` and `-l0`, without creating another scheduler. Command assignments are escaped using MAKEFLAGS environment syntax (backslashes, dollars, and whitespace), and Kati installs GNU-compatible recursive MAKEFLAGS/MAKEOVERRIDES variables with their observable origin/flavor relationship. After evaluating a parent unit, its evaluated MAKEFLAGS plus command-line environment values seed descendant compilation, so a Makefile can deliberately change or clear MAKEOVERRIDES before the child graph is compiled. The old note's proposed jobserver splice-order edit is intentionally not implemented: exact recursive jobserver text is Make-runner choreography superseded by [dec:ronin:make-compiles-to-ninja], while accepted syntax and graph-affecting values remain interface-compatible. Refactored the prior same-shell nested-Make fixture into actual semantic subninja composition, removed its divergence marker, and added GNU Make 4.4.1-recorded cases for spaced assignments across two child levels, recursive `-j`/`-l` replacement, and clearing MAKEOVERRIDES while retaining environment-origin values. The full build-intent gate, 296-file direct-graph/manifest equivalence gate, workspace tests, format, release Clippy with `-D warnings`, and `nplan check` all pass. The separate upstream conformance inventory still reports its existing generated-include and `.SHELLSTATUS` reclassifications under the claimed make-conformance-corpus node. Kati commit 029cbb9 is pushed on origin/nplan/make-option-carrying."
+                    }
+
+                    {
+                        at 2026-08-09T15:20:43.227171217Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

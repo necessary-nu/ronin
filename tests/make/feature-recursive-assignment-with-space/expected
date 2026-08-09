@@ -1,0 +1,26 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| # A quoted assignment is one child argv word, and the next semantic subninja
+| # inherits that same value through MAKEFLAGS.
+| all:
+| 	$(MAKE) --no-print-directory -f middle.mk middle V='two words'
+| .PHONY: all
+file bottom.mk kept 5
+| ifneq ($(V),two words)
+| $(error inherited assignment was '$(V)')
+| endif
+| bottom: ; @printf '%s\n' '$(V)' > result
+| .PHONY: bottom
+file middle touched 1
+| two words
+file middle.mk kept 7
+| ifneq ($(V),two words)
+| $(error recursive assignment was '$(V)')
+| endif
+| middle:
+| 	@printf '%s\n' '$(V)' > middle
+| 	$(MAKE) --no-print-directory -f bottom.mk bottom
+| .PHONY: middle
+file result touched 1
+| two words

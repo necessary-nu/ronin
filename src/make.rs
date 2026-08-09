@@ -281,6 +281,14 @@ where
         reorder(shuffle, ev.session.flags.not_parallel, &mut nodes);
         let exported =
             exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+        let command_line =
+            command_line_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+        // A Makefile may replace MAKEOVERRIDES (and therefore the recursive
+        // MAKEFLAGS value) before naming a child. That evaluated compiler
+        // variable, not the invocation's pre-evaluation seed, is what the
+        // semantic subninja parses.
+        let makeflags =
+            evaluated_makeflags(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
         if let Some(parent) = parent_scope {
             sink.begin_subninja(
                 parent,
@@ -310,9 +318,9 @@ where
             })?;
         let unit = sink.take_unit();
         ev.finish().map_err(|error| MakeError::evaluate(&error))?;
-        Ok((unit, exported, unit_regenerations))
+        Ok((unit, exported, command_line, unit_regenerations, makeflags))
     });
-    let (unit, exported, unit_regenerations) = match evaluated {
+    let (unit, exported, command_line, unit_regenerations, makeflags) = match evaluated {
         Ok(evaluated) => evaluated,
         Err(error) => {
             compiling.remove(&compilation_key);
@@ -326,6 +334,8 @@ where
     }
 
     let mut descendant_context = context;
+    descendant_context.makeflags = makeflags;
+    apply_exported_environment(&mut descendant_context.environment, &command_line);
     apply_exported_environment(&mut descendant_context.environment, &exported);
     apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
     for pending in unit.subninjas {
@@ -628,4 +638,35 @@ fn exported_environment(
         ));
     }
     Ok(exported)
+}
+
+fn evaluated_makeflags(ev: &mut kati::eval::Evaluator) -> Result<String, kati::anyhow::Error> {
+    let makeflags = ev.session.intern("MAKEFLAGS");
+    Ok(String::from_utf8_lossy(&ev.eval_var(makeflags)?).into_owned())
+}
+
+/// Command-line bindings a semantic child receives through its compiler
+/// environment in addition to MAKEFLAGS.
+///
+/// Normally the same bindings also arrive as command-line assignments and win
+/// there. A Makefile that clears `MAKEOVERRIDES` removes that half, leaving the
+/// environment-origin value GNU Make exposes to its child. Explicit
+/// `export`/`unexport` results are applied after this list and can replace it.
+fn command_line_environment(
+    ev: &mut kati::eval::Evaluator,
+) -> Result<Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>, kati::anyhow::Error> {
+    use std::os::unix::ffi::OsStringExt;
+    let variables = ev
+        .session
+        .globals
+        .matching(|variable| variable.read().origin() == kati::var::VarOrigin::CommandLine);
+    let mut environment = Vec::with_capacity(variables.len());
+    for (name, _) in variables {
+        let value = ev.eval_var(name)?;
+        environment.push((
+            std::ffi::OsString::from_vec(name.as_bytes(&ev.session).to_vec()),
+            Some(std::ffi::OsString::from_vec(value.to_vec())),
+        ));
+    }
+    Ok(environment)
 }

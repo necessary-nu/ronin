@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 7
+| # Clearing MAKEOVERRIDES removes command-line precedence from the recursive
+| # MAKEFLAGS value before the child Makefile is compiled. The ordinary exported
+| # value still arrives with environment origin.
+| MAKEOVERRIDES =
+| all:
+| 	$(MAKE) --no-print-directory -f child.mk child
+| .PHONY: all
+file child.mk kept 8
+| ifneq ($(origin V),environment)
+| $(error V descended with origin $(origin V))
+| endif
+| ifneq ($(V),from-cli)
+| $(error V descended with value '$(V)')
+| endif
+| child: ; @printf '%s\n' '$(origin V)|$(V)' > result
+| .PHONY: child
+file result touched 1
+| environment|from-cli
