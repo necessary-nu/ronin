@@ -6658,6 +6658,44 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-09T22:25:10.922921258Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Second review found that corrective commit 6831eb6 still compares deferred prerequisite raw bytes when deciding whether a new pattern rule replaces an existing rule. GNU make compares the parsed first-expanded prerequisite-name sequence instead: insignificant whitespace must not distinguish candidates, and order-only classification (`|`) is not part of the replacement identity. Follow-up work records that name sequence separately from the raw text retained for second expansion and uses it for replacement matching."
+                        after_done true
+                    }
+                )
+            }
+
+            {
+                id make-pattern-rule-prerequisite-names
+                title "Compare pattern rules by first-expanded prerequisite names"
+                kind @fix
+                deps (make-pattern-rule-candidate-identity make-second-expansion-patterns)
+                sealed true
+                log (
+                    {
+                        at 2026-08-09T22:25:32.416787385Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T22:35:33.651384471Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Implemented in vendored Kati commit 0775006e09ba6e324fb8025f38ba964e7d010121. Rule now carries a prerequisite_names sequence independently from deferred_prerequisites: immediately parsed lists preserve their existing glob-expanded dependency names, while deferred lists record first-expanded words in source order and keep the original bytes untouched for the second expansion. Pattern-rule replacement compares only that sequence, so leading/repeated whitespace and order-only classification do not change candidate identity. The GNU 4.4.1 fixture feature-pattern-rule-replacement-normalizes-deferred-prerequisites failed 1/278 before the change (first selected instead of second) and passes in the 278/278 owned build-intent gate afterward. Also green: cargo fmt; Kati clippy with -D warnings; workspace tests (664 passed, 1 ignored); GNU/Kati conformance (386 runs, 43 pre-classified defects); graph equivalence (296 makefiles, 272 graphs). scripts/check-make-project.sh remains independently red at exit 2 for its established recursive CMake graph collision: multiple rules generate build/browse_py.h."
+                    }
+
+                    {
+                        at 2026-08-09T22:36:24.607059015Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
         )
