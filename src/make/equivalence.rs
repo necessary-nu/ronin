@@ -401,11 +401,12 @@ fn differences(direct: &BuildGraph, parsed: &BuildGraph, semantics: &EdgeSemanti
 // [spec:ronin:req:make.manifest-equivalence]
 // [spec:ronin:req:make.semantics+1]
 fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
+    let _directory = super::compilation_directory_guard();
     let session = Session::from_args(argv);
     let manifest_path = directory.join("build.ninja");
     let options = NinjaWriterOptions::from_flags(&session.flags);
 
-    let Evaluated { mut ev, nodes } = match evaluate(session) {
+    let Evaluated { mut ev, nodes, .. } = match evaluate(session) {
         Ok(evaluated) => evaluated,
         Err(error) => return Outcome::NotAccepted(format!("{error:#}")),
     };

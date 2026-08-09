@@ -55,6 +55,15 @@ use std::ffi::OsString;
 use std::fmt;
 use std::path::PathBuf;
 
+/// Kati observes the process working directory while evaluating a source unit.
+static COMPILATION_DIRECTORY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn compilation_directory_guard() -> std::sync::MutexGuard<'static, ()> {
+    COMPILATION_DIRECTORY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Why a Makefile did not become a graph.
 #[derive(Debug)]
 #[non_exhaustive]
@@ -107,10 +116,13 @@ impl MakeError {
 /// [`Persistence`](crate::frontend::Persistence) makes incremental, with the
 /// Makefile's own default goal recorded as the graph's default target.
 ///
-/// The returned graph is complete execution input. The engine does not receive
-/// Make provenance beside it: recipe environments and every other
-/// graph-affecting Make construct are compiled into the graph before this
-/// function returns, and persistence applies ordinary Ninja semantics.
+/// The returned graph is complete execution input when
+/// [`Loaded::regeneration_targets`] is empty. Otherwise those targets are
+/// compiler inputs to build through the ordinary Ninja scheduler before
+/// evaluating from a fresh session. The engine does not receive Make
+/// provenance beside the graph: recipe environments and every other
+/// graph-affecting Make construct are compiled before execution, and
+/// persistence applies ordinary Ninja semantics.
 ///
 /// # Errors
 ///
@@ -122,6 +134,7 @@ impl MakeError {
 // [spec:ronin:req:make.compiler-boundary]
 // [spec:ronin:req:make.state-outside-the-tree+1]
 pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeError> {
+    let _directory = compilation_directory_guard();
     let directory = std::env::current_dir().map_err(|error| {
         MakeError::Evaluate(format!(
             "reading current directory for Make compilation: {error}"
@@ -168,7 +181,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
         shuffle,
         cache_key: key,
     };
-    load_with_subninjas(compilation, cli::compile_subninja)
+    load_with_subninjas_unlocked(compilation, cli::compile_subninja)
 }
 
 /// Invocation context retained while one Makefile compilation discovers its
@@ -206,13 +219,22 @@ struct CompiledUnit {
 /// shared graph before returning it to the executor.
 // [spec:ronin:req:make.recursive-invocation+1]
 // [spec:ronin:req:make.compiler-boundary]
-pub(crate) fn load_with_subninjas<F>(root: Compilation, mut resolve: F) -> Result<Loaded, MakeError>
+pub(crate) fn load_with_subninjas<F>(root: Compilation, resolve: F) -> Result<Loaded, MakeError>
+where
+    F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+{
+    let _directory = compilation_directory_guard();
+    load_with_subninjas_unlocked(root, resolve)
+}
+
+fn load_with_subninjas_unlocked<F>(root: Compilation, mut resolve: F) -> Result<Loaded, MakeError>
 where
     F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let mut sink = GraphSink::new_at(&root.context.root_directory);
     let mut cache = HashMap::new();
     let mut compiling = HashSet::new();
+    let mut regenerations = Vec::new();
     compile_unit(
         root,
         &mut sink,
@@ -220,9 +242,13 @@ where
         &mut resolve,
         &mut cache,
         &mut compiling,
+        &mut regenerations,
     )?;
     let graph = sink.into_graph().map_err(MakeError::Construct)?;
-    Ok(Loaded { graph })
+    Ok(Loaded {
+        graph,
+        regenerations,
+    })
 }
 
 fn compile_unit<F>(
@@ -232,6 +258,7 @@ fn compile_unit<F>(
     resolve: &mut F,
     cache: &mut HashMap<Vec<u8>, Vec<Node>>,
     compiling: &mut HashSet<Vec<u8>>,
+    regenerations: &mut Vec<Node>,
 ) -> Result<CompiledUnit, MakeError>
 where
     F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
@@ -246,8 +273,11 @@ where
     let session = compilation.session;
     let shuffle = compilation.shuffle;
     let evaluated = in_directory(&context.directory, || {
-        let Evaluated { mut ev, mut nodes } =
-            evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
+        let Evaluated {
+            mut ev,
+            mut nodes,
+            regeneration_nodes,
+        } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
         reorder(shuffle, ev.session.flags.not_parallel, &mut nodes);
         let exported =
             exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
@@ -268,17 +298,32 @@ where
             }
             return Err(MakeError::evaluate(&error));
         }
+        let regeneration_symbols = regeneration_nodes
+            .iter()
+            .map(|(name, _)| *name)
+            .collect::<Vec<_>>();
+        let unit_regenerations = sink
+            .unit_nodes(&ev.session, &regeneration_symbols)
+            .map_err(|error| {
+                sink.construction_failure()
+                    .map_or_else(|| MakeError::evaluate(&error), MakeError::Construct)
+            })?;
         let unit = sink.take_unit();
         ev.finish().map_err(|error| MakeError::evaluate(&error))?;
-        Ok((unit, exported))
+        Ok((unit, exported, unit_regenerations))
     });
-    let (unit, exported) = match evaluated {
+    let (unit, exported, unit_regenerations) = match evaluated {
         Ok(evaluated) => evaluated,
         Err(error) => {
             compiling.remove(&compilation_key);
             return Err(error);
         }
     };
+    for target in unit_regenerations {
+        if !regenerations.contains(&target) {
+            regenerations.push(target);
+        }
+    }
 
     let mut descendant_context = context;
     apply_exported_environment(&mut descendant_context.environment, &exported);
@@ -292,8 +337,15 @@ where
                 targets.clone()
             } else {
                 let child_scope = pending.scope;
-                let child =
-                    compile_unit(child, sink, Some(child_scope), resolve, cache, compiling)?;
+                let child = compile_unit(
+                    child,
+                    sink,
+                    Some(child_scope),
+                    resolve,
+                    cache,
+                    compiling,
+                    regenerations,
+                )?;
                 cache.insert(child_key, child.targets.clone());
                 child.targets
             };
@@ -516,6 +568,19 @@ fn reorder(shuffle: Shuffle, not_parallel: bool, nodes: &mut [kati::dep::NamedDe
 pub struct Loaded {
     /// What the Makefile builds.
     pub graph: BuildGraph,
+    /// Missing included Makefiles this provisional graph knows how to build.
+    regenerations: Vec<Node>,
+}
+
+impl Loaded {
+    /// Compiler inputs to build before evaluating this Makefile again.
+    ///
+    /// Each node is part of [`Self::graph`] and runs through the ordinary Ninja
+    /// scheduler. An empty slice means the graph is the final compilation.
+    #[must_use]
+    pub fn regeneration_targets(&self) -> &[Node] {
+        &self.regenerations
+    }
 }
 
 fn exported_environment(

@@ -5571,12 +5571,34 @@ children (
                 title "Build a missing include and go on where GNU Make does"
                 priority 1
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-08T12:11:54.762848733Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "40 of the 53 cases `make-io-error-wording` grouped are kati's, and they are one behaviour and one rendering.\n\nkati treats a failed `include` as fatal. GNU Make **warns, tries to build the named file as a target, and re-reads the makefile if it succeeded** — `features/include.diff.10` shows Make building `inc1` and `inc2` and then running the recipe. That is the remaking-makefiles pass, which Ronin has no equivalent of, so decide how far to go: warning and continuing is most of the value and does not need the pass; building the include does.\n\n`kati/src-rs/eval.rs:958-966` renders a raw `std::io::Error` into `\"{pat}: {err}\"`, which is 35 of the 40. `kati/src-rs/file.rs:36` reads with `std::fs::read(...)?` into anyhow with no context at all, so the whole diagnostic is `Permission denied (os error 13)` — no name, no location. That is 5.\n\nRonin's side already has `system_message` for exactly this shape; `make-io-error-wording` applied it everywhere an `io::Error` reaches a Ronin diagnostic.\n\nAlso here, from `make-parser-parity`: `-I -` restarts the include search path, and `dash-I.5` still differs because we name the resolved path and add kati's `In file included from` line, which GNU has no equivalent of.\n\n`kati/src-rs/eval.rs` and `kati/src-rs/file.rs`. Other lanes own `dep.rs`, `parser.rs` and `ninja.rs` this wave."
+                    }
+
+                    {
+                        at 2026-08-09T13:27:08.729567224Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-09T13:49:04.746614759Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Missing included Makefiles are compiler source dependencies, not a reason to add Make execution behavior. Kati keeps evaluating so later rules can emit a provisional Ninja graph in which every buildable missing include is an additional root selected only after the Makefile's default goal. Ronin builds those roots through the ordinary Ninja scheduler and persistence layer, creates a fresh Kati session, and recompiles until the graph no longer has compiler-input roots. Recursive Make units contribute their roots to the same composed graph, preserving the semantic subninja boundary. Required unbuildable includes remain compiler errors; optional unbuildable includes remain absent. The two recorded include-remake divergences now match GNU Make's build effects and their markers are removed; all 257 build-intent cases pass."
+                    }
+
+                    {
+                        at 2026-08-09T13:49:10.814797475Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

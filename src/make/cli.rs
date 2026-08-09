@@ -21,7 +21,7 @@
 use crate::build::{BuildOptions, JobLimit};
 use crate::cli::{RunResult, Runner, PRODUCT_NAME};
 use crate::error::CliError;
-use crate::frontend::{Build, Persistence};
+use crate::frontend::{Build, BuildGraph, Persistence};
 use crate::make::report::{
     abandoned, answered, discard_intermediates, finished, no_makefile, ordinary_diagnostic,
     ABANDONED,
@@ -1353,6 +1353,116 @@ fn make_named_invocation(arguments: &[BString], executable: &Path) -> PathBuf {
         .unwrap_or(program)
 }
 
+struct RootCompilation<'a> {
+    invocation: &'a Invocation,
+    makefile: &'a Path,
+    invoked_as: &'a Path,
+    directory: &'a Path,
+    options: &'a BuildOptions,
+    level: usize,
+}
+
+enum PreparedGraph {
+    Ready(Box<BuildGraph>),
+    Finished(RunResult),
+}
+
+/// Compile a stable graph, building source includes through Ninja between
+/// attempts when the provisional graph says how to produce them.
+fn prepare_graph(
+    root: &RootCompilation<'_>,
+    reported: &mut String,
+    output: &mut Option<&mut dyn Write>,
+    diagnostics: &mut Option<&mut dyn Write>,
+) -> Result<PreparedGraph, Error> {
+    for _ in 0..100 {
+        let mut session = session_for(
+            root.invocation,
+            root.makefile,
+            job_count(root.options),
+            root.invoked_as,
+        );
+        record_invocation_variables(&mut session, root.invocation, root.level);
+        let compilation = compilation_context(
+            root.invocation,
+            root.directory.to_owned(),
+            job_count(root.options),
+            root.level,
+            &session,
+        );
+        let loaded = match evaluated(
+            session,
+            &root.invocation.evals,
+            root.invocation.shuffle,
+            compilation,
+            reported,
+        ) {
+            Ok(loaded) => loaded,
+            Err(result) => return Ok(PreparedGraph::Finished(result)),
+        };
+        if loaded.regeneration_targets().is_empty() {
+            return Ok(PreparedGraph::Ready(Box::new(loaded.graph)));
+        }
+
+        let regeneration_targets = loaded.regeneration_targets().to_vec();
+        let mut graph = loaded.graph;
+        let (mut persistence, warning) = Persistence::open(&mut graph, root.directory)?;
+        reported.push_str(warning.as_deref().unwrap_or_default());
+        let mut build = Build::with_options(&mut graph, &mut persistence, root.options.clone());
+        if let Some(sink) = output.as_deref_mut() {
+            build = build.output(sink);
+        }
+        if let Some(sink) = diagnostics.as_deref_mut() {
+            build = build.diagnostics(sink);
+        }
+        let planned = build.plan(&regeneration_targets);
+        if root.invocation.questioning() {
+            let question = planned.map(|planned| planned.already_up_to_date());
+            let flushed = persistence.finish();
+            let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
+            return Ok(PreparedGraph::Finished(answered(
+                std::mem::take(reported),
+                question,
+            )));
+        }
+        let outcome = planned.and_then(|planned| {
+            let disposable = planned.disposable();
+            planned.run().map(|outcome| (disposable, outcome))
+        });
+        let flushed = persistence.finish();
+        let (disposable, outcome) = match outcome {
+            Ok(outcome) => outcome,
+            Err(failure) => {
+                return Ok(PreparedGraph::Finished(abandoned(
+                    std::mem::take(reported),
+                    failure,
+                )));
+            }
+        };
+        flushed?;
+        discard_intermediates(&disposable, root.invocation.given(Switch::DryRun));
+        if outcome.exit_code() != 0 || root.invocation.given(Switch::DryRun) {
+            return Ok(PreparedGraph::Finished(finished(
+                std::mem::take(reported),
+                false,
+                &outcome,
+                root.invocation.given(Switch::Silent),
+            )));
+        }
+        reported.push_str(&String::from_utf8_lossy(outcome.output()));
+    }
+
+    let path = BString::from(root.makefile.as_os_str().as_encoded_bytes().to_vec());
+    Ok(PreparedGraph::Finished(abandoned(
+        std::mem::take(reported),
+        CliError::ManifestRetryLimit {
+            path,
+            attempts: 100,
+        }
+        .into(),
+    )))
+}
+
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.recursive-invocation+1]
@@ -1360,8 +1470,8 @@ fn make_named_invocation(arguments: &[BString], executable: &Path) -> PathBuf {
 pub(crate) fn run(
     runner: &Runner,
     arguments: &[BString],
-    output: Option<&mut dyn Write>,
-    diagnostics: Option<&mut dyn Write>,
+    mut output: Option<&mut dyn Write>,
+    mut diagnostics: Option<&mut dyn Write>,
 ) -> Result<RunResult, Error> {
     let invocation = match parse(arguments, runner.makeflags.as_deref())? {
         Action::Immediate(result) => return Ok(result),
@@ -1384,25 +1494,21 @@ pub(crate) fn run(
         return Ok(no_makefile());
     };
 
-    let mut session = session_for(&invocation, &makefile, job_count(&options), &invoked_as);
-    record_invocation_variables(&mut session, &invocation, level);
-    let compilation = compilation_context(
-        &invocation,
-        directory.clone(),
-        job_count(&options),
+    // Missing included Makefiles are source dependencies. Kati emits their
+    // rules into a provisional graph; the ordinary Ninja scheduler builds
+    // those roots, then the frontend recompiles from a fresh session. No Make
+    // provenance or restart behavior crosses into the executor.
+    let root = RootCompilation {
+        invocation: &invocation,
+        makefile: &makefile,
+        invoked_as: &invoked_as,
+        directory: &directory,
+        options: &options,
         level,
-        &session,
-    );
-
-    let mut graph = match evaluated(
-        session,
-        &invocation.evals,
-        invocation.shuffle,
-        compilation,
-        &reported,
-    ) {
-        Ok(loaded) => loaded.graph,
-        Err(result) => return Ok(result),
+    };
+    let mut graph = match prepare_graph(&root, &mut reported, &mut output, &mut diagnostics)? {
+        PreparedGraph::Ready(graph) => *graph,
+        PreparedGraph::Finished(result) => return Ok(result),
     };
     let (mut persistence, warning) = Persistence::open(&mut graph, &directory)?;
     reported.push_str(warning.as_deref().unwrap_or_default());

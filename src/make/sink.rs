@@ -264,6 +264,19 @@ impl GraphSink {
         }
     }
 
+    /// Resolve compiler-input roots while this unit's symbol map is current.
+    ///
+    /// Generated included Makefiles are emitted like any other target, but the
+    /// frontend also needs their graph handles so it can build them before
+    /// recompiling the source unit.
+    pub(crate) fn unit_nodes(
+        &mut self,
+        names: &dyn Interner,
+        symbols: &[Symbol],
+    ) -> Result<Vec<Node>, anyhow::Error> {
+        self.node_list(names, symbols)
+    }
+
     /// Replace a recursive wrapper edge with the child goals it requested.
     ///
     /// Parent prerequisites become order-only inputs of each child goal: the

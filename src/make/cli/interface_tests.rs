@@ -158,6 +158,42 @@ fn eval_fragments_reach_compilation() {
     );
 }
 
+/// A generated include is compiler input, so the first compilation exposes
+/// its producer as a graph root without changing the Makefile's default goal.
+/// The CLI builds this root with the ordinary scheduler and compiles again.
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn generated_include_is_provisional_graph_root() {
+    let directory = tempfile::tempdir().unwrap();
+    let makefile = directory.path().join("Makefile");
+    std::fs::write(
+        &makefile,
+        "all: ; @printf '%s\\n' '$(GENERATED)' > out\n\
+         include gen.mk\n\
+         gen.mk: ; @printf 'GENERATED := yes\\n' > $@\n",
+    )
+    .unwrap();
+
+    let invocation = parsed(&["make"]);
+    let mut session = super::session_for(&invocation, &makefile, 1, Path::new("make"));
+    super::record_invocation_variables(&mut session, &invocation, 0);
+    let context = super::compilation_context(
+        &invocation,
+        directory.path().canonicalize().unwrap(),
+        1,
+        0,
+        &session,
+    );
+    let loaded = super::evaluated(session, &[], Shuffle::None, context, "")
+        .expect("the missing include's rule should compile provisionally");
+
+    let [include] = loaded.regeneration_targets() else {
+        panic!("the provisional graph should name exactly one generated include");
+    };
+    assert!(loaded.graph.generator(*include).is_some());
+    assert!(!loaded.graph.default_targets().contains(include));
+}
+
 // [spec:ronin:req:make.interface-compatibility/test]
 #[test]
 fn unknown_make_option_is_refused() {
