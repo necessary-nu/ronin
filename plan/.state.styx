@@ -304,6 +304,8 @@ assertions (
     {id make-second-expansion-patterns, kind @complete, author "brendan@necessary.nu", at 2026-08-09T17:17:47.851925543Z}
     {id ronin-exit-status-parity, kind @complete, author "brendan@necessary.nu", at 2026-08-09T19:05:47.569973822Z}
     {id make-makeflags-residue-classification, kind @complete, author "brendan@necessary.nu", at 2026-08-09T19:52:31.117510043Z}
+    {id make-pattern-rule-output-overlap, kind @complete, author "brendan@necessary.nu", at 2026-08-09T21:47:55.758460953Z}
+    {id kati-format-nit-blocks-the-fmt-gate, kind @complete, author "brendan@necessary.nu", at 2026-08-09T21:47:52.554127893Z}
 )
 
 impl_evidence (

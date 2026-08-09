@@ -1,8 +1,7 @@
-# A pattern rule with several targets is a rule that can make any one of them,
-# not a rule that makes them together, so two such rules may both offer %.elf.
-# Make chooses one of them per goal and builds; it does not refuse a graph in
-# which one name has two possible makers.
-.SECONDARY:
+# Two multi-target pattern rules may both offer %.elf. Make chooses one rule
+# for each requested target; a peer output from one rule does not prevent the
+# other rule from making its own requested target.
+.SECONDARY: a.lnk
 
 all: a.elf a.dbg
 

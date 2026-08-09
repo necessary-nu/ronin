@@ -6519,12 +6519,34 @@ children (
                 title "Let two pattern rules offer the same output"
                 kind @fix
                 deps (make-conformance-corpus)
+                sealed true
                 log (
                     {
                         at 2026-08-09T18:19:05.057192557Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Opened from the GNU Make corpus triage in make-conformance-corpus, with a reproducer already recorded: tests/make/feature-two-pattern-rules-make-the-same-output, marked as a known divergence.\n\nA pattern rule with several targets is a rule that can make any one of them, not a rule that makes them together — that is what `&:` is for. So two pattern rules may both offer `%.elf`, and GNU Make simply chooses one per goal:\n\n    .SECONDARY:\n    all: a.elf a.dbg\n    %.elf %.lnk: %.c ; ... touch $*.elf $*.lnk\n    %.elf %.dbg: %.lnk ; ... touch $*.elf $*.dbg\n\nGNU Make 4.4.1 runs both recipes and produces a.elf, a.lnk and a.dbg. Ronin refuses the whole graph with `multiple rules generate a.elf` and builds nothing, so this is a refusal rather than a wrong answer.\n\nTwo reasons to take it seriously beyond the one case. It is 33 of the upstream suite's features/patternrules residues, the largest compiler-shaped group after MAKEFLAGS. And the same diagnostic is what stops scripts/check-make-project.sh today: building Ninja's own CMake-generated Makefile ends at `ronin: multiple rules generate build/browse_py.h` before any recipe runs. Whether the project gate's instance has this cause or another one is unestablished and worth establishing first — that failure reproduces unchanged on main, so it is not new.\n\nA near neighbour is worth checking in the same pass rather than separately. With both rules taking the same prerequisite (`%.elf %.lnk: %.c` and `%.elf %.dbg: %.c`) Ronin does not refuse; it builds a.elf and a.dbg and never makes a.lnk, where GNU Make applies both rules and makes all three. Same misreading of what a multi-target pattern rule means, showing as missing work instead of a refusal."
+                    }
+
+                    {
+                        at 2026-08-09T21:47:20.331373514Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Correction to the opening note: in GNU Make 4.4.1, a multi-target pattern rule is always grouped whether written with : or &:; &: is not what makes a pattern rule grouped. The manual states that all pattern rules with multiple targets are treated as grouped, and implicit.c represents the peer targets through also_make. The defect here is therefore candidate selection when two grouped pattern rules overlap one output, not independent recipes. The opening note also associated the real-project build/browse_py.h refusal with this cause; inspection shows that target is explicit and the same generated CMake build.make is compiled through two recursive child units, so that failure remains a separate subninja-composition defect. Finally, bare .SECONDARY: exposes a distinct direct-graph no-work behavior; the focused fixture now scopes it to .SECONDARY: a.lnk so this node tests only output overlap."
+                    }
+
+                    {
+                        at 2026-08-09T21:47:40.320471162Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Implementation in kati 29933ef turns each trie hit into a candidate carrying the rule, the exact matched target pattern, and source order. Candidate search follows GNU implicit.c by trying the shortest stem first and source order on ties, and follows rule.c by removing an older exact repeat. Both chain discovery and final selection use that same order. When a grouped rule records its peer outputs, it now preserves any maker already selected for that peer goal instead of creating a duplicate generator. The focused divergence is removed and a neighboring same-prerequisite fixture proves both recipes and all three outputs survive. A manual case where one rule matches a.x through both %.x and a.% also agrees with GNU and selects stem a. Verification under scripts/sandboxed: nplan check green; focused build-intent 1 passed; workspace tests 664 passed and 1 ignored; kati clippy with warnings denied green; Make conformance completed 386 runs; direct/manifest equivalence completed 296 makefiles and 272 compared graphs. scripts/check-make-project.sh remains separately blocked by the explicit build/browse_py.h duplicate described in the correction note."
+                    }
+
+                    {
+                        at 2026-08-09T21:47:55.758460953Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -6735,12 +6757,34 @@ children (
         id kati-format-nit-blocks-the-fmt-gate
         title "Make the pinned kati satisfy the format gate"
         kind @chore
+        sealed true
         log (
             {
                 at 2026-08-09T20:03:17.993256054Z
                 author "brendan@necessary.nu"
                 kind @note
                 text "`cargo fmt --all -- --check` — the commit gate's format check and scripts/check-release.sh line 13 — has been failing since kati was pinned at cf6b064 (this repo's 133fe3e, \"Pin the kati that compiles\"). The whole of it is import ordering in kati/src-rs/evaluate.rs: cf6b064's semantic-merge resolution added `use crate::{error_loc, log};` at line 39, where rustfmt wants it after `use crate::var::...` at line 46. Nothing else in the tree is unformatted; `cargo fmt --check -p ronin` is clean.\n\nConfirmed pre-existing by stashing ronin-indent-error-location's changes and re-running the check on the untouched branch: same single diff, same two hunks.\n\nNot fixed there because it is not that node's code and the remedy is not local to this repo. Fixing it means a commit *in the submodule* — which 133fe3e did with git plumbing, since kati is not nplan-governed and this repo's commit guard only knows this repo — and then bumping the submodule pointer, which moves a pin the conformance-corpus ship placed deliberately. That is a decision about the pin, not about formatting, so it wants its own commit and a Make-gate run behind it rather than a drive-by inside an unrelated change.\n\nUntil then every rust-touching commit has to bypass with `format-failed`, which is the cost of leaving it. ronin-indent-error-location is the first to do so."
+            }
+
+            {
+                at 2026-08-09T21:24:45.008082372Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-09T21:46:35.007734264Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Resolved exactly the recorded formatting defect in kati 29933ef: rustfmt moved the crate error_loc/log import below the var import; no semantic code was changed for this node. cargo fmt --all -- --check, workspace check/tests, kati clippy with warnings denied, the 386-run Make conformance corpus, and the 296-file direct/manifest equivalence gate are green. The same kati commit also carries make-pattern-rule-output-overlap because both changes require one submodule pin; the outer delivery addresses both node IDs."
+            }
+
+            {
+                at 2026-08-09T21:47:52.554127893Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
