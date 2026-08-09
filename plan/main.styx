@@ -6730,4 +6730,18 @@ children (
             }
         )
     }
+
+    {
+        id ronin-manifest-mtime-test-margin
+        title "Separate the manifest-reload test's mtimes by more than load can eat"
+        kind @fix
+        log (
+            {
+                at 2026-08-09T20:08:45.886769483Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Filed after two independent sightings on 2026-08-09: cli::tests::rust_cli_rebuilds_and_reloads_manifest_before_targets fails with MissingInput on its own template file under load (both failures immediately after a full recompile; 0 in 22 warm-cache runs across two branches). The test separates two manifest mtimes with a 20 ms sleep in src/cli.rs, which load can eat. Fix the mechanism, not the number: write the mtimes explicitly (filetime-style) or stat-loop until the clock has visibly advanced, rather than sleeping and hoping."
+            }
+        )
+    }
 )
