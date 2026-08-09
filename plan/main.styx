@@ -5914,12 +5914,27 @@ children (
                 priority 2
                 kind @fix
                 deps (make-refusal-reaches-further)
+                sealed true
                 log (
                     {
                         at 2026-08-09T15:48:15.542909737Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "GNU Make 4.4.1 accepts ten recorded `.PHONY` prerequisite names beyond the host's addressable path length, while the pinned Ninja reference rejects those literal nodes with ENAMETOOLONG. This is a Makefile-to-Ninja compiler gap: Kati/Ronin must lower unaddressable logical phony names to collision-safe synthetic Ninja aliases while preserving goals, dependency relationships, and build effects. Do not weaken GraphError::Stat or teach the shared executor that the literal path is absent; pinned Ninja's own stat failure proves that would violate the executor boundary."
+                    }
+
+                    {
+                        at 2026-08-09T16:34:16.852002039Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Unaddressable phony names are a Make-to-Ninja compiler-lowering concern under [dec:ronin:make-compiles-to-ninja], not an executor/stat exception. Kati now maps only logical `.PHONY` names that cannot be addressed by the host filesystem (total path bytes >= PATH_MAX or any component > NAME_MAX) to stable hash-derived physical Ninja aliases before the shared BuildSink boundary. Outputs, every input partition, implicit outputs, validations, and requested/default targets resolve through the same table; recipes and progress descriptions retain the original logical Make name. Alias selection reserves every reachable node and implicit output and resolves collisions deterministically, so user targets are never merged with synthetic nodes. GraphSink and NinjaWriter therefore receive the same valid graph, while literal non-phony filesystem targets retain pinned Ninja's refusal behavior. Verification covers limit detection and occupied-name collisions, direct/manifest equivalence plus manifest-byte inspection, a GNU Make 4.4.1-recorded 66 KiB phony prerequisite build, execution of the emitted 349-byte manifest by the pinned Ninja, `nplan check`, release Clippy with `-D warnings`, the 296-file graph-equivalence corpus, and all 425 pinned Ninja conformance cases. Kati commit fe95c28 is pushed on origin/nplan/make-unaddressable-phony-aliases."
+                    }
+
+                    {
+                        at 2026-08-09T16:34:25.62515217Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

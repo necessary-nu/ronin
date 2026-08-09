@@ -293,6 +293,7 @@ assertions (
     {id make-assignment-modifiers, kind @complete, author "brendan@necessary.nu", at 2026-08-09T14:24:45.243432158Z}
     {id make-option-carrying, kind @complete, author "brendan@necessary.nu", at 2026-08-09T15:20:43.227171217Z}
     {id make-refusal-reaches-further, kind @complete, author "brendan@necessary.nu", at 2026-08-09T16:04:35.96362172Z}
+    {id make-unaddressable-phony-aliases, kind @complete, author "brendan@necessary.nu", at 2026-08-09T16:34:25.62515217Z}
 )
 
 impl_evidence (
