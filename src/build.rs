@@ -71,6 +71,16 @@ pub(crate) struct BuildOptions {
     /// for recipe children. Makefile compilation disables this: recursive Make
     /// units are already inside the graph and use this scheduler directly.
     pub(crate) serve_jobserver: bool,
+    /// Whether a command's own exit status of 130 says the build was cut short.
+    ///
+    /// Ninja spends 130 on `ExitInterrupted` and then reads every finished
+    /// command's status back through that same number, so a command that exits
+    /// 130 is indistinguishable from one killed by `SIGINT`: no `FAILED:` line,
+    /// the build stops where it stands, and 130 leaves with it. Make has no such
+    /// rule — a recipe exiting 130 is `Error 130`, no different from `Error 5` —
+    /// so the Make front end turns this off rather than inheriting a number
+    /// Ninja's enum happens to have spent.
+    pub(crate) command_status_interrupts: bool,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -95,6 +105,7 @@ impl Default for BuildOptions {
             maxload: 0.0,
             jobserver: None,
             serve_jobserver: false,
+            command_status_interrupts: true,
             working_directory: crate::os::WorkingDirectory::default(),
         }
     }
@@ -1014,6 +1025,24 @@ impl<'a> Builder<'a> {
                 })?;
         }
 
+        // The depfile's directory is made and the response file's is not, which
+        // is Ninja's asymmetry rather than an oversight here: a compiler writes
+        // its own depfile and cannot be asked to create the directory first,
+        // while a response file is written by the build tool, which fails
+        // outright if the manifest pointed it somewhere that does not exist.
+        if let Some(depfile) = command.depfile_path.as_ref() {
+            self.disk
+                .make_dirs(depfile.to_path().expect("byte paths are valid on Unix"))
+                .map_err(|source| {
+                    BuildError::io(
+                        BuildOperation::CreateOutputDirectory,
+                        Some(depfile.clone()),
+                        Some(edge),
+                        source,
+                    )
+                })?;
+        }
+
         let response_file = command.rspfile.as_ref().map(|path| ResponseFile {
             path: self
                 .disk
@@ -1026,20 +1055,6 @@ impl<'a> Builder<'a> {
                 .as_ref()
                 .expect("response file guard follows a response file")
                 .clone();
-            self.disk
-                .make_dirs(
-                    logical_path
-                        .to_path()
-                        .expect("byte paths are valid on Unix"),
-                )
-                .map_err(|source| {
-                    BuildError::io(
-                        BuildOperation::CreateOutputDirectory,
-                        Some(logical_path.clone()),
-                        Some(edge),
-                        source,
-                    )
-                })?;
             self.disk
                 .write(
                     logical_path
@@ -1079,6 +1094,26 @@ impl<'a> Builder<'a> {
             start_millis: self.progress.offset_millis(),
             _response_file: response_file,
         })
+    }
+
+    /// Whether a finished command says the build was cut short rather than that
+    /// it failed.
+    ///
+    /// Ninja funnels both answers through one number. `ParseExitStatus` turns a
+    /// child killed by `SIGINT`, `SIGTERM` or `SIGHUP` into `ExitInterrupted`,
+    /// which is 130, and then the build loop asks only whether the status *is*
+    /// `ExitInterrupted` — so a command that plainly exited 130 of its own
+    /// accord takes the same branch, with no way for Ninja to tell the two
+    /// apart and no attempt to. That is the contract, oddity included.
+    // [spec:ronin:req:compat.process-integration]
+    // [spec:ronin:req:product.build-outcome]
+    fn command_interrupted(&self, status: std::process::ExitStatus) -> bool {
+        if status_interrupted(status) {
+            return true;
+        }
+        self.options.command_status_interrupts
+            && crate::subprocess::exit_status_code(status)
+                == crate::subprocess::INTERRUPTED_EXIT_CODE
     }
 
     // [spec:ronin:def:build.nodedone-fn]
@@ -1155,28 +1190,36 @@ impl<'a> Builder<'a> {
                             let path = command.depfile_path.as_ref().ok_or({
                                 BuildError::DependencyFileMissing { edge, path: None }
                             })?;
-                            if self
+                            // Ninja reads a depfile that is not there as an
+                            // empty one — `NotFound` clears the error and the
+                            // empty content returns success — so the edge is
+                            // recorded with no discovered dependencies and the
+                            // command that succeeded stays succeeded. Only a
+                            // depfile that exists and will not parse fails the
+                            // command. C samurai stopped the build here instead,
+                            // which cost a compiler that emits no depfile for a
+                            // translation unit with no includes its exit status.
+                            let deps = self
                                 .disk
                                 .exists(path.to_path().expect("byte paths are valid on Unix"))
-                            {
-                                let deps = crate::deps::depsparse(
-                                    self.graph,
-                                    &self.disk.resolve(
-                                        path.to_path().expect("byte paths are valid on Unix"),
-                                    ),
-                                    false,
-                                )?;
-                                self.replace_depfile_deps(edge, &deps.nodes);
-                                let state = self.runtime.edge_mut(edge);
-                                state.set_deps_loaded(true);
-                                state.set_deps_missing(false);
-                                Ok(())
-                            } else {
-                                Err(BuildError::DependencyFileMissing {
-                                    edge,
-                                    path: Some(path.clone()),
+                                .then(|| {
+                                    crate::deps::depsparse(
+                                        self.graph,
+                                        &self.disk.resolve(
+                                            path.to_path().expect("byte paths are valid on Unix"),
+                                        ),
+                                        false,
+                                    )
                                 })
-                            }
+                                .transpose()?;
+                            self.replace_depfile_deps(
+                                edge,
+                                deps.as_ref().map_or(&[][..], |deps| &deps.nodes),
+                            );
+                            let state = self.runtime.edge_mut(edge);
+                            state.set_deps_loaded(true);
+                            state.set_deps_missing(false);
+                            Ok(())
                         }
                         DepsType::Unsupported(deps_type) => Err(BuildError::UnsupportedDepsType {
                             edge,
@@ -1195,7 +1238,7 @@ impl<'a> Builder<'a> {
             // reported as failed: Ninja tests for the interrupt before it
             // finishes the command, which is why a build cut short by SIGTERM
             // prints no `FAILED:` line. Half-written outputs still go.
-            if status_interrupted(status) {
+            if self.command_interrupted(status) {
                 let disk = self.disk.clone();
                 for (output, old_mtime) in self.graph.edge(edge).out.iter().zip(&old_mtimes) {
                     let path = self.graph.node_path(*output).to_owned();
@@ -1721,8 +1764,18 @@ impl<'a> Builder<'a> {
             }
             let result = self.finish_edge(prepared, completion.result);
             if let Err(error) = self.settle_edge(edge, result) {
+                // Ninja leaves the build loop the moment a command reports an
+                // interrupt, whatever allowance `-k` still had: the interrupt
+                // is checked before the completion is even counted as a
+                // failure. Carrying on would let the next command's status
+                // overwrite the 130 that says why the build stopped, which is
+                // the whole answer a caller is reading.
+                let interrupted = matches!(error, BuildError::Interrupted { .. });
                 failures += 1;
                 last_error = Some(error);
+                if interrupted {
+                    break;
+                }
             }
         }
 

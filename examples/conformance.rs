@@ -305,6 +305,17 @@ struct BuildCase {
     /// Backdate the manifest, so a generator edge has something to do. Without
     /// it a manifest-regeneration case is already up to date and proves nothing.
     stale_manifest: bool,
+    /// The process exit status this shape must leave with, as measured from
+    /// Ninja and written down here.
+    ///
+    /// Comparing the two tools to each other already catches a status that
+    /// drifts on one side. What it cannot catch is a case that quietly stops
+    /// being the case it is named after: two of these once ran
+    /// `kill -KILL $$`, where `$$` is a manifest escape for one `$`, so both
+    /// tools agreed on the status of a `kill` that was never given a pid.
+    /// A recorded number is the shape's identity, and a case that stops
+    /// producing it says so.
+    status: i32,
 }
 
 /// One process-boundary case the upstream unit binary does not exercise.
@@ -313,6 +324,8 @@ struct InvocationCase {
     manifest: Option<&'static str>,
     arguments: &'static [&'static str],
     makeflags: Option<&'static str>,
+    /// The process exit status this shape must leave with. See `BuildCase`.
+    status: i32,
 }
 
 const INVOCATION_CASES: &[InvocationCase] = &[
@@ -321,18 +334,21 @@ const INVOCATION_CASES: &[InvocationCase] = &[
         manifest: None,
         arguments: &["-f", "absent.custom"],
         makeflags: None,
+        status: 1,
     },
     InvocationCase {
         name: "a stale inherited jobserver falls back locally",
         manifest: Some("build all: phony\ndefault all\n"),
         arguments: &[],
         makeflags: Some(" -j2 --jobserver-auth=fifo:@DIR@/missing-jobserver"),
+        status: 0,
     },
     InvocationCase {
         name: "a dry run does not join an inherited jobserver",
         manifest: Some("build all: phony\ndefault all\n"),
         arguments: &["-n"],
         makeflags: Some(" -j2 --jobserver-auth=fifo:@DIR@/missing-jobserver"),
+        status: 0,
     },
 ];
 
@@ -343,6 +359,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 7,
     },
     BuildCase {
         name: "quiet suppresses the directory line but not the failure",
@@ -350,27 +367,144 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "--quiet"],
         extra: &[],
         stale_manifest: false,
+        status: 7,
     },
     BuildCase {
         name: "a killed command reports the shell's status",
-        manifest: "rule f\n  command = kill -KILL $$\nbuild a: f\n",
+        manifest: "rule f\n  command = kill -KILL $$$$\nbuild a: f\n",
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 137,
     },
     BuildCase {
         name: "a terminated command reads as an interrupt",
-        manifest: "rule f\n  command = kill -TERM $$\nbuild a: f\n",
+        manifest: "rule f\n  command = kill -TERM $$$$\nbuild a: f\n",
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 130,
     },
     BuildCase {
         name: "a quit command is an ordinary failure",
-        manifest: "rule f\n  command = kill -QUIT $$\nbuild a: f\n",
+        manifest: "rule f\n  command = kill -QUIT $$$$\nbuild a: f\n",
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 3,
+    },
+    BuildCase {
+        name: "a segmentation fault is an ordinary failure",
+        manifest: "rule f\n  command = kill -SEGV $$$$\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 11,
+    },
+    BuildCase {
+        name: "a hung-up command reads as an interrupt",
+        manifest: "rule f\n  command = kill -HUP $$$$\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 130,
+    },
+    BuildCase {
+        // Ninja's ExitStatus enum spends 130 on ExitInterrupted and then reads
+        // every finished command's status back through it, so a command that
+        // exits 130 by itself is an interrupt: no FAILED line, and the build
+        // stops where it stands.
+        name: "a command that exits 130 reads as an interrupt",
+        manifest: "rule f\n  command = exit 130\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 130,
+    },
+    BuildCase {
+        name: "a large command status survives the round trip",
+        manifest: "rule f\n  command = exit 111\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 111,
+    },
+    BuildCase {
+        name: "a command that does not exist reports the shell's status",
+        manifest: "rule f\n  command = ronin-no-such-command\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 127,
+    },
+    BuildCase {
+        // An interrupt is checked before the completion is even counted as a
+        // failure, so no allowance keeps the build going and no later status
+        // replaces the one that says why it stopped.
+        name: "an interrupt outranks keep-going and any later failure",
+        manifest: "rule f\n  command = kill -TERM $$$$\nrule g\n  command = exit 5\n\
+                   build a: f\nbuild b: g\ndefault a b\n",
+        arguments: &["-C", "@DIR@", "-k", "0", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+        status: 130,
+    },
+    BuildCase {
+        name: "an ordinary failure does not stop keep-going before an interrupt",
+        manifest: "rule f\n  command = exit 5\nrule g\n  command = kill -TERM $$$$\n\
+                   build a: f\nbuild b: g\ndefault a b\n",
+        arguments: &["-C", "@DIR@", "-k", "0", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+        status: 130,
+    },
+    BuildCase {
+        name: "a signal-killed command still lets keep-going finish the rest",
+        manifest: "rule f\n  command = kill -SEGV $$$$\nrule ok\n  command = cp $in $out\n\
+                   build a: f\nbuild b: ok source\ndefault a b\n",
+        arguments: &["-C", "@DIR@", "-k", "0", "-j", "1"],
+        extra: &[],
+        stale_manifest: false,
+        status: 11,
+    },
+    BuildCase {
+        name: "a dry run over a failing command still succeeds",
+        manifest: "rule f\n  command = exit 3\nbuild a: f\n",
+        arguments: &["-C", "@DIR@", "-n"],
+        extra: &[],
+        stale_manifest: false,
+        status: 0,
+    },
+    BuildCase {
+        // Ninja reads a depfile that was never written as an empty one, so a
+        // compiler that emits nothing for a unit with no includes keeps the
+        // status it exited with.
+        name: "a depfile that was never written is read as empty",
+        manifest: "rule cc\n  command = cp $in $out\n  depfile = $out.d\n  deps = gcc\n\
+                   build a: cc source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 0,
+    },
+    BuildCase {
+        // The depfile's directory is the build tool's to create; the response
+        // file's is not. Ninja is asymmetric here and the statuses show it.
+        name: "a depfile's directory is created before the command runs",
+        manifest: "rule cc\n  command = cp $in $out && printf 'a: source\\n' > $depfile\n\
+                   \x20 depfile = deeper/nested/a.d\n  deps = gcc\nbuild a: cc source\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 0,
+    },
+    BuildCase {
+        name: "a console command's status leaves with the build",
+        manifest: "rule f\n  command = exit 111\n  pool = console\nbuild a: f\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[],
+        stale_manifest: false,
+        status: 111,
     },
     BuildCase {
         name: "keep-going carries the last failure out",
@@ -378,6 +512,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-k", "0", "-j", "1"],
         extra: &[],
         stale_manifest: false,
+        status: 5,
     },
     BuildCase {
         name: "stopping at the first failure carries that one out",
@@ -385,6 +520,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-j", "1"],
         extra: &[],
         stale_manifest: false,
+        status: 3,
     },
     BuildCase {
         name: "an exhausted allowance above one reports the plural",
@@ -392,6 +528,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-k", "2", "-j", "1"],
         extra: &[],
         stale_manifest: false,
+        status: 5,
     },
     BuildCase {
         name: "an unexhausted allowance reports lost progress",
@@ -399,6 +536,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-k", "3", "-j", "1"],
         extra: &[],
         stale_manifest: false,
+        status: 5,
     },
     BuildCase {
         name: "work behind a failure cannot proceed",
@@ -407,6 +545,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-k", "0", "-j", "1"],
         extra: &[],
         stale_manifest: false,
+        status: 3,
     },
     BuildCase {
         name: "a console command owns the terminal while it fails",
@@ -414,6 +553,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 7,
     },
     BuildCase {
         name: "a missing input is an error, not a build outcome",
@@ -421,6 +561,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "the directory is announced before it is entered",
@@ -428,6 +569,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 0,
     },
     BuildCase {
         name: "a directory that cannot be entered is still named",
@@ -435,6 +577,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@/nope"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "repeated -C does not compose",
@@ -442,6 +585,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-C", "nested"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a tool suppresses the directory line",
@@ -449,6 +593,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-t", "targets"],
         extra: &[],
         stale_manifest: false,
+        status: 0,
     },
     BuildCase {
         name: "a dry run still announces the directory",
@@ -456,6 +601,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-n"],
         extra: &[],
         stale_manifest: false,
+        status: 0,
     },
     BuildCase {
         name: "a self-referencing phony names the cycle and the flag",
@@ -463,6 +609,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@", "-w", "phonycycle=err"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a phony cycle through two nodes names both",
@@ -470,6 +617,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a cycle through real rules names the path",
@@ -478,6 +626,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         // Ninja reports the cycle from the node that closes it, not from
@@ -488,6 +637,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "an unexpected rule binding is located and named",
@@ -495,6 +645,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a duplicate rule is located",
@@ -502,6 +653,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a rule with no command is reported after its block",
@@ -509,6 +661,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a half-specified response file is reported after its block",
@@ -516,6 +669,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a pool with no depth is reported after its block",
@@ -523,6 +677,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "an unknown build rule is located at the name",
@@ -530,6 +685,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a missing colon names what was found and hints",
@@ -537,6 +693,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "an unexpected indent carries no source context",
@@ -544,6 +701,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a manifest that cannot be included names the file",
@@ -551,6 +709,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "an invalid pool depth does not quote the value",
@@ -558,6 +717,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[],
         stale_manifest: false,
+        status: 1,
     },
     BuildCase {
         name: "a failing manifest regeneration is an error against the manifest",
@@ -567,6 +727,7 @@ const BUILD_CASES: &[BuildCase] = &[
         arguments: &["-C", "@DIR@"],
         extra: &[("conf", "conf\n")],
         stale_manifest: true,
+        status: 1,
     },
 ];
 
@@ -597,6 +758,22 @@ fn normalize(output: &[u8], directory: &Path) -> Vec<u8> {
         }
     }
     normalized.into_bytes()
+}
+
+/// Check the status the two tools agreed on against the one the case records.
+///
+/// Reached only once they already agree, so this says nothing about
+/// compatibility and everything about whether the case is still the case it is
+/// named after. `None` is a tool that died by a signal rather than exiting,
+/// which no shape here is meant to produce.
+fn recorded_status(name: &str, recorded: i32, observed: Option<i32>) -> Result<(), String> {
+    if observed == Some(recorded) {
+        return Ok(());
+    }
+    Err(format!(
+        "case '{name}' left with {observed:?} where it is recorded as exiting {recorded}; \
+         either the shape stopped exercising what it is named after, or Ninja's status moved"
+    ))
 }
 
 fn compare_build_case(ninja: &Path, ronin: &Path, case: &BuildCase) -> Result<(), String> {
@@ -630,7 +807,7 @@ fn compare_build_case(ninja: &Path, ronin: &Path, case: &BuildCase) -> Result<()
     }
     let (ninja_result, ronin_result) = (&rendered[0], &rendered[1]);
     if ninja_result == ronin_result {
-        return Ok(());
+        return recorded_status(case.name, case.status, ninja_result.0);
     }
     Err(format!(
         "build case '{}' differs\n\
@@ -687,7 +864,7 @@ fn compare_invocation_case(
     }
     let (ninja_result, ronin_result) = (&rendered[0], &rendered[1]);
     if ninja_result == ronin_result {
-        return Ok(());
+        return recorded_status(case.name, case.status, ninja_result.0);
     }
     Err(format!(
         "invocation case '{}' differs\n\
@@ -908,11 +1085,12 @@ fn run(config: &Config) -> Result<(), String> {
     }
     println!("differential: 10 CLI/tool cases matched");
     println!(
-        "build outcome: {} failure and directory cases matched",
+        "build outcome: {} failure and directory cases matched, each on its recorded exit status",
         BUILD_CASES.len()
     );
     println!(
-        "invocation boundary: {} source and inherited-runtime cases matched",
+        "invocation boundary: {} source and inherited-runtime cases matched, \
+         each on its recorded exit status",
         INVOCATION_CASES.len()
     );
     println!("persistence: Ninja → Ronin → Ninja log/deps round trip passed");
@@ -930,8 +1108,74 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize, parse_log_records, LogRecord};
+    use super::{
+        normalize, parse_log_records, recorded_status, LogRecord, BUILD_CASES, INVOCATION_CASES,
+    };
+    use std::collections::BTreeSet;
     use std::path::Path;
+
+    // [spec:ronin:req:product.build-outcome/test]
+    #[test]
+    fn recorded_status_accepts_the_measured_code() {
+        assert!(recorded_status("a case", 130, Some(130)).is_ok());
+        assert!(recorded_status("a case", 0, Some(0)).is_ok());
+    }
+
+    /// The regression this check exists for. Three cases named after signals
+    /// were written `kill -KILL $$`, which a manifest escapes to one `$`, so
+    /// they ran `kill -KILL $` — a usage error exiting 2 that both tools
+    /// agreed on. Comparing the tools to each other could never see it;
+    /// a recorded 137 does.
+    // [spec:ronin:req:product.build-outcome/test]
+    #[test]
+    fn recorded_status_rejects_a_drifted_shape() {
+        let error = recorded_status("a killed command", 137, Some(2))
+            .expect_err("a status that is not the recorded one is a failure");
+        assert!(error.contains("a killed command"), "{error}");
+        assert!(error.contains("137"), "{error}");
+        assert!(error.contains("Some(2)"), "{error}");
+    }
+
+    /// No shape here asks either tool to die by a signal, so a status of
+    /// `None` is a tool that crashed rather than a case that passed.
+    // [spec:ronin:req:product.build-outcome/test]
+    #[test]
+    fn recorded_status_rejects_a_signalled_tool() {
+        assert!(recorded_status("a case", 1, None).is_err());
+    }
+
+    /// Every case is looked up by name in its failure message, and the
+    /// recorded statuses were measured one name at a time.
+    // [spec:ronin:req:compat.upstream-conformance/test]
+    #[test]
+    fn case_names_are_unique() {
+        let mut names = BTreeSet::new();
+        for name in BUILD_CASES
+            .iter()
+            .map(|case| case.name)
+            .chain(INVOCATION_CASES.iter().map(|case| case.name))
+        {
+            assert!(names.insert(name), "duplicate case name: {name}");
+        }
+    }
+
+    /// A manifest escape for a literal `$` is `$$`, so a command that means
+    /// to reach the shell's `$$` has to spell it `$$$$`. Writing `$$` there
+    /// is how three signal cases came to prove nothing.
+    // [spec:ronin:req:compat.upstream-conformance/test]
+    #[test]
+    fn signal_cases_escape_the_shell_pid() {
+        for case in BUILD_CASES {
+            if !case.manifest.contains("kill -") {
+                continue;
+            }
+            assert!(
+                case.manifest.contains("$$$$"),
+                "case '{}' signals a pid the shell never expands",
+                case.name
+            );
+        }
+    }
 
     // [spec:ronin:req:compat.process-integration/test]
     #[test]

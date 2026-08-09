@@ -1438,6 +1438,143 @@ fn ninja_build_swallow_failures_limit() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Ninja's `ExitStatus` enum spends 130 on `ExitInterrupted` and then reads
+/// every finished command's status back through it, so a command that exits 130
+/// under its own power is an interrupt and cannot be told apart from one.
+// [spec:ronin:req:product.build-outcome/test]
+#[test]
+fn ninja_build_exit_130_interrupts() {
+    let (mut graph, directory) = build_fixture(
+        "exit-130-interrupt",
+        "rule f\n  command = exit 130\nbuild $dir/out: f\n",
+    );
+    let out = directory.join("out").to_string_lossy().into_owned();
+    let mut builder = Builder::new(&mut graph, BuildOptions::default());
+    builder.add_target(&out).unwrap();
+    let error = builder.build().unwrap_err();
+    assert_eq!(error.exit_code(), crate::subprocess::INTERRUPTED_EXIT_CODE);
+    assert!(
+        !String::from_utf8_lossy(&builder.build_output).contains("FAILED"),
+        "an interrupted command is not a failed one: {:?}",
+        String::from_utf8_lossy(&builder.build_output)
+    );
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// 130 means nothing to Make, which reports `Error 130` and goes on under `-k`
+/// exactly as it would for any other status.
+// [spec:ronin:req:product.build-outcome/test]
+#[test]
+fn make_build_exit_130_fails() {
+    let (mut graph, directory) = build_fixture(
+        "exit-130-make",
+        "rule f\n  command = exit 130\nrule g\n  command = exit 5\n\
+         build $dir/out1: f\nbuild $dir/out2: g\n",
+    );
+    let out1 = directory.join("out1").to_string_lossy().into_owned();
+    let out2 = directory.join("out2").to_string_lossy().into_owned();
+    let options = BuildOptions {
+        maxfail: usize::MAX,
+        command_status_interrupts: false,
+        ..BuildOptions::default()
+    };
+    let mut builder = Builder::new(&mut graph, options);
+    builder.add_target(&out1).unwrap();
+    builder.add_target(&out2).unwrap();
+    let error = builder.build().unwrap_err();
+    assert_eq!(builder.commands_ran.len(), 2);
+    assert_eq!(error.exit_code(), 5);
+    assert!(
+        String::from_utf8_lossy(&builder.build_output).contains("FAILED: [code=130]"),
+        "{:?}",
+        String::from_utf8_lossy(&builder.build_output)
+    );
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Ninja checks for an interrupt before it counts the completion as a failure,
+/// so no `-k` allowance keeps the build going and no later command's status
+/// replaces the one that says why it stopped.
+// [spec:ronin:req:product.build-outcome/test]
+#[test]
+fn ninja_build_interrupt_outranks_keep_going() {
+    let (mut graph, directory) = build_fixture(
+        "interrupt-outranks-keep-going",
+        "rule f\n  command = exit 130\nrule g\n  command = exit 5\n\
+         build $dir/out1: f\nbuild $dir/out2: g\n",
+    );
+    let out1 = directory.join("out1").to_string_lossy().into_owned();
+    let out2 = directory.join("out2").to_string_lossy().into_owned();
+    let options = BuildOptions {
+        maxfail: usize::MAX,
+        ..BuildOptions::default()
+    };
+    let mut builder = Builder::new(&mut graph, options);
+    builder.add_target(&out1).unwrap();
+    builder.add_target(&out2).unwrap();
+    let error = builder.build().unwrap_err();
+    assert_eq!(builder.commands_ran, ["exit 130"]);
+    assert_eq!(error.exit_code(), crate::subprocess::INTERRUPTED_EXIT_CODE);
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Ninja reads a depfile that is not there as an empty one, so a compiler that
+/// writes none for a translation unit with no includes keeps the status it
+/// exited with. C samurai stopped the build here, and so did this.
+// [spec:ronin:req:compat.persistent-state/test]
+#[test]
+fn ninja_build_missing_depfile_reads_empty() {
+    let (mut graph, directory) = build_fixture(
+        "gcc-depfile-absent",
+        "rule cc\n  command = touch $out\n  depfile = $out.d\n  deps = gcc\nbuild $dir/out: cc\n",
+    );
+    let out = directory.join("out").to_string_lossy().into_owned();
+    let mut builder = Builder::new(&mut graph, BuildOptions::default());
+    builder.add_target(&out).unwrap();
+    builder.build().unwrap();
+    assert_eq!(builder.commands_ran.len(), 1);
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The depfile's directory is the build tool's to create and the response
+/// file's is not. Ninja is asymmetric here on purpose: a compiler writes its
+/// own depfile and cannot be asked to make the directory first, while a
+/// response file the tool writes itself has nowhere to go and says so.
+// [spec:ronin:req:compat.command-runtime/test]
+#[test]
+fn ninja_build_makes_depfile_dir_only() {
+    let (mut graph, directory) = build_fixture(
+        "depfile-directory",
+        "rule cc\n  command = touch $out && printf 'x: y\\n' > $depfile\n\
+         \x20 depfile = $dir/deeper/out.d\n  deps = gcc\nbuild $dir/out: cc\n",
+    );
+    let out = directory.join("out").to_string_lossy().into_owned();
+    let mut builder = Builder::new(&mut graph, BuildOptions::default());
+    builder.add_target(&out).unwrap();
+    builder.build().unwrap();
+    assert!(directory.join("deeper").is_dir());
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+
+    let (mut graph, directory) = build_fixture(
+        "response-file-directory",
+        "rule cc\n  command = touch $out\n  rspfile = $dir/absent/args.rsp\n\
+         \x20 rspfile_content = arguments\nbuild $dir/out: cc\n",
+    );
+    let out = directory.join("out").to_string_lossy().into_owned();
+    let mut builder = Builder::new(&mut graph, BuildOptions::default());
+    builder.add_target(&out).unwrap();
+    assert!(builder.build().is_err());
+    assert!(builder.commands_ran.is_empty());
+    assert!(!directory.join("absent").exists());
+    drop(builder);
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn ninja_build_swallow_failures_releases_pool() {
     let (mut graph, directory) = build_fixture(

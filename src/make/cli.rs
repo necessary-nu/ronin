@@ -1286,6 +1286,10 @@ fn build_options(
     // An inherited outer transport remains attached above and may bound the
     // same scheduler.
     options.serve_jobserver = false;
+    // 130 is Ninja's `ExitInterrupted` and nothing at all to Make: GNU Make
+    // reports a recipe that exits 130 as `Error 130` and goes on under -k
+    // exactly as it would for any other status.
+    options.command_status_interrupts = false;
     Ok(options)
 }
 
