@@ -61,6 +61,24 @@ impl Error {
             ErrorRepr::Tool(error) => error.kind(),
         }
     }
+
+    /// Add context that belongs to the executable without changing the error
+    /// exposed by the reusable library entry points.
+    pub(crate) const fn at_process_boundary(mut self) -> Self {
+        let manifest = match &mut self.0 {
+            ErrorRepr::Manifest(error) | ErrorRepr::Build(BuildError::Manifest(error)) => {
+                Some(error)
+            }
+            _ => None,
+        };
+        if let Some(ManifestError::Read {
+            process_context, ..
+        }) = manifest
+        {
+            *process_context = true;
+        }
+        self
+    }
 }
 
 impl fmt::Display for Error {
@@ -262,7 +280,7 @@ impl CliError {
 /// message being rebuilt from the raw code. Taken off the rendered text rather
 /// than off the error, because a source that owns one renders it inside a
 /// sentence of its own.
-pub(crate) fn system_message(error: &impl fmt::Display) -> String {
+pub(crate) fn system_message(error: &(impl fmt::Display + ?Sized)) -> String {
     const OS_ERROR: &str = " (os error ";
     let rendered = error.to_string();
     let mut kept = String::with_capacity(rendered.len());
@@ -497,6 +515,7 @@ pub(crate) enum ManifestError {
     Read {
         path: PathBuf,
         source: io::Error,
+        process_context: bool,
     },
     Scan(ScanError),
     Problem {
@@ -530,6 +549,7 @@ impl ManifestError {
         Self::Read {
             path: path.into(),
             source,
+            process_context: false,
         }
     }
 
@@ -602,6 +622,16 @@ fn write_located(
 impl fmt::Display for ManifestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Read {
+                path,
+                source,
+                process_context: true,
+            } => write!(
+                formatter,
+                "error: loading '{}': {}",
+                path.display(),
+                system_message(source)
+            ),
             Self::Read { source, .. } => formatter.write_str(&system_message(source)),
             Self::Scan(error) => error.fmt(formatter),
             // Ninja reports a too-new required version through `Fatal`, not
@@ -1473,6 +1503,10 @@ mod tests {
         let error: Error = BuildError::from(manifest).into();
         assert_eq!(error.kind(), ErrorKind::Manifest);
         assert_eq!(error.to_string(), "missing");
+        assert_eq!(
+            error.at_process_boundary().to_string(),
+            "error: loading 'build.ninja': missing"
+        );
     }
 
     /// Neither Ninja nor GNU Make appends Rust's raw errno to `strerror`, and

@@ -80,6 +80,71 @@ fn default_manifest_and_state_files_keep_ninja_names() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+#[cfg(unix)]
+// [spec:ronin:req:compat.cli-and-tools/test]
+#[test]
+fn missing_manifest_names_selected_source() {
+    let directory = test_directory("missing-manifest");
+    fs::create_dir_all(&directory).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .args(["-f", "absent.custom"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        output.stderr,
+        b"ronin: error: loading 'absent.custom': No such file or directory\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[cfg(unix)]
+// [spec:ronin:req:compat.process-integration/test]
+#[test]
+fn stale_jobserver_uses_local_scheduler() {
+    let directory = test_directory("stale-jobserver");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("build.ninja"),
+        "rule emit\n  command = printf built > $out\nbuild output: emit\ndefault output\n",
+    )
+    .unwrap();
+    let makeflags = format!(
+        " -j2 --jobserver-auth=fifo:{}/missing-jobserver",
+        directory.display()
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .env("MAKEFLAGS", makeflags)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output
+            .stdout
+            .starts_with(b"ronin: Jobserver mode detected:  -j2 "),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        output.stderr,
+        b"ronin: error: Could not initialize jobserver: Error opening fifo for reading: No such file or directory\n"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("output")).unwrap(),
+        "built"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:compat.cli-and-tools/test]
 #[test]
 fn ninja_compatible_options_tools_streams_and_statuses_are_connected() {

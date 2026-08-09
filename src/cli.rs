@@ -1,5 +1,7 @@
 //! Ronin command-line parsing and runtime orchestration.
 
+mod runtime_options;
+
 use crate::build::{BuildOptions, ColorChoice, JobLimit, OutputStyle};
 use crate::error::{
     BuildError, CliError, EncodingContext, PersistenceError, PersistenceOperation,
@@ -864,12 +866,17 @@ pub(crate) fn normalize_runtime_options(
     let config = crate::jobserver::parse_makeflags_value(makeflags)?;
     let inheritable = config.has_mode() && config.is_native();
     if options.jobs == JobLimit::Auto {
-        if inheritable {
-            options.jobs = JobLimit::Unlimited;
-            options.jobserver = Some(crate::jobserver::Transport::inherit(
-                connect_jobserver()?,
-                makeflags,
-            ));
+        if inheritable && !options.dryrun {
+            if let Ok(client) = connect_jobserver() {
+                options.jobs = JobLimit::Unlimited;
+                options.jobserver = Some(crate::jobserver::Transport::inherit(client, makeflags));
+            } else {
+                // An inherited transport is only an optional outer budget.
+                // A stale FIFO or descriptor must not prevent either front end
+                // from loading its source and using the ordinary local Ninja
+                // scheduler, which is also pinned Ninja's fallback.
+                options.jobs = unshared;
+            }
         } else {
             options.jobs = unshared;
         }
@@ -1610,9 +1617,15 @@ pub(crate) fn run_bytes<'sink>(
         enter_directory(&mut invocation.working_directory, &directory)?;
     }
     invocation.build_options.working_directory = invocation.working_directory.clone();
+    // Carries output written before loading the manifest when there was no
+    // sink to stream it to, so it still leads what an embedding caller gets.
+    let mut output = entering.take().unwrap_or_default();
+    // Warnings and other non-fatal diagnostics are retained here only when the
+    // invocation has no diagnostic sink to stream them to.
+    let mut warnings = Vec::new();
     // An explicit `-j` declines an inherited budget. Manifest mode may publish
     // its own fixed limit to recipe children, but it does so silently.
-    normalize_runtime_options(
+    let jobserver_notice = runtime_options::normalize_ninja_runtime_options(
         &mut invocation.build_options,
         runner.makeflags.as_deref(),
         runner.status_format.as_deref(),
@@ -1620,6 +1633,15 @@ pub(crate) fn run_bytes<'sink>(
         runner.connect_jobserver,
         JobLimit::fixed(default_jobs()).expect("the default job count is nonzero"),
     )?;
+    if let Some(notice) = jobserver_notice {
+        notice.emit(
+            invocation.build_options.quiet,
+            build_output.as_deref_mut(),
+            build_diagnostics.as_deref_mut(),
+            &mut output,
+            &mut warnings,
+        )?;
+    }
     if let Some(tool) = invocation
         .selected_tool
         .filter(|tool| tool.stage() == crate::tool::ToolStage::Flags)
@@ -1632,12 +1654,6 @@ pub(crate) fn run_bytes<'sink>(
         );
     }
 
-    // Carries the `-C` announcement when there was no sink to stream it to, so
-    // it still leads the output an embedding caller is handed.
-    let mut output = entering.take().unwrap_or_default();
-    // Warnings raised while parsing, kept here only when the invocation has no
-    // diagnostic sink to stream them to.
-    let mut warnings = Vec::new();
     // The command line's own warnings go out before the manifest is read, as
     // Ninja's do, so a flag's complaint survives a manifest that then fails.
     // Command-line warnings come first, as they do in Ninja: the flag was read
@@ -2064,6 +2080,42 @@ mod tests {
         .unwrap();
         assert_eq!(explicit.jobs, JobLimit::fixed(2).unwrap());
         assert!(explicit.jobserver.is_none());
+
+        let fallback = JobLimit::fixed(3).unwrap();
+        let mut unavailable = BuildOptions::default();
+        normalize_runtime_options(
+            &mut unavailable,
+            Some("-j --jobserver-auth=fifo:/tmp/missing"),
+            None,
+            crate::build::TerminalContext::default(),
+            || {
+                Err(crate::error::ProcessError::Jobserver {
+                    operation: crate::error::JobserverOperation::StartHelper,
+                    source: std::io::Error::from(std::io::ErrorKind::NotFound),
+                })
+            },
+            fallback,
+        )
+        .unwrap();
+        assert_eq!(unavailable.jobs, fallback);
+        assert!(unavailable.jobserver.is_none());
+        assert!(unavailable.serve_jobserver);
+
+        let mut dryrun = BuildOptions {
+            dryrun: true,
+            ..BuildOptions::default()
+        };
+        normalize_runtime_options(
+            &mut dryrun,
+            Some("-j --jobserver-auth=fifo:/tmp/unused"),
+            None,
+            crate::build::TerminalContext::default(),
+            || panic!("a dry run must not connect to an inherited jobserver"),
+            fallback,
+        )
+        .unwrap();
+        assert_eq!(dryrun.jobs, fallback);
+        assert!(dryrun.jobserver.is_none());
     }
 
     #[test]

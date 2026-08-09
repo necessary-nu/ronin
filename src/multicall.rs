@@ -89,7 +89,7 @@ pub fn run_process(
 ) -> Result<RunResult, Error> {
     let runner = crate::cli::process_runner()?;
     let arguments = crate::cli::byte_arguments(arguments)?;
-    match select(&arguments) {
+    let result = match select(&arguments) {
         FrontEnd::Ninja => {
             crate::cli::run_bytes(&runner, &arguments, Some(output), Some(diagnostics))
         }
@@ -111,7 +111,8 @@ pub fn run_process(
             .into_bytes(),
             exit_code: 1,
         }),
-    }
+    };
+    result.map_err(Error::at_process_boundary)
 }
 
 #[cfg(test)]

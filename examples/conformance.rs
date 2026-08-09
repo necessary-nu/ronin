@@ -307,6 +307,35 @@ struct BuildCase {
     stale_manifest: bool,
 }
 
+/// One process-boundary case the upstream unit binary does not exercise.
+struct InvocationCase {
+    name: &'static str,
+    manifest: Option<&'static str>,
+    arguments: &'static [&'static str],
+    makeflags: Option<&'static str>,
+}
+
+const INVOCATION_CASES: &[InvocationCase] = &[
+    InvocationCase {
+        name: "a missing manifest names the selected source",
+        manifest: None,
+        arguments: &["-f", "absent.custom"],
+        makeflags: None,
+    },
+    InvocationCase {
+        name: "a stale inherited jobserver falls back locally",
+        manifest: Some("build all: phony\ndefault all\n"),
+        arguments: &[],
+        makeflags: Some(" -j2 --jobserver-auth=fifo:@DIR@/missing-jobserver"),
+    },
+    InvocationCase {
+        name: "a dry run does not join an inherited jobserver",
+        manifest: Some("build all: phony\ndefault all\n"),
+        arguments: &["-n"],
+        makeflags: Some(" -j2 --jobserver-auth=fifo:@DIR@/missing-jobserver"),
+    },
+];
+
 const BUILD_CASES: &[BuildCase] = &[
     BuildCase {
         name: "failure propagates the command status",
@@ -617,6 +646,63 @@ fn compare_build_case(ninja: &Path, ronin: &Path, case: &BuildCase) -> Result<()
     ))
 }
 
+// [spec:ronin:req:compat.upstream-conformance]
+// [spec:ronin:req:compat.process-integration]
+fn compare_invocation_case(
+    ninja: &Path,
+    ronin: &Path,
+    case: &InvocationCase,
+) -> Result<(), String> {
+    let mut rendered = Vec::new();
+    for tool in [ninja, ronin] {
+        let directory = TemporaryDirectory::new("invocation").map_err(|error| error.to_string())?;
+        if let Some(manifest) = case.manifest {
+            fs::write(directory.0.join("build.ninja"), manifest)
+                .map_err(|error| error.to_string())?;
+        }
+        let arguments = case
+            .arguments
+            .iter()
+            .map(|argument| argument.replace("@DIR@", &directory.0.display().to_string()))
+            .collect::<Vec<_>>();
+        let mut command = Command::new(tool);
+        command
+            .args(&arguments)
+            .current_dir(&directory.0)
+            .env_remove("MAKEFLAGS");
+        if let Some(makeflags) = case.makeflags {
+            command.env(
+                "MAKEFLAGS",
+                makeflags.replace("@DIR@", &directory.0.display().to_string()),
+            );
+        }
+        let output = command
+            .output()
+            .map_err(|error| format!("running {}: {error}", tool.display()))?;
+        rendered.push((
+            output.status.code(),
+            normalize(&output.stdout, &directory.0),
+            normalize(&output.stderr, &directory.0),
+        ));
+    }
+    let (ninja_result, ronin_result) = (&rendered[0], &rendered[1]);
+    if ninja_result == ronin_result {
+        return Ok(());
+    }
+    Err(format!(
+        "invocation case '{}' differs\n\
+         Ninja rc={:?}\nstdout:\n{}\nstderr:\n{}\n\
+         Ronin rc={:?}\nstdout:\n{}\nstderr:\n{}",
+        case.name,
+        ninja_result.0,
+        String::from_utf8_lossy(&ninja_result.1),
+        String::from_utf8_lossy(&ninja_result.2),
+        ronin_result.0,
+        String::from_utf8_lossy(&ronin_result.1),
+        String::from_utf8_lossy(&ronin_result.2)
+    ))
+}
+
 /// Ages a file so an edge that depends on a newer one has work to do.
 fn backdate(path: &Path) -> Result<(), String> {
     let file = fs::File::options()
@@ -817,10 +903,17 @@ fn run(config: &Config) -> Result<(), String> {
     for case in BUILD_CASES {
         compare_build_case(&ninja, &config.ronin, case)?;
     }
+    for case in INVOCATION_CASES {
+        compare_invocation_case(&ninja, &config.ronin, case)?;
+    }
     println!("differential: 10 CLI/tool cases matched");
     println!(
         "build outcome: {} failure and directory cases matched",
         BUILD_CASES.len()
+    );
+    println!(
+        "invocation boundary: {} source and inherited-runtime cases matched",
+        INVOCATION_CASES.len()
     );
     println!("persistence: Ninja → Ronin → Ninja log/deps round trip passed");
     println!("log content: build-log records and dry-run inertness matched");
@@ -837,7 +930,25 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_log_records, LogRecord};
+    use super::{normalize, parse_log_records, LogRecord};
+    use std::path::Path;
+
+    // [spec:ronin:req:compat.process-integration/test]
+    #[test]
+    fn normalizes_invocation_output() {
+        let directory = Path::new("/tmp/ronin-invocation-case");
+        assert_eq!(
+            normalize(
+                b"ninja: Jobserver mode detected: fifo:/tmp/ronin-invocation-case/outer\n",
+                directory,
+            ),
+            b"@TOOL@: Jobserver mode detected: fifo:@DIR@/outer\n"
+        );
+        assert_eq!(
+            normalize(b"ronin: error: unavailable\n", directory),
+            b"@TOOL@: error: unavailable\n"
+        );
+    }
 
     // [spec:ronin:req:compat.persistent-state/test]
     #[test]

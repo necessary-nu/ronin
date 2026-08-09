@@ -5571,12 +5571,34 @@ children (
                 priority 2
                 kind @fix
                 deps (make-executor-boundary)
+                sealed true
                 log (
                     {
                         at 2026-08-08T12:11:47.03355994Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Places Ronin abandons a build GNU Make finishes, or refuses without saying what it was reading. Found by `make-io-error-wording` while removing Rust's `(os error N)` suffix, and left because they are behaviour rather than wording.\n\nA stem past `NAME_MAX` makes Ronin abandon on ENAMETOOLONG where Make builds the target — 10 cases, `GraphError::Stat`. Statting a path that cannot exist is not an error; it is the answer \"no\".\n\n`jobserver unavailable: using -j1` — GNU Make warns and finishes; Ronin says the same thing and exits 1. Verified side by side.\n\nNinja mode answers a missing manifest with `ronin: No such file or directory` where upstream Ninja says `ninja: error: loading 'build.ninja': No such file or directory`. The missing `error: loading '<path>': ` context is a real gap the 425 pinned tests do not reach — check it against the pinned reference binary, and note this half is Ninja's contract, not Make's, so `[spec:ronin:req:compat.upstream-conformance]` governs rather than the Make narration rule.\n\n`src/main.rs:62` reports `writing terminal output:` where the suite expects `/^ronin: write error/`. `system_message` is `pub(crate)` and main.rs is the binary crate, so reaching it means widening the library's public API — decide whether that is worth it or whether the message moves instead.\n\n`src/error.rs`, `src/graph.rs`, `src/main.rs`. Do not touch `src/build.rs` or `src/make/**` — other lanes own them this wave."
+                    }
+
+                    {
+                        at 2026-08-09T15:40:22.065979806Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Pinned-Ninja invocation differential exposed a narrower interface requirement: stale inherited jobserver setup is non-fatal (exit 0 and local scheduling), but the reference emits its jobserver-detected line on stdout and initialization error on stderr. Preserve that Ninja-facing diagnostic surface while refusing to turn the stale transport into a build failure."
+                    }
+
+                    {
+                        at 2026-08-09T16:04:27.471695554Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Refusals are split at the compiler/executor boundary established by [dec:ronin:make-compiles-to-ninja]. A stale inherited jobserver is optional outer scheduling state: Ronin now reports the pinned Ninja information/error lines, discards the unusable transport, and continues with its local Ninja scheduler; dry runs and explicit `-j` do not join it. A missing selected Ninja manifest now gains `error: loading '<path>':` only at the executable boundary, preserving the reusable library API's raw I/O error and source chain. The proposed shared ENAMETOOLONG/stat relaxation is rejected because the pinned Ninja reference also refuses the literal 66 KiB node; the remaining GNU-compatible build-intent gap is compiler lowering and is tracked by `make-unaddressable-phony-aliases`, which must synthesize safe aliases without changing executor stat behavior. The proposed `write error` change is also rejected as GNU Make runner narration: pinned Ninja reports nothing for the measured `/dev/full` terminal-close case, so `src/main.rs` remains unchanged. Permanent process differentials cover selected missing manifests, stale jobserver fallback, and dry-run jobserver avoidance. `nplan check`, release Clippy with `-D warnings`, all 425 pinned Ninja tests, 10 CLI/tool cases, 32 build outcomes, 3 invocation-boundary cases, persistence/log round trips, the 296-file direct graph/manifest equivalence gate, and the 296-case Make build-intent test all pass."
+                    }
+
+                    {
+                        at 2026-08-09T16:04:35.96362172Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -5882,6 +5904,22 @@ children (
                         author "brendan@necessary.nu"
                         kind @decision
                         text "Decomposed into seven P0 leaves after operator approval. The dependency DAG is deliberate: inventory first; interface acceptance and Ninja narration then split; recursive compilation leads to removal of the jobserver tree; those branches join at the executor boundary; build-intent verification is the final gate. This parent is a pure container and owns no spec rules directly."
+                    }
+                )
+            }
+
+            {
+                id make-unaddressable-phony-aliases
+                title "Compile unaddressable phony names through safe Ninja aliases"
+                priority 2
+                kind @fix
+                deps (make-refusal-reaches-further)
+                log (
+                    {
+                        at 2026-08-09T15:48:15.542909737Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "GNU Make 4.4.1 accepts ten recorded `.PHONY` prerequisite names beyond the host's addressable path length, while the pinned Ninja reference rejects those literal nodes with ENAMETOOLONG. This is a Makefile-to-Ninja compiler gap: Kati/Ronin must lower unaddressable logical phony names to collision-safe synthetic Ninja aliases while preserving goals, dependency relationships, and build effects. Do not weaken GraphError::Stat or teach the shared executor that the literal path is absent; pinned Ninja's own stat failure proves that would violate the executor boundary."
                     }
                 )
             }
