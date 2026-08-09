@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| $(file >>appended.out,line one)
+| all: ; @printf '%s\n' 'done' > out
+file appended.out touched 1
+| line one
+file out touched 1
+| done

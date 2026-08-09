@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| dirs := a b c
+| all: ; @printf '[%s]\n' '$(foreach d,$(dirs),$(d)/lib.a)' '$(foreach d,,$(d)/lib.a)' > out
+file out touched 2
+| [a/lib.a b/lib.a c/lib.a]
+| []

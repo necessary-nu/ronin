@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| VARS = A B
+| VARSET = $(1) = $(2)
+| $(foreach v,$(VARS),$(eval $(call VARSET,$(v),$(v))))
+| all: ; @printf '%s\n' 'A = $(A) B = $(B)' > out
+file out touched 1
+| A = A B = B

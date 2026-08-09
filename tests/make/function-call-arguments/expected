@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| reverse = $(2) $(1)
+| all: ; @printf '[%s]\n' '$(call reverse,bar,foo)' '$(call reverse,one)' > out
+file out touched 2
+| [foo bar]
+| [ one]

@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 8
+| define EXTRA
+| all: more
+| more: ; @printf '%s\n' 'extra' > more.out
+| endef
+| all: ; @printf '%s\n' 'base' > out
+| ifdef BAR
+| $(eval $(EXTRA))
+| endif
+file out touched 1
+| base

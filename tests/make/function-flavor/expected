@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| s := s
+| r = r
+| ra += ra
+| rc ?= rc
+| all: ; @printf '%s\n' 'u $(flavor u)' 's $(flavor s)' 'r $(flavor r)' 'ra $(flavor ra)' 'rc $(flavor rc)' > out
+file out touched 5
+| u undefined
+| s simple
+| r recursive
+| ra recursive
+| rc recursive

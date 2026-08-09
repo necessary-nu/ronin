@@ -5197,6 +5197,20 @@ children (
                                 kind @note
                                 text "One of three lanes growing `tests/make/` from GNU Make's own scenarios. This one takes `reference/gnumake/tests/scripts/functions/` and `variables/`.\n\nThe point is coverage of behaviour we already claim, not finding new defects — though it will find some. Every case is a makefile written here from behaviour probed off /usr/bin/make 4.4.1, never copied: upstream's scripts are GPLv3 and `reference/gnumake` is a pinned checkout for exactly that reason (`make-licence-position`).\n\nCase names take a `function-` or `variable-` prefix so three lanes writing concurrently cannot collide.\n\nFunctions are the awkward half: most of what a function test does is `$(info ...)`, which the harness cannot compare because it does not read output. Write these so the value under test reaches a file — `all: ; @printf '%s\\n' '$(sort c a b)' > out` — which is a fair test of the function and a better one of the recipe path with it. Say which scenarios cannot survive that translation.\n\nWhere a case fails, record a `divergence` file naming the defect and, if one exists, the node. Do not fix code — that is another lane's ground this wave."
                             }
+
+                            {
+                                at 2026-08-09T13:06:22.186827337Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-09T13:10:40.749830217Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Ported 97 repository-owned GNU Make 4.4.1 build-intent cases covering functions and variables, taking the corpus from 111 to 208 cases. Seventy-one already compile to matching Ninja work. Twenty-six expose compiler gaps and carry bidirectional divergence markers: existing owners are make-assignment-modifiers, make-export-to-recipes, and make-refusal-reaches-further; the remaining newly concrete gaps explicitly record that no dedicated WBS leaf exists yet. The cases compare normal success/failure and filesystem effects, never GNU Make runner narration. Output-only diagnostic scenarios remain discovery input rather than build-intent gates. The complete 208-case release run passes, including the corpus rule that a fixed recorded divergence must have its marker removed."
+                            }
                         )
                     }
 

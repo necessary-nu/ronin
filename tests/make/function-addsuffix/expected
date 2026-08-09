@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 1
+| all: ; @printf '[%s]\n' '$(addsuffix .c,src/a.b hacks)' '$(addsuffix suf,)' > out
+file out touched 2
+| [src/a.b.c hacks.c]
+| []

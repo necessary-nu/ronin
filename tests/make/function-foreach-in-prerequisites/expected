@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| names := a b c
+| all: $(foreach n,$(names),$(n).txt) ; @printf '[%s]\n' '$^' > out
+| %.txt: ; @printf '%s\n' '$@' > $@
+file a.txt touched 1
+| a.txt
+file b.txt touched 1
+| b.txt
+file c.txt touched 1
+| c.txt
+file out touched 1
+| [a.txt b.txt c.txt]

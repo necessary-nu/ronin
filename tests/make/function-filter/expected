@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| files := foo.elc bar.o lose.o foo.i bar.i
+| all: ; @printf '[%s]\n' '$(filter %.o,$(files))' '$(filter %.o foo.i,$(files))' '$(filter nothing,$(files))' > out
+file out touched 3
+| [bar.o lose.o]
+| [bar.o lose.o foo.i]
+| []

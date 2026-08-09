@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| C := $(file <input.txt)
+| all: ; @printf '[%s]\n' '$(words $(C))' '$(firstword $(C))' '$(lastword $(C))' > out
+file input.txt kept 2
+| alpha
+| beta
+file out touched 3
+| [2]
+| [alpha]
+| [beta]

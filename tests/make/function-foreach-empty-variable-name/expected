@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| x = $(foreach ,1 2 3,a)
+| y := $(x)
+| all: ; @printf '[%s]\n' '$(y)' > out
+file out touched 1
+| [a a a]

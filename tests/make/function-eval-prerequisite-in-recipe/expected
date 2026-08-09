@@ -1,0 +1,5 @@
+oracle GNU Make 4.4.1
+status 2
+file Makefile kept 2
+| # A recipe may not introduce a new target/prerequisite relationship.
+| all: ; $(eval all: extra)

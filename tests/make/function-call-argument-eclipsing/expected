@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 5
+| nine = $(1) $(2) $(3) $(4) $(5) $(6) $(7) $(8) $(9)
+| level1 = $(call nine,$(1),$(2),$(3),$(4),$(5))
+| level2 = $(call level1,$(1),$(2),$(3))
+| level3 = $(call level2,$(1),$(2),$(3),$(4),$(5))
+| all: ; @printf '[%s]\n' '$(call nine,1,2,3,4,5,6,7,8,9,10,11)' '$(call level1,1,2,3,4,5,6,7,8)' '$(call level2,1,2,3,4,5,6,7,8)' '$(call level3,1,2,3,4,5,6,7,8)' > out
+file out touched 4
+| [1 2 3 4 5 6 7 8 9]
+| [1 2 3 4 5    ]
+| [1 2 3      ]
+| [1 2 3      ]

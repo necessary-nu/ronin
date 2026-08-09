@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 2
+| list := src/a.b.z.foo.c src/hacks src.bar/a.b.c src.bar/hacks hacks
+| all: ; @printf '[%s]\n' '$(basename $(list))' > out
+file out touched 1
+| [src/a.b.z.foo src/hacks src.bar/a.b src.bar/hacks hacks]

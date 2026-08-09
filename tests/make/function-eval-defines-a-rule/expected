@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 4
+| define RULE
+| all: ; @printf '%s\n' 'from eval' > out
+| endef
+| $(eval $(RULE))
+file out touched 1
+| from eval

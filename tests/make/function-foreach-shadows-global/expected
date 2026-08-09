@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+status 0
+file Makefile kept 3
+| x := GLOBAL
+| inner := $(foreach x,ONE TWO,[$(x)])
+| all: ; @printf '[%s]\n' '$(inner)' '$(x)' > out
+file out touched 2
+| [[ONE] [TWO]]
+| [GLOBAL]
