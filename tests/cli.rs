@@ -2981,6 +2981,80 @@ fn make_recipe_failure_uses_ninja_narration() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// An I/O failure reading a Makefile names the file and the line that asked
+/// for it, in the system's own words.
+///
+/// Three shapes, each of which used to reach the user as a bare `io::Error`
+/// and nothing else — `Permission denied (os error 13)`, with no path, no
+/// line, and Rust's spelling of an errno that neither front end uses.
+// [spec:ronin:req:make.narration/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_io_failures_name_their_source() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unreadable = |directory: &std::path::Path, name: &str, contents: &str| {
+        let path = directory.join(name);
+        fs::write(&path, contents).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
+    };
+    let diagnostic_of = |directory: &std::path::Path| {
+        let output = make_command(&invoked_as(directory, "make"), directory)
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_eq!(output.status.code(), Some(2), "{said}");
+        // Rust's rendering of an errno is nobody's wording: GNU Make quotes
+        // `strerror` and so does the manifest front end.
+        assert!(!said.contains("(os error"), "{said}");
+        said
+    };
+
+    // An `include` of a file that will not open: the line of the directive.
+    let directory = make_case("make-io-include", "include inc.mk\nall:;@echo hi\n");
+    unreadable(&directory, "inc.mk", "FOO := foo\n");
+    let said = diagnostic_of(&directory);
+    assert!(
+        said.contains("Makefile:1: inc.mk: Permission denied"),
+        "{said}"
+    );
+    fs::remove_dir_all(&directory).unwrap();
+
+    // `$(file >)` onto a file that will not open: the line of the expansion.
+    let directory = make_case("make-io-file-write", "all:;@echo hi\n$(file >out.txt,x)\n");
+    unreadable(&directory, "out.txt", "");
+    let said = diagnostic_of(&directory);
+    assert!(
+        said.contains("Makefile:2: open: out.txt: Permission denied"),
+        "{said}"
+    );
+    fs::remove_dir_all(&directory).unwrap();
+
+    // The Makefile itself. No directive asked for it, so there is no line to
+    // point at, and it is still named with the system's own reason.
+    let directory = make_case("make-io-makefile", "all:;@echo hi\n");
+    unreadable(&directory, "Makefile", "all:;@echo hi\n");
+    let said = diagnostic_of(&directory);
+    assert!(said.contains("Makefile: Permission denied"), "{said}");
+    fs::remove_dir_all(&directory).unwrap();
+
+    // `-include` is a Makefile saying it does not care whether the file is
+    // there or readable, and GNU Make 4.4.1 reports neither. Verified side by
+    // side rather than read off the manual, which covers only absence.
+    let directory = make_case(
+        "make-io-optional-include",
+        "-include inc.mk\nall:;@echo hi\n",
+    );
+    unreadable(&directory, "inc.mk", "FOO := foo\n");
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{said}");
+    assert!(!said.contains("inc.mk"), "{said}");
+    fs::remove_dir_all(&directory).unwrap();
+}
+
 /// Compiler diagnostics keep their Makefile source without borrowing GNU
 /// Make's fatal-error decorations.
 // [spec:ronin:req:make.narration/test]

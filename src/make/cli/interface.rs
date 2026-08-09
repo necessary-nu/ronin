@@ -226,7 +226,10 @@ pub(super) fn prepend_command_line_evals(
     let Some(makefile_name) = session.flags.makefile.clone() else {
         return Ok(());
     };
-    let Some(makefile) = session.get_makefile(&makefile_name)? else {
+    // A Makefile that is absent or will not open is not this function's failure
+    // to report: evaluation reads it again in a moment and says which file and
+    // why. Here the fragments simply have nothing to go in front of.
+    let kati::file::Source::Read(makefile) = session.get_makefile(&makefile_name)? else {
         return Ok(());
     };
     let filename = session.intern("*command line eval*");
