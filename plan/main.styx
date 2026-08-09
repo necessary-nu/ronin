@@ -4075,6 +4075,7 @@ children (
                 title "Use the GNU Make corpus to discover compiler gaps"
                 kind @test
                 deps (make-build-intent-gate)
+                sealed true
                 log (
                     {
                         at 2026-08-08T22:04:45.746413879Z
@@ -4099,6 +4100,13 @@ children (
 
                     {
                         at 2026-08-09T18:24:49.379503739Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-09T19:05:49.279613653Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
@@ -6565,6 +6573,7 @@ children (
         id ronin-exit-status-parity
         title "Exit with the status Ninja exits with when a command fails"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-09T17:25:12.172102097Z
@@ -6585,6 +6594,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @status
                 text "Doing → Done (nplan complete)"
+            }
+
+            {
+                at 2026-08-09T19:05:47.569973822Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Done (nplan complete)"
             }
         )
     }
