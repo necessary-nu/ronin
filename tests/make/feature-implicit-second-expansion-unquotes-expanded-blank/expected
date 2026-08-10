@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # An implicit pattern's one raw prerequisite word can expand to an escaped
+| # blank, which is unquoted only after that word's second expansion.
+| S = a\ file
+| .SECONDEXPANSION:
+| .PHONY: all foo.a\ file
+| all: foo.pick
+| foo.a\ file: ; @:
+| %.pick: %.$$(S) ; @printf '<%s> <%s>\n' '$@' '$<' > result
+file result touched 1
+| <foo.pick> <foo.a file>

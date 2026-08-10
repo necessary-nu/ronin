@@ -6586,6 +6586,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-09T22:02:26.825213909Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Independent review found the delivered classifier incomplete in three connected cases: after an expanded first colon it forced a later literal equals into an assignment even when the literal suffix was not a one-word variable assignment; it lost target-specific modifier words when classification happened after expansion; and colon_in_source recorded any source colon rather than whether the first effective colon was literal, so a colon appended after a fully expanded rule changed the earlier colon's meaning. Corrective work is tracked by dependent node make-target-specific-separator-provenance; the original completion and commits remain append-only history."
+                        after_done true
+                    }
                 )
             }
 
@@ -6594,6 +6602,7 @@ children (
                 title "Name the MAKEFLAGS share of the upstream residue"
                 kind @test
                 deps (make-conformance-corpus)
+                sealed true
                 log (
                     {
                         at 2026-08-09T18:21:26.533466517Z
@@ -6769,6 +6778,156 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-target-specific-separator-provenance
+                title "Track the effective rule colon through partial expansion"
+                kind @fix
+                deps (make-target-specific-separator-is-literal)
+                sealed true
+                log (
+                    {
+                        at 2026-08-09T22:02:38.319902442Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-10T10:41:04.542232739Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The corrective node remains scoped to classifying the first effective rule colon and target-specific assignment from GNU Make partial expansion. Probing grouped double-colon execution exposed a separate scheduler-boundary problem, so the uncommitted grouped action implementation and its claimed divergence removals were removed rather than shipping a known counterexample. Follow-up is make-grouped-double-colon-actions."
+                    }
+
+                    {
+                        at 2026-08-10T11:39:46.927211534Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Independent final review approved the provenance correction after three additional boundary fixes: semicolon-only residual text is no longer erased as an empty rule, an escaped interior semicolon remains in its ordinary source word, and a pattern-specific assignment name expands ambiently once per target pattern. The final scope has 23 GNU Make 4.4.1-recorded fixtures and no grouped executor changes. Green evidence: formatting and diff checks; workspace tests; Kati all-target tests with 96 library and 5 no-global checks; workspace clippy with warnings denied; 299-case owned Make oracle; 387-run GNU conformance with 43 pre-classified defects; direct/manifest equivalence over 297 Makefiles and 274 graphs with zero disagreements; stable 1351-case upstream inventory; nplan check, lint, comments, and audit. The real-project witness remains independently red only for multiple rules generating build/browse_py.h. Grouped actions, escaped prerequisite-colon normalization, and pattern-assignment RHS scope remain in their recorded follow-up nodes."
+                    }
+
+                    {
+                        at 2026-08-10T11:39:47.070397088Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-10T12:27:57.014119517Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Post-rebase integration composes Kati commits 75a27df (original separator classifier), 3fd635b (effective-separator provenance correction), and 27b868f (dependent escaped-blank file-sequence parsing) on upstream be221ae. The final composed evidence is 304/304 owned Make cases, 301 normalized matches in the 387-run conformance corpus with 11 recorded TODOs, 297 Makefiles and 276 direct/manifest graphs with zero disagreements, and a reproducible upstream inventory of 520 unclassified / 68 compiler / 172 interface / 591 narration. Independent final review approved the complete composition."
+                        after_done true
+                    }
+                )
+            }
+
+            {
+                id make-grouped-double-colon-actions
+                title "Compile grouped double-colon actions across the Ninja scheduling boundary"
+                kind @fix
+                deps (make-target-specific-separator-provenance)
+                log (
+                    {
+                        at 2026-08-10T10:41:04.65063167Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Oracle handoff from separator-provenance work. An exact &:: record is an independent action identified by its rule record even when records share a real member. GNU Make snapshots the oldest group-member mtime and member existence before updating prerequisites, waits for normal and order-only prerequisites, then compares final normal-input state with that snapshot. A phony order-only prerequisite can touch a normal input newer after the initial graph scan; GNU then runs the grouped recipe. A static Ninja edge that keeps the order-only partition waits but stays clean, so a shell guard is never scheduled. Promoting or always-forcing the order-only input makes clean question-mode and no-op builds falsely dirty. Additional observed constraints: shared records need private action identities plus public completion joins; post-prerequisite member deletion does not change the pre-update member verdict; depfile inputs use the wrong oldest/newest boundary; recursive Make actions need graph composition rather than a nested runner. Solve this as graph/scheduler representation work and keep the existing grouped divergence markers until the complete model is verified."
+                    }
+                )
+            }
+
+            {
+                id make-escaped-prerequisite-colon
+                title "Unquote prerequisite colons before static-pattern parsing"
+                kind @fix
+                deps (make-target-specific-separator-provenance)
+                sealed true
+                log (
+                    {
+                        at 2026-08-10T10:59:26.887291839Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Inherited reproducer confirmed while reviewing make-target-specific-separator-provenance: with an existing file named foo:bar, `all: foo\\:bar ; @:` succeeds under GNU Make 4.4.1 and names that file. Kati passes the escaped prerequisite bytes to Rule::parse_prerequisites, whose raw memchr sees the quoted colon as static-pattern syntax and refuses the line with target pattern contains no %. The same raw memchr is present at base 8d4ecbd, so this is downstream of the effective rule-colon and target-variable boundary and is not part of the corrective provenance diff."
+                    }
+
+                    {
+                        at 2026-08-10T11:45:41.299553895Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Post-rebase composition corrected the original inherited-defect observation. Kati be221ae already introduced odd-backslash-aware static-pattern colon discovery plus escaped-colon prerequisite normalization while preserving deferred prerequisite identity. On the composed tip, the existing GNU-recorded feature-escaped-colon-in-a-target fixture covers both the prerequisite and target spellings and now matches, so its stale divergence marker is removed. No additional implementation is needed in this node."
+                    }
+
+                    {
+                        at 2026-08-10T11:45:41.428475793Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-pattern-variable-assignment-scope
+                title "Expand pattern-specific assignment values in ambient scope"
+                kind @fix
+                deps (make-target-specific-separator-provenance)
+                log (
+                    {
+                        at 2026-08-10T11:05:45.875216748Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Inherited reproducer confirmed during separator-provenance review: `%.o: N=P` followed by `%.o: X := $(N)` and a pattern recipe prints X. GNU Make 4.4.1 expands the pattern-specific value in ambient scope and prints empty; Kati sets current_scope to the pattern rule_vars scope before eval_rhs and prints P. Base 8d4ecbd already has this loop behavior. The provenance correction keeps pattern-specific name expansion ambient, as GNU does, and changes only concrete target names to expand per file scope; RHS scope remains this separate defect."
+                    }
+                )
+            }
+
+            {
+                id make-rule-file-sequence-escaped-whitespace
+                title "Unquote escaped whitespace while scanning rule file names"
+                kind @fix
+                deps (make-target-specific-separator-provenance)
+                sealed true
+                log (
+                    {
+                        at 2026-08-10T11:54:08.450583619Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Post-rebase conformance handoff: colon_ws_in_file.mk and colon_ws_in_target.mk expose GNU PARSE_FILE_SEQ whitespace quoting after be221ae fixes their escaped-colon half. File-name sequence scanning must compact each immediate backslash run before a space or tab, keep the blank inside one name after an odd run, and split after an even run; half the slashes remain. Apply the same scanner to rule targets, ordinary prerequisites, and static-pattern target-pattern words without changing deferred prerequisite identity."
+                    }
+
+                    {
+                        at 2026-08-10T11:54:14.649199973Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-10T12:27:12.725309125Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Implemented GNU Make's rule file-sequence blank quoting as a zero-copy scanner for ordinary names: an immediate backslash run before space or tab is halved, an odd run keeps the blank inside the name, and an even run leaves it as a separator. Rule targets, immediate prerequisites, static target-pattern words, and fully expanded prerequisite results use the same scanner. Explicit and static second expansion retain and expand the whole prerequisite list; implicit pattern rules first preserve GNU implicit.c get_next_word raw-word boundaries, skipping variable-reference contents and carrying order-only state, then scan each expanded word separately. This prevents a raw trailing backslash from quoting the boundary before the next implicit prerequisite while still accepting an escaped blank introduced by expansion. Five GNU Make 4.4.1-recorded fixtures cover immediate, explicit, implicit decline/success, and static paths; the stale escaped-space target divergence and both colon_ws inventory rows are removed. Independent review APPROVED. Green evidence: Kati all-target tests (101 library, 5 no-global); owned Make oracle 304/304; 387-run conformance (262 raw, 301 normalized, 43 defects and 11 recorded); workspace tests (671 passed, 1 ignored); formatting, diff checks, and clippy with warnings denied; direct/manifest equivalence over 297 Makefiles and 276 graphs with zero disagreements; reproducible 1351-case upstream inventory at 520 unclassified, 68 compiler, 172 interface, and 591 narration; nplan check, lint, comments, and audit. The real-project witness remains independently red only for multiple rules generating build/browse_py.h."
+                    }
+
+                    {
+                        at 2026-08-10T12:27:12.797857486Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-10T12:27:56.843700906Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The delivered vendored implementation is Kati commit 27b868fec2e007f546e0f85b1ac8288797b258c1, atop separator-provenance correction 3fd635b and rebased original 75a27df."
+                        after_done true
                     }
                 )
             }

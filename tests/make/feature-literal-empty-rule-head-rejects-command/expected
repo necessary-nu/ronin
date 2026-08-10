@@ -1,0 +1,5 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 2
+| # With no source word before the semicolon, the command really has no rule.
+| ; @false

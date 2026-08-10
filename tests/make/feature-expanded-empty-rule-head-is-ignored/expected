@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # A source word existed before the literal semicolon, so its empty expansion
+| # makes the whole apparent rule and inline recipe disappear.
+| EMPTY =
+| $(EMPTY); @false
+| 
+| .PHONY: all
+| all: ; @printf '%s\n' ok > all-out
+file all-out touched 1
+| ok

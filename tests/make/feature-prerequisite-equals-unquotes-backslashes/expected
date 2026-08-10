@@ -1,0 +1,29 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 14
+| # Once assignment classification fails, GNU unquotes an equals sign in the
+| # untouched source suffix. The already-expanded colon word is the control: its
+| # quoting backslash remains.
+| NAME = foo=bar
+| QUOTED_NAME = foo\=bar
+| EXPANDED_RULE = expanded: first foo\=bar
+| 
+| .PHONY: all expanded literal first
+| all: expanded literal ; @printf '%s\n' all > all-out
+| $(EXPANDED_RULE) ; @printf '%s\n' expanded > expanded-out
+| literal: first foo\=bar ; @printf '%s\n' literal > literal-out
+| first: ; @printf '%s\n' first > first-out
+| $(NAME): ; @printf '%s\n' equals > equals-out
+| $(QUOTED_NAME): ; @printf '%s\n' quoted > quoted-out
+file all-out touched 1
+| all
+file equals-out touched 1
+| equals
+file expanded-out touched 1
+| expanded
+file first-out touched 1
+| first
+file literal-out touched 1
+| literal
+file quoted-out touched 1
+| quoted

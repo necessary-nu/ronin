@@ -1,0 +1,8 @@
+# The opposite provenance control: once a literal colon token is first, the
+# following source remains unexpanded during assignment classification. Its
+# expanded `=` and trailing colon therefore describe a malformed static pattern,
+# not a target-specific assignment.
+TAIL = VALUE=wrong:
+
+literal-first:$(TAIL)
+literal-first: ; @printf '%s\n' wrong > wrong-out

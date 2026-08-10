@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # A quoted semicolon inside an ordinary source word remains part of the target.
+| # It is not the standalone semicolon token that starts an inline recipe.
+| foo\;bar: ; @printf '<%s>\n' '$@' > result
+file result touched 1
+| <foo;bar>

@@ -310,6 +310,9 @@ assertions (
     {id make-pattern-rule-prerequisite-names, kind @complete, author "brendan@necessary.nu", at 2026-08-09T22:36:24.607059015Z}
     {id make-pattern-rule-deferred-prerequisite-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-09T23:36:40.460068917Z}
     {id make-target-specific-separator-is-literal, kind @complete, author "brendan@necessary.nu", at 2026-08-09T21:49:39.782024318Z}
+    {id make-target-specific-separator-provenance, kind @complete, author "brendan@necessary.nu", at 2026-08-10T11:39:47.070397088Z}
+    {id make-escaped-prerequisite-colon, kind @complete, author "brendan@necessary.nu", at 2026-08-10T11:45:41.428475793Z}
+    {id make-rule-file-sequence-escaped-whitespace, kind @complete, author "brendan@necessary.nu", at 2026-08-10T12:27:12.797857486Z}
 )
 
 impl_evidence (
