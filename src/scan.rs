@@ -381,7 +381,7 @@ fn space(scanner: &mut Scanner<'_>) -> ScanResult<bool> {
 /// What Ninja's lexer reads where a line begins.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum LineStart {
-    /// A run of spaces no longer rule claimed.
+    /// A run of spaces no other rule claimed.
     Indent,
     /// A line ending, with or without spaces in front of it.
     Newline,

@@ -314,6 +314,7 @@ assertions (
     {id make-escaped-prerequisite-colon, kind @complete, author "brendan@necessary.nu", at 2026-08-10T11:45:41.428475793Z}
     {id make-rule-file-sequence-escaped-whitespace, kind @complete, author "brendan@necessary.nu", at 2026-08-10T12:27:12.797857486Z}
     {id ronin-baseline-rerecord, kind @complete, author "brendan@necessary.nu", at 2026-08-10T15:57:40.249129095Z}
+    {id ronin-indent-error-location, kind @complete, author "brendan@necessary.nu", at 2026-08-10T16:22:04.10916719Z}
 )
 
 impl_evidence (

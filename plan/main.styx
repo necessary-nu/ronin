@@ -7039,6 +7039,7 @@ children (
         id ronin-indent-error-location
         title "Locate an unexpected indent where Ninja locates it"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-09T18:16:46.070001876Z
@@ -7056,6 +7057,20 @@ children (
 
             {
                 at 2026-08-09T20:01:21.749088376Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+
+            {
+                at 2026-08-10T16:22:00.024462701Z
+                author "brendan@necessary.nu"
+                kind @errata
+                text "Recovery audit on 2026-08-10: the prior Doing → Done log and delivery commit 5d625c5 are valid, and 5d625c5 is already an ancestor of current main, but the node's completion assertion did not survive later plan integration, so nplan exposed the node as Todo again. The delivered scanner, parser, port-test, and indent conformance code has not drifted since 5d625c5; subsequent changes to examples/conformance.rs only added unrelated response-file cases. Revalidation on current main passed the focused indent/peek tests and upstream CommentEOF port test; all 425 pinned Ninja tests; 10 differential cases; 86 build-outcome cases; 3 invocation cases; persistence and log-content checks; and the forced nplan workspace check. The recovered slice also corrects the nearby LineStart::Indent comment from 'no longer rule' to 'no other rule'. Restoring the manual completion assertion records existing shipped reality rather than delivering a second implementation."
+            }
+
+            {
+                at 2026-08-10T16:22:04.10916719Z
                 author "brendan@necessary.nu"
                 kind @status
                 text "Doing → Done (nplan complete)"
