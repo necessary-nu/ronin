@@ -7011,6 +7011,7 @@ children (
         id ronin-response-file-write-diagnostic
         title "Say what Ninja says when a response file cannot be written"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-09T18:16:29.695734373Z
@@ -7028,6 +7029,20 @@ children (
 
             {
                 at 2026-08-09T20:10:03.136477509Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+
+            {
+                at 2026-08-10T18:08:28.453135559Z
+                author "brendan@necessary.nu"
+                kind @errata
+                text "Recovery audit on 2026-08-10: the prior Doing → Done log and delivery commit 11900e8 are valid, and 11900e8 is already an ancestor of current main, but the node's completion assertion did not survive later plan integration, so nplan exposed the node as Todo again. Every delivery path — src/build.rs, src/build/command.rs, src/build/tests.rs, src/cli.rs, src/error.rs, src/os.rs, and examples/conformance.rs — is unchanged since 11900e8. Current-source verification passed the focused response-file creation/diagnostic test, failed-command cleanup test, and /dev/full buffer-boundary invariant; the immediately preceding full differential run on the same source passed all 425 pinned Ninja tests, 10 CLI/tool comparisons, 86 build-outcome cases (including all five response-file cases), 3 invocation cases, persistence, and log-content checks; and the forced nplan workspace check is green. No implementation correction is needed. Restoring the manual completion assertion records shipped reality; this recovery requires no violation bypasses."
+            }
+
+            {
+                at 2026-08-10T18:08:32.798859837Z
                 author "brendan@necessary.nu"
                 kind @status
                 text "Doing → Done (nplan complete)"
