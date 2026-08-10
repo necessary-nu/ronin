@@ -1,0 +1,38 @@
+# schema=ronin-performance-baseline-v2
+# workload_version=1
+# ronin_revision=3e6b9479835c5b55514b0de70aebc0c8a4f97a4d
+# ronin_dirty=false
+# ninja_revision=b51a1e37c2fb89bbefa600bd155e1ce13983f09d
+# build_profile=release
+# platform=Linux n-debian13-dev 6.12.100+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.100-1 (2026-07-30) x86_64 GNU/Linux
+# rustc=rustc 1.97.1 (8bab26f4f 2026-07-14)
+# warmups=2
+# repetitions=15
+# noise_control=interleaved tool samples; stdout/stderr discarded; 2 warmup(s); median wall time; Linux peak RSS sampled from /proc every 100 us; no CPU pinning
+# validation_thresholds=Ronin/Ninja runtime ratio <= 120% of recorded v1 ratio and Ronin runtime <= 120% of pinned Ninja; peak RSS <= 200% of pinned Ninja
+# sizes=command:4000,deep:2000,wide:4000,canonical:4000,deps:300,clean:2000,large:100000,scheduler:128
+tool,tool_version,workload,median_ms,min_ms,max_ms,median_peak_rss_kib,min_peak_rss_kib,max_peak_rss_kib
+ronin,1.14.0,manifest-command-evaluation,6.015,5.792,6.746,4976,4952,5128
+ninja,1.14.0.git,manifest-command-evaluation,12.231,11.399,13.008,7700,7672,8040
+samurai-c,1.9.0,manifest-command-evaluation,9.661,9.111,10.791,5128,5068,5160
+ronin,1.14.0,deep-graph-evaluation,5.495,5.162,6.480,3732,3592,3732
+ninja,1.14.0.git,deep-graph-evaluation,7.619,7.128,9.104,5936,5872,6304
+samurai-c,1.9.0,deep-graph-evaluation,6.008,5.451,6.424,2764,2644,2852
+ronin,1.14.0,wide-noop-build,9.314,8.912,10.077,4856,4696,4904
+ninja,1.14.0.git,wide-noop-build,11.389,10.546,12.522,5772,5752,6184
+samurai-c,1.9.0,wide-noop-build,10.269,9.699,11.262,3712,3600,3836
+ronin,1.14.0,path-canonicalization,4.110,3.740,4.643,3480,3424,3496
+ninja,1.14.0.git,path-canonicalization,7.024,6.178,7.626,5532,5504,5808
+samurai-c,1.9.0,path-canonicalization,6.380,5.786,7.052,3424,3328,3468
+ronin,1.14.0,dependency-log-load,3.012,2.746,3.223,2852,2668,2936
+ninja,1.14.0.git,dependency-log-load,4.136,3.808,4.596,4388,4324,4664
+samurai-c,1.9.0,dependency-log-load,3.147,2.890,3.540,2112,2028,2176
+ronin,1.14.0,clean-tree-noop,7.869,7.011,8.444,4572,4440,4656
+ninja,1.14.0.git,clean-tree-noop,12.180,11.622,14.035,5700,5696,6056
+samurai-c,1.9.0,clean-tree-noop,11.184,10.328,11.831,3248,3156,3304
+ronin,1.14.0,large-manifest-parse,161.506,149.855,172.123,85056,84948,85592
+ninja,1.14.0.git,large-manifest-parse,314.521,298.461,335.112,100348,100328,100408
+samurai-c,1.9.0,large-manifest-parse,305.112,296.703,314.784,100780,100708,100860
+ronin,1.14.0,scheduler-barrier,43.505,41.610,46.027,2548,2544,2608
+ninja,1.14.0.git,scheduler-barrier,42.828,42.206,46.141,4196,4188,4556
+samurai-c,1.9.0,scheduler-barrier,40.332,39.474,46.180,1976,1908,2032

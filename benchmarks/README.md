@@ -45,8 +45,9 @@ and maximum wall time. On Linux they also sample each coordinator process's
 peak RSS from `/proc`. CPU frequency and affinity are not controlled, so
 compare large changes and rerun noisy cases before drawing conclusions.
 
-The original Ronin medians are stored as machine-readable input in
-[`baseline-v1.csv`](baseline-v1.csv). Run the release gate with:
+The recorded Ronin and pinned Release Ninja medians are stored as
+machine-readable input in [`baseline-v1.csv`](baseline-v1.csv). Run the
+release gate with:
 
 ```sh
 scripts/check-performance.sh --warmups 1 --repetitions 7
@@ -59,9 +60,13 @@ peak RSS above 200% of Ninja. Normalizing the historical comparison against
 Ninja makes it portable across differently loaded hosts while preventing a
 large regression from being hidden by an old, slower absolute baseline.
 
-The completed clean-revision comparison is recorded in
-[`performance-validation-2026-07-29.md`](performance-validation-2026-07-29.md),
-with the exact machine-readable output beside it.
+The current baseline was recorded on a quiet host against a Ninja binary built
+from the pinned source revision with CMake's Release profile. Its provenance,
+analysis, and confirmation sweep are in
+[`performance-validation-2026-08-10.md`](performance-validation-2026-08-10.md),
+with the exact machine-readable primary output beside it. The earlier
+clean-revision gate comparison remains in
+[`performance-validation-2026-07-29.md`](performance-validation-2026-07-29.md).
 
 The dependency-free `alloc_metrics` Cargo example measures deterministic
 in-process allocation requests and requested bytes for the same version-1

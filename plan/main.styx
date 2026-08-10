@@ -6982,12 +6982,27 @@ children (
         id ronin-baseline-rerecord
         title "Re-record the performance baseline against the pinned Release Ninja"
         kind @chore
+        sealed true
         log (
             {
                 at 2026-08-09T17:25:14.780156143Z
                 author "brendan@necessary.nu"
                 kind @note
                 text "Opened from the review of 2026-08-09: benchmarks/README.md pins the reference recipe to a Release Ninja (cmake -DCMAKE_BUILD_TYPE=Release, recorded by ronin-reference-in-checkout), but benchmarks/baseline-v1.csv has not been re-recorded since 553dc19 and still encodes the unoptimised Ninja that ronin-ninja-reference-unpinned identified — the gate compares against a stale ratio. Re-record on a quiet host; do not run alongside other work, per the wall-time discipline. Blocked on host quietness, not on any node."
+            }
+
+            {
+                at 2026-08-10T15:57:34.680166147Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Selected the first quiet-host Release-reference sweep as the new baseline. The pinned Ninja checkout remained at b51a1e37c2fb89bbefa600bd155e1ce13983f09d and was rebuilt with CMake Release flags (-O3 -DNDEBUG, -flto=auto), shrinking the stale 1,464,216-byte unoptimised binary to 430,528 bytes. Live preflight intervals showed 99% CPU idle, no blocked tasks, and no material I/O wait. The primary run used clean Ronin revision 3e6b9479835c5b55514b0de70aebc0c8a4f97a4d with two warmups and 15 interleaved samples; an immediate equal-size confirmation kept every tool median within 7.1% and each Ronin/Ninja ratio within 8.6%. Ronin is faster than Release Ninja and C samurai on seven of eight workloads; scheduler-barrier is 1.016x Ninja and 1.079x C, while every Ronin/Ninja peak-RSS ratio is below 1. baseline-v1.csv now exactly matches the primary raw output, with gate thresholds unchanged. Evidence: benchmarks/performance-validation-2026-08-10.{md,csv}; the 1-warmup/7-sample release gate passed, the baseline validation unit test passed, and the forced workspace check passed. The first forced workspace test run had one transient manifest-reload failure; that exact test passed three isolated reruns and the full forced suite passed on repetition."
+            }
+
+            {
+                at 2026-08-10T15:57:40.249129095Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
