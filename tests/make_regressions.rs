@@ -106,3 +106,50 @@ fn make_skips_current_recursive_wrapper() {
     assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "self\n");
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// Automake's suffix rules use `$*` to give each object a distinct dependency
+/// file. The stem must survive when that Makefile is a compiled child unit.
+#[test]
+fn make_populates_suffix_rule_stem() {
+    let directory = test_directory("suffix-rule-stem");
+    let child = directory.join("child");
+    fs::create_dir_all(child.join(".deps")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t@$(MAKE) -C child all\n",
+    )
+    .unwrap();
+    fs::write(
+        child.join("Makefile"),
+        br#"all: one.o two.o
+.SUFFIXES: .c .o
+.c.o:
+	@printf '%s\n' '$@' > .deps/$*.Tpo
+	@mv -f .deps/$*.Tpo .deps/$*.Po
+	@cp $< $@
+"#,
+    )
+    .unwrap();
+    fs::write(child.join("one.c"), "one\n").unwrap();
+    fs::write(child.join("two.c"), "two\n").unwrap();
+
+    let output = make_command(&directory)
+        .args(["-j2", "all"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(child.join(".deps/one.Po")).unwrap(),
+        "one.o\n"
+    );
+    assert_eq!(
+        fs::read_to_string(child.join(".deps/two.Po")).unwrap(),
+        "two.o\n"
+    );
+    assert!(!child.join(".deps/.Po").exists());
+    fs::remove_dir_all(directory).unwrap();
+}

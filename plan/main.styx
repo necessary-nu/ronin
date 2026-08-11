@@ -8219,6 +8219,43 @@ children (
                     }
                 )
             }
+
+            {
+                id make-suffix-rule-stem-variable
+                title "Populate the stem automatic variable for suffix rules"
+                kind @fix
+                deps (make-suffixes-with-prerequisites make-build-intent-gate)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T23:30:05.763950773Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Necessary OS run 1786490192555-490425 reached Findutils 4.10.0 compilation and exposed Automake's `.c.o` recipe as `-MF .deps/.Tpo`: `$(DEPDIR)/$*.Tpo` lost the suffix-rule stem, so every parallel object shared one dependency path and `printquoted.o` failed with `mv: cannot stat '.deps/.Tpo'`. The exact upstream `lib/Makefile.in` uses `$*`, not a shell-local depbase. Acceptance: suffix-rule recipes receive the same stem GNU Make 4.4.1 supplies, producing `.deps/one.Tpo` and `.deps/two.Tpo` independently in a recursively compiled child."
+                    }
+
+                    {
+                        at 2026-08-11T23:30:05.845151156Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T23:42:24.199771533Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Implemented suffix-rule lowering with an explicit `%.<suffix>` output pattern so existing automatic-variable expansion derives `$*` from the recipe target. Added a Kati corpus assertion and a recursive parallel Ronin regression reproducing Findutils' `.deps/$*.Tpo` recipe. Verified against GNU Make output; `cargo clippy -p kati --all-targets -- -D warnings`, `cargo test --all-targets --no-fail-fast`, and `scripts/check-make-equivalence.sh` pass (297 Makefiles, 276 graph comparisons, zero disagreements)."
+                    }
+
+                    {
+                        at 2026-08-11T23:42:24.280804056Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
         )
         log (
             {
