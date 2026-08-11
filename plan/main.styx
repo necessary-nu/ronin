@@ -7959,6 +7959,7 @@ children (
                 title "Evaluate recursive children after parent prerequisites"
                 kind @fix
                 deps (make-recursive-prerequisite-boundary)
+                sealed true
                 log (
                     {
                         at 2026-08-11T19:01:41.237133684Z
@@ -7986,6 +7987,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Nested recursive-prerequisite regression and Linux header-tree check pass; clean Necessary compiler-rt DoD remains pending."
+                    }
+
+                    {
+                        at 2026-08-11T19:54:28.909020987Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "DoD satisfied by Necessary OS run 1786477483250-1550720 in /data/pkg-build-ronin-eval-e4dc77a: 5 built, 0 reused, 1 imported; kernel headers completed 963 generic plus 68 x86 edges; injected box 11c8bd9f8545d864262a875766ce93b37a3b012689a18f10fba1393d1ae508c2 owns asm/{types,param,ioctl}.h; compiler-rt@seed completed 375 edges. Full Ninja gate passed 425 pinned tests and all differential/outcome/persistence checks."
+                    }
+
+                    {
+                        at 2026-08-11T19:54:28.986026967Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

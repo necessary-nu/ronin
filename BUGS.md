@@ -323,7 +323,7 @@ headers. The retained build log is
 
 ## A recursive child is evaluated before its parent prerequisites run
 
-Status: open
+Status: fixed
 
 Observed with Ronin revision `176a1c08fcb16babcd41bf44f311e298f351a476`
 in Necessary OS run `1786474273988-942846`, using 16 jobs. The recursive
@@ -408,3 +408,23 @@ Acceptance: the reduced case MUST create `installed/value.h` repeatedly with
 `-j16`; a clean Linux headers build MUST package every generated x86 UAPI
 wrapper, including the three files above; and Necessary OS MUST advance past
 `compiler-rt@seed` using that clean kernel-header package.
+
+Resolution: revisions `d97cca14878274b5d5d084ab22a812844adf7a00` and
+`e4dc77a102f0d755448978a11618f0c8d5d30304` stage recursive child evaluation
+behind the parent's completed prerequisites and put held recursive producer
+edges before consumers that need their targets. The original reduced case runs
+eight consecutive times with `-j16`; the nested recursive-prerequisite case is
+also covered directly.
+
+Necessary OS run `1786477483250-1550720` built the final revision in the new
+output root `/data/pkg-build-ronin-eval-e4dc77a`: 5 packages built, 0 reused,
+and 1 bootstrap toolchain imported. Linux built `scripts/unifdef`, completed
+the 963-edge generic header phase and the separate 68-edge x86 phase, and
+installed `usr/include/asm/types.h`, `param.h`, and `ioctl.h`. Injecting and
+listing the resulting
+`kernel-headers-6.18.2-x86_64-seed.box` (BLAKE3
+`11c8bd9f8545d864262a875766ce93b37a3b012689a18f10fba1393d1ae508c2`)
+confirmed all three paths are in the package. `compiler-rt@seed` then consumed
+that package, completed its 375-edge build, and installed successfully. The
+retained package log is
+`/home/brendan/.cache/necessary/runs/1786477483250-1550720/logs/kernel-headers--x86-64-x86-64--seed-.log`.
