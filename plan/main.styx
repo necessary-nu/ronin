@@ -7336,6 +7336,13 @@ children (
                                 kind @note
                                 text "Implemented the ordinary-rule `$?` boundary and proved the bootstrap DoD. Kati now models the destination choice as `NewInputsTiming::{RecipeShell, SchedulerBoundary}` rather than a boolean: NinjaWriter retains the recipe-shell fallback, while GraphSink leaves the `$?` marker for Ronin's scheduler. `filter-out` exclusions cross SinkEdge as symbols; they still participate in late dirtiness but are omitted from the published newer-prerequisite value. Ronin snapshots target outputs before prerequisite traversal, recomputes ordinary prerequisites after they settle, and substitutes the final names into both inline shell commands and response scripts without exporting KATI_NEW_INPUTS. Kati commit b014d26 is pushed.\n\nEvidence: variable-automatic-parts and variable-automatic-absent-prerequisite-is-in-question now match GNU Make 4.4.1 and their divergence markers are removed. A CLI regression pins Linux's `.PHONY: FORCE` plus `$(filter-out $(PHONY),$?)` shape with fixed mtimes and receives `[new]`. `cargo test -p kati --all-targets` passes 106 tests; Ronin all-targets passes; Make port gate passes; direct/manifest equivalence compares 276 graphs from 297 makefiles with zero disagreements; GNU Make 4.4.1 conformance completes 387 runs; all 425 pinned Ninja tests and differential/persistence checks pass; format and the intended split Clippy policies pass.\n\nTerminal proof: built release Ronin, invoked `/home/brendan/work/samurai/target/release/ronin` through a symlink named `make`, and ran `make headers` in `/data/cap9p/linux`. It exited 0 after `[1052/1052] build headers`. Generated outputs verified on disk include usr/include/linux/version.h (215 bytes), usr/include/asm/unistd.h (623 bytes), and usr/include/asm/unistd_64.h (10,430 bytes)."
                             }
+
+                            {
+                                at 2026-08-11T15:27:29.599349062Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
