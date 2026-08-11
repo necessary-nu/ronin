@@ -214,7 +214,7 @@ fn recursive_group_activates_same_member_child() {
     );
     fs::write(
         scratch.path("Child.mk"),
-        r"a:
+        r"a: q
 	@printf 'child\n' >> actions
 	@touch a b
 ",
@@ -223,6 +223,7 @@ fn recursive_group_activates_same_member_child() {
     write_at(&scratch.path("a"), 300);
     write_at(&scratch.path("b"), 300);
     write_at(&scratch.path("p"), 200);
+    write_at(&scratch.path("q"), 400);
 
     assert_success(&scratch.run(&["--no-print-directory", "a"]));
     assert!(!scratch.path("actions").exists());

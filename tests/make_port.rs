@@ -38,8 +38,6 @@ const ORACLE_VERSION: &str = "GNU Make 4.4.1";
 /// build-intent gate because their asserted result belongs to GNU Make's
 /// executor rather than to the graph the invocation describes.
 ///
-/// The state cases assume timestamp-only up-to-date decisions for outputs with
-/// no Ninja log entry. Ronin deliberately applies Ninja's persistence rules.
 /// The option cases assert `MAKEFLAGS` propagation/precedence or the execution
 /// effects of flags Ronin accepts as interface-compatible no-ops. Recursive
 /// Make invocations compile into one graph, so there is no child Make runner in
@@ -53,21 +51,16 @@ const ORACLE_VERSION: &str = "GNU Make 4.4.1";
 /// classification they demonstrate is the one Ronin's compiler reads —
 /// `recursive-dry-run-writes-nothing` is the same question where the two tools
 /// agree, and it gates.
-const DISCOVERY_ONLY_CASES: [&str; 15] = [
+const DISCOVERY_ONLY_CASES: [&str; 10] = [
     "always-make-option",
     "dry-run-skips-a-make-reference-line",
     "dry-run-skips-a-plus-line",
-    "equal-timestamps-are-up-to-date",
-    "intermediate-absent-is-not-rebuilt",
     "makeflags-keep-going-precedence",
     "makeflags-outranked-by-command-line",
     "makeflags-value-switch-precedence",
     "makeflags-withdrawal-outranked-by-command-line",
-    "output-with-no-prerequisites-exists",
     "phony-runs-though-the-file-is-current",
-    "recipe-unrecorded-is-not-a-change",
     "touch-option",
-    "up-to-date-without-log",
     "what-if-option",
 ];
 

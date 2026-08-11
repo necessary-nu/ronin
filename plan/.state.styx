@@ -655,4 +655,11 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule make.narration}
     )}
+    {id make-timestamp-only-recipe-freshness, covered_rules (
+        make.manifest-equivalence
+        make.state-outside-the-tree
+    ), covered_claims (
+        {impl_name target-impl, rule make.manifest-equivalence}
+        {impl_name target-impl, rule make.state-outside-the-tree}
+    )}
 )

@@ -49,12 +49,13 @@ manifest-derived graph is.
 > Ninja's own way to say it is a dependency on a path nothing produces — so a
 > graph parsed from a manifest never carries it.
 
-> [spec:ronin:req:make.manifest-equivalence]
+> [spec:ronin:req:make.manifest-equivalence+1]
 > For any Makefile the front end accepts, the graph built directly and the
 > graph obtained by parsing that front end's emitted Ninja manifest are
 > equivalent: same edges, same inputs partitioned identically into explicit,
 > implicit, and order-only, same outputs, same validations, same commands,
-> same pool and depfile and restat bindings, and the same default targets.
+> same pool, depfile, restat, and generator bindings, and the same default
+> targets.
 
 ## Evaluation state
 
@@ -72,13 +73,16 @@ manifest-derived graph is.
 
 ## Persistent state
 
-> [spec:ronin:req:make.state-outside-the-tree+1]
-> A Makefile-derived graph uses the same Ninja build-log and dependency-log
-> placement, formats, names, and dirtiness interpretation as an equivalent
-> manifest-derived graph. Front-end provenance does not select an external
-> Make namespace, suppress state beside the build, or change what absence from
-> the build log means. If state placement is configurable for Ninja graphs,
-> that ordinary Ninja control is available uniformly to every front end.
+> [spec:ronin:req:make.state-outside-the-tree+2]
+> A Makefile-derived graph uses Ninja's build-log and dependency-log placement,
+> formats, and names. Kati MUST encode GNU Make's timestamp-only recipe
+> freshness with Ninja's existing `generator` rule control: a changed or
+> missing persisted command hash alone MUST NOT make an otherwise up-to-date
+> Make target dirty. Both the direct and emitted graphs carry that control, so
+> the engine interprets it without consulting front-end provenance. Front-end
+> provenance does not select an external Make namespace or suppress state
+> beside the build. If state placement is configurable for Ninja graphs, that
+> ordinary Ninja control is available uniformly to every front end.
 
 ## Product surface
 

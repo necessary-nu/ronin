@@ -6508,6 +6508,14 @@ children (
                                 kind @decision
                                 text "Completed the boundary as graph compilation, not a second Make executor. Removed frontend-selected state placement and missing-log semantics, Make-only scheduler/reporter/process options, touch and what-if dirtiness hooks, and relocated-state infrastructure. Root and recursive exports plus MAKELEVEL now compile into edge command templates; .NOTPARALLEL remains a graph pool. Runner-only flags remain accepted but do not enter command hashes. Make and manifest graphs now share in-tree .ninja_log/.ninja_deps and identical unlogged-output dirtiness. Verified equivalent frontend effects, full workspace tests, nplan checks, and strict all-feature Clippy."
                             }
+
+                            {
+                                at 2026-08-11T21:26:48.546491687Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "The completed boundary correctly removed executor branches keyed by Make provenance, but its claim of identical command-hash dirtiness was too broad. GNU Make does not rebuild an otherwise current target because a later invocation expands its recipe differently or has no prior command record. The correction remains graph compilation: Kati marks recipe rules with Ninja's existing `generator` control in both the direct graph and retained manifest, so the shared executor applies timestamp-only freshness without knowing the front end. Follow-up: make-timestamp-only-recipe-freshness."
+                                after_done true
+                            }
                         )
                     }
 
@@ -6541,6 +6549,14 @@ children (
                                 kind @note
                                 text "Completed the replacement gate around build intent rather than Make runner parity. make_port now invokes the exact Ronin binary Cargo built, normalises outcomes to success/failure, and compares selected filesystem effects across 51 GNU Make-recorded cases. Thirteen fixtures that assert GNU Make timestamp/log rules, recursive MAKEFLAGS choreography, or the execution effects of accepted no-op flags are explicitly retained as discovery-only instead of being allowed to pass accidentally. The direct-vs-emitted graph oracle now covers all 296 Kati makefiles, compares ignore-error recipes by semantic property across their in-memory-binding and manifest-wrapper encodings, and verifies recursive recipes were held for subninja composition while excluding the obsolete emitted wrapper edge. Its process-cwd mutation is isolated as an exact ignored test and wired into scripts/check-release.sh. Exact stdout/stderr/status inventory remains discovery-only and no longer claims make.semantics coverage. All v1 build-intent refs are fresh. Verified full workspace/all-target tests, focused release graph equivalence, nplan check, all-feature check, strict all-feature Clippy, clean lint/comments/audit, spec validation, and zero stale refs."
                             }
+
+                            {
+                                at 2026-08-11T21:26:48.629590552Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "The gate classified timestamp-only up-to-date cases as executor discovery because Make graphs then inherited Ninja command-hash dirtiness unchanged. That classification permits a wrong build across conventional build/install invocations: an install can relink a current artifact with different command-line variables. The follow-up make-timestamp-only-recipe-freshness promotes the affected cases into the GNU Make build-intent gate after encoding the semantics as a graph control."
+                                after_done true
+                            }
                         )
                     }
 
@@ -6572,6 +6588,31 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Delivery evidence: the exact CLI regression reports `[1/2] printf '%s\\\\n' payload > out` and `[2/2] cp out installed`, with no generic `build` label and no internal MAKELEVEL/shell wrapper. Kati's full Rust suite passed (101 library tests plus 5 no-globals tests); Ronin's workspace Clippy, workspace tests, graph-equivalence suite (297 Makefiles, 276 comparable graphs, zero disagreements), Make conformance suite (387 runs), and full pinned Ninja conformance suite (425 upstream tests plus differential, outcome, invocation, persistence, and log-content gates) passed. The reproducible upstream inventory is 519 unclassified, 68 compiler, 103 interface, and 616 narration rows."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-timestamp-only-recipe-freshness
+                        title "Keep current Make targets clean when recipe commands change"
+                        kind @fix
+                        implements {
+                            target-impl ([spec:ronin:req:make.manifest-equivalence+1] [spec:ronin:req:make.state-outside-the-tree+2])
+                        }
+                        deps (make-executor-boundary make-build-intent-gate)
+                        log (
+                            {
+                                at 2026-08-11T21:26:48.708585682Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-11T21:43:13.043203523Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Compile GNU Make timestamp-only recipe freshness into both direct and emitted Ninja graphs with generator = 1: changed or missing command hashes do not dirty an otherwise current Make target, while native Ninja command hashing remains unchanged. Preserve prerequisite-free double-colon recipes by representing their unconditional execution explicitly rather than relying on missing-log dirtiness. Promote the five timestamp cases to the make_port gate and retire the now-fixed double-colon divergence."
                             }
                         )
                     }

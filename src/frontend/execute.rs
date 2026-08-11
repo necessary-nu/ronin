@@ -51,7 +51,7 @@ impl Persistence {
     ///
     /// Returns an [`Error`] when the directory cannot be created or when either
     /// log exists and cannot be read or reopened for appending.
-    // [spec:ronin:req:make.state-outside-the-tree+1]
+    // [spec:ronin:req:make.state-outside-the-tree+2]
     pub fn open(graph: &mut BuildGraph, directory: &Path) -> Result<(Self, Option<String>), Error> {
         std::fs::create_dir_all(directory).map_err(|source| {
             PersistenceError::io(

@@ -1,4 +1,5 @@
-//! Make-compiled graphs use Ninja's persistence without a frontend exception.
+//! Make-compiled graphs use Ninja's persistence, with Make freshness compiled
+//! into ordinary Ninja rule controls rather than selected by the executor.
 //!
 //! Each test runs the real executable under the name `make`, which selects the
 //! Make compiler, then inspects the same `.ninja_log` and `.ninja_deps` that a
@@ -79,7 +80,7 @@ fn named(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|name| (*name).to_owned()).collect()
 }
 
-// [spec:ronin:req:make.state-outside-the-tree+1/test]
+// [spec:ronin:req:make.state-outside-the-tree+2/test]
 // [spec:ronin:req:make.compiler-boundary/test]
 #[test]
 fn make_build_uses_ninja_state() {
@@ -95,9 +96,9 @@ fn make_build_uses_ninja_state() {
     assert_eq!(listing(&tree), built);
 }
 
-// [spec:ronin:req:make.state-outside-the-tree+1/test]
+// [spec:ronin:req:make.state-outside-the-tree+2/test]
 #[test]
-fn state_preserves_deps_and_hashes() {
+fn state_preserves_discovered_dependencies() {
     let fixture = Fixture::new();
     let tree = fixture.tree("project");
     assert!(fixture.build_in(&tree, &[]).contains("main.o"));
@@ -107,18 +108,33 @@ fn state_preserves_deps_and_hashes() {
     let after_header = fixture.build_in(&tree, &[]);
     assert!(after_header.contains("main.o"), "{after_header}");
     assert!(fixture.build_in(&tree, &[]).contains("no work to do"));
-
-    fs::write(
-        tree.join("Makefile"),
-        MAKEFILE.replace("cc -o app main.o", "cc -o app main.o && true"),
-    )
-    .unwrap();
-    let after_command = fixture.build_in(&tree, &[]);
-    assert_eq!(after_command, "[1/1] cc -o app main.o && true\n");
-    assert!(fixture.build_in(&tree, &[]).contains("no work to do"));
 }
 
-// [spec:ronin:req:make.state-outside-the-tree+1/test]
+// [spec:ronin:req:make.state-outside-the-tree+2/test]
+#[test]
+fn changed_recipe_keeps_current_target() {
+    let fixture = Fixture::new();
+    let tree = fixture.root.path().join("changed-recipe");
+    fs::create_dir_all(&tree).unwrap();
+    fs::write(
+        tree.join("Makefile"),
+        "all: out\n\
+         out:\n\
+         \tprintf '%s\\n' '$(VALUE)' > $@\n\
+         install: out\n\
+         \tcp out installed\n",
+    )
+    .unwrap();
+
+    fixture.build_in(&tree, &["VALUE=kept"]);
+    let install = fixture.build_in(&tree, &["install"]);
+
+    assert_eq!(install, "[1/1] cp out installed\n");
+    assert_eq!(fs::read(tree.join("out")).unwrap(), b"kept\n");
+    assert_eq!(fs::read(tree.join("installed")).unwrap(), b"kept\n");
+}
+
+// [spec:ronin:req:make.state-outside-the-tree+2/test]
 #[test]
 fn state_follows_working_directory() {
     let fixture = Fixture::new();
@@ -141,7 +157,7 @@ fn state_follows_working_directory() {
     );
 }
 
-// [spec:ronin:req:make.state-outside-the-tree+1/test]
+// [spec:ronin:req:make.state-outside-the-tree+2/test]
 // [spec:ronin:req:make.compiler-boundary/test]
 #[test]
 fn equivalent_frontends_execute_identically() {
@@ -157,7 +173,7 @@ fn equivalent_frontends_execute_identically() {
     .unwrap();
     fs::write(
         ninja_tree.join("build.ninja"),
-        "rule rebuild\n  command = printf rebuilt > out\nbuild out: rebuild in\ndefault out\n",
+        "rule rebuild\n  command = printf rebuilt > out\n  generator = 1\nbuild out: rebuild in\ndefault out\n",
     )
     .unwrap();
     for tree in [&make_tree, &ninja_tree] {
@@ -198,7 +214,7 @@ const GOALS: [&str; 8] = [
     "one", "two", "three", "four", "five", "six", "seven", "eight",
 ];
 
-// [spec:ronin:req:make.state-outside-the-tree+1/test]
+// [spec:ronin:req:make.state-outside-the-tree+2/test]
 #[test]
 fn concurrent_builds_share_ninja_log() {
     let fixture = Fixture::new();

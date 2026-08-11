@@ -31,6 +31,7 @@ struct Bindings {
     description: Binding,
     depfile: Binding,
     deps: Binding,
+    generator: Binding,
     restat: Binding,
     rspfile: Binding,
     rspfile_content: Binding,
@@ -50,6 +51,7 @@ impl Bindings {
             description: graph.binding(b"description"),
             depfile: graph.binding(b"depfile"),
             deps: graph.binding(b"deps"),
+            generator: graph.binding(b"generator"),
             restat: graph.binding(b"restat"),
             rspfile: graph.binding(b"rspfile"),
             rspfile_content: graph.binding(b"rspfile_content"),
@@ -686,6 +688,7 @@ impl GraphSink {
     /// No binding here describes a dry run. Make's `-n` is Ninja's `-n` on the
     /// graph kati compiled, and the recursion GNU Make would have run a child
     /// process to discover is already in that graph as composed child edges.
+    // [spec:ronin:req:make.state-outside-the-tree+2]
     fn executor_rule_bindings(
         &self,
         rule: &SinkRule<'_>,
@@ -704,6 +707,10 @@ impl GraphSink {
         if let Some(description) = description {
             bindings.push((self.bindings.description, Template::literal(description)));
         }
+        // GNU Make decides whether a recipe is current from timestamps alone.
+        // Ninja's generator control expresses exactly the command-hash half of
+        // that policy, so the executor still needs no front-end provenance.
+        bindings.push((self.bindings.generator, Template::literal(b"1")));
         if let Some(depfile) = rule.depfile {
             bindings.push((
                 self.bindings.depfile,

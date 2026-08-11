@@ -123,7 +123,7 @@ impl MakeError {
 /// evaluating from a fresh session. The engine does not receive Make
 /// provenance beside the graph: recipe environments and every other
 /// graph-affecting Make construct are compiled before execution, and
-/// persistence applies ordinary Ninja semantics.
+/// persistence applies the Ninja controls the compiler placed on that graph.
 ///
 /// # Errors
 ///
@@ -133,7 +133,7 @@ impl MakeError {
 /// engine cannot hold, such as two rules generating one output.
 // [spec:ronin:req:make.graph-direct]
 // [spec:ronin:req:make.compiler-boundary]
-// [spec:ronin:req:make.state-outside-the-tree+1]
+// [spec:ronin:req:make.state-outside-the-tree+2]
 pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeError> {
     let _directory = compilation_directory_guard();
     let directory = std::env::current_dir().map_err(|error| {

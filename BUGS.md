@@ -428,3 +428,63 @@ confirmed all three paths are in the package. `compiler-rt@seed` then consumed
 that package, completed its 375-edge build, and installed successfully. The
 retained package log is
 `/home/brendan/.cache/necessary/runs/1786477483250-1550720/logs/kernel-headers--x86-64-x86-64--seed-.log`.
+
+## A changed recipe command rebuilds an otherwise up-to-date Make target
+
+Status: open
+
+Observed with Ronin revision `e4dc77a102f0d755448978a11618f0c8d5d30304`
+while building the ICU4X-backed musl libc for Necessary OS with 16 jobs.
+
+Ronin persists Ninja's command hashes between separate Make invocations and
+uses a changed expanded recipe as a reason to rebuild a target. GNU Make does
+not: freshness is determined from the target and prerequisite timestamps, not
+from whether command-line variables would expand its recipe differently in a
+later invocation.
+
+A reduced case is:
+
+```make
+all: out
+
+out:
+	printf '%s\n' '$(VALUE)' > $@
+
+install: out
+	cp out installed
+```
+
+Run the two invocations in the same directory:
+
+```sh
+make VALUE=kept
+make install
+```
+
+GNU Make 4.4.1 builds `out` only in the first invocation; both `out` and
+`installed` contain `kept`. Ronin rebuilds `out` in the second invocation
+because `VALUE` is then empty:
+
+```text
+[1/1] build out
+[1/2] build out
+[2/2] build install
+```
+
+Both files consequently become empty even though no target or prerequisite
+timestamp made `out` stale.
+
+Necessary OS hits the same difference in musl's conventional build/install
+sequence. The build invocation passes the ICU4X archive through
+`EXTRA_LIBS=/build/work/target/x86_64-unknown-linux-musl/release-musl/libposix_locale_icu4x.a`
+and successfully links it into `lib/libc.so`. The following `make install
+DESTDIR=/staging` invocation should only copy that up-to-date library. Ronin
+instead recompiles and relinks it with the second invocation's empty
+`EXTRA_LIBS`, then fails on every `__icu4x_*` reference. Necessary OS run
+`1786480330604-805720` captured both expanded shell invocations and the failing
+install edge.
+
+Expected: Make mode MUST ignore persisted Ninja command-hash differences when
+deciding whether an existing target is dirty. The reduced second invocation
+must run only the `install` recipe and preserve `kept`. Ninja mode's native
+command-change behavior is unaffected.

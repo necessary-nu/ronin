@@ -545,7 +545,7 @@ fn differences(direct: &BuildGraph, parsed: &BuildGraph, semantics: &EdgeSemanti
 ///
 /// `directory` is where the manifest is written and read back from; `argv` is a
 /// whole kati command line, program name included.
-// [spec:ronin:req:make.manifest-equivalence]
+// [spec:ronin:req:make.manifest-equivalence+1]
 // [spec:ronin:req:make.semantics+1]
 fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
     let _directory = super::compilation_directory_guard();
@@ -882,7 +882,7 @@ all:
 /// `scripts/check-make-equivalence.sh`; otherwise the process-global directory
 /// can race unrelated tests that launch commands.
 // [spec:ronin:req:make.graph-direct/test]
-// [spec:ronin:req:make.manifest-equivalence/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
 // [spec:ronin:req:make.semantics+1/test]
 #[test]
 #[ignore = "changes the process working directory; the release gate runs it alone"]
