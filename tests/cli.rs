@@ -2717,6 +2717,40 @@ fn mixed_recipe_composes_subninjas() {
 // [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
+fn recursive_targets_are_invocation_local() {
+    let directory = make_case(
+        "make-recursive-target-namespace",
+        "all: one two\n\
+         one: ; +$(MAKE) -f one.mk\n\
+         two: ; +$(MAKE) -f two.mk\n\
+         .PHONY: all one two\n",
+    );
+    fs::write(
+        directory.join("one.mk"),
+        "all: one.out\none.out: FORCE ; @touch $@\nFORCE:\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("two.mk"),
+        "all: two.out\ntwo.out: FORCE ; @touch $@\nFORCE:\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-j2")
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert!(directory.join("one.out").is_file(), "{reported}");
+    assert!(directory.join("two.out").is_file(), "{reported}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
 fn unsplittable_submake_never_executes() {
     let directory = test_directory("make-unsplittable-subninja");
     fs::create_dir_all(directory.join("first")).unwrap();

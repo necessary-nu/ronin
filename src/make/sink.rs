@@ -331,9 +331,9 @@ impl GraphSink {
     ///
     /// Parent prerequisites become order-only inputs of each child goal: the
     /// subgraph starts only once the wrapper recipe could have started, while
-    /// the child's own timestamps still decide what work it needs. When parent
-    /// and child name the same goal, the child edge subsumes the held wrapper;
-    /// otherwise the wrapper becomes a phony alias for the child targets.
+    /// the child's own timestamps still decide what work it needs. The wrapper
+    /// becomes a phony alias for child targets whose identities remain local to
+    /// their own recursive compilation units.
     // [spec:ronin:req:make.recursive-invocation+1]
     pub(crate) fn complete_subninja(
         &mut self,
@@ -342,28 +342,6 @@ impl GraphSink {
     ) -> Result<(), FrontendError> {
         debug_assert_eq!(pending.invocations.len(), child_target_groups.len());
         let child_targets = self.attach_child_ordering(&pending, child_target_groups);
-
-        let collapsed = pending.residual_rule.is_none()
-            && pending.deferred.is_none()
-            && child_target_groups.len() == 1
-            && pending.implicit_outputs.is_empty()
-            && pending.explicit_outputs.len() == 1
-            && child_targets.contains(&pending.explicit_outputs[0])
-            && self.graph.generator(pending.explicit_outputs[0]).is_some();
-        if collapsed {
-            let edge = self
-                .graph
-                .generator(pending.explicit_outputs[0])
-                .expect("the collapse predicate found the child edge");
-            self.graph.merge_edge_properties(
-                edge,
-                pending.always_dirty,
-                pending.intermediate,
-                pending.disposable,
-                &pending.validations,
-            );
-            return Ok(());
-        }
 
         if child_targets.iter().any(|target| {
             pending.explicit_outputs.contains(target) || pending.implicit_outputs.contains(target)
@@ -464,7 +442,12 @@ impl GraphSink {
         } else {
             self.unit.path_prefix.join(path)
         };
-        match self.graph.node(qualified.as_os_str().as_bytes()) {
+        let node = if self.unit.root {
+            self.graph.node(qualified.as_os_str().as_bytes())
+        } else {
+            self.graph.isolated_node(qualified.as_os_str().as_bytes())
+        };
+        match node {
             Ok(node) => {
                 self.interned.insert(symbol, node);
                 Ok(node)

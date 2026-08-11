@@ -20,7 +20,7 @@ use deferred::{
 pub(crate) use deferred::{edgeaddorderonly, DeferredFreshness};
 use edge::EdgePartitions;
 use index::NodeIndex;
-pub(crate) use index::{mknode, nodeget};
+pub(crate) use index::{allocate_node, mknode, nodeget};
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 pub(crate) use path::nodepath_bytes;
@@ -119,6 +119,9 @@ pub(crate) struct Graph {
     // input (executing them runs arbitrary commands), so SipHash DoS
     // hardening buys nothing here. Observable graph order comes from the
     // arenas, never index iteration.
+    /// Nodes interned by the Ninja-global path namespace. Front ends may also
+    /// allocate isolated nodes whose identity is local to one source unit;
+    /// those retain a physical path but deliberately do not enter this index.
     node_by_path: NodeIndex,
     /// Every node path and shell-quoted path, appended and never moved.
     paths: Vec<u8>,

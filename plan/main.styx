@@ -6376,6 +6376,14 @@ children (
                                 kind @status
                                 text "Todo → Doing (nplan start)"
                             }
+
+                            {
+                                at 2026-08-11T12:11:50.757446951Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "The completed recursive-subninja implementation scoped rules and variables but interned every child target by its filesystem spelling in one global node namespace. Independent recursive invocations in the same directory therefore collide on conventional local names such as `all` and `FORCE`. Follow-up node make-recursive-target-namespace owns distinct per-compilation target identity while retaining each target's physical path for execution and freshness."
+                                after_done true
+                            }
                         )
                     }
 
@@ -7711,6 +7719,50 @@ children (
 
                     {
                         at 2026-08-11T11:58:13.267827406Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-recursive-target-namespace
+                title "Isolate recursive Make target namespaces"
+                kind @fix
+                deps (make-subninja-recursion)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T12:12:05.210921494Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
+
+                    {
+                        at 2026-08-11T12:12:10.978093125Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T12:17:50.728493564Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "A child compilation receives fresh graph Node identities for every Kati target symbol, but each Node retains the canonical physical path used by commands, stat, logs, and diagnostics. The per-unit symbol map still canonicalizes repeated names inside that Makefile, so same-unit duplicate producers remain errors; only independent compiled units are isolated. Root nodes stay in the global path index for command-line target lookup, and the existing compilation cache reuses identities when the complete child invocation context is identical."
+                    }
+
+                    {
+                        at 2026-08-11T12:21:20.343738224Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The BUGS.md reproducer failed before the change with `multiple rules generate all` and now builds both one.out and two.out under -j2. Validation passes all 73 CLI tests, 483 library tests (482 pass, one deliberately ignored), all eight grouped-Make tests, the owned Make intent oracle, strict all-workspace/all-target/all-feature Clippy, and the 297-Makefile direct-graph equivalence gate with zero disagreements."
+                    }
+
+                    {
+                        at 2026-08-11T12:21:55.717616987Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"

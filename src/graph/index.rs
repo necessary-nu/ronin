@@ -1,4 +1,4 @@
-//! Open-addressed node index keyed by each node's own interned path.
+//! Open-addressed index for nodes in the graph's global path namespace.
 //!
 //! Storing only node identifiers means a path is never copied into a separate
 //! map key: lookups hash the probe bytes and compare against the path the
@@ -183,16 +183,13 @@ fn node_bytes<'arena>(paths: &'arena [u8], nodes: &[Node], node: NodeId) -> &'ar
 // [spec:ronin:sem:graph.mknode-fn]
 // [spec:ronin:def:graph.delnode-fn]
 // [spec:ronin:sem:graph.delnode-fn]
-/// Intern a path, allocating nothing when the node already exists.
+/// Allocate a distinct node that retains `path` for filesystem operations.
 ///
-/// A new node appends into the arena rather than taking ownership of a
-/// buffer, so interning never allocates per path at all.
-pub(crate) fn mknode(graph: &mut Graph, path: impl AsRef<[u8]>) -> NodeId {
-    let path = path.as_ref();
-    let (found, vacancy) = graph.node_by_path.locate(&graph.paths, &graph.nodes, path);
-    if let Some(node) = found {
-        return node;
-    }
+/// This only appends the node; [`mknode`] enters it into the global path index.
+/// A recursive front end may deliberately leave it unindexed when the target's
+/// identity belongs to one source unit even though another unit names the same
+/// physical path.
+pub(crate) fn allocate_node(graph: &mut Graph, path: &[u8]) -> NodeId {
     let quoted = shell_escape_path(path);
     let path = graph.intern_bytes(path);
     let shellpath = quoted.map(|quoted| graph.intern_bytes(quoted.as_bytes()));
@@ -203,6 +200,20 @@ pub(crate) fn mknode(graph: &mut Graph, path: impl AsRef<[u8]>) -> NodeId {
         gen: None,
         uses: IdVec::new(),
     });
+    node
+}
+
+/// Intern a path, allocating nothing when the node already exists.
+///
+/// A new node appends into the arena rather than taking ownership of a
+/// buffer, so interning never allocates per path at all.
+pub(crate) fn mknode(graph: &mut Graph, path: impl AsRef<[u8]>) -> NodeId {
+    let path = path.as_ref();
+    let (found, vacancy) = graph.node_by_path.locate(&graph.paths, &graph.nodes, path);
+    if let Some(node) = found {
+        return node;
+    }
+    let node = allocate_node(graph, path);
     graph
         .node_by_path
         .fill(&graph.paths, &graph.nodes, node, vacancy);

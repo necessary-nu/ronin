@@ -22,7 +22,9 @@ use crate::env::{
     edgevar, envaddrule, envaddvar, envrule, envvar_named, mkenv, mkpool, mkrule, poolget,
     ruleaddvar, EnvState, EnvironmentId, PoolId, RuleId,
 };
-use crate::graph::{mkedge, mknode, nodeget, nodeuse, EdgeId, Graph, NodeId, PathStyle};
+use crate::graph::{
+    allocate_node, mkedge, mknode, nodeget, nodeuse, EdgeId, Graph, NodeId, PathStyle,
+};
 use crate::names::{Names, VarId};
 use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, EvalPart, EvalString};
 use std::fmt;
@@ -310,6 +312,25 @@ impl BuildGraph {
         Ok(Node(mknode(&mut self.arenas, &self.canonical)))
     }
 
+    /// Allocates a node whose identity is private while its filesystem path is
+    /// still `path`.
+    ///
+    /// A recursive front end uses this when two independently evaluated source
+    /// units may both define a target with the same spelling. Repeated names
+    /// within one unit remain canonical through that front end's own map.
+    pub(crate) fn isolated_node(&mut self, path: &[u8]) -> Result<Node, FrontendError> {
+        if path.is_empty() {
+            return Err(FrontendError::EmptyPath);
+        }
+        if is_canonical(path) {
+            return Ok(Node(allocate_node(&mut self.arenas, path)));
+        }
+        self.canonical.clear();
+        self.canonical.extend_from_slice(path);
+        canonpath(&mut self.canonical);
+        Ok(Node(allocate_node(&mut self.arenas, &self.canonical)))
+    }
+
     /// Finds an already-interned path, canonicalizing it first.
     #[must_use]
     pub fn lookup(&self, path: &[u8]) -> Option<Node> {
@@ -551,30 +572,6 @@ impl BuildGraph {
             nodeuse(&mut self.arenas, input.0, edge.0);
             self.arenas.edge_mut(edge.0).input.push(input.0);
         }
-    }
-
-    /// Carry wrapper-edge properties onto a child edge that produces the same
-    /// logical target and therefore subsumes the wrapper entirely.
-    pub(crate) fn merge_edge_properties(
-        &mut self,
-        edge: Edge,
-        always_dirty: bool,
-        intermediate: bool,
-        disposable: bool,
-        validations: &[Node],
-    ) {
-        let mut added = Vec::new();
-        for validation in validations {
-            if !self.arenas.edge(edge.0).validation.contains(&validation.0) {
-                self.arenas.add_validation_use(validation.0, edge.0);
-                added.push(validation.0);
-            }
-        }
-        let stored = self.arenas.edge_mut(edge.0);
-        stored.validation.extend(added);
-        stored.always_dirty |= always_dirty;
-        stored.intermediate |= intermediate;
-        stored.disposable |= disposable;
     }
 
     /// Resolves `edge`'s `pool` binding against the declared pools.
@@ -822,6 +819,29 @@ mod tests {
                 path: b"twice".to_vec()
             })
         );
+    }
+
+    // [spec:ronin:req:frontend.graph-construction/test]
+    #[test]
+    fn isolated_nodes_keep_distinct_identities() {
+        let mut graph = BuildGraph::new();
+        let rule = cat_rule(&mut graph);
+        let root = graph.root();
+        let input = nodes(&mut graph, &["in"]);
+        let first = graph.isolated_node(b"same").unwrap();
+        let second = graph.isolated_node(b"./same").unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(graph.path(first), b"same");
+        assert_eq!(graph.path(second), b"same");
+        assert_eq!(graph.lookup(b"same"), None);
+        graph.add_edge(spec(root, rule, &[first], &input)).unwrap();
+        graph.add_edge(spec(root, rule, &[second], &input)).unwrap();
+
+        let indexed = graph.node(b"same").unwrap();
+        assert_ne!(indexed, first);
+        assert_ne!(indexed, second);
+        assert_eq!(graph.lookup(b"same"), Some(indexed));
     }
 
     // [spec:ronin:req:frontend.graph-construction/test]

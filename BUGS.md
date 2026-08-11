@@ -41,3 +41,47 @@ synchronization. Make mode now advertises that capability as `output-sync`.
 The `-O`/`--output-sync` mode selector remains an accepted no-op because Ronin
 does not install a separate Make reporting path. The Linux guard above is a
 regression test.
+
+## Recursive Make subgraphs collide on local target names
+
+Status: fixed
+
+Observed with Ronin revision `71cb93ac5b95c5c1561441cb4642290fca2580da`
+while retrying the Linux 6.18.2 Necessary OS build after the `output-sync` fix.
+The version guard now passes, but the kernel build later stops with:
+
+```text
+ronin: multiple rules generate FORCE
+```
+
+This is not two explicit rules in one Makefile; Ronin handles that case. The
+collision is between independent recursive Make invocations. A reduced case is:
+
+```make
+# Makefile
+all: one two
+one: ; +$(MAKE) -f one.mk
+two: ; +$(MAKE) -f two.mk
+
+# one.mk
+all: one.out
+one.out: FORCE ; @touch $@
+FORCE:
+
+# two.mk
+all: two.out
+two.out: FORCE ; @touch $@
+FORCE:
+```
+
+At that revision, Ronin refused this graph with `multiple rules generate all`.
+GNU Make runs the two child invocations successfully because each recursive
+invocation has its own target namespace. Linux reaches the same defect through
+the conventional `FORCE` target declared by many of its recursive Kbuild
+Makefiles.
+
+Resolution: each independently compiled recursive Make unit now allocates its
+targets in a private graph namespace while retaining their real filesystem
+paths for commands and freshness checks. Repeated target names within one unit
+remain canonical, so genuine duplicate producers are still rejected. The
+reduced case above is a regression test.
