@@ -32,8 +32,15 @@ target/release/make -f Makefile all
 ```
 
 When invoked as `make` (or `gmake`), Ronin reads Makefiles and uses Make-style
-command-line options. Invoking it as `ronin` keeps the Ninja-compatible
-behavior and reads `build.ninja`.
+command-line options. Invoking it as `ronin` or `ninja` keeps the
+Ninja-compatible behavior and reads `build.ninja`.
+
+Ronin supports GNU Make's jobserver protocol. It can join a usable inherited
+jobserver and apply that shared budget to its scheduler. In Ninja mode on
+Unix, a fixed `-j` budget is also published to jobserver-aware child tools,
+including Cargo through `CARGO_MAKEFLAGS`. Recursive Make invocations are
+already compiled into one graph and share the same scheduler and job limit,
+so Ronin does not create a second jobserver for them.
 
 ## Output
 
