@@ -140,3 +140,36 @@ publishes only that delta, so untouched inherited values retain their original
 bytes rather than being re-expanded as Make syntax; GNU Make's special `SHELL`
 handling remains unchanged. The three-level case now reaches `included.mk`, and
 the grandchild receives `ROOT=.`.
+
+## Makefile-assigned `MAKEFLAGS` became recursive goals
+
+Status: fixed
+
+Observed with Ronin revision `36860b702ba16a2adb4f834837b6d908a2ee05fa`
+while building Linux userspace headers. Kbuild begins with:
+
+```make
+MAKEFLAGS += -rR
+```
+
+Ronin retained the evaluated variable as an ordinary string. Because command
+line overrides already occupied the suffix after `--`, the semantic self-child
+parsed the appended `-rR` as a goal. Its `MAKECMDGOALS` became `-rR headers`,
+which selected Kbuild's configuration branch and made absent
+`include/config/auto.conf{,.cmd}` regeneration roots. The resulting
+`auto.conf` diagnostic was therefore downstream evidence, not an optional
+include defect.
+
+Resolution: Kati now calls the Make frontend after every effective global
+`MAKEFLAGS` assignment. Ronin decodes the value through its existing GNU Make
+option grammar, mutates the accumulated switch state, reapplies the
+higher-precedence environment and command-line switches, and immediately
+replaces `MAKEFLAGS` and `MFLAGS` with their canonical values. Command-line
+assignments remain behind one recursive `-- $(MAKEOVERRIDES)` suffix. The final
+state controls the current Ninja scheduler and is inherited by semantic
+children.
+
+A regression covers immediate canonicalization, current-build `-k`, and a
+recursive child receiving `-rR` as switches rather than goals. The real Linux
+`headers` build now compiles its complete graph and reaches recipe execution;
+its next failure is the separately tracked `$?`/`KATI_NEW_INPUTS` lowering gap.

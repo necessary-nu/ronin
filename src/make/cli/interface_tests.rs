@@ -1,6 +1,9 @@
 #![cfg(test)]
 
-use super::{parse, Action, ArgumentShape, Invocation, Shuffle, MAKE_OPTION_SURFACE};
+use super::{
+    decode_makefile_makeflags, parse, Action, ArgumentShape, Invocation, Shuffle,
+    MAKE_OPTION_SURFACE,
+};
 use crate::util::BString;
 use std::path::Path;
 
@@ -35,6 +38,31 @@ pub(super) fn refused(arguments: &[&str]) -> Option<String> {
         }
         Action::Execute(_) => None,
     }
+}
+
+// [spec:ronin:req:make.semantics+1/test]
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[test]
+fn makefile_makeflags_mutate_switch_table() {
+    let decoded = decode_makefile_makeflags(b"", b" -- FOO=bar -rR", b"").unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b"rR");
+    assert_eq!(decoded.mflags.as_ref(), b"-rR");
+
+    // Plain `=` adds to the special table just as `+=` does. A contradictory
+    // spelling changes the settled state rather than creating a second table.
+    let decoded = decode_makefile_makeflags(&decoded.makeflags, b"-w", b"").unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b"rRw");
+    let decoded =
+        decode_makefile_makeflags(&decoded.makeflags, b"--no-print-directory -k", b"").unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b"krR --no-print-directory");
+    assert!(decoded.makeflags.as_ref().starts_with(b"k"));
+
+    // Environment/argv switches are protected and therefore get the last
+    // word when a Makefile tries to contradict them.
+    let decoded =
+        decode_makefile_makeflags(b"w", b"w -- FOO=bar --no-print-directory", b"w").unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b"w");
+    assert_eq!(decoded.mflags.as_ref(), b"-w");
 }
 
 // [spec:ronin:req:make.interface-compatibility/test]

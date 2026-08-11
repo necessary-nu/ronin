@@ -213,6 +213,7 @@ pub(crate) struct Compilation {
 
 struct CompiledUnit {
     targets: Vec<Node>,
+    makeflags: String,
 }
 
 /// Evaluate a root Makefile and every recursive `$(MAKE)` recipe into one
@@ -235,7 +236,7 @@ where
     let mut cache = HashMap::new();
     let mut compiling = HashSet::new();
     let mut regenerations = Vec::new();
-    compile_unit(
+    let root = compile_unit(
         root,
         &mut sink,
         None,
@@ -248,6 +249,7 @@ where
     Ok(Loaded {
         graph,
         regenerations,
+        makeflags: root.makeflags,
     })
 }
 
@@ -331,7 +333,7 @@ where
     }
 
     let mut descendant_context = context;
-    descendant_context.makeflags = makeflags;
+    descendant_context.makeflags.clone_from(&makeflags);
     apply_exported_environment(&mut descendant_context.environment, &command_line);
     apply_exported_environment(&mut descendant_context.environment, &exported);
     apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
@@ -364,6 +366,7 @@ where
     compiling.remove(&compilation_key);
     Ok(CompiledUnit {
         targets: unit.targets,
+        makeflags,
     })
 }
 
@@ -593,6 +596,8 @@ pub struct Loaded {
     pub graph: BuildGraph,
     /// Missing included Makefiles this provisional graph knows how to build.
     regenerations: Vec<Node>,
+    /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
+    makeflags: String,
 }
 
 impl Loaded {
@@ -603,6 +608,12 @@ impl Loaded {
     #[must_use]
     pub fn regeneration_targets(&self) -> &[Node] {
         &self.regenerations
+    }
+
+    /// The switch state the Makefile left for its own build and its children.
+    #[must_use]
+    pub(crate) fn makeflags(&self) -> &str {
+        &self.makeflags
     }
 }
 

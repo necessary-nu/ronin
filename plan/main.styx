@@ -6982,6 +6982,50 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-11T13:46:39.022589049Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "The Linux headers compatibility loop makes this concrete. At 36860b7, Kbuild's root `MAKEFLAGS += -rR` reaches the semantic self-child as a goal named `-rR` rather than as the no-builtins switches. Its `MAKECMDGOALS` becomes `-rR headers`, Kbuild consequently enables `need-config`, and compilation invents regeneration roots for absent `include/config/auto.conf{,.cmd}`; planning then dies before any recipe. Trace and control isolate the mechanism: GNU Make delegating `scripts/Makefile.build` directly to the same Ronin binary completes `headers`, while Ronin composing the self-child fails. Fix Makefile-assigned MAKEFLAGS decoding and prove both the focused child state and the real `/data/cap9p/linux` target."
+                            }
+
+                            {
+                                at 2026-08-11T13:46:39.09463582Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-11T14:15:28.035547705Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Delivered GNU Make's special MAKEFLAGS assignment semantics at the evaluator boundary without adding an option parser to Kati. Each effective global write is decoded through Ronin's existing option grammar into a persistent switch table, protected environment/argv switches are reapplied last, MAKEFLAGS and MFLAGS are immediately canonicalized, MAKEOVERRIDES retains its recursive suffix, the normalized state reaches semantic children, and current-build scheduler controls such as -k are updated. Focused unit and process regressions pass; cargo test --workspace --all-targets passes; strict all-feature Clippy passes; direct/manifest equivalence covers 297 Makefiles and 276 graphs with zero disagreements. The real /data/cap9p/linux headers build no longer creates an -rR goal or auto.conf regeneration roots: it compiles 1,034 edges and reaches recipes, exposing the next existing make-newer-prerequisite-automatic-variable gap at KATI_NEW_INPUTS/find FORCE."
+                            }
+
+                            {
+                                at 2026-08-11T14:15:28.251770985Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
+
+                            {
+                                at 2026-08-11T14:21:42.001193475Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Post-completion GNU Make 4.4.1 inventory refresh confirms the broad effect: 62 recorded differences disappeared, from 1,368 to 1,306. The bounded classes are now 522 unclassified, 68 compiler candidates, 103 interface observations, and 613 narration observations (previously 522/69/168/609). Most removed rows were MAKEFLAGS content mismatches; one prior no-rule candidate now advances to an ordinary build-result difference. The versioned inventory was updated and its completeness gate passes."
+                                after_done true
+                            }
+
+                            {
+                                at 2026-08-11T14:23:57.786680363Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "The vendored evaluator implementation is Kati commit 842172904589605cd157940790b808fae617aa1d, pushed as origin/nplan/make-makefile-set-makeflags."
+                                after_done true
+                            }
                         )
                     }
 

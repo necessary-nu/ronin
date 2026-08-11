@@ -38,7 +38,10 @@ use std::path::{Path, PathBuf};
 
 mod interface;
 mod subninja;
-use interface::{compiler_flag_variables, makeflags_arguments, prepend_command_line_evals};
+use interface::{
+    compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
+    evaluated_invocation, makeflags_arguments, prepend_command_line_evals,
+};
 pub(super) use subninja::compile as compile_subninja;
 
 /// The makefiles GNU Make reads when no `-f` names one, in its own order.
@@ -1170,6 +1173,8 @@ fn session_for(
 ) -> Session {
     let mut session = Session::new();
     let compiler_flags = compiler_flag_variables(invocation);
+    let makeflags = Bytes::from(compiler_flags.base.into_bytes());
+    let make_overrides = Bytes::from(compiler_flags.overrides.into_bytes());
     session.flags = Flags {
         makefile: Some(makefile.as_os_str().to_owned()),
         num_jobs: jobs,
@@ -1185,8 +1190,14 @@ fn session_for(
         // A parent's assignments and this invocation's own, in that order,
         // which is the order Make applies them.
         cl_vars: invocation.variables.clone(),
-        makeflags: Some(Bytes::from(compiler_flags.base.into_bytes())),
-        make_overrides: Some(Bytes::from(compiler_flags.overrides.into_bytes())),
+        makeflags: Some(makeflags.clone()),
+        make_overrides: Some(make_overrides.clone()),
+        makeflags_assignment: Some(kati::flags::MakeflagsAssignment {
+            decoder: decode_makefile_makeflags,
+            protected: makeflags.clone(),
+            effective: makeflags,
+            has_overrides: !make_overrides.is_empty(),
+        }),
         // One word, and that word is a path. GNU Make answers `$(MAKE)` this
         // way and a great deal of software execs the answer rather than running
         // it through a shell — upstream's own suite adopts it as the program for
@@ -1365,7 +1376,11 @@ struct RootCompilation<'a> {
 }
 
 enum PreparedGraph {
-    Ready(Box<BuildGraph>),
+    Ready {
+        graph: Box<BuildGraph>,
+        invocation: Box<Invocation>,
+        options: Box<BuildOptions>,
+    },
     Finished(RunResult),
 }
 
@@ -1402,15 +1417,21 @@ fn prepare_graph(
             Ok(loaded) => loaded,
             Err(result) => return Ok(PreparedGraph::Finished(result)),
         };
+        let effective_invocation = evaluated_invocation(loaded.makeflags())?;
+        let effective_options = evaluated_build_options(root.options, &effective_invocation);
         if loaded.regeneration_targets().is_empty() {
-            return Ok(PreparedGraph::Ready(Box::new(loaded.graph)));
+            return Ok(PreparedGraph::Ready {
+                graph: Box::new(loaded.graph),
+                invocation: Box::new(effective_invocation),
+                options: Box::new(effective_options),
+            });
         }
 
         let regeneration_targets = loaded.regeneration_targets().to_vec();
         let mut graph = loaded.graph;
         let (mut persistence, warning) = Persistence::open(&mut graph, root.directory)?;
         reported.push_str(warning.as_deref().unwrap_or_default());
-        let mut build = Build::with_options(&mut graph, &mut persistence, root.options.clone());
+        let mut build = Build::with_options(&mut graph, &mut persistence, effective_options);
         if let Some(sink) = output.as_deref_mut() {
             build = build.output(sink);
         }
@@ -1418,7 +1439,7 @@ fn prepare_graph(
             build = build.diagnostics(sink);
         }
         let planned = build.plan(&regeneration_targets);
-        if root.invocation.questioning() {
+        if effective_invocation.questioning() {
             let question = planned.map(|planned| planned.already_up_to_date());
             let flushed = persistence.finish();
             let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
@@ -1442,13 +1463,13 @@ fn prepare_graph(
             }
         };
         flushed?;
-        discard_intermediates(&disposable, root.invocation.given(Switch::DryRun));
-        if outcome.exit_code() != 0 || root.invocation.given(Switch::DryRun) {
+        discard_intermediates(&disposable, effective_invocation.given(Switch::DryRun));
+        if outcome.exit_code() != 0 || effective_invocation.given(Switch::DryRun) {
             return Ok(PreparedGraph::Finished(finished(
                 std::mem::take(reported),
                 false,
                 &outcome,
-                root.invocation.given(Switch::Silent),
+                effective_invocation.given(Switch::Silent),
             )));
         }
         reported.push_str(&String::from_utf8_lossy(outcome.output()));
@@ -1508,10 +1529,15 @@ pub(crate) fn run(
         options: &options,
         level,
     };
-    let mut graph = match prepare_graph(&root, &mut reported, &mut output, &mut diagnostics)? {
-        PreparedGraph::Ready(graph) => *graph,
-        PreparedGraph::Finished(result) => return Ok(result),
-    };
+    let (mut graph, invocation, options) =
+        match prepare_graph(&root, &mut reported, &mut output, &mut diagnostics)? {
+            PreparedGraph::Ready {
+                graph,
+                invocation,
+                options,
+            } => (*graph, *invocation, *options),
+            PreparedGraph::Finished(result) => return Ok(result),
+        };
     let (mut persistence, warning) = Persistence::open(&mut graph, &directory)?;
     reported.push_str(warning.as_deref().unwrap_or_default());
     let targets = graph.default_targets();

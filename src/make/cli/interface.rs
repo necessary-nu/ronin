@@ -1,7 +1,10 @@
 //! Inputs shared by Make's command-line parser and kati compilation.
 
-use super::{Invocation, JobLimit, Switch};
+use super::{parse, parse_arguments, Action, ArgumentSource, Invocation, JobLimit, Switch};
+use crate::build::BuildOptions;
+use crate::error::CliError;
 use crate::util::{BString, ByteSlice};
+use crate::Error;
 use kati::bytes::Bytes;
 use kati::session::Session;
 
@@ -169,6 +172,119 @@ pub(super) fn makeflags_arguments(inherited: &str) -> Vec<BString> {
         }
     }
     arguments
+}
+
+/// Turn the evaluated right-hand side of a Makefile `MAKEFLAGS` assignment
+/// back into an option stream.
+///
+/// The value may already contain `--` and command-line assignments, followed
+/// by newly appended switches. GNU Make does not turn those switches into
+/// goals: it removes assignments, decodes every remaining word as an option,
+/// then renders one fresh `--` before the override table.
+fn assigned_makeflags_arguments(value: &str) -> Vec<BString> {
+    let mut arguments = vec![BString::from("make")];
+    for word in makeflags_words(value) {
+        if word == "--" || (!word.starts_with('-') && word.contains('=')) {
+            continue;
+        }
+        if arguments.len() == 1 && !word.starts_with('-') {
+            arguments.push(BString::from(format!("-{word}")));
+        } else {
+            arguments.push(BString::from(word));
+        }
+    }
+    arguments
+}
+
+/// Decode a Makefile assignment with the same option grammar as argv.
+///
+/// `previous` is GNU Make's persistent switch table, while `protected` is the
+/// environment/argv state that outranks every Makefile write. The evaluated
+/// assignment sits between them, so ordinary last-spelling-wins parsing gives
+/// exactly the special precedence GNU Make applies here.
+pub(super) fn decode_makefile_makeflags(
+    previous: &[u8],
+    assigned: &[u8],
+    protected: &[u8],
+) -> Result<kati::flags::DecodedMakeflags, String> {
+    let mut invocation = Invocation::new();
+    for value in [previous, assigned, protected] {
+        let value = std::str::from_utf8(value)
+            .map_err(|_| "MAKEFLAGS contains non-UTF-8 option bytes".to_owned())?;
+        let arguments = assigned_makeflags_arguments(value);
+        if let Some(action) =
+            parse_arguments(&mut invocation, &arguments, ArgumentSource::Inherited)
+                .map_err(|error| error.to_string())?
+        {
+            let diagnostic = match action {
+                Action::Immediate(result) => String::from_utf8_lossy(&result.stderr).into_owned(),
+                Action::Execute(_) => unreachable!("parse_arguments never executes"),
+            };
+            return Err(if diagnostic.is_empty() {
+                "MAKEFLAGS requests an immediate command-line action".to_owned()
+            } else {
+                diagnostic
+            });
+        }
+        if !invocation.goals.is_empty() {
+            let goal = invocation.goals.remove(0);
+            return Err(format!(
+                "MAKEFLAGS contains non-option word '{}'",
+                goal.to_str_lossy()
+            ));
+        }
+    }
+    if invocation.debugging() == 0 {
+        invocation.switches &= !Switch::Debug.bit();
+    }
+    let flags = compiler_flag_variables(&invocation);
+    Ok(kati::flags::DecodedMakeflags {
+        makeflags: Bytes::from(flags.base.into_bytes()),
+        mflags: Bytes::from(flags.mflags.into_bytes()),
+        is_dry_run: invocation.given(Switch::DryRun),
+        is_silent_mode: invocation.given(Switch::Silent),
+        ignore_errors: invocation.given(Switch::IgnoreErrors),
+        environment_overrides: invocation.given(Switch::EnvironmentOverrides),
+        no_builtin_rules: invocation.given(Switch::NoBuiltinRules),
+        no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
+    })
+}
+
+/// Parse the canonical value left by Makefile assignments back into the state
+/// that controls this unit's one Ninja scheduler.
+pub(super) fn evaluated_invocation(makeflags: &str) -> Result<Invocation, Error> {
+    match parse(&[BString::from("make")], Some(makeflags))? {
+        Action::Execute(invocation) => Ok(*invocation),
+        Action::Immediate(_) => Err(CliError::InvalidParameter {
+            option: "MAKEFLAGS",
+        }
+        .into()),
+    }
+}
+
+/// Apply the switches a Makefile named without disturbing the runtime
+/// facilities (terminal, jobserver transport, working directory) already
+/// selected for this invocation.
+pub(super) fn evaluated_build_options(
+    initial: &BuildOptions,
+    invocation: &Invocation,
+) -> BuildOptions {
+    let mut options = initial.clone();
+    options.maxfail = if invocation.given(Switch::KeepGoing) {
+        usize::MAX
+    } else {
+        1
+    };
+    options.dryrun = invocation.given(Switch::DryRun);
+    options.verbose = options.dryrun;
+    options.quiet = invocation.given(Switch::Silent);
+    options.maxload = invocation.load.map_or(0.0, |load| load.ceiling);
+    if options.jobserver.is_none() {
+        if let Some(jobs) = invocation.effective_jobs() {
+            options.jobs = jobs;
+        }
+    }
+    options
 }
 
 /// Split the words GNU Make writes into `MAKEFLAGS`.

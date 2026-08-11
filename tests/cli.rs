@@ -2131,6 +2131,56 @@ fn make_passes_linux_output_sync_guard() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// A Makefile write is visible immediately, controls this unit's scheduler,
+/// and reaches a semantic child as canonical switches rather than extra goals.
+// [spec:ronin:req:make.semantics+1/test]
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn assigned_makeflags_control_build_and_children() {
+    let directory = make_case(
+        "makefile-assigned-makeflags",
+        "MAKEFLAGS += -rR\n\
+         MAKEFLAGS += -k\n\
+         $(file >root.flags,MAKEFLAGS=$(MAKEFLAGS) MFLAGS=$(MFLAGS))\n\
+         all: failing continued child\n\
+         failing:;@false\n\
+         continued:;@touch $@\n\
+         child:;@$(MAKE) --no-print-directory -f child.mk child-output\n\
+         .PHONY: all failing child\n",
+    );
+    fs::write(
+        directory.join("child.mk"),
+        "$(file >child.flags,GOALS=$(MAKECMDGOALS) MAKEFLAGS=$(MAKEFLAGS))\n\
+         child-output:;@touch $@\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(2), "{said}");
+    assert!(
+        directory.join("continued").exists(),
+        "-k was not applied: {said}"
+    );
+    assert!(
+        directory.join("child-output").exists(),
+        "child did not run: {said}"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("root.flags")).unwrap(),
+        "MAKEFLAGS=krR MFLAGS=-krR\n"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("child.flags")).unwrap(),
+        "GOALS=child-output MAKEFLAGS=krR --no-print-directory\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.narration/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
