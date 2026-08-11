@@ -4350,6 +4350,7 @@ children (
                         id make-io-error-wording
                         title "Report Makefile I/O failures through ordinary Ronin diagnostics"
                         kind @fix
+                        sealed true
                         log (
                             {
                                 at 2026-08-08T08:44:23.239321847Z
@@ -4398,6 +4399,28 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @status
                                 text "Doing → Done (nplan complete)"
+                            }
+
+                            {
+                                at 2026-08-11T07:33:36.690945236Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "Recovery audit on 2026-08-11: delivery commit 9c70f9c is already an ancestor of current main and originally carried a Doing → Done record, but that completion entry did not survive later plan integration, leaving the node exposed as Doing. The outer interface change and make_io_failures_name_their_source regression test are unchanged since 9c70f9c; the current Kati pin 27b868f still carries Source::Unreadable, path-aware diagnostics, errno-suffix removal, and optional-include handling. Current-source verification passed the focused unreadable-include/$(file >)/top-level/optional-include regression and the forced workspace check. The first forced run hit the separately tracked manifest-reload timing flake; that exact test passed five immediate isolated reruns and the unchanged full forced gate then passed, including all 101 Kati tests, 477 Ronin library tests with one ignored, and all 70 CLI tests. No implementation correction or violation bypass is needed; restoring the manual completion assertion records shipped reality."
+                            }
+
+                            {
+                                at 2026-08-11T07:33:40.939434605Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
+
+                            {
+                                at 2026-08-11T07:34:17.602544381Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "Correction to the immediately preceding recovery note: the original Doing → Done log entry did survive later plan integration. Only its derived @complete assertion in plan/.state.styx was lost, which is why nplan exposed the node as Doing. The implementation ancestry, current-source verification, and conclusion that no code correction is needed are unchanged."
+                                after_done true
                             }
                         )
                     }
