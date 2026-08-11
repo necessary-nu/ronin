@@ -5586,6 +5586,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-11T12:38:31.175251488Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The completed node proved explicit export, unexport, and untouched inherited environment pass-through, but it did not prove GNU Make's sticky export attribute when a Makefile replaces an environment-origin binding. At Ronin e7ca797, `export ROOT := inherited-before-child` followed by a child `ROOT := .` leaves the semantic grandchild's compiler environment at the stale inherited value. The value binding changes correctly inside the child evaluator; the separate exported-name set was never seeded from that evaluator's imported environment. Corrective work is tracked by make-inherited-export-reassignment."
+                        after_done true
+                    }
                 )
             }
 
@@ -7763,6 +7771,64 @@ children (
 
                     {
                         at 2026-08-11T12:21:55.717616987Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-inherited-export-reassignment
+                title "Preserve inherited export status across reassignment"
+                kind @fix
+                deps (make-export-to-recipes make-subninja-recursion)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T12:38:43.528104432Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Own the BUGS.md three-level reproducer and Linux's exported `srcroot` reassignment. Importing an environment binding gives it GNU Make's default export attribute; a later accepted file-origin assignment changes its value without clearing that attribute. Semantic children and recipe environments must therefore receive the replacement value, while explicit `unexport` must still suppress it. This does not absorb the separate bare-export, target-specific-export, or evaluation-time-shell gaps owned by make-export-scope-semantics."
+                    }
+
+                    {
+                        at 2026-08-11T12:38:47.572800836Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
+
+                    {
+                        at 2026-08-11T12:38:53.379650275Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T12:52:20.301172525Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Preserve the inherited export attribute as a compiled environment delta, not by adding every imported name to Kati's explicit export map. An untouched environment value must cross recipes and semantic children as its original bytes — for example `RAW=$(EXPANDED)` stays literal even though `$(RAW)` inside the Makefile expands — while GNU Make deliberately keeps an inherited SHELL value in the process environment unless an export directive names SHELL. At the end of each unit, compare imported names with current global bindings: environment-origin bindings need no delta, a replacement binding exports its evaluated current value, and a removed binding emits an unset. Explicit export/unexport entries take precedence. Apply that same delta to the unit's recipes and descendant compiler environment."
+                    }
+
+                    {
+                        at 2026-08-11T12:52:30.787692925Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The BUGS.md regression failed before the change because two.mk sought inherited-before-child/included.mk; it now includes ./included.mk and records ROOT=. VALUE=inherited. The same test proves untouched `RAW=$(EXPANDED)` remains byte-literal and inherited SHELL remains /caller/shell. Green evidence: 74 CLI tests, the 304-case owned Make build-intent oracle, eight grouped-Make tests, 483 library tests (482 pass, one deliberately ignored), strict workspace/all-target/all-feature Clippy, the 297-Makefile direct/manifest equivalence gate with 276 graphs and zero disagreements, nplan check, lint, comments, audit, and diff checks. The pinned GNU Make 4.4.1 discovery inventory remains 1,368 rows and 69 compiler candidates; 12 rows change shape, with four unclassified and three interface observations becoming narration-only, producing 522 unclassified / 69 compiler / 168 interface / 609 narration. The real-project gate remains independently red after the earlier namespace correction, now at its next existing recursive-CMake gap: build_log.cc.o is missing with no known rule."
+                    }
+
+                    {
+                        at 2026-08-11T12:53:31.570124178Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Evidence-count correction: the preceding note's 304-case figure was stale. The owned Make build-intent gate currently enumerates 313 cases (328 case directories minus 15 explicitly discovery-only cases), and the green run covered all current 313."
+                    }
+
+                    {
+                        at 2026-08-11T12:53:37.196757407Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"

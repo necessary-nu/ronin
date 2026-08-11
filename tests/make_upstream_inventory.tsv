@@ -85,7 +85,7 @@ case	features/exec.diff.7	narration	ninja-progress
 case	features/exec.diff.8	narration	ninja-progress
 case	features/exec.diff.9	narration	ninja-progress
 case	features/export.diff	narration	ninja-progress
-case	features/export.diff.1	interface	ninja-progress+makeflags-content
+case	features/export.diff.1	narration	ninja-progress
 case	features/export.diff.10	narration	ninja-progress
 case	features/export.diff.11	narration	ninja-progress
 case	features/export.diff.12	narration	ninja-progress
@@ -255,7 +255,7 @@ case	features/jobserver.diff.15	unclassified	ninja-progress+evaluation
 case	features/jobserver.diff.16	unclassified	ninja-progress+product-name+evaluation
 case	features/jobserver.diff.2	unclassified	ninja-progress+product-name+evaluation
 case	features/jobserver.diff.3	unclassified	ninja-progress+product-name+evaluation
-case	features/jobserver.diff.4	unclassified	product-name+evaluation
+case	features/jobserver.diff.4	unclassified	ninja-progress+product-name+evaluation
 case	features/jobserver.diff.5	unclassified	ninja-progress+no-work-line+product-name+evaluation
 case	features/jobserver.diff.6	narration	ninja-progress+no-work-line
 case	features/jobserver.diff.7	unclassified	ninja-progress+directory-announce+product-name+evaluation
@@ -279,7 +279,7 @@ case	features/order_only.diff.9	narration	ninja-progress
 case	features/output-sync.diff	unclassified	ninja-progress+ninja-failure-block+directory-announce+evaluation
 case	features/output-sync.diff.1	unclassified	ninja-progress+ninja-failure-block+directory-announce+evaluation
 case	features/output-sync.diff.10	narration	directory-announce
-case	features/output-sync.diff.11	unclassified	product-name+directory-announce+evaluation
+case	features/output-sync.diff.11	narration	ninja-progress+directory-announce
 case	features/output-sync.diff.12	unclassified	product-name+directory-announce+recipe-error-line+evaluation
 case	features/output-sync.diff.13	unclassified	ninja-progress+ninja-failure-block+evaluation
 case	features/output-sync.diff.14	unclassified	ninja-progress+ninja-failure-block+product-name+recipe-error-line+evaluation
@@ -394,7 +394,7 @@ case	features/patternrules.diff.8	unclassified	no-work-line+product-name+evaluat
 case	features/patternrules.diff.9	narration	ninja-progress
 case	features/quoting.diff	narration	ninja-progress
 case	features/recursion.diff	unclassified	ninja-progress+directory-announce+evaluation
-case	features/recursion.diff.1	unclassified	product-name+evaluation
+case	features/recursion.diff.1	narration	ninja-progress
 case	features/recursion.diff.2	unclassified	ninja-progress+evaluation
 case	features/reinvoke.diff	unclassified	ninja-progress+evaluation
 case	features/reinvoke.diff.1	unclassified	ninja-progress+evaluation
@@ -593,12 +593,12 @@ case	features/targetvars.diff.24	narration	ninja-progress
 case	features/targetvars.diff.25	unclassified	ninja-progress+ninja-failure-block+evaluation
 case	features/targetvars.diff.26	unclassified	ninja-progress+product-name+recipe-error-line+evaluation
 case	features/targetvars.diff.27	narration	ninja-progress
-case	features/targetvars.diff.28	interface	ninja-progress+makeflags-content
+case	features/targetvars.diff.28	narration	ninja-progress
 case	features/targetvars.diff.29	interface	ninja-progress+makeflags-content
 case	features/targetvars.diff.3	narration	ninja-progress
 case	features/targetvars.diff.30	interface	ninja-progress+makeflags-content
 case	features/targetvars.diff.31	narration	ninja-progress
-case	features/targetvars.diff.32	interface	ninja-progress+makeflags-content
+case	features/targetvars.diff.32	narration	ninja-progress
 case	features/targetvars.diff.33	narration	ninja-progress
 case	features/targetvars.diff.34	unclassified	ninja-progress+evaluation
 case	features/targetvars.diff.35	unclassified	ninja-progress+evaluation
@@ -721,7 +721,7 @@ case	functions/realpath.diff.1	unclassified	ninja-progress+evaluation
 case	functions/realpath.diff.2	unclassified	ninja-progress+evaluation
 case	functions/shell.diff	narration	ninja-progress
 case	functions/shell.diff.1	narration	ninja-progress
-case	functions/shell.diff.10	unclassified	ninja-progress+evaluation
+case	functions/shell.diff.10	narration	ninja-progress
 case	functions/shell.diff.11	unclassified	ninja-progress+evaluation
 case	functions/shell.diff.12	narration	ninja-progress
 case	functions/shell.diff.13	unclassified	ninja-progress+evaluation
@@ -739,7 +739,7 @@ case	functions/shell.diff.5	unclassified	ninja-progress+evaluation
 case	functions/shell.diff.6	unclassified	ninja-progress+evaluation
 case	functions/shell.diff.7	narration	ninja-progress
 case	functions/shell.diff.8	narration	ninja-progress
-case	functions/shell.diff.9	unclassified	ninja-progress+evaluation
+case	functions/shell.diff.9	narration	ninja-progress
 case	functions/sort.diff	narration	ninja-progress
 case	functions/sort.diff.1	narration	ninja-progress
 case	functions/strip.diff	narration	ninja-progress
@@ -840,8 +840,8 @@ case	misc/general4.diff.2	narration	ninja-progress
 case	misc/general4.diff.3	narration	ninja-progress
 case	misc/general4.diff.4	narration	ninja-progress
 case	misc/general4.diff.5	narration	ninja-progress
-case	misc/general4.diff.6	unclassified	ninja-progress+ninja-failure-block+evaluation
-case	misc/general4.diff.7	unclassified	ninja-progress+product-name+recipe-error-line+evaluation
+case	misc/general4.diff.6	unclassified	ninja-progress+evaluation
+case	misc/general4.diff.7	unclassified	ninja-progress+ninja-failure-block+product-name+recipe-error-line+evaluation
 case	misc/general4.diff.8	unclassified	ninja-progress+ninja-failure-block+product-name+recipe-error-line+evaluation
 case	misc/general4.diff.9	narration	ninja-progress
 case	misc/utf8.diff	narration	no-work-line
@@ -1031,7 +1031,7 @@ case	targets/SECONDARY.diff.8	unclassified	ninja-progress+evaluation
 case	targets/SECONDARY.diff.9	unclassified	ninja-progress+evaluation
 case	targets/SILENT.diff	unclassified	ninja-progress+evaluation
 case	targets/SILENT.diff.1	narration	ninja-progress
-case	targets/SILENT.diff.2	unclassified	product-name+evaluation
+case	targets/SILENT.diff.2	unclassified	ninja-progress+evaluation
 case	targets/WAIT.diff	unclassified	ninja-progress+ninja-failure-block+evaluation
 case	targets/WAIT.diff.1	unclassified	ninja-progress+ninja-failure-block+evaluation
 case	targets/WAIT.diff.10	narration	ninja-progress
@@ -1303,7 +1303,7 @@ case	variables/MAKEFLAGS.diff.99	interface	no-work-line+up-to-date-line+makeflag
 case	variables/MAKELEVEL.diff	narration	ninja-progress+recipe-echo
 case	variables/MAKE_RESTARTS.diff	interface	ninja-progress+makeflags-content
 case	variables/MAKE_RESTARTS.diff.1	interface	ninja-progress+no-work-line+makeflags-content
-case	variables/MAKE_RESTARTS.diff.2	unclassified	product-name+directory-announce+evaluation
+case	variables/MAKE_RESTARTS.diff.2	unclassified	ninja-progress+directory-announce+evaluation
 case	variables/MFILE_LIST.diff	narration	ninja-progress
 case	variables/MFILE_LIST.diff.1	narration	ninja-progress
 case	variables/SHELL.diff	narration	ninja-progress

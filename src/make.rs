@@ -611,6 +611,45 @@ fn exported_environment(
 ) -> Result<Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>, kati::anyhow::Error> {
     use std::os::unix::ffi::OsStringExt;
     let mut exports = ev.exports.clone();
+
+    // Environment variables are exported by default. Untouched bindings need
+    // no entry here: retaining the compiler's inherited environment preserves
+    // their raw bytes without evaluating Make syntax inside them. A replacement
+    // or `undefine`, however, must override that inherited value for recipes
+    // and semantic children. GNU Make deliberately exempts SHELL from this
+    // inherited export attribute unless an export directive names it.
+    let inherited_environment = ev
+        .session
+        .invocation_environment
+        .clone()
+        .unwrap_or_else(|| std::env::vars_os().collect());
+    for (name, _) in inherited_environment {
+        if name.as_os_str().as_encoded_bytes() == b"SHELL" {
+            continue;
+        }
+        let symbol = ev
+            .session
+            .intern(name.as_os_str().as_encoded_bytes().to_vec());
+        if exports.contains_key(&symbol) {
+            continue;
+        }
+        let change = match ev.session.peek_global_var(symbol) {
+            Some(variable)
+                if matches!(
+                    variable.read().origin(),
+                    kati::var::VarOrigin::Environment | kati::var::VarOrigin::EnvironmentOverride
+                ) =>
+            {
+                None
+            }
+            Some(_) => Some(true),
+            None => Some(false),
+        };
+        if let Some(is_exported) = change {
+            exports.insert(symbol, is_exported);
+        }
+    }
+
     // `.EXPORT_ALL_VARIABLES` names nothing, so it is the set of variables the
     // Makefile itself defined. GNU Make leaves the built-in defaults out: with
     // it declared, `CC` is still unset in a recipe.

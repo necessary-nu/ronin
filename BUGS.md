@@ -85,3 +85,58 @@ targets in a private graph namespace while retaining their real filesystem
 paths for commands and freshness checks. Repeated target names within one unit
 remain canonical, so genuine duplicate producers are still rejected. The
 reduced case above is a regression test.
+
+## An inherited exported variable keeps its stale value after reassignment
+
+Status: fixed
+
+Observed with Ronin revision `e7ca7976b4a929fef15326b70fe4cf3cf5028356`
+while retrying the Linux 6.18.2 Necessary OS build after recursive target
+namespaces were isolated. The `FORCE` collision is fixed, but a nested Kbuild
+evaluation fails with:
+
+```text
+./scripts/Makefile.build:37: /scripts/Makefile: No such file or directory
+ronin: No rule to make target '/scripts/Makefile'.
+```
+
+The reduced case has three Make invocations:
+
+```make
+# Makefile
+export ROOT := inherited-before-child
+all: ; +$(MAKE) -f one.mk
+
+# one.mk
+ROOT := .
+all: ; +$(MAKE) -f two.mk
+
+# two.mk
+include $(ROOT)/included.mk
+all: ; @printf '%s\n' 'ROOT=$(ROOT) VALUE=$(VALUE)'
+
+# included.mk
+VALUE := inherited
+```
+
+GNU Make retains the export attribute when `one.mk` replaces the
+environment-origin value and passes `ROOT=.` to `two.mk`, which succeeds.
+Ronin passes the original `ROOT=inherited-before-child` to the grandchild and
+fails to include `inherited-before-child/included.mk`.
+
+Linux hits the same shape. Its wrapper invocation exports `srcroot` before it
+has a value, a child assigns the final `srcroot := .`, and a later recursive
+`scripts/Makefile.build` must inherit that replacement. Ronin instead passes
+the stale empty value, so `$(srcroot)/$(obj)/Makefile` becomes
+`/scripts/Makefile`.
+
+Expected: assigning a new file-origin value to an environment-origin exported
+variable MUST preserve its export attribute, and semantic grandchildren MUST
+receive the new value. Add the three-level case above as a regression test.
+
+Resolution: Make compilation now treats an imported environment name as
+implicitly exported when its evaluator binding is replaced or removed. It
+publishes only that delta, so untouched inherited values retain their original
+bytes rather than being re-expanded as Make syntax; GNU Make's special `SHELL`
+handling remains unchanged. The three-level case now reaches `included.mk`, and
+the grandchild receives `ROOT=.`.

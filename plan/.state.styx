@@ -319,6 +319,7 @@ assertions (
     {id make-grouped-double-colon-actions, kind @complete, author "brendan@necessary.nu", at 2026-08-11T09:35:38.96915034Z}
     {id make-output-sync-feature-advertisement, kind @complete, author "brendan@necessary.nu", at 2026-08-11T11:58:13.267827406Z}
     {id make-recursive-target-namespace, kind @complete, author "brendan@necessary.nu", at 2026-08-11T12:21:55.717616987Z}
+    {id make-inherited-export-reassignment, kind @complete, author "brendan@necessary.nu", at 2026-08-11T12:53:37.196757407Z}
 )
 
 impl_evidence (

@@ -2644,6 +2644,52 @@ fn recursive_make_compiles_as_subninja() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+// [spec:ronin:req:make.semantics+1/test]
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn reassigned_export_reaches_grandchild() {
+    let directory = test_directory("make-inherited-export-reassignment");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "export ROOT := inherited-before-child\n\
+         all: ; +$(MAKE) -f one.mk\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("one.mk"),
+        "ROOT := .\n\
+         all: ; +$(MAKE) -f two.mk\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("two.mk"),
+        "include $(ROOT)/included.mk\n\
+         all: ; @printf '%s\\n' 'ROOT=$(ROOT) VALUE=$(VALUE)' \"RAW=$$RAW SHELL=$$SHELL\" > result\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(directory.join("included.mk"), "VALUE := inherited\n").unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .env("RAW", "$(EXPANDED)")
+        .env("EXPANDED", "must-stay-raw")
+        .env("SHELL", "/caller/shell")
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("result")).unwrap(),
+        "ROOT=. VALUE=inherited\nRAW=$(EXPANDED) SHELL=/caller/shell\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
