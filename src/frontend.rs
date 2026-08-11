@@ -561,9 +561,9 @@ impl BuildGraph {
     /// Make `edge` wait for additional order-only inputs.
     ///
     /// Subninja composition uses this to preserve the parent recipe boundary:
-    /// every prerequisite of the wrapper target finishes before any requested
-    /// child goal starts, without making that prerequisite part of the child's
-    /// own timestamp dirtiness calculation.
+    /// every prerequisite of the wrapper target finishes before any edge in
+    /// the requested child subtree starts, without making that prerequisite
+    /// part of the child's own timestamp dirtiness calculation.
     pub(crate) fn add_order_only_inputs(&mut self, edge: Edge, inputs: &[Node]) {
         for input in inputs {
             if self.arenas.edge(edge.0).input.contains(&input.0) {

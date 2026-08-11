@@ -46,6 +46,7 @@ pub use sink::GraphSink;
 pub const MAKE_VERSION: &str = "4.4.1";
 
 use crate::frontend::{BuildGraph, FrontendError, Node, Scope};
+use crate::make::sink::{UnitOutput, UnitSubgraph};
 use kati::evaluate::{Evaluated, evaluate};
 use kati::ninja::emit_build;
 use kati::session::Session;
@@ -212,7 +213,7 @@ pub(crate) struct Compilation {
 }
 
 struct CompiledUnit {
-    targets: Vec<Node>,
+    subgraph: UnitSubgraph,
     makeflags: String,
 }
 
@@ -258,7 +259,7 @@ fn compile_unit<F>(
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
     resolve: &mut F,
-    cache: &mut HashMap<Vec<u8>, Vec<Node>>,
+    cache: &mut HashMap<Vec<u8>, UnitSubgraph>,
     compiling: &mut HashSet<Vec<u8>>,
     regenerations: &mut Vec<Node>,
 ) -> Result<CompiledUnit, MakeError>
@@ -337,13 +338,42 @@ where
     apply_exported_environment(&mut descendant_context.environment, &command_line);
     apply_exported_environment(&mut descendant_context.environment, &exported);
     apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
+    let subgraph = compose_subninjas(
+        unit,
+        sink,
+        resolve,
+        &descendant_context,
+        cache,
+        compiling,
+        regenerations,
+    )?;
+    compiling.remove(&compilation_key);
+    Ok(CompiledUnit {
+        subgraph,
+        makeflags,
+    })
+}
+
+fn compose_subninjas<F>(
+    unit: UnitOutput,
+    sink: &mut GraphSink,
+    resolve: &mut F,
+    descendant_context: &CompilationContext,
+    cache: &mut HashMap<Vec<u8>, UnitSubgraph>,
+    compiling: &mut HashSet<Vec<u8>>,
+    regenerations: &mut Vec<Node>,
+) -> Result<UnitSubgraph, MakeError>
+where
+    F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+{
+    let mut subtree_edges = unit.edges;
     for pending in unit.subninjas {
-        let mut child_target_groups = Vec::with_capacity(pending.invocations.len());
+        let mut child_groups = Vec::with_capacity(pending.invocations.len());
         for invocation in &pending.invocations {
-            let child = resolve(&invocation.command, &invocation.make, &descendant_context)?;
+            let child = resolve(&invocation.command, &invocation.make, descendant_context)?;
             let child_key = child.cache_key.clone();
-            let child_targets = if let Some(targets) = cache.get(&child_key) {
-                targets.clone()
+            let child_subgraph = if let Some(subgraph) = cache.get(&child_key) {
+                subgraph.clone()
             } else {
                 let child_scope = pending.scope;
                 let child = compile_unit(
@@ -355,18 +385,26 @@ where
                     compiling,
                     regenerations,
                 )?;
-                cache.insert(child_key, child.targets.clone());
-                child.targets
+                cache.insert(child_key, child.subgraph.clone());
+                child.subgraph
             };
-            child_target_groups.push(child_targets);
+            child_groups.push(child_subgraph);
         }
-        sink.complete_subninja(pending, &child_target_groups)
+        let wrapper = sink
+            .complete_subninja(pending, &child_groups)
             .map_err(MakeError::Construct)?;
+        for child in child_groups {
+            for edge in child.edges {
+                if !subtree_edges.contains(&edge) {
+                    subtree_edges.push(edge);
+                }
+            }
+        }
+        subtree_edges.push(wrapper);
     }
-    compiling.remove(&compilation_key);
-    Ok(CompiledUnit {
+    Ok(UnitSubgraph {
         targets: unit.targets,
-        makeflags,
+        edges: subtree_edges,
     })
 }
 

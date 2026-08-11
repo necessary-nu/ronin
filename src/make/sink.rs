@@ -6,7 +6,9 @@
 //! that reaches the scheduler is the one Make described rather than one
 //! recovered from a file.
 
-use crate::frontend::{Binding, BuildGraph, EdgeSpec, FrontendError, Node, Rule, Scope, Template};
+use crate::frontend::{
+    Binding, BuildGraph, Edge, EdgeSpec, FrontendError, Node, Rule, Scope, Template,
+};
 use kati::anyhow;
 use kati::build_sink::{
     BuildSink, NewInputsTiming, RuleId, SinkCommand, SinkEdge, SinkPool, SinkRule,
@@ -102,6 +104,14 @@ struct SubninjaRule {
 pub(crate) struct UnitOutput {
     pub(crate) targets: Vec<Node>,
     pub(crate) subninjas: Vec<PendingSubninja>,
+    pub(crate) edges: Vec<Edge>,
+}
+
+/// The targets and complete edge closure contributed by one compiled unit.
+#[derive(Clone)]
+pub(crate) struct UnitSubgraph {
+    pub(crate) targets: Vec<Node>,
+    pub(crate) edges: Vec<Edge>,
 }
 
 struct Unit {
@@ -113,6 +123,7 @@ struct Unit {
     recipe_environment: Vec<(Vec<u8>, Option<Vec<u8>>)>,
     targets: Vec<Node>,
     subninjas: Vec<PendingSubninja>,
+    edges: Vec<Edge>,
 }
 
 /// A [`BuildSink`] that builds a Ronin graph instead of a manifest.
@@ -201,6 +212,7 @@ impl GraphSink {
                 recipe_environment: Vec::new(),
                 targets: Vec::new(),
                 subninjas: Vec::new(),
+                edges: Vec::new(),
             },
             bindings,
             phony,
@@ -236,6 +248,7 @@ impl GraphSink {
             recipe_environment: Vec::new(),
             targets: Vec::new(),
             subninjas: Vec::new(),
+            edges: Vec::new(),
         };
     }
 
@@ -275,6 +288,7 @@ impl GraphSink {
         UnitOutput {
             targets: std::mem::take(&mut self.unit.targets),
             subninjas: std::mem::take(&mut self.unit.subninjas),
+            edges: std::mem::take(&mut self.unit.edges),
         }
     }
 
@@ -295,7 +309,7 @@ impl GraphSink {
     fn attach_child_ordering(
         &mut self,
         pending: &PendingSubninja,
-        child_target_groups: &[Vec<Node>],
+        child_groups: &[UnitSubgraph],
     ) -> Vec<Node> {
         let mut waits = pending
             .inputs
@@ -304,23 +318,23 @@ impl GraphSink {
             .copied()
             .collect::<Vec<_>>();
         let mut child_targets = Vec::new();
-        for targets in child_target_groups {
-            for target in targets {
-                if let Some(edge) = self.graph.generator(*target) {
-                    let preceding = waits
-                        .iter()
-                        .copied()
-                        .filter(|wait| wait != target)
-                        .collect::<Vec<_>>();
-                    self.graph.add_order_only_inputs(edge, &preceding);
-                }
+        for child in child_groups {
+            let preceding = waits
+                .iter()
+                .copied()
+                .filter(|wait| !child.targets.contains(wait))
+                .collect::<Vec<_>>();
+            for edge in &child.edges {
+                self.graph.add_order_only_inputs(*edge, &preceding);
+            }
+            for target in &child.targets {
                 if !child_targets.contains(target) {
                     child_targets.push(*target);
                 }
             }
-            if !targets.is_empty() {
+            if !child.targets.is_empty() {
                 waits.clear();
-                for target in targets {
+                for target in &child.targets {
                     if !waits.contains(target) {
                         waits.push(*target);
                     }
@@ -332,19 +346,19 @@ impl GraphSink {
 
     /// Replace a recursive wrapper edge with the child goals it requested.
     ///
-    /// Parent prerequisites become order-only inputs of each child goal: the
-    /// subgraph starts only once the wrapper recipe could have started, while
-    /// the child's own timestamps still decide what work it needs. The wrapper
-    /// becomes a phony alias for child targets whose identities remain local to
-    /// their own recursive compilation units.
+    /// Parent prerequisites become order-only inputs of every edge in each
+    /// child subtree: no indirect child work starts before the wrapper recipe
+    /// could have started, while the child's own timestamps still decide what
+    /// work it needs. The wrapper becomes a phony alias for child targets whose
+    /// identities remain local to their own recursive compilation units.
     // [spec:ronin:req:make.recursive-invocation+1]
     pub(crate) fn complete_subninja(
         &mut self,
         pending: PendingSubninja,
-        child_target_groups: &[Vec<Node>],
-    ) -> Result<(), FrontendError> {
-        debug_assert_eq!(pending.invocations.len(), child_target_groups.len());
-        let child_targets = self.attach_child_ordering(&pending, child_target_groups);
+        child_groups: &[UnitSubgraph],
+    ) -> Result<Edge, FrontendError> {
+        debug_assert_eq!(pending.invocations.len(), child_groups.len());
+        let child_targets = self.attach_child_ordering(&pending, child_groups);
 
         if child_targets.iter().any(|target| {
             pending.explicit_outputs.contains(target) || pending.implicit_outputs.contains(target)
@@ -406,7 +420,7 @@ impl GraphSink {
         if let Some(output) = pending.completion_output {
             self.graph.set_completion_join(edge, output);
         }
-        Ok(())
+        Ok(edge)
     }
 
     /// The graph, or the first thing kati asked for that a graph cannot hold.
@@ -874,6 +888,7 @@ impl BuildSink for GraphSink {
                 if edge.completion_join {
                     self.graph.set_completion_join(built, completion_output);
                 }
+                self.unit.edges.push(built);
                 Ok(())
             }
             Err(failure) => Err(self.refuse(failure)),

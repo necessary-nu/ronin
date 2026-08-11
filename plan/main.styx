@@ -6392,6 +6392,14 @@ children (
                                 text "The completed recursive-subninja implementation scoped rules and variables but interned every child target by its filesystem spelling in one global node namespace. Independent recursive invocations in the same directory therefore collide on conventional local names such as `all` and `FORCE`. Follow-up node make-recursive-target-namespace owns distinct per-compilation target identity while retaining each target's physical path for execution and freshness."
                                 after_done true
                             }
+
+                            {
+                                at 2026-08-11T16:58:32.954331116Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "The implementation composes recursive child goals, but its ordering preservation is incomplete: GraphSink::attach_child_ordering gates each child goal edge while Ninja may start the goal's transitive prerequisites before the recursive parent target's prerequisites finish. The GNU Make process-start boundary therefore is not preserved for indirect child work. Track the correction under make-recursive-prerequisite-boundary."
+                                after_done true
+                            }
                         )
                     }
 
@@ -7343,6 +7351,14 @@ children (
                                 kind @status
                                 text "Doing → Done (nplan complete)"
                             }
+
+                            {
+                                at 2026-08-11T16:58:32.878908905Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "The implementation and focused $? verification remain valid, but the completion record's Linux headers success was not clean evidence: /data/cap9p/linux already contained the ignored generated executable scripts/unifdef. A clean Necessary OS kernel-headers@seed run at Ronin revision 893ea90 fails because recursive child prerequisites can start before the parent target's scripts_unifdef prerequisite. Track that separate defect under make-recursive-prerequisite-boundary; do not treat the contaminated manual headers run as DoD evidence."
+                                after_done true
+                            }
                         )
                     }
 
@@ -7897,6 +7913,28 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-recursive-prerequisite-boundary
+                title "Fence recursive child work behind parent prerequisites"
+                kind @fix
+                deps (make-recursive-target-namespace make-newer-prerequisite-automatic-variable)
+                log (
+                    {
+                        at 2026-08-11T16:59:44.580213661Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Observed at Ronin 893ea90 in the clean Necessary OS kernel-headers@seed run: scripts/headers_install.sh starts before the recursive parent's scripts_unifdef prerequisite and fails because scripts/unifdef does not exist. Reduced case: parent `all: prepare` invokes `+$(MAKE) -f child.mk child`; indirect child prerequisite `leaf` tests for the file produced by `prepare`. GNU Make 4.4.1 succeeds under -j16; Ronin fails deterministically because only the child goal edge is ordered. Acceptance: repeatedly pass the indirect reduced case at -j16, preserve ordering between consecutive recursive recipe lines, and complete a genuinely clean Necessary OS kernel-headers@seed build with Ronin as make."
+                    }
+
+                    {
+                        at 2026-08-11T16:59:48.133147812Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
                     }
                 )
             }

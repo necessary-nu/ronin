@@ -367,6 +367,7 @@ assertions (
     {id make-makefile-set-makeflags, kind @complete, author "brendan@necessary.nu", at 2026-08-11T14:15:28.251770985Z}
     {id ronin-rust-2024-edition, kind @complete, author "brendan@necessary.nu", at 2026-08-11T14:38:43.4702456Z}
     {id make-newer-prerequisite-automatic-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-11T15:27:29.599349062Z}
+    {id make-recursive-prerequisite-boundary, kind @doing, author "brendan@necessary.nu", at 2026-08-11T16:59:48.133147812Z}
 )
 
 impl_evidence (

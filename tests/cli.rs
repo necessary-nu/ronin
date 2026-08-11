@@ -2740,6 +2740,59 @@ fn recursive_make_compiles_as_subninja() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn recursive_subtree_waits_for_parent_inputs() {
+    let directory = test_directory("make-recursive-prerequisite-boundary");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: prepare\n\
+         \t+$(MAKE) -f first.mk first\n\
+         \t+$(MAKE) -f second.mk second\n\
+         prepare:\n\
+         \t@sleep 0.1\n\
+         \t@touch ready\n\
+         .PHONY: all prepare\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("first.mk"),
+        "first: leaf\n\
+         leaf:\n\
+         \t@test -e ready\n\
+         \t@touch first.leaf\n\
+         .PHONY: first leaf\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("second.mk"),
+        "second: leaf\n\
+         leaf:\n\
+         \t@test -e first.leaf\n\
+         \t@touch second.leaf\n\
+         .PHONY: second leaf\n",
+    )
+    .unwrap();
+
+    let program = invoked_as(&directory, "make");
+    for attempt in 0..8 {
+        for output in ["ready", "first.leaf", "second.leaf"] {
+            let _ = fs::remove_file(directory.join(output));
+        }
+        let output = make_command(&program, &directory)
+            .arg("-j16")
+            .output()
+            .unwrap();
+        let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "attempt {attempt}: {reported}");
+        assert!(directory.join("second.leaf").is_file(), "{reported}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.semantics+1/test]
 // [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]

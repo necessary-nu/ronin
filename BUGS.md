@@ -227,8 +227,80 @@ substituted into the inline recipe or response script.
 
 The two owned automatic-variable corpus cases now agree with GNU Make 4.4.1,
 including an absent prerequisite whose rule materialises no file. A dedicated
-regression pins the Linux `FORCE`/`$(filter-out $(PHONY),$?)` shape. Finally,
-Ronin built in release mode and invoked through a symlink named `make`
-completed Linux `headers` successfully through all 1,052 edges; representative
-generated outputs include `usr/include/linux/version.h`,
-`usr/include/asm/unistd.h`, and `usr/include/asm/unistd_64.h`.
+regression pins the Linux `FORCE`/`$(filter-out $(PHONY),$?)` shape. A release
+Ronin invoked through a symlink named `make` also reached all 1,052 Linux
+`headers` edges in the reused `/data/cap9p/linux` tree, but that was not clean
+verification: the ignored generated executable `scripts/unifdef` already
+existed. The clean Necessary OS seed run confirms this `$?` gap is fixed and
+exposes the separate recursive ordering defect below.
+
+## A recursive child's prerequisites outrun its parent prerequisites
+
+Status: open
+
+Observed with Ronin revision `893ea90f462ceb42b72557b5aca229309444c60d`
+while rebuilding Linux 6.18.2 userspace headers for Necessary OS with 16 jobs.
+The earlier `$?` failure is fixed: `scripts/basic/fixdep` and the generated
+syscall-header recipes now complete. The build instead stops when an indirect
+prerequisite of a semantic recursive child starts before the recursive parent
+target is eligible to run:
+
+```text
+./scripts/headers_install.sh: 41: scripts/unifdef: not found
+```
+
+The reduced case is:
+
+```make
+# Makefile
+all: prepare
+	+$(MAKE) -f child.mk child
+
+prepare:
+	@sleep 1
+	@touch ready
+
+.PHONY: all prepare
+
+# child.mk
+child: leaf
+
+leaf:
+	@test -e ready
+	@touch leaf
+
+.PHONY: child leaf
+```
+
+GNU Make 4.4.1 with `-j16` waits for `prepare`, enters the child, and succeeds.
+Ronin 1.14.0 with `-j16` schedules `leaf` immediately, before `prepare` has
+finished:
+
+```text
+[1/2] build leaf
+FAILED: [code=1] leaf
+cd '...' && env 'MAKELEVEL=2' /bin/sh -c "(test -e ready ) && (touch leaf )"
+[2/2] build prepare
+ronin: build stopped: subcommand failed.
+```
+
+Linux has the same dependency shape. Its top-level `headers` target depends on
+`scripts_unifdef` and then invokes recursive Make twice. Each child default
+goal depends on hundreds of header-install recipes, and those recipes call
+`scripts/headers_install.sh`, which executes the `scripts/unifdef` produced by
+the parent prerequisite. The child recipes therefore cannot start merely
+because their graph was compiled.
+
+`GraphSink::attach_child_ordering` currently adds the parent's prerequisites
+as order-only inputs of each child *goal*. That delays completion of the goal,
+but Ninja remains free to build the goal's own prerequisites in parallel with
+those order-only inputs. Semantic recursion must instead preserve the process
+boundary: no command in the recursively composed child invocation may start
+before all ordinary and order-only prerequisites of the parent target have
+completed. Consecutive recursive recipe lines must retain the same boundary
+between child groups.
+
+Acceptance: the reduced case succeeds repeatedly with `-j16`, including when
+`leaf` is an indirect prerequisite rather than the child's goal recipe, and
+Necessary OS's `kernel-headers@seed` completes its parallel Linux `headers`
+build.
