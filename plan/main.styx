@@ -8145,6 +8145,14 @@ children (
                 kind @status
                 text "Doing → Done (nplan complete)"
             }
+
+            {
+                at 2026-08-11T14:42:11.145102688Z
+                author "brendan@necessary.nu"
+                kind @errata
+                text "Correction: the workspace test run passed 692 tests, not 690. The earlier total omitted the two src/main.rs unit tests; all other verification counts are unchanged."
+                after_done true
+            }
         )
     }
 )
