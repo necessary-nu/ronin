@@ -173,3 +173,62 @@ A regression covers immediate canonicalization, current-build `-k`, and a
 recursive child receiving `-rR` as switches rather than goals. The real Linux
 `headers` build now compiles its complete graph and reaches recipe execution;
 its next failure is the separately tracked `$?`/`KATI_NEW_INPUTS` lowering gap.
+
+## `$?` lowering passes a phony prerequisite to `find`
+
+Status: fixed
+
+Observed with Ronin revision `bd54acc1bb5d6ddabba88295b14e12aae18bae1b`
+while building Linux 6.18.2 userspace headers for Necessary OS. This is the
+existing `make-newer-prerequisite-automatic-variable` gap promoted from corpus
+residue to a bootstrap blocker.
+
+A reduced case is:
+
+```make
+.PHONY: FORCE
+PHONY := FORCE
+
+question.out: question.in FORCE
+	@printf 'newer=%s\n' '$(filter-out $(PHONY),$?)'
+	@touch $@
+
+FORCE:
+```
+
+With `question.in` present and `question.out` absent, GNU Make 4.4.1 prints
+`newer=question.in` and succeeds. Ronin instead lowers `$?` to a shell-time
+placeholder before `filter-out` can see its members, then generates:
+
+```text
+KATI_NEW_INPUTS=$(find question.in FORCE \
+    $(test -e question.out && echo -newer question.out))
+find: ‘FORCE’: No such file or directory
+```
+
+Linux uses the same shape through `newer-prereqs = $(filter-out $(PHONY),$?)`
+and the conventional phony `FORCE` prerequisite. Its `make headers` graph now
+compiles 1,037 edges, but the first `scripts/basic/fixdep` and syscall-header
+recipes fail before their real commands run because `find FORCE` exits nonzero.
+
+Expected: compile `$?` from the scheduler's ordinary prerequisites that are
+newer than the target, preserving Make-level transformations such as
+`filter-out` and never exposing `KATI_NEW_INPUTS` shell syntax. The reduced case
+must agree with GNU Make, and Linux `make headers` must advance past the
+generated-header wave.
+
+Resolution: Kati now selects an explicit `$?` evaluation timing for each graph
+destination. The Ninja manifest writer retains its recipe-shell fallback;
+Ronin's direct graph sink leaves a typed scheduling-boundary reference and
+carries any `filter-out` exclusions as edge metadata. After prerequisites have
+settled, Ronin compares every ordinary prerequisite with the target snapshot.
+Excluded prerequisites still make the edge run, but do not enter the value
+substituted into the inline recipe or response script.
+
+The two owned automatic-variable corpus cases now agree with GNU Make 4.4.1,
+including an absent prerequisite whose rule materialises no file. A dedicated
+regression pins the Linux `FORCE`/`$(filter-out $(PHONY),$?)` shape. Finally,
+Ronin built in release mode and invoked through a symlink named `make`
+completed Linux `headers` successfully through all 1,052 edges; representative
+generated outputs include `usr/include/linux/version.h`,
+`usr/include/asm/unistd.h`, and `usr/include/asm/unistd_64.h`.

@@ -1715,6 +1715,46 @@ fn make_mode_answers_the_order_only_automatic_variable() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// A phony prerequisite still makes the rule run, but filtering it out of `$?`
+/// must operate on the final prerequisite names rather than an opaque shell
+/// placeholder. This is the shape used by the Linux header-generation rules.
+// [spec:ronin:req:make.semantics+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_filters_phony_from_new_inputs() {
+    use std::time::{Duration, SystemTime};
+
+    let directory = test_directory("make-filter-newer-prerequisites");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".PHONY: FORCE\n\
+         PHONY := FORCE\n\
+         out: old new FORCE\n\
+         \t@printf '[%s]\\n' '$(filter-out $(PHONY),$?)' > answer\n",
+    )
+    .unwrap();
+    for (name, seconds) in [("old", 100), ("out", 200), ("new", 300)] {
+        let path = directory.join(name);
+        fs::write(&path, []).unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+            .unwrap();
+    }
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("out")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(fs::read(directory.join("answer")).unwrap(), b"[new]\n");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Make's step 7: the recipe for a target nothing else could make.
 // [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]

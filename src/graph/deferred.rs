@@ -17,7 +17,10 @@ pub(crate) struct DeferredFreshness {
     pub(crate) outputs: IdVec<NodeId>,
     pub(crate) always_dirty_output: bool,
     pub(crate) always_new_inputs: IdVec<NodeId>,
-    pub(crate) new_inputs_environment: BString,
+    /// Inputs that affect the late freshness predicate but are omitted from
+    /// the value substituted for Make's `$?` automatic variable.
+    pub(crate) excluded_new_inputs: IdVec<NodeId>,
+    pub(crate) new_inputs_variable: BString,
     /// Roots that become dependencies only when the late predicate succeeds.
     /// Recursive front ends use this to compose conditional child graphs
     /// without starting a nested executor.

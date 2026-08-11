@@ -1001,6 +1001,8 @@ impl<'a> Builder<'a> {
     fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<PreparedEdge> {
         let command = self.take_command(edge)?;
         let launch_command = self.deferred_launch_command(edge, &command.command);
+        let launch_rspfile_content =
+            self.deferred_response_file_content(edge, &command.rspfile_content);
         let completion_outputs = self.graph.deferred_freshness(edge).map_or_else(
             || self.graph.edge(edge).out.clone(),
             |freshness| freshness.outputs.clone(),
@@ -1051,7 +1053,7 @@ impl<'a> Builder<'a> {
                     .to_owned();
                 if let Err((step, source)) = self
                     .disk
-                    .write_response_file(&path, command.rspfile_content.as_bytes())
+                    .write_response_file(&path, launch_rspfile_content.as_bytes())
                 {
                     let error = BuildError::io(
                         BuildOperation::WriteResponseFile(step),

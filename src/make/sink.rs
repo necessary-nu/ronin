@@ -8,7 +8,9 @@
 
 use crate::frontend::{Binding, BuildGraph, EdgeSpec, FrontendError, Node, Rule, Scope, Template};
 use kati::anyhow;
-use kati::build_sink::{BuildSink, RuleId, SinkCommand, SinkEdge, SinkPool, SinkRule};
+use kati::build_sink::{
+    BuildSink, NewInputsTiming, RuleId, SinkCommand, SinkEdge, SinkPool, SinkRule,
+};
 use kati::bytes::Bytes;
 use kati::strutil::escape_shell;
 use kati::symtab::{Interner, Symbol};
@@ -86,6 +88,7 @@ struct PendingDeferred {
     outputs: Vec<Node>,
     always_dirty_output: bool,
     always_new_inputs: Vec<Node>,
+    excluded_new_inputs: Vec<Node>,
 }
 
 /// The non-executor description retained between kati's rule and edge calls.
@@ -395,6 +398,7 @@ impl GraphSink {
                 &deferred.outputs,
                 deferred.always_dirty_output,
                 &deferred.always_new_inputs,
+                &deferred.excluded_new_inputs,
                 b"KATI_NEW_INPUTS",
             );
             self.graph.add_deferred_activations(edge, &child_targets);
@@ -483,6 +487,23 @@ impl GraphSink {
             nodes.push(node);
         }
         Ok(nodes)
+    }
+
+    fn deferred_edge(
+        &mut self,
+        names: &dyn Interner,
+        edge: &SinkEdge<'_>,
+    ) -> Result<Option<PendingDeferred>, anyhow::Error> {
+        let outputs = self.observed_node_list(names, edge.deferred_freshness_outputs)?;
+        if outputs.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(PendingDeferred {
+            outputs,
+            always_dirty_output: edge.deferred_freshness_always_dirty,
+            always_new_inputs: self.node_list(names, edge.deferred_always_new_inputs)?,
+            excluded_new_inputs: self.node_list(names, edge.deferred_excluded_new_inputs)?,
+        }))
     }
 
     /// A recursive child may build the real member named by its parent
@@ -681,6 +702,10 @@ impl GraphSink {
 }
 
 impl BuildSink for GraphSink {
+    fn new_inputs_timing(&self) -> NewInputsTiming {
+        NewInputsTiming::SchedulerBoundary
+    }
+
     fn start(&mut self, pools: &[SinkPool<'_>]) -> anyhow::Result<()> {
         for pool in pools {
             if !self.declared_pools.insert(pool.name.to_vec()) {
@@ -759,9 +784,7 @@ impl BuildSink for GraphSink {
         let inputs = self.node_list(names, edge.inputs)?;
         let order_only_inputs = self.node_list(names, edge.order_only_inputs)?;
         let validations = self.node_list(names, edge.validations)?;
-        let deferred_freshness_outputs =
-            self.observed_node_list(names, edge.deferred_freshness_outputs)?;
-        let deferred_always_new_inputs = self.node_list(names, edge.deferred_always_new_inputs)?;
+        let deferred = self.deferred_edge(names, edge)?;
         let outputs = if edge.completion_join {
             self.observed_members.insert(edge.output, completion_output);
             let proxy = self.completion_proxy()?;
@@ -803,11 +826,7 @@ impl BuildSink for GraphSink {
                 order_only_inputs,
                 validations,
                 always_dirty: edge.always_dirty,
-                deferred: (!deferred_freshness_outputs.is_empty()).then_some(PendingDeferred {
-                    outputs: deferred_freshness_outputs,
-                    always_dirty_output: edge.deferred_freshness_always_dirty,
-                    always_new_inputs: deferred_always_new_inputs,
-                }),
+                deferred,
                 completion_output: edge.completion_join.then_some(completion_output),
                 intermediate: edge.intermediate,
                 disposable: edge.disposable,
@@ -842,12 +861,13 @@ impl BuildSink for GraphSink {
         };
         match self.graph.add_edge(spec) {
             Ok(built) => {
-                if !deferred_freshness_outputs.is_empty() {
+                if let Some(deferred) = deferred {
                     self.graph.set_deferred_freshness(
                         built,
-                        &deferred_freshness_outputs,
-                        edge.deferred_freshness_always_dirty,
-                        &deferred_always_new_inputs,
+                        &deferred.outputs,
+                        deferred.always_dirty_output,
+                        &deferred.always_new_inputs,
+                        &deferred.excluded_new_inputs,
                         b"KATI_NEW_INPUTS",
                     );
                 }

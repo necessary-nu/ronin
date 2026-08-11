@@ -123,8 +123,8 @@ pub(super) struct PreparedEdge {
     pub(super) edge: EdgeId,
     pub(super) old_mtimes: Vec<i64>,
     pub(super) command: CommandSpec,
-    /// The stable command with scheduling-time environment assignments added.
-    /// Hashing and narration continue to use `command` itself.
+    /// The stable command with scheduling-time values substituted. Hashing and
+    /// narration continue to use `command` itself.
     pub(super) launch_command: BString,
     pub(super) command_start_mtime: i64,
     /// Milliseconds from the start of the build to this command's launch.

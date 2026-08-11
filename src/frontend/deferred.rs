@@ -18,15 +18,17 @@ impl BuildGraph {
     /// `outputs` are observed before prerequisite traversal and are not graph
     /// outputs of `edge`; its declared output is a private virtual completion
     /// identity. `always_new_inputs` are normal inputs that always enter the
-    /// late new-input set. The scheduler exposes that set to the command in
-    /// `new_inputs_environment` without assigning any meaning to the name.
+    /// late new-input set. `excluded_new_inputs` still affect freshness but do
+    /// not enter the published value. The scheduler substitutes that value for
+    /// `new_inputs_variable` without assigning any meaning to the name.
     pub fn set_deferred_freshness(
         &mut self,
         edge: Edge,
         outputs: &[Node],
         always_dirty_output: bool,
         always_new_inputs: &[Node],
-        new_inputs_environment: &[u8],
+        excluded_new_inputs: &[Node],
+        new_inputs_variable: &[u8],
     ) {
         self.arenas.set_deferred_freshness(
             edge.0,
@@ -34,7 +36,8 @@ impl BuildGraph {
                 outputs: outputs.iter().map(|node| node.0).collect(),
                 always_dirty_output,
                 always_new_inputs: always_new_inputs.iter().map(|node| node.0).collect(),
-                new_inputs_environment: BString::from(new_inputs_environment),
+                excluded_new_inputs: excluded_new_inputs.iter().map(|node| node.0).collect(),
+                new_inputs_variable: BString::from(new_inputs_variable),
                 activations: IdVec::new(),
             },
         );

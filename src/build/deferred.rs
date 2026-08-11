@@ -13,6 +13,40 @@ enum DeferredWork {
     Run,
 }
 
+#[derive(Clone, Copy)]
+enum NewInputsReferenceContext {
+    /// The recipe is nested in the outer shell's double-quoted `-c` argument.
+    InlineCommand,
+    /// The recipe is written directly to a response script.
+    ResponseFile,
+}
+
+fn escape_double_quoted_shell(bytes: &[u8]) -> Vec<u8> {
+    let mut escaped = Vec::with_capacity(bytes.len());
+    for byte in bytes {
+        if matches!(byte, b'"' | b'$' | b'\\' | b'`') {
+            escaped.push(b'\\');
+        }
+        escaped.push(*byte);
+    }
+    escaped
+}
+
+fn replace_all(source: &[u8], needle: &[u8], replacement: &[u8]) -> BString {
+    if needle.is_empty() || source.find(needle).is_none() {
+        return BString::from(source);
+    }
+    let mut resolved = Vec::with_capacity(source.len() + replacement.len());
+    let mut remaining = source;
+    while let Some(at) = remaining.find(needle) {
+        resolved.extend_from_slice(&remaining[..at]);
+        resolved.extend_from_slice(replacement);
+        remaining = &remaining[at + needle.len()..];
+    }
+    resolved.extend_from_slice(remaining);
+    BString::from(resolved)
+}
+
 impl Plan {
     pub(super) fn reportable_work_count(&self, graph: &Graph, runtime: &RuntimeState) -> usize {
         self.wanted
@@ -43,6 +77,7 @@ impl Builder<'_> {
             return DeferredWork::Ordinary;
         };
         let always_new = freshness.always_new_inputs.clone();
+        let excluded = freshness.excluded_new_inputs.clone();
         let activations = freshness.activations.to_vec();
         let normal_inputs = self.graph.edge(edge).non_order_only_inputs().to_vec();
         let state = self
@@ -63,10 +98,12 @@ impl Builder<'_> {
                 || always_new.contains(&input)
                 || input_state.mtime().is_missing()
                 || input_state.mtime() > baseline;
-            if is_new && seen.insert(input) {
-                new_inputs.push(input);
+            if is_new {
+                should_run = true;
+                if seen.insert(input) && !excluded.contains(&input) {
+                    new_inputs.push(input);
+                }
             }
-            should_run |= is_new;
         }
         // A dry run cannot observe the changes prerequisite commands would
         // have made. Reaching a candidate means such work was planned, so the
@@ -92,13 +129,7 @@ impl Builder<'_> {
         DeferredWork::Run
     }
 
-    pub(super) fn deferred_launch_command(&self, edge: EdgeId, command: &BString) -> BString {
-        let Some(freshness) = self.graph.deferred_freshness(edge) else {
-            return command.clone();
-        };
-        if freshness.new_inputs_environment.is_empty() {
-            return command.clone();
-        }
+    fn deferred_new_inputs_value(&self, edge: EdgeId) -> Vec<u8> {
         let mut value = Vec::new();
         if let Some(state) = self.runtime.deferred(edge) {
             for input in state.new_inputs() {
@@ -108,21 +139,45 @@ impl Builder<'_> {
                 value.extend_from_slice(self.graph.node_path(*input).as_bytes());
             }
         }
-        let mut launch = Vec::with_capacity(
-            freshness.new_inputs_environment.len() + value.len() + command.len() + 4,
-        );
-        launch.extend_from_slice(&freshness.new_inputs_environment);
-        launch.extend_from_slice(b"='");
-        for byte in value {
-            if byte == b'\'' {
-                launch.extend_from_slice(b"'\\''");
-            } else {
-                launch.push(byte);
-            }
+        value
+    }
+
+    fn resolve_deferred_new_inputs(
+        &self,
+        edge: EdgeId,
+        source: &BString,
+        context: NewInputsReferenceContext,
+    ) -> BString {
+        let Some(freshness) = self.graph.deferred_freshness(edge) else {
+            return source.clone();
+        };
+        if freshness.new_inputs_variable.is_empty() {
+            return source.clone();
         }
-        launch.extend_from_slice(b"' ");
-        launch.extend_from_slice(command);
-        BString::from(launch)
+        let mut reference = Vec::with_capacity(freshness.new_inputs_variable.len() + 3);
+        reference.extend_from_slice(b"${");
+        reference.extend_from_slice(&freshness.new_inputs_variable);
+        reference.push(b'}');
+        let value = self.deferred_new_inputs_value(edge);
+        match context {
+            NewInputsReferenceContext::InlineCommand => {
+                reference.insert(0, b'\\');
+                replace_all(source, &reference, &escape_double_quoted_shell(&value))
+            }
+            NewInputsReferenceContext::ResponseFile => replace_all(source, &reference, &value),
+        }
+    }
+
+    pub(super) fn deferred_launch_command(&self, edge: EdgeId, command: &BString) -> BString {
+        self.resolve_deferred_new_inputs(edge, command, NewInputsReferenceContext::InlineCommand)
+    }
+
+    pub(super) fn deferred_response_file_content(
+        &self,
+        edge: EdgeId,
+        content: &BString,
+    ) -> BString {
+        self.resolve_deferred_new_inputs(edge, content, NewInputsReferenceContext::ResponseFile)
     }
 
     fn finish_deferred_without_command(
