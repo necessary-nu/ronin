@@ -33,7 +33,7 @@ pub(super) fn no_makefile() -> RunResult {
 /// Kati identifies Makefile locations correctly, but its standalone reporter
 /// decorates fatal messages with GNU Make's recursive prefix, stars, and
 /// `Stop.` suffix. Those are runner narration, not compiler information.
-// [spec:ronin:req:make.narration]
+// [spec:ronin:req:make.narration+1]
 pub(super) fn ordinary_diagnostic(failure: impl Display) -> Vec<u8> {
     let mut diagnostic = failure.to_string();
     if let Some(rest) = diagnostic.strip_prefix(PRODUCT_NAME).and_then(|rest| {
@@ -98,7 +98,7 @@ pub(super) fn answered(reported: String, question: Result<bool, Error>) -> RunRe
 /// summary. Exit-status translation remains isolated here until the Make
 /// executor boundary is retired.
 ///
-// [spec:ronin:req:make.narration]
+// [spec:ronin:req:make.narration+1]
 pub(super) fn finished(
     reported: String,
     up_to_date: bool,

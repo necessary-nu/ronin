@@ -343,10 +343,10 @@ fn public_api_builds_a_makefile_through_ronins_scheduler() {
     assert_eq!(outcome.stopped(), None);
     assert_eq!(outcome.exit_code(), 0);
     assert_eq!(std::fs::read(directory.join("out")).unwrap(), b"source\n");
-    // A recipe that says nothing about itself gets kati's default description,
-    // and the direct graph expands the `$out` in it against the edge.
+    // A recipe that gives no description is narrated by its expanded command,
+    // rather than hidden behind a synthetic `build $out` description.
     assert!(
-        String::from_utf8_lossy(&streamed).contains(&format!("build {}", at("out"))),
+        String::from_utf8_lossy(&streamed).contains(&format!("cp {} {}", at("mid"), at("out"))),
         "{}",
         String::from_utf8_lossy(&streamed)
     );

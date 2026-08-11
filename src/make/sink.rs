@@ -37,9 +37,9 @@ struct Bindings {
     pool: Binding,
     tags: Binding,
     ignore_errors: Binding,
-    /// `$out`, for the two bindings whose value is per edge rather than per
-    /// rule. kati mints one rule per edge, so this expands to that edge's own
-    /// single output.
+    /// `$out`, used to name a response file per edge rather than per rule.
+    /// kati mints one rule per edge, so this expands to that edge's own single
+    /// output.
     out: Binding,
 }
 
@@ -692,20 +692,18 @@ impl GraphSink {
         command: SinkCommand<'_>,
         ignore_errors: bool,
     ) -> Vec<(Binding, Template)> {
+        let description = rule.description.or(match command {
+            SinkCommand::Inline(script) => Some(script),
+            SinkCommand::ResponseFile(_) => None,
+        });
         let mut bindings = self.command_bindings(rule.shell, rule.shell_flags, command);
-        bindings.push((
-            self.bindings.description,
-            rule.description.map_or_else(
-                // What a build prints when the Makefile did not say. The
-                // manifest writer picks the same thing, in the same terms.
-                || {
-                    let mut default = Template::literal(b"build ");
-                    default.push_variable(self.bindings.out);
-                    default
-                },
-                Template::literal,
-            ),
-        ));
+        // [spec:ronin:req:make.narration+1]
+        // Prefer what the Makefile said. Otherwise narrate a short inline
+        // recipe with its own expanded text, without exposing the environment
+        // and shell wrapper needed to execute it.
+        if let Some(description) = description {
+            bindings.push((self.bindings.description, Template::literal(description)));
+        }
         if let Some(depfile) = rule.depfile {
             bindings.push((
                 self.bindings.depfile,

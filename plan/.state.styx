@@ -650,4 +650,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
     )}
+    {id make-recipe-command-narration, covered_rules (
+        make.narration
+    ), covered_claims (
+        {impl_name target-impl, rule make.narration}
+    )}
 )

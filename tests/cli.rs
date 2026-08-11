@@ -1092,7 +1092,7 @@ fn make_mode_assigns_what_a_shell_command_printed() {
 /// A variable name is one word, so `x y = 1` is not an assignment at all and
 /// the line is read as a rule, which has no separator.
 // [spec:ronin:req:make.semantics+1/test]
-// [spec:ronin:req:make.narration/test]
+// [spec:ronin:req:make.narration+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
@@ -2227,7 +2227,7 @@ fn assigned_makeflags_control_build_and_children() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.narration/test]
+// [spec:ronin:req:make.narration+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_synchronizes_each_target_output() {
@@ -2594,7 +2594,7 @@ fn no_builtin_rules_withdraws_the_rules_nobody_wrote() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.narration/test]
+// [spec:ronin:req:make.narration+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_narration_flags_are_accepted_noops() {
@@ -2628,6 +2628,32 @@ fn make_narration_flags_are_accepted_noops() {
             assert!(!said.contains(make_only), "{arguments:?}: {said}");
         }
     }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.narration+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_narrates_recipe_command() {
+    let directory = make_case(
+        "make-recipe-command-narration",
+        "out:\n\
+         \t@printf '%s\\n' payload > $@\n\
+         install: out\n\
+         \t@cp out installed\n\
+         .PHONY: install\n",
+    );
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-j1")
+        .arg("install")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert_eq!(
+        stdout,
+        "[1/2] printf '%s\\n' payload > out\n[2/2] cp out installed\n"
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -3139,7 +3165,7 @@ fn make_reference_as_data_stays_recipe() {
 
 /// A composed child uses the same Ninja narrator as every other edge; there is
 /// no recursive Make reporter left to install directory banners around it.
-// [spec:ronin:req:make.narration/test]
+// [spec:ronin:req:make.narration+1/test]
 // [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -3357,7 +3383,7 @@ fn child_jobs_keep_one_scheduler() {
 }
 
 /// A Makefile-compiled graph fails in the same shape as a manifest graph.
-// [spec:ronin:req:make.narration/test]
+// [spec:ronin:req:make.narration+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_recipe_failure_uses_ninja_narration() {
@@ -3390,7 +3416,7 @@ fn make_recipe_failure_uses_ninja_narration() {
 /// Three shapes, each of which used to reach the user as a bare `io::Error`
 /// and nothing else — `Permission denied (os error 13)`, with no path, no
 /// line, and Rust's spelling of an errno that neither front end uses.
-// [spec:ronin:req:make.narration/test]
+// [spec:ronin:req:make.narration+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_io_failures_name_their_source() {
@@ -3460,7 +3486,7 @@ fn make_io_failures_name_their_source() {
 
 /// Compiler diagnostics keep their Makefile source without borrowing GNU
 /// Make's fatal-error decorations.
-// [spec:ronin:req:make.narration/test]
+// [spec:ronin:req:make.narration+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_evaluation_uses_ordinary_diagnostics() {

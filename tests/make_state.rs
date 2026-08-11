@@ -114,8 +114,7 @@ fn state_preserves_deps_and_hashes() {
     )
     .unwrap();
     let after_command = fixture.build_in(&tree, &[]);
-    assert!(after_command.contains("app"), "{after_command}");
-    assert!(!after_command.contains("main.o"), "{after_command}");
+    assert_eq!(after_command, "[1/1] cc -o app main.o && true\n");
     assert!(fixture.build_in(&tree, &[]).contains("no work to do"));
 }
 

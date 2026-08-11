@@ -106,13 +106,16 @@ manifest-derived graph is.
 > rather than the build outcome `compatibility.md` governs, because no build is
 > run to have a status of its own.
 
-> [spec:ronin:req:make.narration]
+> [spec:ronin:req:make.narration+1]
 > A Makefile becomes a Ninja graph, and a Ninja graph is narrated Ninja's way.
 > Make mode reports progress, failures and diagnostics in the same shape as
 > the manifest front end, rather than reproducing GNU Make's wording. This is
 > a product decision and not a gap: GNU Make's own test suite compares output
 > byte for byte, so it is read for what a Makefile evaluated to rather than
-> for how the build was announced. See `make-upstream-suite`.
+> for how the build was announced. When an ordinary inline recipe supplies no
+> description, its compiled rule uses the expanded recipe text instead of
+> synthesizing a generic `build` description, so the shared reporter names the
+> action that actually runs. See `make-upstream-suite`.
 
 > [spec:ronin:req:make.recursive-invocation+1]
 > A recursive invocation through `$(MAKE)` compiles as `subninja`. Kati

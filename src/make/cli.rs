@@ -1245,7 +1245,7 @@ fn record_invocation(session: &mut Session, name: &'static str, value: String) {
 }
 
 /// The scheduler settings this invocation maps onto Ninja's controls.
-// [spec:ronin:req:make.narration]
+// [spec:ronin:req:make.narration+1]
 // [spec:ronin:req:make.jobserver+1]
 fn build_options(
     invocation: &Invocation,
@@ -1530,7 +1530,7 @@ fn build_compiler_inputs(
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.recursive-invocation+1]
-// [spec:ronin:req:make.narration]
+// [spec:ronin:req:make.narration+1]
 pub(crate) fn run(
     runner: &Runner,
     arguments: &[BString],

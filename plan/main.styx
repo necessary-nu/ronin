@@ -6459,6 +6459,22 @@ children (
                                 kind @note
                                 text "Removed Make directory banners, recursive prefixes, debug/trace narration, output-sync grouping, forced-jobserver warnings, per-recipe Make failure lines, intermediate-file rm narration, and fatal `***`/`Stop.` decoration from the Make front end. Make-only narration flags remain accepted and propagated as interface no-ops. Makefile evaluation retains source locations through Ronin's ordinary diagnostic prefix; compiled graph progress and failures use the common Ninja reporter. Verified by the full all-feature test suite and strict all-target Clippy."
                             }
+
+                            {
+                                at 2026-08-11T20:58:06.099013955Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "The shared Ninja reporter landed, but kati's manifest writer and the direct GraphSink both synthesized `description = build $out` when the Makefile supplied no description. That is not required by make.narration and hides the actual recipe behind the generic verb `build`, including install actions. Follow-up: make-recipe-command-narration removes the synthetic description from both graph-construction paths so Ninja's ordinary command fallback is used."
+                                after_done true
+                            }
+
+                            {
+                                at 2026-08-11T21:14:12.344690677Z
+                                author "brendan@necessary.nu"
+                                kind @errata
+                                text "Correction to the preceding errata's proposed mechanism: leaving the description absent exposed Ronin's internal `env ... /bin/sh -c` executor wrapper. The follow-up therefore uses the expanded inline recipe itself as the generated description. It still removes `build $out`; only the compact oversized response-file path uses the reporter's no-description fallback."
+                                after_done true
+                            }
                         )
                     }
 
@@ -6524,6 +6540,38 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "Completed the replacement gate around build intent rather than Make runner parity. make_port now invokes the exact Ronin binary Cargo built, normalises outcomes to success/failure, and compares selected filesystem effects across 51 GNU Make-recorded cases. Thirteen fixtures that assert GNU Make timestamp/log rules, recursive MAKEFLAGS choreography, or the execution effects of accepted no-op flags are explicitly retained as discovery-only instead of being allowed to pass accidentally. The direct-vs-emitted graph oracle now covers all 296 Kati makefiles, compares ignore-error recipes by semantic property across their in-memory-binding and manifest-wrapper encodings, and verifies recursive recipes were held for subninja composition while excluding the obsolete emitted wrapper edge. Its process-cwd mutation is isolated as an exact ignored test and wired into scripts/check-release.sh. Exact stdout/stderr/status inventory remains discovery-only and no longer claims make.semantics coverage. All v1 build-intent refs are fresh. Verified full workspace/all-target tests, focused release graph equivalence, nplan check, all-feature check, strict all-feature Clippy, clean lint/comments/audit, spec validation, and zero stale refs."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-recipe-command-narration
+                        title "Show the recipe command when a Makefile provides no description"
+                        kind @fix
+                        implements {
+                            target-impl ([spec:ronin:req:make.narration+1])
+                        }
+                        deps (make-ninja-narration)
+                        log (
+                            {
+                                at 2026-08-11T20:58:32.940404716Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-11T21:13:23.875010475Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "A missing Makefile-authored description is compiled as the expanded inline recipe text, not as `build $out` and not as Ronin's internal `env ... /bin/sh -c` executor wrapper. An explicit description still wins. Oversized response-file scripts remain undescribed so the reporter falls back to the compact response-file command rather than printing more than 100 KiB of recipe text. The direct GraphSink and retained NinjaWriter implement the same rule."
+                            }
+
+                            {
+                                at 2026-08-11T21:17:19.883440761Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Delivery evidence: the exact CLI regression reports `[1/2] printf '%s\\\\n' payload > out` and `[2/2] cp out installed`, with no generic `build` label and no internal MAKELEVEL/shell wrapper. Kati's full Rust suite passed (101 library tests plus 5 no-globals tests); Ronin's workspace Clippy, workspace tests, graph-equivalence suite (297 Makefiles, 276 comparable graphs, zero disagreements), Make conformance suite (387 runs), and full pinned Ninja conformance suite (425 upstream tests plus differential, outcome, invocation, persistence, and log-content gates) passed. The reproducible upstream inventory is 519 unclassified, 68 compiler, 103 interface, and 616 narration rows."
                             }
                         )
                     }
@@ -7108,6 +7156,13 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @decision
                                 text "The bounded upstream snapshot advances after make-output-sync-feature-advertisement makes GNU Make's 17-case features/output-sync category reachable. Supersede the earlier counts with the versioned 1,368-row inventory: 526 unclassified, 69 compiler candidates, 171 interface observations, and 602 narration observations. Triage owns the ten new unclassified rows and the new no-rule-to-make compiler candidate; the six newly explicit narration rows require no implementation leaf under make.narration."
+                            }
+
+                            {
+                                at 2026-08-11T21:13:23.79749243Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Re-ran the pinned GNU Make 4.4.1 discovery suite after inline recipes became their own descriptions. The versioned inventory remains 1,306 rows, but three targets/WAIT rows (diff, diff.1, diff.2) are now provably narration-only instead of unclassified evaluation/failure candidates: the visible recipe establishes that their selected work agrees. Counts move from 522 unclassified / 68 compiler / 103 interface / 613 narration to 519 / 68 / 103 / 616. options/dash-B.diff.7 and variables/automatic.diff.7 remain unclassified; only their runner facet changed from ninja-progress to no-work-line. No new compiler or interface leaf is warranted."
                             }
                         )
                     }
