@@ -7980,6 +7980,13 @@ children (
                         kind @note
                         text "Implemented a staged compiler-input boundary using HashSet<EvaluationBoundary>: parent prerequisites run through a provisional Ronin graph before child evaluation, consecutive child groups do the same, and their completed subgraphs become commandless phony closures in the final graph so recipes execute once. The reported wildcard regression and consecutive-child wildcard regression each pass 8 times at -j16. Workspace tests, strict Ronin Clippy, 297-file/276-graph equivalence with zero disagreements, and the 387-run GNU Make 4.4.1 conformance gate pass. Necessary OS kernel-header packaging and compiler-rt@seed remain the completion gate."
                     }
+
+                    {
+                        at 2026-08-11T19:40:26.489791673Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Nested recursive-prerequisite regression and Linux header-tree check pass; clean Necessary compiler-rt DoD remains pending."
+                    }
                 )
             }
         )

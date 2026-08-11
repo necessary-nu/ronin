@@ -393,6 +393,17 @@ fatal error: 'asm/param.h' file not found
 /sysroot/usr/include/linux/ioctl.h:5:10: fatal error: 'asm/ioctl.h' file not found
 ```
 
+The first staged-evaluation implementation, revision
+`d97cca14878274b5d5d084ab22a812844adf7a00`, exposed a nested form of the same
+boundary in clean Necessary OS run `1786476396058-1334673`. The outer
+`headers` target needs `scripts_unifdef`, which is itself a held recursive Make
+target. Kati's target walk presented `headers` before the held producer edge,
+so the provisional graph requested `scripts_unifdef` before that edge had been
+composed and stopped with `scripts_unifdef missing and no known rule to make
+it`. A reduced nested-recursion regression reproduced the failure as a missing
+`generate` prerequisite. Held recursive edges must therefore be composed in
+stable dependency order as well as staged across their execution boundaries.
+
 Acceptance: the reduced case MUST create `installed/value.h` repeatedly with
 `-j16`; a clean Linux headers build MUST package every generated x86 UAPI
 wrapper, including the three files above; and Necessary OS MUST advance past

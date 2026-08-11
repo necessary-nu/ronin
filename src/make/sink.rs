@@ -87,6 +87,14 @@ pub(crate) struct PendingSubninja {
 }
 
 impl PendingSubninja {
+    /// Target nodes whose held recursive edge this pending unit will produce.
+    pub(crate) fn outputs(&self) -> impl Iterator<Item = Node> + '_ {
+        self.explicit_outputs
+            .iter()
+            .chain(&self.implicit_outputs)
+            .copied()
+    }
+
     /// Prerequisites GNU Make settles before it starts this recursive recipe.
     pub(crate) fn evaluation_inputs(&self) -> Vec<Node> {
         self.inputs

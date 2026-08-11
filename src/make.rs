@@ -50,7 +50,7 @@ use crate::make::sink::{UnitOutput, UnitSubgraph};
 use kati::evaluate::{Evaluated, evaluate};
 use kati::ninja::emit_build;
 use kati::session::Session;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::error;
 use std::ffi::OsString;
 use std::fmt;
@@ -403,7 +403,7 @@ where
         edges,
     } = unit;
     let mut subtree_edges = edges;
-    for (pending_index, pending) in subninjas.into_iter().enumerate() {
+    for (pending_index, pending) in dependency_ordered(subninjas).into_iter().enumerate() {
         let parent_inputs = pending.evaluation_inputs();
         if !parent_inputs.is_empty() {
             let boundary = evaluation_boundary(
@@ -492,6 +492,56 @@ where
         },
         complete: true,
     })
+}
+
+/// Put held recursive edges before any held edge that needs their outputs.
+///
+/// Kati emits recursive edges in target walk order, which is not necessarily
+/// prerequisite order. A provisional compiler graph must nevertheless be able
+/// to build a recursive target used as another recursive target's evaluation
+/// input. Stable topological order makes that producer available first; Make's
+/// ordinary cycle diagnostics remain responsible for a cyclic remainder.
+fn dependency_ordered(subninjas: Vec<sink::PendingSubninja>) -> Vec<sink::PendingSubninja> {
+    let mut producers = HashMap::new();
+    for (index, pending) in subninjas.iter().enumerate() {
+        for output in pending.outputs() {
+            producers.insert(output, index);
+        }
+    }
+
+    let mut predecessor_counts = vec![0usize; subninjas.len()];
+    let mut successors = vec![Vec::new(); subninjas.len()];
+    for (consumer, pending) in subninjas.iter().enumerate() {
+        let mut predecessors = HashSet::new();
+        for input in pending.evaluation_inputs() {
+            let Some(&producer) = producers.get(&input) else {
+                continue;
+            };
+            if producer != consumer && predecessors.insert(producer) {
+                predecessor_counts[consumer] += 1;
+                successors[producer].push(consumer);
+            }
+        }
+    }
+
+    let mut ready = predecessor_counts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, count)| (*count == 0).then_some(index))
+        .collect::<BTreeSet<_>>();
+    let mut pending = subninjas.into_iter().map(Some).collect::<Vec<_>>();
+    let mut ordered = Vec::with_capacity(pending.len());
+    while let Some(index) = ready.pop_first() {
+        ordered.push(pending[index].take().expect("ready pending edge exists"));
+        for successor in &successors[index] {
+            predecessor_counts[*successor] -= 1;
+            if predecessor_counts[*successor] == 0 {
+                ready.insert(*successor);
+            }
+        }
+    }
+    ordered.extend(pending.into_iter().flatten());
+    ordered
 }
 
 fn evaluation_boundary(

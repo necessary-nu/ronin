@@ -2850,6 +2850,59 @@ fn recursive_evaluation_waits_for_parent_inputs() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn nested_recursive_evaluation_boundary() {
+    let directory = test_directory("make-recursive-evaluation-nested-boundary");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: generate\n\
+         \t+$(MAKE) -f consumer.mk consume\n\
+         generate: prepare\n\
+         \t+$(MAKE) -f generator.mk generate\n\
+         prepare:\n\
+         \t@touch ready\n\
+         .PHONY: all generate prepare\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("generator.mk"),
+        "generate:\n\
+         \t@test -e ready\n\
+         \t@mkdir -p generated\n\
+         \t@printf '#define GENERATED 1\\n' > generated/value.h\n\
+         .PHONY: generate\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("consumer.mk"),
+        "HEADERS := $(wildcard generated/*.h)\n\
+         OUTPUTS := $(patsubst generated/%,installed/%,$(HEADERS))\n\
+         consume: $(OUTPUTS)\n\
+         installed/%: generated/%\n\
+         \t@mkdir -p installed\n\
+         \t@cp $< $@\n\
+         .PHONY: consume\n",
+    )
+    .unwrap();
+
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-j16")
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("installed/value.h")).unwrap(),
+        "#define GENERATED 1\n",
+        "{reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 // [spec:ronin:req:make.semantics+1/test]
 // [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]
