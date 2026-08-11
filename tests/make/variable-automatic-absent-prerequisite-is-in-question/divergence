@@ -1,1 +1,1 @@
-Ronin refuses an absent prerequisite whose rule leaves the target current instead of exposing it through $?; no dedicated WBS node yet.
+Ronin refuses an absent prerequisite whose rule leaves the target current instead of exposing it through $?; make-newer-prerequisite-automatic-variable.

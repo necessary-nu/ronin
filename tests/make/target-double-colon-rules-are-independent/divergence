@@ -1,1 +1,1 @@
-Kati combines double-colon rules instead of testing each rule against its own prerequisites; no dedicated WBS node yet.
+Kati combines double-colon rules instead of testing each rule against its own prerequisites; make-double-colon-rule-freshness.

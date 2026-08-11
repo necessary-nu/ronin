@@ -1,1 +1,1 @@
-Kati does not install GNU Make's POSIX built-in variable defaults; no dedicated WBS node yet.
+Kati does not install GNU Make's POSIX built-in variable defaults; make-builtin-variable-defaults.

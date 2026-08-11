@@ -1,1 +1,1 @@
-Kati does not expose the selected goal through .DEFAULT_GOAL; no dedicated WBS node yet.
+Kati does not expose the selected goal through .DEFAULT_GOAL; make-default-goal-variable-semantics.

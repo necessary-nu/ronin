@@ -1,1 +1,1 @@
-Kati neither rebuilds the included makefile nor exposes MAKE_RESTARTS; make-include-semantics.
+Kati neither rebuilds the included makefile nor exposes MAKE_RESTARTS; make-included-makefile-restarts.

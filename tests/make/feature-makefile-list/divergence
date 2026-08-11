@@ -1,1 +1,1 @@
-Kati prefixes MAKEFILE_LIST with an empty entry; no dedicated WBS node yet.
+Kati prefixes MAKEFILE_LIST with an empty entry; make-makefile-list-initialization.

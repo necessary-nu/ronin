@@ -6666,34 +6666,6 @@ children (
             }
 
             {
-                id make-makefile-set-makeflags
-                title "Decode a MAKEFLAGS a makefile assigns into the switches it names"
-                kind @fix
-                log (
-                    {
-                        at 2026-08-09T19:50:25.822176379Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "Measured on make-makeflags-residue-classification, 2026-08-09, against GNU Make 4.4.1 (/usr/bin/make). Found by naming the MAKEFLAGS share of the upstream residue; not fixed there because that node's subject was the classifier.\n\nA makefile that assigns MAKEFLAGS is writing to a switch table, not to a string. GNU Make re-reads the variable after each makefile and decodes the value back through decode_env_switches, then re-renders MAKEFLAGS from the table (define_makeflags, main.c). Ronin stores the literal text, acts on none of it, and renders nothing.\n\nTHREE CONSEQUENCES, each reproduced on its own.\n\n1. The switches never take effect. This is the build-outcome one.\n\n     MAKEFLAGS=-k\n     all: one two\n     one:; @false\n     two:; @echo TWO-RAN\n\n   GNU Make:  `make: *** [d1.mk:3: one] Error 1` / `TWO-RAN` /\n              `make: Target 'all' not remade because of errors.`   rc=2\n   Ronin:     `FAILED: [code=1] one` / `ronin: build stopped: subcommand failed.`   rc=2\n\n   Same status, different work: `two` is never built. -k asked for it. Reproduce this one through the build-intent gate — it is selected work, not narration.\n\n2. A plain assignment discards what the environment and the command line put there. Makefile `MAKEFLAGS=-w`, value read with `$(info $(MAKEFLAGS))`:\n\n     nothing else                GNU `w`                    Ronin `-w`\n     env MAKEFLAGS=-S            GNU `Sw`                   Ronin `-w`\n     command line `hello=world`  GNU `w -- hello=world`     Ronin `-w`\n\n   The `-- hello=world` half is MAKEOVERRIDES, which is how a command-line variable reaches a deeper unit, so this one is graph-affecting and not only spelling.\n\n3. `+=` appends text rather than adding a switch, so nothing is re-rendered and contradicting switches from different origins are never resolved. Makefile `MAKEFLAGS+=--no-print-directory` then `MAKEFLAGS+=-k`, command line `FOO=bar -r -R hello:=world`:\n\n     GNU    `rR --no-print-directory -- hello:=world FOO=bar`\n            then `krR --no-print-directory -- hello:=world FOO=bar`\n     Ronin  `rR -- hello:=world FOO=bar --no-print-directory`\n            then the same with ` -k` on the end\n\n   And with env `MAKEFLAGS=-w` against makefile `MAKEFLAGS+=--no-print-directory`: GNU renders `w`, because the environment beats the makefile (sv 63537); Ronin renders `w --no-print-directory` and so says two opposite things at once.\n\nWHERE IT LANDS\n`record_invocation_variables` in src/make/cli.rs removes the inherited MAKEFLAGS binding so kati can install its own file-origin recursive one, and nothing then reads back what the makefile assigns to it. `make-switch-precedence`'s closing note already carved out the neighbouring question — \"$(MAKEFLAGS) read inside a sub-make's own makefile still reports the parent's raw value, not the merge\" — and names the same two mechanisms (record_invocation's guard, and kati's read_invocation_state importing the process environment during evaluate). This is the other half of it: not what a parent hands down, but what the makefile itself writes.\n\nUPSTREAM SUITE\n28 of the 65 cases still unclassified in variables/MAKEFLAGS after the classifier fix are the -k/-S matrix at tests/scripts/variables/MAKEFLAGS:605-719, which is (1). The suite also asserts (2) and (3) throughout MAKEFLAGS:290-338 and :445-529; those land in makeflags-content, which is an interface observation and not by itself a defect claim."
-                    }
-                )
-            }
-
-            {
-                id make-makeflags-in-recipe-environment
-                title "Give a recipe the MAKEFLAGS and MFLAGS GNU Make gives it"
-                kind @fix
-                log (
-                    {
-                        at 2026-08-09T19:50:38.792405765Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "Measured on make-makeflags-residue-classification, 2026-08-09, against GNU Make 4.4.1 (/usr/bin/make).\n\n  all:; @echo \"MAKEFLAGS=[$$MAKEFLAGS] MFLAGS=[$$MFLAGS] MAKELEVEL=[$$MAKELEVEL]\"\n\n    invocation          GNU Make 4.4.1                              Ronin\n    (none)              MAKEFLAGS=[] MFLAGS=[] MAKELEVEL=[1]        identical\n    -k V=1              MAKEFLAGS=[k -- V=1] MFLAGS=[-k]            MAKEFLAGS=[] MFLAGS=[]\n    env MAKEFLAGS=-r    MAKEFLAGS=[r] MFLAGS=[-r]                   MAKEFLAGS=[-r] MFLAGS=[]\n    -j2 -k V=1          MAKEFLAGS=[k -j2 --jobserver-auth=fifo:… -- V=1]\n                        MFLAGS=[-k -j2 --jobserver-auth=fifo:…]     MAKEFLAGS=[] MFLAGS=[]\n\nMAKELEVEL agrees everywhere; the other two agree only when there is nothing to say. Three differences: the invocation's own switches never reach the recipe, an inherited value is passed through raw rather than re-rendered (`-r` where GNU writes `r`), and MFLAGS is never set at all.\n\nMECHANISM\n`compilation_context` in src/make/cli.rs builds `recipe_environment` from MAKELEVEL alone. MAKEFLAGS and MFLAGS reach a recipe only through `publication_of` in src/jobserver.rs, which carries the budget words for a jobserver client and nothing else — and the -j2 row above shows that path did not fire here either. `compiler_flag_variables` already renders exactly the string that is wanted: it is what the makefile is told and what a semantic child is handed. It is simply not put in the recipe's environment.\n\nWHY IT MATTERS BEYOND SPELLING\nThis is the value a nested tool reads. libtool, cmake, autotools sub-builds and the kernel's scripts branch on `$MAKEFLAGS` from the environment rather than on `$(MAKEFLAGS)`, and a recipe that shells out to one of them is told nothing about -k, -n, -s or the command-line variables. `make-export-to-recipes`'s opening note assumed MAKELEVEL, MAKEFLAGS and MFLAGS were all literals already in BuildOptions::environment; only MAKELEVEL is.\n\nUPSTREAM SUITE\nExercised at tests/scripts/variables/MAKEFLAGS:54 (`\"\\$$MAKEFLAGS=$$MAKEFLAGS\"`) and :158 (`XX := $(shell echo \"$$MAKEFLAGS\")`). Both now land in makeflags-content, which is an interface observation; this node is the defect claim behind that share of it, and wants a focused reproducer on what a nested tool does differently rather than on the bytes."
-                    }
-                )
-            }
-
-            {
                 id make-pattern-rule-candidate-identity
                 title "Preserve pattern-rule candidate identity through selection"
                 kind @fix
@@ -6926,21 +6898,6 @@ children (
             }
 
             {
-                id make-pattern-variable-assignment-scope
-                title "Expand pattern-specific assignment values in ambient scope"
-                kind @fix
-                deps (make-target-specific-separator-provenance)
-                log (
-                    {
-                        at 2026-08-10T11:05:45.875216748Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "Inherited reproducer confirmed during separator-provenance review: `%.o: N=P` followed by `%.o: X := $(N)` and a pattern recipe prints X. GNU Make 4.4.1 expands the pattern-specific value in ambient scope and prints empty; Kati sets current_scope to the pattern rule_vars scope before eval_rhs and prints P. Base 8d4ecbd already has this loop behavior. The provenance correction keeps pattern-specific name expansion ambient, as GNU does, and changes only concrete target names to expand per file scope; RHS scope remains this separate defect."
-                    }
-                )
-            }
-
-            {
                 id make-rule-file-sequence-escaped-whitespace
                 title "Unquote escaped whitespace while scanning rule file names"
                 kind @fix
@@ -6981,6 +6938,731 @@ children (
                         kind @decision
                         text "The delivered vendored implementation is Kati commit 27b868fec2e007f546e0f85b1ac8288797b258c1, atop separator-provenance correction 3fd635b and rebased original 75a27df."
                         after_done true
+                    }
+                )
+            }
+
+            {
+                id make-compatibility-gap-closure
+                title "Close known GNU Make build-intent and interface gaps"
+                kind @fix
+                children (
+                    {
+                        id make-makefile-set-makeflags
+                        title "Decode a MAKEFLAGS a makefile assigns into the switches it names"
+                        kind @fix
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-09T19:50:25.822176379Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Measured on make-makeflags-residue-classification, 2026-08-09, against GNU Make 4.4.1 (/usr/bin/make). Found by naming the MAKEFLAGS share of the upstream residue; not fixed there because that node's subject was the classifier.\n\nA makefile that assigns MAKEFLAGS is writing to a switch table, not to a string. GNU Make re-reads the variable after each makefile and decodes the value back through decode_env_switches, then re-renders MAKEFLAGS from the table (define_makeflags, main.c). Ronin stores the literal text, acts on none of it, and renders nothing.\n\nTHREE CONSEQUENCES, each reproduced on its own.\n\n1. The switches never take effect. This is the build-outcome one.\n\n     MAKEFLAGS=-k\n     all: one two\n     one:; @false\n     two:; @echo TWO-RAN\n\n   GNU Make:  `make: *** [d1.mk:3: one] Error 1` / `TWO-RAN` /\n              `make: Target 'all' not remade because of errors.`   rc=2\n   Ronin:     `FAILED: [code=1] one` / `ronin: build stopped: subcommand failed.`   rc=2\n\n   Same status, different work: `two` is never built. -k asked for it. Reproduce this one through the build-intent gate — it is selected work, not narration.\n\n2. A plain assignment discards what the environment and the command line put there. Makefile `MAKEFLAGS=-w`, value read with `$(info $(MAKEFLAGS))`:\n\n     nothing else                GNU `w`                    Ronin `-w`\n     env MAKEFLAGS=-S            GNU `Sw`                   Ronin `-w`\n     command line `hello=world`  GNU `w -- hello=world`     Ronin `-w`\n\n   The `-- hello=world` half is MAKEOVERRIDES, which is how a command-line variable reaches a deeper unit, so this one is graph-affecting and not only spelling.\n\n3. `+=` appends text rather than adding a switch, so nothing is re-rendered and contradicting switches from different origins are never resolved. Makefile `MAKEFLAGS+=--no-print-directory` then `MAKEFLAGS+=-k`, command line `FOO=bar -r -R hello:=world`:\n\n     GNU    `rR --no-print-directory -- hello:=world FOO=bar`\n            then `krR --no-print-directory -- hello:=world FOO=bar`\n     Ronin  `rR -- hello:=world FOO=bar --no-print-directory`\n            then the same with ` -k` on the end\n\n   And with env `MAKEFLAGS=-w` against makefile `MAKEFLAGS+=--no-print-directory`: GNU renders `w`, because the environment beats the makefile (sv 63537); Ronin renders `w --no-print-directory` and so says two opposite things at once.\n\nWHERE IT LANDS\n`record_invocation_variables` in src/make/cli.rs removes the inherited MAKEFLAGS binding so kati can install its own file-origin recursive one, and nothing then reads back what the makefile assigns to it. `make-switch-precedence`'s closing note already carved out the neighbouring question — \"$(MAKEFLAGS) read inside a sub-make's own makefile still reports the parent's raw value, not the merge\" — and names the same two mechanisms (record_invocation's guard, and kati's read_invocation_state importing the process environment during evaluate). This is the other half of it: not what a parent hands down, but what the makefile itself writes.\n\nUPSTREAM SUITE\n28 of the 65 cases still unclassified in variables/MAKEFLAGS after the classifier fix are the -k/-S matrix at tests/scripts/variables/MAKEFLAGS:605-719, which is (1). The suite also asserts (2) and (3) throughout MAKEFLAGS:290-338 and :445-529; those land in makeflags-content, which is an interface observation and not by itself a defect claim."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:01.11937585Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-makeflags-in-recipe-environment
+                        title "Give a recipe the MAKEFLAGS and MFLAGS GNU Make gives it"
+                        kind @fix
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-09T19:50:38.792405765Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Measured on make-makeflags-residue-classification, 2026-08-09, against GNU Make 4.4.1 (/usr/bin/make).\n\n  all:; @echo \"MAKEFLAGS=[$$MAKEFLAGS] MFLAGS=[$$MFLAGS] MAKELEVEL=[$$MAKELEVEL]\"\n\n    invocation          GNU Make 4.4.1                              Ronin\n    (none)              MAKEFLAGS=[] MFLAGS=[] MAKELEVEL=[1]        identical\n    -k V=1              MAKEFLAGS=[k -- V=1] MFLAGS=[-k]            MAKEFLAGS=[] MFLAGS=[]\n    env MAKEFLAGS=-r    MAKEFLAGS=[r] MFLAGS=[-r]                   MAKEFLAGS=[-r] MFLAGS=[]\n    -j2 -k V=1          MAKEFLAGS=[k -j2 --jobserver-auth=fifo:… -- V=1]\n                        MFLAGS=[-k -j2 --jobserver-auth=fifo:…]     MAKEFLAGS=[] MFLAGS=[]\n\nMAKELEVEL agrees everywhere; the other two agree only when there is nothing to say. Three differences: the invocation's own switches never reach the recipe, an inherited value is passed through raw rather than re-rendered (`-r` where GNU writes `r`), and MFLAGS is never set at all.\n\nMECHANISM\n`compilation_context` in src/make/cli.rs builds `recipe_environment` from MAKELEVEL alone. MAKEFLAGS and MFLAGS reach a recipe only through `publication_of` in src/jobserver.rs, which carries the budget words for a jobserver client and nothing else — and the -j2 row above shows that path did not fire here either. `compiler_flag_variables` already renders exactly the string that is wanted: it is what the makefile is told and what a semantic child is handed. It is simply not put in the recipe's environment.\n\nWHY IT MATTERS BEYOND SPELLING\nThis is the value a nested tool reads. libtool, cmake, autotools sub-builds and the kernel's scripts branch on `$MAKEFLAGS` from the environment rather than on `$(MAKEFLAGS)`, and a recipe that shells out to one of them is told nothing about -k, -n, -s or the command-line variables. `make-export-to-recipes`'s opening note assumed MAKELEVEL, MAKEFLAGS and MFLAGS were all literals already in BuildOptions::environment; only MAKELEVEL is.\n\nUPSTREAM SUITE\nExercised at tests/scripts/variables/MAKEFLAGS:54 (`\"\\$$MAKEFLAGS=$$MAKEFLAGS\"`) and :158 (`XX := $(shell echo \"$$MAKEFLAGS\")`). Both now land in makeflags-content, which is an interface observation; this node is the defect claim behind that share of it, and wants a focused reproducer on what a nested tool does differently rather than on the bytes."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:01.269724374Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-pattern-variable-assignment-scope
+                        title "Expand pattern-specific assignment values in ambient scope"
+                        kind @fix
+                        deps (make-target-specific-separator-provenance)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-10T11:05:45.875216748Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Inherited reproducer confirmed during separator-provenance review: `%.o: N=P` followed by `%.o: X := $(N)` and a pattern recipe prints X. GNU Make 4.4.1 expands the pattern-specific value in ambient scope and prints empty; Kati sets current_scope to the pattern rule_vars scope before eval_rhs and prints P. Base 8d4ecbd already has this loop behavior. The provenance correction keeps pattern-specific name expansion ambient, as GNU does, and changes only concrete target names to expand per file scope; RHS scope remains this separate defect."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:01.434956041Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-upstream-residue-triage
+                        title "Classify the bounded GNU Make upstream residue into intent, interface, or narration"
+                        kind @test
+                        deps (make-upstream-suite make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:27.79263368Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Bounded discovery scope is the versioned 2026-08-11 upstream inventory: resolve all 513 unclassified observations and revalidate the 68 compiler-labelled candidates against graph shape, selected work, filesystem effects, and accepted interface. Work category by category, starting with the largest clusters (variables/MAKEFLAGS 65, implicit_search 25, patternrules 24, include 21, targetvars 17, bs-nl 17, word 16, shell 13, EXTRA_PREREQS 13, define 13). Reclassify intentional Ninja narration and runner choreography without implementation nodes; when a focused GNU Make reproducer proves a shared compiler/interface defect, add one grouped implementation leaf and an owned build-intent case. Completion is finite: no unclassified rows remain in this inventory snapshot and every surviving compiler candidate is either linked to such a leaf or downgraded with evidence."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:01.603393077Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-delete-on-error-cleanup
+                        title "Remove failed outputs under .DELETE_ON_ERROR"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:28.000472387Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns the five .DELETE_ON_ERROR markers covering a direct failed output, a dependency-chain output, a secondary output, and keep-going, plus recorded corpus case delete_on_error.mk#test. Preserve .PRECIOUS where it independently forbids deletion and verify filesystem effects rather than GNU Make's failure wording."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:01.799537993Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-double-colon-rule-freshness
+                        title "Test ordinary double-colon rules against their own prerequisites"
+                        kind @fix
+                        deps (make-grouped-double-colon-actions make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:28.179574377Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns feature-double-colon-only-outdated-runs, target-double-colon-rules-are-independent, target-double-colon-up-to-date-rules-do-not-run, and recorded multi_explicit_output_patterns_double_colon.mk#test. Ordinary :: records remain separate actions: each record tests only its own prerequisites and static-pattern form retains its own stem and recipe."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:02.021659578Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-default-goal-variable-semantics
+                        title "Select and expose goals through .DEFAULT_GOAL"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:28.390047357Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns variable-default-goal, variable-default-goal-reset, variable-default-goal-reassigned, and variable-default-goal-unknown. The selected graph root and the Makefile-visible .DEFAULT_GOAL value must track assignment, reset, and reassignment, while an invalid multi-target value is rejected during evaluation."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:02.20931783Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+
+                            {
+                                at 2026-08-11T10:12:18.981999052Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Correction to the preceding scope note: the unknown-goal fixture assigns .DEFAULT_GOAL = nosuchtarget. GNU Make honors that name as the graph root and then reports that no rule can make it; it is not the separate multi-target-value validation case."
+                            }
+                        )
+                    }
+
+                    {
+                        id make-pattern-specific-variable-application
+                        title "Apply, inherit, and order pattern-specific variables"
+                        kind @fix
+                        deps (make-target-variable-order make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:28.599485364Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns feature-pattern-specific-variable, feature-pattern-specific-variable-is-inherited, and feature-pattern-specific-shortest-stem, together with the focused share of upstream features/patspecific_vars. Apply pattern-specific bindings to explicit targets, inherit them into prerequisites, and choose matching bindings using GNU Make's shortest-stem precedence. RHS ambient-scope expansion remains separately owned by make-pattern-variable-assignment-scope."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:02.377907457Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-modern-function-evaluation
+                        title "Evaluate let, intcmp, and builtin names reached through call"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:28.817043523Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns function-let, function-let-recursive, function-intcmp, and function-call-builtin. Implement GNU Make 4.4.1 let/intcmp semantics and dispatch a builtin function named through call, including recursive let bindings; the upstream intcmp unsupported-feature row is a confirmed member rather than generic residue."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:02.535492661Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-filter-percent-escaping
+                        title "Preserve escaped percent signs in filter patterns"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:29.042838804Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns function-filter-escaped-percent. A backslash-escaped percent is a literal percent in filter and filter-out patterns, with the remaining wildcard and backslash behavior matching GNU Make."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:02.700515235Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-path-function-semantics
+                        title "Evaluate suffix and realpath with GNU Make pathname semantics"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:29.271695723Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns function-suffix and function-realpath. suffix examines only the final pathname component, and realpath resolves during Make evaluation to a value rather than leaking a deferred helper command into the compiled recipe."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:02.864863931Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-shell-function-evaluation
+                        title "Compile shell function values in the evaluation environment"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:29.496249638Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns function-shell and variable-curdir. Shell-backed evaluation must produce its value before graph construction, with the evaluation working directory represented correctly so CURDIR comparisons and recipe-context shell expansion do not retain literal command substitution."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:03.038813395Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-newer-prerequisite-automatic-variable
+                        title "Compile the newer-prerequisite automatic variable for ordinary rules"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:29.718375543Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns variable-automatic-parts and variable-automatic-absent-prerequisite-is-in-question. Compile 0 from ordinary prerequisites newer than the target, including an absent prerequisite whose producing rule completes without materialising it, without leaving KATI_NEW_INPUTS syntax for the shell."
+                            }
+
+                            {
+                                at 2026-08-11T10:09:11.294785242Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Correction to the preceding note: the automatic variable is $? (dollar-question), not the shell-expanded status shown there."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:03.19409771Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-empty-variable-append
+                        title "Append to defined-empty variables without a separator"
+                        kind @fix
+                        deps (make-assignment-modifiers make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:29.948025931Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns feature-conditional-flavours and variable-append-to-empty plus the seven vendored-corpus defect rows classified append-to-empty (cond_syntax, ifeq_without_parens, makefile_list tests 1-3, target_specific_var_append, and var_append). Appending to a variable that is defined but empty adds no separator, for simple, recursive, target-specific, and conditional paths."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:03.371848309Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-builtin-variable-defaults
+                        title "Install ordinary and POSIX built-in variable defaults"
+                        kind @fix
+                        deps (make-option-no-builtin-variables make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:30.173356186Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns target-variable-defaults-without-posix and target-posix-variable-defaults. Install GNU Make's ordinary built-in defaults, switch to the POSIX default set when .POSIX is active, and continue honoring -R/-r suppression through make-option-no-builtin-variables."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:03.563589802Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-precious-intermediate-retention
+                        title "Keep intermediate outputs protected by .PRECIOUS"
+                        kind @fix
+                        deps (make-intermediate-files make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:30.388591494Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Follow-up to completed make-intermediate-files. Owns target-precious-overrides-intermediate and target-precious-pattern-keeps-an-intermediate: explicit and pattern .PRECIOUS declarations prevent deletion even when the file is otherwise intermediate."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:03.759827479Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-makefile-list-initialization
+                        title "Populate MAKEFILE_LIST without a leading empty entry"
+                        kind @fix
+                        deps (make-parser-parity make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:30.617831207Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns feature-makefile-list and variable-makefile-list. MAKEFILE_LIST begins with the first Makefile actually parsed and records subsequent includes in order; no empty sentinel is visible to the Makefile."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:03.943905066Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-wildcard-cache-coherence
+                        title "Refresh wildcard results after evaluation-time filesystem changes"
+                        kind @fix
+                        deps (kati-caches-session make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:30.822944791Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns feature-wildcard-sees-a-file-made-while-reading and recorded wildcard_cache.mk#test. Evaluation-time shell effects can change directory contents, so wildcard results must obey GNU Make's observation points instead of a session-long stale cache."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:04.13014625Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-grouped-pattern-targets
+                        title "Compile grouped pattern rules as one multi-output action"
+                        kind @fix
+                        deps (make-grouped-double-colon-actions make-pattern-rule-candidate-identity)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:31.031498576Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns target-grouped-pattern-with-intermediates and the remaining grouped_targets upstream residue. Extend the already-correct exact grouped action model to pattern rules: one recipe instance produces all peers, automatic variables name the triggering output correctly, and intermediate handling does not split the action."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:04.341788496Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-static-pattern-nonmatch-semantics
+                        title "Warn and continue for a static-pattern target that does not match"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:31.22865597Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns target-static-pattern-target-must-match. GNU Make warns when a listed static-pattern target misses the target pattern but continues to build applicable work; Kati currently turns that condition into a fatal refusal."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:04.54917Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-pattern-rule-cancellation
+                        title "Cancel a pattern rule on recipe-less redeclaration"
+                        kind @fix
+                        deps (make-pattern-rule-candidate-identity make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:31.463403661Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns feature-pattern-rule-is-cancelled. A recipe-less redeclaration cancels the matching pattern rule in GNU Make's rule table rather than leaving the old candidate selectable."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:04.771571317Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-continuation-expansion
+                        title "Preserve dollar and recipe semantics across backslash-newline continuation"
+                        kind @fix
+                        deps (make-parser-parity make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:31.685819199Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns variable-line-continuation-dollar-backslash and recorded multiline_recipe.mk#test6. Preserve GNU Make's dollar/backslash treatment across logical-line folding and recipe continuation so the shell receives the same variable syntax and command text."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:04.965110281Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-vpath-gpath-output-location
+                        title "Rebuild VPATH-found targets in their GPATH directory"
+                        kind @fix
+                        deps (make-vpath-search make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:31.897791417Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Follow-up to completed make-vpath-search. Owns feature-gpath-keeps-the-found-directory: when GPATH retains a VPATH-found name, rebuild the target at that found path instead of relocating the output to the current directory."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:05.133302043Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-export-scope-semantics
+                        title "Complete export, unexport, and target-specific export scope"
+                        kind @fix
+                        deps (make-export-to-recipes make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:32.104453259Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Follow-up to completed make-export-to-recipes. Owns feature-target-specific-export, feature-unexport-outranks-export-all, function-shell-sees-exported-variable, and recorded export_export.mk#test. Resolve bare export, later named unexport, target-specific export, and the environment seen by evaluation-time shell consistently."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:05.311962264Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-included-makefile-restarts
+                        title "Remake included makefiles and expose MAKE_RESTARTS"
+                        kind @fix
+                        deps (make-include-semantics make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:32.332707009Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Follow-up to completed make-include-semantics. Owns feature-restart-count: remake an out-of-date included Makefile, restart evaluation on the rebuilt text, and expose the incremented MAKE_RESTARTS value without turning the include into a user goal."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:05.47634706Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-posix-recipe-semantics
+                        title "Honor POSIX shell flags and ignored-failure continuation"
+                        kind @fix
+                        deps (make-ignore-errors-status make-recipe-one-shell-per-line)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:32.55377803Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Follow-up to completed make-ignore-errors-status and one-shell support. Owns target-posix-shellflags-take-precedence and target-posix-spares-an-ignored-failure: an explicit .SHELLFLAGS assignment outranks the .POSIX default, and a prefixed ignored failure does not prevent later recipe work."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:05.630970647Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-recipe-eval-mutation-refusal
+                        title "Reject recipe-time eval that mutates the dependency graph"
+                        kind @fix
+                        deps (make-refusal-reaches-further make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:32.775935015Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Follow-up to completed refusal-boundary work. Owns function-eval-prerequisite-in-recipe: recipe-time eval may not mutate the already-compiled dependency graph, and the front end must refuse the construct during compilation rather than silently accepting a different graph."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:05.784986845Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-local-binding-assignment-scope
+                        title "Keep eval assignments inside foreach and call bindings semantically scoped"
+                        kind @fix
+                        deps (kati-scoped-binding make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:32.997500581Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns recorded autovar_assign.mk#default and param.mk#test. Assignments performed through eval inside foreach and call must update the GNU Make binding that those constructs designate without leaking or overwriting their temporary loop/parameter bindings."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:05.94196303Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-automatic-variable-value-function
+                        title "Expose automatic variables correctly through the value function"
+                        kind @fix
+                        deps (make-build-intent-gate)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:33.224187652Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns recorded value_at.mk#test. The value function must expose the unexpanded values of @, @D, and @F in recipe context according to GNU Make's automatic-variable rules instead of losing or deferring them."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:06.095918528Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+
+                    {
+                        id make-makefile-standard-input
+                        title "Read -f dash Makefiles from standard input"
+                        kind @fix
+                        deps (make-interface-surface make-parser-parity)
+                        sealed true
+                        log (
+                            {
+                                at 2026-08-11T10:08:33.452765236Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Owns the two upstream option-refused features/temp_stdin observations and the related options/dash-f and temp_stdin no-makefile candidates. Accept -f - as required by interface compatibility, parse the supplied standard-input Makefile, preserve its source identity, and verify goals/effects through a focused case rather than treating every classifier refusal as confirmed."
+                            }
+
+                            {
+                                at 2026-08-11T10:11:06.249228458Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+                        )
+                    }
+                )
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T10:08:27.606483533Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Reconciled the Make compatibility evidence at 0bbb6d4 (GNU Make 4.4.1 oracle): 47 owned build-intent divergence markers, 43 vendored-corpus defect rows, 11 recorded corpus TODO rows, and an upstream inventory of 513 unclassified / 68 compiler-candidate / 172 interface / 598 narration observations. The 598 narration rows are excluded by make.narration. Of the 43 defect rows, seven append-to-empty cases are evaluator gaps owned by make-empty-variable-append; the remaining rows concern diagnostic text, numeric runner status, stream routing, attribution, or recipe interleaving and do not create compiler work under make.semantics. Eight recorded rows affect evaluation or selected work and have focused owners below; blank_line_before_command, err_invalid_ifeq5, and warn_extra_trailings only retain excluded runner output/status differences. The interface inventory is 170 MAKEFLAGS-content observations covered by the two existing MAKEFLAGS leaves, plus two refused standard-input cases. This sealed subtree is the complete decomposition of confirmed gaps in this snapshot; make-upstream-residue-triage owns the finite unresolved candidate set and must open grouped follow-ups for anything it confirms."
+                    }
+
+                    {
+                        at 2026-08-11T10:11:10.587299944Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
                     }
                 )
             }

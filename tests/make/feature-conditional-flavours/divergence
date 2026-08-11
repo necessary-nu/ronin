@@ -1,1 +1,1 @@
-Kati retains a leading separator when appending to an empty simple variable; no dedicated WBS node yet.
+Kati retains a leading separator when appending to an empty simple variable; make-empty-variable-append.

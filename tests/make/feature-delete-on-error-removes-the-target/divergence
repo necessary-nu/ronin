@@ -1,1 +1,1 @@
-Ronin does not remove a failed target under .DELETE_ON_ERROR; no dedicated WBS node yet.
+Ronin does not remove a failed target under .DELETE_ON_ERROR; make-delete-on-error-cleanup.

@@ -1,1 +1,1 @@
-Kati permits recipe-time eval to introduce a prerequisite where GNU Make refuses it; make-refusal-reaches-further.
+Kati permits recipe-time eval to introduce a prerequisite where GNU Make refuses it; make-recipe-eval-mutation-refusal.

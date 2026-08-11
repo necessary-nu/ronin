@@ -1,1 +1,1 @@
-Kati does not install GNU Make's ordinary built-in variable defaults; make-option-no-builtin-variables.
+Kati does not install GNU Make's ordinary built-in variable defaults; make-builtin-variable-defaults.

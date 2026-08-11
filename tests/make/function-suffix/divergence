@@ -1,1 +1,1 @@
-Kati treats a dot in a directory component as a filename suffix; no dedicated WBS node yet.
+Kati treats a dot in a directory component as a filename suffix; make-path-function-semantics.

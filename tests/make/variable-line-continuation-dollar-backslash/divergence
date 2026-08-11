@@ -1,1 +1,1 @@
-Kati expands a dollar-backslash continuation differently from GNU Make; no dedicated WBS node yet.
+Kati expands a dollar-backslash continuation differently from GNU Make; make-continuation-expansion.

@@ -1,1 +1,1 @@
-Kati accepts an unknown .DEFAULT_GOAL instead of refusing the Makefile; no dedicated WBS node yet.
+Kati accepts an unknown .DEFAULT_GOAL instead of refusing the Makefile; make-default-goal-variable-semantics.

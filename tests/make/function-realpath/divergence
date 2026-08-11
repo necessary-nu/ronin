@@ -1,1 +1,1 @@
-Kati leaves its deferred realpath helper as shell syntax instead of producing the value during graph compilation; no dedicated WBS node yet.
+Kati leaves its deferred realpath helper as shell syntax instead of producing the value during graph compilation; make-path-function-semantics.

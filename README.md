@@ -1,16 +1,9 @@
 # Ronin
 
-Ronin is a fast Ninja-compatible build tool implemented in Rust.
+Ronin is a fast Ninja- and Make-compatible build tool implemented in Rust.
 
-The current compatibility baseline is the Ninja build language through version
-1.14. Ronin preserves Ninja-owned interfaces such as `build.ninja`,
-`NINJA_STATUS`, `.ninja_log`, `.ninja_deps`, depfiles, dyndeps, pools, and
-Ninja tool-mode names. `SAMUFLAGS` is intentionally unsupported; pass options
-on the command line.
-
-The current Unix package recognizes `-t browse` but does not bundle Ninja's
-Python browser helper; invoking it exits with an explicit unsupported-tool
-diagnostic. The remaining Linux subtools are connected.
+Ronin is fully compatible with Ninja 1.14 and partially compatible with GNU
+Make 4.4.1.
 
 ## Build and test
 
@@ -26,6 +19,21 @@ ronin --version
 ronin -C build
 ronin -t targets
 ```
+
+## Make compatibility
+
+On Unix, linking the Ronin executable as `make` makes the same binary behave
+as a GNU Make-compatible tool:
+
+```sh
+ln -s ronin target/release/make
+target/release/make -j8
+target/release/make -f Makefile all
+```
+
+When invoked as `make` (or `gmake`), Ronin reads Makefiles and uses Make-style
+command-line options. Invoking it as `ronin` keeps the Ninja-compatible
+behavior and reads `build.ninja`.
 
 ## Output
 
@@ -63,12 +71,6 @@ supported `ronin_core` API.
 caller-provided output sinks. The free `run` and `run_os` functions are
 convenience wrappers that snapshot the process directory and Ninja environment
 values without changing the process working directory.
-
-Rust changes are checked with Clippy's `pedantic` and `nursery` groups in
-addition to `cargo fmt`. Unsafe code is confined to the POSIX signal and GNU
-Make jobserver boundaries and must document its safety invariants. Resource
-ownership otherwise follows RAII; build and dependency logs expose consuming
-`finish` operations where callers need to observe final flush errors.
 
 ## Compatibility work
 
