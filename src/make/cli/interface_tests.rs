@@ -174,8 +174,15 @@ fn eval_fragments_reach_compilation() {
         0,
         &session,
     );
-    let loaded = super::evaluated(session, &invocation.evals, Shuffle::None, context, "")
-        .expect("the goal supplied only by --eval must compile into the graph");
+    let loaded = super::evaluated(
+        session,
+        &invocation.evals,
+        Shuffle::None,
+        context,
+        "",
+        &std::collections::HashSet::new(),
+    )
+    .expect("the goal supplied only by --eval must compile into the graph");
     let target = loaded
         .graph
         .lookup(b"from_flags")
@@ -212,8 +219,15 @@ fn generated_include_is_provisional_graph_root() {
         0,
         &session,
     );
-    let loaded = super::evaluated(session, &[], Shuffle::None, context, "")
-        .expect("the missing include's rule should compile provisionally");
+    let loaded = super::evaluated(
+        session,
+        &[],
+        Shuffle::None,
+        context,
+        "",
+        &std::collections::HashSet::new(),
+    )
+    .expect("the missing include's rule should compile provisionally");
 
     let [include] = loaded.regeneration_targets() else {
         panic!("the provisional graph should name exactly one generated include");

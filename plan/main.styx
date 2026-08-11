@@ -7953,6 +7953,35 @@ children (
                     }
                 )
             }
+
+            {
+                id make-recursive-evaluation-boundary
+                title "Evaluate recursive children after parent prerequisites"
+                kind @fix
+                deps (make-recursive-prerequisite-boundary)
+                log (
+                    {
+                        at 2026-08-11T19:01:41.237133684Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Observed at Ronin 176a1c0 in Necessary OS run 1786474273988-942846: recursive child edges are fenced behind parent prerequisites, but the child Makefile is still evaluated before those prerequisites execute. A child wildcard therefore misses parent-generated headers, Linux packages omit generated x86 UAPI wrappers, and compiler-rt@seed fails. Acceptance: repeatedly create the wildcard-selected installed/value.h at -j16, package generated x86 wrappers in a clean kernel-headers@seed build, and advance Necessary OS past compiler-rt@seed."
+                    }
+
+                    {
+                        at 2026-08-11T19:01:41.417904703Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T19:20:52.677812736Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Implemented a staged compiler-input boundary using HashSet<EvaluationBoundary>: parent prerequisites run through a provisional Ronin graph before child evaluation, consecutive child groups do the same, and their completed subgraphs become commandless phony closures in the final graph so recipes execute once. The reported wildcard regression and consecutive-child wildcard regression each pass 8 times at -j16. Workspace tests, strict Ronin Clippy, 297-file/276-graph equivalence with zero disagreements, and the 387-run GNU Make 4.4.1 conformance gate pass. Necessary OS kernel-header packaging and compiler-rt@seed remain the completion gate."
+                    }
+                )
+            }
         )
         log (
             {

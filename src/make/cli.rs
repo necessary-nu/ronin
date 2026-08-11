@@ -23,15 +23,16 @@ use crate::build::{BuildOptions, JobLimit};
 use crate::cli::{PRODUCT_NAME, RunResult, Runner};
 use crate::error::CliError;
 use crate::frontend::{Build, BuildGraph, Persistence};
-use crate::make::Shuffle;
 use crate::make::report::{
     ABANDONED, abandoned, answered, discard_intermediates, finished, no_makefile,
     ordinary_diagnostic,
 };
+use crate::make::{EvaluationBoundary, Shuffle};
 use crate::util::{BString, ByteSlice, terminated};
 use kati::bytes::Bytes;
 use kati::flags::Flags;
 use kati::session::Session;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -1243,13 +1244,6 @@ fn record_invocation(session: &mut Session, name: &'static str, value: String) {
     environment.push((OsString::from(name), OsString::from(value)));
 }
 
-fn remove_invocation(session: &mut Session, name: &'static str) {
-    let environment = session
-        .invocation_environment
-        .get_or_insert_with(|| std::env::vars_os().collect());
-    environment.retain(|(candidate, _)| candidate != name);
-}
-
 /// The scheduler settings this invocation maps onto Ninja's controls.
 // [spec:ronin:req:make.narration]
 // [spec:ronin:req:make.jobserver+1]
@@ -1384,6 +1378,13 @@ enum PreparedGraph {
     Finished(RunResult),
 }
 
+struct CompilerInputBuild<'a> {
+    loaded: crate::make::Loaded,
+    invocation: &'a Invocation,
+    options: BuildOptions,
+    directory: &'a Path,
+}
+
 /// Compile a stable graph, building source includes through Ninja between
 /// attempts when the provisional graph says how to produce them.
 fn prepare_graph(
@@ -1392,6 +1393,7 @@ fn prepare_graph(
     output: &mut Option<&mut dyn Write>,
     diagnostics: &mut Option<&mut dyn Write>,
 ) -> Result<PreparedGraph, Error> {
+    let mut settled_boundaries = HashSet::new();
     for _ in 0..100 {
         let mut session = session_for(
             root.invocation,
@@ -1413,6 +1415,7 @@ fn prepare_graph(
             root.invocation.shuffle,
             compilation,
             reported,
+            &settled_boundaries,
         ) {
             Ok(loaded) => loaded,
             Err(result) => return Ok(PreparedGraph::Finished(result)),
@@ -1426,53 +1429,21 @@ fn prepare_graph(
                 options: Box::new(effective_options),
             });
         }
-
-        let regeneration_targets = loaded.regeneration_targets().to_vec();
-        let mut graph = loaded.graph;
-        let (mut persistence, warning) = Persistence::open(&mut graph, root.directory)?;
-        reported.push_str(warning.as_deref().unwrap_or_default());
-        let mut build = Build::with_options(&mut graph, &mut persistence, effective_options);
-        if let Some(sink) = output.as_deref_mut() {
-            build = build.output(sink);
-        }
-        if let Some(sink) = diagnostics.as_deref_mut() {
-            build = build.diagnostics(sink);
-        }
-        let planned = build.plan(&regeneration_targets);
-        if effective_invocation.questioning() {
-            let question = planned.map(|planned| planned.already_up_to_date());
-            let flushed = persistence.finish();
-            let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
-            return Ok(PreparedGraph::Finished(answered(
-                std::mem::take(reported),
-                question,
-            )));
-        }
-        let outcome = planned.and_then(|planned| {
-            let disposable = planned.disposable();
-            planned.run().map(|outcome| (disposable, outcome))
-        });
-        let flushed = persistence.finish();
-        let (disposable, outcome) = match outcome {
-            Ok(outcome) => outcome,
-            Err(failure) => {
-                return Ok(PreparedGraph::Finished(abandoned(
-                    std::mem::take(reported),
-                    failure,
-                )));
-            }
+        let compiler_inputs = CompilerInputBuild {
+            loaded,
+            invocation: &effective_invocation,
+            options: effective_options,
+            directory: root.directory,
         };
-        flushed?;
-        discard_intermediates(&disposable, effective_invocation.given(Switch::DryRun));
-        if outcome.exit_code() != 0 || effective_invocation.given(Switch::DryRun) {
-            return Ok(PreparedGraph::Finished(finished(
-                std::mem::take(reported),
-                false,
-                &outcome,
-                effective_invocation.given(Switch::Silent),
-            )));
+        if let Some(result) = build_compiler_inputs(
+            compiler_inputs,
+            reported,
+            output,
+            diagnostics,
+            &mut settled_boundaries,
+        )? {
+            return Ok(PreparedGraph::Finished(result));
         }
-        reported.push_str(&String::from_utf8_lossy(outcome.output()));
     }
 
     let path = BString::from(root.makefile.as_os_str().as_encoded_bytes().to_vec());
@@ -1484,6 +1455,76 @@ fn prepare_graph(
         }
         .into(),
     )))
+}
+
+fn build_compiler_inputs(
+    request: CompilerInputBuild<'_>,
+    reported: &mut String,
+    output: &mut Option<&mut dyn Write>,
+    diagnostics: &mut Option<&mut dyn Write>,
+    settled_boundaries: &mut HashSet<EvaluationBoundary>,
+) -> Result<Option<RunResult>, Error> {
+    let CompilerInputBuild {
+        loaded,
+        invocation,
+        options,
+        directory,
+    } = request;
+    let targets = loaded.regeneration_targets().to_vec();
+    let boundaries = loaded.evaluation_boundaries().clone();
+    let mut graph = loaded.graph;
+    let (mut persistence, warning) = Persistence::open(&mut graph, directory)?;
+    reported.push_str(warning.as_deref().unwrap_or_default());
+    let mut build = Build::with_options(&mut graph, &mut persistence, options);
+    if let Some(sink) = output.as_deref_mut() {
+        build = build.output(sink);
+    }
+    if let Some(sink) = diagnostics.as_deref_mut() {
+        build = build.diagnostics(sink);
+    }
+    let planned = build.plan(&targets);
+    if invocation.questioning() {
+        let question = planned.map(|planned| planned.already_up_to_date());
+        let flushed = persistence.finish();
+        let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
+        if matches!(question, Ok(true)) && !boundaries.is_empty() {
+            settled_boundaries.extend(boundaries);
+            return Ok(None);
+        }
+        return Ok(Some(answered(std::mem::take(reported), question)));
+    }
+    let planned = match planned {
+        Ok(planned) => planned,
+        Err(failure) => {
+            let _ = persistence.finish();
+            return Ok(Some(abandoned(std::mem::take(reported), failure)));
+        }
+    };
+    if planned.already_up_to_date() && !boundaries.is_empty() {
+        persistence.finish()?;
+        settled_boundaries.extend(boundaries);
+        return Ok(None);
+    }
+    let disposable = planned.disposable();
+    let outcome = planned.run();
+    let flushed = persistence.finish();
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(failure) => return Ok(Some(abandoned(std::mem::take(reported), failure))),
+    };
+    flushed?;
+    discard_intermediates(&disposable, invocation.given(Switch::DryRun));
+    if outcome.exit_code() != 0 || invocation.given(Switch::DryRun) {
+        return Ok(Some(finished(
+            std::mem::take(reported),
+            false,
+            &outcome,
+            invocation.given(Switch::Silent),
+        )));
+    }
+    settled_boundaries.extend(boundaries);
+    reported.push_str(&String::from_utf8_lossy(outcome.output()));
+    Ok(None)
 }
 
 /// Run one Make invocation to its end.
@@ -1583,7 +1624,10 @@ fn record_invocation_variables(session: &mut Session, invocation: &Invocation, l
     // Kati installs MAKEFLAGS as a file-origin recursive compiler variable.
     // Leaving an inherited environment binding beside it would make `-e`
     // incorrectly outrank that built-in definition.
-    remove_invocation(session, "MAKEFLAGS");
+    let environment = session
+        .invocation_environment
+        .get_or_insert_with(|| std::env::vars_os().collect());
+    environment.retain(|(candidate, _)| candidate != "MAKEFLAGS");
     let flags = compiler_flag_variables(invocation);
     record_invocation(session, "MFLAGS", flags.mflags);
 }
@@ -1642,6 +1686,7 @@ fn evaluated(
     shuffle: Shuffle,
     context: crate::make::CompilationContext,
     reported: &str,
+    settled_boundaries: &HashSet<EvaluationBoundary>,
 ) -> Result<crate::make::Loaded, RunResult> {
     if let Err(failure) = prepend_command_line_evals(&mut session, evals) {
         return Err(RunResult {
@@ -1663,11 +1708,13 @@ fn evaluated(
         context,
         cache_key,
     };
-    crate::make::load_with_subninjas(compilation, compile_subninja).map_err(|failure| RunResult {
-        stdout: terminated(reported),
-        stderr: ordinary_diagnostic(failure),
-        exit_code: ABANDONED,
-    })
+    crate::make::load_with_subninjas(compilation, compile_subninja, settled_boundaries).map_err(
+        |failure| RunResult {
+            stdout: terminated(reported),
+            stderr: ordinary_diagnostic(failure),
+            exit_code: ABANDONED,
+        },
+    )
 }
 
 #[cfg(test)]

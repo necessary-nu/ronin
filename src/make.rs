@@ -182,7 +182,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
         shuffle,
         cache_key: key,
     };
-    load_with_subninjas_unlocked(compilation, cli::compile_subninja)
+    load_with_subninjas_unlocked(compilation, cli::compile_subninja, &HashSet::new())
 }
 
 /// Invocation context retained while one Makefile compilation discovers its
@@ -215,41 +215,74 @@ pub(crate) struct Compilation {
 struct CompiledUnit {
     subgraph: UnitSubgraph,
     makeflags: String,
+    complete: bool,
+}
+
+struct ComposedUnit {
+    subgraph: UnitSubgraph,
+    complete: bool,
+}
+
+struct CompilationState<'a> {
+    cache: HashMap<Vec<u8>, UnitSubgraph>,
+    compiling: HashSet<Vec<u8>>,
+    regenerations: Vec<Node>,
+    settled_boundaries: &'a HashSet<EvaluationBoundary>,
+    evaluation_boundaries: HashSet<EvaluationBoundary>,
+}
+
+/// The work that must finish before one recursive child can be evaluated.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct EvaluationBoundary {
+    compilation_key: Vec<u8>,
+    pending_index: usize,
+    predecessor: EvaluationPredecessor,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum EvaluationPredecessor {
+    ParentPrerequisites,
+    ChildGroup(usize),
 }
 
 /// Evaluate a root Makefile and every recursive `$(MAKE)` recipe into one
 /// shared graph before returning it to the executor.
 // [spec:ronin:req:make.recursive-invocation+1]
 // [spec:ronin:req:make.compiler-boundary]
-pub(crate) fn load_with_subninjas<F>(root: Compilation, resolve: F) -> Result<Loaded, MakeError>
+pub(crate) fn load_with_subninjas<F>(
+    root: Compilation,
+    resolve: F,
+    settled_boundaries: &HashSet<EvaluationBoundary>,
+) -> Result<Loaded, MakeError>
 where
     F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let _directory = compilation_directory_guard();
-    load_with_subninjas_unlocked(root, resolve)
+    load_with_subninjas_unlocked(root, resolve, settled_boundaries)
 }
 
-fn load_with_subninjas_unlocked<F>(root: Compilation, mut resolve: F) -> Result<Loaded, MakeError>
+fn load_with_subninjas_unlocked<F>(
+    root: Compilation,
+    mut resolve: F,
+    settled_boundaries: &HashSet<EvaluationBoundary>,
+) -> Result<Loaded, MakeError>
 where
     F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let mut sink = GraphSink::new_at(&root.context.root_directory);
-    let mut cache = HashMap::new();
-    let mut compiling = HashSet::new();
-    let mut regenerations = Vec::new();
-    let root = compile_unit(
-        root,
-        &mut sink,
-        None,
-        &mut resolve,
-        &mut cache,
-        &mut compiling,
-        &mut regenerations,
-    )?;
+    let mut state = CompilationState {
+        cache: HashMap::new(),
+        compiling: HashSet::new(),
+        regenerations: Vec::new(),
+        settled_boundaries,
+        evaluation_boundaries: HashSet::new(),
+    };
+    let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
     let graph = sink.into_graph().map_err(MakeError::Construct)?;
     Ok(Loaded {
         graph,
-        regenerations,
+        regenerations: state.regenerations,
+        evaluation_boundaries: state.evaluation_boundaries,
         makeflags: root.makeflags,
     })
 }
@@ -259,15 +292,13 @@ fn compile_unit<F>(
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
     resolve: &mut F,
-    cache: &mut HashMap<Vec<u8>, UnitSubgraph>,
-    compiling: &mut HashSet<Vec<u8>>,
-    regenerations: &mut Vec<Node>,
+    state: &mut CompilationState<'_>,
 ) -> Result<CompiledUnit, MakeError>
 where
     F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let compilation_key = compilation.cache_key.clone();
-    if !compiling.insert(compilation_key.clone()) {
+    if !state.compiling.insert(compilation_key.clone()) {
         return Err(MakeError::Evaluate(
             "recursive Make compilation includes itself".to_owned(),
         ));
@@ -323,13 +354,13 @@ where
     let (unit, exported, command_line, unit_regenerations, makeflags) = match evaluated {
         Ok(evaluated) => evaluated,
         Err(error) => {
-            compiling.remove(&compilation_key);
+            state.compiling.remove(&compilation_key);
             return Err(error);
         }
     };
     for target in unit_regenerations {
-        if !regenerations.contains(&target) {
-            regenerations.push(target);
+        if !state.regenerations.contains(&target) {
+            state.regenerations.push(target);
         }
     }
 
@@ -338,57 +369,109 @@ where
     apply_exported_environment(&mut descendant_context.environment, &command_line);
     apply_exported_environment(&mut descendant_context.environment, &exported);
     apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
-    let subgraph = compose_subninjas(
+    let composed = compose_subninjas(
         unit,
+        &compilation_key,
         sink,
         resolve,
         &descendant_context,
-        cache,
-        compiling,
-        regenerations,
-    )?;
-    compiling.remove(&compilation_key);
+        state,
+    );
+    state.compiling.remove(&compilation_key);
+    let composed = composed?;
     Ok(CompiledUnit {
-        subgraph,
+        subgraph: composed.subgraph,
         makeflags,
+        complete: composed.complete,
     })
 }
 
 fn compose_subninjas<F>(
     unit: UnitOutput,
+    compilation_key: &[u8],
     sink: &mut GraphSink,
     resolve: &mut F,
     descendant_context: &CompilationContext,
-    cache: &mut HashMap<Vec<u8>, UnitSubgraph>,
-    compiling: &mut HashSet<Vec<u8>>,
-    regenerations: &mut Vec<Node>,
-) -> Result<UnitSubgraph, MakeError>
+    state: &mut CompilationState<'_>,
+) -> Result<ComposedUnit, MakeError>
 where
     F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
-    let mut subtree_edges = unit.edges;
-    for pending in unit.subninjas {
+    let UnitOutput {
+        targets,
+        subninjas,
+        edges,
+    } = unit;
+    let mut subtree_edges = edges;
+    for (pending_index, pending) in subninjas.into_iter().enumerate() {
+        let parent_inputs = pending.evaluation_inputs();
+        if !parent_inputs.is_empty() {
+            let boundary = evaluation_boundary(
+                compilation_key,
+                pending_index,
+                EvaluationPredecessor::ParentPrerequisites,
+            );
+            if !state.settled_boundaries.contains(&boundary) {
+                state.regenerations.extend_from_slice(&parent_inputs);
+                state.regenerations.sort_unstable();
+                state.regenerations.dedup();
+                state.evaluation_boundaries.insert(boundary);
+                return Ok(ComposedUnit {
+                    subgraph: UnitSubgraph {
+                        targets,
+                        edges: subtree_edges,
+                    },
+                    complete: false,
+                });
+            }
+            sink.mark_subgraphs_prebuilt(&parent_inputs);
+        }
+
         let mut child_groups = Vec::with_capacity(pending.invocations.len());
-        for invocation in &pending.invocations {
+        for (group_index, invocation) in pending.invocations.iter().enumerate() {
             let child = resolve(&invocation.command, &invocation.make, descendant_context)?;
             let child_key = child.cache_key.clone();
-            let child_subgraph = if let Some(subgraph) = cache.get(&child_key) {
+            let child_subgraph = if let Some(subgraph) = state.cache.get(&child_key) {
                 subgraph.clone()
             } else {
                 let child_scope = pending.scope;
-                let child = compile_unit(
-                    child,
-                    sink,
-                    Some(child_scope),
-                    resolve,
-                    cache,
-                    compiling,
-                    regenerations,
-                )?;
-                cache.insert(child_key, child.subgraph.clone());
+                let child = compile_unit(child, sink, Some(child_scope), resolve, state)?;
+                if !child.complete {
+                    return Ok(ComposedUnit {
+                        subgraph: UnitSubgraph {
+                            targets,
+                            edges: subtree_edges,
+                        },
+                        complete: false,
+                    });
+                }
+                state.cache.insert(child_key, child.subgraph.clone());
                 child.subgraph
             };
             child_groups.push(child_subgraph);
+
+            if group_index + 1 < pending.invocations.len() {
+                let boundary = evaluation_boundary(
+                    compilation_key,
+                    pending_index,
+                    EvaluationPredecessor::ChildGroup(group_index),
+                );
+                let completed_targets = &child_groups[group_index].targets;
+                if !state.settled_boundaries.contains(&boundary) {
+                    state.regenerations.extend_from_slice(completed_targets);
+                    state.regenerations.sort_unstable();
+                    state.regenerations.dedup();
+                    state.evaluation_boundaries.insert(boundary);
+                    return Ok(ComposedUnit {
+                        subgraph: UnitSubgraph {
+                            targets,
+                            edges: subtree_edges,
+                        },
+                        complete: false,
+                    });
+                }
+                sink.mark_subgraphs_prebuilt(completed_targets);
+            }
         }
         let wrapper = sink
             .complete_subninja(pending, &child_groups)
@@ -402,10 +485,25 @@ where
         }
         subtree_edges.push(wrapper);
     }
-    Ok(UnitSubgraph {
-        targets: unit.targets,
-        edges: subtree_edges,
+    Ok(ComposedUnit {
+        subgraph: UnitSubgraph {
+            targets,
+            edges: subtree_edges,
+        },
+        complete: true,
     })
+}
+
+fn evaluation_boundary(
+    compilation_key: &[u8],
+    pending_index: usize,
+    predecessor: EvaluationPredecessor,
+) -> EvaluationBoundary {
+    EvaluationBoundary {
+        compilation_key: compilation_key.to_vec(),
+        pending_index,
+        predecessor,
+    }
 }
 
 /// Apply Make's `export`/`unexport` result to the environment imported by a
@@ -632,8 +730,10 @@ fn reorder(shuffle: Shuffle, not_parallel: bool, nodes: &mut [kati::dep::NamedDe
 pub struct Loaded {
     /// What the Makefile builds.
     pub graph: BuildGraph,
-    /// Missing included Makefiles this provisional graph knows how to build.
+    /// Compiler inputs this provisional graph knows how to build.
     regenerations: Vec<Node>,
+    /// Recursive evaluation boundaries satisfied by building those inputs.
+    evaluation_boundaries: HashSet<EvaluationBoundary>,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
     makeflags: String,
 }
@@ -646,6 +746,12 @@ impl Loaded {
     #[must_use]
     pub fn regeneration_targets(&self) -> &[Node] {
         &self.regenerations
+    }
+
+    /// Recursive compiler boundaries satisfied by the provisional build.
+    #[must_use]
+    pub(crate) const fn evaluation_boundaries(&self) -> &HashSet<EvaluationBoundary> {
+        &self.evaluation_boundaries
     }
 
     /// The switch state the Makefile left for its own build and its children.

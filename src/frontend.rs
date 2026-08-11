@@ -574,6 +574,47 @@ impl BuildGraph {
         }
     }
 
+    /// Keep work completed through a provisional compiler graph completed in
+    /// the final graph for the same invocation.
+    ///
+    /// Make evaluates a recursive child only after the parent target's
+    /// prerequisites have run. The Make frontend therefore builds that input
+    /// closure through a provisional graph and evaluates again. Replacing the
+    /// closure's commands with the built-in phony rule preserves its graph
+    /// ordering and dirty propagation without running any recipe a second
+    /// time. Real outputs retain the files and timestamps the provisional
+    /// build produced; phony outputs settle immediately when the final graph
+    /// reaches them.
+    pub(crate) fn mark_subgraphs_prebuilt(&mut self, roots: &[Node], phony: Rule) {
+        let mut seen = std::collections::HashSet::new();
+        let mut work = roots.iter().map(|node| node.0).collect::<Vec<_>>();
+        while let Some(node) = work.pop() {
+            let Some(edge) = self.arenas.node(node).generator else {
+                continue;
+            };
+            if !seen.insert(edge) {
+                continue;
+            }
+            let (inputs, validations, activations) = {
+                let stored = self.arenas.edge(edge);
+                let activations = self
+                    .arenas
+                    .deferred_freshness(edge)
+                    .map(|freshness| freshness.activations.to_vec())
+                    .unwrap_or_default();
+                (
+                    stored.input.to_vec(),
+                    stored.validation.to_vec(),
+                    activations,
+                )
+            };
+            self.arenas.edge_mut(edge).rule = Some(phony.0);
+            work.extend(inputs);
+            work.extend(validations);
+            work.extend(activations);
+        }
+    }
+
     /// Resolves `edge`'s `pool` binding against the declared pools.
     ///
     /// # Errors

@@ -86,6 +86,17 @@ pub(crate) struct PendingSubninja {
     bindings: Vec<(Binding, Vec<u8>)>,
 }
 
+impl PendingSubninja {
+    /// Prerequisites GNU Make settles before it starts this recursive recipe.
+    pub(crate) fn evaluation_inputs(&self) -> Vec<Node> {
+        self.inputs
+            .iter()
+            .chain(&self.order_only_inputs)
+            .copied()
+            .collect()
+    }
+}
+
 struct PendingDeferred {
     outputs: Vec<Node>,
     always_dirty_output: bool,
@@ -290,6 +301,11 @@ impl GraphSink {
             subninjas: std::mem::take(&mut self.unit.subninjas),
             edges: std::mem::take(&mut self.unit.edges),
         }
+    }
+
+    /// Preserve compiler-input work already run by a provisional graph.
+    pub(crate) fn mark_subgraphs_prebuilt(&mut self, roots: &[Node]) {
+        self.graph.mark_subgraphs_prebuilt(roots, self.phony);
     }
 
     /// Resolve compiler-input roots while this unit's symbol map is current.

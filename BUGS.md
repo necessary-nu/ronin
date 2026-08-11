@@ -320,3 +320,80 @@ reused, and 1 bootstrap toolchain imported. The clean Linux build compiled
 header-install subtree, completed all 1,037 edges, and installed the userspace
 headers. The retained build log is
 `/home/brendan/.cache/necessary/runs/1786468373998-736102/logs/kernel-headers--x86-64-x86-64--seed-.log`.
+
+## A recursive child is evaluated before its parent prerequisites run
+
+Status: open
+
+Observed with Ronin revision `176a1c08fcb16babcd41bf44f311e298f351a476`
+in Necessary OS run `1786474273988-942846`, using 16 jobs. The recursive
+subtree execution fence is fixed: Linux builds `scripts/unifdef` at edge 24
+before starting its header-install edges and reports successful completion of
+all 1,037 scheduled edges. The resulting `kernel-headers@seed` package is
+nevertheless incomplete.
+
+Linux's `archheaders` prerequisite generates wrapper files such as
+`arch/x86/include/generated/uapi/asm/types.h`, `param.h`, and `ioctl.h`. The
+later recursive invocation of `scripts/Makefile.headersinst` discovers those
+files with `$(wildcard ...)` while evaluating the child Makefile. GNU Make
+starts that child process only after `archheaders` has completed, so the files
+enter the child graph and are installed. Ronin compiles the semantic child
+before executing the parent graph. Its wildcard therefore sees none of the
+generated wrappers, and no edges for their installed forms exist to fence.
+
+The reduced case is:
+
+```make
+# Makefile
+all: generate
+	+$(MAKE) -f child.mk child
+
+generate:
+	@mkdir -p generated
+	@printf '#define GENERATED 1\n' > generated/value.h
+
+.PHONY: all generate
+
+# child.mk
+HEADERS := $(wildcard generated/*.h)
+OUTPUTS := $(patsubst generated/%,installed/%,$(HEADERS))
+
+child: $(OUTPUTS)
+
+installed/%: generated/%
+	@mkdir -p installed
+	@cp $< $@
+
+.PHONY: child
+```
+
+GNU Make 4.4.1 with `-j16` runs `generate`, evaluates the child, and creates
+`installed/value.h`. Ronin with `-j16` reports only one successful edge:
+
+```text
+[1/1] build generate
+```
+
+It exits zero with `generated/value.h` present and `installed/value.h` absent.
+This distinguishes child *evaluation* ordering from the fixed child *edge*
+ordering: attaching prerequisites to every already-compiled child edge cannot
+recover edges selected by files that did not exist when the child was
+compiled.
+
+In the Necessary build, archive
+`08394f942c8808fed0a4d109057b18c14a19a1becc538c83aec16b09d5c59d0c.box`
+contains `usr/include/linux/types.h` but omits `usr/include/asm/types.h`,
+`usr/include/asm/param.h`, and `usr/include/asm/ioctl.h`. The next package,
+`compiler-rt@seed`, consequently fails while compiling sanitizer sources:
+
+```text
+/sysroot/usr/include/linux/types.h:5:10: fatal error: 'asm/types.h' file not found
+/build/src/compiler-rt/lib/sanitizer_common/sanitizer_linux.cpp:30:14:
+fatal error: 'asm/param.h' file not found
+/sysroot/usr/include/linux/ioctl.h:5:10: fatal error: 'asm/ioctl.h' file not found
+```
+
+Acceptance: the reduced case MUST create `installed/value.h` repeatedly with
+`-j16`; a clean Linux headers build MUST package every generated x86 UAPI
+wrapper, including the three files above; and Necessary OS MUST advance past
+`compiler-rt@seed` using that clean kernel-header package.

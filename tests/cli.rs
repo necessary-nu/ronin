@@ -2768,7 +2768,8 @@ fn recursive_subtree_waits_for_parent_inputs() {
     .unwrap();
     fs::write(
         directory.join("second.mk"),
-        "second: leaf\n\
+        "FIRST := $(wildcard first.leaf)\n\
+         second: $(patsubst first.leaf,leaf,$(FIRST))\n\
          leaf:\n\
          \t@test -e first.leaf\n\
          \t@touch second.leaf\n\
@@ -2789,6 +2790,62 @@ fn recursive_subtree_waits_for_parent_inputs() {
             + &String::from_utf8_lossy(&output.stderr);
         assert!(output.status.success(), "attempt {attempt}: {reported}");
         assert!(directory.join("second.leaf").is_file(), "{reported}");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn recursive_evaluation_waits_for_parent_inputs() {
+    let directory = test_directory("make-recursive-evaluation-boundary");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: generate\n\
+         \t+$(MAKE) -f child.mk child\n\
+         generate:\n\
+         \t@mkdir -p generated\n\
+         \t@printf '#define GENERATED 1\\n' > generated/value.h\n\
+         \t@printf 'generated\\n' >> generate.count\n\
+         .PHONY: all generate\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("child.mk"),
+        "HEADERS := $(wildcard generated/*.h)\n\
+         OUTPUTS := $(patsubst generated/%,installed/%,$(HEADERS))\n\
+         child: $(OUTPUTS)\n\
+         installed/%: generated/%\n\
+         \t@mkdir -p installed\n\
+         \t@cp $< $@\n\
+         .PHONY: child\n",
+    )
+    .unwrap();
+
+    let program = invoked_as(&directory, "make");
+    for attempt in 0..8 {
+        for path in ["generated", "installed"] {
+            let _ = fs::remove_dir_all(directory.join(path));
+        }
+        let _ = fs::remove_file(directory.join("generate.count"));
+        let output = make_command(&program, &directory)
+            .arg("-j16")
+            .output()
+            .unwrap();
+        let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "attempt {attempt}: {reported}");
+        assert_eq!(
+            fs::read_to_string(directory.join("installed/value.h")).unwrap(),
+            "#define GENERATED 1\n",
+            "attempt {attempt}: {reported}"
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("generate.count")).unwrap(),
+            "generated\n",
+            "parent prerequisite ran more than once on attempt {attempt}: {reported}"
+        );
     }
     fs::remove_dir_all(directory).unwrap();
 }
