@@ -1,5 +1,6 @@
 //! Dense graph arenas and dependency operations.
 
+mod deferred;
 mod edge;
 mod ids;
 mod index;
@@ -13,6 +14,10 @@ use crate::error::GraphError;
 use crate::htab::rapidhashv1;
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{arena_id, BStr, BString, ByteSlice, IdVec};
+use deferred::{
+    capture_deferred_freshness, recompute_completion_join, recompute_deferred_freshness,
+};
+pub(crate) use deferred::{edgeaddorderonly, DeferredFreshness};
 use edge::EdgePartitions;
 use index::NodeIndex;
 pub(crate) use index::{mknode, nodeget};
@@ -130,6 +135,8 @@ pub(crate) struct Graph {
     /// largest structure a large manifest builds. Holding them aside keeps the
     /// feature exactly and charges only the nodes that use it.
     validation_uses: crate::htab::RapidHashMap<NodeId, IdVec<EdgeId>>,
+    deferred_freshness: crate::htab::RapidHashMap<EdgeId, DeferredFreshness>,
+    completion_joins: crate::htab::RapidHashMap<EdgeId, NodeId>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
     names: crate::names::Names,
@@ -297,7 +304,9 @@ pub(crate) fn collect_stat_targets(
         if scratch.seen_nodes.replace(node.index()) {
             continue;
         }
-        out.push(node);
+        if !graph.is_virtual_output(node) {
+            out.push(node);
+        }
         let Some(edge) = graph.node(node).gen else {
             continue;
         };
@@ -322,6 +331,12 @@ pub(crate) fn recompute_edge_dirty_with<F>(
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
+    if graph.deferred_freshness(edge).is_some() {
+        return recompute_deferred_freshness(graph, runtime, edge, stat);
+    }
+    if graph.is_completion_join(edge) {
+        return recompute_completion_join(graph, runtime, edge, stat);
+    }
     if runtime.edge(edge).restat_clean() {
         for output in &graph.edge(edge).out {
             runtime.node_mut(*output).set_dirty(false);
@@ -501,8 +516,13 @@ impl DirtyEvaluator {
                             continue;
                         }
 
+                        if graph.deferred_freshness(edge).is_some() {
+                            capture_deferred_freshness(graph, runtime, edge, stat)?;
+                        }
                         for &output in outputs {
-                            if runtime.node(output).mtime().is_unobserved() {
+                            if !graph.is_virtual_output(output)
+                                && runtime.node(output).mtime().is_unobserved()
+                            {
                                 nodestat_with(graph, runtime, output, stat)?;
                             }
                             self.nodes.set(output.index(), VisitState::Active);

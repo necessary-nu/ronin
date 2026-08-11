@@ -103,6 +103,14 @@ enum IgnoredCommand {
 struct EdgeSemantics {
     ignored: BTreeMap<Vec<u8>, IgnoredCommand>,
     recursive: BTreeSet<Vec<u8>>,
+    deferred: BTreeMap<Vec<u8>, DeferredSemantics>,
+}
+
+struct DeferredSemantics {
+    outputs: Vec<Vec<u8>>,
+    always_dirty_output: bool,
+    always_new_inputs: Vec<Vec<u8>>,
+    completion_join: bool,
 }
 
 impl BuildSink for Tee<'_> {
@@ -128,14 +136,33 @@ impl BuildSink for Tee<'_> {
     }
 
     fn declare_edge(&mut self, names: &dyn Interner, edge: &SinkEdge<'_>) -> anyhow::Result<()> {
+        let output = names.symtab().name(edge.output).to_vec();
         if let Some(semantics) = edge.rule.and_then(|rule| self.rule_semantics.remove(&rule)) {
-            let output = names.symtab().name(edge.output).to_vec();
             if let Some(command) = semantics.ignored_command {
                 self.edge_semantics.ignored.insert(output.clone(), command);
             }
             if semantics.recursive {
-                self.edge_semantics.recursive.insert(output);
+                self.edge_semantics.recursive.insert(output.clone());
             }
+        }
+        if !edge.deferred_freshness_outputs.is_empty() || edge.completion_join {
+            self.edge_semantics.deferred.insert(
+                output,
+                DeferredSemantics {
+                    outputs: edge
+                        .deferred_freshness_outputs
+                        .iter()
+                        .map(|output| names.symtab().name(*output).to_vec())
+                        .collect(),
+                    always_dirty_output: edge.deferred_freshness_always_dirty,
+                    always_new_inputs: edge
+                        .deferred_always_new_inputs
+                        .iter()
+                        .map(|input| names.symtab().name(*input).to_vec())
+                        .collect(),
+                    completion_join: edge.completion_join,
+                },
+            );
         }
         let _ = self.graph.declare_edge(names, edge);
         self.manifest.declare_edge(names, edge)
@@ -228,12 +255,103 @@ fn describe_ignore_semantics<'a>(
     Some(command)
 }
 
+fn describe_deferred_semantics(
+    graph: &BuildGraph,
+    edge: crate::graph::EdgeId,
+    output: &[u8],
+    semantics: &EdgeSemantics,
+    side: Side,
+    described: &mut String,
+) {
+    let recorded = semantics.deferred.get(output);
+    let (outputs, always_dirty_output, always_new_inputs, completion_join, environment) = match side
+    {
+        Side::Direct => {
+            let arenas = graph.arenas();
+            let freshness = arenas.deferred_freshness(edge);
+            (
+                freshness
+                    .map(|freshness| {
+                        freshness
+                            .outputs
+                            .iter()
+                            .map(|node| arenas.node_path(*node).as_bytes().to_vec())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
+                freshness.is_some_and(|freshness| freshness.always_dirty_output),
+                freshness
+                    .map(|freshness| {
+                        freshness
+                            .always_new_inputs
+                            .iter()
+                            .map(|node| arenas.node_path(*node).as_bytes().to_vec())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
+                arenas.is_completion_join(edge),
+                freshness
+                    .map(|freshness| freshness.new_inputs_environment.as_slice())
+                    .unwrap_or_default(),
+            )
+        }
+        Side::Manifest => (
+            recorded.map_or_else(Vec::new, |semantic| semantic.outputs.clone()),
+            recorded.is_some_and(|semantic| semantic.always_dirty_output),
+            recorded.map_or_else(Vec::new, |semantic| semantic.always_new_inputs.clone()),
+            recorded.is_some_and(|semantic| semantic.completion_join),
+            recorded
+                .filter(|semantic| !semantic.outputs.is_empty())
+                .map_or(&[][..], |_| &b"KATI_NEW_INPUTS"[..]),
+        ),
+    };
+    let list = |paths: &[Vec<u8>]| {
+        paths
+            .iter()
+            .map(|path| path.as_bstr().to_string())
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let _ = writeln!(described, "  deferred outputs: {}", list(&outputs));
+    let _ = writeln!(
+        described,
+        "  deferred output always dirty: {always_dirty_output}"
+    );
+    let _ = writeln!(
+        described,
+        "  deferred always-new inputs: {}",
+        list(&always_new_inputs)
+    );
+    let _ = writeln!(
+        described,
+        "  deferred environment: {:?}",
+        environment.as_bstr()
+    );
+    let _ = writeln!(described, "  completion join: {completion_join}");
+}
+
 fn destination_specific_binding(name: &str, command: Option<&IgnoredCommand>) -> bool {
     matches!(
         (name, command),
         ("command", Some(IgnoredCommand::Inline(_)))
             | ("rspfile_content", Some(IgnoredCommand::ResponseFile(_)))
     )
+}
+
+/// Return the Make-visible path for a graph node.
+///
+/// A direct grouped-action graph gives its public completion edge a private
+/// proxy output so a recursively compiled child can still generate the real
+/// member.  The retained manifest spells that same completion point with the
+/// member path itself, so compare the proxy as the observed member.
+fn semantic_path(graph: &BuildGraph, node: crate::graph::NodeId) -> Vec<u8> {
+    let arenas = graph.arenas();
+    let node = arenas
+        .node(node)
+        .gen
+        .and_then(|edge| arenas.completion_join_output(edge))
+        .unwrap_or(node);
+    arenas.node_path(node).as_bytes().to_vec()
 }
 
 fn describe_edge(
@@ -244,7 +362,7 @@ fn describe_edge(
 ) -> Option<(Vec<u8>, String)> {
     let arenas = graph.arenas();
     let stored = arenas.edge(edge);
-    let path = |node: &crate::graph::NodeId| arenas.node_path(*node).as_bytes().to_vec();
+    let path = |node: &crate::graph::NodeId| semantic_path(graph, *node);
     let outputs: Vec<Vec<u8>> = stored.out.iter().map(path).collect();
     if outputs.len() == 1 && outputs[0] == ALWAYS_BUILD {
         return None;
@@ -311,6 +429,7 @@ fn describe_edge(
         &mut described,
     );
     let _ = writeln!(described, "  always dirty: {always_dirty}");
+    describe_deferred_semantics(graph, edge, &outputs[0], semantics, side, &mut described);
     let ignored_command =
         describe_ignore_semantics(graph, edge, &outputs[0], semantics, side, &mut described);
     let _ = writeln!(
@@ -353,7 +472,12 @@ fn defaults(graph: &BuildGraph) -> Vec<Vec<u8>> {
     graph
         .default_targets()
         .into_iter()
-        .map(|node| graph.path(node).to_vec())
+        .map(|node| {
+            graph
+                .completion_join_observed_output(node)
+                .map_or_else(|| graph.path(node), |observed| graph.path(observed))
+                .to_vec()
+        })
         .filter(|path| path != ALWAYS_BUILD)
         .collect()
 }
@@ -506,6 +630,21 @@ all: out
 out: in | ordered
 \t@echo building $@ > $@
 in ordered:
+\t@touch $@
+",
+        &[],
+    );
+}
+
+#[test]
+fn deferred_edges_cross_the_common_sink() {
+    agrees(
+        "\
+all: a
+a b &:: p | ordered
+\t@printf '%s\\n' '$?' > a
+\t@cp a b
+p ordered:
 \t@touch $@
 ",
         &[],

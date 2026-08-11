@@ -4,6 +4,10 @@ use crate::graph::{EdgeId, Graph, NodeId};
 use std::num::NonZeroU64;
 use std::ops::Range;
 
+mod deferred;
+
+pub(crate) use deferred::DeferredRuntime;
+
 /// A filesystem timestamp with the unobserved sentinel hidden behind methods.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(transparent)]
@@ -246,6 +250,7 @@ impl EdgeRuntime {
 pub(crate) struct RuntimeState {
     nodes: Vec<NodeRuntime>,
     edges: Vec<EdgeRuntime>,
+    deferred: crate::htab::RapidHashMap<EdgeId, DeferredRuntime>,
 }
 
 impl RuntimeState {
@@ -262,6 +267,7 @@ impl RuntimeState {
         self.edges
             .resize(graph.edge_count(), EdgeRuntime::default());
         self.edges.fill(EdgeRuntime::default());
+        self.deferred.clear();
         for edge in graph.edge_ids() {
             if let Some(dyndep) = graph.edge(edge).dyndep {
                 self.node_mut(dyndep).set_dyndep_pending(true);
@@ -298,6 +304,14 @@ impl RuntimeState {
 
     pub(crate) fn edge_mut(&mut self, edge: EdgeId) -> &mut EdgeRuntime {
         &mut self.edges[edge.index()]
+    }
+
+    pub(crate) fn deferred(&self, edge: EdgeId) -> Option<&DeferredRuntime> {
+        self.deferred.get(&edge)
+    }
+
+    pub(crate) fn deferred_mut(&mut self, edge: EdgeId) -> &mut DeferredRuntime {
+        self.deferred.entry(edge).or_default()
     }
 }
 

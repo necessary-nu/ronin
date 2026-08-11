@@ -75,9 +75,17 @@ pub(crate) struct PendingSubninja {
     order_only_inputs: Vec<Node>,
     validations: Vec<Node>,
     always_dirty: bool,
+    deferred: Option<PendingDeferred>,
+    completion_output: Option<Node>,
     intermediate: bool,
     disposable: bool,
     bindings: Vec<(Binding, Vec<u8>)>,
+}
+
+struct PendingDeferred {
+    outputs: Vec<Node>,
+    always_dirty_output: bool,
+    always_new_inputs: Vec<Node>,
 }
 
 /// The non-executor description retained between kati's rule and edge calls.
@@ -141,7 +149,9 @@ pub struct GraphSink {
     /// kati's symbols to Ronin's nodes, so a path shared by many edges is
     /// canonicalized and interned once.
     interned: HashMap<Symbol, Node>,
+    observed_members: HashMap<Symbol, Node>,
     declared_pools: HashSet<Vec<u8>>,
+    completion_proxies: usize,
     serial_units: usize,
     /// The first construction failure, kept because kati's walk unwinds through
     /// [`anyhow::Error`] and the typed error is what a caller can act on.
@@ -194,7 +204,9 @@ impl GraphSink {
             rules: HashMap::new(),
             subninja_rules: HashMap::new(),
             interned: HashMap::new(),
+            observed_members: HashMap::new(),
             declared_pools: HashSet::new(),
+            completion_proxies: 0,
             serial_units: 0,
             failure: None,
         }
@@ -211,6 +223,7 @@ impl GraphSink {
         debug_assert!(self.rules.is_empty());
         debug_assert!(self.subninja_rules.is_empty());
         self.interned.clear();
+        self.observed_members.clear();
         self.unit = Unit {
             scope: self.graph.child_scope(parent),
             path_prefix,
@@ -275,20 +288,12 @@ impl GraphSink {
         self.node_list(names, symbols)
     }
 
-    /// Replace a recursive wrapper edge with the child goals it requested.
-    ///
-    /// Parent prerequisites become order-only inputs of each child goal: the
-    /// subgraph starts only once the wrapper recipe could have started, while
-    /// the child's own timestamps still decide what work it needs. When parent
-    /// and child name the same goal, the child edge subsumes the held wrapper;
-    /// otherwise the wrapper becomes a phony alias for the child targets.
-    // [spec:ronin:req:make.recursive-invocation+1]
-    pub(crate) fn complete_subninja(
+    /// Make each child group wait for the parent or preceding child group.
+    fn attach_child_ordering(
         &mut self,
-        pending: PendingSubninja,
+        pending: &PendingSubninja,
         child_target_groups: &[Vec<Node>],
-    ) -> Result<(), FrontendError> {
-        debug_assert_eq!(pending.invocations.len(), child_target_groups.len());
+    ) -> Vec<Node> {
         let mut waits = pending
             .inputs
             .iter()
@@ -319,8 +324,27 @@ impl GraphSink {
                 }
             }
         }
+        child_targets
+    }
+
+    /// Replace a recursive wrapper edge with the child goals it requested.
+    ///
+    /// Parent prerequisites become order-only inputs of each child goal: the
+    /// subgraph starts only once the wrapper recipe could have started, while
+    /// the child's own timestamps still decide what work it needs. When parent
+    /// and child name the same goal, the child edge subsumes the held wrapper;
+    /// otherwise the wrapper becomes a phony alias for the child targets.
+    // [spec:ronin:req:make.recursive-invocation+1]
+    pub(crate) fn complete_subninja(
+        &mut self,
+        pending: PendingSubninja,
+        child_target_groups: &[Vec<Node>],
+    ) -> Result<(), FrontendError> {
+        debug_assert_eq!(pending.invocations.len(), child_target_groups.len());
+        let child_targets = self.attach_child_ordering(&pending, child_target_groups);
 
         let collapsed = pending.residual_rule.is_none()
+            && pending.deferred.is_none()
             && child_target_groups.len() == 1
             && pending.implicit_outputs.is_empty()
             && pending.explicit_outputs.len() == 1
@@ -349,7 +373,14 @@ impl GraphSink {
             });
         }
 
-        let (rule, inputs, order_only_inputs) = if let Some(rule) = pending.residual_rule {
+        let is_deferred = pending.deferred.is_some();
+        let (rule, inputs, order_only_inputs) = if is_deferred {
+            (
+                pending.residual_rule.unwrap_or(self.phony),
+                pending.inputs,
+                pending.order_only_inputs,
+            )
+        } else if let Some(rule) = pending.residual_rule {
             let mut order_only_inputs = pending.order_only_inputs;
             for target in &child_targets {
                 if !order_only_inputs.contains(target) {
@@ -366,7 +397,7 @@ impl GraphSink {
             }
             (self.phony, inputs, pending.order_only_inputs)
         };
-        self.graph.add_edge(EdgeSpec {
+        let edge = self.graph.add_edge(EdgeSpec {
             scope: pending.scope,
             rule,
             explicit_outputs: &pending.explicit_outputs,
@@ -380,6 +411,19 @@ impl GraphSink {
             disposable: pending.disposable,
             bindings: pending.bindings,
         })?;
+        if let Some(deferred) = pending.deferred {
+            self.graph.set_deferred_freshness(
+                edge,
+                &deferred.outputs,
+                deferred.always_dirty_output,
+                &deferred.always_new_inputs,
+                b"KATI_NEW_INPUTS",
+            );
+            self.graph.add_deferred_activations(edge, &child_targets);
+        }
+        if let Some(output) = pending.completion_output {
+            self.graph.set_completion_join(edge, output);
+        }
         Ok(())
     }
 
@@ -439,6 +483,40 @@ impl GraphSink {
             .iter()
             .map(|symbol| self.node(names, *symbol))
             .collect()
+    }
+
+    fn observed_node_list(
+        &mut self,
+        names: &dyn Interner,
+        symbols: &[Symbol],
+    ) -> Result<Vec<Node>, anyhow::Error> {
+        let mut nodes = Vec::with_capacity(symbols.len());
+        for symbol in symbols {
+            let node = if let Some(node) = self.observed_members.get(symbol) {
+                *node
+            } else {
+                self.node(names, *symbol)?
+            };
+            nodes.push(node);
+        }
+        Ok(nodes)
+    }
+
+    /// A recursive child may build the real member named by its parent
+    /// grouped action. The parent's public completion point therefore needs a
+    /// graph-only identity while it continues to observe that real file.
+    fn completion_proxy(&mut self) -> Result<Node, anyhow::Error> {
+        loop {
+            let path = format!(".ronin_grouped_join/{}", self.completion_proxies);
+            self.completion_proxies += 1;
+            if self.graph.lookup(path.as_bytes()).is_some() {
+                continue;
+            }
+            return self
+                .graph
+                .node(path.as_bytes())
+                .map_err(|failure| self.refuse(failure));
+        }
     }
 
     /// Qualify a Makefile-relative auxiliary path the same way as its graph
@@ -693,11 +771,23 @@ impl BuildSink for GraphSink {
     // [spec:ronin:req:make.graph-direct]
     // [spec:ronin:req:make.phony-always-dirty]
     fn declare_edge(&mut self, names: &dyn Interner, edge: &SinkEdge<'_>) -> anyhow::Result<()> {
-        let outputs = vec![self.node(names, edge.output)?];
+        let completion_output = self.node(names, edge.output)?;
         let implicit_outputs = self.node_list(names, edge.implicit_outputs)?;
         let inputs = self.node_list(names, edge.inputs)?;
         let order_only_inputs = self.node_list(names, edge.order_only_inputs)?;
         let validations = self.node_list(names, edge.validations)?;
+        let deferred_freshness_outputs =
+            self.observed_node_list(names, edge.deferred_freshness_outputs)?;
+        let deferred_always_new_inputs = self.node_list(names, edge.deferred_always_new_inputs)?;
+        let outputs = if edge.completion_join {
+            self.observed_members.insert(edge.output, completion_output);
+            let proxy = self.completion_proxy()?;
+            self.graph.redirect_node_uses(completion_output, proxy);
+            self.interned.insert(edge.output, proxy);
+            vec![proxy]
+        } else {
+            vec![completion_output]
+        };
 
         let mut bindings = Vec::new();
         if let Some(pool) = edge.pool {
@@ -727,6 +817,12 @@ impl BuildSink for GraphSink {
                     order_only_inputs,
                     validations,
                     always_dirty: edge.always_dirty,
+                    deferred: (!deferred_freshness_outputs.is_empty()).then_some(PendingDeferred {
+                        outputs: deferred_freshness_outputs,
+                        always_dirty_output: edge.deferred_freshness_always_dirty,
+                        always_new_inputs: deferred_always_new_inputs,
+                    }),
+                    completion_output: edge.completion_join.then_some(completion_output),
                     intermediate: edge.intermediate,
                     disposable: edge.disposable,
                     bindings,
@@ -760,7 +856,21 @@ impl BuildSink for GraphSink {
             bindings,
         };
         match self.graph.add_edge(spec) {
-            Ok(_) => Ok(()),
+            Ok(built) => {
+                if !deferred_freshness_outputs.is_empty() {
+                    self.graph.set_deferred_freshness(
+                        built,
+                        &deferred_freshness_outputs,
+                        edge.deferred_freshness_always_dirty,
+                        &deferred_always_new_inputs,
+                        b"KATI_NEW_INPUTS",
+                    );
+                }
+                if edge.completion_join {
+                    self.graph.set_completion_join(built, completion_output);
+                }
+                Ok(())
+            }
             Err(failure) => Err(self.refuse(failure)),
         }
     }

@@ -6870,12 +6870,27 @@ children (
                 title "Compile grouped double-colon actions across the Ninja scheduling boundary"
                 kind @fix
                 deps (make-target-specific-separator-provenance)
+                sealed true
                 log (
                     {
                         at 2026-08-10T10:41:04.65063167Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Oracle handoff from separator-provenance work. An exact &:: record is an independent action identified by its rule record even when records share a real member. GNU Make snapshots the oldest group-member mtime and member existence before updating prerequisites, waits for normal and order-only prerequisites, then compares final normal-input state with that snapshot. A phony order-only prerequisite can touch a normal input newer after the initial graph scan; GNU then runs the grouped recipe. A static Ninja edge that keeps the order-only partition waits but stays clean, so a shell guard is never scheduled. Promoting or always-forcing the order-only input makes clean question-mode and no-op builds falsely dirty. Additional observed constraints: shared records need private action identities plus public completion joins; post-prerequisite member deletion does not change the pre-update member verdict; depfile inputs use the wrong oldest/newest boundary; recursive Make actions need graph composition rather than a nested runner. Solve this as graph/scheduler representation work and keep the existing grouped divergence markers until the complete model is verified."
+                    }
+
+                    {
+                        at 2026-08-11T09:35:35.360786247Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Exact grouped &:: records compile into private action nodes plus virtual completion joins, with no stamp files. Freshness snapshots every real member before prerequisites and decides after prerequisite completion from published normal-input mtimes; normal and order-only inputs remain distinct, missing or phony members force work, clean -q reports no work, and recursive child graphs activate through the generic conditional graph path. Ordinary grouped &: retains per-member second expansion, while mixed ordinary :: actions keep member identity. Evidence: 8 focused grouped-action tests; the full workspace suite and clippy -D warnings pass; equivalence covers 297 Makefiles and 276 graphs with zero disagreements; conformance has 301/387 normalized matches with every difference classified; upstream inventory is 513 unclassified / 68 compiler / 172 interface / 598 narration."
+                    }
+
+                    {
+                        at 2026-08-11T09:35:38.96915034Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

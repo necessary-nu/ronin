@@ -28,6 +28,7 @@ use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, EvalPart, E
 use std::fmt;
 use std::num::NonZeroUsize;
 
+mod deferred;
 mod execute;
 
 pub use crate::parse::{load_manifest, Manifest, ManifestOptions};

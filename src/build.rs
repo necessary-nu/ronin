@@ -977,7 +977,7 @@ impl<'a> Builder<'a> {
     /// says `no work to do.`, while the Ninja project's own graph never hits
     /// the shape and looked correct.
     pub(crate) fn already_up_to_date(&self) -> bool {
-        self.plan.is_empty() || self.plan.command_edge_count(self.graph) == 0
+        self.plan.is_empty() || self.plan.reportable_work_count(self.graph, &self.runtime) == 0
     }
 
     /// The intermediate files this plan is going to create, which is GNU Make's
@@ -1003,15 +1003,17 @@ impl<'a> Builder<'a> {
 
     fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<PreparedEdge> {
         let command = self.take_command(edge)?;
-        let old_mtimes = self
-            .graph
-            .edge(edge)
-            .out
+        let launch_command = self.deferred_launch_command(edge, &command.command);
+        let completion_outputs = self.graph.deferred_freshness(edge).map_or_else(
+            || self.graph.edge(edge).out.clone(),
+            |freshness| freshness.outputs.clone(),
+        );
+        let old_mtimes = completion_outputs
             .iter()
             .map(|output| self.runtime.node(*output).mtime().raw())
             .collect::<Vec<_>>();
 
-        for output in &self.graph.edge(edge).out {
+        for output in &completion_outputs {
             let path = self.graph.node_path(*output).to_owned();
             self.disk
                 .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
@@ -1101,6 +1103,7 @@ impl<'a> Builder<'a> {
             edge,
             old_mtimes,
             command,
+            launch_command,
             command_start_mtime,
             start_millis: self.progress.offset_millis(),
             _response_file: response_file,
@@ -1148,6 +1151,7 @@ impl<'a> Builder<'a> {
             edge,
             old_mtimes,
             command,
+            launch_command: _,
             command_start_mtime,
             start_millis,
             _response_file,
@@ -1251,7 +1255,11 @@ impl<'a> Builder<'a> {
             // prints no `FAILED:` line. Half-written outputs still go.
             if self.command_interrupted(status) {
                 let disk = self.disk.clone();
-                for (output, old_mtime) in self.graph.edge(edge).out.iter().zip(&old_mtimes) {
+                let completion_outputs = self.graph.deferred_freshness(edge).map_or_else(
+                    || self.graph.edge(edge).out.as_slice(),
+                    |state| &state.outputs,
+                );
+                for (output, old_mtime) in completion_outputs.iter().zip(&old_mtimes) {
                     let path = self.graph.node_path(*output).to_owned();
                     if disk
                         .stat(path.to_path().expect("byte paths are valid on Unix"))
@@ -1287,30 +1295,62 @@ impl<'a> Builder<'a> {
 
         let disk = self.disk.clone();
         let mut new_mtimes = Vec::new();
-        let output_ids = self.graph.edge(edge).out.clone();
+        let deferred_outputs = self
+            .graph
+            .deferred_freshness(edge)
+            .map(|freshness| freshness.outputs.clone());
         let edge_hash = edgehash(
             &mut self.runtime,
             edge,
             command.command.as_bstr(),
             (!command.rspfile_content.is_empty()).then_some(command.rspfile_content.as_bstr()),
         );
-        for output in output_ids {
-            let path = self.graph.node_path(output).to_owned();
-            let mtime = disk
-                .stat(path.to_path().expect("byte paths are valid on Unix"))
-                .map_err(|source| {
-                    BuildError::io(
-                        BuildOperation::StatOutput,
-                        Some(path.clone()),
-                        Some(edge),
-                        source,
-                    )
-                })?;
-            let output = self.runtime.node_mut(output);
-            output.set_mtime(FileTime::observed(mtime));
-            output.set_dirty(false);
-            output.set_logged_command_hash(edge_hash);
-            new_mtimes.push(mtime);
+        if let Some(outputs) = &deferred_outputs {
+            let mut logical_mtime = FileTime::MISSING;
+            for output in outputs {
+                let path = self.graph.node_path(*output).to_owned();
+                let mtime = disk
+                    .stat(path.to_path().expect("byte paths are valid on Unix"))
+                    .map_err(|source| {
+                        BuildError::io(
+                            BuildOperation::StatOutput,
+                            Some(path.clone()),
+                            Some(edge),
+                            source,
+                        )
+                    })?;
+                self.runtime
+                    .node_mut(*output)
+                    .set_mtime(FileTime::observed(mtime));
+                logical_mtime = logical_mtime.max(FileTime::observed(mtime));
+                new_mtimes.push(mtime);
+            }
+            for output in &self.graph.edge(edge).out {
+                let output = self.runtime.node_mut(*output);
+                output.set_mtime(logical_mtime);
+                output.set_dirty(false);
+                output.set_logged_command_hash(edge_hash);
+            }
+        } else {
+            let output_ids = self.graph.edge(edge).out.clone();
+            for output in output_ids {
+                let path = self.graph.node_path(output).to_owned();
+                let mtime = disk
+                    .stat(path.to_path().expect("byte paths are valid on Unix"))
+                    .map_err(|source| {
+                        BuildError::io(
+                            BuildOperation::StatOutput,
+                            Some(path.clone()),
+                            Some(edge),
+                            source,
+                        )
+                    })?;
+                let output = self.runtime.node_mut(output);
+                output.set_mtime(FileTime::observed(mtime));
+                output.set_dirty(false);
+                output.set_logged_command_hash(edge_hash);
+                new_mtimes.push(mtime);
+            }
         }
         if !self.options.dryrun {
             match &command.deps_type {
@@ -1373,12 +1413,25 @@ impl<'a> Builder<'a> {
             .zip(&new_mtimes)
             .map(|(old, new)| old == new)
             .collect::<Vec<_>>();
-        let pruned =
-            command.restat && !self.options.dryrun && unchanged_outputs.iter().any(|same| *same);
-        let all_pruned =
-            command.restat && !self.options.dryrun && unchanged_outputs.iter().all(|same| *same);
+        let deferred = deferred_outputs.is_some();
+        let pruned = if deferred {
+            !self.options.dryrun
+        } else {
+            command.restat && !self.options.dryrun && unchanged_outputs.iter().any(|same| *same)
+        };
+        let all_pruned = if deferred {
+            !self.options.dryrun
+                && !self
+                    .graph
+                    .deferred_freshness(edge)
+                    .is_some_and(|freshness| freshness.always_dirty_output)
+                && new_mtimes.iter().all(|mtime| *mtime != 0)
+                && unchanged_outputs.iter().all(|same| *same)
+        } else {
+            command.restat && !self.options.dryrun && unchanged_outputs.iter().all(|same| *same)
+        };
         let mut record_mtime = command_start_mtime;
-        if !self.options.dryrun && (command.restat || command.generator) {
+        if !self.options.dryrun && (command.restat || command.generator || deferred) {
             record_mtime = record_mtime.max(new_mtimes.iter().copied().max().unwrap_or_default());
         }
         if pruned {
@@ -1409,6 +1462,9 @@ impl<'a> Builder<'a> {
             }
         }
         self.runtime.edge_mut(edge).set_restat_clean(all_pruned);
+        if deferred {
+            self.runtime.deferred_mut(edge).settle();
+        }
         Ok((pruned, loaded_dyndeps))
     }
 
@@ -1660,6 +1716,12 @@ impl<'a> Builder<'a> {
                 let Some(edge) = self.plan.find_work(self.graph) else {
                     break;
                 };
+                if !self.advance_deferred(edge, &mut failures, failure_limit, &mut last_error) {
+                    if failures >= failure_limit {
+                        break;
+                    }
+                    continue;
+                }
                 let is_phony = self.graph.is_phony_rule(self.graph.edge(edge).rule);
                 if is_phony {
                     let result = Ok(self.finish_phony_edge(edge));
@@ -1702,7 +1764,7 @@ impl<'a> Builder<'a> {
                 });
                 match prepared {
                     Ok(prepared) => {
-                        let command = prepared.command.command.clone();
+                        let command = prepared.launch_command.clone();
                         match processes.spawn(edge, command, use_console, self.options.dryrun) {
                             Ok(()) => {
                                 running[edge.index()] = Some(prepared);
@@ -1834,6 +1896,7 @@ impl<'a> Builder<'a> {
 }
 
 mod command;
+mod deferred;
 mod reporter;
 mod status;
 #[cfg(test)]
