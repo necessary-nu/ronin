@@ -173,6 +173,9 @@ pub struct GraphSink {
     unit: Unit,
     bindings: Bindings,
     phony: Rule,
+    /// Non-phony rule used only while deciding whether a recursive wrapper's
+    /// recipe is current. It is never allowed to execute.
+    subninja_probe: Rule,
     /// kati's rule handles to Ronin's. kati mints one rule per edge and
     /// declares it immediately before that edge, so this holds one entry for
     /// as long as it takes to reach the edge that names it.
@@ -221,6 +224,16 @@ impl GraphSink {
         let phony = graph
             .rule(scope, b"phony")
             .expect("a new graph holds the built-in phony rule");
+        let subninja_probe = graph
+            .define_rule(
+                scope,
+                b"__ronin_subninja_freshness_probe",
+                vec![
+                    (bindings.command, Template::literal(b"false")),
+                    (bindings.generator, Template::literal(b"1")),
+                ],
+            )
+            .expect("the internal recursive-freshness rule is unique");
         Self {
             graph,
             root_directory: root_directory.to_owned(),
@@ -237,6 +250,7 @@ impl GraphSink {
             },
             bindings,
             phony,
+            subninja_probe,
             rules: HashMap::new(),
             subninja_rules: HashMap::new(),
             interned: HashMap::new(),
@@ -380,6 +394,7 @@ impl GraphSink {
     // [spec:ronin:req:make.recursive-invocation+1]
     pub(crate) fn complete_subninja(
         &mut self,
+        edge: Edge,
         pending: PendingSubninja,
         child_groups: &[UnitSubgraph],
     ) -> Result<Edge, FrontendError> {
@@ -395,43 +410,16 @@ impl GraphSink {
         }
 
         let is_deferred = pending.deferred.is_some();
-        let (rule, inputs, order_only_inputs) = if is_deferred {
-            (
-                pending.residual_rule.unwrap_or(self.phony),
-                pending.inputs,
-                pending.order_only_inputs,
-            )
+        let rule = if is_deferred {
+            pending.residual_rule.unwrap_or(self.phony)
         } else if let Some(rule) = pending.residual_rule {
-            let mut order_only_inputs = pending.order_only_inputs;
-            for target in &child_targets {
-                if !order_only_inputs.contains(target) {
-                    order_only_inputs.push(*target);
-                }
-            }
-            (rule, pending.inputs, order_only_inputs)
+            self.graph.add_order_only_inputs(edge, &child_targets);
+            rule
         } else {
-            let mut inputs = pending.inputs;
-            for target in &child_targets {
-                if !inputs.contains(target) {
-                    inputs.push(*target);
-                }
-            }
-            (self.phony, inputs, pending.order_only_inputs)
+            self.graph.add_explicit_inputs(edge, &child_targets);
+            self.phony
         };
-        let edge = self.graph.add_edge(EdgeSpec {
-            scope: pending.scope,
-            rule,
-            explicit_outputs: &pending.explicit_outputs,
-            implicit_outputs: &pending.implicit_outputs,
-            explicit_inputs: &inputs,
-            implicit_inputs: &[],
-            order_only_inputs: &order_only_inputs,
-            validations: &pending.validations,
-            always_dirty: pending.always_dirty,
-            intermediate: pending.intermediate,
-            disposable: pending.disposable,
-            bindings: pending.bindings,
-        })?;
+        self.graph.set_edge_rule(edge, rule);
         if let Some(deferred) = pending.deferred {
             self.graph.set_deferred_freshness(
                 edge,
@@ -447,6 +435,40 @@ impl GraphSink {
             self.graph.set_completion_join(edge, output);
         }
         Ok(edge)
+    }
+
+    /// Add a recursive wrapper with an inert ordinary rule so its Make
+    /// timestamp freshness can be decided before any child Makefile is read.
+    pub(crate) fn probe_subninja(
+        &mut self,
+        pending: &mut PendingSubninja,
+    ) -> Result<Edge, FrontendError> {
+        self.graph.add_edge(EdgeSpec {
+            scope: pending.scope,
+            rule: self.subninja_probe,
+            explicit_outputs: &pending.explicit_outputs,
+            implicit_outputs: &pending.implicit_outputs,
+            explicit_inputs: &pending.inputs,
+            implicit_inputs: &[],
+            order_only_inputs: &pending.order_only_inputs,
+            validations: &pending.validations,
+            always_dirty: pending.always_dirty,
+            intermediate: pending.intermediate,
+            disposable: pending.disposable,
+            bindings: std::mem::take(&mut pending.bindings),
+        })
+    }
+
+    /// Ask the ordinary graph evaluator whether a staged wrapper must run.
+    pub(crate) fn subninja_is_dirty<F>(
+        &self,
+        edge: Edge,
+        stat: &mut F,
+    ) -> Result<bool, crate::error::GraphError>
+    where
+        F: FnMut(&Path) -> std::io::Result<i64>,
+    {
+        self.graph.edge_dirty_with(edge, stat)
     }
 
     /// The graph, or the first thing kati asked for that a graph cannot hold.

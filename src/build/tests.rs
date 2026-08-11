@@ -253,6 +253,32 @@ fn ninja_plan_basic() {
     assert!(plan.find_work(&graph).is_none());
 }
 
+/// A clean phony edge is still a scheduling barrier.  `CMake` emits this shape
+/// for generated headers: the object waits on a clean order-only phony, whose
+/// transitive phony input is dirty because the header generator must run.
+#[test]
+fn plan_tracks_clean_order_only_bridges() {
+    let graph = plan_graph(
+        "build generated: cat in\n\
+         build group: phony generated\n\
+         build order: phony || group\n\
+         build out: cat || order\n",
+    );
+    let runtime = mark_dirty(&graph, &["generated", "group", "out"]);
+    let mut plan = Plan::default();
+    add_plan_target(&mut plan, &graph, &runtime, b"out");
+    plan.prepare_queue(&graph);
+
+    for expected in ["generated", "group", "out"] {
+        let edge = plan.find_work(&graph).unwrap();
+        assert_eq!(output_path(&graph, edge), expected);
+        plan.edge_finished(&graph, &runtime, edge, EdgeResult::Succeeded)
+            .unwrap();
+    }
+    assert!(plan.find_work(&graph).is_none());
+    assert!(!plan.more_to_do());
+}
+
 #[test]
 fn ninja_plan_double_output_direct() {
     let graph = plan_graph("build out: cat mid1 mid2\nbuild mid1 mid2: cat in\n");

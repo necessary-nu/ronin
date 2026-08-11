@@ -34,7 +34,7 @@ use kati::flags::Flags;
 use kati::session::Session;
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 mod interface;
@@ -1366,6 +1366,7 @@ struct RootCompilation<'a> {
     invoked_as: &'a Path,
     directory: &'a Path,
     options: &'a BuildOptions,
+    makefile_contents: Option<&'a [u8]>,
     level: usize,
 }
 
@@ -1401,6 +1402,9 @@ fn prepare_graph(
             job_count(root.options),
             root.invoked_as,
         );
+        if let Some(contents) = root.makefile_contents {
+            session.supply_makefile(root.makefile.as_os_str().to_owned(), contents.to_vec());
+        }
         record_invocation_variables(&mut session, root.invocation, root.level);
         let compilation = compilation_context(
             root.invocation,
@@ -1557,6 +1561,15 @@ pub(crate) fn run(
     else {
         return Ok(no_makefile());
     };
+    let makefile_contents = if makefile == Path::new("-") {
+        let mut contents = Vec::new();
+        std::io::stdin()
+            .read_to_end(&mut contents)
+            .map_err(|source| CliError::ReadInput { source })?;
+        Some(contents)
+    } else {
+        None
+    };
 
     // Missing included Makefiles are source dependencies. Kati emits their
     // rules into a provisional graph; the ordinary Ninja scheduler builds
@@ -1568,6 +1581,7 @@ pub(crate) fn run(
         invoked_as: &invoked_as,
         directory: &directory,
         options: &options,
+        makefile_contents: makefile_contents.as_deref(),
         level,
     };
     let (mut graph, invocation, options) =

@@ -45,7 +45,7 @@ pub use sink::GraphSink;
 // [spec:ronin:req:product.make-identity]
 pub const MAKE_VERSION: &str = "4.4.1";
 
-use crate::frontend::{BuildGraph, FrontendError, Node, Scope};
+use crate::frontend::{BuildGraph, Edge, FrontendError, Node, Scope};
 use crate::make::sink::{UnitOutput, UnitSubgraph};
 use kati::evaluate::{Evaluated, evaluate};
 use kati::ninja::emit_build;
@@ -57,11 +57,18 @@ use std::fmt;
 use std::path::PathBuf;
 
 /// Kati observes the process working directory while evaluating a source unit.
-static COMPILATION_DIRECTORY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+static COMPILATION_DIRECTORY: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
-fn compilation_directory_guard() -> std::sync::MutexGuard<'static, ()> {
+fn compilation_directory_guard() -> std::sync::RwLockWriteGuard<'static, ()> {
     COMPILATION_DIRECTORY
-        .lock()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Keep the process directory stable while a non-Make frontend uses it.
+pub(crate) fn stable_process_directory_guard() -> std::sync::RwLockReadGuard<'static, ()> {
+    COMPILATION_DIRECTORY
+        .read()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
@@ -403,7 +410,8 @@ where
         edges,
     } = unit;
     let mut subtree_edges = edges;
-    for (pending_index, pending) in dependency_ordered(subninjas).into_iter().enumerate() {
+    let disk = freshness_disk(descendant_context)?;
+    for (pending_index, mut pending) in dependency_ordered(subninjas).into_iter().enumerate() {
         let parent_inputs = pending.evaluation_inputs();
         if !parent_inputs.is_empty() {
             let boundary = evaluation_boundary(
@@ -416,16 +424,18 @@ where
                 state.regenerations.sort_unstable();
                 state.regenerations.dedup();
                 state.evaluation_boundaries.insert(boundary);
-                return Ok(ComposedUnit {
-                    subgraph: UnitSubgraph {
-                        targets,
-                        edges: subtree_edges,
-                    },
-                    complete: false,
-                });
+                return Ok(incomplete_unit(targets, subtree_edges));
             }
             sink.mark_subgraphs_prebuilt(&parent_inputs);
         }
+
+        let wrapper = match stage_recursive_wrapper(sink, &mut pending, &disk)? {
+            RecursiveWrapper::Current(wrapper) => {
+                subtree_edges.push(wrapper);
+                continue;
+            }
+            RecursiveWrapper::Dirty(wrapper) => wrapper,
+        };
 
         let mut child_groups = Vec::with_capacity(pending.invocations.len());
         for (group_index, invocation) in pending.invocations.iter().enumerate() {
@@ -437,13 +447,7 @@ where
                 let child_scope = pending.scope;
                 let child = compile_unit(child, sink, Some(child_scope), resolve, state)?;
                 if !child.complete {
-                    return Ok(ComposedUnit {
-                        subgraph: UnitSubgraph {
-                            targets,
-                            edges: subtree_edges,
-                        },
-                        complete: false,
-                    });
+                    return Ok(incomplete_unit(targets, subtree_edges));
                 }
                 state.cache.insert(child_key, child.subgraph.clone());
                 child.subgraph
@@ -462,19 +466,13 @@ where
                     state.regenerations.sort_unstable();
                     state.regenerations.dedup();
                     state.evaluation_boundaries.insert(boundary);
-                    return Ok(ComposedUnit {
-                        subgraph: UnitSubgraph {
-                            targets,
-                            edges: subtree_edges,
-                        },
-                        complete: false,
-                    });
+                    return Ok(incomplete_unit(targets, subtree_edges));
                 }
                 sink.mark_subgraphs_prebuilt(completed_targets);
             }
         }
         let wrapper = sink
-            .complete_subninja(pending, &child_groups)
+            .complete_subninja(wrapper, pending, &child_groups)
             .map_err(MakeError::Construct)?;
         for child in child_groups {
             for edge in child.edges {
@@ -491,6 +489,48 @@ where
             edges: subtree_edges,
         },
         complete: true,
+    })
+}
+
+const fn incomplete_unit(targets: Vec<Node>, edges: Vec<Edge>) -> ComposedUnit {
+    ComposedUnit {
+        subgraph: UnitSubgraph { targets, edges },
+        complete: false,
+    }
+}
+
+fn freshness_disk(context: &CompilationContext) -> Result<crate::os::RealDiskInterface, MakeError> {
+    let working_directory = if context.root_directory.as_os_str().is_empty() {
+        crate::os::WorkingDirectory::default()
+    } else {
+        crate::os::WorkingDirectory::new(&context.root_directory).map_err(|error| {
+            MakeError::Evaluate(format!(
+                "opening Make build directory for freshness: {error}"
+            ))
+        })?
+    };
+    Ok(crate::os::RealDiskInterface::new(working_directory))
+}
+
+enum RecursiveWrapper {
+    Current(Edge),
+    Dirty(Edge),
+}
+
+fn stage_recursive_wrapper(
+    sink: &mut GraphSink,
+    pending: &mut sink::PendingSubninja,
+    disk: &crate::os::RealDiskInterface,
+) -> Result<RecursiveWrapper, MakeError> {
+    let edge = sink.probe_subninja(pending).map_err(MakeError::Construct)?;
+    let mut stat = |path: &std::path::Path| disk.stat(path);
+    let dirty = sink
+        .subninja_is_dirty(edge, &mut stat)
+        .map_err(|error| MakeError::Evaluate(error.to_string()))?;
+    Ok(if dirty {
+        RecursiveWrapper::Dirty(edge)
+    } else {
+        RecursiveWrapper::Current(edge)
     })
 }
 

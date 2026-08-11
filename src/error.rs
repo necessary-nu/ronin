@@ -176,6 +176,9 @@ pub(crate) enum CliError {
     CurrentDirectory {
         source: io::Error,
     },
+    ReadInput {
+        source: io::Error,
+    },
     ChangeDirectory {
         path: BString,
         source: io::Error,
@@ -236,9 +239,9 @@ impl fmt::Display for CliError {
                 EncodingContext::WarningValue => "invalid -w parameter",
                 EncodingContext::ToolValue => "invalid -t parameter",
             }),
-            Self::CurrentDirectory { source } | Self::WriteOutput { source } => {
-                formatter.write_str(&system_message(source))
-            }
+            Self::CurrentDirectory { source }
+            | Self::ReadInput { source }
+            | Self::WriteOutput { source } => formatter.write_str(&system_message(source)),
             // Ninja reports this one through `Fatal`, quoting the directory it
             // was asked for and the system's own message for why it could not
             // be entered.
@@ -259,6 +262,7 @@ impl error::Error for CliError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Self::CurrentDirectory { source }
+            | Self::ReadInput { source }
             | Self::ChangeDirectory { source, .. }
             | Self::WriteOutput { source } => Some(source),
             _ => None,

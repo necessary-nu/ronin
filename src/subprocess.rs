@@ -414,6 +414,8 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             return Ok(());
         }
 
+        #[cfg(feature = "make")]
+        let _directory = crate::make::stable_process_directory_guard();
         let mut mode = self.shell.clone();
         let (child, output) = loop {
             let mut shell =

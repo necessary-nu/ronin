@@ -7836,7 +7836,7 @@ children (
 
                     {
                         id make-makefile-standard-input
-                        title "Read -f dash Makefiles from standard input"
+                        title "Read stdin Makefiles and preserve hidden-path targets"
                         kind @fix
                         deps (make-interface-surface make-parser-parity)
                         sealed true
@@ -7853,6 +7853,27 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+
+                            {
+                                at 2026-08-11T23:12:24.657167025Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-11T23:12:24.844473232Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Necessary OS exposed the real acceptance case through Dash's Automake bootstrap: `sed -e '/# am--include-marker/d' Makefile | make -f - ... am--depfiles`. The fix must supply stdin bytes to every fresh Kati evaluation session and treat slash-containing hidden paths such as `.deps/alias.Po` as ordinary file targets rather than obsolete suffix rules. Delivery evidence: the exact filtered Makefile produced all 27 dependency fragments, and the focused CLI regressions cover stdin reuse and the hidden-directory target shape."
+                            }
+
+                            {
+                                at 2026-08-11T23:12:24.92027294Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -8102,6 +8123,96 @@ children (
 
                     {
                         at 2026-08-11T19:54:28.986026967Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-clean-dependency-bridges
+                title "Keep clean dependency bridges in the scheduled graph"
+                kind @fix
+                deps (ronin-event-scheduler ronin-prune-clean-subtrees)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T23:12:24.999696279Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T23:12:25.188057608Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "LLVM exposed a scheduler correctness gap: a clean phony order-only bridge was absent from Plan, so a consumer could run before the bridge's transitive generated header. Preserve every tracked edge in the dependency frontier while limiting command execution to the dirty wanted subset. Delivery evidence: the reduced CMake/LLVM-shaped manifest orders generation before consumption, its focused scheduler regression passes, and all 425 pinned Ninja 1.14 conformance tests pass."
+                    }
+
+                    {
+                        at 2026-08-11T23:12:25.261238148Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-current-recursive-wrapper-freshness
+                title "Skip recursive recipes when their wrapper target is current"
+                kind @fix
+                deps (make-recursive-evaluation-boundary make-timestamp-only-recipe-freshness)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T23:12:25.345228668Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T23:12:25.531476673Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Python exposed repeated recursive compilation for an already-current wrapper target, exhausting Ronin's 100-pass convergence limit. Probe the staged wrapper only after its parent prerequisites settle, represent the result as a typed Current/Dirty boundary, skip the recursive child when current, and compile it when dirty. Delivery evidence: the reduced self-recursive current-target regression and recursive CLI suite pass."
+                    }
+
+                    {
+                        at 2026-08-11T23:12:25.61162014Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-process-directory-isolation
+                title "Serialize process-directory snapshots against Make evaluation"
+                kind @fix
+                deps (ronin-process-boundary make-subninja-recursion)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T23:12:25.6919436Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T23:12:25.869977593Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Parallel conformance exposed process-global cwd leakage: Kati's temporary evaluation directory could race Runner::from_process snapshots and child-process spawn preparation in another thread. Hold an exclusive directory guard during Make evaluation and shared guards while capturing or applying a process directory. Delivery evidence: ten consecutive parallel full library-test runs passed after the isolation change."
+                    }
+
+                    {
+                        at 2026-08-11T23:12:25.943419344Z
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"

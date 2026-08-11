@@ -125,6 +125,8 @@ impl Runner {
     /// Returns an error when the process working directory cannot be read or
     /// canonicalized.
     pub fn from_process() -> std::io::Result<Self> {
+        #[cfg(all(unix, feature = "make"))]
+        let _directory = crate::make::stable_process_directory_guard();
         let mut runner = Self::new(std::env::current_dir()?)?;
         runner.makeflags = std::env::var("MAKEFLAGS").ok();
         #[cfg(all(unix, feature = "make"))]

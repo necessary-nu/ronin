@@ -169,6 +169,13 @@ impl PoolOccupancy {
 
 #[derive(Default)]
 pub(crate) struct Plan {
+    /// Every edge whose inputs must settle before a consumer may start.
+    ///
+    /// Ninja keeps clean edges in its plan as `kWantNothing`: they run no
+    /// command, but they are still dependency barriers.  `wanted` is the
+    /// subset that is dirty and must execute.
+    tracked: Vec<bool>,
+    tracked_count: usize,
     wanted: Vec<bool>,
     wanted_count: usize,
     weight: Vec<CriticalPathWeight>,
@@ -193,6 +200,7 @@ pub(crate) struct Plan {
 impl Plan {
     fn synchronize_arenas(&mut self, graph: &Graph) {
         let edge_count = graph.edge_count();
+        self.tracked.resize(edge_count, false);
         self.wanted.resize(edge_count, false);
         self.weight
             .resize(edge_count, CriticalPathWeight::default());
@@ -262,6 +270,11 @@ impl Plan {
                 continue;
             }
 
+            if !self.tracked[edge.index()] {
+                self.tracked[edge.index()] = true;
+                self.tracked_count += 1;
+            }
+
             if edge_dirty {
                 let previous_weight = self.weight[edge.index()];
                 let newly_wanted = !self.wanted[edge.index()];
@@ -321,14 +334,14 @@ impl Plan {
         self.dependency_marks.fill(None);
         for edge in graph.edge_ids() {
             let index = edge.index();
-            if !self.wanted[index] || self.completed[index] {
+            if !self.tracked[index] || self.completed[index] {
                 continue;
             }
             for input in graph.edge(edge).input.iter().copied() {
                 let Some(generator) = graph.node(input).generator else {
                     continue;
                 };
-                if self.wanted[generator.index()]
+                if self.tracked[generator.index()]
                     && !self.completed[generator.index()]
                     && self.dependency_marks[generator.index()] != Some(edge)
                 {
@@ -338,14 +351,48 @@ impl Plan {
                 }
             }
         }
+        let mut clean = Vec::new();
         for edge in graph.edge_ids() {
             let index = edge.index();
-            if self.wanted[index]
+            if self.tracked[index]
                 && !self.completed[index]
                 && !self.running[index]
                 && self.pending[index] == 0
             {
-                self.ready.push(ReadyEdge::new(self.weight[index], edge));
+                if self.wanted[index] {
+                    self.ready.push(ReadyEdge::new(self.weight[index], edge));
+                } else {
+                    clean.push(edge);
+                }
+            }
+        }
+        self.finish_initially_clean(clean);
+    }
+
+    /// Settle clean dependency bridges without scheduling them.
+    ///
+    /// Their only job in the plan is to hold consumers until their own inputs
+    /// finish.  This is Ninja's `kWantNothing` state: omitting these edges
+    /// entirely lets a consumer cross a clean phony/order-only bridge while a
+    /// dirty transitive prerequisite is still running.
+    fn finish_initially_clean(&mut self, mut work: Vec<EdgeId>) {
+        while let Some(edge) = work.pop() {
+            if std::mem::replace(&mut self.completed[edge.index()], true) {
+                continue;
+            }
+            self.completed_count += 1;
+            for index in 0..self.dependents[edge.index()].len() {
+                let dependent = self.dependents[edge.index()][index];
+                self.pending[dependent.index()] -= 1;
+                if self.pending[dependent.index()] != 0 {
+                    continue;
+                }
+                if self.wanted[dependent.index()] {
+                    self.ready
+                        .push(ReadyEdge::new(self.weight[dependent.index()], dependent));
+                } else {
+                    work.push(dependent);
+                }
             }
         }
     }
@@ -358,7 +405,7 @@ impl Plan {
         self.synchronize_arenas(graph);
         for edge in graph.edge_ids() {
             let index = edge.index();
-            if !self.wanted[index] {
+            if !self.tracked[index] {
                 continue;
             }
             let weight = self.weight[index];
@@ -469,7 +516,7 @@ impl Plan {
     }
 
     pub(crate) const fn more_to_do(&self) -> bool {
-        self.failures != 0 || self.completed_count < self.wanted_count
+        self.failures != 0 || self.completed_count < self.tracked_count
     }
 
     pub(crate) fn command_edge_count(&self, graph: &Graph) -> usize {

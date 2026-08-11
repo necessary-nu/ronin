@@ -369,6 +369,10 @@ assertions (
     {id make-newer-prerequisite-automatic-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-11T15:27:29.599349062Z}
     {id make-recursive-prerequisite-boundary, kind @complete, author "brendan@necessary.nu", at 2026-08-11T17:19:43.477573544Z}
     {id make-recursive-evaluation-boundary, kind @complete, author "brendan@necessary.nu", at 2026-08-11T19:54:28.986026967Z}
+    {id make-makefile-standard-input, kind @complete, author "brendan@necessary.nu", at 2026-08-11T23:12:24.92027294Z}
+    {id make-clean-dependency-bridges, kind @complete, author "brendan@necessary.nu", at 2026-08-11T23:12:25.261238148Z}
+    {id make-current-recursive-wrapper-freshness, kind @complete, author "brendan@necessary.nu", at 2026-08-11T23:12:25.61162014Z}
+    {id make-process-directory-isolation, kind @complete, author "brendan@necessary.nu", at 2026-08-11T23:12:25.943419344Z}
 )
 
 impl_evidence (

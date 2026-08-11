@@ -23,9 +23,11 @@ use crate::env::{
     mkenv, mkpool, mkrule, poolget, ruleaddvar,
 };
 use crate::graph::{
-    EdgeId, Graph, NodeId, PathStyle, allocate_node, mkedge, mknode, nodeget, nodeuse,
+    EdgeId, Graph, NodeId, PathStyle, TraversalScratch, allocate_node, mkedge, mknode, nodeget,
+    nodeuse, recompute_dirty_with_validations,
 };
 use crate::names::{Names, VarId};
+use crate::runtime::RuntimeState;
 use crate::util::{BStr, BString, ByteSlice, EvalPart, EvalString, canonpath, is_canonical};
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -572,6 +574,72 @@ impl BuildGraph {
             nodeuse(&mut self.arenas, input.0, edge.0);
             self.arenas.edge_mut(edge.0).input.push(input.0);
         }
+    }
+
+    /// Promote additional inputs into the ordinary explicit partition.
+    pub(crate) fn add_explicit_inputs(&mut self, edge: Edge, inputs: &[Node]) {
+        for input in inputs {
+            let partitions = {
+                let stored = self.arenas.edge(edge.0);
+                (
+                    stored.explicit_input_count(),
+                    stored.non_order_only_input_count(),
+                )
+            };
+            if self
+                .arenas
+                .edge(edge.0)
+                .explicit_inputs()
+                .contains(&input.0)
+            {
+                continue;
+            }
+            let existing = self
+                .arenas
+                .edge(edge.0)
+                .input
+                .iter()
+                .position(|node| *node == input.0);
+            if let Some(index) = existing {
+                self.arenas.edge_mut(edge.0).remove_input(index);
+            } else {
+                nodeuse(&mut self.arenas, input.0, edge.0);
+            }
+            let explicit = partitions.0.min(self.arenas.edge(edge.0).input.len());
+            self.arenas.edge_mut(edge.0).input.insert(explicit, input.0);
+            let non_order_only = partitions.1.saturating_sub(usize::from(
+                existing.is_some_and(|index| index < partitions.1),
+            ));
+            self.arenas
+                .edge_mut(edge.0)
+                .set_input_partitions(explicit + 1, non_order_only + 1);
+        }
+    }
+
+    /// Replace the command rule of an edge whose structure was staged first.
+    pub(crate) fn set_edge_rule(&mut self, edge: Edge, rule: Rule) {
+        self.arenas.edge_mut(edge.0).rule = Some(rule.0);
+    }
+
+    /// Evaluate one staged edge's timestamp freshness without executing it.
+    pub(crate) fn edge_dirty_with<F>(
+        &self,
+        edge: Edge,
+        stat: &mut F,
+    ) -> Result<bool, crate::error::GraphError>
+    where
+        F: FnMut(&std::path::Path) -> std::io::Result<i64>,
+    {
+        let target = self.arenas.edge(edge.0).out[0];
+        let mut runtime = RuntimeState::new(&self.arenas);
+        recompute_dirty_with_validations(
+            &self.arenas,
+            &mut runtime,
+            &mut TraversalScratch::default(),
+            target,
+            stat,
+        )?;
+        Ok(runtime.node(target).dirty())
     }
 
     /// Keep work completed through a provisional compiler graph completed in
