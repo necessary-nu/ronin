@@ -7922,6 +7922,7 @@ children (
                 title "Fence recursive child work behind parent prerequisites"
                 kind @fix
                 deps (make-recursive-target-namespace make-newer-prerequisite-automatic-variable)
+                sealed true
                 log (
                     {
                         at 2026-08-11T16:59:44.580213661Z
@@ -7935,6 +7936,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T17:19:43.38868714Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Fixed in 176a1c08fcb16babcd41bf44f311e298f351a476 by fencing every edge in each recursively composed child subtree behind the parent prerequisites and each later recursive group behind the preceding group. The indirect-prerequisite regression passed 8 consecutive -j16 runs. Clean Necessary OS run 1786468373998-736102 used new output root /data/pkg-build-ronin-boundary-176a1c0, built Ronin from that revision, compiled scripts/basic/fixdep at edge 22 and scripts/unifdef at edge 24 before header installation, and completed all 1,037 kernel-headers@seed edges: 2 built, 0 reused, 1 imported. Post-fix gates: 297 Makefiles/276 direct-manifest graph comparisons with 0 disagreements; 387 GNU Make 4.4.1 conformance runs retained their recorded classifications; all 425 pinned Ninja tests and differential/persistence gates passed."
+                    }
+
+                    {
+                        at 2026-08-11T17:19:43.477573544Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

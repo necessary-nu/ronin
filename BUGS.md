@@ -236,7 +236,7 @@ exposes the separate recursive ordering defect below.
 
 ## A recursive child's prerequisites outrun its parent prerequisites
 
-Status: open
+Status: fixed
 
 Observed with Ronin revision `893ea90f462ceb42b72557b5aca229309444c60d`
 while rebuilding Linux 6.18.2 userspace headers for Necessary OS with 16 jobs.
@@ -304,3 +304,19 @@ Acceptance: the reduced case succeeds repeatedly with `-j16`, including when
 `leaf` is an indirect prerequisite rather than the child's goal recipe, and
 Necessary OS's `kernel-headers@seed` completes its parallel Linux `headers`
 build.
+
+Resolution: Ronin now records every edge in a compiled recursive child unit,
+including nested recursive units, and adds the recursive parent's ordinary and
+order-only prerequisites to every edge in that subtree. Consecutive recursive
+recipe lines likewise fence every edge in each later child group behind the
+targets of the preceding group. The indirect-prerequisite regression succeeds
+eight consecutive times with `-j16`.
+
+Necessary OS run `1786468373998-736102` then built Ronin revision
+`176a1c08fcb16babcd41bf44f311e298f351a476` and `kernel-headers@seed` in the
+new output root `/data/pkg-build-ronin-boundary-176a1c0`: 2 packages built, 0
+reused, and 1 bootstrap toolchain imported. The clean Linux build compiled
+`scripts/basic/fixdep` at edge 22 and `scripts/unifdef` at edge 24 before the
+header-install subtree, completed all 1,037 edges, and installed the userspace
+headers. The retained build log is
+`/home/brendan/.cache/necessary/runs/1786468373998-736102/logs/kernel-headers--x86-64-x86-64--seed-.log`.
