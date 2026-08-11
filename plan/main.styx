@@ -3610,6 +3610,7 @@ children (
         id ronin-manifest-message-parity
         title "Say what Ninja says when a manifest is wrong"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-03T23:18:26.397545662Z
@@ -3634,6 +3635,20 @@ children (
 
             {
                 at 2026-08-09T18:30:59.95151471Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+
+            {
+                at 2026-08-11T07:40:11.876799462Z
+                author "brendan@necessary.nu"
+                kind @errata
+                text "Recovery audit on 2026-08-11: delivery commit 8b711b2 is already an ancestor of current main, and the detailed delivery decision plus its Doing → Done log survive in plan/main.styx. Only the derived @complete assertion in plan/.state.styx was lost, leaving nplan to expose the node as Doing. Later parser, scanner, diagnostic, and conformance work overlaps the original delivery paths, so current behavior was revalidated rather than inferred from file identity. The pinned-Ninja gate passed all 425 upstream tests, 10 CLI/tool differential cases, 86 recorded build-outcome cases, 3 invocation cases, the persistence round trip, and log-content checks; its all-target test phase also passed. The forced nplan workspace check passed on repetition. Its first run hit an unrelated supervisor-scale test whose shell inherited a concurrently removed working directory; that exact test passed five immediate isolated reruns and had already passed in the conformance gate's all-target phase. No source correction or violation bypass is needed; restoring the completion assertion records shipped reality."
+            }
+
+            {
+                at 2026-08-11T07:40:20.260424767Z
                 author "brendan@necessary.nu"
                 kind @status
                 text "Doing → Done (nplan complete)"
