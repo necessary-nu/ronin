@@ -431,7 +431,7 @@ retained package log is
 
 ## A changed recipe command rebuilds an otherwise up-to-date Make target
 
-Status: open
+Status: fixed in `2dc68b0`
 
 Observed with Ronin revision `e4dc77a102f0d755448978a11618f0c8d5d30304`
 while building the ICU4X-backed musl libc for Necessary OS with 16 jobs.
@@ -488,3 +488,19 @@ Expected: Make mode MUST ignore persisted Ninja command-hash differences when
 deciding whether an existing target is dirty. The reduced second invocation
 must run only the `install` recipe and preserve `kept`. Ninja mode's native
 command-change behavior is unaffected.
+
+Resolution: Kati now marks every Make recipe rule with Ninja's `generator = 1`
+control in both its direct graph and retained manifest. That keeps Make
+freshness timestamp-only without adding Make provenance to the executor, while
+native Ninja rules retain their ordinary command-hash behavior. Five timestamp
+cases moved from discovery into the GNU Make build-intent gate, and the reduced
+case above passes as an integration test.
+
+The Necessary OS definition of done passed in run `1786484875353-377057` using
+Ronin `2dc68b0` and a temporary recipe with the musl install workaround removed.
+The build linked `lib/libc.so` once at edge 1369/1369 with the ICU4X archive;
+the following bare `make install AR=llvm-ar RANLIB=llvm-ranlib
+DESTDIR=/staging` copied it at edge 3/235 instead of relinking it. `musl@seed`
+completed successfully, `sysconf` remained exported, and there were no
+undefined `__icu4x_*` symbols. The retained log is
+`/home/brendan/.cache/necessary/runs/1786484875353-377057/logs/musl--x86-64-x86-64--seed-.log`.

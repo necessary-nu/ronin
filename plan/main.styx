@@ -6614,6 +6614,14 @@ children (
                                 kind @decision
                                 text "Compile GNU Make timestamp-only recipe freshness into both direct and emitted Ninja graphs with generator = 1: changed or missing command hashes do not dirty an otherwise current Make target, while native Ninja command hashing remains unchanged. Preserve prerequisite-free double-colon recipes by representing their unconditional execution explicitly rather than relying on missing-log dirtiness. Promote the five timestamp cases to the make_port gate and retire the now-fixed double-colon divergence."
                             }
+
+                            {
+                                at 2026-08-11T21:56:09.135948196Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Necessary OS DoD passed with the musl install workaround removed. Run 1786484875353-377057 built Ronin 2dc68b0, kernel headers, compiler-rt, and musl@seed. The ICU4X-bearing libc.so linked once at build edge 1369/1369; the bare install invocation copied it at edge 3/235 without relinking, retained sysconf, and produced no undefined __icu4x_* symbols. Evidence: /home/brendan/.cache/necessary/runs/1786484875353-377057/logs/musl--x86-64-x86-64--seed-.log"
+                                after_done true
+                            }
                         )
                     }
                 )
