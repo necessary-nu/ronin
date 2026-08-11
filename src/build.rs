@@ -2,13 +2,13 @@
 
 use crate::error::{BuildError, BuildOperation, BuildStop, ProcessError};
 use crate::graph::{
-    edgeadddeps, edgehash, nodestat_with, recompute_dirty_with_validations,
-    recompute_edge_dirty_with, EdgeId, Graph, NodeId, PathStyle, TraversalScratch,
+    EdgeId, Graph, NodeId, PathStyle, TraversalScratch, edgeadddeps, edgehash, nodestat_with,
+    recompute_dirty_with_validations, recompute_edge_dirty_with,
 };
 use crate::names::Names;
 use crate::os::RealDiskInterface;
 use crate::runtime::{FileTime, RuntimeState};
-use crate::subprocess::{status_interrupted, ProcessOutput, ProcessSupervisor, SupervisorWake};
+use crate::subprocess::{ProcessOutput, ProcessSupervisor, SupervisorWake, status_interrupted};
 use crate::util::{BString, ByteSlice};
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
@@ -144,11 +144,7 @@ impl CriticalPathWeight {
     }
 
     const fn max(self, other: Self) -> Self {
-        if self.0 >= other.0 {
-            self
-        } else {
-            other
-        }
+        if self.0 >= other.0 { self } else { other }
     }
 }
 
@@ -240,7 +236,7 @@ impl Plan {
     ) -> BuildResult<()> {
         let mut work = vec![(node, weight, None)];
         while let Some((node, weight, needed_by)) = work.pop() {
-            let Some(edge) = graph.node(node).gen else {
+            let Some(edge) = graph.node(node).generator else {
                 if runtime.node(node).dirty() {
                     let path = graph.node_path(node).to_owned();
                     let needed_by = needed_by
@@ -294,7 +290,7 @@ impl Plan {
             for (index, &input) in inputs.iter().enumerate().rev() {
                 if !(index >= depfile_start
                     && index < depfile_end
-                    && graph.node(input).gen.is_none())
+                    && graph.node(input).generator.is_none())
                 {
                     work.push((input, weight.next(), needed_by));
                 }
@@ -329,7 +325,7 @@ impl Plan {
                 continue;
             }
             for input in graph.edge(edge).input.iter().copied() {
-                let Some(generator) = graph.node(input).gen else {
+                let Some(generator) = graph.node(input).generator else {
                     continue;
                 };
                 if self.wanted[generator.index()]
@@ -659,7 +655,7 @@ impl<'a> Builder<'a> {
         while let Some(item) = work.pop() {
             match item {
                 Work::Enter(node) => {
-                    let Some(edge) = self.graph.node(node).gen else {
+                    let Some(edge) = self.graph.node(node).generator else {
                         if self.runtime.node(node).mtime().is_unobserved() {
                             let mut stat = |path: &Path| disk.stat(path);
                             nodestat_with(self.graph, &mut self.runtime, node, &mut stat)?;
@@ -705,11 +701,12 @@ impl<'a> Builder<'a> {
                                     self.runtime.node(output).mtime().raw() <= entry.mtime
                                 })
                         });
-                        if !base_dirty && entry_is_current {
-                            if let Some(log) = self.deps_log.as_deref() {
-                                crate::deps::depsload(self.graph, edge, log);
-                                dependencies_changed = true;
-                            }
+                        if !base_dirty
+                            && entry_is_current
+                            && let Some(log) = self.deps_log.as_deref()
+                        {
+                            crate::deps::depsload(self.graph, edge, log);
+                            dependencies_changed = true;
                         }
                         let state = self.runtime.edge_mut(edge);
                         state.set_deps_loaded(true);
@@ -768,7 +765,7 @@ impl<'a> Builder<'a> {
         visited_edges.resize(self.graph.edge_count(), false);
         let mut work = vec![node];
         while let Some(node) = work.pop() {
-            let Some(edge) = self.graph.node(node).gen else {
+            let Some(edge) = self.graph.node(node).generator else {
                 continue;
             };
             if std::mem::replace(&mut visited_edges[edge.index()], true) {
@@ -800,7 +797,7 @@ impl<'a> Builder<'a> {
         self.visited_edges.begin(self.graph.edge_count());
         let mut work = vec![node];
         while let Some(node) = work.pop() {
-            let Some(edge) = self.graph.node(node).gen else {
+            let Some(edge) = self.graph.node(node).generator else {
                 continue;
             };
             if self.visited_edges.replace(edge.index()) {
@@ -901,7 +898,7 @@ impl<'a> Builder<'a> {
         self.plan
             .add_target(self.graph, &self.runtime, node)
             .map_err(|error| {
-                if self.graph.node(node).gen.is_none() {
+                if self.graph.node(node).generator.is_none() {
                     BuildError::MissingRule {
                         node,
                         path: self.graph.node_path(node).to_owned(),
@@ -996,7 +993,7 @@ impl<'a> Builder<'a> {
     /// Whether the build ran the command that generates `node`, and a `restat`
     /// rule did not then find the output unchanged.
     pub(crate) fn regenerated(&self, node: NodeId) -> bool {
-        self.graph.node(node).gen.is_some_and(|edge| {
+        self.graph.node(node).generator.is_some_and(|edge| {
             self.executed_edges.contains(&edge) && !self.runtime.edge(edge).restat_clean()
         })
     }
@@ -1382,14 +1379,13 @@ impl<'a> Builder<'a> {
                 }
             }
         }
-        if command.deps_type == DepsType::Gcc {
-            if let Some(path) = &command.depfile_path {
-                if !self.options.keepdepfile {
-                    let _ = self
-                        .disk
-                        .remove_file(path.to_path().expect("byte paths are valid on Unix"));
-                }
-            }
+        if command.deps_type == DepsType::Gcc
+            && let Some(path) = &command.depfile_path
+            && !self.options.keepdepfile
+        {
+            let _ = self
+                .disk
+                .remove_file(path.to_path().expect("byte paths are valid on Unix"));
         }
         let mut loaded_dyndeps = Vec::new();
         if !self.options.dryrun {
@@ -1448,18 +1444,18 @@ impl<'a> Builder<'a> {
         // which every later invocation of any tool then pays to load. The
         // in-memory mtime above is still set, because the rest of this run's
         // planning depends on it; only the persistent write is skipped.
-        if !self.options.dryrun {
-            if let Some(build_log) = self.build_log.as_deref_mut() {
-                crate::log::logrecordedge(
-                    build_log,
-                    self.graph,
-                    edge,
-                    edge_hash,
-                    start_millis,
-                    end_millis,
-                    record_mtime,
-                )?;
-            }
+        if !self.options.dryrun
+            && let Some(build_log) = self.build_log.as_deref_mut()
+        {
+            crate::log::logrecordedge(
+                build_log,
+                self.graph,
+                edge,
+                edge_hash,
+                start_millis,
+                end_millis,
+                record_mtime,
+            )?;
         }
         self.runtime.edge_mut(edge).set_restat_clean(all_pruned);
         if deferred {
@@ -1653,22 +1649,27 @@ impl<'a> Builder<'a> {
         // budget: a jobserver there would be a budget nothing is spending.
         let transport = if self.options.dryrun {
             None
-        } else if let Some(inherited) = self.options.jobserver.clone() {
-            Some(inherited)
-        } else if let (true, JobLimit::Fixed(jobs)) =
-            (self.options.serve_jobserver, self.options.jobs)
-        {
-            // A budget of one has nothing to share, and Ninja's `-j0` has no
-            // budget at all. GNU Make publishes no jobserver in either case.
-            // Neither has a build with no command to run, which is most of
-            // them: an up-to-date tree must not pay to create and remove a
-            // fifo nothing was ever going to open.
-            (jobs.get() > 1 && self.progress.total != 0)
-                .then(|| crate::jobserver::Transport::serve(jobs))
-                .transpose()?
-                .flatten()
         } else {
-            None
+            match self.options.jobserver.clone() {
+                Some(inherited) => Some(inherited),
+                _ => {
+                    if let (true, JobLimit::Fixed(jobs)) =
+                        (self.options.serve_jobserver, self.options.jobs)
+                    {
+                        // A budget of one has nothing to share, and Ninja's `-j0` has no
+                        // budget at all. GNU Make publishes no jobserver in either case.
+                        // Neither has a build with no command to run, which is most of
+                        // them: an up-to-date tree must not pay to create and remove a
+                        // fifo nothing was ever going to open.
+                        (jobs.get() > 1 && self.progress.total != 0)
+                            .then(|| crate::jobserver::Transport::serve(jobs))
+                            .transpose()?
+                            .flatten()
+                    } else {
+                        None
+                    }
+                }
+            }
         };
         let mut environment = Vec::new();
         // A generic inherited or manifest-served jobserver remains process

@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 use crate::error::ToolError;
-use crate::util::{canonpath, BString};
+use crate::util::{BString, canonpath};
 use std::collections::BTreeSet;
 
 #[derive(Default)]

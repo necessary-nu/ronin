@@ -29,13 +29,13 @@
 
 use super::sink::GraphSink;
 use crate::env::edgevar;
-use crate::frontend::{load_manifest, BuildGraph, ManifestOptions};
+use crate::frontend::{BuildGraph, ManifestOptions, load_manifest};
 use crate::graph::PathStyle;
 use crate::util::{BStr, ByteSlice};
 use kati::anyhow;
 use kati::build_sink::{BuildSink, RuleId, SinkCommand, SinkEdge, SinkPool, SinkRule};
-use kati::evaluate::{evaluate, Evaluated};
-use kati::ninja::{emit_build, NinjaWriter, NinjaWriterOptions};
+use kati::evaluate::{Evaluated, evaluate};
+use kati::ninja::{NinjaWriter, NinjaWriterOptions, emit_build};
 use kati::session::Session;
 use kati::symtab::{Interner, Symbol};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -348,7 +348,7 @@ fn semantic_path(graph: &BuildGraph, node: crate::graph::NodeId) -> Vec<u8> {
     let arenas = graph.arenas();
     let node = arenas
         .node(node)
-        .gen
+        .generator
         .and_then(|edge| arenas.completion_join_output(edge))
         .unwrap_or(node);
     arenas.node_path(node).as_bytes().to_vec()
@@ -688,12 +688,16 @@ all: {target}
     }
 
     let manifest = std::fs::read(case.directory.path().join("build.ninja")).unwrap();
-    assert!(manifest
-        .windows(b"_kati_unaddressable_phony_".len())
-        .any(|part| part == b"_kati_unaddressable_phony_"));
-    assert!(!manifest
-        .windows(target.len())
-        .any(|part| part == target.as_bytes()));
+    assert!(
+        manifest
+            .windows(b"_kati_unaddressable_phony_".len())
+            .any(|part| part == b"_kati_unaddressable_phony_")
+    );
+    assert!(
+        !manifest
+            .windows(target.len())
+            .any(|part| part == target.as_bytes())
+    );
 }
 
 // [spec:ronin:req:make.graph-direct/test]

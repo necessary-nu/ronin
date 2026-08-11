@@ -2,7 +2,7 @@
 
 use crate::env::edgevar;
 use crate::error::{ManifestError, ToolAvailability, ToolError, ToolOperation};
-use crate::graph::{nodeget, EdgeId, Graph, NodeId, PathStyle};
+use crate::graph::{EdgeId, Graph, NodeId, PathStyle, nodeget};
 use crate::names::Names;
 use crate::source::Source;
 use crate::util::{BStr, BString, ByteSlice};
@@ -265,7 +265,7 @@ impl Cleaner {
     fn clean_target(&mut self, graph: &Graph, node: NodeId) -> ToolResult<()> {
         let mut work = vec![node];
         while let Some(node) = work.pop() {
-            let Some(edge) = graph.node(node).gen else {
+            let Some(edge) = graph.node(node).generator else {
                 continue;
             };
             if !self.visited_edges.insert(edge) {
@@ -472,7 +472,7 @@ fn collect_target_commands(
     while let Some(item) = work.pop() {
         match item {
             CommandWork::Visit(node) => {
-                let Some(edge) = graph.node(node).gen else {
+                let Some(edge) = graph.node(node).generator else {
                     continue;
                 };
                 if !visited.insert(edge) {
@@ -547,13 +547,13 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolRe
             b"-h" | b"--help" => {
                 return Err(ToolError::Usage {
                     text: "usage: ronin -t commands [options] [targets]\n\noptions:\n  -s     only print the final command to build [target], not the whole chain",
-                })
+                });
             }
             option if option.starts_with(b"-") => {
                 return Err(ToolError::UnknownOption {
                     tool: "commands",
                     option: argument.clone(),
-                })
+                });
             }
             _ => targets.push(argument.clone()),
         }
@@ -567,7 +567,7 @@ pub(crate) fn commands_with_args(graph: &Graph, arguments: &[BString]) -> ToolRe
         let node = nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
             path: target.clone(),
         })?;
-        let Some(edge) = graph.node(node).gen else {
+        let Some(edge) = graph.node(node).generator else {
             continue;
         };
         if !seen.insert(edge) {
@@ -618,7 +618,7 @@ fn graphnode_inner(graph: &Graph, node: NodeId, output: &mut Vec<u8>, visited: &
                 let _ = write!(output, "\"n{}\" [label=\"", node.index());
                 output.extend_from_slice(printquoted(path.as_bytes(), false).as_bytes());
                 output.extend_from_slice(b"\"]\n");
-                let Some(edge) = graph.node(node).gen else {
+                let Some(edge) = graph.node(node).generator else {
                     continue;
                 };
                 if !visited.insert(edge) {
@@ -723,7 +723,7 @@ pub(crate) fn query(graph: &Graph, targets: &[BString]) -> ToolResult<String> {
         })?;
         let node_borrow = graph.node(node);
         let _ = writeln!(output, "{}:", target.to_str_lossy());
-        if let Some(edge) = node_borrow.gen {
+        if let Some(edge) = node_borrow.generator {
             let _ = writeln!(output, "  input: {}", edge_name(graph, edge));
             for (index, input) in graph.edge(edge).input.iter().enumerate() {
                 let input_path = graph.node_path(*input);
@@ -784,7 +784,7 @@ pub(crate) fn targetsdepth(
     while let Some((node, depth, indent)) = work.pop() {
         output.push_str(&"  ".repeat(indent));
         let node_borrow = graph.node(node);
-        if let Some(edge) = node_borrow.gen {
+        if let Some(edge) = node_borrow.generator {
             let _ = writeln!(
                 output,
                 "{}: {}",
@@ -859,7 +859,7 @@ pub(crate) fn targets_with_args(graph: &Graph, args: &[String]) -> ToolResult<St
             } else {
                 for edge in graph.edge_ids() {
                     for input in &graph.edge(edge).input {
-                        if graph.node(*input).gen.is_none() {
+                        if graph.node(*input).generator.is_none() {
                             let input_path = graph.node_path(*input);
                             let _ = writeln!(
                                 output,
@@ -901,13 +901,13 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
             "-h" | "--help" => {
                 return Err(ToolError::Usage {
                     text: "usage: ronin -t rules [options]\n\noptions:\n  -d     also print the description of the rule\n  -h     print this message",
-                })
+                });
             }
             option => {
                 return Err(ToolError::UnknownOption {
                     tool: "rules",
                     option: BString::from(option),
-                })
+                });
             }
         }
     }
@@ -919,17 +919,16 @@ pub(crate) fn rules(graph: &Graph, arguments: &[String]) -> ToolResult<String> {
     let mut output = String::new();
     for (name, rule) in rules {
         output.push_str(&name.to_str_lossy());
-        if descriptions {
-            if let Some(description) = graph.rule(rule).bindings.get(Names::DESCRIPTION) {
-                output.push_str(": ");
-                for part in &description.parts {
-                    match part {
-                        crate::util::EvalPart::Literal(value) => {
-                            output.push_str(&String::from_utf8_lossy(value.as_bytes()));
-                        }
-                        crate::util::EvalPart::Variable(name) => {
-                            let _ = write!(output, "${{{}}}", graph.names().name(*name));
-                        }
+        if descriptions && let Some(description) = graph.rule(rule).bindings.get(Names::DESCRIPTION)
+        {
+            output.push_str(": ");
+            for part in &description.parts {
+                match part {
+                    crate::util::EvalPart::Literal(value) => {
+                        output.push_str(&String::from_utf8_lossy(value.as_bytes()));
+                    }
+                    crate::util::EvalPart::Variable(name) => {
+                        let _ = write!(output, "${{{}}}", graph.names().name(*name));
                     }
                 }
             }
@@ -1103,9 +1102,11 @@ mod tests {
 
                 let graphviz = super::graph(&graph, std::slice::from_ref(&target)).unwrap();
                 assert!(graphviz.as_bytes().contains_str("label=\"source\""));
-                assert!(graphviz
-                    .as_bytes()
-                    .contains_str(format!("label=\"node{}\"", DEPTH - 1)));
+                assert!(
+                    graphviz
+                        .as_bytes()
+                        .contains_str(format!("label=\"node{}\"", DEPTH - 1))
+                );
 
                 let targets = targets_with_args(&graph, &["depth".into(), "0".into()]).unwrap();
                 assert_eq!(targets.lines().count(), DEPTH + 1);
@@ -1247,9 +1248,11 @@ mod tests {
         .unwrap();
 
         let error = clean(&graph, &[], &[], true).unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("bad $-escape (literal $ must be written as $$)"));
+        assert!(
+            error
+                .to_string()
+                .contains("bad $-escape (literal $ must be written as $$)")
+        );
         assert!(output.exists());
     }
 

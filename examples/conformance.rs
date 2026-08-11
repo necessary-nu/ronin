@@ -836,8 +836,7 @@ const BUILD_CASES: &[BuildCase] = &[
         // context and only the line number says which line is meant.
         // Anchoring an indent at the line before it is invisible here.
         name: "an unexpected indent below a line too long to quote still names its own line",
-        manifest:
-            "x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
+        manifest: "x = aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\
                    \n  y = 2\n",
         arguments: &["-C", "@DIR@"],
         extra: &[],
@@ -1536,7 +1535,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize, parse_log_records, recorded_status, LogRecord, BUILD_CASES, INVOCATION_CASES,
+        BUILD_CASES, INVOCATION_CASES, LogRecord, normalize, parse_log_records, recorded_status,
     };
     use std::collections::BTreeSet;
     use std::path::Path;

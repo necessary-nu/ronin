@@ -1,4 +1,4 @@
-use super::{nodestat_with, nodeuse, EdgeId, Graph, NodeId};
+use super::{EdgeId, Graph, NodeId, nodestat_with, nodeuse};
 use crate::error::GraphError;
 use crate::runtime::{FileTime, RuntimeState};
 use crate::util::{BString, IdVec};
@@ -53,7 +53,7 @@ impl Graph {
     }
 
     pub(crate) fn is_virtual_output(&self, node: NodeId) -> bool {
-        self.node(node).gen.is_some_and(|edge| {
+        self.node(node).generator.is_some_and(|edge| {
             self.deferred_freshness.contains_key(&edge)
                 || self
                     .completion_join_output(edge)

@@ -51,7 +51,7 @@ impl MissingDependencyScanner {
         while let Some(item) = work.pop() {
             match item {
                 Work::Enter(node) => {
-                    let Some(edge) = graph.node(node).gen else {
+                    let Some(edge) = graph.node(node).generator else {
                         continue;
                     };
                     self.seen
@@ -92,7 +92,7 @@ impl MissingDependencyScanner {
         self.generated_edges.resize(graph.edge_count(), false);
         self.generated_edges.fill(false);
         for dependency in dependencies {
-            if let Some(edge) = graph.node(*dependency).gen {
+            if let Some(edge) = graph.node(*dependency).generator {
                 self.generated_edges[edge.index()] = true;
             }
         }
@@ -112,7 +112,7 @@ impl MissingDependencyScanner {
 
         let mut missing_rules = BTreeSet::new();
         for dependency in dependencies {
-            let Some(generator) = graph.node(*dependency).gen else {
+            let Some(generator) = graph.node(*dependency).generator else {
                 continue;
             };
             if !self.missing_edges[generator.index()] {
@@ -167,7 +167,7 @@ impl MissingDependencyScanner {
             }
             self.path_marks[edge.index()] = self.path_generation;
             for input in &graph.edge(edge).input {
-                let Some(generator) = graph.node(*input).gen else {
+                let Some(generator) = graph.node(*input).generator else {
                     continue;
                 };
                 if generator == from
@@ -259,9 +259,9 @@ pub(crate) fn process_all_nodes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::env::{mkrule, ruleaddvar, EnvState, EnvironmentId, RuleId};
+    use crate::env::{EnvState, EnvironmentId, RuleId, mkrule, ruleaddvar};
     use crate::graph::{mkedge, mknode, nodeuse};
-    use crate::util::{xasprintf, EvalString};
+    use crate::util::{EvalString, xasprintf};
 
     struct Fixture {
         graph: Graph,
@@ -297,12 +297,12 @@ mod tests {
             edge_mut.rule = Some(rule);
             edge_mut.out.push(output);
             edge_mut.set_explicit_output_count(1);
-            self.graph.node_mut(output).gen = Some(edge);
+            self.graph.node_mut(output).generator = Some(edge);
             output
         }
 
         fn add_graph_dependency(&mut self, from: NodeId, to: NodeId) {
-            let edge = self.graph.node(from).gen.unwrap();
+            let edge = self.graph.node(from).generator.unwrap();
             nodeuse(&mut self.graph, to, edge);
             let edge_mut = self.graph.edge_mut(edge);
             edge_mut.input.push(to);

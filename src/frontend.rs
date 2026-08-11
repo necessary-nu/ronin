@@ -19,21 +19,21 @@
 //! rather than for whichever caller remembered them.
 
 use crate::env::{
-    edgevar, envaddrule, envaddvar, envrule, envvar_named, mkenv, mkpool, mkrule, poolget,
-    ruleaddvar, EnvState, EnvironmentId, PoolId, RuleId,
+    EnvState, EnvironmentId, PoolId, RuleId, edgevar, envaddrule, envaddvar, envrule, envvar_named,
+    mkenv, mkpool, mkrule, poolget, ruleaddvar,
 };
 use crate::graph::{
-    allocate_node, mkedge, mknode, nodeget, nodeuse, EdgeId, Graph, NodeId, PathStyle,
+    EdgeId, Graph, NodeId, PathStyle, allocate_node, mkedge, mknode, nodeget, nodeuse,
 };
 use crate::names::{Names, VarId};
-use crate::util::{canonpath, is_canonical, BStr, BString, ByteSlice, EvalPart, EvalString};
+use crate::util::{BStr, BString, ByteSlice, EvalPart, EvalString, canonpath, is_canonical};
 use std::fmt;
 use std::num::NonZeroUsize;
 
 mod deferred;
 mod execute;
 
-pub use crate::parse::{load_manifest, Manifest, ManifestOptions};
+pub use crate::parse::{Manifest, ManifestOptions, load_manifest};
 pub use execute::{Build, Jobs, Outcome, Persistence, Planned};
 
 /// A path interned in a graph.
@@ -345,7 +345,7 @@ impl BuildGraph {
     /// The edge that generates `node`, absent for a file nothing builds.
     #[must_use]
     pub fn generator(&self, node: Node) -> Option<Edge> {
-        self.arenas.node(node.0).gen.map(Edge)
+        self.arenas.node(node.0).generator.map(Edge)
     }
 
     /// The interned path of `node`.
@@ -513,7 +513,7 @@ impl BuildGraph {
     /// Returns [`FrontendError::DuplicateOutput`] when another edge already
     /// generates it and [`FrontendError::RepeatedOutput`] when this one does.
     pub(crate) fn attach_output(&mut self, edge: Edge, output: Node) -> Result<(), FrontendError> {
-        if let Some(other) = self.arenas.node(output.0).gen {
+        if let Some(other) = self.arenas.node(output.0).generator {
             let path = self.arenas.node_path(output.0).to_vec();
             return Err(if other == edge.0 {
                 FrontendError::RepeatedOutput { path }
@@ -521,7 +521,7 @@ impl BuildGraph {
                 FrontendError::DuplicateOutput { path }
             });
         }
-        self.arenas.node_mut(output.0).gen = Some(edge.0);
+        self.arenas.node_mut(output.0).generator = Some(edge.0);
         self.arenas.edge_mut(edge.0).out.push(output.0);
         Ok(())
     }
@@ -671,7 +671,7 @@ impl BuildGraph {
             .node_ids()
             .filter(|node| {
                 let node = self.arenas.node(*node);
-                node.gen.is_some() && node.uses.is_empty()
+                node.generator.is_some() && node.uses.is_empty()
             })
             .map(Node)
             .collect()
@@ -777,7 +777,7 @@ mod tests {
         // Every output names the edge, every input and validation is recorded
         // as using it, and `$in` and `$out` see only the explicit partitions.
         for output in &built {
-            assert_eq!(arenas.node(output.0).gen, Some(edge.0));
+            assert_eq!(arenas.node(output.0).generator, Some(edge.0));
         }
         for input in &used[..3] {
             assert_eq!(arenas.node(input.0).uses.as_slice(), [edge.0]);

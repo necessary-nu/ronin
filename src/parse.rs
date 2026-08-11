@@ -9,10 +9,10 @@
 use crate::error::{ManifestError, ManifestProblem, NameKind};
 use crate::frontend::{BuildGraph, FrontendError, Node, Scope, Template};
 use crate::scan::{
-    scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
     AllowedSeparators, ScannedEvalPart, ScannedEvalString, Scanner, Separator, Source, TokenKind,
+    scanchar, scanindent, scankeyword, scanname, scannewline, scanpaths, scanpipe, scanstring,
 };
-use crate::util::{canonpath, BStr, BString, ByteSlice};
+use crate::util::{BStr, BString, ByteSlice, canonpath};
 use std::path::Path;
 
 type ManifestResult<T> = Result<T, ManifestError>;
@@ -521,13 +521,13 @@ fn parseedge(
     // place so cycle detection reports it, which is the whole point of the
     // flag. Ninja filters before it resolves the dyndep, so a phony statement
     // whose dyndep is its own output is rejected rather than accepted.
-    if parser.options.phony_cycle_warns {
-        if let Some(output) = graph.drop_phony_self_reference(edge) {
-            parser.warnings.push(format!(
-                "phony target '{}' names itself as an input; ignoring [-w phonycycle=warn]",
-                graph.path(output).as_bstr()
-            ));
-        }
+    if parser.options.phony_cycle_warns
+        && let Some(output) = graph.drop_phony_self_reference(edge)
+    {
+        parser.warnings.push(format!(
+            "phony target '{}' names itself as an input; ignoring [-w phonycycle=warn]",
+            graph.path(output).as_bstr()
+        ));
     }
     graph
         .resolve_dyndep(edge)
@@ -828,7 +828,7 @@ mod ninja_manifest_tests {
     fn output_edge(graph: &Graph, output: &[u8]) -> crate::graph::EdgeId {
         graph
             .node(crate::graph::nodeget(graph, output).unwrap())
-            .gen
+            .generator
             .unwrap()
     }
 
@@ -914,10 +914,12 @@ mod ninja_manifest_tests {
         let graph = parse_graph("build a: phony a\n").unwrap();
         let edge = output_edge(&graph, b"a");
         assert!(graph.edge(edge).input.is_empty());
-        assert!(graph
-            .node(crate::graph::nodeget(&graph, b"a").unwrap())
-            .uses
-            .is_empty());
+        assert!(
+            graph
+                .node(crate::graph::nodeget(&graph, b"a").unwrap())
+                .uses
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1003,10 +1005,10 @@ mod ninja_manifest_tests {
                 .ends_with(":1: duplicate pool 'console'\npool console\n            ^ near here"),
             "{duplicate}"
         );
-        assert!(parse_source(
-            "rule run\n  command = echo\n  pool = unnamed_pool\nbuild out: run in\n"
-        )
-        .is_err());
+        assert!(
+            parse_source("rule run\n  command = echo\n  pool = unnamed_pool\nbuild out: run in\n")
+                .is_err()
+        );
     }
 
     #[test]
@@ -1047,7 +1049,7 @@ mod ninja_manifest_tests {
         let graph = parse_graph_at(&path).unwrap();
         let output = crate::graph::nodeget(&graph, b"out-\xff").unwrap();
         assert!(crate::graph::nodeget(&graph, b"in-\xfe").is_some());
-        let edge = graph.node(output).gen.unwrap();
+        let edge = graph.node(output).generator.unwrap();
         let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
         assert_eq!(command.as_bytes(), b"cat in-\xfe > out-\xff");
         fs::remove_dir_all(directory).unwrap();

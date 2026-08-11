@@ -19,9 +19,9 @@
 //! See `plan/decisions/multicall-identity.md`.
 // [spec:ronin:req:product.make-identity]
 
+use crate::Error;
 use crate::cli::RunResult;
 use crate::util::{BString, ByteSlice};
-use crate::Error;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -117,7 +117,7 @@ pub fn run_process(
 
 #[cfg(test)]
 mod tests {
-    use super::{select, FrontEnd};
+    use super::{FrontEnd, select};
     use crate::util::BString;
 
     fn selected(arguments: &[&str]) -> FrontEnd {

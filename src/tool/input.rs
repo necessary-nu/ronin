@@ -1,5 +1,5 @@
 use crate::error::ToolError;
-use crate::graph::{nodeget, Graph, InputsCollector, NodeId, PathStyle};
+use crate::graph::{Graph, InputsCollector, NodeId, PathStyle, nodeget};
 use crate::util::{BString, ByteSlice};
 
 type ToolResult<T> = Result<T, ToolError>;
@@ -28,13 +28,13 @@ pub(crate) fn inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<BString
             b"-h" | b"--help" => {
                 return Err(ToolError::Usage {
                     text: "Usage '-t inputs [options] [targets]",
-                })
+                });
             }
             option if option.starts_with(b"-") => {
                 return Err(ToolError::UnknownOption {
                     tool: "inputs",
                     option: argument.clone(),
-                })
+                });
             }
             _ => targets.push(argument.clone()),
         }
@@ -67,7 +67,7 @@ pub(crate) fn multi_inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<B
             b"-h" | b"--help" => {
                 return Err(ToolError::Usage {
                     text: "Usage '-t multi-inputs [options] [targets]",
-                })
+                });
             }
             b"-d" | b"--delimiter" => {
                 index += 1;
@@ -85,7 +85,7 @@ pub(crate) fn multi_inputs(graph: &Graph, arguments: &[BString]) -> ToolResult<B
                 return Err(ToolError::UnknownOption {
                     tool: "multi-inputs",
                     option: arguments[index].clone(),
-                })
+                });
             }
             _ => targets.push(arguments[index].clone()),
         }

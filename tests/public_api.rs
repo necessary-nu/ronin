@@ -1,8 +1,8 @@
 use ronin::frontend::{
-    load_manifest, Build, BuildGraph, EdgeSpec, FrontendError, Jobs, ManifestOptions, Node,
-    Persistence, Template,
+    Build, BuildGraph, EdgeSpec, FrontendError, Jobs, ManifestOptions, Node, Persistence, Template,
+    load_manifest,
 };
-use ronin::{run, run_os, ErrorKind};
+use ronin::{ErrorKind, run, run_os};
 use std::error::Error as _;
 use std::ffi::OsString;
 use std::num::NonZeroUsize;
@@ -282,7 +282,7 @@ fn public_api_refuses_a_second_generator_for_one_output() {
 #[test]
 fn public_api_builds_a_makefile_through_ronins_scheduler() {
     use ronin::make::kati::session::Session;
-    use ronin::make::{load_makefile, Shuffle};
+    use ronin::make::{Shuffle, load_makefile};
     use std::ffi::OsString;
 
     let directory = std::env::temp_dir().join(format!(

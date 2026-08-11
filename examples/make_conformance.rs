@@ -386,7 +386,7 @@ fn wait_for(command: &mut Command) -> Result<String, String> {
                 return Ok(status.code().map_or_else(
                     || format!("signal {}", status.signal().unwrap_or(0)),
                     |code| code.to_string(),
-                ))
+                ));
             }
             None if started.elapsed() > CASE_TIMEOUT => {
                 let _ = child.kill();
@@ -460,12 +460,12 @@ fn tool_identity(line: &str) -> Option<&str> {
         if rest.starts_with(": ") {
             return Some(rest);
         }
-        if let Some(level) = rest.strip_prefix('[') {
-            if let Some(close) = level.find("]: ") {
-                if close > 0 && level[..close].bytes().all(|b| b.is_ascii_digit()) {
-                    return Some(rest);
-                }
-            }
+        if let Some(level) = rest.strip_prefix('[')
+            && let Some(close) = level.find("]: ")
+            && close > 0
+            && level[..close].bytes().all(|b| b.is_ascii_digit())
+        {
+            return Some(rest);
         }
     }
     None
@@ -589,23 +589,27 @@ fn run_corpus(config: &Config, cases: &[Case]) -> Result<(usize, Vec<Divergence>
     let failure = std::sync::Mutex::new(None::<String>);
     std::thread::scope(|scope| {
         for _ in 0..workers {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(case) = cases.get(index) else {
-                    return;
-                };
-                match run_case(config, case) {
-                    Ok(Outcome::Identical) => {
-                        verbatim.fetch_add(1, Ordering::Relaxed);
-                    }
-                    Ok(Outcome::NormalisedAway) => {}
-                    Ok(Outcome::Differs(divergence)) => results.lock().unwrap().push(*divergence),
-                    Err(error) => {
-                        let mut slot = failure.lock().unwrap();
-                        if slot.is_none() {
-                            *slot = Some(format!("{}: {error}", case.id));
-                        }
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(case) = cases.get(index) else {
                         return;
+                    };
+                    match run_case(config, case) {
+                        Ok(Outcome::Identical) => {
+                            verbatim.fetch_add(1, Ordering::Relaxed);
+                        }
+                        Ok(Outcome::NormalisedAway) => {}
+                        Ok(Outcome::Differs(divergence)) => {
+                            results.lock().unwrap().push(*divergence);
+                        }
+                        Err(error) => {
+                            let mut slot = failure.lock().unwrap();
+                            if slot.is_none() {
+                                *slot = Some(format!("{}: {error}", case.id));
+                            }
+                            return;
+                        }
                     }
                 }
             });
@@ -915,8 +919,8 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        case_directory_name, declared_targets, names_kati, normalize, parse_inventory,
-        self_detecting, tool_identity, FrontEnd,
+        FrontEnd, case_directory_name, declared_targets, names_kati, normalize, parse_inventory,
+        self_detecting, tool_identity,
     };
     use std::path::{Path, PathBuf};
 

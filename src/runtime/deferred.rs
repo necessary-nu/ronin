@@ -115,7 +115,7 @@ impl DeferredRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::{mknode, Graph};
+    use crate::graph::{Graph, mknode};
 
     #[test]
     fn lifecycle_preserves_snapshot_and_inputs() {

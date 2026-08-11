@@ -647,14 +647,20 @@ impl fmt::Display for ManifestError {
                 span: Some(span),
                 problem,
             } => write_located(formatter, span, problem),
-            Self::Problem { span: None, problem } => write!(formatter, "error: {problem}"),
+            Self::Problem {
+                span: None,
+                problem,
+            } => write!(formatter, "error: {problem}"),
             Self::Graph(error) => error.fmt(formatter),
             Self::Dyndep(error) => error.fmt(formatter),
             Self::DyndepRead { path, source } => {
                 write!(formatter, "loading '{path}': {}", system_message(source))
             }
             Self::DyndepMissingOutput { path, output } => {
-                write!(formatter, "'{output}' not mentioned in its dyndep file '{path}'")
+                write!(
+                    formatter,
+                    "'{output}' not mentioned in its dyndep file '{path}'"
+                )
             }
             Self::DyndepWrongOwner { path, output, .. } => write!(
                 formatter,

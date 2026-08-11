@@ -21,7 +21,7 @@
 // [spec:ronin:sem:htab.htabget-fn]
 // [spec:ronin:def:htab.delhtab-fn]
 // [spec:ronin:sem:htab.delhtab-fn]
-use super::{shell_escape_path, Graph, Node, NodeId};
+use super::{Graph, Node, NodeId, shell_escape_path};
 use crate::htab::rapidhashv1;
 use crate::util::{ByteSlice, IdVec};
 
@@ -197,7 +197,7 @@ pub(crate) fn allocate_node(graph: &mut Graph, path: &[u8]) -> NodeId {
     graph.nodes.push(Node {
         path,
         shellpath,
-        gen: None,
+        generator: None,
         uses: IdVec::new(),
     });
     node

@@ -46,7 +46,7 @@ pub use sink::GraphSink;
 pub const MAKE_VERSION: &str = "4.4.1";
 
 use crate::frontend::{BuildGraph, FrontendError, Node, Scope};
-use kati::evaluate::{evaluate, Evaluated};
+use kati::evaluate::{Evaluated, evaluate};
 use kati::ninja::emit_build;
 use kati::session::Session;
 use std::collections::{HashMap, HashSet};

@@ -495,7 +495,7 @@ pub(crate) fn scankeyword<'source>(
                 return Err(scanerror(
                     scanner,
                     ScanErrorKind::UnexpectedToken(FoundToken::Indent),
-                ))
+                ));
             }
             LineStart::Other => {}
         }

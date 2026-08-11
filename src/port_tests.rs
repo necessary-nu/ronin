@@ -243,7 +243,7 @@ fn serialized_eval(value: &scan::ScannedEvalString<'_>) -> String {
     let parts = match value {
         scan::ScannedEvalString::Plain([]) => return String::new(),
         scan::ScannedEvalString::Plain(bytes) => {
-            return format!("[{}]", std::str::from_utf8(bytes).unwrap())
+            return format!("[{}]", std::str::from_utf8(bytes).unwrap());
         }
         scan::ScannedEvalString::Parts(parts) => parts,
     };
@@ -313,10 +313,12 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
     fs::write(&path, "foo$\nbad $").unwrap();
     let source = scan::Source::from_path(&path).unwrap();
     let mut scanner = scan::Scanner::new(&source);
-    assert!(scan::scanstring(&mut scanner, false)
-        .unwrap_err()
-        .to_string()
-        .contains("bad $-escape (literal $ must be written as $$)"));
+    assert!(
+        scan::scanstring(&mut scanner, false)
+            .unwrap_err()
+            .to_string()
+            .contains("bad $-escape (literal $ must be written as $$)")
+    );
 
     // Ninja's lexer reads `   \tfoobar` as an indent token and *then* an error
     // token, so which of the two a manifest hears depends on where it stands.
@@ -326,26 +328,32 @@ fn ninja_lexer_errors_tabs_and_versioned_newlines() {
     fs::write(&path, "   \tfoobar\n").unwrap();
     let source = scan::Source::from_path(&path).unwrap();
     let mut scanner = scan::Scanner::new(&source);
-    assert!(scan::scankeyword(&mut scanner)
-        .unwrap_err()
-        .to_string()
-        .contains("unexpected indent"));
+    assert!(
+        scan::scankeyword(&mut scanner)
+            .unwrap_err()
+            .to_string()
+            .contains("unexpected indent")
+    );
 
     fs::write(&path, "\tfoobar\n").unwrap();
     let source = scan::Source::from_path(&path).unwrap();
     let mut scanner = scan::Scanner::new(&source);
-    assert!(scan::scankeyword(&mut scanner)
-        .unwrap_err()
-        .to_string()
-        .contains("tabs are not allowed"));
+    assert!(
+        scan::scankeyword(&mut scanner)
+            .unwrap_err()
+            .to_string()
+            .contains("tabs are not allowed")
+    );
 
     fs::write(&path, "foo$\nbar$^newline foo\n").unwrap();
     let source = scan::Source::from_path(&path).unwrap();
     let mut scanner = scan::Scanner::new(&source);
-    assert!(scan::scanstring(&mut scanner, false)
-        .unwrap_err()
-        .to_string()
-        .contains("ninja_required_version"));
+    assert!(
+        scan::scanstring(&mut scanner, false)
+            .unwrap_err()
+            .to_string()
+            .contains("ninja_required_version")
+    );
     scanner.set_manifest_version(1, 14);
     let source = scan::Source::from_path(&path).unwrap();
     let mut scanner = scan::Scanner::new(&source);
@@ -384,10 +392,12 @@ fn ninja_lexer_dotted_and_braced_variables() {
     // as a byte no token begins with. This assertion used to read `None`,
     // which is what Ronin did and what the case it was adapted from says is
     // wrong.
-    assert!(scan::scankeyword(&mut scanner)
-        .unwrap_err()
-        .to_string()
-        .contains("lexing error"));
+    assert!(
+        scan::scankeyword(&mut scanner)
+            .unwrap_err()
+            .to_string()
+            .contains("lexing error")
+    );
     let _ = fs::remove_file(path);
 }
 
@@ -447,7 +457,7 @@ fn ninja_manifest_parser_variables_comments_and_dependency_kinds() {
     .graph
     .into_arenas();
     let out = graph::nodeget(&graph, b"out").unwrap();
-    let edge = graph.node(out).gen.unwrap();
+    let edge = graph.node(out).generator.unwrap();
     assert_eq!(graph.edge(edge).explicit_output_count(), 1);
     assert_eq!(graph.edge(edge).explicit_input_count(), 1);
     assert_eq!(graph.edge(edge).non_order_only_input_count(), 2);
@@ -503,7 +513,7 @@ fn ninja_manifest_parser_rule_attributes_and_special_variables() {
     let manifest = parse_manifest(&path);
     let graph = manifest.graph.into_arenas();
     let out = graph::nodeget(&graph, b"out").unwrap();
-    let edge = graph.node(out).gen.unwrap();
+    let edge = graph.node(out).generator.unwrap();
     let command = env::edgevar(&graph, edge, Names::COMMAND, graph::PathStyle::Raw).unwrap();
     assert_eq!(command.as_bytes(), b"cat out.rsp > out");
     let inputs = env::edgevar(&graph, edge, Names::IN_NEWLINE, graph::PathStyle::Raw).unwrap();
@@ -555,11 +565,11 @@ fn ninja_manifest_parser_variable_scope_and_continuations() {
     let graph = manifest.graph.into_arenas();
     let first = graph
         .node(graph::nodeget(&graph, b"a").unwrap())
-        .gen
+        .generator
         .unwrap();
     let second = graph
         .node(graph::nodeget(&graph, b"supernested").unwrap())
-        .gen
+        .generator
         .unwrap();
     let command = env::edgevar(&graph, first, Names::COMMAND, graph::PathStyle::Raw).unwrap();
     assert_eq!(
@@ -639,7 +649,7 @@ fn ninja_manifest_parser_dollar_escaped_paths() {
     assert!(graph::nodeget(&graph, b"$one").is_some());
     assert!(graph::nodeget(&graph, b"two$ three").is_some());
     let output = graph::nodeget(&graph, b"$dollar").unwrap();
-    let edge = graph.node(output).gen.unwrap();
+    let edge = graph.node(output).generator.unwrap();
     let command =
         env::edgevar(&graph, edge, Names::COMMAND, graph::PathStyle::ShellEscaped).unwrap();
     assert_eq!(command.as_bytes(), b"'$dollar'bar$baz$blah");
@@ -674,26 +684,30 @@ fn ninja_manifest_parser_includes_and_errors() {
         "rule cat\n  command = cat $in > $out\nbuild out1 out2: cat in1\nbuild out1: cat in2\n",
     )
     .unwrap();
-    assert!(crate::parse::load_manifest_in(
-        root.to_str().unwrap(),
-        crate::os::WorkingDirectory::default(),
-        crate::frontend::ManifestOptions::default(),
-    )
-    .map(|_| ())
-    .unwrap_err()
-    .to_string()
-    .contains("multiple rules generate out1"));
+    assert!(
+        crate::parse::load_manifest_in(
+            root.to_str().unwrap(),
+            crate::os::WorkingDirectory::default(),
+            crate::frontend::ManifestOptions::default(),
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .to_string()
+        .contains("multiple rules generate out1")
+    );
 
     fs::write(&root, "rule cat\n  rspfile = cat.rsp\n").unwrap();
-    assert!(crate::parse::load_manifest_in(
-        root.to_str().unwrap(),
-        crate::os::WorkingDirectory::default(),
-        crate::frontend::ManifestOptions::default(),
-    )
-    .map(|_| ())
-    .unwrap_err()
-    .to_string()
-    .contains("expected 'command =' line"));
+    assert!(
+        crate::parse::load_manifest_in(
+            root.to_str().unwrap(),
+            crate::os::WorkingDirectory::default(),
+            crate::frontend::ManifestOptions::default(),
+        )
+        .map(|_| ())
+        .unwrap_err()
+        .to_string()
+        .contains("expected 'command =' line")
+    );
     let _ = fs::remove_dir_all(directory);
 }
 

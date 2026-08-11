@@ -135,9 +135,11 @@ fn state_follows_working_directory() {
         named(&[".ninja_deps", ".ninja_log", "main.c", "app", "main.o"])
     );
     assert_eq!(listing(&elsewhere), named(&["Makefile", "main.c", "hdr.h"]));
-    assert!(fixture
-        .build_in(&work, &["-f", "../elsewhere/Makefile"])
-        .contains("no work to do"));
+    assert!(
+        fixture
+            .build_in(&work, &["-f", "../elsewhere/Makefile"])
+            .contains("no work to do")
+    );
 }
 
 // [spec:ronin:req:make.state-outside-the-tree+1/test]

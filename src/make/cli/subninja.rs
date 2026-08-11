@@ -1,8 +1,8 @@
 //! Turn one statically expanded `$(MAKE)` command into a child compilation.
 
 use super::{
-    compilation_key, default_makefile, parse, path_of, prepend_command_line_evals,
-    propagated_makeflags, record_invocation_variables, session_for, Action, MAKELEVEL,
+    Action, MAKELEVEL, compilation_key, default_makefile, parse, path_of,
+    prepend_command_line_evals, propagated_makeflags, record_invocation_variables, session_for,
 };
 use crate::make::{Compilation, CompilationContext, MakeError};
 use crate::util::{BString, ByteSlice};

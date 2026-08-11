@@ -3,8 +3,8 @@
 #[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_SOURCE_ID: AtomicU64 = AtomicU64::new(1);
 

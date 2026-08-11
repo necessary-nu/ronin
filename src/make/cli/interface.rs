@@ -1,10 +1,10 @@
 //! Inputs shared by Make's command-line parser and kati compilation.
 
-use super::{parse, parse_arguments, Action, ArgumentSource, Invocation, JobLimit, Switch};
+use super::{Action, ArgumentSource, Invocation, JobLimit, Switch, parse, parse_arguments};
+use crate::Error;
 use crate::build::BuildOptions;
 use crate::error::CliError;
 use crate::util::{BString, ByteSlice};
-use crate::Error;
 use kati::bytes::Bytes;
 use kati::session::Session;
 
@@ -279,10 +279,10 @@ pub(super) fn evaluated_build_options(
     options.verbose = options.dryrun;
     options.quiet = invocation.given(Switch::Silent);
     options.maxload = invocation.load.map_or(0.0, |load| load.ceiling);
-    if options.jobserver.is_none() {
-        if let Some(jobs) = invocation.effective_jobs() {
-            options.jobs = jobs;
-        }
+    if options.jobserver.is_none()
+        && let Some(jobs) = invocation.effective_jobs()
+    {
+        options.jobs = jobs;
     }
     options
 }

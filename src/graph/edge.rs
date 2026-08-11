@@ -76,7 +76,7 @@ impl Edge {
 mod tests {
     use super::*;
     use crate::env::mkenv;
-    use crate::graph::{mkedge, Graph};
+    use crate::graph::{Graph, mkedge};
 
     #[test]
     fn partitions_follow_insertions_removals_and_discovered_input_replacement() {

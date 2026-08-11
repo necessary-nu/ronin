@@ -56,12 +56,12 @@ fn main() {
     // [spec:ronin:req:runtime.explicit-invocation-boundary]
     match ronin::run_process(&arguments, &mut stdout, &mut stderr) {
         Ok(result) => {
-            if let Err(error) = write_terminal(&result, &mut stdout, &mut stderr) {
-                if error.kind() != std::io::ErrorKind::BrokenPipe {
-                    drop(stderr);
-                    let _ = write_diagnostic(format_args!("writing terminal output: {error}"));
-                    std::process::exit(1);
-                }
+            if let Err(error) = write_terminal(&result, &mut stdout, &mut stderr)
+                && error.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                drop(stderr);
+                let _ = write_diagnostic(format_args!("writing terminal output: {error}"));
+                std::process::exit(1);
             }
             if result.exit_code != 0 {
                 std::process::exit(result.exit_code);
@@ -73,10 +73,10 @@ fn main() {
             if is_broken_pipe(&error) {
                 return;
             }
-            if let Err(write_error) = write_diagnostic(&error) {
-                if write_error.kind() != std::io::ErrorKind::BrokenPipe {
-                    std::process::exit(1);
-                }
+            if let Err(write_error) = write_diagnostic(&error)
+                && write_error.kind() != std::io::ErrorKind::BrokenPipe
+            {
+                std::process::exit(1);
             }
             // [spec:ronin:req:product.build-outcome]
             // Ninja leaves with 130 rather than dying by the signal it caught,

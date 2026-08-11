@@ -8,9 +8,9 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, Receiver, Sender};
 #[cfg(unix)]
 use std::sync::Arc;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 type ProcessResult<T> = Result<T, ProcessError>;
 
@@ -437,7 +437,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                         command: command.clone(),
                         operation: ShellOperation::Spawn,
                         source,
-                    })
+                    });
                 }
             }
         };
@@ -450,11 +450,11 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             output_bytes: Vec::new(),
             registered: false,
         };
-        if let Some(signal) = self.interrupted {
-            if let Err(error) = signal_process(child.child.id(), process_group, signal) {
-                terminate_and_reap(&mut child);
-                return Err(error);
-            }
+        if let Some(signal) = self.interrupted
+            && let Err(error) = signal_process(child.child.id(), process_group, signal)
+        {
+            terminate_and_reap(&mut child);
+            return Err(error);
         }
         let previous = self.children.insert(edge, child);
         debug_assert!(previous.is_none(), "an edge cannot run twice concurrently");
@@ -719,10 +719,10 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             .children
             .remove(&edge)
             .expect("failing child remains present");
-        if child.registered {
-            if let Some(output) = child.output.as_ref() {
-                let _ = self.poller.delete(output);
-            }
+        if child.registered
+            && let Some(output) = child.output.as_ref()
+        {
+            let _ = self.poller.delete(output);
         }
         terminate_and_reap(&mut child);
         self.ready.push_back(ProcessCompletion {
@@ -744,10 +744,10 @@ impl<External> Drop for ProcessSupervisor<External> {
             let _ = self.poller.delete(wake);
         }
         for child in self.children.values_mut() {
-            if child.registered {
-                if let Some(output) = child.output.as_ref() {
-                    let _ = self.poller.delete(output);
-                }
+            if child.registered
+                && let Some(output) = child.output.as_ref()
+            {
+                let _ = self.poller.delete(output);
             }
             terminate_and_reap(child);
         }

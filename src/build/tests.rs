@@ -1,8 +1,8 @@
 use super::*;
 use crate::env::mkenv;
-use crate::graph::{mkedge, mknode, nodeget, nodeuse, Graph};
+use crate::graph::{Graph, mkedge, mknode, nodeget, nodeuse};
 use crate::names::Names;
-use crate::util::{xasprintf, BStr};
+use crate::util::{BStr, xasprintf};
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -88,9 +88,9 @@ fn parse_fixture(directory: &Path) -> Graph {
 
 fn assert_multi_output_deps_log(label: &str, depfile: &str) {
     let (mut graph, directory) = build_fixture(
-            label,
-            "rule cc\n  command = touch $out\n  depfile = $dir/in.d\n  deps = gcc\nbuild $dir/out1 $dir/out2: cc $dir/in1 $dir/in2\n",
-        );
+        label,
+        "rule cc\n  command = touch $out\n  depfile = $dir/in.d\n  deps = gcc\nbuild $dir/out1 $dir/out2: cc $dir/in1 $dir/in2\n",
+    );
     fs::write(directory.join("in1"), "").unwrap();
     fs::write(directory.join("in2"), "").unwrap();
     fs::write(
@@ -309,8 +309,8 @@ fn ninja_plan_double_dependent() {
 
 fn check_depth_one_pool(pool_definition: &str) {
     let graph = plan_graph(&format!(
-            "{pool_definition}rule poolcat\n  command = cat $in > $out\n  pool = selected\nbuild out1: poolcat in\nbuild out2: poolcat in\n"
-        ));
+        "{pool_definition}rule poolcat\n  command = cat $in > $out\n  pool = selected\nbuild out1: poolcat in\nbuild out2: poolcat in\n"
+    ));
     let runtime = mark_dirty(&graph, &["out1", "out2"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out1");
@@ -337,8 +337,8 @@ fn ninja_plan_pool_with_depth_one() {
 #[test]
 fn ninja_plan_console_pool() {
     let graph = plan_graph(
-            "rule poolcat\n  command = cat $in > $out\n  pool = console\nbuild out1: poolcat in\nbuild out2: poolcat in\n",
-        );
+        "rule poolcat\n  command = cat $in > $out\n  pool = console\nbuild out1: poolcat in\nbuild out2: poolcat in\n",
+    );
     let runtime = mark_dirty(&graph, &["out1", "out2"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out1");
@@ -357,8 +357,8 @@ fn ninja_plan_console_pool() {
 #[test]
 fn ninja_plan_pools_with_depth_two() {
     let graph = plan_graph(
-            "pool foobar\n  depth = 2\npool bazbin\n  depth = 2\nrule foocat\n  command = cat\n  pool = foobar\nrule bazcat\n  command = cat\n  pool = bazbin\nbuild out1: foocat in\nbuild out2: foocat in\nbuild out3: foocat in\nbuild outb1: bazcat in\nbuild outb2: bazcat in\nbuild outb3: bazcat in\n  pool =\nbuild allTheThings: cat out1 out2 out3 outb1 outb2 outb3\n",
-        );
+        "pool foobar\n  depth = 2\npool bazbin\n  depth = 2\nrule foocat\n  command = cat\n  pool = foobar\nrule bazcat\n  command = cat\n  pool = bazbin\nbuild out1: foocat in\nbuild out2: foocat in\nbuild out3: foocat in\nbuild outb1: bazcat in\nbuild outb2: bazcat in\nbuild outb3: bazcat in\n  pool =\nbuild allTheThings: cat out1 out2 out3 outb1 outb2 outb3\n",
+    );
     let runtime = mark_dirty(
         &graph,
         &[
@@ -406,8 +406,8 @@ fn ninja_plan_pools_with_depth_two() {
 // [spec:ronin:req:runtime.typed-runtime-state/test]
 fn ninja_plan_pool_with_failing_edge() {
     let graph = plan_graph(
-            "pool foobar\n  depth = 1\nrule poolcat\n  command = cat\n  pool = foobar\nbuild out1: poolcat in\nbuild out2: poolcat in\n",
-        );
+        "pool foobar\n  depth = 1\nrule poolcat\n  command = cat\n  pool = foobar\nbuild out1: poolcat in\nbuild out2: poolcat in\n",
+    );
     let runtime = mark_dirty(&graph, &["out1", "out2"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out1");
@@ -428,8 +428,8 @@ fn ninja_plan_pool_with_failing_edge() {
 #[test]
 fn ninja_plan_pool_with_redundant_edges() {
     let graph = plan_graph(
-            "pool compile\n  depth = 1\nrule generate\n  command = touch $out\nrule echo\n  command = echo $out\nbuild foo.obj: echo foo || foo\n  pool = compile\nbuild bar.obj: echo bar || bar\n  pool = compile\nbuild lib: echo foo.obj bar.obj\nbuild foo: generate\nbuild bar: generate\nbuild all: phony lib\n",
-        );
+        "pool compile\n  depth = 1\nrule generate\n  command = touch $out\nrule echo\n  command = echo $out\nbuild foo.obj: echo foo || foo\n  pool = compile\nbuild bar.obj: echo bar || bar\n  pool = compile\nbuild lib: echo foo.obj bar.obj\nbuild foo: generate\nbuild bar: generate\nbuild all: phony lib\n",
+    );
     let runtime = mark_dirty(&graph, &["foo", "bar", "foo.obj", "bar.obj", "lib", "all"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"all");
@@ -473,8 +473,8 @@ fn ninja_plan_pool_with_redundant_edges() {
 #[test]
 fn ninja_plan_priority_without_build_log() {
     let graph = plan_graph(
-            "rule r\n  command = unused\nbuild out: r a0 b0 c0\nbuild a0: r a1\nbuild a1: r a2\nbuild b0: r b1\nbuild c0: r b1\n",
-        );
+        "rule r\n  command = unused\nbuild out: r a0 b0 c0\nbuild a0: r a1\nbuild a1: r a2\nbuild b0: r b1\nbuild c0: r b1\n",
+    );
     let runtime = mark_dirty(&graph, &["a1", "a0", "b0", "c0", "out"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out");
@@ -482,7 +482,7 @@ fn ninja_plan_priority_without_build_log() {
     assert_eq!(
         [("out", 1), ("a0", 2), ("b0", 2), ("c0", 2), ("a1", 3)].map(|(path, weight)| {
             let node = nodeget(&graph, path.as_bytes()).unwrap();
-            let edge = graph.node(node).gen.unwrap();
+            let edge = graph.node(node).generator.unwrap();
             let actual = plan.weight[edge.index()].0;
             (actual, weight)
         }),
@@ -516,14 +516,14 @@ fn ronin_plan_handles_deep_graphs_without_recursion() {
             edge.set_explicit_output_count(1);
         }
         nodeuse(&mut graph, input, edge);
-        graph.node_mut(output).gen = Some(edge);
+        graph.node_mut(output).generator = Some(edge);
         input = output;
         target = output;
     }
 
     let mut runtime = RuntimeState::new(&graph);
     for node in graph.node_ids() {
-        if graph.node(node).gen.is_some() {
+        if graph.node(node).generator.is_some() {
             runtime.node_mut(node).set_dirty(true);
         }
     }
@@ -581,9 +581,9 @@ fn ninja_build_one_step() {
 #[test]
 fn ninja_build_two_step() {
     let (mut graph, directory) = build_fixture(
-            "two-step",
-            "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/mid\nbuild $dir/mid: copy $dir/in\n",
-        );
+        "two-step",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/mid\nbuild $dir/mid: copy $dir/in\n",
+    );
     fs::write(directory.join("in"), "hello").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     {
@@ -620,9 +620,9 @@ fn ninja_build_two_outputs() {
 #[test]
 fn ninja_build_implicit_output() {
     let (mut graph, directory) = build_fixture(
-            "implicit-output",
-            "rule touch\n  command = touch $out $dir/out.imp\nbuild $dir/out | $dir/out.imp: touch $dir/in\n",
-        );
+        "implicit-output",
+        "rule touch\n  command = touch $out $dir/out.imp\nbuild $dir/out | $dir/out.imp: touch $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out.imp").to_string_lossy().into_owned();
     {
@@ -639,9 +639,9 @@ fn ninja_build_implicit_output() {
 #[test]
 fn ninja_build_multi_output_input_rebuilds_consistently() {
     let (mut graph, directory) = build_fixture(
-            "multi-output-input",
-            "rule touch\n  command = touch $out\nbuild $dir/in1 $dir/otherfile: touch $dir/in\nbuild $dir/out: touch $dir/in | $dir/in1\n",
-        );
+        "multi-output-input",
+        "rule touch\n  command = touch $out\nbuild $dir/in1 $dir/otherfile: touch $dir/in\nbuild $dir/out: touch $dir/in | $dir/in1\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in1"), "").unwrap();
@@ -660,9 +660,9 @@ fn ninja_build_multi_output_input_rebuilds_consistently() {
 #[test]
 fn ninja_build_chain_is_clean_on_second_scan() {
     let (mut graph, directory) = build_fixture(
-            "chain",
-            "rule copy\n  command = cp $in $out\nbuild $dir/c2: copy $dir/c1\nbuild $dir/c3: copy $dir/c2\nbuild $dir/c4: copy $dir/c3\nbuild $dir/c5: copy $dir/c4\n",
-        );
+        "chain",
+        "rule copy\n  command = cp $in $out\nbuild $dir/c2: copy $dir/c1\nbuild $dir/c3: copy $dir/c2\nbuild $dir/c4: copy $dir/c3\nbuild $dir/c5: copy $dir/c4\n",
+    );
     fs::write(directory.join("c1"), "chain").unwrap();
     let target = directory.join("c5").to_string_lossy().into_owned();
     {
@@ -840,14 +840,16 @@ fn ronin_command_cache_recomputes_after_explicit_binding_invalidation() {
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
     builder.add_target(&target).unwrap();
     let output = nodeget(builder.graph, target.as_bytes()).unwrap();
-    let edge = builder.graph.node(output).gen.unwrap();
+    let edge = builder.graph.node(output).generator.unwrap();
     builder.refresh_command_hash(edge).unwrap();
     let first_hash = builder.runtime.edge(edge).command_hash();
-    assert!(builder.command_cache[edge.index()]
-        .as_ref()
-        .unwrap()
-        .command
-        .contains_str("first"));
+    assert!(
+        builder.command_cache[edge.index()]
+            .as_ref()
+            .unwrap()
+            .command
+            .contains_str("first")
+    );
 
     let value_name = builder.graph.names_mut().intern(BStr::new("value"));
     builder
@@ -858,11 +860,13 @@ fn ronin_command_cache_recomputes_after_explicit_binding_invalidation() {
     builder.invalidate_command(edge);
     builder.refresh_command_hash(edge).unwrap();
     assert_ne!(builder.runtime.edge(edge).command_hash(), first_hash);
-    assert!(builder.command_cache[edge.index()]
-        .as_ref()
-        .unwrap()
-        .command
-        .contains_str("second"));
+    assert!(
+        builder.command_cache[edge.index()]
+            .as_ref()
+            .unwrap()
+            .command
+            .contains_str("second")
+    );
     drop(builder);
     fs::remove_dir_all(directory).unwrap();
 }
@@ -952,7 +956,7 @@ fn ignored_status_uses_ninja_reporter() {
         let mut builder = Builder::with_output(&mut graph, BuildOptions::default(), &mut output);
         builder.add_target(&target).unwrap();
         let node = nodeget(builder.graph, target.as_bytes()).unwrap();
-        let edge = builder.graph.node(node).gen.unwrap();
+        let edge = builder.graph.node(node).generator.unwrap();
         let name = builder
             .graph
             .names_mut()
@@ -1009,9 +1013,9 @@ fn ninja_build_interrupted_command_cleans_only_changed_outputs() {
 #[test]
 fn ninja_build_response_file_success() {
     let (mut graph, directory) = build_fixture(
-            "rsp-success",
-            "rule rsp\n  command = cat $rspfile > $out\n  rspfile = $dir/args.rsp\n  rspfile_content = response contents\nbuild $dir/out: rsp $dir/in\n",
-        );
+        "rsp-success",
+        "rule rsp\n  command = cat $rspfile > $out\n  rspfile = $dir/args.rsp\n  rspfile_content = response contents\nbuild $dir/out: rsp $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     {
@@ -1030,9 +1034,9 @@ fn ninja_build_response_file_success() {
 #[test]
 fn ninja_build_response_file_failure_cleanup() {
     let (mut graph, directory) = build_fixture(
-            "rsp-failure",
-            "rule rsp\n  command = false\n  rspfile = $dir/args.rsp\n  rspfile_content = response contents\nbuild $dir/out: rsp $dir/in\n",
-        );
+        "rsp-failure",
+        "rule rsp\n  command = false\n  rspfile = $dir/args.rsp\n  rspfile_content = response contents\nbuild $dir/out: rsp $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     {
@@ -1047,9 +1051,9 @@ fn ninja_build_response_file_failure_cleanup() {
 #[test]
 fn ninja_build_phony_dependency() {
     let (mut graph, directory) = build_fixture(
-            "phony",
-            "rule copy\n  command = cp $in $out\nbuild $dir/real: copy $dir/in\nbuild $dir/alias: phony $dir/real\n",
-        );
+        "phony",
+        "rule copy\n  command = cp $in $out\nbuild $dir/real: copy $dir/in\nbuild $dir/alias: phony $dir/real\n",
+    );
     fs::write(directory.join("in"), "hello").unwrap();
     let target = directory.join("alias").to_string_lossy().into_owned();
     {
@@ -1066,9 +1070,9 @@ fn ninja_build_phony_dependency() {
 #[test]
 fn ninja_build_phony_no_work() {
     let (mut graph, directory) = build_fixture(
-            "phony-no-work",
-            "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in\nbuild $dir/all: phony $dir/out\n",
-        );
+        "phony-no-work",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in\nbuild $dir/all: phony $dir/out\n",
+    );
     fs::write(directory.join("in"), "hello").unwrap();
     fs::write(directory.join("out"), "hello").unwrap();
     let target = directory.join("all").to_string_lossy().into_owned();
@@ -1168,7 +1172,7 @@ fn ninja_build_loads_existing_depfile() {
         assert!(builder.already_up_to_date());
     }
     let output = nodeget(&graph, target.as_bytes()).unwrap();
-    let edge = graph.node(output).gen.unwrap();
+    let edge = graph.node(output).generator.unwrap();
     assert_eq!(graph.edge(edge).input.len(), 3);
     let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
     assert_eq!(
@@ -1197,9 +1201,9 @@ fn ninja_build_rejects_invalid_depfile() {
 #[test]
 fn ninja_build_wrong_output_in_depfile_forces_rebuild() {
     let (mut graph, directory) = build_fixture(
-            "depfile-wrong-output",
-            "rule copy\n  command = cp $in $out; printf '$out: $dir/header\\n' > $out.d\n  depfile = $out.d\nbuild $dir/out: copy $dir/in\n",
-        );
+        "depfile-wrong-output",
+        "rule copy\n  command = cp $in $out; printf '$out: $dir/header\\n' > $out.d\n  depfile = $out.d\nbuild $dir/out: copy $dir/in\n",
+    );
     fs::write(directory.join("in"), "new").unwrap();
     fs::write(directory.join("header"), "").unwrap();
     fs::write(directory.join("out"), "old").unwrap();
@@ -1255,9 +1259,9 @@ fn ninja_build_depfile_rejects_undeclared_extra_output() {
 #[test]
 fn ninja_build_failed_depfile_parse_after_command() {
     let (mut graph, directory) = build_fixture(
-            "depfile-command-parse-error",
-            "rule copy\n  command = cp $in $out\n  depfile = $out.d\n  deps = gcc\nbuild $dir/out: copy $dir/in\n",
-        );
+        "depfile-command-parse-error",
+        "rule copy\n  command = cp $in $out\n  depfile = $out.d\n  deps = gcc\nbuild $dir/out: copy $dir/in\n",
+    );
     fs::write(directory.join("in"), "source").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
@@ -1294,9 +1298,9 @@ fn ninja_build_gcc_deps_without_depfile_errors_after_command() {
 #[test]
 fn ninja_build_records_generated_depfile() {
     let (mut graph, directory) = build_fixture(
-            "depfile-generated",
-            "rule copy\n  command = cp $in $out; printf '$out: $dir/header\\n' > $out.d\n  depfile = $out.d\nbuild $dir/out: copy $dir/in\n",
-        );
+        "depfile-generated",
+        "rule copy\n  command = cp $in $out; printf '$out: $dir/header\\n' > $out.d\n  depfile = $out.d\nbuild $dir/out: copy $dir/in\n",
+    );
     fs::write(directory.join("in"), "hello").unwrap();
     fs::write(directory.join("header"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
@@ -1313,7 +1317,7 @@ fn ninja_build_records_generated_depfile() {
         assert!(builder.already_up_to_date());
     }
     let output = nodeget(&graph, target.as_bytes()).unwrap();
-    let edge = graph.node(output).gen.unwrap();
+    let edge = graph.node(output).generator.unwrap();
     assert_eq!(graph.edge(edge).input.len(), 2);
     fs::remove_dir_all(directory).unwrap();
 }
@@ -1338,9 +1342,9 @@ fn ninja_build_newer_order_only_input_does_not_rebuild() {
 #[test]
 fn ninja_build_rebuilds_dirty_order_only_generator() {
     let (mut graph, directory) = build_fixture(
-            "order-only-generated",
-            "rule copy\n  command = cp $in $out\nbuild $dir/order: copy $dir/order.in\nbuild $dir/out: copy $dir/in || $dir/order\n",
-        );
+        "order-only-generated",
+        "rule copy\n  command = cp $in $out\nbuild $dir/order: copy $dir/order.in\nbuild $dir/out: copy $dir/in || $dir/order\n",
+    );
     fs::write(directory.join("order.in"), "order").unwrap();
     fs::write(directory.join("in"), "hello").unwrap();
     fs::write(directory.join("out"), "hello").unwrap();
@@ -1360,9 +1364,9 @@ fn ninja_build_rebuilds_dirty_order_only_generator() {
 #[test]
 fn ninja_build_encounter_ready_twice() {
     let (mut graph, directory) = build_fixture(
-            "encounter-ready-twice",
-            "rule touch\n  command = touch $out\nbuild $dir/c: touch\nbuild $dir/b: touch || $dir/c\nbuild $dir/a: touch | $dir/b || $dir/c\n",
-        );
+        "encounter-ready-twice",
+        "rule touch\n  command = touch $out\nbuild $dir/c: touch\nbuild $dir/b: touch || $dir/c\nbuild $dir/a: touch | $dir/b || $dir/c\n",
+    );
     fs::write(directory.join("b"), "").unwrap();
     let target = directory.join("a").to_string_lossy().into_owned();
     {
@@ -1379,9 +1383,9 @@ fn ninja_build_encounter_ready_twice() {
 #[test]
 fn ninja_build_phony_with_no_inputs_respects_order_only() {
     let (mut graph, directory) = build_fixture(
-            "phony-empty",
-            "rule touch\n  command = touch $out\nbuild $dir/nonexistent: phony\nbuild $dir/out1: touch || $dir/nonexistent\nbuild $dir/out2: touch $dir/nonexistent\n",
-        );
+        "phony-empty",
+        "rule touch\n  command = touch $out\nbuild $dir/nonexistent: phony\nbuild $dir/out1: touch || $dir/nonexistent\nbuild $dir/out2: touch $dir/nonexistent\n",
+    );
     fs::write(directory.join("out1"), "").unwrap();
     fs::write(directory.join("out2"), "").unwrap();
     let out1 = directory.join("out1").to_string_lossy().into_owned();
@@ -1589,9 +1593,9 @@ fn ninja_build_makes_depfile_dir_only() {
 #[test]
 fn ninja_build_swallow_failures_releases_pool() {
     let (mut graph, directory) = build_fixture(
-            "failure-pool",
-            "pool serial\n  depth = 1\nrule fail\n  command = false\n  pool = serial\nbuild $dir/out1: fail\nbuild $dir/out2: fail\n",
-        );
+        "failure-pool",
+        "pool serial\n  depth = 1\nrule fail\n  command = false\n  pool = serial\nbuild $dir/out1: fail\nbuild $dir/out2: fail\n",
+    );
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
     let options = BuildOptions {
@@ -1610,9 +1614,9 @@ fn ninja_build_swallow_failures_releases_pool() {
 #[test]
 fn ninja_build_runs_independent_edges_in_parallel() {
     let (mut graph, directory) = build_fixture(
-            "parallel-edges",
-            "rule sync\n  command = touch $out.started; i=0; while [ ! -e $other.started ] && [ $$i -lt 100 ]; do sleep 0.01; i=$$((i + 1)); done; test -e $other.started; touch $out\nbuild $dir/out1: sync\n  other = $dir/out2\nbuild $dir/out2: sync\n  other = $dir/out1\n",
-        );
+        "parallel-edges",
+        "rule sync\n  command = touch $out.started; i=0; while [ ! -e $other.started ] && [ $$i -lt 100 ]; do sleep 0.01; i=$$((i + 1)); done; test -e $other.started; touch $out\nbuild $dir/out1: sync\n  other = $dir/out2\nbuild $dir/out2: sync\n  other = $dir/out1\n",
+    );
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
     let options = BuildOptions {
@@ -1689,9 +1693,9 @@ fn ronin_scheduler_releases_dependents_on_each_completion() {
 #[test]
 fn ninja_build_pool_depth_serializes_parallel_commands() {
     let (mut graph, directory) = build_fixture(
-            "parallel-pool-depth",
-            "pool serial\n  depth = 1\nrule locked\n  command = mkdir $dir/lock; sleep 0.02; rmdir $dir/lock; touch $out\n  pool = serial\nbuild $dir/out1: locked\nbuild $dir/out2: locked\n",
-        );
+        "parallel-pool-depth",
+        "pool serial\n  depth = 1\nrule locked\n  command = mkdir $dir/lock; sleep 0.02; rmdir $dir/lock; touch $out\n  pool = serial\nbuild $dir/out1: locked\nbuild $dir/out2: locked\n",
+    );
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
     let options = BuildOptions {
@@ -1713,9 +1717,9 @@ fn ninja_build_pool_depth_serializes_parallel_commands() {
 // [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn ninja_build_console_pool_is_exclusive() {
     let (mut graph, directory) = build_fixture(
-            "parallel-console-exclusive",
-            "rule regular\n  command = mkdir $dir/lock; sleep 0.02; rmdir $dir/lock; touch $out\nrule console\n  command = mkdir $dir/lock; sleep 0.02; rmdir $dir/lock; touch $out\n  pool = console\nbuild $dir/out1: regular\nbuild $dir/out2: console\n",
-        );
+        "parallel-console-exclusive",
+        "rule regular\n  command = mkdir $dir/lock; sleep 0.02; rmdir $dir/lock; touch $out\nrule console\n  command = mkdir $dir/lock; sleep 0.02; rmdir $dir/lock; touch $out\n  pool = console\nbuild $dir/out1: regular\nbuild $dir/out2: console\n",
+    );
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
     let options = BuildOptions {
@@ -1736,9 +1740,9 @@ fn ninja_build_console_pool_is_exclusive() {
 #[test]
 fn ninja_build_dry_run_shows_all_commands() {
     let (mut graph, directory) = build_fixture(
-            "dry-run",
-            "rule touch\n  command = touch $out\nbuild $dir/mid: touch $dir/in\nbuild $dir/out: touch $dir/mid\n",
-        );
+        "dry-run",
+        "rule touch\n  command = touch $out\nbuild $dir/mid: touch $dir/in\nbuild $dir/out: touch $dir/mid\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let options = BuildOptions {
@@ -1758,9 +1762,9 @@ fn ninja_build_dry_run_shows_all_commands() {
 #[test]
 fn ninja_build_ready_dyndep_implicit_connection() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-ready",
-            "rule touch\n  command = touch $out\nbuild $dir/out1: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out2: touch $dir/in\n",
-        );
+        "dyndep-ready",
+        "rule touch\n  command = touch $out\nbuild $dir/out1: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out2: touch $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(
         directory.join("dd"),
@@ -1786,9 +1790,9 @@ fn ninja_build_ready_dyndep_implicit_connection() {
 #[test]
 fn ninja_build_ready_dyndep_syntax_error() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-syntax",
-            "rule touch\n  command = touch $out\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-syntax",
+        "rule touch\n  command = touch $out\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(directory.join("dd"), "not a dyndep file\n").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
@@ -1801,9 +1805,9 @@ fn ninja_build_ready_dyndep_syntax_error() {
 #[test]
 fn ninja_build_ready_dyndep_discovers_cycle() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-ready-cycle",
-            "rule touch\n  command = touch $out\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/in: touch $dir/circ\n",
-        );
+        "dyndep-ready-cycle",
+        "rule touch\n  command = touch $out\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/in: touch $dir/circ\n",
+    );
     fs::write(
         directory.join("dd"),
         format!(
@@ -1824,9 +1828,9 @@ fn ninja_build_ready_dyndep_discovers_cycle() {
 #[test]
 fn ninja_build_dyndep_missing_and_no_rule() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-missing",
-            "rule touch\n  command = touch $out\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-missing",
+        "rule touch\n  command = touch $out\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
@@ -1838,9 +1842,9 @@ fn ninja_build_dyndep_missing_and_no_rule() {
 #[test]
 fn ninja_build_dry_run_with_dyndep() {
     let (mut graph, directory) = build_fixture(
-            "dry-dyndep",
-            "rule touch\n  command = touch $out\nbuild $dir/out1: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out2: touch $dir/in\n",
-        );
+        "dry-dyndep",
+        "rule touch\n  command = touch $out\nbuild $dir/out1: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out2: touch $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(
         directory.join("dd"),
@@ -1867,9 +1871,9 @@ fn ninja_build_dry_run_with_dyndep() {
 #[test]
 fn ninja_build_validation() {
     let (mut graph, directory) = build_fixture(
-            "validation",
-            "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in |@ $dir/validate\nbuild $dir/validate: copy $dir/in2\n",
-        );
+        "validation",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in |@ $dir/validate\nbuild $dir/validate: copy $dir/in2\n",
+    );
     fs::write(directory.join("in"), "out").unwrap();
     fs::write(directory.join("in2"), "validation").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
@@ -1890,9 +1894,9 @@ fn ninja_build_validation() {
 #[test]
 fn ninja_build_validation_depends_on_output() {
     let (mut graph, directory) = build_fixture(
-            "validation-output",
-            "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in |@ $dir/validate\nbuild $dir/validate: copy $dir/out\n",
-        );
+        "validation-output",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in |@ $dir/validate\nbuild $dir/validate: copy $dir/out\n",
+    );
     fs::write(directory.join("in"), "out").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     {
@@ -1913,9 +1917,9 @@ fn ninja_build_validation_depends_on_output() {
 #[test]
 fn ninja_build_circular_validations() {
     let (mut graph, directory) = build_fixture(
-            "validation-circular",
-            "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in |@ $dir/out2\nbuild $dir/out2: copy $dir/in2 |@ $dir/out\n",
-        );
+        "validation-circular",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in |@ $dir/out2\nbuild $dir/out2: copy $dir/in2 |@ $dir/out\n",
+    );
     fs::write(directory.join("in"), "out").unwrap();
     fs::write(directory.join("in2"), "out2").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
@@ -1933,9 +1937,9 @@ fn ninja_build_circular_validations() {
 #[test]
 fn ninja_build_validation_with_dependency_cycle() {
     let (mut graph, directory) = build_fixture(
-            "validation-dependency-cycle",
-            "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in |@ $dir/validate\nbuild $dir/validate: copy $dir/validate_in | $dir/out\nbuild $dir/validate_in: copy $dir/validate\n",
-        );
+        "validation-dependency-cycle",
+        "rule copy\n  command = cp $in $out\nbuild $dir/out: copy $dir/in |@ $dir/validate\nbuild $dir/validate: copy $dir/validate_in | $dir/out\nbuild $dir/validate_in: copy $dir/validate\n",
+    );
     fs::write(directory.join("in"), "out").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
@@ -2007,9 +2011,9 @@ fn build_log_rebuilds_changed_command() {
 #[test]
 fn ninja_build_log_generator_rebuilds_for_newer_implicit_input() {
     let (mut graph, directory) = build_fixture(
-            "log-generator-implicit-newer",
-            "rule generate\n  command = touch $out\n  generator = 1\nbuild $dir/out: generate | $dir/in\n",
-        );
+        "log-generator-implicit-newer",
+        "rule generate\n  command = touch $out\n  generator = 1\nbuild $dir/out: generate | $dir/in\n",
+    );
     fs::write(directory.join("out"), "").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "").unwrap();
@@ -2096,9 +2100,9 @@ fn ninja_build_log_does_not_record_failure() {
 #[test]
 fn ninja_build_log_rspfile_content_change_rebuilds() {
     let (mut graph, directory) = build_fixture(
-            "log-rsp-change",
-            "rule rsp\n  command = cat $rspfile > $out\n  rspfile = $dir/args.rsp\n  rspfile_content = first\nbuild $dir/out: rsp\n",
-        );
+        "log-rsp-change",
+        "rule rsp\n  command = cat $rspfile > $out\n  rspfile = $dir/args.rsp\n  rspfile_content = first\nbuild $dir/out: rsp\n",
+    );
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut log = crate::log::BuildLog::open(Some(&directory)).unwrap();
     {
@@ -2167,9 +2171,9 @@ fn ninja_build_log_generator_command_change_is_ignored() {
 #[test]
 fn ninja_build_log_restat_prunes_downstream_edge() {
     let (mut graph, directory) = build_fixture(
-            "log-restat",
-            "rule steady\n  command = true\n  restat = 1\nrule touch\n  command = touch $out\nbuild $dir/mid: steady $dir/in\nbuild $dir/out: touch $dir/mid\n",
-        );
+        "log-restat",
+        "rule steady\n  command = true\n  restat = 1\nrule touch\n  command = touch $out\nbuild $dir/mid: steady $dir/in\nbuild $dir/out: touch $dir/mid\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(directory.join("mid"), "").unwrap();
     fs::write(directory.join("out"), "").unwrap();
@@ -2197,9 +2201,9 @@ fn ninja_build_log_restat_prunes_downstream_edge() {
 #[test]
 fn ninja_build_log_restat_does_not_hide_missing_sibling_output() {
     let (mut graph, directory) = build_fixture(
-            "log-restat-sibling",
-            "rule steady\n  command = true\n  restat = 1\nrule touch\n  command = touch $out\nbuild $dir/mid: steady $dir/in\nbuild $dir/out1 $dir/out2: touch $dir/mid\nbuild $dir/final: touch $dir/out1\n",
-        );
+        "log-restat-sibling",
+        "rule steady\n  command = true\n  restat = 1\nrule touch\n  command = touch $out\nbuild $dir/mid: steady $dir/in\nbuild $dir/out1 $dir/out2: touch $dir/mid\nbuild $dir/final: touch $dir/out1\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(directory.join("mid"), "").unwrap();
     fs::write(directory.join("out1"), "").unwrap();
@@ -2229,9 +2233,9 @@ fn ninja_build_log_restat_does_not_hide_missing_sibling_output() {
 #[test]
 fn ninja_build_log_rebuild_with_no_inputs() {
     let (mut graph, directory) = build_fixture(
-            "log-no-inputs",
-            "rule touch\n  command = touch $out\nbuild $dir/out1: touch\nbuild $dir/out2: touch $dir/in\n",
-        );
+        "log-no-inputs",
+        "rule touch\n  command = touch $out\nbuild $dir/out1: touch\nbuild $dir/out2: touch $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
@@ -2261,9 +2265,9 @@ fn ninja_build_log_rebuild_with_no_inputs() {
 #[test]
 fn ninja_build_log_rebuilds_after_failed_output_update() {
     let (mut graph, directory) = build_fixture(
-            "log-rebuild-failure",
-            "rule conditional\n  command = touch $out; test ! -e $dir/fail\nbuild $dir/out: conditional $dir/in\n",
-        );
+        "log-rebuild-failure",
+        "rule conditional\n  command = touch $out; test ! -e $dir/fail\nbuild $dir/out: conditional $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut log = crate::log::BuildLog::open(Some(&directory)).unwrap();
@@ -2436,9 +2440,9 @@ fn ninja_build_log_generated_plain_depfile_mtime() {
 #[test]
 fn ninja_build_log_dyndep_discovers_restat() {
     let (mut graph, directory) = build_fixture(
-            "log-dyndep-restat",
-            "rule steady\n  command = true\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/out1: steady $dir/in || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out2: copy $dir/out1\n",
-        );
+        "log-dyndep-restat",
+        "rule steady\n  command = true\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/out1: steady $dir/in || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out2: copy $dir/out1\n",
+    );
     fs::write(directory.join("out1"), "").unwrap();
     fs::write(directory.join("out2"), "").unwrap();
     fs::write(directory.join("in"), "").unwrap();
@@ -2618,9 +2622,9 @@ fn ninja_build_deps_log_detects_discovered_input_changed_during_command() {
 #[test]
 fn ninja_build_deps_are_ignored_in_dry_run() {
     let (mut graph, directory) = build_fixture(
-            "deps-log-dry-run",
-            "rule cc\n  command = cp $in $out\n  depfile = $out.d\n  deps = gcc\nbuild $dir/out: cc $dir/in\n",
-        );
+        "deps-log-dry-run",
+        "rule cc\n  command = cp $in $out\n  depfile = $out.d\n  deps = gcc\nbuild $dir/out: cc $dir/in\n",
+    );
     fs::write(directory.join("out"), "old").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("in"), "new").unwrap();
@@ -2641,9 +2645,9 @@ fn ninja_build_deps_are_ignored_in_dry_run() {
 #[test]
 fn ninja_build_deps_log_records_all_outputs() {
     let (mut graph, directory) = build_fixture(
-            "deps-log-multiple-outputs",
-            "rule cc\n  command = touch $out; printf '$dir/out1: $dir/header\\n' > $dir/out.d\n  depfile = $dir/out.d\n  deps = gcc\nbuild $dir/out1 $dir/out2: cc $dir/in\n",
-        );
+        "deps-log-multiple-outputs",
+        "rule cc\n  command = touch $out; printf '$dir/out1: $dir/header\\n' > $dir/out.d\n  depfile = $dir/out.d\n  deps = gcc\nbuild $dir/out1 $dir/out2: cc $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(directory.join("header"), "").unwrap();
     let out1 = directory.join("out1").to_string_lossy().into_owned();
@@ -2718,9 +2722,9 @@ fn ninja_build_deps_log_two_outputs_gcc_only_secondary_output() {
 #[test]
 fn ninja_build_deps_log_msvc_records_all_outputs() {
     let (mut graph, directory) = build_fixture(
-            "deps-log-msvc-multiple-outputs",
-            "rule cc\n  command = printf 'using $dir/in\\n'; touch $out\n  deps = msvc\n  msvc_deps_prefix = using\nbuild $dir/out1 $dir/out2: cc $dir/in\n",
-        );
+        "deps-log-msvc-multiple-outputs",
+        "rule cc\n  command = printf 'using $dir/in\\n'; touch $out\n  deps = msvc\n  msvc_deps_prefix = using\nbuild $dir/out1 $dir/out2: cc $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let out1 = directory.join("out1").to_string_lossy().into_owned();
     let out2 = directory.join("out2").to_string_lossy().into_owned();
@@ -2783,7 +2787,7 @@ fn ninja_build_deps_log_escaped_output_preserves_command_inputs() {
         builder.add_target(&target).unwrap();
     }
     let output = nodeget(&graph, target.as_bytes()).unwrap();
-    let edge = graph.node(output).gen.unwrap();
+    let edge = graph.node(output).generator.unwrap();
     assert_eq!(graph.edge(edge).input.len(), 3);
     let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
     let command = String::from_utf8_lossy(command.as_bytes());
@@ -2920,9 +2924,9 @@ fn ninja_build_deps_log_validation_through_discovered_input() {
 #[test]
 fn ninja_build_restat_depfile_dependency() {
     let (mut graph, directory) = build_fixture(
-            "restat-depfile-dependency",
-            "rule steady\n  command = true\n  restat = 1\nrule copy\n  command = cp $in $out\nbuild $dir/header.h: steady $dir/header.in\nbuild $dir/out: copy $dir/in\n  depfile = $dir/out.d\n",
-        );
+        "restat-depfile-dependency",
+        "rule steady\n  command = true\n  restat = 1\nrule copy\n  command = cp $in $out\nbuild $dir/header.h: steady $dir/header.in\nbuild $dir/out: copy $dir/in\n  depfile = $dir/out.d\n",
+    );
     fs::write(directory.join("in"), "source").unwrap();
     fs::write(directory.join("header.h"), "").unwrap();
     fs::write(directory.join("out"), "source").unwrap();
@@ -2950,9 +2954,9 @@ fn ninja_build_restat_depfile_dependency() {
 #[test]
 fn ninja_build_restat_missing_depfile_does_not_prune_dependent() {
     let (mut graph, directory) = build_fixture(
-            "restat-missing-depfile",
-            "rule steady\n  command = true\n  restat = 1\nrule copy\n  command = cp $in $out\nbuild $dir/header.h: steady $dir/header.in\nbuild $dir/out: copy $dir/header.h\n  depfile = $dir/out.d\n",
-        );
+        "restat-missing-depfile",
+        "rule steady\n  command = true\n  restat = 1\nrule copy\n  command = cp $in $out\nbuild $dir/header.h: steady $dir/header.in\nbuild $dir/out: copy $dir/header.h\n  depfile = $dir/out.d\n",
+    );
     fs::write(directory.join("header.h"), "header").unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
     fs::write(directory.join("out"), "header").unwrap();
@@ -2971,9 +2975,9 @@ fn ninja_build_restat_missing_depfile_does_not_prune_dependent() {
 #[test]
 fn ninja_build_stale_depfile_does_not_introduce_cycle() {
     let (mut graph, directory) = build_fixture(
-            "stale-depfile-cycle",
-            "rule copy\n  command = cp $in $out\nrule copy_deps\n  command = cp $in $out; printf '$dir/b: $dir/X\\n' > $dir/d.d\nbuild $dir/b: copy_deps $dir/a\n  depfile = $dir/d.d\nbuild $dir/c: copy $dir/b\nbuild $dir/d: copy $dir/c\n",
-        );
+        "stale-depfile-cycle",
+        "rule copy\n  command = cp $in $out\nrule copy_deps\n  command = cp $in $out; printf '$dir/b: $dir/X\\n' > $dir/d.d\nbuild $dir/b: copy_deps $dir/a\n  depfile = $dir/d.d\nbuild $dir/c: copy $dir/b\nbuild $dir/d: copy $dir/c\n",
+    );
     fs::write(directory.join("a"), "source").unwrap();
     fs::write(directory.join("X"), "").unwrap();
     fs::write(
@@ -2995,7 +2999,7 @@ fn ninja_build_stale_depfile_does_not_introduce_cycle() {
             directory.join("b").to_string_lossy().as_bytes(),
         )
         .unwrap();
-        let edge = builder.graph.node(b).gen.unwrap();
+        let edge = builder.graph.node(b).generator.unwrap();
         assert_eq!(builder.graph.edge(edge).input.len(), 1);
         builder.add_target(&target).unwrap();
         builder.build().unwrap();
@@ -3015,9 +3019,9 @@ fn ninja_build_stale_depfile_does_not_introduce_cycle() {
 #[test]
 fn ninja_build_generated_dyndep() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-generated",
-            "rule generate_dd\n  command = printf 'ninja_dyndep_version = 1\\nbuild $dir/out: dyndep\\n' > $out\nrule touch\n  command = touch $out\nbuild $dir/dd: generate_dd\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-generated",
+        "rule generate_dd\n  command = printf 'ninja_dyndep_version = 1\\nbuild $dir/out: dyndep\\n' > $out\nrule touch\n  command = touch $out\nbuild $dir/dd: generate_dd\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     {
@@ -3040,9 +3044,9 @@ fn ninja_build_generated_dyndep() {
 #[test]
 fn ninja_build_generated_dyndep_syntax_error() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-generated-error",
-            "rule generate_dd\n  command = printf 'not a dyndep file\\n' > $out\nrule touch\n  command = touch $out\nbuild $dir/dd: generate_dd\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-generated-error",
+        "rule generate_dd\n  command = printf 'not a dyndep file\\n' > $out\nrule touch\n  command = touch $out\nbuild $dir/dd: generate_dd\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut builder = Builder::new(&mut graph, BuildOptions::default());
@@ -3056,9 +3060,9 @@ fn ninja_build_generated_dyndep_syntax_error() {
 #[test]
 fn ninja_build_generated_dyndep_with_unrelated_dependent() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-unrelated-output",
-            "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/unrelated: touch || $dir/dd\nbuild $dir/out: touch $dir/unrelated || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-unrelated-output",
+        "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/unrelated: touch || $dir/dd\nbuild $dir/out: touch $dir/unrelated || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(
         directory.join("dd-in"),
         format!(
@@ -3084,9 +3088,9 @@ fn ninja_build_generated_dyndep_with_unrelated_dependent() {
 #[test]
 fn ninja_build_generated_dyndep_discovers_new_output() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-new-output",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-new-output",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(
         directory.join("dd-in"),
@@ -3115,9 +3119,9 @@ fn ninja_build_generated_dyndep_discovers_new_output() {
 #[test]
 fn ninja_build_generated_dyndep_rejects_existing_static_output() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-duplicate-static-output",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/out1 | $dir/out-twice.imp: touch $dir/in\nbuild $dir/out2: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-duplicate-static-output",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/out1 | $dir/out-twice.imp: touch $dir/in\nbuild $dir/out2: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(
         directory.join("dd-in"),
@@ -3144,9 +3148,9 @@ fn ninja_build_generated_dyndep_rejects_existing_static_output() {
 #[test]
 fn ninja_build_generated_dyndep_rejects_output_from_other_dyndep() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-duplicate-dynamic-output",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/out1: touch || $dir/dd1\n  dyndep = $dir/dd1\nbuild $dir/dd2: copy $dir/dd2-in || $dir/dd1\nbuild $dir/out2: touch || $dir/dd2\n  dyndep = $dir/dd2\n",
-        );
+        "dyndep-duplicate-dynamic-output",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/out1: touch || $dir/dd1\n  dyndep = $dir/dd1\nbuild $dir/dd2: copy $dir/dd2-in || $dir/dd1\nbuild $dir/out2: touch || $dir/dd2\n  dyndep = $dir/dd2\n",
+    );
     fs::write(
         directory.join("dd1-in"),
         format!(
@@ -3182,9 +3186,9 @@ fn ninja_build_generated_dyndep_rejects_output_from_other_dyndep() {
 #[test]
 fn ninja_build_generated_dyndep_rejects_validation_syntax() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-validation-syntax",
-            "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/out: touch || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-validation-syntax",
+        "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/out: touch || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(
         directory.join("dd-in"),
         format!(
@@ -3207,9 +3211,9 @@ fn ninja_build_generated_dyndep_rejects_validation_syntax() {
 #[test]
 fn ninja_build_generated_dyndep_discovers_transitive_validation() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-transitive-validation",
-            "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/in: touch |@ $dir/validation\nbuild $dir/validation: touch $dir/in $dir/out\nbuild $dir/out: touch || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-transitive-validation",
+        "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/in: touch |@ $dir/validation\nbuild $dir/validation: touch $dir/in $dir/out\nbuild $dir/out: touch || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(
         directory.join("dd-in"),
         format!(
@@ -3237,9 +3241,9 @@ fn ninja_build_generated_dyndep_discovers_transitive_validation() {
 #[test]
 fn ninja_build_generated_dyndep_discovers_implicit_connection() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-implicit-connection",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/tmp: touch || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out: touch || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-implicit-connection",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/tmp: touch || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out: touch || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(
         directory.join("dd-in"),
         format!(
@@ -3270,9 +3274,9 @@ fn ninja_build_generated_dyndep_discovers_implicit_connection() {
 #[test]
 fn ninja_build_generated_dyndep_connects_depfile_input() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-depfile-connection",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/tmp: touch || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out: copy $dir/tmp\n  depfile = $dir/out.d\n",
-        );
+        "dyndep-depfile-connection",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/tmp: touch || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out: copy $dir/tmp\n  depfile = $dir/out.d\n",
+    );
     fs::write(
         directory.join("out.d"),
         format!(
@@ -3303,20 +3307,22 @@ fn ninja_build_generated_dyndep_connects_depfile_input() {
         directory.join("tmp.imp").to_string_lossy().as_bytes(),
     )
     .unwrap();
-    let generator = graph.node(implicit).gen.unwrap();
-    assert!(graph
-        .edge(generator)
-        .rule
-        .is_none_or(|rule| graph.rule(rule).name != "phony"));
+    let generator = graph.node(implicit).generator.unwrap();
+    assert!(
+        graph
+            .edge(generator)
+            .rule
+            .is_none_or(|rule| graph.rule(rule).name != "phony")
+    );
     fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
 fn ninja_build_generated_dyndep_now_wants_clean_edge() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-now-want-edge",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/tmp: touch || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out: touch $dir/tmp || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-now-want-edge",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/tmp: touch || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out: touch $dir/tmp || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("tmp"), "").unwrap();
     fs::write(directory.join("out"), "").unwrap();
     fs::write(
@@ -3345,9 +3351,9 @@ fn ninja_build_generated_dyndep_now_wants_clean_edge() {
 #[test]
 fn ninja_build_generated_dyndep_now_wants_edge_and_dependent() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-now-want-dependent",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/tmp: touch || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out: touch $dir/tmp\n",
-        );
+        "dyndep-now-want-dependent",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd: copy $dir/dd-in\nbuild $dir/tmp: touch || $dir/dd\n  dyndep = $dir/dd\nbuild $dir/out: touch $dir/tmp\n",
+    );
     fs::write(directory.join("tmp"), "").unwrap();
     fs::write(directory.join("out"), "").unwrap();
     fs::write(
@@ -3375,9 +3381,9 @@ fn ninja_build_generated_dyndep_now_wants_edge_and_dependent() {
 #[test]
 fn ninja_build_generated_dyndep_does_not_reschedule_completed_edge() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-scheduled-edge",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/out1 | $dir/out1.imp: touch\nbuild $dir/zdd: copy $dir/zdd-in\nbuild $dir/out2: copy $dir/out1 || $dir/zdd\n  dyndep = $dir/zdd\n",
-        );
+        "dyndep-scheduled-edge",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/out1 | $dir/out1.imp: touch\nbuild $dir/zdd: copy $dir/zdd-in\nbuild $dir/out2: copy $dir/out1 || $dir/zdd\n  dyndep = $dir/zdd\n",
+    );
     fs::write(
         directory.join("zdd-in"),
         format!(
@@ -3412,9 +3418,9 @@ fn ninja_build_generated_dyndep_does_not_reschedule_completed_edge() {
 #[test]
 fn ninja_build_two_level_dyndep_direct() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-two-level-direct",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/out1 | $dir/out1.imp: touch || $dir/dd1\n  dyndep = $dir/dd1\nbuild $dir/dd2: copy $dir/dd2-in || $dir/dd1\nbuild $dir/out2: touch || $dir/dd2\n  dyndep = $dir/dd2\n",
-        );
+        "dyndep-two-level-direct",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/out1 | $dir/out1.imp: touch || $dir/dd1\n  dyndep = $dir/dd1\nbuild $dir/dd2: copy $dir/dd2-in || $dir/dd1\nbuild $dir/out2: touch || $dir/dd2\n  dyndep = $dir/dd2\n",
+    );
     fs::write(directory.join("out1.imp"), "").unwrap();
     fs::write(directory.join("out2"), "").unwrap();
     fs::write(directory.join("out2.imp"), "").unwrap();
@@ -3453,9 +3459,9 @@ fn ninja_build_two_level_dyndep_direct() {
 #[test]
 fn ninja_build_two_level_dyndep_indirect() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-two-level-indirect",
-            "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/out1: touch || $dir/dd1\n  dyndep = $dir/dd1\nbuild $dir/dd2: copy $dir/dd2-in || $dir/out1\nbuild $dir/out2: touch || $dir/dd2\n  dyndep = $dir/dd2\n",
-        );
+        "dyndep-two-level-indirect",
+        "rule touch\n  command = touch $out $out.imp\nrule copy\n  command = cp $in $out\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/out1: touch || $dir/dd1\n  dyndep = $dir/dd1\nbuild $dir/dd2: copy $dir/dd2-in || $dir/out1\nbuild $dir/out2: touch || $dir/dd2\n  dyndep = $dir/dd2\n",
+    );
     fs::write(directory.join("out1.imp"), "").unwrap();
     fs::write(directory.join("out2"), "").unwrap();
     fs::write(directory.join("out2.imp"), "").unwrap();
@@ -3495,9 +3501,9 @@ fn ninja_build_two_level_dyndep_indirect() {
 #[test]
 fn ninja_build_two_level_dyndep_discovered_ready() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-two-level-ready",
-            "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd0: copy $dir/dd0-in\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/in: touch\nbuild $dir/tmp: touch || $dir/dd0\n  dyndep = $dir/dd0\nbuild $dir/out: touch || $dir/dd1\n  dyndep = $dir/dd1\n",
-        );
+        "dyndep-two-level-ready",
+        "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd0: copy $dir/dd0-in\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/in: touch\nbuild $dir/tmp: touch || $dir/dd0\n  dyndep = $dir/dd0\nbuild $dir/out: touch || $dir/dd1\n  dyndep = $dir/dd1\n",
+    );
     fs::write(
         directory.join("dd1-in"),
         format!(
@@ -3535,9 +3541,9 @@ fn ninja_build_two_level_dyndep_discovered_ready() {
 #[test]
 fn ninja_build_two_level_dyndep_discovered_dirty() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-two-level-dirty",
-            "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd0: copy $dir/dd0-in\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/in: touch\nbuild $dir/tmp: touch || $dir/dd0\n  dyndep = $dir/dd0\nbuild $dir/out: touch || $dir/dd1\n  dyndep = $dir/dd1\n",
-        );
+        "dyndep-two-level-dirty",
+        "rule touch\n  command = touch $out\nrule copy\n  command = cp $in $out\nbuild $dir/dd0: copy $dir/dd0-in\nbuild $dir/dd1: copy $dir/dd1-in\nbuild $dir/in: touch\nbuild $dir/tmp: touch || $dir/dd0\n  dyndep = $dir/dd0\nbuild $dir/out: touch || $dir/dd1\n  dyndep = $dir/dd1\n",
+    );
     fs::write(
         directory.join("dd1-in"),
         format!(
@@ -3575,9 +3581,9 @@ fn ninja_build_two_level_dyndep_discovered_dirty() {
 #[test]
 fn ninja_build_multiple_dyndeps_from_one_edge() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-multiple-files",
-            "rule touch\n  command = touch $out\nrule generate\n  command = cp $dir/dd3-in $dir/dd3; cp $dir/dd2-in $dir/dd2\nrule copy_out1\n  command = cp $dir/out1 $out\nbuild $dir/dd3 $dir/dd2: generate $dir/dd3-in $dir/dd2-in\nbuild $dir/out3: touch $dir/in || $dir/dd3\n  dyndep = $dir/dd3\nbuild $dir/out2: copy_out1 || $dir/dd2\n  dyndep = $dir/dd2\nbuild $dir/out1: touch $dir/in\n",
-        );
+        "dyndep-multiple-files",
+        "rule touch\n  command = touch $out\nrule generate\n  command = cp $dir/dd3-in $dir/dd3; cp $dir/dd2-in $dir/dd2\nrule copy_out1\n  command = cp $dir/out1 $out\nbuild $dir/dd3 $dir/dd2: generate $dir/dd3-in $dir/dd2-in\nbuild $dir/out3: touch $dir/in || $dir/dd3\n  dyndep = $dir/dd3\nbuild $dir/out2: copy_out1 || $dir/dd2\n  dyndep = $dir/dd2\nbuild $dir/out1: touch $dir/in\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(
         directory.join("dd3-in"),
@@ -3616,9 +3622,9 @@ fn ninja_build_multiple_dyndeps_from_one_edge() {
 #[test]
 fn ninja_build_dyndep_discovers_new_generated_input() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-new-input",
-            "rule generate_dd\n  command = printf 'ninja_dyndep_version = 1\\nbuild $dir/out: dyndep | $dir/implicit\\n' > $out\nrule touch\n  command = touch $out\nbuild $dir/dd: generate_dd\nbuild $dir/implicit: touch $dir/source\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-new-input",
+        "rule generate_dd\n  command = printf 'ninja_dyndep_version = 1\\nbuild $dir/out: dyndep | $dir/implicit\\n' > $out\nrule touch\n  command = touch $out\nbuild $dir/dd: generate_dd\nbuild $dir/implicit: touch $dir/source\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     fs::write(directory.join("source"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
@@ -3639,9 +3645,9 @@ fn ninja_build_dyndep_discovers_new_generated_input() {
 #[test]
 fn ninja_build_dyndep_discovers_dependency_cycle() {
     let (mut graph, directory) = build_fixture(
-            "dyndep-cycle",
-            "rule generate_dd\n  command = printf 'ninja_dyndep_version = 1\\nbuild $dir/out: dyndep | $dir/circular\\n' > $out\nrule touch\n  command = touch $out\nbuild $dir/dd: generate_dd\nbuild $dir/circular: touch $dir/out\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
-        );
+        "dyndep-cycle",
+        "rule generate_dd\n  command = printf 'ninja_dyndep_version = 1\\nbuild $dir/out: dyndep | $dir/circular\\n' > $out\nrule touch\n  command = touch $out\nbuild $dir/dd: generate_dd\nbuild $dir/circular: touch $dir/out\nbuild $dir/out: touch $dir/in || $dir/dd\n  dyndep = $dir/dd\n",
+    );
     fs::write(directory.join("in"), "").unwrap();
     let target = directory.join("out").to_string_lossy().into_owned();
     let mut builder = Builder::new(&mut graph, BuildOptions::default());

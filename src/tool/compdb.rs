@@ -1,6 +1,6 @@
 use crate::env::edgevar;
 use crate::error::ToolError;
-use crate::graph::{nodeget, CommandCollector, EdgeId, Graph, PathStyle};
+use crate::graph::{CommandCollector, EdgeId, Graph, PathStyle, nodeget};
 use crate::names::Names;
 use crate::util::{BString, ByteSlice};
 
@@ -153,7 +153,7 @@ pub(crate) fn compdb_for_targets(
         let node = nodeget(graph, target.as_bytes()).ok_or_else(|| ToolError::UnknownTarget {
             path: target.clone(),
         })?;
-        if graph.node(node).gen.is_none() {
+        if graph.node(node).generator.is_none() {
             return Err(ToolError::NotTarget {
                 path: target.clone(),
             });
@@ -188,17 +188,21 @@ mod tests {
             ),
         );
         let regular = compdb(&fixture.graph, &[], false, &fixture.directory);
-        assert!(regular
-            .as_bytes()
-            .contains_str("\"command\": \"cc @object.rsp -o object\""));
+        assert!(
+            regular
+                .as_bytes()
+                .contains_str("\"command\": \"cc @object.rsp -o object\"")
+        );
         assert!(regular.as_bytes().contains_str("\"file\": \"source\""));
         assert!(regular.as_bytes().contains_str("\"output\": \"object\""));
 
         let expanded =
             compdb_for_targets(&fixture.graph, &["all".into()], true, &fixture.directory).unwrap();
-        assert!(expanded
-            .as_bytes()
-            .contains_str("\"command\": \"cc -DVALUE source -o object\""));
+        assert!(
+            expanded
+                .as_bytes()
+                .contains_str("\"command\": \"cc -DVALUE source -o object\"")
+        );
         assert!(!expanded.as_bytes().contains_str("@object.rsp"));
         assert_eq!(
             compdb_for_targets(

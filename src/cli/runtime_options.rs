@@ -1,6 +1,6 @@
 //! Ninja-facing diagnostics around runtime option normalization.
 
-use super::{append_output, normalize_runtime_options, CliResult, PRODUCT_NAME};
+use super::{CliResult, PRODUCT_NAME, append_output, normalize_runtime_options};
 use crate::build::{BuildOptions, JobLimit};
 use crate::error::{CliError, ProcessError};
 
@@ -49,15 +49,14 @@ impl JobserverNotice {
 
 fn ninja_jobserver_failure(error: &ProcessError) -> String {
     #[cfg(unix)]
-    if let ProcessError::JobserverEnvironment { source } = error {
-        if matches!(source.kind(), jobserver::FromEnvErrorKind::CannotOpenPath) {
-            if let Some(source) = std::error::Error::source(source) {
-                return format!(
-                    "Error opening fifo for reading: {}",
-                    crate::error::system_message(source)
-                );
-            }
-        }
+    if let ProcessError::JobserverEnvironment { source } = error
+        && matches!(source.kind(), jobserver::FromEnvErrorKind::CannotOpenPath)
+        && let Some(source) = std::error::Error::source(source)
+    {
+        return format!(
+            "Error opening fifo for reading: {}",
+            crate::error::system_message(source)
+        );
     }
     crate::error::system_message(error)
 }

@@ -4,7 +4,7 @@ mod depfile;
 
 use crate::env::edgevar;
 use crate::error::{DepfileProblem, PersistenceError, PersistenceOperation};
-use crate::graph::{edgeadddeps, EdgeId, Graph, NodeId, PathStyle};
+use crate::graph::{EdgeId, Graph, NodeId, PathStyle, edgeadddeps};
 use crate::names::Names;
 use crate::runtime::RuntimeState;
 use crate::util::{BString, ByteSlice};
@@ -50,11 +50,7 @@ impl DependencyId {
     }
 
     const fn get(self) -> Option<i32> {
-        if self.0 < 0 {
-            None
-        } else {
-            Some(self.0)
-        }
+        if self.0 < 0 { None } else { Some(self.0) }
     }
 }
 
@@ -226,12 +222,12 @@ fn stage_deps_entry(
     mtime: i64,
 ) -> io::Result<Option<Entry>> {
     const MAX_RECORD_SIZE: usize = (1 << 19) - 1;
-    if let EntryPolicy::SkipUnchanged(existing_entries) = policy {
-        if let Some(existing) = existing_entries.get(output) {
-            let unchanged = existing.mtime == mtime && existing.deps.nodes == deps.nodes;
-            if unchanged {
-                return Ok(None);
-            }
+    if let EntryPolicy::SkipUnchanged(existing_entries) = policy
+        && let Some(existing) = existing_entries.get(output)
+    {
+        let unchanged = existing.mtime == mtime && existing.deps.nodes == deps.nodes;
+        if unchanged {
+            return Ok(None);
         }
     }
     let size = 12 + deps.nodes.len() * 4;
@@ -352,7 +348,7 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
     let content = match fs::read(path) {
         Ok(content) => content,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            return Ok((depsinit_path(path.to_path_buf())?, None))
+            return Ok((depsinit_path(path.to_path_buf())?, None));
         }
         Err(error) => return Err(error),
     };
@@ -479,7 +475,7 @@ pub(crate) fn depsloadlog(path: &Path, graph: &mut Graph) -> io::Result<(DepsLog
 fn deps_entry_is_live(graph: &Graph, entry: &Entry) -> bool {
     graph
         .node(entry.node)
-        .gen
+        .generator
         .is_some_and(|edge| edgevar(graph, edge, Names::DEPS, PathStyle::Raw).is_some())
 }
 
@@ -574,14 +570,14 @@ pub(crate) fn depsparse(
     let text = match std::fs::read(path) {
         Ok(text) => text,
         Err(error) if allow_missing && error.kind() == io::ErrorKind::NotFound => {
-            return Ok(NodeArray::default())
+            return Ok(NodeArray::default());
         }
         Err(source) => {
             return Err(PersistenceError::io(
                 PersistenceOperation::ReadDepfile,
                 path,
                 source,
-            ))
+            ));
         }
     };
     let mut nodes = Vec::new();
@@ -622,7 +618,7 @@ pub(crate) fn depsparse_for_edge(
                 PersistenceOperation::ReadDepfile,
                 path,
                 source,
-            ))
+            ));
         }
     };
     if text.is_empty() {
@@ -836,7 +832,7 @@ mod ninja_depfile_tests {
         let edge = crate::graph::mkedge(graph, state.root);
         graph.edge_mut(edge).rule = Some(rule);
         graph.edge_mut(edge).out.push(output);
-        graph.node_mut(output).gen = Some(edge);
+        graph.node_mut(output).generator = Some(edge);
     }
 
     // [spec:ronin:req:compat.persistent-state/test]
@@ -996,9 +992,11 @@ mod ninja_depfile_tests {
                 .collect::<Vec<_>>();
 
             let error = depsrecompact_with_fault(&mut log, &graph, stage).unwrap_err();
-            assert!(error
-                .to_string()
-                .contains("injected atomic rewrite failure"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("injected atomic rewrite failure")
+            );
             assert_eq!(fs::read(&path).unwrap(), original_file);
             assert_eq!(log.entries, original_entries);
             assert_eq!(log.nodes, original_nodes);

@@ -35,10 +35,10 @@ mod subprocess;
 mod tool;
 mod util;
 
-pub use cli::{run, run_os, RunResult, Runner, NINJA_COMPAT_VERSION, PRODUCT_NAME};
+pub use cli::{NINJA_COMPAT_VERSION, PRODUCT_NAME, RunResult, Runner, run, run_os};
 pub use error::{Error, ErrorKind};
 pub use multicall::run_process;
-pub use signal::{install_signal_handlers, Signal, SignalHandlers};
+pub use signal::{Signal, SignalHandlers, install_signal_handlers};
 pub use subprocess::INTERRUPTED_EXIT_CODE;
 
 #[cfg(test)]

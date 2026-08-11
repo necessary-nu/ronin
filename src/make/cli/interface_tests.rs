@@ -1,8 +1,8 @@
 #![cfg(test)]
 
 use super::{
-    decode_makefile_makeflags, parse, Action, ArgumentShape, Invocation, Shuffle,
-    MAKE_OPTION_SURFACE,
+    Action, ArgumentShape, Invocation, MAKE_OPTION_SURFACE, Shuffle, decode_makefile_makeflags,
+    parse,
 };
 use crate::util::BString;
 use std::path::Path;

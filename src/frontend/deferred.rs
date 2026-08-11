@@ -7,7 +7,7 @@ impl BuildGraph {
     pub(crate) fn completion_join_observed_output(&self, node: Node) -> Option<Node> {
         self.arenas
             .node(node.0)
-            .gen
+            .generator
             .and_then(|edge| self.arenas.completion_join_output(edge))
             .map(Node)
     }

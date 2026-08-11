@@ -1,7 +1,7 @@
 use super::reporter::Rendering;
-use super::{status, Builder};
+use super::{Builder, status};
 use crate::error::{BuildError, BuildOperation};
-use crate::graph::{edgehash, EdgeId, Graph, PathStyle};
+use crate::graph::{EdgeId, Graph, PathStyle, edgehash};
 use crate::names::Names;
 use crate::util::{BString, ByteSlice};
 use std::fs;

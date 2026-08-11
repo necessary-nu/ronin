@@ -2,14 +2,14 @@
 
 mod runtime_options;
 
+use crate::Error;
 use crate::build::{BuildOptions, ColorChoice, JobLimit, OutputStyle};
 use crate::error::{
     BuildError, BuildStop, CliError, EncodingContext, PersistenceError, PersistenceOperation,
     ToolAvailability, ToolError,
 };
 use crate::frontend::{Build, BuildGraph, ManifestOptions, Node, Persistence};
-use crate::util::{terminated, BString, ByteSlice, ByteVec};
-use crate::Error;
+use crate::util::{BString, ByteSlice, ByteVec, terminated};
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -249,7 +249,7 @@ pub(crate) fn debugflag(options: &mut BuildOptions, flag: &str) -> CliResult<()>
             return Err(CliError::UnknownDebugFlag {
                 flag: flag.to_owned(),
             }
-            .into())
+            .into());
         }
     }
     Ok(())
@@ -287,7 +287,7 @@ pub(crate) fn warnflag(
             return Err(CliError::UnknownWarningFlag {
                 flag: flag.to_owned(),
             }
-            .into())
+            .into());
         }
     }
     Ok(())
@@ -633,7 +633,7 @@ fn parse_run_arguments(
             b"--version" => {
                 return Ok(RunAction::Immediate(RunResult::stdout(format!(
                     "{NINJA_COMPAT_VERSION}\n"
-                ))))
+                ))));
             }
             b"--help" => {
                 let program = progname(
@@ -837,7 +837,7 @@ fn parse_run_arguments(
                             return Ok(invalid_option(
                                 arguments,
                                 format_args!("invalid option -- '{}'", char::from(option)),
-                            ))
+                            ));
                         }
                     }
                 }
@@ -867,15 +867,19 @@ pub(crate) fn normalize_runtime_options(
     let inheritable = config.has_mode() && config.is_native();
     if options.jobs == JobLimit::Auto {
         if inheritable && !options.dryrun {
-            if let Ok(client) = connect_jobserver() {
-                options.jobs = JobLimit::Unlimited;
-                options.jobserver = Some(crate::jobserver::Transport::inherit(client, makeflags));
-            } else {
-                // An inherited transport is only an optional outer budget.
-                // A stale FIFO or descriptor must not prevent either front end
-                // from loading its source and using the ordinary local Ninja
-                // scheduler, which is also pinned Ninja's fallback.
-                options.jobs = unshared;
+            match connect_jobserver() {
+                Ok(client) => {
+                    options.jobs = JobLimit::Unlimited;
+                    options.jobserver =
+                        Some(crate::jobserver::Transport::inherit(client, makeflags));
+                }
+                _ => {
+                    // An inherited transport is only an optional outer budget.
+                    // A stale FIFO or descriptor must not prevent either front end
+                    // from loading its source and using the ordinary local Ninja
+                    // scheduler, which is also pinned Ninja's fallback.
+                    options.jobs = unshared;
+                }
             }
         } else {
             options.jobs = unshared;
@@ -1034,7 +1038,7 @@ fn run_compdb_targets_tool(
                 return Err(ToolError::Usage {
                     text: "usage: ronin -t compdb-targets [-hx] target [targets]",
                 }
-                .into())
+                .into());
             }
             option if option.starts_with(b"-") => {
                 return Err(ToolError::UnknownOption {
@@ -1174,14 +1178,14 @@ fn run_flag_tool(
                             "usage: ronin -t restat [--builddir=DIR] [outputs]\n",
                             [],
                             1,
-                        ))
+                        ));
                     }
                     option if option.starts_with(b"-") => {
                         return Err(ToolError::UnknownOption {
                             tool: "restat",
                             option: arguments[index].clone(),
                         }
-                        .into())
+                        .into());
                     }
                     _ => filters.push(arguments[index].clone()),
                 }
@@ -1239,10 +1243,9 @@ fn run_manifest_tool(
     if arguments
         .iter()
         .any(|argument| matches!(argument.as_bytes(), b"-h" | b"--help"))
+        && let Some(help) = tool_help(tool)
     {
-        if let Some(help) = tool_help(tool) {
-            return Ok(RunResult::exit(help, [], 1));
-        }
+        return Ok(RunResult::exit(help, [], 1));
     }
     if tool == crate::tool::Tool::CompdbTargets && arguments.is_empty() {
         return Ok(RunResult::exit(
@@ -1361,7 +1364,7 @@ fn run_log_tool(
                 let arenas = graph.arenas();
                 crate::log::logrecompact(build_log, |path| {
                     crate::graph::nodeget(arenas, path.as_bytes())
-                        .is_none_or(|node| arenas.node(node).gen.is_none())
+                        .is_none_or(|node| arenas.node(node).generator.is_none())
                 })
                 .map_err(|source| {
                     PersistenceError::io(
@@ -1920,10 +1923,12 @@ mod tests {
         ];
         let runner = Runner::new(&directory).unwrap();
         let result = run_bytes(&runner, &arguments, None, None).unwrap();
-        assert!(result
-            .stdout
-            .windows(b"target-\xff".len())
-            .any(|window| window == b"target-\xff"));
+        assert!(
+            result
+                .stdout
+                .windows(b"target-\xff".len())
+                .any(|window| window == b"target-\xff")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -2010,9 +2015,11 @@ mod tests {
             .unwrap();
         assert!(result.stdout.is_empty());
         assert!(result.stderr.is_empty());
-        assert!(output
-            .windows(b"child-output".len())
-            .any(|value| value == b"child-output"));
+        assert!(
+            output
+                .windows(b"child-output".len())
+                .any(|value| value == b"child-output")
+        );
         assert!(diagnostics.is_empty());
         fs::remove_dir_all(directory).unwrap();
     }

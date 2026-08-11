@@ -3,16 +3,15 @@
 use crate::error::{ManifestError, NameKind, ScanError};
 #[cfg(test)]
 use crate::graph::PathStyle;
-use crate::graph::{edgeadddeps, mknode, nodeget, EdgeId, Graph, NodeId};
+use crate::graph::{EdgeId, Graph, NodeId, edgeadddeps, mknode, nodeget};
 use crate::names::Names;
 use crate::runtime::RuntimeState;
 use crate::scan::{
-    scanchar, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring,
     AllowedSeparators, ByteSpan, ScannedEvalPart, ScannedEvalString, Scanner, Separator, Source,
-    TokenKind,
+    TokenKind, scanchar, scanindent, scankeyword, scanname, scannewline, scanpipe, scanstring,
 };
 use crate::source::SourceSpan;
-use crate::util::{canonpath, xasprintf, BStr, BString, ByteSlice};
+use crate::util::{BStr, BString, ByteSlice, canonpath, xasprintf};
 use std::collections::HashSet;
 use std::fmt;
 use std::sync::Arc;
@@ -211,7 +210,7 @@ fn scanner_error(error: ScanError) -> DyndepError {
 }
 
 macro_rules! scan {
-    ($scanner:expr, $operation:expr) => {
+    ($scanner:expr_2021, $operation:expr_2021) => {
         $operation.map_err(scanner_error)?
     };
 }
@@ -363,7 +362,7 @@ fn parse_build(
             DyndepErrorKind::NoBuildStatement(output.value),
         ));
     };
-    let Some(edge) = graph.node(node).gen else {
+    let Some(edge) = graph.node(node).generator else {
         return Err(error(
             scanner,
             line,
@@ -546,7 +545,7 @@ fn validate_dyndep(
     for (_, entry) in file.iter() {
         for output in &entry.dyndeps.implicit_outputs {
             let existing_generator =
-                nodeget(graph, output.value.as_bytes()).and_then(|node| graph.node(node).gen);
+                nodeget(graph, output.value.as_bytes()).and_then(|node| graph.node(node).generator);
             if existing_generator.is_some() || !staged_outputs.insert(output.value.as_bytes()) {
                 return Err(ManifestError::DyndepDuplicateOutput {
                     path: path.clone(),
@@ -575,7 +574,7 @@ fn commit_dyndep(graph: &mut Graph, runtime: &mut RuntimeState, dyndep: NodeId, 
             .map(|output| mknode(graph, output.value))
             .collect::<Vec<_>>();
         for output in outputs {
-            graph.node_mut(output).gen = Some(edge);
+            graph.node_mut(output).generator = Some(edge);
             graph.edge_mut(edge).out.push(output);
         }
         edgeadddeps(graph, edge, &inputs);
@@ -625,7 +624,7 @@ mod tests {
         let edge = mkedge(&mut graph, root);
         for path in ["out", "otherout"] {
             let output = mknode(&mut graph, xasprintf(format_args!("{path}")));
-            graph.node_mut(output).gen = Some(edge);
+            graph.node_mut(output).generator = Some(edge);
             graph.edge_mut(edge).out.push(output);
         }
         graph.edge_mut(edge).set_explicit_output_count(2);
@@ -636,7 +635,7 @@ mod tests {
         let root = mkenv(graph, None);
         let edge = mkedge(graph, root);
         let output = mknode(graph, xasprintf(format_args!("{path}")));
-        graph.node_mut(output).gen = Some(edge);
+        graph.node_mut(output).generator = Some(edge);
         graph.edge_mut(edge).out.push(output);
         graph.edge_mut(edge).set_explicit_output_count(1);
     }
@@ -656,12 +655,12 @@ mod tests {
 
     fn entry_for<'a>(graph: &Graph, file: &'a DyndepFile, output: &str) -> &'a Dyndeps {
         let node = nodeget(graph, output.as_bytes()).unwrap();
-        let edge = graph.node(node).gen.unwrap();
+        let edge = graph.node(node).generator.unwrap();
         file.get(edge).unwrap()
     }
 
     macro_rules! valid_version_case {
-        ($name:ident, $input:expr) => {
+        ($name:ident, $input:expr_2021) => {
             #[test]
             fn $name() {
                 assert!(parse($input).is_ok());
@@ -704,7 +703,7 @@ mod tests {
     );
 
     macro_rules! invalid_case {
-        ($name:ident, $input:expr, $message:expr) => {
+        ($name:ident, $input:expr_2021, $message:expr_2021) => {
             #[test]
             fn $name() {
                 let Err(error) = parse($input) else {
@@ -927,7 +926,10 @@ mod tests {
     #[test]
     fn ninja_dyndep_parser_other_output_of_same_edge() {
         let (graph, file) = parse("ninja_dyndep_version = 1\nbuild otherout: dyndep\n").unwrap();
-        let edge = graph.node(nodeget(&graph, b"out").unwrap()).gen.unwrap();
+        let edge = graph
+            .node(nodeget(&graph, b"out").unwrap())
+            .generator
+            .unwrap();
         assert!(file.get(edge).is_some());
     }
 
@@ -1008,7 +1010,10 @@ mod tests {
         assert!(runtime.node(dyndep).dyndep_pending());
         load_test_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
         assert!(!runtime.node(dyndep).dyndep_pending());
-        let edge = graph.node(nodeget(&graph, b"out").unwrap()).gen.unwrap();
+        let edge = graph
+            .node(nodeget(&graph, b"out").unwrap())
+            .generator
+            .unwrap();
         assert_eq!(node_paths(&graph, &graph.edge(edge).out), ["out"]);
         assert_eq!(graph.edge(edge).input.len(), 2);
         assert_eq!(graph.edge(edge).explicit_input_count(), 1);
@@ -1024,7 +1029,10 @@ mod tests {
         );
         let mut runtime = RuntimeState::new(&graph);
         load_test_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
-        let edge = graph.node(nodeget(&graph, b"out1").unwrap()).gen.unwrap();
+        let edge = graph
+            .node(nodeget(&graph, b"out1").unwrap())
+            .generator
+            .unwrap();
         let inputs = node_paths(&graph, &graph.edge(edge).input);
         assert_eq!(inputs[0..2], ["in", "out2"]);
         assert_eq!(graph.edge(edge).explicit_input_count(), 1);
@@ -1038,10 +1046,12 @@ mod tests {
         let (mut graph, dyndep, directory) =
             load_fixture("build out: r in || $dd\n  dyndep = $dd\n", None);
         let mut runtime = RuntimeState::new(&graph);
-        assert!(load_test_dyndep(&mut graph, &mut runtime, dyndep)
-            .unwrap_err()
-            .to_string()
-            .contains("loading"));
+        assert!(
+            load_test_dyndep(&mut graph, &mut runtime, dyndep)
+                .unwrap_err()
+                .to_string()
+                .contains("loading")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1052,10 +1062,12 @@ mod tests {
             Some("ninja_dyndep_version = 1\n"),
         );
         let mut runtime = RuntimeState::new(&graph);
-        assert!(load_test_dyndep(&mut graph, &mut runtime, dyndep)
-            .unwrap_err()
-            .to_string()
-            .contains("'out' not mentioned"));
+        assert!(
+            load_test_dyndep(&mut graph, &mut runtime, dyndep)
+                .unwrap_err()
+                .to_string()
+                .contains("'out' not mentioned")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1066,10 +1078,12 @@ mod tests {
             Some("ninja_dyndep_version = 1\nbuild out: dyndep\nbuild out2: dyndep\n"),
         );
         let mut runtime = RuntimeState::new(&graph);
-        assert!(load_test_dyndep(&mut graph, &mut runtime, dyndep)
-            .unwrap_err()
-            .to_string()
-            .contains("does not have a dyndep binding"));
+        assert!(
+            load_test_dyndep(&mut graph, &mut runtime, dyndep)
+                .unwrap_err()
+                .to_string()
+                .contains("does not have a dyndep binding")
+        );
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1102,7 +1116,7 @@ mod tests {
             ),
         );
         let out1 = nodeget(&graph, b"out1").unwrap();
-        let edge1 = graph.node(out1).gen.unwrap();
+        let edge1 = graph.node(out1).generator.unwrap();
         let original_outputs = graph.edge(edge1).out.clone();
         let original_inputs = graph.edge(edge1).input.clone();
         let original_uses = graph.node(dyndep).uses.clone();
@@ -1136,8 +1150,14 @@ mod tests {
         );
         let mut runtime = RuntimeState::new(&graph);
         load_test_dyndep(&mut graph, &mut runtime, dyndep).unwrap();
-        let edge1 = graph.node(nodeget(&graph, b"out1").unwrap()).gen.unwrap();
-        let edge2 = graph.node(nodeget(&graph, b"out2").unwrap()).gen.unwrap();
+        let edge1 = graph
+            .node(nodeget(&graph, b"out1").unwrap())
+            .generator
+            .unwrap();
+        let edge2 = graph
+            .node(nodeget(&graph, b"out2").unwrap())
+            .generator
+            .unwrap();
         assert_eq!(
             node_paths(&graph, &graph.edge(edge1).out),
             ["out1", "out1imp"]
@@ -1153,7 +1173,7 @@ mod tests {
         let restat = crate::env::edgevar(&graph, edge2, Names::RESTAT, PathStyle::Raw).unwrap();
         assert_eq!(restat.as_bytes(), b"1");
         assert_eq!(
-            graph.node(nodeget(&graph, b"out1imp").unwrap()).gen,
+            graph.node(nodeget(&graph, b"out1imp").unwrap()).generator,
             Some(edge1)
         );
         fs::remove_dir_all(directory).unwrap();

@@ -30,7 +30,7 @@ impl DirtyEvaluator {
         let mut work = Vec::new();
         if let Some(edge) = graph
             .node(target)
-            .gen
+            .generator
             .filter(|_| runtime.node(target).dirty())
         {
             work.push(edge);
@@ -41,7 +41,7 @@ impl DirtyEvaluator {
             }
             let inputs: &[NodeId] = &graph.edge(edge).input;
             for &input in inputs {
-                let Some(generator) = graph.node(input).gen else {
+                let Some(generator) = graph.node(input).generator else {
                     continue;
                 };
                 if runtime.edge(generator).absent_intermediate() {
@@ -64,7 +64,7 @@ fn ask_for(graph: &Graph, runtime: &mut RuntimeState, edge: EdgeId) {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{mkedge, mknode, nodeuse, recompute_dirty_with, Graph, NodeId};
+    use super::super::{Graph, NodeId, mkedge, mknode, nodeuse, recompute_dirty_with};
     use crate::env::mkenv;
     use crate::runtime::RuntimeState;
     use std::collections::BTreeMap;
@@ -80,7 +80,7 @@ mod tests {
         graph.edge_mut(edge).set_input_partitions(1, 1);
         graph.edge_mut(edge).intermediate = true;
         nodeuse(graph, input, edge);
-        graph.node_mut(output).gen = Some(edge);
+        graph.node_mut(output).generator = Some(edge);
         output
     }
 
@@ -94,7 +94,9 @@ mod tests {
         let first = generated(&mut graph, "mid1", "src");
         let second = generated(&mut graph, "mid2", "mid1");
         let out = generated(&mut graph, "out", "mid2");
-        graph.edge_mut(graph.node(out).gen.unwrap()).intermediate = false;
+        graph
+            .edge_mut(graph.node(out).generator.unwrap())
+            .intermediate = false;
 
         let settled = |graph: &Graph, source: i64| {
             let mtimes = BTreeMap::from([("src".to_owned(), source), ("out".to_owned(), 2)]);

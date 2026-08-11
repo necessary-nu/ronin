@@ -1,9 +1,9 @@
 //! Translation from Make-front-end outcomes into Ronin's ordinary CLI result.
 
-use crate::cli::{RunResult, PRODUCT_NAME};
+use crate::Error;
+use crate::cli::{PRODUCT_NAME, RunResult};
 use crate::frontend::Outcome;
 use crate::util::terminated;
-use crate::Error;
 use std::fmt::Display;
 use std::path::Path;
 

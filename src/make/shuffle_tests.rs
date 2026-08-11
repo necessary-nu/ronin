@@ -4,7 +4,7 @@
 //! ready ones in, so an edge's position is the build order this Makefile would
 //! run in.
 
-use super::{load_makefile, Shuffle};
+use super::{Shuffle, load_makefile};
 use crate::util::ByteSlice;
 use kati::session::Session;
 use std::ffi::OsString;

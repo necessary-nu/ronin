@@ -18,17 +18,17 @@
 //! is why Make mode is entered from the executable rather than from
 //! [`Runner`]'s library path, which never moves it.
 
+use crate::Error;
 use crate::build::{BuildOptions, JobLimit};
-use crate::cli::{RunResult, Runner, PRODUCT_NAME};
+use crate::cli::{PRODUCT_NAME, RunResult, Runner};
 use crate::error::CliError;
 use crate::frontend::{Build, BuildGraph, Persistence};
-use crate::make::report::{
-    abandoned, answered, discard_intermediates, finished, no_makefile, ordinary_diagnostic,
-    ABANDONED,
-};
 use crate::make::Shuffle;
-use crate::util::{terminated, BString, ByteSlice};
-use crate::Error;
+use crate::make::report::{
+    ABANDONED, abandoned, answered, discard_intermediates, finished, no_makefile,
+    ordinary_diagnostic,
+};
+use crate::util::{BString, ByteSlice, terminated};
 use kati::bytes::Bytes;
 use kati::flags::Flags;
 use kati::session::Session;
@@ -1785,7 +1785,9 @@ mod tests {
         );
 
         // Asserted here, withdrawn there, and the other way about.
-        assert!(under(Some("w"), &["make", "--no-print-directory"]).refused(Switch::PrintDirectory));
+        assert!(
+            under(Some("w"), &["make", "--no-print-directory"]).refused(Switch::PrintDirectory)
+        );
         assert!(under(Some("--no-print-directory"), &["make", "-w"]).given(Switch::PrintDirectory));
         assert!(under(Some("k"), &["make", "-S"]).refused(Switch::KeepGoing));
         assert!(under(Some("S"), &["make", "-k"]).given(Switch::KeepGoing));

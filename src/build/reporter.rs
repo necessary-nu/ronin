@@ -15,7 +15,7 @@
 //! is fixed before the first command starts.
 
 use super::command::CommandSpec;
-use super::{status, BuildOptions, BuildState};
+use super::{BuildOptions, BuildState, status};
 use crate::graph::{EdgeId, Graph};
 use crate::util::ByteSlice;
 use std::io::Write as _;
@@ -143,11 +143,7 @@ impl Palette {
     };
 
     const fn select(color: bool) -> Self {
-        if color {
-            Self::COLOURED
-        } else {
-            Self::PLAIN
-        }
+        if color { Self::COLOURED } else { Self::PLAIN }
     }
 }
 
@@ -242,33 +238,32 @@ impl Reporter {
     /// anything calls this first, so the erase rides in the same buffer as
     /// whatever displaces it and costs no additional write.
     pub(super) fn clear(&mut self, out: &mut Vec<u8>) {
-        if let Self::Cargo(style) = self {
-            if let Some(bar) = style.bar.as_mut() {
-                if std::mem::replace(&mut bar.drawn, false) {
-                    out.extend_from_slice(ERASE_LINE);
-                }
-            }
+        if let Self::Cargo(style) = self
+            && let Some(bar) = style.bar.as_mut()
+            && std::mem::replace(&mut bar.drawn, false)
+        {
+            out.extend_from_slice(ERASE_LINE);
         }
     }
 
     /// Note that a command has begun, so the bar can name it.
     pub(super) fn started(&mut self, options: &BuildOptions, command: &CommandSpec) {
-        if let Self::Cargo(style) = self {
-            if let Some(bar) = style.bar.as_mut() {
-                bar.running += 1;
-                bar.subject.clear();
-                bar.subject
-                    .extend_from_slice(describe(options, command).text());
-            }
+        if let Self::Cargo(style) = self
+            && let Some(bar) = style.bar.as_mut()
+        {
+            bar.running += 1;
+            bar.subject.clear();
+            bar.subject
+                .extend_from_slice(describe(options, command).text());
         }
     }
 
     /// Note that a command has ended.
     pub(super) const fn ended(&mut self) {
-        if let Self::Cargo(style) = self {
-            if let Some(bar) = style.bar.as_mut() {
-                bar.running = bar.running.saturating_sub(1);
-            }
+        if let Self::Cargo(style) = self
+            && let Some(bar) = style.bar.as_mut()
+        {
+            bar.running = bar.running.saturating_sub(1);
         }
     }
 
@@ -331,10 +326,10 @@ impl Reporter {
     /// print a prompt on. Ninja says nothing at the end of a build either way.
     pub(super) fn finish(&mut self, out: &mut Vec<u8>, progress: &BuildState, succeeded: bool) {
         self.clear(out);
-        if let Self::Cargo(style) = self {
-            if succeeded {
-                cargo_finish(out, style.palette, progress);
-            }
+        if let Self::Cargo(style) = self
+            && succeeded
+        {
+            cargo_finish(out, style.palette, progress);
         }
     }
 }

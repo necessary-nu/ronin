@@ -330,7 +330,7 @@ mod tests {
         let edge = mkedge(&mut graph, root);
         let output = mknode(&mut graph, BString::from("out"));
         let dyndep = mknode(&mut graph, BString::from("out.dd"));
-        graph.node_mut(output).gen = Some(edge);
+        graph.node_mut(output).generator = Some(edge);
         graph.edge_mut(edge).out.push(output);
         graph.edge_mut(edge).dyndep = Some(dyndep);
         let node_count = graph.node_ids().len();

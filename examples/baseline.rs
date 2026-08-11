@@ -721,9 +721,11 @@ mod tests {
             .unwrap()
             .median_ms =
             baseline.ronin_ms / baseline.ninja_ms * MAX_RECORDED_RUNTIME_RATIO * 1.01 * ninja;
-        assert!(validate(&recorded_regression)
-            .unwrap_err()
-            .contains("ratio regressed"));
+        assert!(
+            validate(&recorded_regression)
+                .unwrap_err()
+                .contains("ratio regressed")
+        );
 
         let mut ninja_regression = passing_records();
         // This case exercises the absolute Ronin-versus-Ninja check, which
@@ -750,9 +752,11 @@ mod tests {
             .find(|record| record.tool == "ronin" && record.workload == workload)
             .unwrap()
             .median_ms = ninja_ms * 1.21;
-        assert!(validate(&ninja_regression)
-            .unwrap_err()
-            .contains("versus Ninja"));
+        assert!(
+            validate(&ninja_regression)
+                .unwrap_err()
+                .contains("versus Ninja")
+        );
 
         let mut memory_regression = passing_records();
         memory_regression
@@ -760,8 +764,10 @@ mod tests {
             .find(|record| record.tool == "ronin")
             .unwrap()
             .median_peak_rss_kib = Some(2_001);
-        assert!(validate(&memory_regression)
-            .unwrap_err()
-            .contains("peak RSS"));
+        assert!(
+            validate(&memory_regression)
+                .unwrap_err()
+                .contains("peak RSS")
+        );
     }
 }

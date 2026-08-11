@@ -13,11 +13,11 @@ use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
 use crate::htab::rapidhashv1;
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
-use crate::util::{arena_id, BStr, BString, ByteSlice, IdVec};
+use crate::util::{BStr, BString, ByteSlice, IdVec, arena_id};
+pub(crate) use deferred::{DeferredFreshness, edgeaddorderonly};
 use deferred::{
     capture_deferred_freshness, recompute_completion_join, recompute_deferred_freshness,
 };
-pub(crate) use deferred::{edgeaddorderonly, DeferredFreshness};
 use edge::EdgePartitions;
 use index::NodeIndex;
 pub(crate) use index::{allocate_node, mknode, nodeget};
@@ -62,7 +62,7 @@ pub(crate) struct Node {
     pub(crate) path: PathSpan,
     /// Shell-quoted form, present only when quoting actually changes the path.
     pub(crate) shellpath: Option<PathSpan>,
-    pub(crate) gen: Option<EdgeId>,
+    pub(crate) generator: Option<EdgeId>,
     pub(crate) uses: IdVec<EdgeId>,
 }
 
@@ -146,7 +146,7 @@ pub(crate) struct Graph {
 }
 
 impl Graph {
-    pub(crate) fn node_ids(&self) -> impl ExactSizeIterator<Item = NodeId> {
+    pub(crate) fn node_ids(&self) -> impl ExactSizeIterator<Item = NodeId> + use<> {
         (0..self.nodes.len()).map(NodeId::from_index)
     }
 
@@ -166,7 +166,7 @@ impl Graph {
         &mut self.edges[id.index()]
     }
 
-    pub(crate) fn edge_ids(&self) -> impl ExactSizeIterator<Item = EdgeId> {
+    pub(crate) fn edge_ids(&self) -> impl ExactSizeIterator<Item = EdgeId> + use<> {
         (0..self.edges.len()).map(EdgeId::from_index)
     }
 
@@ -310,7 +310,7 @@ pub(crate) fn collect_stat_targets(
         if !graph.is_virtual_output(node) {
             out.push(node);
         }
-        let Some(edge) = graph.node(node).gen else {
+        let Some(edge) = graph.node(node).generator else {
             continue;
         };
         if scratch.seen_edges.replace(edge.index()) {
@@ -487,7 +487,7 @@ impl DirtyEvaluator {
                         return Err(cycle_through(graph, &path, node));
                     }
                     VisitState::New => {
-                        let Some(edge) = graph.node(node).gen else {
+                        let Some(edge) = graph.node(node).generator else {
                             if runtime.node(node).mtime().is_unobserved() {
                                 nodestat_with(graph, runtime, node, stat)?;
                             }
@@ -563,7 +563,7 @@ impl DirtyEvaluator {
 /// `a -> c -> a`, not `b -> c -> a`.
 // [spec:ronin:req:compat.graph-semantics]
 fn cycle_through(graph: &Graph, path: &[NodeId], node: NodeId) -> GraphError {
-    let Some(edge) = graph.node(node).gen else {
+    let Some(edge) = graph.node(node).generator else {
         return GraphError::DependencyCycle {
             node: Some(node),
             path: Vec::new(),
@@ -572,7 +572,7 @@ fn cycle_through(graph: &Graph, path: &[NodeId], node: NodeId) -> GraphError {
     };
     let start = path
         .iter()
-        .position(|entry| graph.node(*entry).gen == Some(edge))
+        .position(|entry| graph.node(*entry).generator == Some(edge))
         .unwrap_or(path.len());
     let mut names = vec![BString::from(nodepath_bytes(graph, node, PathStyle::Raw))];
     names.extend(
@@ -638,7 +638,7 @@ where
     while let Some(item) = work.pop() {
         match item {
             Work::Enter(node) => {
-                let Some(edge) = graph.node(node).gen else {
+                let Some(edge) = graph.node(node).generator else {
                     continue;
                 };
                 if scratch.seen_edges.replace(edge.index()) {
@@ -733,7 +733,7 @@ pub(crate) fn rootnodes(graph: &Graph) -> Result<Vec<NodeId>, GraphError> {
         .node_ids()
         .filter(|node| {
             let node = graph.node(*node);
-            node.gen.is_some() && node.uses.is_empty()
+            node.generator.is_some() && node.uses.is_empty()
         })
         .collect::<Vec<_>>();
     if roots.is_empty() && graph.edge_count() != 0 {
@@ -758,7 +758,7 @@ impl InputsCollector {
 
         self.visited_nodes.resize(graph.nodes.len(), false);
         let mut work = Vec::new();
-        if let Some(edge) = graph.node(node).gen {
+        if let Some(edge) = graph.node(node).generator {
             for input in graph.edge(edge).input.iter().rev() {
                 work.push(Work::Enter(*input));
             }
@@ -770,7 +770,7 @@ impl InputsCollector {
                         continue;
                     }
                     work.push(Work::Record(input));
-                    if let Some(edge) = graph.node(input).gen {
+                    if let Some(edge) = graph.node(input).generator {
                         for child in graph.edge(edge).input.iter().rev() {
                             work.push(Work::Enter(*child));
                         }
@@ -779,7 +779,7 @@ impl InputsCollector {
                 Work::Record(input) => {
                     let generated_by_phony = graph
                         .node(input)
-                        .gen
+                        .generator
                         .is_some_and(|edge| graph.is_phony_rule(graph.edge(edge).rule));
                     if !generated_by_phony {
                         self.inputs.push(input);
@@ -826,7 +826,7 @@ impl CommandCollector {
                     if std::mem::replace(&mut self.visited_nodes[node.index()], true) {
                         continue;
                     }
-                    let Some(edge) = graph.node(node).gen else {
+                    let Some(edge) = graph.node(node).generator else {
                         continue;
                     };
                     if std::mem::replace(&mut self.visited_edges[edge.index()], true) {
@@ -888,7 +888,7 @@ mod tests {
 
         assert_eq!(size_of::<NodeId>(), 4);
         assert_eq!(size_of::<EdgeId>(), 4);
-        // The niche is what shrinks Node.gen, Edge.rule, Edge.pool, and
+        // The niche is what shrinks Node.generator, Edge.rule, Edge.pool, and
         // Edge.dyndep from sixteen bytes to four.
         assert_eq!(size_of::<Option<NodeId>>(), 4);
         assert_eq!(size_of::<Option<EdgeId>>(), 4);
@@ -994,7 +994,7 @@ mod tests {
         graph
             .edge_mut(edge)
             .set_input_partitions(input_count, input_count);
-        graph.node_mut(output).gen = Some(edge);
+        graph.node_mut(output).generator = Some(edge);
         output
     }
 
@@ -1166,9 +1166,11 @@ mod tests {
         );
         let roots = rootnodes(&graph).unwrap();
         assert_eq!(roots.len(), 4);
-        assert!(roots
-            .iter()
-            .all(|node| graph.node_path(*node).as_bytes().starts_with(b"out")));
+        assert!(
+            roots
+                .iter()
+                .all(|node| graph.node_path(*node).as_bytes().starts_with(b"out"))
+        );
     }
 
     #[test]
@@ -1301,7 +1303,7 @@ mod tests {
     fn ninja_graph_variable_paths_are_shell_escaped() {
         let graph = parse_graph("build a$ b: cat no'space with$ space$$ no\"space2\n");
         let edge = nodeget(&graph, b"a b").unwrap();
-        let edge = graph.node(edge).gen.unwrap();
+        let edge = graph.node(edge).generator.unwrap();
         let command =
             crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::ShellEscaped).unwrap();
         assert_eq!(
@@ -1316,7 +1318,7 @@ mod tests {
             "rule r\n  depfile = x\n  command = depfile is $depfile\nbuild out: r in\n",
         );
         let edge = nodeget(&graph, b"out").unwrap();
-        let edge = graph.node(edge).gen.unwrap();
+        let edge = graph.node(edge).generator.unwrap();
         let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
         assert_eq!(command.as_bytes(), b"depfile is x");
     }
@@ -1327,7 +1329,7 @@ mod tests {
             "rule r\n  depfile = x\n  command = depfile is $depfile\nbuild out: r in\n  depfile = y\n",
         );
         let edge = nodeget(&graph, b"out").unwrap();
-        let edge = graph.node(edge).gen.unwrap();
+        let edge = graph.node(edge).generator.unwrap();
         let depfile = crate::env::edgevar(&graph, edge, Names::DEPFILE, PathStyle::Raw).unwrap();
         let command = crate::env::edgevar(&graph, edge, Names::COMMAND, PathStyle::Raw).unwrap();
         assert_eq!(depfile.as_bytes(), b"y");
@@ -1352,12 +1354,10 @@ mod tests {
     #[test]
     fn ninja_graph_newer_order_only_input_is_clean() {
         let graph = parse_graph("build out: cat in || order_only\n");
-        assert!(!recompute_with_mtimes(
-            &graph,
-            b"out",
-            &[("in", 1), ("out", 1), ("order_only", 2)]
-        )
-        .unwrap());
+        assert!(
+            !recompute_with_mtimes(&graph, b"out", &[("in", 1), ("out", 1), ("order_only", 2)])
+                .unwrap()
+        );
     }
 
     #[test]
@@ -1441,7 +1441,7 @@ mod tests {
         let (dirty, _) = recompute_state_with_mtimes(&graph, b"downstream", &mtimes).unwrap();
         assert!(!dirty);
 
-        let edge = graph.node(output).gen.unwrap();
+        let edge = graph.node(output).generator.unwrap();
         graph.edge_mut(edge).always_dirty = true;
         let mtimes = BTreeMap::from_iter(mtimes.map(|(path, mtime)| (path.to_owned(), mtime)));
         let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
@@ -1464,7 +1464,7 @@ mod tests {
         let mut graph = parse_graph("build in_ph: phony in1\nbuild out1: cat in_ph\n");
         let alias_output = nodeget(&graph, b"in_ph").unwrap();
         let consumer = nodeget(&graph, b"out1").unwrap();
-        let alias = graph.node(alias_output).gen.unwrap();
+        let alias = graph.node(alias_output).generator.unwrap();
         graph.edge_mut(alias).always_dirty = true;
 
         let mtimes = BTreeMap::from([("in1".to_owned(), 1), ("out1".to_owned(), 2)]);
@@ -1485,7 +1485,7 @@ mod tests {
         let root = mkenv(&mut graph, None);
         let middle = generated_node(&mut graph, root, "mid", &["src"]);
         let consumer = generated_node(&mut graph, root, "out", &["mid"]);
-        let producer = graph.node(middle).gen.unwrap();
+        let producer = graph.node(middle).generator.unwrap();
         graph.edge_mut(producer).intermediate = true;
 
         let settled = |mtimes: [(&str, i64); 2]| {

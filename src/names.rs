@@ -6,7 +6,7 @@
 //! into an integer comparison over a contiguous table.
 
 use crate::htab::RapidHashMap;
-use crate::util::{arena_id, BStr, BString};
+use crate::util::{BStr, BString, arena_id};
 
 arena_id!(VarId);
 

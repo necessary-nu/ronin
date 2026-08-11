@@ -168,11 +168,9 @@ pub(crate) fn canonpath(path: &mut Vec<u8>) {
             continue;
         }
         let parent = length == 2 && path[start] == b'.' && path[start + 1] == b'.';
-        if parent {
-            if let Some(previous) = components.pop() {
-                write = previous;
-                continue;
-            }
+        if parent && let Some(previous) = components.pop() {
+            write = previous;
+            continue;
         }
 
         let component_start = write;
@@ -221,10 +219,10 @@ pub(crate) fn edit_distance(
             previous = old;
             best = best.min(row[right_index + 1]);
         }
-        if let Some(limit) = max_edit_distance {
-            if best > limit {
-                return limit + 1;
-            }
+        if let Some(limit) = max_edit_distance
+            && best > limit
+        {
+            return limit + 1;
         }
     }
     row[right.len()]

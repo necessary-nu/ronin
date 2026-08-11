@@ -206,8 +206,10 @@ fn ninja_compatible_options_tools_streams_and_statuses_are_connected() {
     let help = invoke(&["-t", "commands", "-h"]);
     assert_eq!(help.status.code(), Some(1));
     assert!(help.stderr.is_empty());
-    assert!(String::from_utf8_lossy(&help.stdout)
-        .starts_with("usage: ronin -t commands [options] [targets]\n"));
+    assert!(
+        String::from_utf8_lossy(&help.stdout)
+            .starts_with("usage: ronin -t commands [options] [targets]\n")
+    );
 
     let unknown = invoke(&["-t", "nope"]);
     assert_eq!(unknown.status.code(), Some(1));
@@ -579,15 +581,19 @@ fn a_failing_command_carries_its_own_status_out_of_the_process() {
 
     let stopped = run(&["-j", "1", "a"]);
     assert_eq!(stopped.status.code(), Some(7));
-    assert!(String::from_utf8_lossy(&stopped.stdout)
-        .ends_with("ronin: build stopped: subcommand failed.\n"));
+    assert!(
+        String::from_utf8_lossy(&stopped.stdout)
+            .ends_with("ronin: build stopped: subcommand failed.\n")
+    );
 
     // Under keep-going the last failure wins, and the reason changes because
     // the allowance was never used up.
     let kept_going = run(&["-k", "0", "-j", "1", "a", "b"]);
     assert_eq!(kept_going.status.code(), Some(5));
-    assert!(String::from_utf8_lossy(&kept_going.stdout)
-        .ends_with("ronin: build stopped: cannot make progress due to previous errors.\n"));
+    assert!(
+        String::from_utf8_lossy(&kept_going.stdout)
+            .ends_with("ronin: build stopped: cannot make progress due to previous errors.\n")
+    );
 
     fs::remove_dir_all(directory).unwrap();
 }

@@ -919,8 +919,8 @@ fn settled(inventory: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify, echoes, normalise, read_divergence, record, settled, Class, Divergence, Side,
-        Source,
+        Class, Divergence, Side, Source, classify, echoes, normalise, read_divergence, record,
+        settled,
     };
 
     fn lines(text: &[&str]) -> Vec<String> {

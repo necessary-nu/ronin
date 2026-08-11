@@ -1,6 +1,6 @@
-use crate::deps::{depsentry, depsnodes, visit_dependencies, DepsLog};
+use crate::deps::{DepsLog, depsentry, depsnodes, visit_dependencies};
 use crate::error::{ToolError, ToolOperation};
-use crate::graph::{nodeget, Graph, NodeId};
+use crate::graph::{Graph, NodeId, nodeget};
 use crate::missing_deps::MissingDependencyScanner;
 use crate::os::RealDiskInterface;
 use crate::util::{BString, ByteSlice};

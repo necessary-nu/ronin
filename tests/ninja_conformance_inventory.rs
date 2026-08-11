@@ -6,10 +6,12 @@ const PINNED_REVISION: &str = "b51a1e37c2fb89bbefa600bd155e1ce13983f09d";
 // [spec:ronin:req:compat.upstream-conformance/test]
 #[test]
 fn pinned_ninja_inventory_is_complete_and_has_no_silent_exclusions() {
-    assert!(INVENTORY
-        .lines()
-        .next()
-        .is_some_and(|line| line.ends_with(PINNED_REVISION)));
+    assert!(
+        INVENTORY
+            .lines()
+            .next()
+            .is_some_and(|line| line.ends_with(PINNED_REVISION))
+    );
 
     let mut suites = BTreeSet::new();
     let mut overrides = BTreeSet::new();

@@ -3,7 +3,7 @@
 use crate::error::GraphError;
 use crate::graph::{EdgeId, Graph, NodeId, PathStyle};
 use crate::names::{Bindings, Names, VarId};
-use crate::util::{arena_id, BStr, BString, ByteSlice, EvalPart, EvalString};
+use crate::util::{BStr, BString, ByteSlice, EvalPart, EvalString, arena_id};
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 

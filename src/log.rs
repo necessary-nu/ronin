@@ -111,7 +111,7 @@ impl BuildLog {
     ) {
         for node in nodes {
             let graph_node = graph.node(node);
-            if graph_node.gen.is_none() {
+            if graph_node.generator.is_none() {
                 continue;
             }
             if let Some(entry) = self.entries.get(graph.node_path(node)) {
@@ -548,9 +548,11 @@ mod tests {
             staged_entries.get_mut(b"out".as_slice()).unwrap().mtime = 99;
 
             let error = rewrite_with_fault(&mut log, staged_entries, stage).unwrap_err();
-            assert!(error
-                .to_string()
-                .contains("injected atomic rewrite failure"));
+            assert!(
+                error
+                    .to_string()
+                    .contains("injected atomic rewrite failure")
+            );
             assert_eq!(log.entries, original_entries);
             assert_eq!(fs::read(&temp.path).unwrap(), original_file);
 
@@ -566,10 +568,12 @@ mod tests {
             )
             .unwrap();
             log.finish().unwrap();
-            assert!(fs::read(&temp.path)
-                .unwrap()
-                .windows(b"\tprobe\t1234\n".len())
-                .any(|window| window == b"\tprobe\t1234\n"));
+            assert!(
+                fs::read(&temp.path)
+                    .unwrap()
+                    .windows(b"\tprobe\t1234\n".len())
+                    .any(|window| window == b"\tprobe\t1234\n")
+            );
         }
     }
 
@@ -637,7 +641,7 @@ mod tests {
         let root = crate::env::mkenv(&mut graph, None);
         let edge = mkedge(&mut graph, root);
         let output = mknode(&mut graph, BString::from(b"out-\xff".as_slice()));
-        graph.node_mut(output).gen = Some(edge);
+        graph.node_mut(output).generator = Some(edge);
         graph.edge_mut(edge).out.push(output);
         let mut runtime = RuntimeState::new(&graph);
         runtime
@@ -654,7 +658,7 @@ mod tests {
         let root = crate::env::mkenv(&mut reloaded_graph, None);
         let edge = mkedge(&mut reloaded_graph, root);
         let output = mknode(&mut reloaded_graph, BString::from(b"out-\xff".as_slice()));
-        reloaded_graph.node_mut(output).gen = Some(edge);
+        reloaded_graph.node_mut(output).generator = Some(edge);
         reloaded_graph.edge_mut(edge).out.push(output);
         let reloaded = BuildLog::open(Some(&temp.directory)).unwrap();
         let mut runtime = RuntimeState::new(&reloaded_graph);

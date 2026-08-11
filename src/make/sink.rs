@@ -782,36 +782,38 @@ impl BuildSink for GraphSink {
         let subninja_rule = edge.rule.and_then(|id| self.subninja_rules.get(&id));
         let is_subninja = subninja_rule.is_some();
         let has_residual_action = subninja_rule.is_some_and(|rule| rule.residual_rule.is_some());
-        if edge.pool.is_none() && edge.rule.is_some() && (!is_subninja || has_residual_action) {
-            if let Some(pool) = &self.unit.serial_pool {
-                bindings.push((self.bindings.pool, pool.clone()));
-            }
+        if edge.pool.is_none()
+            && edge.rule.is_some()
+            && (!is_subninja || has_residual_action)
+            && let Some(pool) = &self.unit.serial_pool
+        {
+            bindings.push((self.bindings.pool, pool.clone()));
         }
-        if let Some(id) = edge.rule {
-            if let Some(rule) = self.subninja_rules.remove(&id) {
-                self.unit.subninjas.push(PendingSubninja {
-                    invocations: rule.invocations,
-                    scope: self.unit.scope,
-                    residual_rule: rule.residual_rule,
-                    diagnostic_command: rule.diagnostic_command,
-                    explicit_outputs: outputs,
-                    implicit_outputs,
-                    inputs,
-                    order_only_inputs,
-                    validations,
-                    always_dirty: edge.always_dirty,
-                    deferred: (!deferred_freshness_outputs.is_empty()).then_some(PendingDeferred {
-                        outputs: deferred_freshness_outputs,
-                        always_dirty_output: edge.deferred_freshness_always_dirty,
-                        always_new_inputs: deferred_always_new_inputs,
-                    }),
-                    completion_output: edge.completion_join.then_some(completion_output),
-                    intermediate: edge.intermediate,
-                    disposable: edge.disposable,
-                    bindings,
-                });
-                return Ok(());
-            }
+        if let Some(id) = edge.rule
+            && let Some(rule) = self.subninja_rules.remove(&id)
+        {
+            self.unit.subninjas.push(PendingSubninja {
+                invocations: rule.invocations,
+                scope: self.unit.scope,
+                residual_rule: rule.residual_rule,
+                diagnostic_command: rule.diagnostic_command,
+                explicit_outputs: outputs,
+                implicit_outputs,
+                inputs,
+                order_only_inputs,
+                validations,
+                always_dirty: edge.always_dirty,
+                deferred: (!deferred_freshness_outputs.is_empty()).then_some(PendingDeferred {
+                    outputs: deferred_freshness_outputs,
+                    always_dirty_output: edge.deferred_freshness_always_dirty,
+                    always_new_inputs: deferred_always_new_inputs,
+                }),
+                completion_output: edge.completion_join.then_some(completion_output),
+                intermediate: edge.intermediate,
+                disposable: edge.disposable,
+                bindings,
+            });
+            return Ok(());
         }
 
         let rule = match edge.rule {

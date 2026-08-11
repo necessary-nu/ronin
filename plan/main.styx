@@ -8118,4 +8118,33 @@ children (
             }
         )
     }
+
+    {
+        id ronin-rust-2024-edition
+        title "Compile the Ronin workspace with Rust 2024 semantics"
+        kind @build
+        sealed true
+        log (
+            {
+                at 2026-08-11T14:30:45.901769577Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-11T14:38:43.398932931Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Done. The root package now declares edition 2024 and the workspace uses dependency resolver 3; kati was already edition 2024. The compiler-guided migration renamed the private Node.gen field to Node.generator rather than carrying raw identifiers, added explicit empty RPIT captures where Rust 2024 would otherwise widen them, and applied the edition's rustfmt layout. Restored the MAKEFLAGS scheduler update as the valid Rust 2024 let-chain that prompted this correction, then collapsed the remaining Clippy-identified nested conditionals into let-chains. Audited the four tail-expression drop-order warnings emitted by cargo fix: they concern ownership-only temporaries in graph comparison, a consumed worklist Option, an owned evaluated byte value, and a spawn Result after its payload is moved; none retains a lock, descriptor, or other side effect across the changed boundary. Verification: cargo fmt --all -- --check; cargo check --workspace --all-targets; cargo clippy --workspace --all-targets -- -D warnings; cargo test --workspace --no-fail-fast (690 passed, one deliberately ignored); the known cold manifest-reload flake was reproduced once, then passed 12/12 focused reruns and both warm suites; Ninja conformance passed all 425 upstream tests plus 10 differential, 86 build-outcome, 3 invocation-boundary, persistence, and log-content cases; Make conformance remained 301/387 normalized with every difference classified; direct/manifest Make graph equivalence compared 276 graphs with zero disagreements."
+            }
+
+            {
+                at 2026-08-11T14:38:43.4702456Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
+    }
 )
