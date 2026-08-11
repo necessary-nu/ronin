@@ -5,6 +5,9 @@ Ronin is a fast Ninja- and Make-compatible build tool implemented in Rust.
 Ronin is fully compatible with Ninja 1.14 and partially compatible with GNU
 Make 4.4.1.
 
+Known compatibility bugs and their status are recorded in
+[`BUGS.md`](BUGS.md).
+
 ## Build and test
 
 ```sh

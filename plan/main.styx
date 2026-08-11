@@ -7034,6 +7034,13 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-11T11:54:35.048437734Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "The bounded upstream snapshot advances after make-output-sync-feature-advertisement makes GNU Make's 17-case features/output-sync category reachable. Supersede the earlier counts with the versioned 1,368-row inventory: 526 unclassified, 69 compiler candidates, 171 interface observations, and 602 narration observations. Triage owns the ten new unclassified rows and the new no-rule-to-make compiler candidate; the six newly explicit narration rows require no implementation leaf under make.narration."
+                            }
                         )
                     }
 
@@ -7663,6 +7670,50 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "sealed — decomposition asserted complete (nplan seal)"
+                    }
+                )
+            }
+
+            {
+                id make-output-sync-feature-advertisement
+                title "Advertise output synchronization to Makefiles"
+                kind @fix
+                deps (make-features-variable make-interface-surface make-ninja-narration)
+                sealed true
+                log (
+                    {
+                        at 2026-08-11T11:46:43.083037966Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Linux 6.18.2 uses `$(filter output-sync,$(.FEATURES))` as its GNU Make >= 4.0 compatibility guard, so Ronin revision fcd4908 refuses the tree while claiming MAKE_VERSION 4.4.1. Ronin's Ninja executor already captures a command edge's output and publishes it as one completed unit, providing always-on target-style synchronization. Advertise `output-sync` to Makefiles on that basis while retaining `-O`/`--output-sync` mode selectors as accepted interface no-ops: no Make-specific reporter or runtime path is introduced. Add the Linux guard verbatim as a regression, update the exact feature-set assertion, and record the resolution in BUGS.md."
+                    }
+
+                    {
+                        at 2026-08-11T11:47:07.396704159Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "sealed — decomposition asserted complete (nplan seal)"
+                    }
+
+                    {
+                        at 2026-08-11T11:47:14.950054752Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-11T11:54:34.973336406Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Advertising `output-sync` activates all 17 cases in GNU Make 4.4.1's previously skipped features/output-sync category. The suite checks recurse/target/line reporter grouping, directory banners, Make failure ceremony, parse-time output, and cleanup around interruption; those exact runner-output expectations are not this compiler-boundary fix. The discovery inventory grows from 1,351 to 1,368 observations: the new category contributes 10 unclassified, one compiler candidate, and six narration rows. The focused Linux guard and overlapping-target regression establish this node's product claim; unresolved graph-shaped evidence remains with make-upstream-residue-triage."
+                    }
+
+                    {
+                        at 2026-08-11T11:58:13.267827406Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

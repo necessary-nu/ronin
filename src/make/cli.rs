@@ -1198,9 +1198,15 @@ fn session_for(
         // a recursive Make runner identity.
         program_name: PRODUCT_NAME.to_owned(),
         // The evaluator declares what a Makefile may assume of the interface.
-        // An inherited jobserver can still bound the outer Ninja scheduler;
-        // Make's output-sync feature is not advertised because `-O` is a no-op.
-        extra_features: vec!["jobserver".to_owned(), "jobserver-fifo".to_owned()],
+        // An inherited jobserver can still bound the outer Ninja scheduler.
+        // Ninja execution publishes a command edge's captured output as one
+        // unit, which is target-style output synchronization even though
+        // Make's `-O` selector does not install a second reporting path.
+        extra_features: vec![
+            "jobserver".to_owned(),
+            "jobserver-fifo".to_owned(),
+            "output-sync".to_owned(),
+        ],
         include_dirs: invocation.include_dirs.clone(),
         ..Flags::default()
     };

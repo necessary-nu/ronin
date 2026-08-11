@@ -903,8 +903,9 @@ fn makefile_tree(label: &str) -> PathBuf {
 /// gets a construct that only works if the feature does, and a Makefile that
 /// branches on `.FEATURES` is entitled to exactly this much.
 ///
-/// `jobserver` and `jobserver-fifo` remain interface claims: Make mode accepts
-/// their spellings and can map an inherited budget onto its Ninja scheduler.
+/// `jobserver`, `jobserver-fifo`, and `output-sync` are build-side claims. Make
+/// mode can map an inherited budget onto its Ninja scheduler, and Ninja's
+/// reporter publishes each command edge's captured output as one unit.
 // [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -2094,9 +2095,72 @@ fn make_mode_claims_only_the_features_it_has() {
             "jobserver",
             "jobserver-fifo",
             "order-only",
+            "output-sync",
             "shortest-stem",
             "target-specific",
         ]
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.interface-compatibility/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_passes_linux_output_sync_guard() {
+    let directory = make_case(
+        "make-linux-output-sync-guard",
+        "ifeq ($(filter output-sync,$(.FEATURES)),)\n\
+         $(error GNU Make >= 4.0 is required. Your Make version is $(MAKE_VERSION))\n\
+         endif\n\
+         all:;@echo linux-guard-passed\n\
+         .PHONY: all\n",
+    );
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("linux-guard-passed"),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+// [spec:ronin:req:make.narration/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_mode_synchronizes_each_target_output() {
+    let directory = make_case(
+        "make-output-sync",
+        "all: left right\n\
+         left:\n\
+         \t@touch left.ready; while test ! -e right.ready; do sleep 0.01; done; printf 'left-1\\n'; sleep 0.05; printf 'left-2\\n'\n\
+         right:\n\
+         \t@touch right.ready; while test ! -e left.ready; do sleep 0.01; done; printf 'right-1\\n'; sleep 0.05; printf 'right-2\\n'\n\
+         .PHONY: all left right\n",
+    );
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-j2")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let left_first = stdout.find("left-1").expect("left output begins");
+    let left_last = stdout.find("left-2").expect("left output ends");
+    let right_first = stdout.find("right-1").expect("right output begins");
+    let right_last = stdout.find("right-2").expect("right output ends");
+    assert!(
+        left_last < right_first || right_last < left_first,
+        "target output was interleaved:\n{stdout}"
     );
     fs::remove_dir_all(directory).unwrap();
 }
