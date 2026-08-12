@@ -507,7 +507,7 @@ undefined `__icu4x_*` symbols. The retained log is
 
 ## Command-line variables disappear in a shell-loop recursive Make
 
-Status: open
+Status: fixed
 
 Observed with Ronin revision `1b732cffef97683d8253b6ed47e1261d61ec7eca`
 while building Gawk 5.3.1 in Necessary OS run `1786491904052-2520395`.
@@ -561,3 +561,10 @@ Expected: every semantic recursive Make receives the parent's command-line
 variable assignments through GNU-compatible `MAKEFLAGS`/`MAKEOVERRIDES`, even
 when the recursive invocation runs inside a shell loop or compound recipe. The
 reduced case MUST print `VALUE=` repeatedly with `-j16`.
+
+Resolution: each compiled Make unit now exports its final canonical
+`MAKEFLAGS` and `MFLAGS` values to every recipe. The jobserver layer splices its
+authorization into those values before execution, so a real recursive process
+inside a shell loop receives both the shared job budget and the command-line
+override table. The reduced shell-loop case is an integration test and prints
+`VALUE=` without falling back to `file-default`.

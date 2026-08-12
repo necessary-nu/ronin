@@ -383,6 +383,7 @@ assertions (
     {id make-current-recursive-wrapper-freshness, kind @complete, author "brendan@necessary.nu", at 2026-08-11T23:12:25.61162014Z}
     {id make-process-directory-isolation, kind @complete, author "brendan@necessary.nu", at 2026-08-11T23:12:25.943419344Z}
     {id make-suffix-rule-stem-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-11T23:42:24.280804056Z}
+    {id make-makeflags-in-recipe-environment, kind @doing, author "brendan@necessary.nu", at 2026-08-12T07:39:04.98862772Z}
 )
 
 impl_evidence (

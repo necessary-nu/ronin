@@ -7153,6 +7153,20 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-12T07:39:04.98862772Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-12T07:44:47.806679836Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Fixed the package-proven shell-loop case by compiling each unit's final evaluated MAKEFLAGS and MFLAGS into every recipe environment before the existing export/unexport delta. Jobserver publication therefore splices authorization into canonical flags instead of replacing them. Added an integration reproducer with -j2 -k and an empty command-line VALUE assignment; the real nested Make prints VALUE= and never the file default. cargo fmt --all -- --check and all 81 CLI integration tests pass."
+                            }
                         )
                     }
 
@@ -8531,5 +8545,17 @@ children (
                 after_done true
             }
         )
+    }
+
+    {
+        id make-recursive-shell-substitution
+        title "Compose recursive Make calls with shell-computed assignment values"
+        kind @fix
+    }
+
+    {
+        id make-symlink-target-freshness
+        title "Follow symlinks when rechecking Make target freshness"
+        kind @fix
     }
 )

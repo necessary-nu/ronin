@@ -329,8 +329,8 @@ where
         // MAKEFLAGS value) before naming a child. That evaluated compiler
         // variable, not the invocation's pre-evaluation seed, is what the
         // semantic subninja parses.
-        let makeflags =
-            evaluated_makeflags(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+        let (makeflags, mflags) =
+            evaluated_flag_variables(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
         if let Some(parent) = parent_scope {
             sink.begin_subninja(
                 parent,
@@ -340,6 +340,16 @@ where
         }
         sink.serialise_unit(ev.session.flags.not_parallel);
         let mut recipe_environment = context.recipe_environment.clone();
+        apply_recipe_environment(
+            &mut recipe_environment,
+            &[
+                (
+                    OsString::from("MAKEFLAGS"),
+                    Some(OsString::from(&makeflags)),
+                ),
+                (OsString::from("MFLAGS"), Some(OsString::from(mflags))),
+            ],
+        );
         apply_recipe_environment(&mut recipe_environment, &exported);
         sink.set_recipe_environment(recipe_environment);
         if let Err(error) = emit_build(&nodes, &mut ev, sink) {
@@ -937,9 +947,14 @@ fn exported_environment(
     Ok(exported)
 }
 
-fn evaluated_makeflags(ev: &mut kati::eval::Evaluator) -> Result<String, kati::anyhow::Error> {
+fn evaluated_flag_variables(
+    ev: &mut kati::eval::Evaluator,
+) -> Result<(String, String), kati::anyhow::Error> {
     let makeflags = ev.session.intern("MAKEFLAGS");
-    Ok(String::from_utf8_lossy(&ev.eval_var(makeflags)?).into_owned())
+    let makeflags = String::from_utf8_lossy(&ev.eval_var(makeflags)?).into_owned();
+    let mflags = ev.session.intern("MFLAGS");
+    let mflags = String::from_utf8_lossy(&ev.eval_var(mflags)?).into_owned();
+    Ok((makeflags, mflags))
 }
 
 /// Command-line bindings a semantic child receives through its compiler

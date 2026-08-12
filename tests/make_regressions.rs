@@ -153,3 +153,42 @@ fn make_populates_suffix_rule_stem() {
     assert!(!child.join(".deps/.Po").exists());
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// Command-line variables must survive a recursive Make hidden inside a shell
+/// loop. Such a command cannot be composed as a semantic subninja, so the real
+/// child process learns the override from the canonical MAKEFLAGS exported to
+/// every recipe.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[test]
+fn shell_loop_submake_inherits_overrides() {
+    let directory = test_directory("shell-loop-overrides");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\
+         \t@printf 'FLAGS=%s\\nMFLAGS=%s\\n' \"$$MAKEFLAGS\" \"$$MFLAGS\"\n\
+         \t@for dir in sub; do (cd $$dir && $(MAKE) print); done\n\
+         .PHONY: all\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("sub/Makefile"),
+        "VALUE = file-default\n\
+         print: ; @printf 'VALUE=%s\\n' '$(VALUE)'\n\
+         .PHONY: print\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory)
+        .args(["-j2", "-k", "all", "VALUE="])
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert!(reported.contains("FLAGS=k -j2"), "{reported}");
+    assert!(reported.contains("MFLAGS=-k -j2"), "{reported}");
+    assert!(reported.contains("VALUE=\n"), "{reported}");
+    assert!(!reported.contains("file-default"), "{reported}");
+    fs::remove_dir_all(directory).unwrap();
+}
