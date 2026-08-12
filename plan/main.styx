@@ -8772,12 +8772,34 @@ children (
                 title "Classify Fedora and Arch departures from the released oracle"
                 kind @docs
                 deps (make-oracle-pristine-baseline)
+                sealed true
                 log (
                     {
                         at 2026-08-12T13:11:50.633659409Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Run the corpus in comparison mode against Fedora's and Arch's builds of Make through container shims, and classify every case that differs as matching the released source, matching Debian, or unique to that distribution. Record the results beside the pristine-vs-Debian classification."
+                    }
+
+                    {
+                        at 2026-08-12T13:52:19.736085402Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-12T13:52:30.037102346Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Ran the 324-case corpus in comparison mode against Fedora 44 (make-4.4.1-12.fc44, fedora@sha256:6c75d5bf...) and Arch (make 4.4.1-3, archlinux@sha256:b0deabeb...) through a Docker shim that mounts each case directory at its own path and runs as the invoking user, so every case saw the distribution's own /bin/sh and shell utilities as well as its Make. Both distributions ship 4.4.1. Fedora: 0 of 324 cases differ; sole identity departure is MAKE_HOST=x86_64-redhat-linux-gnu, the configure triple, with every built-in variable and every .FEATURES entry matching the released source. Arch: 0 of 324 cases differ; sole identity departure is a guile entry in .FEATURES, a capability no case reaches. So the classification across all three distributions is: one distro-unique divergence in total — Debian's POSIX ARFLAGS — and nothing that matches Debian in either of the other two, which is what makes the -rvU value a Debian patch rather than a platform convention. No case in either run classified as matches-Debian, and none as host-environment, so running two distinct userlands produced no shell-dialect or coreutils differences in this corpus either."
+                    }
+
+                    {
+                        at 2026-08-12T13:52:40.111255655Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
