@@ -7537,6 +7537,34 @@ children (
                                 kind @note
                                 text "Necessary OS world run 1786524003873-3677276 exposed this as a concrete bootstrap blocker with Ronin 6147c84. zstd@bootstrap uses explicit recipes built from GNU's standard COMPILE.c, COMPILE.S, and OUTPUT_OPTION defaults. Ronin leaves them empty, turning `$(COMPILE.c) -MMD -MP $(OUTPUT_OPTION) source.c` into an attempted `MMD` executable and `$(COMPILE.S) $(OUTPUT_OPTION) source.S` into an attempt to execute the source file. BUGS.md records the retained log and a reduced case."
                             }
+
+                            {
+                                at 2026-08-12T11:24:57.281738243Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-12T11:53:28.06895439Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "The catalogue is a table in kati, not bootstrap Makefile text. The three defaults that existed — CC, CXX, AR — were written as `?=` lines in *bootstrap*, which cannot express two things GNU Make's `define_default_variables` does. First, `.POSIX:` must replace an existing default (CC becomes c99) while still losing to the environment, the command line and the Makefile; `?=` declines on any existing binding, so it cannot. Second, a Makefile's own `MAKEFLAGS += -rR` has to withdraw exactly the names the catalogue owns after the whole read, and there is nothing to withdraw unless the names are known. kati/src-rs/builtins.rs therefore carries GNU Make 4.4.1 src/default.c's `default_variables[]` verbatim through this host's preprocessor branches (non-VMS, no GCC_IS_NATIVE), installs each as a recursive binding at VarOrigin::Default only where nothing stronger already holds the name, and offers the inverse for the deferred `-R`. POSIX values install as simple bindings from GNU's `check_specials`, and are not withheld by `-R` because the switch withholds a catalogue while `.POSIX:` asks for a named standard's values — verified against the oracle, which answers CC=c99 under `make -R` and undefines CC again under a Makefile-set `-rR`. One value departs from the pinned tarball: POSIX ARFLAGS is `-rv` in GNU's 4.4.1 sources and `-rvU` in the Debian make-dfsg 4.4.1-2 binary the corpus is recorded against, so the recorded oracle wins and the departure is commented where it is written."
+                            }
+
+                            {
+                                at 2026-08-12T11:53:39.764467927Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Upstream inventory audit. The recorded inventory did not reproduce at HEAD before this change: a baseline run with the kati change stashed recorded 1363 cases against the committed 1370, so most of the movement is accumulated drift from the ten commits that landed since 2dc68b0 last recorded it — stdin makefiles (7a659c0) moved options/dash-f.diff.5-31 and features/temp_stdin.diff.3-6 off the no-makefile-found family, filesystem freshness (204fa87) turned ninja-progress into no-work-line across variables/MAKE.diff and variables/MAKEFLAGS.diff.132-140, and seven cases (features/reinvoke.diff.11, options/dash-s.diff.1/2/3/8/9/10) had already become byte-identical. This change's own delta against that baseline is exactly one row: options/dash-r.diff.3 — GNU Make's own test that a Makefile-set `MAKEFLAGS += -R` leaves `$(CC)` empty — is now byte-identical and leaves the corpus, taking the count to 1362. No case id appears in the new inventory that was not in the old one, so nothing regressed; every other change is a reclassification within the discovery classes, three of them out of unclassified into a named family. Recorded on that basis."
+                            }
+
+                            {
+                                at 2026-08-12T11:55:45.414658578Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 

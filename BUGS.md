@@ -653,7 +653,7 @@ reports `ronin: no work to do.`
 
 ## GNU Make's built-in compile variables are missing
 
-Status: open
+Status: fixed
 
 Observed with Ronin revision `6147c84b1a0f5d0116cf86ace7f6028c8de98281`
 while building Zstd 1.5.7 at `zstd@bootstrap` in Necessary OS run
@@ -705,3 +705,19 @@ GNU Make's standard built-in variable catalogue, including the composition
 variables used by explicit recipes (`COMPILE.c`, `COMPILE.S`, `OUTPUT_OPTION`,
 and their constituent defaults). `-R` must continue to suppress them. The
 reduced case and Zstd's real `libzstd` graph must both compile through Ronin.
+
+Resolution: kati now installs GNU Make 4.4.1's `default_variables[]` catalogue
+at its evaluation-initialization boundary, after the environment and before any
+Makefile, as recursive bindings at the `default` origin. `.POSIX:` substitutes
+the standard's values where GNU Make's `check_specials` does. `-R` withholds
+the catalogue, and a Makefile's own `MAKEFLAGS += -rR` withdraws it once the
+read is over, so a `$(origin CC)` on the next line still answers `default` and
+the recipe that runs afterwards expands to nothing — which is what the Linux
+kernel's build relies on. Six recorded build-intent cases cover the reduced C
+recipe, the assembly recipe, Makefile override, origin and flavour, `-R`, and
+the deferred `MAKEFLAGS` withdrawal, and the two previously diverging
+variable-default cases now match. GNU Make's own `options/dash-r` case for a
+Makefile-set `-R` became byte-identical in the upstream inventory. The retained
+Zstd tree replays to a complete 76-edge dry-run graph whose object recipes are
+real `clang … -c -MMD -MP -o …` and `clang … -c -o …` commands, and builds a
+1.2 MB `libzstd.a` through Ronin's scheduler.

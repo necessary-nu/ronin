@@ -387,6 +387,7 @@ assertions (
     {id make-recursive-shell-substitution, kind @complete, author "brendan@necessary.nu", at 2026-08-12T08:31:56.804672845Z}
     {id make-substitution-reference-suffix, kind @complete, author "brendan@necessary.nu", at 2026-08-12T08:31:56.940156077Z}
     {id make-symlink-target-freshness, kind @complete, author "brendan@necessary.nu", at 2026-08-12T08:31:57.107507861Z}
+    {id make-builtin-variable-defaults, kind @complete, author "brendan@necessary.nu", at 2026-08-12T11:55:45.414658578Z}
 )
 
 impl_evidence (

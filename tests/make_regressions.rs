@@ -319,3 +319,59 @@ fn symlink_freshness_ignores_old_build_log() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// Zstd's object rules consist of nothing but GNU Make's built-in compile
+/// variables. Undefined, the C rule lost both its compiler and its output
+/// argument and ran `MMD`; the assembler rule became the source path alone and
+/// the shell tried to execute it.
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn builtin_compile_variables_drive_recipes() {
+    let directory = test_directory("builtin-compile");
+    let bin = directory.join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    // Stands in for the catalogue's default `cc` and records the command line
+    // it was reached with as the object it was asked to produce.
+    let shim = bin.join("cc");
+    fs::write(
+        &shim,
+        "#!/bin/sh\nout=\nprev=\nfor a in \"$@\"; do\n\
+         \t[ \"$prev\" = -o ] && out=$a\n\tprev=$a\ndone\n\
+         printf '%s\\n' \"$*\" > \"$out\"\n",
+    )
+    .unwrap();
+    fs::set_permissions(&shim, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "CFLAGS = -O3\n\
+         ASFLAGS = -Wa,--noexecstack\n\
+         DEPFLAGS = -MMD -MP\n\
+         all: debug.o huf.o\n\
+         debug.o: debug.c\n\
+         \t$(COMPILE.c) $(DEPFLAGS) $(OUTPUT_OPTION) $<\n\
+         huf.o: huf.S\n\
+         \t$(COMPILE.S) $(OUTPUT_OPTION) $<\n",
+    )
+    .unwrap();
+    fs::write(directory.join("debug.c"), "int debug;\n").unwrap();
+    fs::write(directory.join("huf.S"), "/* nothing */\n").unwrap();
+
+    let path = std::env::var("PATH").unwrap_or_default();
+    let output = make_command(&directory)
+        .env("PATH", format!("{}:{path}", bin.display()))
+        .arg("all")
+        .output()
+        .unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("debug.o")).unwrap(),
+        "-O3 -c -MMD -MP -o debug.o debug.c\n"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("huf.o")).unwrap(),
+        "-Wa,--noexecstack -c -o huf.o huf.S\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

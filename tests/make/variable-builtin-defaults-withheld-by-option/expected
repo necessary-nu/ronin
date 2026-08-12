@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # `-R` withholds the catalogue outright: the names are not bound at all, so
+| # `$(origin)` answers `undefined` rather than naming an empty default.
+| all: ; printf '[%s]\n' '$(COMPILE.c)' '$(OUTPUT_OPTION)' '$(origin CC)' '$(origin COMPILE.c)' '$(origin RM)' > out
+file out touched 5
+| []
+| []
+| [undefined]
+| [undefined]
+| [undefined]
