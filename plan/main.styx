@@ -8550,12 +8550,59 @@ children (
     {
         id make-recursive-shell-substitution
         title "Compose recursive Make calls with shell-computed assignment values"
+        priority 0
         kind @fix
+        log (
+            {
+                at 2026-08-12T07:47:01.485202058Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "priority pinned to 0 — operator override: Operator explicitly directed this session to fix the three failures from the monitored Necessary OS package run now."
+            }
+
+            {
+                at 2026-08-12T07:47:36.707633042Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-12T08:03:43.317360049Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Implemented deferred shell command substitution for statically classified recursive Make invocations. The direct graph sink now carries the recipe shell and flags to the child resolver; substitutions execute only after the parent-prerequisite evaluation boundary, in the recipe directory and compiled environment, then undergo quoted/unquoted shell word handling before Make argv parsing. Two regressions cover a Zstd-shaped pipeline assignment and a substitution that must read a prerequisite-generated file. The retained Zstd tree now computes conf_b7fa5eb4cb1f6c5f21930f5277aefbd8 and gets past the original static-invocation refusal. It then exposes a distinct Kati substitution-reference defect: debug.c becomes debug.o.o through $(SRC:.c=.o) / $(OBJ0:.S=.o); filed as make-substitution-reference-suffix. Full workspace tests pass, strict all-target/all-feature Clippy passes, and the Make regression suite passes."
+            }
+        )
     }
 
     {
         id make-symlink-target-freshness
         title "Follow symlinks when rechecking Make target freshness"
+        priority 0
         kind @fix
+        log (
+            {
+                at 2026-08-12T07:47:01.579694567Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "priority pinned to 0 — operator override: Operator explicitly directed this session to fix the three failures from the monitored Necessary OS package run now."
+            }
+        )
+    }
+
+    {
+        id make-substitution-reference-suffix
+        title "Replace only matching suffixes in substitution references"
+        priority 0
+        kind @fix
+        log (
+            {
+                at 2026-08-12T08:03:29.599853307Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "priority pinned to 0 — operator override: Operator explicitly directed this session to fix all Ronin blockers exposed by the monitored Necessary OS package failures now."
+            }
+        )
     }
 )

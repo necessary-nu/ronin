@@ -67,6 +67,8 @@ impl Bindings {
 pub(crate) struct SubninjaInvocation {
     pub(crate) command: Vec<u8>,
     pub(crate) make: Vec<u8>,
+    pub(crate) shell: Vec<u8>,
+    pub(crate) shell_flags: Vec<u8>,
 }
 
 /// A recursive recipe held until all its child Makefiles have been compiled.
@@ -821,6 +823,8 @@ impl BuildSink for GraphSink {
                 .map(|subninja| SubninjaInvocation {
                     command: subninja.command.to_vec(),
                     make: subninja.make.to_vec(),
+                    shell: rule.shell.to_vec(),
+                    shell_flags: rule.shell_flags.to_vec(),
                 })
                 .collect();
             self.subninja_rules.insert(

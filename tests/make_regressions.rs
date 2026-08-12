@@ -121,13 +121,13 @@ fn make_populates_suffix_rule_stem() {
     .unwrap();
     fs::write(
         child.join("Makefile"),
-        br#"all: one.o two.o
+        br"all: one.o two.o
 .SUFFIXES: .c .o
 .c.o:
 	@printf '%s\n' '$@' > .deps/$*.Tpo
 	@mv -f .deps/$*.Tpo .deps/$*.Po
 	@cp $< $@
-"#,
+",
     )
     .unwrap();
     fs::write(child.join("one.c"), "one\n").unwrap();
@@ -190,5 +190,60 @@ fn shell_loop_submake_inherits_overrides() {
     assert!(reported.contains("MFLAGS=-k -j2"), "{reported}");
     assert!(reported.contains("VALUE=\n"), "{reported}");
     assert!(!reported.contains("file-default"), "{reported}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Zstd selects a recursive build directory with a deferred `$(shell ...)`.
+/// Kati deliberately leaves that computation as shell command substitution in
+/// a recipe, so Ronin must settle it before parsing the child invocation.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[test]
+fn submake_expands_shell_computed_assignment() {
+    let directory = test_directory("submake-shell-assignment");
+    fs::write(
+        directory.join("Makefile"),
+        "HASH_DIR = conf_$(shell printf hash | sed -n 1p)\n\
+         all:\n\
+         \t+$(MAKE) --no-print-directory child BUILD_DIR=obj/$(HASH_DIR)\n\
+         child: ; @printf '%s\\n' '$(BUILD_DIR)' > result\n\
+         .PHONY: all child\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("result")).unwrap(),
+        "obj/conf_hash\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Deferred command substitution must observe files made by the recursive
+/// wrapper's prerequisites, not run during the provisional graph compilation.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[test]
+fn submake_shell_waits_for_prerequisite() {
+    let directory = test_directory("submake-shell-boundary");
+    fs::write(
+        directory.join("Makefile"),
+        "all: stamp\n\
+         \t+$(MAKE) --no-print-directory child VALUE=$(shell cat stamp)\n\
+         stamp: ; @printf ready > $@\n\
+         child: ; @printf '%s\\n' '$(VALUE)' > result\n\
+         .PHONY: all child\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("result")).unwrap(),
+        "ready\n"
+    );
     fs::remove_dir_all(directory).unwrap();
 }

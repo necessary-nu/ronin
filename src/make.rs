@@ -262,7 +262,7 @@ pub(crate) fn load_with_subninjas<F>(
     settled_boundaries: &HashSet<EvaluationBoundary>,
 ) -> Result<Loaded, MakeError>
 where
-    F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let _directory = compilation_directory_guard();
     load_with_subninjas_unlocked(root, resolve, settled_boundaries)
@@ -274,7 +274,7 @@ fn load_with_subninjas_unlocked<F>(
     settled_boundaries: &HashSet<EvaluationBoundary>,
 ) -> Result<Loaded, MakeError>
 where
-    F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let mut sink = GraphSink::new_at(&root.context.root_directory);
     let mut state = CompilationState {
@@ -302,7 +302,7 @@ fn compile_unit<F>(
     state: &mut CompilationState<'_>,
 ) -> Result<CompiledUnit, MakeError>
 where
-    F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let compilation_key = compilation.cache_key.clone();
     if !state.compiling.insert(compilation_key.clone()) {
@@ -331,6 +331,7 @@ where
         // semantic subninja parses.
         let (makeflags, mflags) =
             evaluated_flag_variables(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+        let flag_environment = flag_recipe_environment(&makeflags, mflags);
         if let Some(parent) = parent_scope {
             sink.begin_subninja(
                 parent,
@@ -340,16 +341,7 @@ where
         }
         sink.serialise_unit(ev.session.flags.not_parallel);
         let mut recipe_environment = context.recipe_environment.clone();
-        apply_recipe_environment(
-            &mut recipe_environment,
-            &[
-                (
-                    OsString::from("MAKEFLAGS"),
-                    Some(OsString::from(&makeflags)),
-                ),
-                (OsString::from("MFLAGS"), Some(OsString::from(mflags))),
-            ],
-        );
+        apply_recipe_environment(&mut recipe_environment, &flag_environment);
         apply_recipe_environment(&mut recipe_environment, &exported);
         sink.set_recipe_environment(recipe_environment);
         if let Err(error) = emit_build(&nodes, &mut ev, sink) {
@@ -366,15 +358,23 @@ where
             })?;
         let unit = sink.take_unit();
         ev.finish().map_err(|error| MakeError::evaluate(&error))?;
-        Ok((unit, exported, command_line, unit_regenerations, makeflags))
+        Ok((
+            unit,
+            exported,
+            command_line,
+            unit_regenerations,
+            makeflags,
+            flag_environment,
+        ))
     });
-    let (unit, exported, command_line, unit_regenerations, makeflags) = match evaluated {
-        Ok(evaluated) => evaluated,
-        Err(error) => {
-            state.compiling.remove(&compilation_key);
-            return Err(error);
-        }
-    };
+    let (unit, exported, command_line, unit_regenerations, makeflags, flag_environment) =
+        match evaluated {
+            Ok(evaluated) => evaluated,
+            Err(error) => {
+                state.compiling.remove(&compilation_key);
+                return Err(error);
+            }
+        };
     for target in unit_regenerations {
         if !state.regenerations.contains(&target) {
             state.regenerations.push(target);
@@ -385,6 +385,10 @@ where
     descendant_context.makeflags.clone_from(&makeflags);
     apply_exported_environment(&mut descendant_context.environment, &command_line);
     apply_exported_environment(&mut descendant_context.environment, &exported);
+    apply_recipe_environment(
+        &mut descendant_context.recipe_environment,
+        &flag_environment,
+    );
     apply_recipe_environment(&mut descendant_context.recipe_environment, &exported);
     let composed = compose_subninjas(
         unit,
@@ -412,7 +416,7 @@ fn compose_subninjas<F>(
     state: &mut CompilationState<'_>,
 ) -> Result<ComposedUnit, MakeError>
 where
-    F: FnMut(&[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let UnitOutput {
         targets,
@@ -449,7 +453,13 @@ where
 
         let mut child_groups = Vec::with_capacity(pending.invocations.len());
         for (group_index, invocation) in pending.invocations.iter().enumerate() {
-            let child = resolve(&invocation.command, &invocation.make, descendant_context)?;
+            let child = resolve(
+                &invocation.command,
+                &invocation.make,
+                &invocation.shell,
+                &invocation.shell_flags,
+                descendant_context,
+            )?;
             let child_key = child.cache_key.clone();
             let child_subgraph = if let Some(subgraph) = state.cache.get(&child_key) {
                 subgraph.clone()
@@ -955,6 +965,13 @@ fn evaluated_flag_variables(
     let mflags = ev.session.intern("MFLAGS");
     let mflags = String::from_utf8_lossy(&ev.eval_var(mflags)?).into_owned();
     Ok((makeflags, mflags))
+}
+
+fn flag_recipe_environment(makeflags: &str, mflags: String) -> [(OsString, Option<OsString>); 2] {
+    [
+        (OsString::from("MAKEFLAGS"), Some(OsString::from(makeflags))),
+        (OsString::from("MFLAGS"), Some(OsString::from(mflags))),
+    ]
 }
 
 /// Command-line bindings a semantic child receives through its compiler

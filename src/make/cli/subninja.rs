@@ -6,44 +6,22 @@ use super::{
 };
 use crate::make::{Compilation, CompilationContext, MakeError};
 use crate::util::{BString, ByteSlice};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
 /// Resolve one expanded recursive recipe into another kati compilation unit.
 // [spec:ronin:req:make.recursive-invocation+1]
 pub(in crate::make) fn compile(
     command: &[u8],
     expanded_make: &[u8],
+    shell: &[u8],
+    shell_flags: &[u8],
     parent: &CompilationContext,
 ) -> Result<Compilation, MakeError> {
-    let mut words = shell_words(command)?;
-    let mut directory = parent.directory.clone();
-    if words.len() >= 4 && words[0].as_bytes() == b"cd" && words[2].as_bytes() == b"&&" {
-        let selected =
-            path_of(words[1].as_bytes()).map_err(|error| MakeError::Evaluate(error.to_string()))?;
-        directory = compilation_directory(&directory, &selected)?;
-        words.drain(0..3);
-    }
-    if words.first().is_some_and(|word| word.as_bytes() == b"exec") {
-        words.remove(0);
-    }
-    let make_words = shell_words(expanded_make)?;
-    if make_words.is_empty()
-        || words.len() < make_words.len()
-        || words[..make_words.len()] != make_words
-    {
-        return Err(MakeError::Evaluate(format!(
-            "recursive MAKE reference is not the invoked command: {}",
-            String::from_utf8_lossy(command)
-        )));
-    }
-    if words.is_empty() || words.iter().any(|word| word.as_bytes() == b"&&") {
-        return Err(MakeError::Evaluate(format!(
-            "recursive Make recipe is not one static invocation: {}",
-            String::from_utf8_lossy(command)
-        )));
-    }
-
+    let (words, mut directory) =
+        invocation_words(command, expanded_make, shell, shell_flags, parent)?;
     let inherited = (!parent.makeflags.is_empty()).then_some(parent.makeflags.as_str());
     let invocation =
         match parse(&words, inherited).map_err(|error| MakeError::Evaluate(error.to_string()))? {
@@ -89,7 +67,14 @@ pub(in crate::make) fn compile(
         makefile.as_os_str().as_encoded_bytes(),
         &makeflags,
     );
-    extend_compilation_key(&mut cache_key, command, expanded_make, parent);
+    extend_compilation_key(
+        &mut cache_key,
+        command,
+        expanded_make,
+        shell,
+        shell_flags,
+        parent,
+    );
     let mut recipe_environment = parent.recipe_environment.clone();
     set_recipe_environment(
         &mut recipe_environment,
@@ -117,16 +102,61 @@ pub(in crate::make) fn compile(
     })
 }
 
+fn invocation_words(
+    command: &[u8],
+    expanded_make: &[u8],
+    shell: &[u8],
+    shell_flags: &[u8],
+    parent: &CompilationContext,
+) -> Result<(Vec<BString>, PathBuf), MakeError> {
+    let mut expand = |script: &[u8]| shell_command_substitution(script, shell, shell_flags, parent);
+    let mut words = shell_words_with(command, Some(&mut expand))?;
+    let mut directory = parent.directory.clone();
+    if words.len() >= 4 && words[0].as_bytes() == b"cd" && words[2].as_bytes() == b"&&" {
+        let selected =
+            path_of(words[1].as_bytes()).map_err(|error| MakeError::Evaluate(error.to_string()))?;
+        directory = compilation_directory(&directory, &selected)?;
+        words.drain(0..3);
+    }
+    if words.first().is_some_and(|word| word.as_bytes() == b"exec") {
+        words.remove(0);
+    }
+    let make_words = shell_words(expanded_make)?;
+    if make_words.is_empty()
+        || words.len() < make_words.len()
+        || words[..make_words.len()] != make_words
+    {
+        return Err(MakeError::Evaluate(format!(
+            "recursive MAKE reference is not the invoked command: {}",
+            String::from_utf8_lossy(command)
+        )));
+    }
+    if words.is_empty() || words.iter().any(|word| word.as_bytes() == b"&&") {
+        return Err(MakeError::Evaluate(format!(
+            "recursive Make recipe is not one static invocation: {}",
+            String::from_utf8_lossy(command)
+        )));
+    }
+
+    Ok((words, directory))
+}
+
 fn extend_compilation_key(
     key: &mut Vec<u8>,
     command: &[u8],
     expanded_make: &[u8],
+    shell: &[u8],
+    shell_flags: &[u8],
     parent: &CompilationContext,
 ) {
     key.push(0);
     key.extend_from_slice(command);
     key.push(0);
     key.extend_from_slice(expanded_make);
+    key.push(0);
+    key.extend_from_slice(shell);
+    key.push(0);
+    key.extend_from_slice(shell_flags);
     append_environment_key(key, &parent.environment);
     append_recipe_environment_key(key, &parent.recipe_environment);
 }
@@ -194,6 +224,15 @@ fn compilation_directory(base: &Path, selected: &Path) -> Result<PathBuf, MakeEr
 /// redirections and globbing are rejected: those are runtime programs, not a
 /// statically selected subninja.
 fn shell_words(command: &[u8]) -> Result<Vec<BString>, MakeError> {
+    shell_words_with(command, None)
+}
+
+type CommandExpansion<'a> = dyn FnMut(&[u8]) -> Result<Vec<u8>, MakeError> + 'a;
+
+fn shell_words_with(
+    command: &[u8],
+    mut expansion: Option<&mut CommandExpansion<'_>>,
+) -> Result<Vec<BString>, MakeError> {
     #[derive(Clone, Copy, Eq, PartialEq)]
     enum Quote {
         Single,
@@ -227,6 +266,13 @@ fn shell_words(command: &[u8]) -> Result<Vec<BString>, MakeError> {
                     let escaped = command.get(index).copied().ok_or_else(&failure)?;
                     word.push(escaped);
                 }
+                b'$' if command.get(index + 1) == Some(&b'(') => {
+                    let end = command_substitution_end(command, index + 2).ok_or_else(&failure)?;
+                    let expand = expansion.as_deref_mut().ok_or_else(&failure)?;
+                    let output = expand(&command[index + 2..end])?;
+                    word.extend(output);
+                    index = end;
+                }
                 b'$' | b'`' => return Err(failure()),
                 _ => word.push(byte),
             },
@@ -250,6 +296,14 @@ fn shell_words(command: &[u8]) -> Result<Vec<BString>, MakeError> {
                         words.push(BString::from(std::mem::take(&mut word)));
                     }
                 }
+                b'$' if command.get(index + 1) == Some(&b'(') => {
+                    let end = command_substitution_end(command, index + 2).ok_or_else(&failure)?;
+                    let expand = expansion.as_deref_mut().ok_or_else(&failure)?;
+                    let output = expand(&command[index + 2..end])?;
+                    append_unquoted_substitution(&mut words, &mut word, &output)
+                        .ok_or_else(&failure)?;
+                    index = end;
+                }
                 b'|' | b'&' | b';' | b'<' | b'>' | b'(' | b')' | b'{' | b'}' | b'$' | b'`'
                 | b'*' | b'?' | b'[' | b']' | b'~' | b'#' => return Err(failure()),
                 _ => word.push(byte),
@@ -264,4 +318,133 @@ fn shell_words(command: &[u8]) -> Result<Vec<BString>, MakeError> {
         words.push(BString::from(word));
     }
     Ok(words)
+}
+
+/// Find the close of one shell command substitution without mistaking quoted
+/// parentheses for its delimiter. The shell still parses and executes the
+/// body; this scanner only isolates the bytes it receives.
+fn command_substitution_end(command: &[u8], start: usize) -> Option<usize> {
+    #[derive(Clone, Copy)]
+    enum Quote {
+        Single,
+        Double,
+        Backtick,
+    }
+
+    let mut depth = 1usize;
+    let mut quote = None;
+    let mut index = start;
+    while index < command.len() {
+        let byte = command[index];
+        match quote {
+            Some(Quote::Single) => {
+                if byte == b'\'' {
+                    quote = None;
+                }
+            }
+            Some(Quote::Double) => match byte {
+                b'"' => quote = None,
+                b'\\' => index += 1,
+                b'$' if command.get(index + 1) == Some(&b'(') => {
+                    depth += 1;
+                    index += 1;
+                }
+                b')' if depth > 1 => depth -= 1,
+                _ => {}
+            },
+            Some(Quote::Backtick) => match byte {
+                b'`' => quote = None,
+                b'\\' => index += 1,
+                _ => {}
+            },
+            None => match byte {
+                b'\'' => quote = Some(Quote::Single),
+                b'"' => quote = Some(Quote::Double),
+                b'`' => quote = Some(Quote::Backtick),
+                b'\\' => index += 1,
+                b'$' if command.get(index + 1) == Some(&b'(') => {
+                    depth += 1;
+                    index += 1;
+                }
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(index);
+                    }
+                }
+                _ => {}
+            },
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Apply the default shell's field splitting to unquoted substitution output.
+/// Globbing remains dynamic, so a result containing a glob is refused rather
+/// than composed as a different argv from the one the shell would produce.
+fn append_unquoted_substitution(
+    words: &mut Vec<BString>,
+    word: &mut Vec<u8>,
+    output: &[u8],
+) -> Option<()> {
+    let fields = output
+        .split(u8::is_ascii_whitespace)
+        .filter(|field| !field.is_empty())
+        .collect::<Vec<_>>();
+    if fields
+        .iter()
+        .any(|field| field.iter().any(|byte| matches!(byte, b'*' | b'?' | b'[')))
+    {
+        return None;
+    }
+    let Some((last, preceding)) = fields.split_last() else {
+        return Some(());
+    };
+    for field in preceding {
+        word.extend_from_slice(field);
+        words.push(BString::from(std::mem::take(word)));
+    }
+    word.extend_from_slice(last);
+    Some(())
+}
+
+/// Execute the computation Kati deferred out of `$(shell ...)` when it expanded
+/// the recursive recipe. This happens only after the parent prerequisites have
+/// crossed the recursive evaluation boundary, in the exact directory and
+/// exported environment the recipe would have received.
+fn shell_command_substitution(
+    script: &[u8],
+    shell: &[u8],
+    shell_flags: &[u8],
+    parent: &CompilationContext,
+) -> Result<Vec<u8>, MakeError> {
+    let mut command = std::process::Command::new(OsStr::from_bytes(shell));
+    command
+        .arg(OsStr::from_bytes(shell_flags))
+        .arg(OsStr::from_bytes(script))
+        .current_dir(&parent.directory)
+        .env_clear()
+        .envs(parent.environment.iter().map(|(name, value)| (name, value)))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+    for (name, value) in &parent.recipe_environment {
+        if let Some(value) = value {
+            command.env(name, value);
+        } else {
+            command.env_remove(name);
+        }
+    }
+    let mut output = command.output().map_err(|error| {
+        MakeError::Evaluate(format!(
+            "running recursive Make command substitution '{}': {error}",
+            String::from_utf8_lossy(script)
+        ))
+    })?;
+    while output.stdout.last() == Some(&b'\n') {
+        output.stdout.pop();
+    }
+    output.stdout.retain(|byte| *byte != 0);
+    Ok(output.stdout)
 }
