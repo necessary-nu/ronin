@@ -7167,6 +7167,13 @@ children (
                                 kind @note
                                 text "Fixed the package-proven shell-loop case by compiling each unit's final evaluated MAKEFLAGS and MFLAGS into every recipe environment before the existing export/unexport delta. Jobserver publication therefore splices authorization into canonical flags instead of replacing them. Added an integration reproducer with -j2 -k and an empty command-line VALUE assignment; the real nested Make prints VALUE= and never the file default. cargo fmt --all -- --check and all 81 CLI integration tests pass."
                             }
+
+                            {
+                                at 2026-08-12T08:31:56.665735683Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
@@ -8552,6 +8559,7 @@ children (
         title "Compose recursive Make calls with shell-computed assignment values"
         priority 0
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-12T07:47:01.485202058Z
@@ -8573,6 +8581,13 @@ children (
                 kind @note
                 text "Implemented deferred shell command substitution for statically classified recursive Make invocations. The direct graph sink now carries the recipe shell and flags to the child resolver; substitutions execute only after the parent-prerequisite evaluation boundary, in the recipe directory and compiled environment, then undergo quoted/unquoted shell word handling before Make argv parsing. Two regressions cover a Zstd-shaped pipeline assignment and a substitution that must read a prerequisite-generated file. The retained Zstd tree now computes conf_b7fa5eb4cb1f6c5f21930f5277aefbd8 and gets past the original static-invocation refusal. It then exposes a distinct Kati substitution-reference defect: debug.c becomes debug.o.o through $(SRC:.c=.o) / $(OBJ0:.S=.o); filed as make-substitution-reference-suffix. Full workspace tests pass, strict all-target/all-feature Clippy passes, and the Make regression suite passes."
             }
+
+            {
+                at 2026-08-12T08:31:56.804672845Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -8581,6 +8596,7 @@ children (
         title "Follow symlinks when rechecking Make target freshness"
         priority 0
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-12T07:47:01.579694567Z
@@ -8602,6 +8618,13 @@ children (
                 kind @note
                 text "The symlink stat path already followed its referent. The defect was Ninja build-log history entering Make freshness: Findutils regenerated the referent, the existing symlink and prerequisite had equal live mtimes, but the edge's older recorded mtime forced `ln -s` to rerun. Added typed `FreshnessHistory::{BuildLogAware, FilesystemOnly}` graph policy; native Ninja edges retain the default and direct Make edges select filesystem-only freshness while still writing compatible logs. The two-invocation regression, native generator regression, retained Findutils target with its stale .ninja_log, strict Clippy, full workspace tests, and 276-graph equivalence sweep all pass."
             }
+
+            {
+                at 2026-08-12T08:31:57.107507861Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
         )
     }
 
@@ -8610,6 +8633,7 @@ children (
         title "Replace only matching suffixes in substitution references"
         priority 0
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-12T08:03:29.599853307Z
@@ -8630,6 +8654,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @note
                 text "Fixed Kati substitution references so suffix replacements preserve nonmatching words and percent patterns use general substitution semantics. Added Kati unit coverage and a Ronin Make regression. The retained Zstd 1.5.7 libzstd.a dry-run now resolves the computed BUILD_DIR and produces the correct 37-step object/archive graph with exit 0."
+            }
+
+            {
+                at 2026-08-12T08:31:56.940156077Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
