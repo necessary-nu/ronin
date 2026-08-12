@@ -492,6 +492,17 @@ impl BuildGraph {
         Edge(edge)
     }
 
+    /// Use only live filesystem mtimes when deciding whether `edge` is dirty.
+    ///
+    /// GNU Make does not make its recipe history part of target freshness. A
+    /// direct Make graph still records Ninja-compatible history for timings
+    /// and tools, but an older record cannot override equal on-disk mtimes.
+    // [spec:ronin:req:make.state-outside-the-tree+2]
+    pub(crate) fn set_filesystem_only_freshness(&mut self, edge: Edge) {
+        self.arenas.edge_mut(edge.0).freshness_history =
+            crate::graph::FreshnessHistory::FilesystemOnly;
+    }
+
     /// The value `edge`'s own bindings give `name`, before its rule or the
     /// scope around it are consulted.
     ///

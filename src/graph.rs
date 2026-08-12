@@ -66,6 +66,18 @@ pub(crate) struct Node {
     pub(crate) uses: IdVec<EdgeId>,
 }
 
+/// Which timestamp history participates in an edge's freshness decision.
+///
+/// Ninja compares both the filesystem and the mtime persisted in its build
+/// log. A Make target is current from the filesystem alone: the build log may
+/// describe an earlier recipe run, but it is not part of Make's semantics.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum FreshnessHistory {
+    #[default]
+    BuildLogAware,
+    FilesystemOnly,
+}
+
 // [spec:ronin:def:graph.edge]
 #[allow(
     clippy::struct_excessive_bools,
@@ -108,6 +120,7 @@ pub(crate) struct Edge {
     /// Whether the build throws this edge's outputs away once it has finished
     /// with them, which every intermediate but a `.SECONDARY` one is.
     pub(crate) disposable: bool,
+    pub(crate) freshness_history: FreshnessHistory,
     partitions: EdgePartitions,
 }
 
@@ -406,7 +419,9 @@ where
             oldest_output = Some(
                 oldest_output.map_or_else(|| output.mtime(), |oldest| oldest.min(output.mtime())),
             );
-            if output.log_mtime().is_observed() {
+            if edge_data.freshness_history == FreshnessHistory::BuildLogAware
+                && output.log_mtime().is_observed()
+            {
                 oldest_recorded_output = Some(oldest_recorded_output.map_or_else(
                     || output.log_mtime(),
                     |oldest| oldest.min(output.log_mtime()),
@@ -693,6 +708,7 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         always_dirty: false,
         intermediate: false,
         disposable: false,
+        freshness_history: FreshnessHistory::default(),
         partitions: EdgePartitions::default(),
     });
     id

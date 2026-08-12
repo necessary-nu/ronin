@@ -445,7 +445,7 @@ impl GraphSink {
         &mut self,
         pending: &mut PendingSubninja,
     ) -> Result<Edge, FrontendError> {
-        self.graph.add_edge(EdgeSpec {
+        let edge = self.graph.add_edge(EdgeSpec {
             scope: pending.scope,
             rule: self.subninja_probe,
             explicit_outputs: &pending.explicit_outputs,
@@ -458,7 +458,9 @@ impl GraphSink {
             intermediate: pending.intermediate,
             disposable: pending.disposable,
             bindings: std::mem::take(&mut pending.bindings),
-        })
+        })?;
+        self.graph.set_filesystem_only_freshness(edge);
+        Ok(edge)
     }
 
     /// Ask the ordinary graph evaluator whether a staged wrapper must run.
@@ -930,6 +932,7 @@ impl BuildSink for GraphSink {
         };
         match self.graph.add_edge(spec) {
             Ok(built) => {
+                self.graph.set_filesystem_only_freshness(built);
                 if let Some(deferred) = deferred {
                     self.graph.set_deferred_freshness(
                         built,

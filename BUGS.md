@@ -568,3 +568,85 @@ authorization into those values before execution, so a real recursive process
 inside a shell loop receives both the shared job budget and the command-line
 override table. The reduced shell-loop case is an integration test and prints
 `VALUE=` without falling back to `file-default`.
+
+## A shell-computed recursive assignment is rejected as non-static
+
+Status: fixed
+
+Observed with Ronin revision `1b732cffef97683d8253b6ed47e1261d61ec7eca`
+while building Zstd 1.5.7 in Necessary OS run `1786492219209-3222893`.
+
+Zstd recursively builds a configuration-specific object directory whose name
+is a hash computed in the recipe:
+
+```make
+libzstd.a:
+	+$(MAKE) --no-print-directory $@ \
+	  BUILD_DIR=obj/conf_$(shell printf '%s' '$(CFLAGS) $(CPPFLAGS)' | md5sum | cut -f1 -d' ')
+```
+
+Kati deliberately preserves that `$(shell ...)` as shell command substitution
+until the recipe boundary. Ronin's semantic recursive-Make parser instead
+required every word to be static and refused the package before constructing
+the child graph:
+
+```text
+ronin: recursive Make recipe is not a static invocation: ...
+BUILD_DIR=obj/conf_$(echo ... | md5sum | cut -f 1 -d " ")
+```
+
+Resolving the command exposed a second evaluator defect in Zstd's two object
+suffix passes: a word not matching `.S` still had `.o` appended, producing
+`debug.o.o` instead of retaining `debug.o`.
+
+Expected: shell substitutions in an otherwise composable recursive invocation
+run with the recipe's shell, flags, directory, and environment after its
+prerequisites settle. Their resulting words form the child Make arguments.
+Suffix-substitution references replace only matching words.
+
+Resolution: recursive invocation resolution now evaluates shell substitutions
+at the scheduler's compilation boundary, applies shell quoting and field
+splitting, and rejects only results that remain dynamic. Kati's substitution
+reference implementation now preserves nonmatches and routes percent patterns
+through its general pattern substitution. Focused regressions cover both
+behaviours. The retained Zstd source tree now compiles to the correct computed
+`conf_b7fa5eb4cb1f6c5f21930f5277aefbd8` directory and complete 37-edge
+`libzstd.a` dry-run graph.
+
+## A stale build-log mtime overrides an up-to-date Make symlink
+
+Status: fixed
+
+Observed with Ronin revision `1b732cffef97683d8253b6ed47e1261d61ec7eca`
+while installing Findutils in Necessary OS run `1786492219209-3222893`.
+
+Findutils generates `locate/dblocation.texi`, then another recursive group
+uses an existing link to it:
+
+```make
+dblocation.texi: ../locate/dblocation.texi
+	$(LN_S) ../locate/dblocation.texi $@
+```
+
+After the referent is regenerated, `stat` follows the link and reports exactly
+the prerequisite's mtime. GNU Make therefore considers the link current.
+Ronin also observed those equal filesystem timestamps, but then compared the
+prerequisite with the older mtime persisted when the link recipe first ran.
+It reran `ln -s` against the existing link and failed:
+
+```text
+[1/1] ln -s ../locate/dblocation.texi dblocation.texi
+ln: Already exists
+```
+
+Expected: persisted Ninja state may provide timing, dependency, and tooling
+data for Make graphs, but it must not override Make's filesystem-only target
+freshness. Native Ninja graphs retain their build-log-aware semantics.
+
+Resolution: graph edges now carry a typed freshness-history policy. Ninja
+edges default to `BuildLogAware`; the direct Make graph marks every edge
+`FilesystemOnly`. The build log remains Ninja-compatible and continues to be
+written, but its recorded mtime no longer dirties an otherwise current Make
+target. A two-invocation symlink regression reproduces the stale-log shape,
+and the retained Findutils target with its original stale `.ninja_log` now
+reports `ronin: no work to do.`

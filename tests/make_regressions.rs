@@ -18,7 +18,9 @@ fn test_directory(label: &str) -> PathBuf {
 
 fn invoked_as(directory: &Path) -> PathBuf {
     let link = directory.join("make");
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ronin"), &link).unwrap();
+    if !link.exists() {
+        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ronin"), &link).unwrap();
+    }
     link
 }
 
@@ -270,6 +272,50 @@ fn substitution_reference_keeps_nonmatches() {
     assert_eq!(
         fs::read_to_string(directory.join("result")).unwrap(),
         "debug.o start.o notes.txt\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Findutils links one generated manual fragment to another. A later recursive
+/// group updates the referent, making the followed link exactly as new as its
+/// prerequisite while Ronin's build log still remembers the link's old mtime.
+/// GNU Make uses the equal filesystem timestamps and leaves the link alone.
+// [spec:ronin:req:make.state-outside-the-tree+2/test]
+#[test]
+fn symlink_freshness_ignores_old_build_log() {
+    let directory = test_directory("symlink-freshness");
+    fs::write(
+        directory.join("Makefile"),
+        "all: link\n\
+         link: source\n\
+         \t@ln -s source link\n",
+    )
+    .unwrap();
+    write_at(&directory, "source", "old\n", 100);
+
+    let first = make_command(&directory).arg("all").output().unwrap();
+    let reported = String::from_utf8_lossy(&first.stdout).into_owned()
+        + &String::from_utf8_lossy(&first.stderr);
+    assert!(first.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_link(directory.join("link")).unwrap(),
+        Path::new("source")
+    );
+
+    // Newer than the first build's wall-clock log record. The existing link
+    // follows this file, so both filesystem mtimes are still equal.
+    write_at(&directory, "source", "updated", 2_000_000_000);
+    let output = make_command(&directory).arg("all").output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_link(directory.join("link")).unwrap(),
+        Path::new("source")
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("source")).unwrap(),
+        "updated"
     );
     fs::remove_dir_all(directory).unwrap();
 }

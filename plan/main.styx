@@ -8588,6 +8588,20 @@ children (
                 kind @decision
                 text "priority pinned to 0 — operator override: Operator explicitly directed this session to fix the three failures from the monitored Necessary OS package run now."
             }
+
+            {
+                at 2026-08-12T08:11:37.002017193Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-12T08:26:52.440580315Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "The symlink stat path already followed its referent. The defect was Ninja build-log history entering Make freshness: Findutils regenerated the referent, the existing symlink and prerequisite had equal live mtimes, but the edge's older recorded mtime forced `ln -s` to rerun. Added typed `FreshnessHistory::{BuildLogAware, FilesystemOnly}` graph policy; native Ninja edges retain the default and direct Make edges select filesystem-only freshness while still writing compatible logs. The two-invocation regression, native generator regression, retained Findutils target with its stale .ninja_log, strict Clippy, full workspace tests, and 276-graph equivalence sweep all pass."
+            }
         )
     }
 
