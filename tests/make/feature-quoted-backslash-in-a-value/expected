@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 6
 | # Backslashes and quotes in a variable's value are not make's business: they
 | # reach the recipe unchanged, for the shell to make of what it will.

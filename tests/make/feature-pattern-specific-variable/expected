@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 12
 | # A variable can be set for every target matching a pattern, and a target's own
 | # setting, or a longer-matching pattern's, takes precedence.

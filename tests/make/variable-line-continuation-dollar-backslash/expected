@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 9
 | recur = $\
 |   one$\

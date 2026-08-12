@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 2
+outcome failure
 file Makefile kept 6
 | # A vpath directive naming a pattern and no directories withdraws that
 | # pattern's search path, so the prerequisite is no longer found.

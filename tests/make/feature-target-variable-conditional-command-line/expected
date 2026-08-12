@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 5
 | # The same conditional assignment, with the name given on the command line: the
 | # command line already gave it a value, so the target's is not used.

@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 2
+outcome failure
 file Makefile kept 2
 | x y =
 | all: ; @printf '%s\n' 'ran' > out

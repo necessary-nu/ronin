@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 8
 | # Makefiles that have to be built are built in the order they were included,
 | # across separate include lines as well as within one.

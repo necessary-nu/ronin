@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 1
 | all: ; @printf '[%s]\n' '$(sort $(wildcard example.*))' '$(sort $(wildcard example.?))' '$(sort $(wildcard example.[a-z0-9]))' > out
 file example.1 kept 0

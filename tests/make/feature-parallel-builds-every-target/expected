@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 4
 | # -j changes when recipes run, not which: every prerequisite is still made.
 | all: a.out b.out c.out

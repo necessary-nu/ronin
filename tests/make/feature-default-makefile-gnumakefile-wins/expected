@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file GNUmakefile kept 3
 | # With no -f, make looks for GNUmakefile, then makefile, then Makefile, and
 | # stops at the first it finds.

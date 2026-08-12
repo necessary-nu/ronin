@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 2
 | # -n prints what would be done and does none of it.
 | all: ; @printf '%s\n' ran > out

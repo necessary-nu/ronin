@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 2
+outcome failure
 file Makefile kept 3
 | .DELETE_ON_ERROR:
 | .PHONY: all

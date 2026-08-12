@@ -1,0 +1,98 @@
+build upstream GNU Make 4.4.1, built by scripts/build-make-oracle.sh from make-4.4.1.tar.gz (sha256 dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3)
+version GNU Make 4.4.1
+host x86_64-pc-linux-gnu
+feature archives
+feature check-symlink
+feature else-if
+feature extra-prereqs
+feature grouped-target
+feature jobserver
+feature jobserver-fifo
+feature load
+feature nocomment
+feature notintermediate
+feature oneshell
+feature order-only
+feature output-sync
+feature second-expansion
+feature shell-export
+feature shortest-stem
+feature target-specific
+feature undefine
+default .LIBPATTERNS lib%.so lib%.a
+default .LOADED 
+default .RECIPEPREFIX 
+default .SHELLFLAGS -c
+default AR ar
+default ARFLAGS -rv
+default AS as
+default CC cc
+default CHECKOUT,v +$(if $(wildcard $@),,$(CO) $(COFLAGS) $< $@)
+default CO co
+default COFLAGS 
+default COMPILE.C $(COMPILE.cc)
+default COMPILE.F $(FC) $(FFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c
+default COMPILE.S $(CC) $(ASFLAGS) $(CPPFLAGS) $(TARGET_MACH) -c
+default COMPILE.c $(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c
+default COMPILE.cc $(CXX) $(CXXFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c
+default COMPILE.cpp $(COMPILE.cc)
+default COMPILE.def $(M2C) $(M2FLAGS) $(DEFFLAGS) $(TARGET_ARCH)
+default COMPILE.f $(FC) $(FFLAGS) $(TARGET_ARCH) -c
+default COMPILE.m $(OBJC) $(OBJCFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c
+default COMPILE.mod $(M2C) $(M2FLAGS) $(MODFLAGS) $(TARGET_ARCH)
+default COMPILE.p $(PC) $(PFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c
+default COMPILE.r $(FC) $(FFLAGS) $(RFLAGS) $(TARGET_ARCH) -c
+default COMPILE.s $(AS) $(ASFLAGS) $(TARGET_MACH)
+default CPP $(CC) -E
+default CTANGLE ctangle
+default CWEAVE cweave
+default CXX g++
+default F77 $(FC)
+default F77FLAGS $(FFLAGS)
+default FC f77
+default GET get
+default LD ld
+default LEX lex
+default LEX.l $(LEX) $(LFLAGS) -t
+default LEX.m $(LEX) $(LFLAGS) -t
+default LINK.C $(LINK.cc)
+default LINK.F $(FC) $(FFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)
+default LINK.S $(CC) $(ASFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_MACH)
+default LINK.c $(CC) $(CFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)
+default LINK.cc $(CXX) $(CXXFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)
+default LINK.cpp $(LINK.cc)
+default LINK.f $(FC) $(FFLAGS) $(LDFLAGS) $(TARGET_ARCH)
+default LINK.m $(OBJC) $(OBJCFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)
+default LINK.o $(CC) $(LDFLAGS) $(TARGET_ARCH)
+default LINK.p $(PC) $(PFLAGS) $(CPPFLAGS) $(LDFLAGS) $(TARGET_ARCH)
+default LINK.r $(FC) $(FFLAGS) $(RFLAGS) $(LDFLAGS) $(TARGET_ARCH)
+default LINK.s $(CC) $(ASFLAGS) $(LDFLAGS) $(TARGET_MACH)
+default LINT lint
+default LINT.c $(LINT) $(LINTFLAGS) $(CPPFLAGS) $(TARGET_ARCH)
+default M2C m2c
+default MAKE $(MAKE_COMMAND)
+default MAKEFILES 
+default MAKEINFO makeinfo
+default MAKE_HOST x86_64-pc-linux-gnu
+default MAKE_VERSION 4.4.1
+default OBJC cc
+default OUTPUT_OPTION -o $@
+default PC pc
+default PREPROCESS.F $(FC) $(FFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -F
+default PREPROCESS.S $(CPP) $(CPPFLAGS)
+default PREPROCESS.r $(FC) $(FFLAGS) $(RFLAGS) $(TARGET_ARCH) -F
+default RM rm -f
+default SUFFIXES .out .a .ln .o .c .cc .C .cpp .p .f .F .m .r .y .l .ym .yl .s .S .mod .sym .def .h .info .dvi .tex .texinfo .texi .txinfo .w .ch .web .sh .elc .el
+default TANGLE tangle
+default TEX tex
+default TEXI2DVI texi2dvi
+default WEAVE weave
+default YACC yacc
+default YACC.m $(YACC) $(YFLAGS)
+default YACC.y $(YACC) $(YFLAGS)
+posix .SHELLFLAGS -ec
+posix CC c99
+posix CFLAGS -O1
+posix FC fort77
+posix FFLAGS -O1
+posix SCCSGETFLAGS -s

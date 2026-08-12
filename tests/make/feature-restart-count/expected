@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 7
 | # MAKE_RESTARTS counts the times make has started itself again to pick up a
 | # rebuilt makefile: empty on the first pass, one afterwards.

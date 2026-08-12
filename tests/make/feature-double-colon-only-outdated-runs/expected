@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 4
 | # Each double-colon rule is weighed against the target on its own
 | # prerequisites, so only the rule whose prerequisite is newer runs.

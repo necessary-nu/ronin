@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 2
 | all: $(shell printf 'p1 p2\n') ; @printf '[%s]\n' '$^' > out
 | p1 p2: ; @printf '%s\n' '$@' > $@

@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 10
 | # A leg that is not taken is skipped whole, assignments included, and the rule
 | # that follows the conditional still belongs to whichever leg was read.

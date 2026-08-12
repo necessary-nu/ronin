@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 4
 | # A command-line assignment reaches a sub-make through MAKEFLAGS and has to go
 | # on reaching the one below that, which is two levels from where it was typed.

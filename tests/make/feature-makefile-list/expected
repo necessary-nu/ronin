@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 4
 | # MAKEFILE_LIST names every makefile read so far, in the order they were read.
 | include extra.mk

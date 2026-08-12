@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 3
 | names := a b c
 | all: $(foreach n,$(names),$(n).txt) ; @printf '[%s]\n' '$^' > out

@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 2
+outcome failure
 file Makefile kept 6
 | # A recipe that fails stops the build: what it had already written stays, and
 | # the prerequisite after it is not made.

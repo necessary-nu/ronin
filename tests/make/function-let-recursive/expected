@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 2
 | reverse = $(let first rest,$(1),$(if $(rest),$(call reverse,$(rest)) )$(first))
 | all: ; @printf '[%s]\n' '$(call reverse,moe miny meeny eeny)' > out

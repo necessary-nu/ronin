@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 7
 | # A backslash before a hash keeps it out of the comment, in a variable's value
 | # and in a target's name alike.

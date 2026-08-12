@@ -8735,12 +8735,34 @@ children (
                 title "Re-record the corpus against upstream GNU Make 4.4.1"
                 kind @fix
                 deps (make-oracle-identity-record)
+                sealed true
                 log (
                     {
                         at 2026-08-12T13:11:47.686012068Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Build GNU Make 4.4.1 from the released tarball, pinned by sha256, under reference/ where the pinned Ninja already lives, and re-record the corpus against it. Audit every fixture that moves and classify each as a distribution patch or a property of this host. Flip kati's POSIX ARFLAGS from Debian's -rvU to GNU's -rv and write the Debian departure down as a divergence rather than a code comment."
+                    }
+
+                    {
+                        at 2026-08-12T13:50:32.815709205Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-12T13:50:48.82705011Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The oracle is upstream GNU Make 4.4.1 as the FSF released it, not a distribution's build of it. Pinned by sha256 dd16fb1d67bfab79a72f5e8390735c49e3e8e70b4945a15ab1f81ddb78658fb3 over make-4.4.1.tar.gz, built by scripts/build-make-oracle.sh into reference/make-oracle, which is gitignored the way the pinned Ninja beside it is. The tarball rather than the reference/gnumake checkout at the same tag: that checkout has no generated configure and bootstrapping wants a gnulib revision it does not vendor, while the tarball is the identical source with configure in it. The corpus was re-recorded twice to separate the questions — once from Debian's /usr/bin/make under the provenance harness, which reproduced every committed expectation byte for byte apart from the status/outcome spelling and was itself byte-identical across two runs, and once from upstream. The delta between those two recordings is the whole of what moved: one case, target-posix-variable-defaults, ARFLAGS=-rvU becoming ARFLAGS=-rv. No host-environment class exists in this re-record because both builds ran on the same host. Consequently kati's POSIX ARFLAGS flips from Debian's -rvU to GNU's -rv (kati 814d61c). The cost is named rather than hidden: on a host whose ar defaults to deterministic archives, -rv writes a zeroed member date, the member is older than every source, and its rule reruns on every build — measured at three ar runs across three builds under -rv against one under -rvU. That is over-building, not under-building, and it is precisely what upstream GNU Make does on the same host, which is the position: the corpus records the released source, and a distribution's workaround for its own toolchain is documented as that distribution's answer instead of implemented as GNU's."
+                    }
+
+                    {
+                        at 2026-08-12T13:51:00.856107985Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

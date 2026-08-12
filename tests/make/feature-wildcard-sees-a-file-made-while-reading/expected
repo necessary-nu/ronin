@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 7
 | # A wildcard reads the directory afresh, so a file created between two of them
 | # by a function call is seen by the second.

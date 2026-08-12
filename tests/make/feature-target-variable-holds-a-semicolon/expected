@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 5
 | # The value of a target-specific assignment runs to the end of the line, so a
 | # semicolon in it is part of the value and does not begin a recipe.

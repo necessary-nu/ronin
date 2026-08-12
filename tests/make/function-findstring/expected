@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 1
 | all: ; @printf '[%s]\n' '$(findstring port,reporter)' '$(findstring xyz,reporter)' '$(findstring ,reporter)' > out
 file out touched 3

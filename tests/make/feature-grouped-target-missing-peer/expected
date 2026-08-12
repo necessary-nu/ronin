@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 4
 | # One member of a group is present and current; the other is absent. Asking for
 | # the present one still has to run the recipe, because the group is made whole

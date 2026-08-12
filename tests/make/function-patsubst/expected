@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 2
 | foo := a.o b.o c.o
 | all: ; @printf '[%s]\n' '$(patsubst %.o,%.c,$(foo))' '$(patsubst Foo,Repl,FooFoo)' '$(patsubst %.c,%.o,x.c.c bar.c)' > out

@@ -388,6 +388,7 @@ assertions (
     {id make-substitution-reference-suffix, kind @complete, author "brendan@necessary.nu", at 2026-08-12T08:31:56.940156077Z}
     {id make-symlink-target-freshness, kind @complete, author "brendan@necessary.nu", at 2026-08-12T08:31:57.107507861Z}
     {id make-builtin-variable-defaults, kind @complete, author "brendan@necessary.nu", at 2026-08-12T11:55:45.414658578Z}
+    {id make-oracle-pristine-baseline, kind @complete, author "brendan@necessary.nu", at 2026-08-12T13:51:00.856107985Z}
 )
 
 impl_evidence (

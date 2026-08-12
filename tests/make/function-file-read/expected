@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 2
 | C := $(file <input.txt)
 | all: ; @printf '[%s]\n' '$(words $(C))' '$(firstword $(C))' '$(lastword $(C))' > out

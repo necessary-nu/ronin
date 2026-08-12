@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 8
 | # Without GPATH a target found along VPATH is rebuilt in the current directory;
 | # GPATH says to rebuild it where it was found.

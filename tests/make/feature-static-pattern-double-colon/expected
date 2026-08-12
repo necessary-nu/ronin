@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 5
 | # The static pattern form works with a double colon too, and the stem is
 | # substituted into the prerequisite pattern just as for a single colon.

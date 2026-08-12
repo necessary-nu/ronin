@@ -1,5 +1,5 @@
 oracle GNU Make 4.4.1
-status 0
+outcome success
 file Makefile kept 9
 | # An override assignment wins against the command line, and the two flavours
 | # still differ: the recursive one reads X where it is used, the simple one

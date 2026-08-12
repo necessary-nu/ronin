@@ -1,0 +1,5 @@
+ARFLAGS is where builds of GNU Make 4.4.1 stop agreeing. The released source
+answers `-rv` under `.POSIX:` and so does Fedora's build and Arch's; Debian's
+make-dfsg answers `-rvU`, asking `ar` not to write the deterministic archive it
+would otherwise write. The recording is the released source's, so this case
+fails first on a host whose `make` is Debian's. See docs/make-oracle-divergences.md.
