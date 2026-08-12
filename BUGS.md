@@ -504,3 +504,60 @@ DESTDIR=/staging` copied it at edge 3/235 instead of relinking it. `musl@seed`
 completed successfully, `sysconf` remained exported, and there were no
 undefined `__icu4x_*` symbols. The retained log is
 `/home/brendan/.cache/necessary/runs/1786484875353-377057/logs/musl--x86-64-x86-64--seed-.log`.
+
+## Command-line variables disappear in a shell-loop recursive Make
+
+Status: open
+
+Observed with Ronin revision `1b732cffef97683d8253b6ed47e1261d61ec7eca`
+while building Gawk 5.3.1 in Necessary OS run `1786491904052-2520395`.
+
+Ronin propagates a command-line variable to a directly recognised recursive
+Make, but loses it when `$(MAKE)` is invoked from a compound shell recipe. A
+reduced case is:
+
+```make
+# Makefile
+all:
+	@for dir in sub; do \
+		(cd $$dir && $(MAKE) print); \
+	done
+
+.PHONY: all
+
+# sub/Makefile
+VALUE = file-default
+
+print:
+	@printf 'VALUE=%s\n' '$(VALUE)'
+
+.PHONY: print
+```
+
+Invoked with the assignment after the goal, matching the package driver:
+
+```sh
+make -j16 all VALUE=
+```
+
+GNU Make 4.4.1 prints `VALUE=`. Ronin instead executes the recursive process
+with no effective command-line override and prints `VALUE=file-default`:
+
+```text
+[1/1] for dir in sub; do (cd $dir && .../make print); done
+[1/1] printf 'VALUE=%s\n' 'file-default'
+VALUE=file-default
+```
+
+Gawk's Automake-generated top-level install target uses the same shell-loop
+shape. Necessary OS invokes `make install profile_DATA=` to suppress two
+irrelevant profile snippets, but the `extras` child receives its Makefile
+default, `profile_DATA = gawk.sh gawk.csh`. With `--prefix=/usr`, Automake's
+default `sysconfdir = ${prefix}/etc` puts them in `/usr/etc/profile.d`, and the
+package layout validator rejects the result. The retained log is
+`/home/brendan/.cache/necessary/runs/1786491904052-2520395/logs/gawk--x86-64-x86-64--seed-.log`.
+
+Expected: every semantic recursive Make receives the parent's command-line
+variable assignments through GNU-compatible `MAKEFLAGS`/`MAKEOVERRIDES`, even
+when the recursive invocation runs inside a shell loop or compound recipe. The
+reduced case MUST print `VALUE=` repeatedly with `-j16`.
