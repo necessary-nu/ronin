@@ -147,3 +147,20 @@ manifest-derived graph is.
 > recursive banners, jobserver choreography, and runner-specific status
 > distinctions are not conformance criteria. Moving the pin requires rerunning
 > the corpus and reclassifying changes in build intent.
+
+> [spec:ronin:req:make.oracle-provenance]
+> The oracle is upstream GNU Make 4.4.1 as the Free Software Foundation
+> released it, built from that release's own source. A distribution's build of
+> 4.4.1 is a different program wearing the same version string, and where the
+> two answer differently the released source decides what Ronin implements;
+> the distribution's answer is a divergence to be classified and written down.
+>
+> Because the version string does not identify the build, a recording carries
+> the identity of the Make that produced it: the reported version, the host it
+> reports being built for, prose naming the source it was built from, and
+> answers to a fixed set of questions on which builds of 4.4.1 are known to
+> differ. Recording MUST refuse when the Make in front of it answers
+> differently from that record, so that moving the oracle is an edit to the
+> record and a rerun of the corpus rather than a silent overwrite. Which Make
+> the recorder runs MUST be selectable, so that a second build can be measured
+> against the recording without becoming it.

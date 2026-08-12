@@ -19,9 +19,16 @@
 //!
 //! Expectations are recorded from GNU Make and never written by hand:
 //!
-//!   `MAKE_PORT_RECORD=1` on a `--test make_port` run
+//!   `MAKE_PORT_RECORD=1 MAKE_PORT_ORACLE=<make>` on a `--test make_port` run
 //!
-//! which needs `/usr/bin/make`. Running the test does not.
+//! which needs the Make `tests/make/oracle.provenance` names. Running the test
+//! does not. A second Make can be measured against the recording without
+//! becoming it:
+//!
+//!   `MAKE_PORT_COMPARE=1 MAKE_PORT_ORACLE=<make>`
+
+#[path = "support/oracle.rs"]
+mod oracle;
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -30,9 +37,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::SystemTime;
 
-/// The oracle. Pinned so that re-recording on a host with a different Make is a
-/// deliberate act rather than an accident.
-const ORACLE_VERSION: &str = "GNU Make 4.4.1";
+/// Runs the corpus with the selected Make and reports how it differs from the
+/// recording, instead of comparing Ronin against it.
+const COMPARE_VARIABLE: &str = "MAKE_PORT_COMPARE";
+
+/// Where the comparison report is left, so a classification can be read after
+/// the run rather than scrolled back to.
+const COMPARISON_REPORT: &str = "target/make-port-comparison.txt";
 
 /// Cases retained as evaluator and interface discovery, but excluded from the
 /// build-intent gate because their asserted result belongs to GNU Make's
@@ -101,7 +112,12 @@ fn make_build_intent_matches_oracle() {
     assert!(!cases.is_empty(), "no cases under {}", corpus.display());
 
     if std::env::var_os("MAKE_PORT_RECORD").is_some() {
-        record(&cases);
+        record(&corpus, &cases);
+        return;
+    }
+
+    if std::env::var_os(COMPARE_VARIABLE).is_some() {
+        report_second_make(&corpus, &cases);
         return;
     }
 
@@ -113,7 +129,7 @@ fn make_build_intent_matches_oracle() {
         let expected = read_expected(case);
         let difference = difference(&expected, &observed);
         match (difference, known_divergence(case)) {
-            (Some(difference), None) => failures.push(format!("{}: {difference}", case.id)),
+            (Some(difference), None) => failures.push(failure(case, &difference)),
             (None, Some(reason)) => repaired.push(format!("{}: {reason}", case.id)),
             _ => {}
         }
@@ -140,9 +156,27 @@ fn make_build_intent_matches_oracle() {
 /// divergence fails, and so does a recorded one that has been fixed — which is
 /// what stops the list becoming a place differences go to be forgotten.
 fn known_divergence(case: &Case) -> Option<String> {
-    fs::read_to_string(case.directory.join("divergence"))
+    sidecar(case, "divergence")
+}
+
+/// How this case failed, with whatever the corpus recorded about why it is one
+/// of the delicate ones.
+///
+/// A case whose recording departs from a distribution's Make fails here first
+/// on a host that has one, so what the reader needs at that moment is the note
+/// beside the case rather than a search for which build the answer came from.
+fn failure(case: &Case, difference: &str) -> String {
+    match sidecar(case, "note") {
+        Some(note) => format!("{}: {difference}\n  {note}", case.id),
+        None => format!("{}: {difference}", case.id),
+    }
+}
+
+/// A case's prose beside it, if the case wrote any.
+fn sidecar(case: &Case, name: &str) -> Option<String> {
+    fs::read_to_string(case.directory.join(name))
         .ok()
-        .map(|reason| reason.trim().to_owned())
+        .map(|text| text.trim().to_owned())
 }
 
 fn collect(corpus: &Path) -> Vec<Case> {
@@ -240,7 +274,7 @@ fn copy_into(from: &Path, to: &Path) {
         let entry = entry.expect("a case entry");
         let name = entry.file_name();
         // The recording is the test's own, not the build's input.
-        if name == "expected" || name == "divergence" {
+        if name == "expected" || name == "divergence" || name == "note" {
             continue;
         }
         let source = entry.path();
@@ -270,7 +304,12 @@ fn walk(root: &Path, directory: &Path, before: SystemTime, into: &mut BTreeMap<S
         let name = name.to_string_lossy();
         // Ronin's build log and the case's own setup are the harness's, not the
         // build's answer.
-        if name.starts_with('.') || name == "setup" || name == "args" || name == "divergence" {
+        if name.starts_with('.')
+            || name == "setup"
+            || name == "args"
+            || name == "divergence"
+            || name == "note"
+        {
             continue;
         }
         if entry.file_type().expect("a file type").is_dir() {
@@ -304,13 +343,13 @@ fn read_words(path: &Path) -> Vec<String> {
 // ---------------------------------------------------------------------------
 // The recording format: readable, diffable, and written only by --record.
 
-fn render(observed: &Observed) -> String {
+fn render(observed: &Observed, version: &str) -> String {
     let outcome = if observed.succeeded {
         "success"
     } else {
         "failure"
     };
-    let mut text = format!("oracle {ORACLE_VERSION}\noutcome {outcome}\n");
+    let mut text = format!("oracle {version}\noutcome {outcome}\n");
     for (path, entry) in &observed.files {
         let mark = if entry.touched { "touched" } else { "kept" };
         match &entry.content {
@@ -363,8 +402,9 @@ fn parse(text: &str, id: &str) -> Observed {
         flush(&mut pending, &mut files);
         let mut words = line.split(' ');
         match words.next() {
-            // The oracle line is a header for the reader; the version it names
-            // is enforced when recording, not when replaying.
+            // The oracle line is a header for the reader. Which Make made the
+            // recording is `tests/make/oracle.provenance`, and it is enforced
+            // when recording rather than when replaying.
             Some("oracle" | "") | None => {}
             Some("status") => {
                 // Backward-compatible reader for recordings made before the
@@ -481,24 +521,107 @@ fn difference(expected: &Observed, observed: &Observed) -> Option<String> {
 }
 
 /// Re-derive every expectation from the oracle. Never inferred, never edited.
-fn record(cases: &[Case]) {
-    let oracle = Path::new("/usr/bin/make");
-    assert!(oracle.exists(), "recording needs {}", oracle.display());
-    let reported = Command::new(oracle)
-        .arg("--version")
-        .output()
-        .expect("asking the oracle its version");
-    let banner = String::from_utf8_lossy(&reported.stdout);
-    let first = banner.lines().next().unwrap_or_default();
-    assert!(
-        first.starts_with(ORACLE_VERSION),
-        "the oracle is {first:?}, and the corpus is recorded against {ORACLE_VERSION}"
-    );
+fn record(corpus: &Path, cases: &[Case]) {
+    let make = oracle::selected();
+    let provenance = pinned(corpus, &make);
 
     for case in cases {
-        let observed = run(case, oracle);
-        fs::write(case.directory.join("expected"), render(&observed))
-            .unwrap_or_else(|error| panic!("{}: writing the recording: {error}", case.id));
+        let observed = run(case, &make);
+        fs::write(
+            case.directory.join("expected"),
+            render(&observed, &provenance.version),
+        )
+        .unwrap_or_else(|error| panic!("{}: writing the recording: {error}", case.id));
         println!("recorded {}", case.id);
     }
+}
+
+/// The identity this recording will carry, having established that the Make
+/// about to produce it is the one the corpus is recorded against.
+///
+/// Moving the pin is its own act with its own name, and it rewrites the record
+/// so that which Make the corpus now speaks for arrives as a diff to review.
+fn pinned(corpus: &Path, make: &Path) -> oracle::Provenance {
+    let observed = oracle::probe(make);
+    let recorded = oracle::read(corpus);
+
+    if let Some(build) = std::env::var_os(oracle::MOVE_VARIABLE) {
+        let moved = oracle::Provenance {
+            build: build.to_string_lossy().into_owned(),
+            ..observed
+        };
+        if let Ok(recorded) = &recorded {
+            for difference in oracle::differences(recorded, &moved) {
+                println!("moved: {difference}");
+            }
+        }
+        oracle::write(corpus, &moved);
+        return moved;
+    }
+
+    let recorded = recorded.unwrap_or_else(|reason| {
+        panic!(
+            "{reason}. Build the oracle with scripts/build-make-oracle.sh and pin it with \
+             {}=<what it was built from>",
+            oracle::MOVE_VARIABLE
+        )
+    });
+    let differences = oracle::differences(&recorded, &observed);
+    assert!(
+        differences.is_empty(),
+        "{} is not the Make this corpus is recorded against ({}):\n\n{}\n\n\
+         Build the oracle with scripts/build-make-oracle.sh and name it in {}, or move the \
+         pin deliberately with {}=<what it was built from>",
+        make.display(),
+        recorded.build,
+        differences.join("\n"),
+        oracle::ORACLE_VARIABLE,
+        oracle::MOVE_VARIABLE
+    );
+
+    oracle::Provenance {
+        build: recorded.build,
+        ..observed
+    }
+}
+
+/// Run the corpus with a Make that is not the oracle and say how it differs
+/// from the recording.
+///
+/// A report rather than a gate. Another build of 4.4.1 disagreeing with the
+/// recording is the finding being sought, so there is nothing here to fail:
+/// what the run produces is a classification of that build's departures.
+fn report_second_make(corpus: &Path, cases: &[Case]) {
+    let make = oracle::selected();
+    let observed = oracle::probe(&make);
+    let mut report = format!(
+        "make {}\nversion {}\nhost {}\n",
+        make.display(),
+        observed.version,
+        observed.host
+    );
+    match oracle::read(corpus) {
+        Ok(recorded) => {
+            let _ = writeln!(report, "recorded oracle {}", recorded.build);
+            for difference in oracle::differences(&recorded, &observed) {
+                let _ = writeln!(report, "identity {difference}");
+            }
+        }
+        Err(reason) => {
+            let _ = writeln!(report, "identity unrecorded: {reason}");
+        }
+    }
+
+    let mut differing = 0;
+    for case in cases {
+        if let Some(difference) = difference(&read_expected(case), &run(case, &make)) {
+            differing += 1;
+            let _ = writeln!(report, "case {}: {difference}", case.id);
+        }
+    }
+    let _ = writeln!(report, "{differing} of {} cases differ", cases.len());
+
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(COMPARISON_REPORT);
+    fs::write(&path, &report).unwrap_or_else(|error| panic!("writing {}: {error}", path.display()));
+    println!("{report}\nwritten to {}", path.display());
 }

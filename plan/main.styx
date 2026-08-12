@@ -8699,4 +8699,89 @@ children (
             }
         )
     }
+
+    {
+        id make-oracle-provenance
+        title "Make the recorded Make oracle's identity explicit"
+        kind @test
+        deps (make-build-intent-gate make-builtin-variable-defaults)
+        children (
+            {
+                id make-oracle-identity-record
+                title "Record which Make produced the corpus and let it be chosen"
+                kind @test
+                implements {
+                    target-impl ([spec:ronin:req:make.oracle-provenance])
+                }
+                log (
+                    {
+                        at 2026-08-12T13:11:40.936775542Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Parameterize the recorder's oracle so an arbitrary command — including a wrapper that runs a container — can be measured, and replace the version-string check with a provenance record the corpus carries: version, reported host, prose naming the build, and answers to a fixed probe on which builds of 4.4.1 are known to differ. Recording refuses on any mismatch. Also add a comparison mode that runs the corpus with a chosen Make and reports how it differs from the recording without writing it, which is how a second distribution's build gets classified."
+                    }
+
+                    {
+                        at 2026-08-12T13:11:57.572967581Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
+            }
+
+            {
+                id make-oracle-pristine-baseline
+                title "Re-record the corpus against upstream GNU Make 4.4.1"
+                kind @fix
+                deps (make-oracle-identity-record)
+                log (
+                    {
+                        at 2026-08-12T13:11:47.686012068Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Build GNU Make 4.4.1 from the released tarball, pinned by sha256, under reference/ where the pinned Ninja already lives, and re-record the corpus against it. Audit every fixture that moves and classify each as a distribution patch or a property of this host. Flip kati's POSIX ARFLAGS from Debian's -rvU to GNU's -rv and write the Debian departure down as a divergence rather than a code comment."
+                    }
+                )
+            }
+
+            {
+                id make-oracle-distro-divergence
+                title "Classify Fedora and Arch departures from the released oracle"
+                kind @docs
+                deps (make-oracle-pristine-baseline)
+                log (
+                    {
+                        at 2026-08-12T13:11:50.633659409Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Run the corpus in comparison mode against Fedora's and Arch's builds of Make through container shims, and classify every case that differs as matching the released source, matching Debian, or unique to that distribution. Record the results beside the pristine-vs-Debian classification."
+                    }
+                )
+            }
+        )
+        log (
+            {
+                at 2026-08-12T13:11:38.508606923Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "The build-intent corpus under tests/make is recorded from a Make the harness identifies by one string, \"GNU Make 4.4.1\", which Debian's make-dfsg 4.4.1-2, Fedora's build, Arch's build and the released tarball all print. The corpus therefore cannot say which program produced it, and a re-record on another host would overwrite Debian-recorded expectations without a word. At least one recorded answer is already known to be Debian's rather than GNU's: POSIX ARFLAGS is -rv in the released 4.4.1 sources and -rvU in Debian's binary, and kati hardcodes -rvU to match. This subtree makes the recording say which Make made it, moves the oracle to the released source, and classifies what the distributions do differently."
+            }
+        )
+    }
+
+    {
+        id make-conformance-oracle-identity
+        title "Record which Make the vendored-corpus run measures against"
+        kind @test
+        deps (make-oracle-identity-record make-conformance-corpus)
+        log (
+            {
+                at 2026-08-12T13:29:30.331398533Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "The 387-run vendored-corpus gate (examples/make_conformance.rs, scripts/check-make-conformance.sh) resolves its oracle as `make` on PATH with a `--make` override, and admits it on the same evidence the build-intent corpus used to: the first line of `--version` equalling \"GNU Make 4.4.1\". Debian's, Fedora's, Arch's and the released source all pass that check, so tests/make_corpus_inventory.tsv records 387 live comparisons against whichever one the host had — Debian's, here. Pointing it at reference/make-oracle and giving it the same provenance record the build-intent corpus now carries would reclassify the inventory, so it is deliberately not folded into the pass that established the pin. The upstream-suite gate needs nothing: its oracle is GNU Make's own test suite, pinned by git commit d66a65a, and it runs Ronin rather than any Make binary."
+            }
+        )
+    }
 )
