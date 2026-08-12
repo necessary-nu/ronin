@@ -7530,6 +7530,13 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-12T09:48:16.045069139Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Necessary OS world run 1786524003873-3677276 exposed this as a concrete bootstrap blocker with Ronin 6147c84. zstd@bootstrap uses explicit recipes built from GNU's standard COMPILE.c, COMPILE.S, and OUTPUT_OPTION defaults. Ronin leaves them empty, turning `$(COMPILE.c) -MMD -MP $(OUTPUT_OPTION) source.c` into an attempted `MMD` executable and `$(COMPILE.S) $(OUTPUT_OPTION) source.S` into an attempt to execute the source file. BUGS.md records the retained log and a reduced case."
+                            }
                         )
                     }
 

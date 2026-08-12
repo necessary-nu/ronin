@@ -650,3 +650,58 @@ written, but its recorded mtime no longer dirties an otherwise current Make
 target. A two-invocation symlink regression reproduces the stale-log shape,
 and the retained Findutils target with its original stale `.ninja_log` now
 reports `ronin: no work to do.`
+
+## GNU Make's built-in compile variables are missing
+
+Status: open
+
+Observed with Ronin revision `6147c84b1a0f5d0116cf86ace7f6028c8de98281`
+while building Zstd 1.5.7 at `zstd@bootstrap` in Necessary OS run
+`1786524003873-3677276`.
+
+Zstd's explicit object rules are written in terms of GNU Make's built-in
+variables:
+
+```make
+$(ZSTD_DYNLIB_DIR)/%.o : %.c | $(ZSTD_DYNLIB_DIR)
+	$(COMPILE.c) $(DEPFLAGS) $(OUTPUT_OPTION) $<
+
+$(ZSTD_DYNLIB_DIR)/%.o : %.S | $(ZSTD_DYNLIB_DIR)
+	$(COMPILE.S) $(OUTPUT_OPTION) $<
+```
+
+Ronin defines `CC`, `CXX`, and `AR` in its bootstrap Makefile, but not
+`COMPILE.c`, `COMPILE.S`, or `OUTPUT_OPTION`. Consequently the C recipe loses
+both its compiler and output argument and becomes, for example:
+
+```text
+(MMD -MP /build/work/lib/common/debug.c)
+/bin/sh: 1: MMD: not found
+```
+
+The assembly recipe becomes the source pathname alone and fails by trying to
+execute it:
+
+```text
+(/build/work/lib/decompress/huf_decompress_amd64.S)
+/bin/sh: 1: /build/work/lib/decompress/huf_decompress_amd64.S: Permission denied
+```
+
+A reduced case is:
+
+```make
+all: hello.o
+
+hello.o: hello.c
+	$(COMPILE.c) $(OUTPUT_OPTION) $<
+```
+
+With a valid `hello.c`, GNU Make 4.4.1 expands the recipe to the equivalent of
+`cc -c -o hello.o hello.c` and succeeds. Ronin expands it to `hello.c` and
+tries to execute the source file.
+
+Expected: unless `-R`/`--no-builtin-variables` is in effect, Ronin MUST expose
+GNU Make's standard built-in variable catalogue, including the composition
+variables used by explicit recipes (`COMPILE.c`, `COMPILE.S`, `OUTPUT_OPTION`,
+and their constituent defaults). `-R` must continue to suppress them. The
+reduced case and Zstd's real `libzstd` graph must both compile through Ronin.
