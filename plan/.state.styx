@@ -385,6 +385,7 @@ assertions (
     {id make-suffix-rule-stem-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-11T23:42:24.280804056Z}
     {id make-makeflags-in-recipe-environment, kind @doing, author "brendan@necessary.nu", at 2026-08-12T07:39:04.98862772Z}
     {id make-recursive-shell-substitution, kind @doing, author "brendan@necessary.nu", at 2026-08-12T07:47:36.707633042Z}
+    {id make-substitution-reference-suffix, kind @doing, author "brendan@necessary.nu", at 2026-08-12T08:05:01.283380596Z}
 )
 
 impl_evidence (

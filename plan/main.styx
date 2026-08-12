@@ -8603,6 +8603,20 @@ children (
                 kind @decision
                 text "priority pinned to 0 — operator override: Operator explicitly directed this session to fix all Ronin blockers exposed by the monitored Necessary OS package failures now."
             }
+
+            {
+                at 2026-08-12T08:05:01.283380596Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-12T08:11:09.034012252Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Fixed Kati substitution references so suffix replacements preserve nonmatching words and percent patterns use general substitution semantics. Added Kati unit coverage and a Ronin Make regression. The retained Zstd 1.5.7 libzstd.a dry-run now resolves the computed BUILD_DIR and produces the correct 37-step object/archive graph with exit 0."
+            }
         )
     }
 )

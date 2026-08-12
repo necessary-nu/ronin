@@ -247,3 +247,29 @@ fn submake_shell_waits_for_prerequisite() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// Zstd converts C and assembler names in two suffix-substitution passes. A
+/// nonmatching second pass must retain `debug.o`, not append another `.o`.
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn substitution_reference_keeps_nonmatches() {
+    let directory = test_directory("substitution-reference");
+    fs::write(
+        directory.join("Makefile"),
+        "SRC := debug.c start.S notes.txt\n\
+         OBJ0 := $(SRC:.c=.o)\n\
+         OBJ := $(OBJ0:.S=.o)\n\
+         all: ; @printf '%s\\n' '$(OBJ)' > result\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("result")).unwrap(),
+        "debug.o start.o notes.txt\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
