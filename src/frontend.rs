@@ -694,6 +694,47 @@ impl BuildGraph {
         }
     }
 
+    /// Keep the Makefiles this invocation already brought up to date out of the
+    /// goals' way.
+    ///
+    /// GNU Make updates every Makefile it read before it chooses a goal, and a
+    /// file it has updated is not considered again: `update_file` returns early
+    /// on one whose `updated` flag is set. What the goals then compare against
+    /// is the Makefile's timestamp rather than the rule behind it, so a
+    /// `gen.mk: force` whose recipe left the file alone leaves whatever reads
+    /// gen.mk up to date — though `force` is out of date whenever it is looked
+    /// at.
+    ///
+    /// Two halves, because those are two different things to stop. Nothing the
+    /// update reached runs a command again, which is [`Self::mark_subgraphs_prebuilt`]
+    /// and the built-in phony rule. The Makefiles themselves additionally stop
+    /// carrying their prerequisites' dirtiness onward: the edge keeps its
+    /// outputs and loses its inputs, which is what makes the file on disk the
+    /// answer. A phony prerequisite reached any other way is left alone and
+    /// still drives whatever else asked for it, which is GNU Make's answer too.
+    pub(crate) fn mark_makefiles_remade(&mut self, remade: &[Node]) {
+        let Some(phony) = self.rule(self.root(), b"phony") else {
+            return;
+        };
+        self.mark_subgraphs_prebuilt(remade, phony);
+        for node in remade {
+            let Some(edge) = self.arenas.node(node.0).generator else {
+                continue;
+            };
+            let inputs = self.arenas.edge(edge).input.to_vec();
+            for index in (0..inputs.len()).rev() {
+                self.arenas.edge_mut(edge).remove_input(index);
+            }
+            for input in inputs {
+                self.arenas
+                    .node_mut(input)
+                    .uses
+                    .retain(|candidate| *candidate != edge);
+            }
+            self.arenas.edge_mut(edge).always_dirty = false;
+        }
+    }
+
     /// Resolves `edge`'s `pool` binding against the declared pools.
     ///
     /// # Errors

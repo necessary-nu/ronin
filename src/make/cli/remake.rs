@@ -96,8 +96,10 @@ enum Remaking {
     Finished(RunResult),
     /// A Makefile moved, so the read has to happen again on the new text.
     Restart,
-    /// Every Makefile is already what it will be, so this read stands.
-    Settled,
+    /// Every Makefile is already what it will be, so this read stands. These
+    /// are the ones the update reached and won, which the goals are not to
+    /// consider again.
+    Settled(Vec<Node>),
 }
 
 /// The graph and the scheduler attachments every pass over it shares.
@@ -117,14 +119,9 @@ impl Passes<'_, '_, '_> {
     /// Nothing to do is reported rather than run, because for the Makefiles it
     /// is the decisive answer: no command ran, so no Makefile can have changed
     /// under this read.
-    fn run(
-        &mut self,
-        targets: &[Node],
-        options: BuildOptions,
-        forgive: bool,
-    ) -> Result<Pass, Error> {
+    fn run(&mut self, targets: &[Node], options: BuildOptions, forgive: bool) -> Pass {
         if targets.is_empty() {
-            return Ok(Pass::Current);
+            return Pass::Current;
         }
         let dryrun = options.dryrun;
         let mut build = Build::with_options(self.graph, self.persistence, options);
@@ -136,38 +133,33 @@ impl Passes<'_, '_, '_> {
         }
         let planned = match build.plan(targets) {
             Ok(planned) => planned,
-            Err(failure) => return Ok(self.abandon(failure, forgive)),
+            Err(failure) => return self.abandon(failure, forgive),
         };
         if planned.already_up_to_date() {
-            return Ok(Pass::Current);
+            return Pass::Current;
         }
         let disposable = planned.disposable();
         let outcome = match planned.run() {
             Ok(outcome) => outcome,
-            Err(failure) => return Ok(self.abandon(failure, forgive)),
+            Err(failure) => return self.abandon(failure, forgive),
         };
         discard_intermediates(&disposable, dryrun);
         if outcome.exit_code() != 0 {
             if !forgive {
                 let reported = std::mem::take(self.reported);
-                return Ok(Pass::Finished(finished(
-                    reported,
-                    false,
-                    &outcome,
-                    self.silent,
-                )));
+                return Pass::Finished(finished(reported, false, &outcome, self.silent));
             }
             // The recipe really ran and really lost, and Ninja's account of
             // that is honest narration to keep. What is dropped is the failure
             // itself: the read asked for this file with `-include`.
             self.narrate(&outcome);
-            return Ok(Pass::Lost);
+            return Pass::Lost;
         }
-        Ok(Pass::Ran(outcome))
+        Pass::Ran(outcome)
     }
 
     /// Answer `-q` about one subset instead of building it.
-    fn ask(&mut self, targets: &[Node], options: BuildOptions) -> Result<Pass, Error> {
+    fn ask(&mut self, targets: &[Node], options: BuildOptions) -> Pass {
         let mut build = Build::with_options(self.graph, self.persistence, options);
         if let Some(sink) = self.diagnostics.as_deref_mut() {
             build = build.diagnostics(sink);
@@ -176,9 +168,9 @@ impl Passes<'_, '_, '_> {
             .plan(targets)
             .map(|planned| planned.already_up_to_date());
         if matches!(question, Ok(true)) {
-            return Ok(Pass::Current);
+            return Pass::Current;
         }
-        Ok(Pass::Answered(question))
+        Pass::Answered(question)
     }
 
     fn abandon(&mut self, failure: Error, forgive: bool) -> Pass {
@@ -198,28 +190,30 @@ impl Passes<'_, '_, '_> {
     /// over either, however the recipe left the file: `any_remade` is raised
     /// for a successful update alone (main.c), which is why each subset is
     /// stamped around its own pass rather than all of them around the phase.
-    fn remake_makefiles(&mut self, makefiles: &Makefiles<'_>) -> Result<Remaking, Error> {
+    fn remake_makefiles(&mut self, makefiles: &Makefiles<'_>) -> Remaking {
         let mut restart = false;
-        for subset in makefiles.subsets(self.graph) {
+        let mut remade = Vec::new();
+        for mut subset in makefiles.subsets(self.graph) {
             let paths = paths_of(self.graph, &subset.targets);
             let before = makefile_stamps(&paths, makefiles.directory);
-            match self.run(&subset.targets, subset.options, subset.forgive)? {
+            match self.run(&subset.targets, subset.options, subset.forgive) {
                 Pass::Ran(outcome) => self.narrate(&outcome),
                 Pass::Lost => continue,
-                Pass::Finished(result) => return Ok(Remaking::Finished(result)),
+                Pass::Finished(result) => return Remaking::Finished(result),
                 Pass::Answered(question) => {
                     let reported = std::mem::take(self.reported);
-                    return Ok(Remaking::Finished(answered(reported, question)));
+                    return Remaking::Finished(answered(reported, question));
                 }
                 Pass::Current => {}
             }
             restart |= makefile_stamps(&paths, makefiles.directory) != before;
+            remade.append(&mut subset.targets);
         }
-        Ok(if restart {
+        if restart {
             Remaking::Restart
         } else {
-            Remaking::Settled
-        })
+            Remaking::Settled(remade)
+        }
     }
 
     /// Build the work staged so a recursive unit can be evaluated at all, under
@@ -228,31 +222,21 @@ impl Passes<'_, '_, '_> {
     /// GNU Make has no such phase, so there is nothing here it would have
     /// disabled: `-n` describes this work and does none of it, which leaves the
     /// child that was waiting for it uncompilable and the run over.
-    fn stage(
-        &mut self,
-        staged: &[Node],
-        invocation: &Invocation,
-        options: BuildOptions,
-    ) -> Result<Pass, Error> {
+    fn stage(&mut self, staged: &[Node], invocation: &Invocation, options: BuildOptions) -> Pass {
         if invocation.questioning() {
             return self.ask(staged, options);
         }
         let dryrun = options.dryrun;
-        let pass = self.run(staged, options, false)?;
+        let pass = self.run(staged, options, false);
         let Pass::Ran(outcome) = pass else {
-            return Ok(pass);
+            return pass;
         };
         if dryrun {
             let reported = std::mem::take(self.reported);
-            return Ok(Pass::Finished(finished(
-                reported,
-                false,
-                &outcome,
-                self.silent,
-            )));
+            return Pass::Finished(finished(reported, false, &outcome, self.silent));
         }
         self.narrate(&outcome);
-        Ok(Pass::Ran(outcome))
+        Pass::Ran(outcome)
     }
 
     fn narrate(&mut self, outcome: &Outcome) {
@@ -404,7 +388,7 @@ pub(super) fn build_compiler_inputs(
         reported,
         silent: invocation.given(Switch::Silent),
     };
-    match passes.remake_makefiles(&makefiles)? {
+    match passes.remake_makefiles(&makefiles) {
         Remaking::Finished(result) => {
             let _ = persistence.finish();
             return Ok(Settlement::Finished(result));
@@ -413,7 +397,11 @@ pub(super) fn build_compiler_inputs(
             persistence.finish()?;
             return Ok(Settlement::Restart);
         }
-        Remaking::Settled => {}
+        // Bringing a Makefile up to date is work the rest of the run has
+        // already had done for it, and GNU Make does the whole of it inside
+        // one process. Ronin reads again in place, so the goals reach the same
+        // graph and have to be told the same thing.
+        Remaking::Settled(remade) => graph.mark_makefiles_remade(&remade),
     }
 
     let mut passes = Passes {
@@ -424,7 +412,7 @@ pub(super) fn build_compiler_inputs(
         reported,
         silent: invocation.given(Switch::Silent),
     };
-    match passes.stage(&staged, invocation, options)? {
+    match passes.stage(&staged, invocation, options) {
         Pass::Finished(result) => {
             let _ = persistence.finish();
             Ok(Settlement::Finished(result))

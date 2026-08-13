@@ -1,1 +1,0 @@
-Ronin builds the Makefile through one scheduler run and the goals through another, so an always-out-of-date remake rule runs once in each; make-remake-work-not-repeated.

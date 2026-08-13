@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 11
+| # What a target that reads a remade Makefile compares against is the Makefile's
+| # timestamp, not the rule behind it. This rule is out of date whenever it is
+| # looked at, because its prerequisite is phony, and it leaves the file alone —
+| # so `copy`, which is newer than gen.mk, is current.
+| .PHONY: force
+| 
+| include gen.mk
+| 
+| gen.mk: force ; @printf 'gen ran\n' >> log
+| 
+| copy: gen.mk ; @printf 'copy ran\n' >> log; cp gen.mk copy
+file copy kept 1
+| # made
+file gen.mk kept 1
+| # made
+file log touched 1
+| gen ran

@@ -236,6 +236,24 @@ struct UnitRemakes {
     forgiven: Vec<Node>,
 }
 
+/// Where this unit's Makefiles ended up in the shared graph.
+fn unit_remakes(
+    sink: &mut GraphSink,
+    names: &Session,
+    regenerations: &RegenerationNames,
+) -> Result<UnitRemakes, MakeError> {
+    let mut looked_up = |symbols: &[kati::symtab::Symbol]| {
+        sink.unit_nodes(names, symbols).map_err(|error| {
+            sink.construction_failure()
+                .map_or_else(|| MakeError::evaluate(&error), MakeError::Construct)
+        })
+    };
+    Ok(UnitRemakes {
+        all: looked_up(&regenerations.all)?,
+        forgiven: looked_up(&regenerations.forgiven)?,
+    })
+}
+
 struct CompilationState<'a> {
     cache: HashMap<Vec<u8>, UnitSubgraph>,
     compiling: HashSet<Vec<u8>>,
@@ -244,6 +262,27 @@ struct CompilationState<'a> {
     forgiven_remakes: Vec<Node>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
+}
+
+impl CompilationState<'_> {
+    /// Record one unit's Makefiles among everything this compilation has to
+    /// build before the read can be trusted, keeping the order they were
+    /// reached in and never naming one twice.
+    fn admit(&mut self, remakes: UnitRemakes) {
+        for target in remakes.all {
+            if !self.regenerations.contains(&target) {
+                self.regenerations.push(target);
+            }
+            if !self.remakes.contains(&target) {
+                self.remakes.push(target);
+            }
+        }
+        for target in remakes.forgiven {
+            if !self.forgiven_remakes.contains(&target) {
+                self.forgiven_remakes.push(target);
+            }
+        }
+    }
 }
 
 /// The work that must finish before one recursive child can be evaluated.
@@ -362,28 +401,14 @@ where
             }
             return Err(MakeError::evaluate(&error));
         }
-        let unit_regenerations = sink
-            .unit_nodes(&ev.session, &regeneration_names.all)
-            .map_err(|error| {
-                sink.construction_failure()
-                    .map_or_else(|| MakeError::evaluate(&error), MakeError::Construct)
-            })?;
-        let unit_forgiven = sink
-            .unit_nodes(&ev.session, &regeneration_names.forgiven)
-            .map_err(|error| {
-                sink.construction_failure()
-                    .map_or_else(|| MakeError::evaluate(&error), MakeError::Construct)
-            })?;
+        let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names)?;
         let unit = sink.take_unit();
         ev.finish().map_err(|error| MakeError::evaluate(&error))?;
         Ok((
             unit,
             exported,
             command_line,
-            UnitRemakes {
-                all: unit_regenerations,
-                forgiven: unit_forgiven,
-            },
+            unit_remakes,
             makeflags,
             flag_environment,
         ))
@@ -396,19 +421,7 @@ where
             return Err(error);
         }
     };
-    for target in unit_remakes.all {
-        if !state.regenerations.contains(&target) {
-            state.regenerations.push(target);
-        }
-        if !state.remakes.contains(&target) {
-            state.remakes.push(target);
-        }
-    }
-    for target in unit_remakes.forgiven {
-        if !state.forgiven_remakes.contains(&target) {
-            state.forgiven_remakes.push(target);
-        }
-    }
+    state.admit(unit_remakes);
 
     let mut descendant_context = context;
     descendant_context.makeflags.clone_from(&makeflags);
