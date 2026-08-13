@@ -8884,6 +8884,7 @@ children (
                 id make-lazy-recipe-expansion
                 title "Expand a recipe when it is about to run"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-13T20:43:52.832200915Z
@@ -8918,6 +8919,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Delivered. kati: `RecipeExpansion` on `BuildSink` plus `SinkRule::deferred_recipe`; `populate_ninja_node` leaves an eligible recipe unread and `sink_node` declares a rule that names it; `ninja::DeferredRecipes::expand` is the launch-time expansion, assembling the same script, description, shell flags and ignore-errors the eager path assembles. `command::expansion_can_reach_make` and `references_new_inputs` and `is_blank_recipe_line` are the eligibility tests; `NewInputsTiming::Launch` answers an indirect `$?` from the real timestamps, which at launch are the ones GNU compares. Two small kati openings the change needed: `Symtab::peek_symbol` (ask about a name without minting it) and `Variable::recursive_definition`; and `Vars::assign` now lets an automatic variable be replaced by another automatic variable, because the front end re-arms `$@`/`$<`/`$?` every time it starts expanding recipes and a Makefile assigning over them is still refused.\n\nRonin: `build::LateCommands`/`LateCommand` and `Builder::bind_late_command`, called from `prepare_edge`; `make::recipe::PendingRecipes` holds the retained session and answers for each deferred edge; `make::sink::CommandLayout` is the `cd`/`env`/shell/response-file wrapper, extracted so the sink and the launch build the identical command line; `Loaded` carries the recipes to every build over the graph, including `cli/remake.rs`'s compiler-input passes.\n\nGates. Workspace tests 737 pass. Make build-intent oracle: 415 gating cases (409 + 6 recorded here), all matching. Direct/manifest equivalence 297 makefiles / 276 graphs compared / 0 disagreements. Conformance 387 runs, 309 identical and 78 differing — unmoved. Upstream GNU Make inventory 1287 rows, no row added or removed, class totals unmoved (unclassified 504, compiler 37, interface 46, narration 700); 4 rows moved, all narration, all the one residue now filed as make-empty-expansion-runs-nothing. Real-project gate: Ninja's CMake Makefile built in 21s at -j8, the recorded figure. fmt clean; Clippy pedantic+nursery clean on ronin lib+bins; plain `-D warnings` clean on kati.\n\nSix oracle-recorded fixtures: recipe-of-a-current-target-is-not-expanded, recipe-error-in-a-current-target-does-not-fire, recipe-expansion-sees-an-earlier-recipes-file, recipe-lines-are-expanded-before-the-first-line-runs, recipe-variable-shell-runs-when-the-recipe-runs (the BUGS.md/CPython shape), dry-run-expands-the-recipe-it-would-run.\n\nThe BUGS.md entry \"Recipe lines expand before their rule runs, freezing $(shell) results\" is closed with the mechanism, the reduced case, and the replay: the failed python@seed tree survives, but its generated Makefile bakes absolute /build paths and remakes itself from a srcdir that exists only inside the package sandbox, so the replay runs CPython's own PYTHON_FOR_BUILD line and pybuilddir.txt rule verbatim against a stand-in interpreter that records the _PYTHON_SYSCONFIGDATA_PATH it was handed. GNU Make 4.4.1 and Ronin now record the same two values.\n\nFollow-ups: make-empty-expansion-runs-nothing, make-recursive-child-recipes-expand-at-launch."
+                    }
+
+                    {
+                        at 2026-08-13T22:35:56.254395338Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
