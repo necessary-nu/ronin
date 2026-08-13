@@ -6050,6 +6050,14 @@ children (
                         kind @status
                         text "Todo → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-13T19:35:17.895042186Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Handoff found while shipping make-pattern-specific-variable-application, and newly reachable because of it: a `private` binding and an ordinary one for the same name, coming from two different scopes, are released in the wrong order.\n\nReproducer (GNU Make 4.4.1 oracle vs Ronin at 5b89c44):\n\n    V = outer\n    %.p: private V = priv\n    q.p: V = pub\n    all: q.p\n    q.p: dep9 ; @echo \"q.p:[$(V)]\"\n    dep9: ; @echo \"dep9:[$(V)]\"\n\nGNU: dep9:[pub], q.p:[pub]. Ronin: dep9:[outer], q.p:[pub]. The prerequisite loses the non-private named value and falls back to the global.\n\nCause. dep.rs keeps rule bindings in two lists — private and ordinary — and releases the private one before planning prerequisites, which is how `private` stops at the target's own recipe. That is sound while at most one scope binds a name. Now that every matching pattern applies, two scopes can bind one name, and releasing only the private guard restores what *it* shadowed rather than what is actually outermost: here the pattern's private binding was installed first, so its guard holds `outer`, and releasing it puts `outer` back over the named `pub`.\n\nOrdering within each list was corrected to last-in-first-out in this change (`unbind`); what remains is that the two lists are one nesting and are unwound as two. The fix is to unwind the whole run in order and lay the surviving public bindings down again, which needs the symbol and value kept beside each guard.\n\nThe mirror case is already correct — `q.p: private V = priv` with `%.p: V = pub` gives GNU's dep9:[pub], q.p:[priv], r.p:[pub] — because there the private binding is installed last and its guard holds the right value.\n\nNo node filed: make-compatibility-gap-closure is sealed (\"complete decomposition of confirmed gaps in this snapshot\") and refuses a new child, and unsealing is an operator decision. Needs a placement decision before it can be scheduled."
+                        after_done true
+                    }
                 )
             }
 
