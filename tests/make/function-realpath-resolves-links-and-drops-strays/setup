@@ -1,0 +1,4 @@
+mkdir -p d/sub
+touch d/f
+ln -s d/f link
+ln -s nowhere .dangling

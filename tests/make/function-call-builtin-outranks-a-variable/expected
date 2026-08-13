@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| notdir = SHADOW
+| suffix = SHADOW
+| all: ; @printf '[%s]\n' '$(call notdir,a/b c/d)' '$(call suffix,a.c b.o)' '$(call notdir)' \
+|  '$(call ,anything)' '$(call call,notdir,x/y)' '$(call subst,a,b,banana,ignored)' > out
+file out touched 6
+| [b d]
+| [.c .o]
+| []
+| []
+| [y]
+| [bbnbnb]

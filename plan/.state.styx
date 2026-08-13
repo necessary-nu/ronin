@@ -410,6 +410,9 @@ assertions (
     {id make-default-goal-variable-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-13T18:45:17.264520233Z}
     {id make-pattern-specific-variable-application, kind @complete, author "brendan@necessary.nu", at 2026-08-13T19:32:03.836210004Z}
     {id make-pattern-variable-assignment-scope, kind @complete, author "brendan@necessary.nu", at 2026-08-13T19:32:07.39527794Z}
+    {id make-modern-function-evaluation, kind @complete, author "brendan@necessary.nu", at 2026-08-13T20:11:38.150028004Z}
+    {id make-filter-percent-escaping, kind @complete, author "brendan@necessary.nu", at 2026-08-13T20:12:08.557718165Z}
+    {id make-path-function-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-13T20:12:41.838244462Z}
 )
 
 impl_evidence (

@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| list := .hidden dir/.hidden a. a.b.c .. ./.x ./x /tmp.c/bar dir.d/f plain /
+| all: ; @printf '[%s]\n' '$(suffix $(list))' '$(basename $(list))' > out
+file out touched 2
+| [.hidden .hidden . .c . .x]
+| [ dir/ a a.b . ./ ./x /tmp.c/bar dir.d/f plain /]

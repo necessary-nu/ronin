@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| W := foo%bar fooXbar foo\%bar foo\Xbar
+| all: ; @printf '[%s]\n' '$(filter foo\\%bar,$(W))' '$(filter foo\\\%bar,$(W))' \
+|  '$(filter-out foo\%bar,$(W))' '$(filter %x\%y,ax\%y aXy ax%y)' '$(filter \%%,%a %b c)' \
+|  '$(filter a%b%c,a%b%c axb%c ab%c)' > out
+file out touched 6
+| [foo\%bar foo\Xbar]
+| [foo\%bar]
+| [fooXbar foo\%bar foo\Xbar]
+| [ax\%y]
+| [%a %b]
+| [a%b%c axb%c ab%c]

@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| V = a/b
+| all: ; @printf '[%s]\n' '$(call notdir,$$(V))' '$(call foreach,v,1 2,x$(v))' \
+|  '$(call foreach,v,1 2,$$(v)y)' '$(call let,q r,1 2 3,$$(q)/$$(r))' \
+|  '$(call if,1,$$(V),n)' '$(if 1,$$(V))' '$(call intcmp,1,1,lt,$$(V),gt)' > out
+file out touched 7
+| [$(V)]
+| [x x]
+| [1y 2y]
+| [1/2 3]
+| [a/b]
+| [$(V)]
+| [a/b]

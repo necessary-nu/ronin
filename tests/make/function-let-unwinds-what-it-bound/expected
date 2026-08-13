@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| a = outer
+| b = news
+| inner = $(let a,shadow,$(a)/$(origin a)/$(flavor a))
+| nested = $(let a b,1 2,$(let a,9,$(a)$(b)))
+| all: ; @printf '[%s]\n' '$(inner)' '$(a)' '$(nested)' '$(a)$(b)' > out
+file out touched 4
+| [shadow/automatic/simple]
+| [outer]
+| [92]
+| [outernews]

@@ -7493,6 +7493,27 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-13T20:11:02.389849611Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T20:11:33.6523695Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "GNU Make 4.4.1 characterised against the pristine oracle before anything moved. Three functions, and the surprising cells are what decided the shape.\n\n`$(let names,list,body)` (function.c func_let, FT_ENTRY 3/3/EXP=0). Each name but the last takes one word; the last takes *the remainder of the string*, not a rejoined word list. `$(let a b,  1   2   3  ,+$(a)+$(b)+)` is `+1+2   3  +`: leading whitespace comes off the remainder and everything inside and after it stays. Names past the end of the list bind to the empty string rather than going unbound. An empty name list is not an error — `$(let ,1 2,body)` expands the body. Bindings are `o_automatic` (`$(origin)` says `automatic`, `$(flavor)` says `simple`) and unwind when the body finishes, so an outer `a` means what it meant again.\n\n`$(intcmp lhs,rhs[,lt[,eq[,gt]]])` (2/5/EXP=0). Parsing is `parse_textint`: optional whitespace, one optional sign, digits, optional whitespace. Leading zeros are dropped and a zero has no sign, so `$(intcmp 007,7)` is `7` and `$(intcmp -0,0)` is `0` — the two-argument form answers with the canonical spelling of the value, not with what was written. The comparison is the surprising one: sign, then digit count, then memcmp of the digits, with no negation for a negative pair. `$(intcmp -5,-6,lt,eq,gt)` is `lt` and `$(intcmp -10,-9,lt,eq,gt)` is `gt` — GNU orders two negatives by magnitude. It is also arbitrary precision by construction: 23-digit values compare correctly. Replicated exactly, quirk included, because the oracle is the specification. Arm defaulting: less takes lt; equal takes eq; greater takes gt if gt was given *and* eq was given, else eq — so `$(intcmp 3,2,lt,eq)` is `eq` and `$(intcmp 3,2,lt)` is empty. Only the chosen arm expands.\n\n`$(call NAME,...)` where NAME is a builtin. `func_call` calls `lookup_function` *before* `lookup_variable`, so a builtin always wins: a Makefile that defines `notdir = SHADOW` cannot reach its own through `$(call)`. Calling nothing is a no-op; `$(call notdir)` is empty rather than an error (`expand_builtin_function` returns early on argc 0), while too few arguments for the function is the same `insufficient number of arguments` it would have refused directly. No maximum-argument clamp applies, because the commas were split by `call`'s unlimited arity — `$(call subst,a,b,banana,ignored)` ignores the fourth. The cell that decided the implementation: `call` expands its arguments first, so a builtin GNU would have handed unexpanded text expands it a *second* time. `$(call foreach,v,1 2,x$(v))` is `x x` (the `$(v)` was consumed before anything was bound) while `$(call foreach,v,1 2,$$(v)y)` is `1y 2y`. `$(call notdir,$$(V))` is the literal `$(V)`.\n\nWhat changed, all in kati/src-rs/func.rs. `FuncInfo` gained `pre_expanded_args`, which is GNU's EXP column and nothing else: every function here expands its own arguments, so it changes nothing about a direct call and decides only what `$(call)` hands over — literal text for an eager function, a re-parsed expression for a lazy one. False for `if`, `and`, `or`, `foreach`, `let`, `intcmp`, and `KATI_foreach_sep` because it is `foreach`. `let_func` binds through the existing `with_bounds`, so a body that fails restores every name at once. `intcmp_func` carries a `MakeInt` that is the parse and the comparison together. `call_func` grew the builtin lookup ahead of the variable lookup, and the GNU no-op for an empty name.\n\nFixtures. The four owned markers are gone: function-let, function-let-recursive, function-intcmp, function-call-builtin all match. Six new cases recorded from the oracle: function-let-binds-the-rest-to-the-last-name, function-let-unwinds-what-it-bound, function-intcmp-reads-sign-and-leading-zeros, function-intcmp-falls-back-to-the-equal-arm (whose lt arm is a `$(shell touch)` that leaves no file, so the laziness is observable as an absence), function-call-hands-a-builtin-expanded-text, function-call-builtin-outranks-a-variable. Three kati unit tests: let_restores_bindings_when_body_fails, intcmp_refuses_a_non_numeric_argument, call_refuses_too_few_builtin_arguments.\n\nUpstream inventory. functions/call.diff, functions/let.diff, .1 and .3 moved unclassified → narration: GNU's own expectations now match line for line and only Ronin's `[N/M]` progress line differs. functions/intcmp.diff.1-4 and functions/let.diff.5-6 stayed unclassified but changed family, ninja-progress+evaluation → product-name+evaluation: those are the error cases, and they now die where they used to evaluate, so what is left is our name and our quoting (`` `intcmp' `` for `'intcmp'`, no `  Stop.` suffix) rather than a different answer. functions/intcmp.diff did not move: it fails on `$(shell echo lt)` inside an arm, which is make-shell-function-evaluation's refusal and not this node's.\n\nTwo defects found and left for follow-ups rather than folded in, both filed under make-subsumption with reproducers: the recursion guard is by name where GNU's is per variable object (reproduces on `foreach` alone, so it predates `let`), and `-e` makes an environment variable's origin `environment override` where GNU says `environment`."
+                            }
+
+                            {
+                                at 2026-08-13T20:11:38.150028004Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
@@ -7516,6 +7537,27 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-13T20:11:42.808745711Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T20:12:03.639086166Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "GNU 4.4.1's rule is `find_percent` (read.c:2528), which is `find_char_unquote(pattern, '%')`, and it is a parity rule rather than a \"strip the backslash\" rule. Characterised against the oracle before anything moved.\n\nA run of N backslashes immediately before a `%` collapses to floor(N/2) of them, and the `%` is the wildcard only when N is even. So `foo\\%bar` is the literal name `foo%bar` with no backslash and no wildcard; `foo\\\\%bar` is a literal backslash then the wildcard, matching `foo\\%bar` and `foo\\Xbar`; `foo\\\\\\%bar` is a literal backslash then a literal percent. Verified all three against the oracle.\n\nThe cell that decides where the code goes: GNU stops rewriting the moment it has its answer. `find_char_unquote` returns at the first unescaped `%`, so escaping *after* it is never compressed. `$(filter %x\\%y,ax\\%y aXy ax%y)` is `ax\\%y` — the pattern's suffix is the four characters `x\\%y`, backslash included, and the word that matches carries one. A pattern with several percents keeps only the first as the wildcard: `a%b%c` is prefix `a`, suffix `b%c`.\n\nThe same function runs on the replacement. `$(patsubst abc,\\%,abc def)` is `% def` — the replacement is unescaped even when the pattern has no wildcard at all, because `patsubst_expand` calls `find_percent` on both unconditionally. A substitution reference is the one place it does not: `variable_expand_string` calls `find_percent(replace)` only when the pattern had a percent, so `$(V:abc=\\%)` keeps its backslash (`\\% def`) while `$(V:%c=\\%)` does not (`% def`). And the pattern half is compressed either way — `$(V:\\%=x)` is a suffix substitution on the single character `%`.\n\nWhat changed. `strutil::find_percent` is the rewrite-and-locate pair, and `Pattern::new` is now its only caller, which is where GNU puts it too — `filter`, `filter-out`, `patsubst` and substitution references all construct patterns through it, so one place covers every function that has this question. `append_subst` resolves the replacement through the same function instead of scanning for a bare `%`; `append_subst_ref` still uses the raw replacement on its no-percent branch, which is the asymmetry the oracle showed. The fast path is a `memchr` and returns the original `Bytes` untouched, so a pattern with no escaping copies nothing.\n\nNot done here, deliberately: GNU compresses a *rule's* target and prerequisite names at read time (`find_percent_cached` in read.c), where kati stores them as written. `Pattern::new` now resolves the pattern half of that at use, but a rule target spelled with `\\%` would still have an uncompressed name to match against. No marker owns it and nothing in the corpora reaches it; it is a parser-layer question rather than an evaluator one.\n\nFixtures. function-filter-escaped-percent matches and its divergence file is gone. Two new cases recorded from the oracle: function-filter-halves-backslashes-at-a-percent (the three parities, filter-out, the stops-at-the-wildcard cell, and a two-percent pattern) and function-patsubst-escaped-percent (pattern and replacement escaping, and the substitution-reference asymmetry). Two kati unit tests: escaped_percent_is_a_literal_percent and escaping_stops_at_the_wildcard.\n\nUpstream inventory: functions/filter-out.diff.3, .4 and .5 moved unclassified → narration. Those are GNU's own escaped-percent cases, and the output now matches but for Ronin's progress line."
+                            }
+
+                            {
+                                at 2026-08-13T20:12:08.557718165Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
@@ -7538,6 +7580,27 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+
+                            {
+                                at 2026-08-13T20:12:14.087079251Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T20:12:36.848995249Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Both halves characterised against the pristine 4.4.1 oracle before anything moved.\n\n`$(suffix)` (function.c func_notdir_suffix). GNU scans back from the end of each word for whichever comes first, a dot or a directory separator, and answers only when it found a dot. So a dot inside a directory name names no suffix — `/tmp.c/bar` and `dir.d/file` have none — and the boundary is the same one `$(basename)` takes the stem from. The surprising cells: a name that is nothing but a dotted tail keeps all of it, so `$(suffix .hidden)` is `.hidden` and `$(suffix dir/.hidden)` is `.hidden`; a trailing dot is a one-character suffix, so `$(suffix a.)` is `.` and `$(suffix ..)` is `.`; `./x` has none and `./.x` has `.x`. A word with no suffix contributes nothing at all rather than an empty word, while `$(basename .hidden)` does contribute one.\n\n`$(realpath)` (func_realpath). realpath(3) then stat(2), so resolution is the filesystem's: symlinks followed, `..` and doubled separators collapsed, `//` answered as `/`. A word that names nothing — a missing path, or a symlink with no target — leaves the output entirely rather than appearing as an empty word, so `$(words $(realpath d/f nosuch d/sub))` is 2. `$(abspath)` was probed alongside and already agrees on every cell tried (`//`, `///a`, trailing slashes, `.`, a nonexistent path), so nothing was changed there and no marker asked for it.\n\nWhat changed. `strutil::get_ext` now stops at a directory separator, which makes it the exact complement of `strip_ext` (that one already stopped there, so the pair had disagreed about what a name's suffix was). `$(suffix)` reads it, and so does dep.rs's suffix-rule lookup, where the old answer for `dir.d/file` was the nonsense suffix `.d/file`; GNU converts suffix rules to pattern rules at read time and would never have matched that either, so the fix is in the same direction on both paths.\n\n`realpath_func` no longer checks `avoid_io`. Upstream kati deferred `$(realpath)` reached from a recipe into `$(<self> --realpath ... 2>/dev/null)` for the recipe's shell to run — a different value at a different time, and in Ronin it did not even run, because the compiled command carried the text inside single quotes and the literal `$( ... )` landed in the output. GNU resolves where it reads, and `$(wildcard)` in this same file already answers during evaluation for exactly that reason; realpath now follows the precedent. `rkati --realpath` is left in place: nothing emits that command line any more, but it is a working mode of the binary and removing a CLI surface is a different question from this one.\n\nFixtures. function-suffix and function-realpath both match and their divergence files are gone. Two new cases recorded from the oracle: function-suffix-reads-the-last-component-only (the dotted-tail, trailing-dot and directory-dot cells, with `$(basename)` beside them for the shared boundary) and function-realpath-resolves-links-and-drops-strays. The realpath case is written against `$(CURDIR)` through `$(filter)` rather than emitting absolute paths, because the harness runs each case in a scratch directory whose path is not stable; its dangling symlink is named `.dangling` so the harness's directory listing skips it, since `fs::read` of one is an error rather than a file. One kati unit test: suffix_stops_at_a_directory_separator.\n\nUpstream inventory: functions/suffix.diff, functions/realpath.diff.1 and .2 moved unclassified → narration. GNU's own suffix expectations now match line for line and only Ronin's `[N/M]` progress line differs."
+                            }
+
+                            {
+                                at 2026-08-13T20:12:41.838244462Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
                             }
                         )
                     }
@@ -8731,6 +8794,34 @@ children (
                 title "Unwind a private and public binding of one name as a single nesting"
                 kind @fix
                 deps (make-private-variables make-pattern-specific-variable-application)
+            }
+
+            {
+                id make-shadowed-name-is-not-self-reference
+                title "Count a recursive expansion per variable rather than per name"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-13T20:13:02.096271485Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while completing make-modern-function-evaluation, and deliberately not folded into it: `let` only inherits this, and the reproducer needs nothing but `foreach`, so it predates that node's work.\n\n    y = $(foreach y,z,$ydef)\n    all: ; @echo [$y]\n\nGNU Make 4.4.1 prints `[zdef]`. Ronin prints `ronin: Recursive variable \"y\" references itself (eventually).` and builds nothing.\n\nWhy. GNU's guard is per variable object: `func_call` and the recursive-variable expander set `v->exp_count` on the `struct variable` being expanded, and `func_foreach` pushes a new scope in which `y` is a *different* variable, so looking it up from inside the body reaches an object with no count set. Ronin's guard is per name — `Evaluator::lookup_var_for_eval` (eval.rs) tests membership in `symbols_for_eval`, a `HashSet<Symbol>` — so an automatic binding that shadows the name currently being expanded is indistinguishable from the recursion the guard is for.\n\nThe same shape reaches `let`, which is how it was found: GNU's own tests/scripts/functions/let case 3 has `y = $(let y,,$ydef)` and expects `def`. That row is `functions/let.diff.2` in the upstream inventory, still unclassified after this dispatch. `$(call)` is mostly safe by accident, because its bindings are the numeric positional names.\n\nA fix has to make the guard about the binding rather than the name. The natural move is to carry the mark on the `Var` — the thing `with_bound`/`with_bounds` replaces — so that replacing a binding replaces the mark with it, and `var_eval_complete` clears the one it set. Worth checking against the case the guard exists for while doing it: a genuinely self-referential `a = $(a)` must still be refused."
+                    }
+                )
+            }
+
+            {
+                id make-environment-origin-precedes-the-switches
+                title "Read the environment before -e can change what its origin is"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-13T20:13:13.717620597Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while completing make-modern-function-evaluation, against GNU's own tests/scripts/functions/let case 5 (the masking test), which runs with `-e` and asks for `$(origin)` of an environment variable.\n\nReproducer, with `FOOFOO` set in the environment:\n\n    all: ; @echo [$(origin FOOFOO)]\n\n`make -e WHITE=WHITE` — GNU Make 4.4.1 prints `[environment]`. Ronin prints `[environment override]`.\n\nWhy it is an ordering question rather than a value one. GNU reads the environment in `main` before it decodes the command line, so `env_overrides` is still zero when each variable is defined and every one of them gets `o_env`. The `-e` switch changes which definition *wins* afterwards, not what the variables say they are; `o_env_override` is reachable only for a variable defined from the environment after the switch has been seen, which for a normal invocation is none of them. Ronin decides the origin with the switch already in hand and so labels the whole environment as overriding.\n\nVisible in the upstream inventory as the second half of `functions/let.diff.4`, which stayed unclassified through this dispatch: with `let` implemented, the remaining difference on that row is this one word plus the progress lines. The case reads `$(origin)` of nine names at once, so it is a ready-made check that fixing the label for environment variables does not move `default`, `file`, `command line`, `override` or `automatic`."
+                    }
+                )
             }
         )
         log (
