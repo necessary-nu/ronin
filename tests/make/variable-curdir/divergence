@@ -1,1 +1,0 @@
-Kati's deferred shell expansion prevents CURDIR from being compared with the evaluation directory; make-shell-function-evaluation.

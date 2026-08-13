@@ -1,1 +1,0 @@
-Kati leaves recipe-context shell expansion as literal command substitution instead of compiling its value; make-shell-function-evaluation.

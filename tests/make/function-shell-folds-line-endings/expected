@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| A := $(shell printf 'a\r\nb\rc\n\r\n')
+| B != printf 'a\r\nb\r\n\r\n'
+| C != printf '\n\n\n'
+| D != printf 'x'
+| all: ; @printf '%s\n' 'A=[$(A)]' 'B=[$(B)]' 'C=[$(C)]' 'D=[$(D)]' | cat -A > out
+file out touched 4
+| A=[a b^Mc]$
+| B=[a b ]$
+| C=[  ]$
+| D=[x]$

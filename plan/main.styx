@@ -7625,6 +7625,20 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-13T20:43:34.849576515Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T20:45:44.617495297Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "GNU Make 4.4.1 characterised against the pristine oracle before anything moved, then the refusal it was owning was traced to a decision that belongs to the destination rather than to kati.\n\nWhat kati was doing. `avoid_io` is set for the whole of command evaluation, and under it `$(shell)` never runs: at `eval_depth <= 1` the call is written back out as `$(cmd)`, a shell command substitution for the generated command's own shell to answer, and at `eval_depth > 1` — anywhere the value would reach another Make function — it is a hard error, `doesn't support passing results of $(shell) to other make constructs`. The one exception is `has_no_io_in_shell_script`: an empty command, or `echo $((...))`, which Android needs arithmetic from. Outside a recipe nothing defers. So the map was: read time runs, recipe top level defers, recipe nested refuses. `function-shell` was the first (`printf '[%s]' '$(shell echo there)' > out` gave `[$(echo there)]`, because a command substitution inside single quotes is not one), `variable-curdir` and `functions/intcmp.diff` were the second.\n\nThe deferral is not a defect. It is correct when the destination is a build.ninja another program will run later, which is what kati was built for. It is wrong when the destination runs the build itself. So it became `BuildSink::shell_evaluation`, beside the `new_inputs_timing` that already splits the same way for `$?`: a manifest writer keeps `RecipeShell`, Ronin's `GraphSink` asks for `Expansion`, and `NinjaWriter` and the equivalence `Tee` keep the default, so the manifest and the graph it is compared against still agree.\n\nThe GNU matrix, all verified rather than assumed. `func_shell_base` hands `construct_command_argv` a zero for cmd_flags, so `$(shell)` runs `$(SHELL)` with `.SHELLFLAGS` — `SHELL := /bin/echo` makes `$(shell hello world)` answer `-c hello world`, which shows both at once — and `.POSIX:` keeps its `-e` because no `COMMANDS_NOERROR` ever arrives. Environment: `target_environment(NULL, 0)`, whose NULL means `current_variable_set_list` rather than no scope at all. The brief's expectation was that target-specific exports would not be visible; the oracle says they are. `all: export TS = t` reaches a `$(shell)` in `all`'s recipe, and reaches one in a prerequisite's recipe too, because recipe expansion happens with the file's variable set installed. MAKELEVEL arrives incremented, SHELL is the environment's rather than Make's, and MAKEFLAGS is the run's switches (` -j4` under `-j4`) with the jobserver auth invalidated. Output: interior newlines become spaces, `\\r` is dropped only when a `\\n` follows it, the whole trailing run goes for `$(shell)` and all but one of it for `!=`, and a NUL ends the output because GNU Make reads it as a C string. `.SHELLSTATUS` is an `o_override` variable, unset before the first call, 127 for a command that was not there, and 128 plus the signal for one that was killed; a failing `$(shell)` is not a Make error and the run still exits 0. Timing: `:=` runs it once at read, `=` at every expansion, a function arm only when the arm is taken, and a recipe line's during expansion — so its side effect lands before any of the commands that line became. `$(shell $(MAKE) ...)` sees MAKELEVEL 1 and no usable jobserver; Ronin's child sees MAKELEVEL 0, which is the environment gap that belongs to make-export-scope-semantics rather than here.\n\nThree cells of that matrix Ronin also got wrong, all in what comes back rather than in who runs it, and all fixed here because they are one GNU function: `fold_newlines` is now translated exactly, including the CRLF rule and the NUL, and a signalled command reports 128 plus the signal where it used to report 1.\n\nMarkers. function-shell and variable-curdir are gone. function-shell-sees-exported-variable stays: the environment a `$(shell)` child gets is make-export-scope-semantics's, and this node did not touch it.\n\nSeven fixtures recorded from the oracle: function-shell-composes-inside-a-recipe, function-shell-runs-before-the-recipe-line, function-shell-folds-line-endings, function-shell-output-stops-at-a-nul, function-shell-status-after-a-signal, function-shell-uses-shell-and-shellflags, function-shell-runs-once-for-a-simple-value. Four kati unit tests: the two halves of the fold, and one test per side of the sink's choice.\n\nUpstream inventory, 1287 rows, five moved and none the wrong way. `functions/intcmp.diff` compiler → narration: the `$(shell echo lt)` arm was this node's refusal, as the previous dispatch said, and only the progress line is left. `functions/shell.diff.4` and `.16` unclassified/interface → narration, an exported variable read through a recursive value in a recipe and `.SHELLSTATUS` after a SIGINT, both now right. `functions/shell.diff.14` lost `ninja-failure-block`: a `$(shell)` naming a missing program used to be written into the recipe and fail the build, and now it runs, reports 127 and lets the build finish. `features/reinvoke.diff.2` is the known flapper and contains no `$(shell)` at all, so its move cannot be this change.\n\nThree defects found and left as follow-ups under make-subsumption rather than folded in: make-lazy-recipe-expansion (Ronin expands every reachable recipe at graph construction, so an up-to-date target's `$(shell)` side effect now fires anyway — the eagerness predates this and reaches `$(wildcard)` too, but answering `$(shell)` during expansion is what made it observable), make-oracle-recording-trailing-newline (the build-intent recording writes a signal for \"no trailing newline\" that its own reader ignores, so such a case can never match), and make-simple-command-without-a-shell (GNU Make execs a command with no shell syntax directly, so it reports a missing program itself where Ronin reports what /bin/sh said)."
+                            }
                         )
                     }
 
@@ -8820,6 +8834,48 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while completing make-modern-function-evaluation, against GNU's own tests/scripts/functions/let case 5 (the masking test), which runs with `-e` and asks for `$(origin)` of an environment variable.\n\nReproducer, with `FOOFOO` set in the environment:\n\n    all: ; @echo [$(origin FOOFOO)]\n\n`make -e WHITE=WHITE` — GNU Make 4.4.1 prints `[environment]`. Ronin prints `[environment override]`.\n\nWhy it is an ordering question rather than a value one. GNU reads the environment in `main` before it decodes the command line, so `env_overrides` is still zero when each variable is defined and every one of them gets `o_env`. The `-e` switch changes which definition *wins* afterwards, not what the variables say they are; `o_env_override` is reachable only for a variable defined from the environment after the switch has been seen, which for a normal invocation is none of them. Ronin decides the origin with the switch already in hand and so labels the whole environment as overriding.\n\nVisible in the upstream inventory as the second half of `functions/let.diff.4`, which stayed unclassified through this dispatch: with `let` implemented, the remaining difference on that row is this one word plus the progress lines. The case reads `$(origin)` of nine names at once, so it is a ready-made check that fixing the label for environment variables does not move `default`, `file`, `command line`, `override` or `automatic`."
+                    }
+                )
+            }
+
+            {
+                id make-lazy-recipe-expansion
+                title "Expand a recipe when it is about to run"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-13T20:43:52.832200915Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed from make-shell-function-evaluation, which made the gap observable rather than creating it.\n\nGNU Make expands a recipe line immediately before it runs it, after the target's prerequisites have been brought up to date and only if the target was out of date. Ronin expands every reachable recipe once, during graph construction, before anything runs. Every evaluation-time effect a recipe carries therefore happens at the wrong moment, and now that $(shell) is answered during expansion rather than written through to the recipe's own shell, the difference has side effects.\n\nReproducer, up-to-date target:\n\n    out: in ; @cp in out $(shell echo ran >> log)\n\nwith `out` newer than `in`. GNU Make says \"'out' is up to date\" and leaves no `log`, because it never expanded the line. Ronin says \"no work to do\" and `log` holds `ran`.\n\nReproducer, prerequisite output:\n\n    a: ; @echo A; touch made\n    b: a ; @printf '[%s] [%s]\\n' '$(wildcard made)' '$(shell ls made 2>/dev/null)'\n\nGNU Make prints `[made] [made]`: `b`'s recipe is expanded after `a` has run. Ronin prints `[] []` — both halves, so this predates the $(shell) change and reaches $(wildcard), $? and anything else evaluation can observe.\n\nThe shape is a scheduler question rather than an evaluator one: kati's populate_ninja_nodes walks the goals and compiles each node's commands eagerly because a manifest has to hold text. A destination that runs the build itself could instead keep the unexpanded command list on the edge and expand at launch, which is what NewInputsTiming::SchedulerBoundary already does for $? alone."
+                    }
+                )
+            }
+
+            {
+                id make-oracle-recording-trailing-newline
+                title "Record a produced file that has no trailing newline"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-13T20:44:09.279800376Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed from make-shell-function-evaluation, which hit it while recording a fixture.\n\ntests/make_port.rs writes a recording that says whether a produced file ended in a newline and then reads it back as though it always did. `render` counts `content.lines().count() + usize::from(!content.is_empty() && !content.ends_with('\\n'))`, so a file holding \"srr\" is recorded as `file tick touched 2` with one content line — the count is one greater than the lines present, and that is the whole of the signal. `parse`'s `flush` ignores it: it joins the content lines with '\\n' and appends one whenever the result is non-empty.\n\nSo a case whose build leaves a file without a trailing newline can never match its own recording. Recording it succeeds, and the very next run of the gate fails with `'tick' holds \"srr\" where GNU Make left \"srr\\n\"` — a difference the harness invented, and one that reads as a Ronin defect.\n\nReproducer: any case whose recipe is `@printf 'x' > out`. Record it, then run the gate.\n\nThe fix is in the reader rather than the writer: the count is already there to be read, and `flush` should append the newline only when the recorded count matches the number of content lines.\n\nWorked around for now by writing the one fixture that needed it — function-shell-runs-once-for-a-simple-value — with `echo` rather than `echo -n`, which is not a fix and hides the next one."
+                    }
+                )
+            }
+
+            {
+                id make-simple-command-without-a-shell
+                title "Run a command with no shell syntax without a shell"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-13T20:44:25.689972356Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed from make-shell-function-evaluation, which met it as the residue on functions/shell.diff.14 and .15 in the upstream inventory.\n\nGNU Make's construct_command_argv_internal (job.c) tokenizes a command itself and execs it directly whenever nothing in it is shell syntax: no character from `#;\"*?[]&|<>(){}$\\`^`, no shell builtin as the first word, an IFS of only whitespace, and .SHELLFLAGS of `-c` or `-ec`. Only a line that fails one of those tests reaches `goto slow` and is handed to $(SHELL). kati always builds `SHELL -c 'line'`.\n\nWhat that changes is who reports a failure and in whose words. Reproducer, in a recipe:\n\n    all: ; ./nosuchprogram arg\n\nGNU Make: `make: ./nosuchprogram: No such file or directory` then `make: *** [Makefile:1: all] Error 127`. Ronin: `/bin/sh: 1: ./nosuchprogram: not found`, because the shell is the one that failed to find it. The same split shows in $(shell):\n\n    $(shell ./nosuchprogram there)\n\nwhere GNU Make prints its own diagnostic and Ronin prints the shell's.\n\nBoth agree on the status — 127 either way — so this is about the diagnostic, the process tree, and one less fork per simple recipe line, not about what gets built. It reaches recipes and $(shell) alike, so it belongs where the argv is constructed rather than in either caller."
                     }
                 )
             }

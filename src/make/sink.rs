@@ -11,7 +11,7 @@ use crate::frontend::{
 };
 use kati::anyhow;
 use kati::build_sink::{
-    BuildSink, NewInputsTiming, RuleId, SinkCommand, SinkEdge, SinkPool, SinkRule,
+    BuildSink, NewInputsTiming, RuleId, ShellEvaluation, SinkCommand, SinkEdge, SinkPool, SinkRule,
 };
 use kati::bytes::Bytes;
 use kati::strutil::escape_shell;
@@ -779,6 +779,10 @@ impl GraphSink {
 impl BuildSink for GraphSink {
     fn new_inputs_timing(&self) -> NewInputsTiming {
         NewInputsTiming::SchedulerBoundary
+    }
+
+    fn shell_evaluation(&self) -> ShellEvaluation {
+        ShellEvaluation::Expansion
     }
 
     fn start(&mut self, pools: &[SinkPool<'_>]) -> anyhow::Result<()> {

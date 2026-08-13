@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # A simple variable's $(shell) runs once, while a recursive one's runs at every
+| # expansion, so the tick file counts the expansions rather than the writes.
+| SIMPLE := $(shell echo s >> tick; echo simple)
+| RECURSIVE = $(shell echo r >> tick; echo recursive)
+| all: ; @printf '%s %s %s\n' '$(SIMPLE)' '$(RECURSIVE)' '$(RECURSIVE)' > out; cp tick ticks
+file out touched 1
+| simple recursive recursive
+file tick touched 3
+| s
+| r
+| r
+file ticks touched 3
+| s
+| r
+| r

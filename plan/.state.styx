@@ -413,6 +413,7 @@ assertions (
     {id make-modern-function-evaluation, kind @complete, author "brendan@necessary.nu", at 2026-08-13T20:11:38.150028004Z}
     {id make-filter-percent-escaping, kind @complete, author "brendan@necessary.nu", at 2026-08-13T20:12:08.557718165Z}
     {id make-path-function-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-13T20:12:41.838244462Z}
+    {id make-shell-function-evaluation, kind @doing, author "brendan@necessary.nu", at 2026-08-13T20:43:34.849576515Z}
 )
 
 impl_evidence (

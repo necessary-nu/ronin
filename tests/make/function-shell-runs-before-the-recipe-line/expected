@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # Expanding the line runs the $(shell), so its side effect lands before any of
+| # the commands the line became.
+| all: ; @echo recipe >> log $(shell echo shellfunc >> log)
+| 	@cp log out
+file log touched 2
+| shellfunc
+| recipe
+file out touched 2
+| shellfunc
+| recipe

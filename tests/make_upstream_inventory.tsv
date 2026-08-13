@@ -399,7 +399,7 @@ case	features/recursion.diff.2	unclassified	ninja-progress+evaluation
 case	features/reinvoke.diff	narration	ninja-progress
 case	features/reinvoke.diff.1	narration	ninja-progress
 case	features/reinvoke.diff.10	narration	ninja-progress+up-to-date-line
-case	features/reinvoke.diff.2	unclassified	ninja-progress+evaluation
+case	features/reinvoke.diff.2	unclassified	ninja-progress+product-name+evaluation
 case	features/reinvoke.diff.3	unclassified	ninja-progress+evaluation
 case	features/reinvoke.diff.4	narration	ninja-progress
 case	features/reinvoke.diff.5	narration	ninja-progress
@@ -700,7 +700,7 @@ case	functions/foreach.diff.3	narration	ninja-progress
 case	functions/foreach.diff.4	unclassified	product-name+evaluation
 case	functions/foreach.diff.5	unclassified	product-name+evaluation
 case	functions/if.diff	narration	ninja-progress
-case	functions/intcmp.diff	compiler	product-name+unsupported-feature
+case	functions/intcmp.diff	narration	ninja-progress
 case	functions/intcmp.diff.1	unclassified	product-name+evaluation
 case	functions/intcmp.diff.2	unclassified	product-name+evaluation
 case	functions/intcmp.diff.3	unclassified	product-name+evaluation
@@ -724,16 +724,16 @@ case	functions/shell.diff.10	narration	ninja-progress
 case	functions/shell.diff.11	unclassified	ninja-progress+evaluation
 case	functions/shell.diff.12	narration	ninja-progress
 case	functions/shell.diff.13	unclassified	ninja-progress+evaluation
-case	functions/shell.diff.14	unclassified	ninja-progress+ninja-failure-block+product-name+evaluation
+case	functions/shell.diff.14	unclassified	ninja-progress+product-name+evaluation
 case	functions/shell.diff.15	unclassified	ninja-progress+product-name+evaluation
-case	functions/shell.diff.16	interface	ninja-progress+makeflags-content
+case	functions/shell.diff.16	narration	ninja-progress
 case	functions/shell.diff.17	narration	ninja-progress
 case	functions/shell.diff.18	unclassified	ninja-progress+product-name+evaluation
 case	functions/shell.diff.19	unclassified	ninja-progress+evaluation
 case	functions/shell.diff.2	narration	ninja-progress
 case	functions/shell.diff.20	unclassified	ninja-progress+evaluation
 case	functions/shell.diff.3	unclassified	ninja-progress+evaluation
-case	functions/shell.diff.4	unclassified	ninja-progress+evaluation
+case	functions/shell.diff.4	narration	ninja-progress
 case	functions/shell.diff.5	unclassified	ninja-progress+evaluation
 case	functions/shell.diff.6	unclassified	ninja-progress+evaluation
 case	functions/shell.diff.7	narration	ninja-progress
