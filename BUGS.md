@@ -813,3 +813,59 @@ same tree schedules neither. In GNU Make's own suite,
 the state the suite's shared working directory produces — GNU Make says
 `'all' is up to date` and Ronin now says `no work to do` instead of rerunning
 the recipe.
+
+## Recipe lines expand before their rule runs, freezing `$(shell)` results
+
+Status: open
+
+Observed with Ronin revision `c35b0fdb8b16afd6ba5d6a1acbd472d88997cc49`
+while building CPython (`python@seed`) for Necessary OS.
+
+GNU Make expands a recipe line when the recipe executes. A recursively
+expanded variable whose value contains `$(shell ...)` therefore re-runs the
+shell command at each expansion, and a recipe that references it after a
+prerequisite created a file sees that file. Ronin expands the recipe line
+while constructing the build graph, so the `$(shell ...)` runs once, before
+any rule has executed, and the frozen result is what every recipe sees.
+
+Minimal reproduction:
+
+```make
+PROBE = $(shell test -f marker && echo found-`cat marker`)
+
+all: marker
+	@echo "probe says: [$(PROBE)]"
+
+marker:
+	@printf yes > marker
+```
+
+GNU Make 4.4.1 prints `probe says: [found-yes]`. Ronin prints
+`probe says: []`, and its own transcript shows the command already expanded
+before the `marker` rule ran:
+
+```text
+[1/2] printf yes > marker
+[2/2] echo "probe says: []"
+```
+
+The real-world failure is CPython's cross-build support. `configure` bakes
+this into `PYTHON_FOR_BUILD`:
+
+```
+_PYTHON_SYSCONFIGDATA_PATH=$(shell test -f pybuilddir.txt && echo $(abs_builddir)/`cat pybuilddir.txt`)
+```
+
+`pybuilddir.txt` is written by an early rule; under GNU Make every later
+`$(PYTHON_FOR_BUILD)` expansion finds it. Under Ronin the variable freezes to
+empty before the file exists, and the `checksharedmods` step dies with:
+
+```text
+ModuleNotFoundError: No module named '_sysconfigdata__linux_x86_64-linux-musl'
+```
+
+This failed `python@seed` and skipped the 129 nodes behind it, including
+systemd and the system package. Suspected surface: the memoized Make graph
+evaluation — a command recorded into the graph at construction time cannot
+honour execution-time expansion; recipe lines (or at least their `$(shell)`
+segments) need their expansion deferred to when the edge is scheduled.
