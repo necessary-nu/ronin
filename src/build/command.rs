@@ -119,6 +119,40 @@ impl CommandSpec {
     }
 }
 
+/// The command text a front end supplied at the moment the edge was launched.
+///
+/// Every field replaces the one the graph held, because the graph held a
+/// placeholder: an edge whose command is bound this late has no earlier text
+/// to merge with.
+pub(crate) struct LateCommand {
+    pub(crate) command: BString,
+    /// What to print while it runs. Empty leaves the choice to the reporter,
+    /// exactly as an unbound `description` on a rule does.
+    pub(crate) description: BString,
+    pub(crate) rspfile: Option<BString>,
+    pub(crate) rspfile_content: BString,
+    pub(crate) ignore_errors: bool,
+}
+
+/// A front end that binds an edge's command when the build is about to run it.
+///
+/// The engine asks once per edge, after the edge's prerequisites have been
+/// brought up to date and only for an edge it is going to run. What the front
+/// end does to answer is its own: this boundary carries command text and a
+/// diagnostic, and no front-end vocabulary crosses it in either direction.
+// [spec:ronin:req:make.compiler-boundary]
+pub(crate) trait LateCommands {
+    /// The command for `edge`, whose single output is `output`, or `None` when
+    /// this edge's command was settled when the graph was built.
+    ///
+    /// # Errors
+    ///
+    /// A rendered diagnostic, when the front end could not produce the
+    /// command. The build stops with it, as it would for a command that could
+    /// not be started.
+    fn command(&mut self, edge: EdgeId, output: &[u8]) -> Result<Option<LateCommand>, String>;
+}
+
 pub(super) struct PreparedEdge {
     pub(super) edge: EdgeId,
     pub(super) old_mtimes: Vec<i64>,
@@ -151,6 +185,13 @@ impl Drop for ResponseFile {
     }
 }
 
+impl<'a> Builder<'a> {
+    /// Bind this build's commands through `recipes` as each edge is launched.
+    pub(crate) fn late_commands(&mut self, recipes: &'a mut dyn LateCommands) {
+        self.late_commands = Some(recipes);
+    }
+}
+
 impl Builder<'_> {
     pub(super) fn ensure_command(&mut self, edge: EdgeId) -> BuildResult<()> {
         self.command_cache
@@ -177,6 +218,40 @@ impl Builder<'_> {
         Ok(self.command_cache[edge.index()]
             .take()
             .expect("command cache was populated"))
+    }
+
+    /// Let the front end bind this edge's command now that it is about to run.
+    ///
+    /// Asked here rather than where commands are evaluated and hashed, because
+    /// those run over every edge the targets reach: asking there would bind
+    /// every command in the graph, which is the thing this exists not to do.
+    pub(super) fn bind_late_command(
+        &mut self,
+        edge: EdgeId,
+        command: &mut CommandSpec,
+    ) -> BuildResult<()> {
+        let Some(recipes) = self.late_commands.as_deref_mut() else {
+            return Ok(());
+        };
+        let output = self
+            .graph
+            .edge(edge)
+            .out
+            .first()
+            .map(|output| self.graph.node_path(*output).to_vec())
+            .unwrap_or_default();
+        let bound = recipes
+            .command(edge, &output)
+            .map_err(|diagnostic| BuildError::LateCommand { diagnostic })?;
+        let Some(bound) = bound else {
+            return Ok(());
+        };
+        command.description = bound.description;
+        command.command = bound.command;
+        command.rspfile = bound.rspfile;
+        command.rspfile_content = bound.rspfile_content;
+        command.ignore_errors = bound.ignore_errors;
+        Ok(())
     }
 
     pub(super) fn refresh_command_hash(&mut self, edge: EdgeId) -> BuildResult<()> {

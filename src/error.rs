@@ -838,6 +838,12 @@ pub(crate) enum BuildError {
     InvalidDepsEncoding {
         edge: EdgeId,
     },
+    /// A front end that binds a command as its edge is launched could not
+    /// produce one. The text is that front end's own diagnostic, already
+    /// rendered, because only it knows what it was reading.
+    LateCommand {
+        diagnostic: String,
+    },
     DependencyFileMissing {
         edge: EdgeId,
         path: Option<BString>,
@@ -973,6 +979,19 @@ impl BuildStop {
 }
 
 impl BuildError {
+    /// This failure's front-end diagnostic, through the summary the build loop
+    /// wrapped it in.
+    pub(crate) fn front_end_diagnostic(&self) -> Option<&str> {
+        match self {
+            Self::LateCommand { diagnostic } => Some(diagnostic),
+            Self::Stopped {
+                reason: BuildStop::Failed(inner),
+                ..
+            } => inner.front_end_diagnostic(),
+            _ => None,
+        }
+    }
+
     /// The process exit status this failure carries out of the build.
     ///
     /// Ninja propagates a failing command's own status so a caller can tell a
@@ -1044,6 +1063,7 @@ impl fmt::Display for BuildError {
             Self::InvalidDepsEncoding { .. } => {
                 formatter.write_str("deps binding is not valid UTF-8")
             }
+            Self::LateCommand { diagnostic } => formatter.write_str(diagnostic),
             Self::DependencyFileMissing { .. } => {
                 formatter.write_str("subcommand succeeded but dependency file is missing")
             }

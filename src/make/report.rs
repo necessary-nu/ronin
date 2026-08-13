@@ -35,6 +35,12 @@ pub(super) fn no_makefile() -> RunResult {
 /// `Stop.` suffix. Those are runner narration, not compiler information.
 // [spec:ronin:req:make.narration+1]
 pub(super) fn ordinary_diagnostic(failure: impl Display) -> Vec<u8> {
+    format!("{PRODUCT_NAME}: {}\n", diagnostic_body(failure)).into_bytes()
+}
+
+/// The compiler's own words for a rejection, with the runner's ceremony taken
+/// off and no product prefix, for a caller that will add one.
+pub(super) fn diagnostic_body(failure: impl Display) -> String {
     let mut diagnostic = failure.to_string();
     if let Some(rest) = diagnostic.strip_prefix(PRODUCT_NAME).and_then(|rest| {
         rest.strip_prefix(": ").or_else(|| {
@@ -51,7 +57,7 @@ pub(super) fn ordinary_diagnostic(failure: impl Display) -> Vec<u8> {
     if let Some(message) = diagnostic.strip_suffix("  Stop.") {
         diagnostic.truncate(message.len());
     }
-    format!("{PRODUCT_NAME}: {diagnostic}\n").into_bytes()
+    diagnostic
 }
 
 /// What an invocation that could not go on reports.
@@ -107,6 +113,16 @@ pub(super) fn finished(
 ) -> RunResult {
     let mut stdout = terminated(reported);
     stdout.extend_from_slice(outcome.output());
+    // A recipe rejected as its edge was launched is rejected for the reasons a
+    // recipe rejected while compiling is, and reads as the same diagnostic
+    // rather than as a build that stopped.
+    if let Some(diagnostic) = outcome.front_end_diagnostic() {
+        return RunResult {
+            stdout,
+            stderr: ordinary_diagnostic(diagnostic),
+            exit_code: ABANDONED,
+        };
+    }
     if let Some((reason, _)) = outcome.stopped.as_ref() {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: build stopped: {reason}.\n").as_bytes());
     } else if up_to_date && stdout.is_empty() && !silent {

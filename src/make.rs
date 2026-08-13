@@ -23,12 +23,15 @@
 pub use kati;
 
 pub(crate) mod cli;
+mod recipe;
 mod report;
 mod sink;
 
 #[cfg(test)]
 mod equivalence;
 
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod shuffle_tests;
 
@@ -47,6 +50,7 @@ pub const MAKE_VERSION: &str = "4.4.1";
 
 use crate::frontend::{BuildGraph, Edge, FrontendError, Node, Scope};
 use crate::make::sink::{UnitOutput, UnitSubgraph};
+use kati::build_sink::RecipeExpansion;
 use kati::evaluate::{Evaluated, evaluate};
 use kati::ninja::emit_build;
 use kati::session::Session;
@@ -189,7 +193,15 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
         shuffle,
         cache_key: key,
     };
-    load_with_subninjas_unlocked(compilation, cli::compile_subninja, &HashSet::new())
+    // A caller that takes this graph and runs it later needs every command in
+    // it, so nothing here is left for a launch that this function will not be
+    // present for.
+    load_with_subninjas_unlocked(
+        compilation,
+        cli::compile_subninja,
+        &HashSet::new(),
+        RecipeExpansion::Construction,
+    )
 }
 
 /// Invocation context retained while one Makefile compilation discovers its
@@ -223,6 +235,10 @@ struct CompiledUnit {
     subgraph: UnitSubgraph,
     makeflags: String,
     complete: bool,
+    /// The root unit's unexpanded recipes and the session that holds them.
+    /// Only the root defers: a recursive child's session and working directory
+    /// do not outlive its own compilation.
+    pending_recipes: Option<recipe::PendingRecipes>,
 }
 
 struct ComposedUnit {
@@ -307,23 +323,25 @@ pub(crate) fn load_with_subninjas<F>(
     root: Compilation,
     resolve: F,
     settled_boundaries: &HashSet<EvaluationBoundary>,
+    expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError>
 where
     F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let _directory = compilation_directory_guard();
-    load_with_subninjas_unlocked(root, resolve, settled_boundaries)
+    load_with_subninjas_unlocked(root, resolve, settled_boundaries, expansion)
 }
 
 fn load_with_subninjas_unlocked<F>(
     root: Compilation,
     mut resolve: F,
     settled_boundaries: &HashSet<EvaluationBoundary>,
+    expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError>
 where
     F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
-    let mut sink = GraphSink::new_at(&root.context.root_directory);
+    let mut sink = GraphSink::new_at(&root.context.root_directory, expansion);
     let mut state = CompilationState {
         cache: HashMap::new(),
         compiling: HashSet::new(),
@@ -334,9 +352,11 @@ where
         evaluation_boundaries: HashSet::new(),
     };
     let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
+    let pending_recipes = root.pending_recipes;
     let graph = sink.into_graph().map_err(MakeError::Construct)?;
     Ok(Loaded {
         graph,
+        pending_recipes,
         regenerations: state.regenerations,
         remakes: state.remakes,
         forgiven_remakes: state.forgiven_remakes,
@@ -395,15 +415,25 @@ where
         apply_recipe_environment(&mut recipe_environment, &flag_environment);
         apply_recipe_environment(&mut recipe_environment, &exported);
         sink.set_recipe_environment(recipe_environment);
-        if let Err(error) = emit_build(&nodes, &mut ev, sink) {
-            if let Some(failure) = sink.construction_failure() {
-                return Err(MakeError::Construct(failure));
+        let deferred = match emit_build(&nodes, &mut ev, sink) {
+            Ok(deferred) => deferred,
+            Err(error) => {
+                if let Some(failure) = sink.construction_failure() {
+                    return Err(MakeError::Construct(failure));
+                }
+                return Err(MakeError::evaluate(&error));
             }
-            return Err(MakeError::evaluate(&error));
-        }
+        };
+        // The layout is read while this unit is still the current one: it is
+        // what wraps every command this unit produces, and a recipe expanded
+        // later has to be wrapped in exactly the same thing.
+        let layout = sink.layout();
         let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names)?;
         let unit = sink.take_unit();
         ev.finish().map_err(|error| MakeError::evaluate(&error))?;
+        let pending_recipes = (!deferred.is_empty()).then(|| {
+            recipe::PendingRecipes::new(ev, deferred, layout, &sink.take_deferred_edges())
+        });
         Ok((
             unit,
             exported,
@@ -411,16 +441,17 @@ where
             unit_remakes,
             makeflags,
             flag_environment,
+            pending_recipes,
         ))
     });
-    let (unit, exported, command_line, unit_remakes, makeflags, flag_environment) = match evaluated
-    {
-        Ok(evaluated) => evaluated,
-        Err(error) => {
-            state.compiling.remove(&compilation_key);
-            return Err(error);
-        }
-    };
+    let (unit, exported, command_line, unit_remakes, makeflags, flag_environment, pending_recipes) =
+        match evaluated {
+            Ok(evaluated) => evaluated,
+            Err(error) => {
+                state.compiling.remove(&compilation_key);
+                return Err(error);
+            }
+        };
     state.admit(unit_remakes);
 
     let mut descendant_context = context;
@@ -446,6 +477,7 @@ where
         subgraph: composed.subgraph,
         makeflags,
         complete: composed.complete,
+        pending_recipes,
     })
 }
 
@@ -914,9 +946,21 @@ pub struct Loaded {
     evaluation_boundaries: HashSet<EvaluationBoundary>,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
     makeflags: String,
+    /// The recipes this graph's own executor will expand as it launches them,
+    /// with the session they belong to.
+    pending_recipes: Option<recipe::PendingRecipes>,
 }
 
 impl Loaded {
+    /// The recipes this graph's executor expands as it launches them.
+    ///
+    /// Every build over this graph must be given these, including the ones
+    /// that build compiler inputs: an edge whose recipe was deferred has no
+    /// command until it is asked for.
+    pub(crate) const fn take_pending_recipes(&mut self) -> Option<recipe::PendingRecipes> {
+        self.pending_recipes.take()
+    }
+
     /// Compiler inputs to build before evaluating this Makefile again.
     ///
     /// Each node is part of [`Self::graph`] and runs through the ordinary Ninja

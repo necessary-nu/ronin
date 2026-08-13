@@ -416,6 +416,7 @@ assertions (
     {id make-shell-function-evaluation, kind @complete, author "brendan@necessary.nu", at 2026-08-13T20:46:50.919257137Z}
     {id make-empty-variable-append, kind @complete, author "brendan@necessary.nu", at 2026-08-13T21:26:12.130768637Z}
     {id make-makefile-list-initialization, kind @complete, author "brendan@necessary.nu", at 2026-08-13T21:26:14.330417918Z}
+    {id make-lazy-recipe-expansion, kind @doing, author "brendan@necessary.nu", at 2026-08-13T21:40:42.10181034Z}
 )
 
 impl_evidence (

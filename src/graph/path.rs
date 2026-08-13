@@ -46,7 +46,7 @@ const fn shell_safe_table() -> [bool; 256] {
 ///
 /// Almost every real path needs no quoting, so the unquoted case must not
 /// copy: the node keeps only its plain path and renders that for both styles.
-pub(super) fn shell_escape_path(source: &[u8]) -> Option<BString> {
+pub(crate) fn shell_escape_path(source: &[u8]) -> Option<BString> {
     let quote = source.iter().any(|byte| !SHELL_SAFE[*byte as usize]);
     if !quote {
         return None;

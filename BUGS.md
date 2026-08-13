@@ -816,7 +816,7 @@ the recipe.
 
 ## Recipe lines expand before their rule runs, freezing `$(shell)` results
 
-Status: open
+Status: fixed
 
 Observed with Ronin revision `c35b0fdb8b16afd6ba5d6a1acbd472d88997cc49`
 while building CPython (`python@seed`) for Necessary OS.
@@ -869,3 +869,35 @@ systemd and the system package. Suspected surface: the memoized Make graph
 evaluation — a command recorded into the graph at construction time cannot
 honour execution-time expansion; recipe lines (or at least their `$(shell)`
 segments) need their expansion deferred to when the edge is scheduled.
+
+Mechanism: kati compiled every reachable recipe into command text while it
+built the graph, because that is what writing a `build.ninja` needs. Make mode
+runs the graph in the process that compiled it, so it does not need that, and
+now says so: `BuildSink::recipe_expansion` is `Launch` for the direct graph
+sink and `Construction` for the manifest writer. A recipe the compiler does not
+have to read for itself is left unexpanded, and the engine asks the front end
+for the command as it launches the edge — after the edge's prerequisites are
+built, and not at all for a target that turns out to be up to date. The
+recipes the compiler still reads while compiling are the ones whose text
+decides the graph's shape: a recursive `$(MAKE)` line, an automatic or declared
+depfile, a `$?` the scheduler binds, a grouped double-colon action.
+
+Reduced case, as a regression: `tests/make/recipe-variable-shell-runs-when-the-recipe-runs`
+is the reproduction above, recorded from GNU Make 4.4.1. Five more cover the
+rest of the timing: `recipe-of-a-current-target-is-not-expanded`,
+`recipe-error-in-a-current-target-does-not-fire`,
+`recipe-expansion-sees-an-earlier-recipes-file`,
+`recipe-lines-are-expanded-before-the-first-line-runs`, and
+`dry-run-expands-the-recipe-it-would-run`.
+
+Replay: the failed `python@seed` tree survives at
+`/data/pkg-build/work/python--x86-64-x86-64--seed-/build.overlay/0/upper`. Its
+generated `Makefile` cannot be run outside the package sandbox — it bakes
+absolute `/build` paths and remakes itself from a `srcdir` that exists only
+there — so the replay takes CPython's own `PYTHON_FOR_BUILD` line and
+`pybuilddir.txt` rule from that Makefile verbatim, with a stand-in for the
+interpreter that records the `_PYTHON_SYSCONFIGDATA_PATH` it was given. GNU
+Make 4.4.1 and Ronin now record the same two values: empty for the
+`pybuilddir.txt` rule's own recipe, which is expanded before the file exists,
+and the built `$(abs_builddir)` path for the `checksharedmods` recipe,
+which is expanded after it.

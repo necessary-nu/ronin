@@ -583,6 +583,9 @@ pub(crate) struct Builder<'a> {
     status_scratch: Vec<u8>,
     output_sink: Option<&'a mut dyn Write>,
     diagnostic_sink: Option<&'a mut dyn Write>,
+    /// A front end that binds an edge's command as the edge is launched,
+    /// rather than having bound it when the graph was built.
+    late_commands: Option<&'a mut dyn crate::build::command::LateCommands>,
     explanations: Option<crate::explanations::Explanations>,
     explanations_recorded: Vec<bool>,
     explanations_emitted: Vec<bool>,
@@ -640,6 +643,7 @@ impl<'a> Builder<'a> {
             commands_ran: Vec::new(),
             command_output: Vec::new(),
             build_output: Vec::new(),
+            late_commands: None,
         }
     }
 
@@ -1058,7 +1062,8 @@ impl<'a> Builder<'a> {
     }
 
     fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<PreparedEdge> {
-        let command = self.take_command(edge)?;
+        let mut command = self.take_command(edge)?;
+        self.bind_late_command(edge, &mut command)?;
         let launch_command = self.deferred_launch_command(edge, &command.command);
         let launch_rspfile_content =
             self.deferred_response_file_content(edge, &command.rspfile_content);
@@ -1987,6 +1992,7 @@ impl<'a> Builder<'a> {
 }
 
 mod command;
+pub(crate) use command::{LateCommand, LateCommands};
 mod deferred;
 mod reporter;
 mod status;

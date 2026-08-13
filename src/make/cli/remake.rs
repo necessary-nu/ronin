@@ -38,6 +38,9 @@ pub(super) enum Settlement {
     Settled {
         graph: Box<BuildGraph>,
         persistence: Persistence,
+        /// The recipes that graph still holds unexpanded, which the build the
+        /// goals run has to be given.
+        recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
     },
 }
 
@@ -106,6 +109,8 @@ enum Remaking {
 struct Passes<'a, 'out, 'diagnostics> {
     graph: &'a mut BuildGraph,
     persistence: &'a mut Persistence,
+    /// The recipes this graph left for the build to expand as it runs them.
+    recipes: Option<&'a mut crate::make::recipe::PendingRecipes>,
     output: &'a mut Option<&'out mut dyn Write>,
     diagnostics: &'a mut Option<&'diagnostics mut dyn Write>,
     /// What the passes have narrated so far, which the result carries out.
@@ -125,6 +130,9 @@ impl Passes<'_, '_, '_> {
         }
         let dryrun = options.dryrun;
         let mut build = Build::with_options(self.graph, self.persistence, options);
+        if let Some(recipes) = self.recipes.as_deref_mut() {
+            build = build.late_commands(recipes);
+        }
         if let Some(sink) = self.output.as_deref_mut() {
             build = build.output(sink);
         }
@@ -364,6 +372,8 @@ pub(super) fn build_compiler_inputs(
         directory,
         goals,
     } = request;
+    let mut loaded = loaded;
+    let mut recipes = loaded.take_pending_recipes().map(Box::new);
     let remakes = loaded.remake_targets().to_vec();
     let forgiven = loaded.forgiven_remake_targets().to_vec();
     let staged = loaded.staged_targets();
@@ -383,6 +393,7 @@ pub(super) fn build_compiler_inputs(
     let mut passes = Passes {
         graph: &mut graph,
         persistence: &mut persistence,
+        recipes: recipes.as_deref_mut(),
         output,
         diagnostics,
         reported,
@@ -407,6 +418,7 @@ pub(super) fn build_compiler_inputs(
     let mut passes = Passes {
         graph: &mut graph,
         persistence: &mut persistence,
+        recipes: recipes.as_deref_mut(),
         output,
         diagnostics,
         reported,
@@ -428,6 +440,7 @@ pub(super) fn build_compiler_inputs(
         Pass::Current if boundaries.is_empty() => Ok(Settlement::Settled {
             graph: Box::new(graph),
             persistence,
+            recipes,
         }),
         // Staged work is never forgiven, so `Lost` cannot arrive here; a
         // recursive child whose parent's prerequisites did not build has

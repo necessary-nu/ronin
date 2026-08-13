@@ -1381,6 +1381,9 @@ struct RootCompilation<'a> {
 enum PreparedGraph {
     Ready {
         graph: Box<BuildGraph>,
+        /// The recipes the graph left for the build to expand as it runs
+        /// them, with the evaluation session they belong to.
+        recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
         /// The logs already opened over that graph, when the compiler-input
         /// build opened them. Ninja's logs are opened once per graph, so the
         /// pass that settled hands its own on rather than leaving the goal
@@ -1441,8 +1444,11 @@ fn prepare_graph(
         let effective_invocation = evaluated_invocation(loaded.makeflags())?;
         let effective_options = evaluated_build_options(root.options, &effective_invocation);
         if loaded.regeneration_targets().is_empty() {
+            let mut loaded = loaded;
+            let recipes = loaded.take_pending_recipes().map(Box::new);
             return Ok(PreparedGraph::Ready {
                 graph: Box::new(loaded.graph),
+                recipes,
                 persistence: None,
                 invocation: Box::new(effective_invocation),
                 options: Box::new(effective_options),
@@ -1464,9 +1470,14 @@ fn prepare_graph(
         )? {
             Settlement::Finished(result) => return Ok(PreparedGraph::Finished(result)),
             Settlement::Restart => restarts = restarts.saturating_add(1),
-            Settlement::Settled { graph, persistence } => {
+            Settlement::Settled {
+                graph,
+                persistence,
+                recipes,
+            } => {
                 return Ok(PreparedGraph::Ready {
                     graph,
+                    recipes,
                     persistence: Some(persistence),
                     invocation: Box::new(effective_invocation),
                     options: Box::new(effective_options),
@@ -1539,14 +1550,15 @@ pub(crate) fn run(
         makefile_contents: makefile_contents.as_deref(),
         level,
     };
-    let (mut graph, opened, invocation, options) =
+    let (mut graph, mut recipes, opened, invocation, options) =
         match prepare_graph(&root, &mut reported, &mut output, &mut diagnostics)? {
             PreparedGraph::Ready {
                 graph,
+                recipes,
                 persistence,
                 invocation,
                 options,
-            } => (*graph, persistence, *invocation, *options),
+            } => (*graph, recipes, persistence, *invocation, *options),
             PreparedGraph::Finished(result) => return Ok(result),
         };
     let mut persistence = if let Some(persistence) = opened {
@@ -1558,6 +1570,9 @@ pub(crate) fn run(
     };
     let targets = graph.default_targets();
     let mut build = Build::with_options(&mut graph, &mut persistence, options);
+    if let Some(recipes) = recipes.as_deref_mut() {
+        build = build.late_commands(recipes);
+    }
     if let Some(sink) = output {
         build = build.output(sink);
     }
@@ -1710,13 +1725,19 @@ fn evaluated(
         context,
         cache_key,
     };
-    crate::make::load_with_subninjas(compilation, compile_subninja, settled_boundaries).map_err(
-        |failure| RunResult {
-            stdout: terminated(reported),
-            stderr: ordinary_diagnostic(failure),
-            exit_code: ABANDONED,
-        },
+    crate::make::load_with_subninjas(
+        compilation,
+        compile_subninja,
+        settled_boundaries,
+        // Make mode runs the graph it compiles, in the process that compiled
+        // it, so a recipe is expanded when its edge is about to run.
+        kati::build_sink::RecipeExpansion::Launch,
     )
+    .map_err(|failure| RunResult {
+        stdout: terminated(reported),
+        stderr: ordinary_diagnostic(failure),
+        exit_code: ABANDONED,
+    })
 }
 
 #[cfg(test)]

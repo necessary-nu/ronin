@@ -46,6 +46,13 @@ pub struct Node(NodeId);
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Edge(EdgeId);
 
+impl Edge {
+    /// This edge's identity in the graph the engine runs.
+    pub(crate) const fn id(self) -> EdgeId {
+        self.0
+    }
+}
+
 /// A named command template shared by the edges that use it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Rule(RuleId);

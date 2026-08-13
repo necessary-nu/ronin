@@ -24,8 +24,7 @@ use index::NodeIndex;
 pub(crate) use index::{allocate_node, mknode, nodeget};
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
-pub(crate) use path::nodepath_bytes;
-use path::shell_escape_path;
+pub(crate) use path::{nodepath_bytes, shell_escape_path};
 use std::io;
 use std::path::Path;
 

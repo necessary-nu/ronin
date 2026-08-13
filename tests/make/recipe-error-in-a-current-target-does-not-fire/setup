@@ -1,0 +1,4 @@
+printf 'source\n' > in
+printf 'built\n' > out
+touch -d '2020-01-01 00:00' in
+touch -d '2021-01-01 00:00' out

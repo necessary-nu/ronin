@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # The second recipe is expanded after the first one has run, so both the
+| # wildcard and the shell call in it see the file the first recipe made.
+| all: second
+| first: ; @printf 'made\n' > made
+| second: first ; @printf '[%s] [%s]\n' '$(wildcard made)' '$(shell cat made 2>/dev/null)' > out
+| .PHONY: all first second
+file made touched 1
+| made
+file out touched 1
+| [made] [made]

@@ -141,6 +141,7 @@ pub struct Build<'graph, 'sink> {
     options: BuildOptions,
     output: Option<&'graph mut (dyn Write + 'sink)>,
     diagnostics: Option<&'graph mut (dyn Write + 'sink)>,
+    late_commands: Option<&'graph mut dyn crate::build::LateCommands>,
     /// Whether failing to start reads as an error against the invocation.
     ///
     /// Ninja prefixes what it could not do with the targets it was given that
@@ -160,6 +161,7 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
             options: BuildOptions::default(),
             output: None,
             diagnostics: None,
+            late_commands: None,
             invocation_errors: false,
         }
     }
@@ -227,6 +229,18 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
         self
     }
 
+    /// Binds an edge's command through `recipes` as the edge is launched,
+    /// for a front end that did not settle every command when it built the
+    /// graph.
+    #[must_use]
+    pub(crate) fn late_commands(
+        mut self,
+        recipes: &'graph mut dyn crate::build::LateCommands,
+    ) -> Self {
+        self.late_commands = Some(recipes);
+        self
+    }
+
     /// Works out what has to run for `targets`.
     ///
     /// This is where a build reads the disk: the mtime of everything the
@@ -248,6 +262,7 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
             options,
             output,
             diagnostics,
+            late_commands,
             invocation_errors,
         } = self;
         // Every frontend reaches the same Ninja dirtiness and persistence
@@ -260,6 +275,9 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
             output.map(|sink| sink as &mut dyn Write),
             diagnostics.map(|sink| sink as &mut dyn Write),
         );
+        if let Some(recipes) = late_commands {
+            builder.late_commands(recipes);
+        }
         for target in targets {
             builder.add_target_node(target.0).map_err(|error| {
                 if invocation_errors {
@@ -358,6 +376,16 @@ impl Outcome {
     #[must_use]
     pub fn stopped(&self) -> Option<String> {
         self.stopped.as_ref().map(|(reason, _)| reason.to_string())
+    }
+
+    /// The front end's own diagnostic, when what stopped the build was a
+    /// command the front end was asked for as an edge launched and could not
+    /// produce.
+    pub(crate) fn front_end_diagnostic(&self) -> Option<&str> {
+        match self.stopped.as_ref() {
+            Some((crate::error::BuildStop::Failed(error), _)) => error.front_end_diagnostic(),
+            _ => None,
+        }
     }
 
     /// The status to leave with: the failing command's own, or zero for a build

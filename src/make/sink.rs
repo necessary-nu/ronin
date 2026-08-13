@@ -11,7 +11,8 @@ use crate::frontend::{
 };
 use kati::anyhow;
 use kati::build_sink::{
-    BuildSink, NewInputsTiming, RuleId, ShellEvaluation, SinkCommand, SinkEdge, SinkPool, SinkRule,
+    BuildSink, DeferredRecipeId, NewInputsTiming, RecipeExpansion, RuleId, ShellEvaluation,
+    SinkCommand, SinkEdge, SinkPool, SinkRule,
 };
 use kati::bytes::Bytes;
 use kati::strutil::escape_shell;
@@ -62,6 +63,140 @@ impl Bindings {
         }
     }
 }
+
+/// Everything a compilation unit wraps a recipe's script in.
+///
+/// The graph sink builds a command line here as it declares each rule, and a
+/// recipe expanded later — when its edge is launched — is wrapped by the same
+/// value, so the two paths cannot drift into two different wrappers.
+#[derive(Clone, Default)]
+pub(crate) struct CommandLayout {
+    command_directory: PathBuf,
+    recipe_environment: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    root_directory: PathBuf,
+    root: bool,
+}
+
+impl CommandLayout {
+    /// A layout for one compilation unit.
+    #[cfg(test)]
+    pub(crate) const fn new(
+        command_directory: PathBuf,
+        recipe_environment: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+        root_directory: PathBuf,
+        root: bool,
+    ) -> Self {
+        Self {
+            command_directory,
+            recipe_environment,
+            root_directory,
+            root,
+        }
+    }
+
+    fn push_shell_word(command: &mut Vec<u8>, word: &[u8]) {
+        command.push(b'\'');
+        for byte in word {
+            if *byte == b'\'' {
+                command.extend_from_slice(b"'\\''");
+            } else {
+                command.push(*byte);
+            }
+        }
+        command.push(b'\'');
+    }
+
+    /// The `cd` and `env` that put a command where Make would have run it.
+    fn prefix(&self) -> Vec<u8> {
+        let mut command = Vec::new();
+        if !self.command_directory.as_os_str().is_empty() {
+            command.extend_from_slice(b"cd ");
+            Self::push_shell_word(&mut command, self.command_directory.as_os_str().as_bytes());
+            command.extend_from_slice(b" && ");
+        }
+        if !self.recipe_environment.is_empty() {
+            command.extend_from_slice(b"env");
+            for (name, value) in &self.recipe_environment {
+                if value.is_none() {
+                    command.extend_from_slice(b" -u ");
+                    Self::push_shell_word(&mut command, name);
+                }
+            }
+            for (name, value) in &self.recipe_environment {
+                if let Some(value) = value {
+                    let mut assignment = Vec::with_capacity(name.len() + value.len() + 1);
+                    assignment.extend_from_slice(name);
+                    assignment.push(b'=');
+                    assignment.extend_from_slice(value);
+                    command.push(b' ');
+                    Self::push_shell_word(&mut command, &assignment);
+                }
+            }
+            command.push(b' ');
+        }
+        command
+    }
+
+    /// Where this unit writes the response file for the edge producing
+    /// `output`, which is per edge because the output is.
+    fn response_file(&self, output: &[u8]) -> Vec<u8> {
+        let mut path = Vec::new();
+        if !self.root && !self.root_directory.as_os_str().is_empty() {
+            path.extend_from_slice(self.root_directory.as_os_str().as_bytes());
+            path.extend_from_slice(std::path::MAIN_SEPARATOR_STR.as_bytes());
+        }
+        path.extend_from_slice(output);
+        path.extend_from_slice(b".rsp");
+        path
+    }
+
+    /// The command line that runs `script`, and the response file it needs.
+    ///
+    /// The same choice the sink makes while emitting: a script short enough to
+    /// pass as an argument is quoted into one, and one too long reaches the
+    /// shell as a file instead.
+    pub(crate) fn launch(
+        &self,
+        shell: &[u8],
+        shell_flags: &[u8],
+        script: &[u8],
+        output: &[u8],
+    ) -> LaunchedScript {
+        let mut command = self.prefix();
+        command.extend_from_slice(shell);
+        command.push(b' ');
+        if script.len() > RESPONSE_FILE_THRESHOLD {
+            let path = self.response_file(output);
+            match crate::graph::shell_escape_path(&path) {
+                Some(quoted) => command.extend_from_slice(&quoted),
+                None => command.extend_from_slice(&path),
+            }
+            return LaunchedScript {
+                command,
+                response_file: Some((path, script.to_vec())),
+            };
+        }
+        command.extend_from_slice(shell_flags);
+        command.extend_from_slice(b" \"");
+        command.extend_from_slice(&escape_shell(&Bytes::copy_from_slice(script)));
+        command.push(b'"');
+        LaunchedScript {
+            command,
+            response_file: None,
+        }
+    }
+}
+
+/// A command line, and the response file it needs when the script was too long
+/// to be an argument.
+pub(crate) struct LaunchedScript {
+    pub(crate) command: Vec<u8>,
+    pub(crate) response_file: Option<(Vec<u8>, Vec<u8>)>,
+}
+
+/// How long a script has to be before it reaches the shell as a file rather
+/// than as an argument. kati's own threshold, kept in step with it.
+const RESPONSE_FILE_THRESHOLD: usize = 100 * 1000;
 
 /// One static recursive invocation within a held recipe.
 pub(crate) struct SubninjaInvocation {
@@ -183,6 +318,12 @@ pub struct GraphSink {
     /// declares it immediately before that edge, so this holds one entry for
     /// as long as it takes to reach the edge that names it.
     rules: HashMap<RuleId, Rule>,
+    /// Rules whose recipe kati left unexpanded, waiting for the edge that
+    /// names them so the recipe can be recorded against the edge instead.
+    deferred_rules: HashMap<RuleId, DeferredRecipeId>,
+    /// Edges whose command this graph's own executor will ask for when it is
+    /// about to run them.
+    deferred_edges: Vec<(Edge, DeferredRecipeId)>,
     /// Recursive rules are not executor rules. They wait for their immediately
     /// following edge so the compiler can replace that edge with graph
     /// composition.
@@ -197,6 +338,12 @@ pub struct GraphSink {
     /// The first construction failure, kept because kati's walk unwinds through
     /// [`anyhow::Error`] and the typed error is what a caller can act on.
     failure: Option<FrontendError>,
+    /// When this sink's caller will turn recipes into command text.
+    ///
+    /// A caller that takes the graph and runs it later needs every command in
+    /// it; a caller that runs the build itself, and holds the session while it
+    /// does, can ask for a recipe when it reaches it.
+    expansion: RecipeExpansion,
 }
 
 impl Default for GraphSink {
@@ -215,12 +362,13 @@ impl GraphSink {
     /// arrange.
     #[must_use]
     pub fn new() -> Self {
-        Self::new_at(Path::new(""))
+        Self::new_at(Path::new(""), RecipeExpansion::Construction)
     }
 
-    /// A sink whose response files are anchored at the executor's root.
+    /// A sink whose response files are anchored at the executor's root, and
+    /// whose recipes are expanded when `expansion` says.
     #[must_use]
-    pub(crate) fn new_at(root_directory: &Path) -> Self {
+    pub(crate) fn new_at(root_directory: &Path, expansion: RecipeExpansion) -> Self {
         let mut graph = BuildGraph::new();
         let scope = graph.root();
         let bindings = Bindings::intern(&mut graph);
@@ -255,6 +403,8 @@ impl GraphSink {
             phony,
             subninja_probe,
             rules: HashMap::new(),
+            deferred_rules: HashMap::new(),
+            deferred_edges: Vec::new(),
             subninja_rules: HashMap::new(),
             interned: HashMap::new(),
             observed_members: HashMap::new(),
@@ -262,6 +412,7 @@ impl GraphSink {
             completion_proxies: 0,
             serial_units: 0,
             failure: None,
+            expansion,
         }
     }
 
@@ -612,52 +763,22 @@ impl GraphSink {
         }
     }
 
-    fn push_shell_word(command: &mut Template, word: &[u8]) {
-        command.push_literal(b"'");
-        for byte in word {
-            if *byte == b'\'' {
-                command.push_literal(b"'\\''");
-            } else {
-                command.push_literal(&[*byte]);
-            }
-        }
-        command.push_literal(b"'");
+    /// The shell prefix that gives a compilation unit its Make `-C` working
+    /// directory and environment without moving Ronin's executor.
+    fn command_prefix(&self) -> Template {
+        Template::literal(&self.layout().prefix())
     }
 
-    /// The shell prefix that gives a child compilation unit its Make `-C`
-    /// working directory without moving Ronin's executor.
-    fn command_prefix(&self) -> Template {
-        let mut command = Template::default();
-        if !self.unit.command_directory.as_os_str().is_empty() {
-            command.push_literal(b"cd ");
-            Self::push_shell_word(
-                &mut command,
-                self.unit.command_directory.as_os_str().as_bytes(),
-            );
-            command.push_literal(b" && ");
+    /// Everything about this unit that a command line is built around, kept
+    /// separately so a recipe expanded when its edge is launched is wrapped
+    /// exactly as the same recipe expanded here would have been.
+    pub(crate) fn layout(&self) -> CommandLayout {
+        CommandLayout {
+            command_directory: self.unit.command_directory.clone(),
+            recipe_environment: self.unit.recipe_environment.clone(),
+            root_directory: self.root_directory.clone(),
+            root: self.unit.root,
         }
-
-        if !self.unit.recipe_environment.is_empty() {
-            command.push_literal(b"env");
-            for (name, value) in &self.unit.recipe_environment {
-                if value.is_none() {
-                    command.push_literal(b" -u ");
-                    Self::push_shell_word(&mut command, name);
-                }
-            }
-            for (name, value) in &self.unit.recipe_environment {
-                if let Some(value) = value {
-                    let mut assignment = Vec::with_capacity(name.len() + value.len() + 1);
-                    assignment.extend_from_slice(name);
-                    assignment.push(b'=');
-                    assignment.extend_from_slice(value);
-                    command.push_literal(b" ");
-                    Self::push_shell_word(&mut command, &assignment);
-                }
-            }
-            command.push_literal(b" ");
-        }
-        command
     }
 
     /// The command line that runs one script, and the bindings it needs.
@@ -764,6 +885,58 @@ impl GraphSink {
         bindings
     }
 
+    /// The rule bindings that do not come from a recipe's text.
+    ///
+    /// The command is deliberately one that fails: nothing should ever run it,
+    /// because the edge that names it binds its real command as it is
+    /// launched, and a placeholder that quietly succeeded would turn a missing
+    /// binding into a build that claimed to have done the work.
+    fn deferred_rule_bindings(&self, rule: &SinkRule<'_>) -> Vec<(Binding, Template)> {
+        let mut bindings = vec![
+            (self.bindings.command, Template::literal(b"false")),
+            (self.bindings.generator, Template::literal(b"1")),
+        ];
+        if rule.restat {
+            bindings.push((self.bindings.restat, Template::literal(b"1")));
+        }
+        bindings
+    }
+
+    /// The per-edge bindings kati names, and the serialising pool this unit
+    /// puts a command edge in when `.NOTPARALLEL` asked for one.
+    fn edge_bindings(&self, edge: &SinkEdge<'_>) -> Vec<(Binding, Vec<u8>)> {
+        let mut bindings = Vec::new();
+        if let Some(pool) = edge.pool {
+            bindings.push((self.bindings.pool, pool.to_vec()));
+        }
+        if let Some(tags) = edge.tags {
+            bindings.push((self.bindings.tags, tags.to_vec()));
+        }
+        let subninja_rule = edge.rule.and_then(|id| self.subninja_rules.get(&id));
+        let is_subninja = subninja_rule.is_some();
+        let has_residual_action = subninja_rule.is_some_and(|rule| rule.residual_rule.is_some());
+        if edge.pool.is_none()
+            && edge.rule.is_some()
+            && (!is_subninja || has_residual_action)
+            && let Some(pool) = &self.unit.serial_pool
+        {
+            bindings.push((self.bindings.pool, pool.clone()));
+        }
+        bindings
+    }
+
+    /// The recipe a declared rule left unexpanded, claimed by the edge that
+    /// names that rule.
+    fn deferred_recipe_for(&mut self, rule: Option<RuleId>) -> Option<DeferredRecipeId> {
+        rule.and_then(|id| self.deferred_rules.remove(&id))
+    }
+
+    /// The edges whose recipes are still to be expanded, and the recipe each
+    /// one names.
+    pub(crate) fn take_deferred_edges(&mut self) -> Vec<(Edge, DeferredRecipeId)> {
+        std::mem::take(&mut self.deferred_edges)
+    }
+
     fn define_executor_rule(
         &mut self,
         name: &[u8],
@@ -783,6 +956,20 @@ impl BuildSink for GraphSink {
 
     fn shell_evaluation(&self) -> ShellEvaluation {
         ShellEvaluation::Expansion
+    }
+
+    /// GNU Make expands a recipe when it is about to run it, and this graph is
+    /// run by the process that built it, so it can do the same.
+    ///
+    /// Only for the root compilation unit. A recursive child's recipes are
+    /// evaluated in its own session and its own directory, neither of which
+    /// outlives its compilation, so those are expanded where they always were.
+    fn recipe_expansion(&self) -> RecipeExpansion {
+        if self.unit.root {
+            self.expansion
+        } else {
+            RecipeExpansion::Construction
+        }
     }
 
     fn start(&mut self, pools: &[SinkPool<'_>]) -> anyhow::Result<()> {
@@ -850,10 +1037,17 @@ impl BuildSink for GraphSink {
             return Ok(());
         }
 
-        let bindings = self.executor_rule_bindings(rule, rule.command, rule.ignore_errors);
+        let bindings = if rule.deferred_recipe.is_some() {
+            self.deferred_rule_bindings(rule)
+        } else {
+            self.executor_rule_bindings(rule, rule.command, rule.ignore_errors)
+        };
         let name = format!("rule{}", rule.id);
         let defined = self.define_executor_rule(name.as_bytes(), bindings)?;
         self.rules.insert(rule.id, defined);
+        if let Some(recipe) = rule.deferred_recipe {
+            self.deferred_rules.insert(rule.id, recipe);
+        }
         Ok(())
     }
 
@@ -877,23 +1071,7 @@ impl BuildSink for GraphSink {
             vec![completion_output]
         };
 
-        let mut bindings = Vec::new();
-        if let Some(pool) = edge.pool {
-            bindings.push((self.bindings.pool, pool.to_vec()));
-        }
-        if let Some(tags) = edge.tags {
-            bindings.push((self.bindings.tags, tags.to_vec()));
-        }
-        let subninja_rule = edge.rule.and_then(|id| self.subninja_rules.get(&id));
-        let is_subninja = subninja_rule.is_some();
-        let has_residual_action = subninja_rule.is_some_and(|rule| rule.residual_rule.is_some());
-        if edge.pool.is_none()
-            && edge.rule.is_some()
-            && (!is_subninja || has_residual_action)
-            && let Some(pool) = &self.unit.serial_pool
-        {
-            bindings.push((self.bindings.pool, pool.clone()));
-        }
+        let bindings = self.edge_bindings(edge);
         if let Some(id) = edge.rule
             && let Some(rule) = self.subninja_rules.remove(&id)
         {
@@ -925,6 +1103,7 @@ impl BuildSink for GraphSink {
                 .ok_or_else(|| anyhow::Error::msg(format!("edge names undeclared rule{id}")))?,
             None => self.phony,
         };
+        let deferred_recipe = self.deferred_recipe_for(edge.rule);
 
         let spec = EdgeSpec {
             scope: self.unit.scope,
@@ -944,6 +1123,9 @@ impl BuildSink for GraphSink {
         };
         match self.graph.add_edge(spec) {
             Ok(built) => {
+                if let Some(recipe) = deferred_recipe {
+                    self.deferred_edges.push((built, recipe));
+                }
                 self.graph.set_filesystem_only_freshness(built);
                 self.graph.set_delete_on_error(built, delete_on_error);
                 if let Some(deferred) = deferred {

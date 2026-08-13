@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 11
+| # A recursively expanded variable holding a shell call is expanded where the
+| # recipe referencing it is expanded, which is after the prerequisite that
+| # writes the file the call looks for.
+| PROBE = $(shell test -f marker && printf 'found-%s' "`cat marker`")
+| 
+| all: marker
+| 	@printf 'probe says: [%s]\n' '$(PROBE)' > out
+| 
+| marker:
+| 	@printf 'yes\n' > marker
+| .PHONY: all
+file marker touched 1
+| yes
+file out touched 1
+| probe says: [found-yes]
