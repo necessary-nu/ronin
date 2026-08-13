@@ -7728,6 +7728,20 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-13T20:54:24.698929974Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T21:25:25.053886934Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Characterised GNU Make 4.4.1 against `do_variable_definition`'s `f_append` branch (reference/gnumake/src/variable.c:1358-1434). Two independent emptiness tests, both absent from kati. `if (!vallen) goto done` — an empty appended value returns the looked-up variable without redefining it, so no separator, no new origin, no new location. `if (oldlen)` — the separator is written only when the existing value is non-empty. Both read `strlen` of a stored string, so a value of one space counts as NON-empty: `V := $(E) $(E)` then `V += x` gives `  x` (two spaces), oracle-confirmed. For a recursive variable the stored string is the UNEXPANDED text, so `V = $(EMPTY)` then `V += x` reads back as `$(EMPTY) x` and expands to ` x`, while `V = x` then `V += $(EMPTY)` appends the reference and expands to `x `. The simple counterparts of both are no-ops. A whitespace-only right-hand side is stripped to empty by the parser's left-trim (GNU's next_token; kati's trim_left_space already matched), so it is the empty case, while trailing whitespace on the left-hand value is preserved and counts.\n\nFixed in kati at nplan/make-empty-variable-append (9bce042): var.rs gained `appended_values`/`appended_text` so both append paths omit the separator on empty text and so a recursive variable's `orig` finally grows with its expression — it never did, which made `$(value V)` return only the first assignment and made a second `+=` ask its emptiness question of a stale answer. eval.rs's PlusEq arm now decides `nothing_to_append` per flavour and short-circuits to `needs_assign = false` with the previous variable returned unchanged, which is GNU's `goto done`. evaluate.rs stopped seeding MAKEFILE_LIST with a hand-written leading space — the same defect written literally rather than reached through the append path, and the source of this node's three makefile_list.mk corpus rows.\n\nOwned markers resolved: feature-conditional-flavours, variable-append-to-empty. All seven owned vendored-corpus rows now match (cond_syntax, ifeq_without_parens, makefile_list tests 1-3, target_specific_var_append, var_append); the `append-to-empty` inventory family is retired, being named by no other case. Target-specific and pattern-specific `+=` onto empty globals were already correct — dep.rs's merge point had the emptiness test — and are unchanged; feature-target-append-follows-its-own-value and feature-pattern-specific-append-order stay green.\n\nFixtures: variable-append-to-empty extended with the `empty_simple :=` cell so it now covers GNU's own TEST 8 exactly; new variable-append-joins-written-text (separator decided by written text, whitespace-only value, `$(value)` after repeated appends) and variable-append-of-nothing-is-a-no-op (value, flavour and origin all survive an empty append; the recursive/simple asymmetry about what counts as nothing). All recorded through the provenance-enforcing harness.\n\nIndependent confirmation: GNU Make's own suite has a case titled \"TEST 8: Append to empty\" (reference/gnumake/tests/scripts/variables/flavors), and `variables/flavors.diff.8` moved from unclassified (ninja-progress+evaluation) to narration (ninja-progress) — the evaluation difference is gone and only Ronin's progress line remains."
+                            }
                         )
                     }
 
@@ -7831,6 +7845,13 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+
+                            {
+                                at 2026-08-13T21:25:29.924661795Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Delivered by make-empty-variable-append rather than separately, because it is the same defect. kati seeded MAKEFILE_LIST in evaluate.rs's read_invocation_state by writing a leading space ahead of the first makefile's name — append-to-empty's separator, spelled out by hand instead of reached through the append path. That seed is also what produced the three makefile_list.mk vendored-corpus rows classified `append-to-empty`, which make-empty-variable-append owned, so the two nodes were holding opposite ends of one line of code and neither could be closed alone.\n\nThe seed is now the first makefile's name alone; subsequent includes still arrive through `append_str`, which no longer writes a separator onto an empty value. Both owned markers resolved: feature-makefile-list, variable-makefile-list. `$(MAKEFILE_LIST)`, `$(words ...)` over it, `$(flavor)` and `$(origin)` all match GNU Make 4.4.1, and makefile_list.mk tests 1-3 are byte-identical in the conformance corpus."
                             }
                         )
                     }

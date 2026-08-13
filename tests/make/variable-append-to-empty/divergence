@@ -1,1 +1,0 @@
-Kati inserts a separator when appending to an empty variable; make-empty-variable-append.

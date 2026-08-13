@@ -1,0 +1,30 @@
+# `+=` with nothing to append is not an assignment. The variable that was
+# looked up is the one handed back, so no separator arrives and the origin it
+# was given stands even where the appending line says override.
+#
+# What counts as nothing differs by flavour, because the two append different
+# things. A simple variable's value was expanded when it was set, so the
+# right-hand side is expanded to match it and a reference to nothing is
+# nothing. A recursive one is appended to unexpanded, so that same reference
+# is text, and it arrives with its separator.
+empty =
+
+kept := kept
+kept +=
+
+recursive = recursive
+recursive +=
+
+noticed := noticed
+override noticed +=
+
+override moved := moved
+override moved += again
+
+immediate := immediate
+immediate += $(empty)
+
+deferred = deferred
+deferred += $(empty)
+
+all: ; @printf '[%s]\n' '$(kept)' '$(origin kept)' '$(flavor kept)' '$(recursive)' '$(value recursive)' '$(noticed)' '$(origin noticed)' '$(moved)' '$(origin moved)' '$(immediate)' '$(deferred)' '$(value deferred)' > out

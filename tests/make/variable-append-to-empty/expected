@@ -1,6 +1,6 @@
 oracle GNU Make 4.4.1
 outcome success
-file Makefile kept 11
+file Makefile kept 13
 | recur =
 | recur += foo
 | simple :=
@@ -11,10 +11,13 @@ file Makefile kept 11
 | simple_empty +=
 | empty_recur =
 | empty_recur +=
-| all: ; @printf '[%s]\n' '$(recur)' '$(simple)' '$(recur_empty)' '$(simple_empty)' '$(empty_recur)' > out
-file out touched 5
+| empty_simple :=
+| empty_simple +=
+| all: ; @printf '[%s]\n' '$(recur)' '$(simple)' '$(recur_empty)' '$(simple_empty)' '$(empty_recur)' '$(empty_simple)' > out
+file out touched 6
 | [foo]
 | [bar]
 | [foo]
 | [bar]
+| []
 | []

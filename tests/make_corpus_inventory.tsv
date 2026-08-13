@@ -16,7 +16,6 @@
 # family   record: name and the reason that family exists.
 # case     record: id, class, `+`-joined families, digest.
 
-family	append-to-empty	+= onto a variable that is defined but empty inserts a separator space. GNU Make appends without one. Present in the C++ original (SimpleVar::AppendVar) and in the Rust port, so it is inherited rather than introduced.
 family	build-order	the two tools schedule an order-only prerequisite at different points, so the recipe echoes interleave differently.
 family	corpus-todo	the corpus annotates the case with a leading # TODO, which is how the vendored harness recorded that kati does not match GNU Make here.
 family	corpus-version-gate	the case gates its expectation on $(filter 4.2%,$(MAKE_VERSION)), so moving the oracle off the vendored harness's 4.2.1 pin changes which branch GNU Make takes.
@@ -38,7 +37,6 @@ case	autovar_assign.mk#default	recorded	evaluation+corpus-todo+exit-status	8c1c6
 case	blank_line_before_command.mk#test	recorded	recipe-stream+corpus-todo+exit-status	1c0003fa1be5e1da
 case	call_with_whitespace.mk#test	defect	quote-style	a70ab0c62ed68238
 case	circular_dep.mk#test	defect	identity-prefix	595f0714ab1a00bb
-case	cond_syntax.mk#test	defect	append-to-empty	af0174ede9a2571d
 case	define_with_comments.mk#test	defect	quote-style	def36077f32e4d2b
 case	delete_on_error.mk#test	recorded	evaluation+corpus-todo+exit-status	92054fe56b1cc1e0
 case	deprecated_export.mk#test	extension	kati-extension	6f76de783020faaf
@@ -72,12 +70,8 @@ case	final_global.sh#script	extension	kati-extension	5f74191705163f37
 case	final_rule.sh#script	extension	kati-extension	c3bce91475c347d9
 case	final_rule2.sh#script	extension	kati-extension	c3bce91475c347d9
 case	func_backslash.mk#test	defect	quote-style	89a7baefb28487f2
-case	ifeq_without_parens.mk#test	defect	append-to-empty	e194f5283e5792fd
 case	ignore_error.mk#test	defect	identity-prefix+error-location	a7a1c3b1ed8e8e57
 case	implicit_pattern_rule_warn.sh#script	extension	kati-extension	254724fe0651e623
-case	makefile_list.mk#test1	defect	append-to-empty	b8790dbce543526b
-case	makefile_list.mk#test2	defect	append-to-empty	6ca60cc5d71101d3
-case	makefile_list.mk#test3	defect	append-to-empty	525a2f82927c1511
 case	multi_rule_order_only.mk#test2	defect	build-order	1bb6f2cdc5e12f75
 case	multiline_recipe.mk#test6	recorded	evaluation+corpus-todo	87c30c30f1d96f00
 case	ninja_normalized_path.mk#test2	defect	recipe-stream+exit-status	3e7af572b01ded7b
@@ -100,10 +94,8 @@ case	shellstatus_in_rule.mk#test	extension	kati-extension	3c32c2b9f1f3cf9d
 case	shellstatus_readonly.mk#test	extension	kati-extension	64b641ea62022407
 case	silent_ignore_error.mk#test	defect	identity-prefix+error-location	ca3a2f47b2c7169c
 case	suffix_rule_warn.sh#script	extension	kati-extension	49f6c8102c13451f
-case	target_specific_var_append.mk#default	defect	append-to-empty	fe2215252d1ac70f
 case	top_level_phony.sh#script	extension	kati-extension	1c3662df94de401b
 case	value_at.mk#test	recorded	evaluation+corpus-todo	ac9393461b047f31
-case	var_append.mk#test	defect	append-to-empty	1954c2a82fdbe7cb
 case	var_visibility_prefix_conflict.mk#test	extension	kati-extension	edfa6fd7930aa88b
 case	var_visibility_prefix_invalid_file_four.mk#test	extension	kati-extension	3d8a5e6ee7c085a7
 case	var_visibility_prefix_invalid_file_one.mk#test	extension	kati-extension	aad7f652f0b6e7bd

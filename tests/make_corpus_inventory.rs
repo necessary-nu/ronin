@@ -58,6 +58,13 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 85 when `+=` stopped writing a separator onto a variable that is
+    // defined but empty: `cond_syntax.mk#test`, `ifeq_without_parens.mk#test`,
+    // `target_specific_var_append.mk#default`, `var_append.mk#test` and the
+    // three `makefile_list.mk` cases became byte-identical, and took the
+    // `append-to-empty` family with them, being the only cases that named it.
+    //
+    // Before that it moved
     // from 86 when each ordinary double-colon record became its own action,
     // tested against the prerequisites that record declared:
     // `multi_explicit_output_patterns_double_colon.mk#test` became
@@ -87,8 +94,8 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 85);
-    assert_eq!(by_class["defect"], 43);
+    assert_eq!(cases.len(), 78);
+    assert_eq!(by_class["defect"], 36);
     assert_eq!(by_class["recorded"], 10);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);

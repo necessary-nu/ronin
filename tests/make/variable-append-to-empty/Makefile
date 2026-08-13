@@ -8,4 +8,6 @@ simple_empty := bar
 simple_empty +=
 empty_recur =
 empty_recur +=
-all: ; @printf '[%s]\n' '$(recur)' '$(simple)' '$(recur_empty)' '$(simple_empty)' '$(empty_recur)' > out
+empty_simple :=
+empty_simple +=
+all: ; @printf '[%s]\n' '$(recur)' '$(simple)' '$(recur_empty)' '$(simple_empty)' '$(empty_recur)' '$(empty_simple)' > out
