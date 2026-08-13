@@ -435,8 +435,6 @@ impl_evidence (
         make.manifest-equivalence
     ), covered_claims (
         {impl_name target-impl, rule make.manifest-equivalence}
-    ), rule_versions_seen (
-        {id make.manifest-equivalence, version 0}
     )}
     {id make-interface-surface, covered_rules (
         make.interface-compatibility
@@ -456,9 +454,6 @@ impl_evidence (
         make.narration
     ), covered_claims (
         {impl_name target-impl, rule make.narration}
-    ), rule_versions_seen (
-        {id make.narration, version 0}
-        {id product.make-identity, version 0}
     )}
     {id make-recipe-command-narration, covered_rules (
         make.narration

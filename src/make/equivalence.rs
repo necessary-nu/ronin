@@ -748,7 +748,13 @@ out$$dollar:
     );
 }
 
+/// One edge carrying the whole binding repertoire the equivalence rule
+/// enumerates: pool, depfile and restat as the Makefile states them, and the
+/// generator control every recipe rule acquires. The corpus pass reaches the
+/// same property over every testcase and is ignored by default, so this is
+/// where a binding that stops crossing the sink is caught on an ordinary run.
 // [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
 #[test]
 fn the_per_edge_bindings_agree() {
     agrees(
