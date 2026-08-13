@@ -679,6 +679,30 @@ fn withdrawn(graph: &BuildGraph) -> Vec<String> {
     paths
 }
 
+/// Every output either graph would delete once the build has finished with it,
+/// as a sorted list of paths.
+fn disposable(graph: &BuildGraph) -> Vec<String> {
+    outputs_where(graph, |edge| edge.disposable)
+}
+
+/// Every output either graph is allowed to find missing, as a sorted list of
+/// paths.
+fn intermediate(graph: &BuildGraph) -> Vec<String> {
+    outputs_where(graph, |edge| edge.intermediate)
+}
+
+fn outputs_where(graph: &BuildGraph, wanted: impl Fn(&crate::graph::Edge) -> bool) -> Vec<String> {
+    let arenas = graph.arenas();
+    let mut paths = arenas
+        .edge_ids()
+        .filter(|edge| wanted(arenas.edge(*edge)))
+        .flat_map(|edge| arenas.edge(edge).out.iter())
+        .map(|node| arenas.node_path(*node).to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
 /// Assert that one Makefile produces the same graph both ways.
 #[track_caller]
 fn agrees(makefile: &str, flags: &[&str]) {
@@ -760,6 +784,58 @@ gone kept &:
     assert!(
         withdrawn(&both.parsed).is_empty(),
         "a manifest has no way to say this, so reading one back must not invent it"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
+    );
+}
+
+/// A `.PRECIOUS` pattern takes an invented file out of the disposable set
+/// without taking away its being intermediate, and only the direct graph can
+/// say either.
+///
+/// Two properties in one Makefile, because they are separable and GNU Make
+/// separates them: `hello.z` was invented to complete the chain, so its absence
+/// is still no reason to remake what reads it, and the pattern that made it is
+/// spelled on `.PRECIOUS`, so the build does not sweep it up afterwards. The
+/// control is `hello.y`, invented the same way and named by no pattern.
+///
+/// `.PRECIOUS` is matched against the target pattern of the rule that made the
+/// file rather than against the file, so `%.z` protecting a `%.z: %.x` output
+/// says nothing about a name an explicit rule wrote.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn a_precious_pattern_spares_an_intermediate() {
+    let case = Case::new(
+        "\
+.PRECIOUS: %.z
+all: hello.tsk other.wsk
+hello.x other.x:
+\t@echo body > $@
+%.z: %.x
+\t@cat $< > $@
+%.y: %.x
+\t@cat $< > $@
+%.tsk: %.z
+\t@cat $< > $@
+%.wsk: %.y
+\t@cat $< > $@
+",
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(disposable(&both.direct), vec!["other.y".to_owned()]);
+    assert_eq!(
+        intermediate(&both.direct),
+        vec!["hello.z".to_owned(), "other.y".to_owned()],
+        "protection is from the deletion and not from being intermediate"
+    );
+    assert!(
+        disposable(&both.parsed).is_empty() && intermediate(&both.parsed).is_empty(),
+        "a manifest has no way to say either, so reading one back must not invent them"
     );
     assert_eq!(
         differences(&both.direct, &both.parsed, &both.semantics),

@@ -1,0 +1,5 @@
+.PRECIOUS: hello.%
+all: hello.tsk
+hello.x: ; echo body > $@
+%.z: %.x ; cat $< > $@
+%.tsk: %.z ; cat $< > $@

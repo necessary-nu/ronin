@@ -1,1 +1,0 @@
-Ronin deletes an explicitly intermediate file even when .PRECIOUS says to retain it; make-precious-intermediate-retention.

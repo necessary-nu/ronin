@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| all:;
+| include gta
+| %a %b : ; touch $*a
+file gta touched 0

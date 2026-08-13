@@ -417,6 +417,7 @@ assertions (
     {id make-empty-variable-append, kind @complete, author "brendan@necessary.nu", at 2026-08-13T21:26:12.130768637Z}
     {id make-makefile-list-initialization, kind @complete, author "brendan@necessary.nu", at 2026-08-13T21:26:14.330417918Z}
     {id make-lazy-recipe-expansion, kind @complete, author "brendan@necessary.nu", at 2026-08-13T22:35:56.254395338Z}
+    {id make-precious-intermediate-retention, kind @doing, author "brendan@necessary.nu", at 2026-08-13T23:15:47.339878201Z}
 )
 
 impl_evidence (

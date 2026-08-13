@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| .PRECIOUS: hello.%
+| all: hello.tsk
+| hello.x: ; echo body > $@
+| %.z: %.x ; cat $< > $@
+| %.tsk: %.z ; cat $< > $@
+file hello.tsk touched 1
+| body
+file hello.x touched 1
+| body
