@@ -285,3 +285,110 @@ all: 15.x 1.x
     assert!(stdout.contains("@=15.x,<=5.z,^=5.z 6.z,+=5.z 6.z 5.z,|=7.z 8.z"));
     assert!(stdout.contains("@=1.x,<=1.z,^=1.z 2.z,+=1.z 2.z 2.z,|=3.z 4.z"));
 }
+
+#[test]
+fn double_colon_rules_weigh_own_prerequisites() {
+    let scratch = Scratch::new(
+        r"out:: old.in
+	@printf 'one ?=%s ^=%s\n' '$?' '$^' >> actions
+out:: new.in
+	@printf 'two ?=%s ^=%s\n' '$?' '$^' >> actions
+",
+    );
+    write_at(&scratch.path("old.in"), 100);
+    write_at(&scratch.path("out"), 300);
+    write_at(&scratch.path("new.in"), 500);
+
+    assert_success(&scratch.run(&["--no-print-directory", "out"]));
+    assert_eq!(
+        fs::read_to_string(scratch.path("actions")).expect("action log"),
+        "two ?=new.in ^=new.in\n"
+    );
+}
+
+#[test]
+fn double_colon_baseline_precedes_the_chain() {
+    // The first rule makes the target far newer than the second rule's
+    // prerequisite. Each entry was weighed before the chain ran, so the
+    // second still has work to do.
+    let scratch = Scratch::new(
+        r"out:: first.in
+	@printf 'one\n' >> actions
+	@touch -d @9000 out
+out:: second.in
+	@printf 'two\n' >> actions
+",
+    );
+    write_at(&scratch.path("out"), 300);
+    write_at(&scratch.path("first.in"), 500);
+    write_at(&scratch.path("second.in"), 500);
+
+    assert_success(&scratch.run(&["--no-print-directory", "out"]));
+    assert_eq!(
+        fs::read_to_string(scratch.path("actions")).expect("action log"),
+        "one\ntwo\n"
+    );
+}
+
+#[test]
+fn double_colon_chain_runs_in_order() {
+    // Under -j the chain is still walked in order: GNU Make refuses to start a
+    // second entry for a target while an earlier one is running.
+    let scratch = Scratch::new(
+        r"out:: first.in
+	@printf 'one-start\n' >> actions
+	@sleep 1
+	@printf 'one-end\n' >> actions
+out:: second.in
+	@printf 'two-start\n' >> actions
+	@printf 'two-end\n' >> actions
+",
+    );
+    write_at(&scratch.path("out"), 300);
+    write_at(&scratch.path("first.in"), 500);
+    write_at(&scratch.path("second.in"), 500);
+
+    assert_success(&scratch.run(&["--no-print-directory", "-j4", "out"]));
+    assert_eq!(
+        fs::read_to_string(scratch.path("actions")).expect("action log"),
+        "one-start\none-end\ntwo-start\ntwo-end\n"
+    );
+}
+
+#[test]
+fn bare_double_colon_rule_stands_alone() {
+    // A rule with no prerequisites is always out of date, but that verdict is
+    // its own: the rule beside it is still weighed against its prerequisite.
+    let scratch = Scratch::new(
+        r"out::
+	@printf 'bare\n' >> actions
+out:: old.in
+	@printf 'dated\n' >> actions
+",
+    );
+    write_at(&scratch.path("old.in"), 100);
+    write_at(&scratch.path("out"), 300);
+
+    assert_success(&scratch.run(&["--no-print-directory", "out"]));
+    assert_eq!(
+        fs::read_to_string(scratch.path("actions")).expect("action log"),
+        "bare\n"
+    );
+}
+
+#[test]
+fn grouped_double_without_prerequisites_runs() {
+    let scratch = Scratch::new(
+        r"a b &::
+	@printf 'ran\n' >> actions
+",
+    );
+    write_at(&scratch.path("a"), 300);
+    write_at(&scratch.path("b"), 300);
+
+    assert_success(&scratch.run(&["--no-print-directory", "a"]));
+    assert_eq!(
+        fs::read_to_string(scratch.path("actions")).expect("action log"),
+        "ran\n"
+    );
+}

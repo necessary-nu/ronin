@@ -1,0 +1,4 @@
+printf 'k\n' > kept.in
+printf 'body\n' > out
+touch -d '2020-01-01 00:00' kept.in
+touch -d '2020-06-01 00:00' out

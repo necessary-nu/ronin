@@ -406,6 +406,7 @@ assertions (
     {id make-remake-work-not-repeated, kind @complete, author "brendan@necessary.nu", at 2026-08-13T16:23:56.53456572Z}
     {id make-restart-count-is-not-a-compilation-input, kind @complete, author "brendan@necessary.nu", at 2026-08-13T16:34:02.840662654Z}
     {id make-delete-on-error-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-13T17:27:12.828743271Z}
+    {id make-double-colon-rule-freshness, kind @doing, author "brendan@necessary.nu", at 2026-08-13T17:54:49.1586711Z}
 )
 
 impl_evidence (

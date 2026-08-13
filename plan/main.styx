@@ -7325,6 +7325,20 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-13T17:54:49.1586711Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T18:00:15.388952092Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "GNU Make 4.4.1 matrix, probed against the pristine oracle before implementing and confirmed against reference/gnumake/src/remake.c:\n\nEach `::` record is an independent rule. A record runs iff the target is out of date against the prerequisites that record declared, never the union: with two records whose prerequisites are `a b` and `c d`, making only `b` newer runs the first alone. `$?`, `$^`, `$<` and `$|` are per-record. A record with no prerequisites at all always runs (`update_file_1`: `if (file->double_colon && file->deps == 0) must_make = 1`), and that verdict is its own — the record beside it is still weighed. Order-only prerequisites do not exempt a record from that test, because GNU asks whether the entry declared any dependency rather than any it would compare timestamps against, so `out:: | oo` is not unconditional. A recipe-less record still has its own prerequisites brought up to date and contributes nothing to run, and its being out of date does not lend that verdict to a sibling that has a recipe. `.PHONY` on the target runs every record. Mixing `:` and `::` for one target is fatal.\n\nTwo cells the design turns on. Post-run mtime: a record that updates the target does not settle later records in the same run. `notice_finished_file` unifies the chain's timestamps to `max_mtime` only once every entry is updated, precisely so that entries are \"separate rules with separate timestamps while they are treated as targets and then as one rule with the unified timestamp when they are considered as a prerequisite of some target\". Probed: a first record pushing the target to 2030 still leaves a second record whose prerequisite is 2021 with work to do. Parallelism: GNU serialises the chain. `update_file` returns as soon as an entry is running — \"Don't run other :: rules for this target until this rule is finished\" — so under -j10 the entries run one at a time in written order. The upstream suite's \"All double-colon rules should be run in parallel build\" (sv 44742) asserts that none is skipped in a parallel build, not that they overlap.\n\nImplementation reuses the make-grouped-double-colon-actions machinery rather than adding a second one. `build_double_action` and `build_grouped_double_member` already compiled one private action node per exact record plus a public completion join, and `DoubleActionId` already carried `trigger: Some(member)` for non-grouped records; only the dispatch in `build_plan` withheld ordinary records from that path. It now admits a merger holding more than one record. A lone `::` record keeps its single-node shape, which confines the graph change to the targets whose semantics actually require it. The order-only chain that serialises records sharing a member gives the written-order execution for free, since every record of one target shares that target. Freshness needs no new mechanism: the deferred baseline is captured by the dirty walk before it descends into prerequisites, which is the same snapshot GNU caches in each entry's `last_mtime`.\n\nTwo corrections the work required. A prerequisite-free record is classified in `build_double_action` after second expansion, which is where GNU reaches the same test; this also repairs grouped `&::` records with no prerequisites, which were never classified unconditional at all and so never re-ran — the same GNU predicate, in the function both forms share. And a completion join must not publish `deferred_freshness_always_dirty`: it owns no members, and letting the chain's unconditional flag reach that field made the direct and manifest sinks disagree over a value neither path reads."
+                            }
                         )
                     }
 
@@ -8572,6 +8586,35 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while completing make-delete-on-error-cleanup, and deliberately not folded into it: the mechanism is a different one.\n\nGNU Make deletes a target whose recipe died by a signal whether or not the Makefile said `.DELETE_ON_ERROR`. `job.c` reaps the child and asks `if (exit_sig != 0 || delete_on_error) delete_child_targets (c)` — the switch is one of two independent reasons, and the signal is the other. `.PRECIOUS` and `.PHONY` still protect, because the deletion goes through the same `delete_target`.\n\nReproducer, no `.DELETE_ON_ERROR` anywhere:\n\n    all: out\n    out: ; echo body > $@ ; kill -TERM $$$$\n\nGNU Make 4.4.1 prints `make: *** [Makefile:2: out] Terminated` and removes `out`. Ronin prints `FAILED: [code=143] out` and keeps it.\n\nWhy Ronin cannot see it today. GNU Make runs the recipe line as its own `sh -c`, so the shell that `$$` names is the child it waits on and a signal death is visible in that child's status. Ronin's recipe is already a `/bin/sh -c \"…\"` command line built by kati, and the executor launches commands through a shell of its own, so the process Ronin waits on is the outer shell — which exits 143 perfectly normally after its inner shell dies. `command_interrupted` therefore never fires, and `status_interrupted` would have recognised SIGTERM if the status had carried one. Ronin has the machinery (`Withdraw::Everything` in `finish_edge` already removes changed outputs on interrupt); what it lacks is the signal.\n\nSo this is not a delete-on-error question. It is a question about what the executor can observe of a recipe's death, and any fix has to change that — surface the inner status, or stop adding the outer shell where the command is already a shell invocation. That is a shared-executor change affecting the manifest front end too, which is why it wants its own node rather than a corner of a Make compatibility fix.\n\nAdjacent and worth settling in the same node: `.PRECIOUS` is not honoured on Ronin's interrupt path. `withdraw_outputs(edge, .., Withdraw::Everything)` removes every changed output of a running edge when the build is cut short, while GNU's fatal-signal cleanup runs `delete_target` per file and so skips precious and phony ones. The eligible-output list this node's work put on the graph is already the thing an interrupt-path fix would consult."
+                    }
+                )
+            }
+
+            {
+                id make-double-colon-keep-going-continues-the-chain
+                title "Continue a double-colon chain past a failed entry under keep-going"
+                kind @fix
+                deps (make-double-colon-rule-freshness)
+                log (
+                    {
+                        at 2026-08-13T17:58:29.782423312Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Reproducer, with n1 and n2 newer than out:\n\n  out:: n1\n  \t@echo R1 >> log\n  \t@false\n  out:: n2\n  \t@echo R2 >> log\n\n`make -k out` under GNU Make 4.4.1 writes log=R1,R2; Ronin writes log=R1 only.\n\nGNU Make's `update_file` walks the double-colon chain and returns early when an entry is still running, but on a failed entry it only abandons the rest of the chain when `keep_going_flag` is clear (reference/gnumake/src/remake.c, the `if (new && !keep_going_flag) return new;` in the chain loop). So under -k the chain continues past a failure.\n\nPre-existing rather than introduced by make-double-colon-rule-freshness: before that node the whole chain compiled into a single action whose recipes were joined with `&&`, so a failing first recipe stopped the rest inside one shell. After it, each record is its own action and the chain order is expressed as an order-only graph edge, so a failed entry leaves its successors unreachable. The observable outcome is the same in both designs; only the mechanism moved.\n\nFixing this needs a scheduler-level edge meaning \"wait for the predecessor to finish, run regardless of its status\", which Ninja's model has no spelling for. That makes it graph/scheduler representation work of the same kind as make-grouped-double-colon-actions, not a rule-compilation change."
+                    }
+                )
+            }
+
+            {
+                id make-terminal-pattern-rule-needs-an-existing-prerequisite
+                title "Apply a terminal pattern rule only when its prerequisite already exists"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-13T17:58:45.099494517Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while characterising ordinary double-colon freshness; unrelated to it. On a pattern rule the double colon means \"terminal\", not \"one independent rule per record\": a terminal rule's prerequisites are never made by another implicit rule, so the rule applies only when they already exist.\n\nReproducer, GNU Make's own suite (tests/scripts/features/double_colon, sv 60188 subtest 1), with hello.z present and test.x absent:\n\n  all: hello.z\n  %.z:: test.x ; touch $@\n  %.x: ;\n\nGNU Make 4.4.1 prints \"Nothing to be done for 'all'.\" — %.x cannot supply test.x for a terminal rule, so %.z:: does not match. Ronin runs `touch hello.z`.\n\nRonin reaches this through the pattern-rule search rather than through a RuleMerger, so make-double-colon-rule-freshness neither caused nor touched it: that node's split is keyed on an explicit merger holding more than one record. The case is one of the three features/double_colon rows still recorded unclassified in tests/make_upstream_inventory.tsv."
                     }
                 )
             }

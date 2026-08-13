@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # A double-colon rule with no recipe still has its own prerequisites brought up
+| # to date, but it contributes nothing for the chain to run, and being out of
+| # date does not lend that verdict to the rule that does have a recipe.
+| out:: made.in
+| out:: kept.in
+| 	@printf '%s\n' recipe >> log
+| 
+| made.in:
+| 	@printf '%s\n' made >> log
+| 	@touch made.in
+file kept.in kept 1
+| k
+file log touched 1
+| made
+file made.in touched 0
+file out kept 1
+| body

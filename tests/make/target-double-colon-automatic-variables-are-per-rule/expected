@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # The automatic variables name what this rule declared, not the union of what
+| # every rule for the same target declared.
+| out:: old.in new.in | gate.one
+| 	@printf 'one q=[$?] all=[$^] first=[$<] order=[$|]\n' >> log
+| out:: other.in | gate.two
+| 	@printf 'two q=[$?] all=[$^] first=[$<] order=[$|]\n' >> log
+file gate.one kept 1
+| g
+file gate.two kept 1
+| g
+file log touched 2
+| one q=[new.in] all=[old.in new.in] first=[old.in] order=[gate.one]
+| two q=[other.in] all=[other.in] first=[other.in] order=[gate.two]
+file new.in kept 1
+| n
+file old.in kept 1
+| o
+file other.in kept 1
+| x
+file out kept 1
+| body

@@ -58,6 +58,12 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 86 when each ordinary double-colon record became its own action,
+    // tested against the prerequisites that record declared:
+    // `multi_explicit_output_patterns_double_colon.mk#test` became
+    // byte-identical and left the recorded corpus-TODO class.
+    //
+    // Before that it moved
     // from 88 when rule file-name scanning adopted GNU Make's escaped-blank
     // semantics: `colon_ws_in_file.mk#test` and `colon_ws_in_target.mk#test`
     // became byte-identical and left the recorded corpus-TODO class.
@@ -81,9 +87,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 86);
+    assert_eq!(cases.len(), 85);
     assert_eq!(by_class["defect"], 43);
-    assert_eq!(by_class["recorded"], 11);
+    assert_eq!(by_class["recorded"], 10);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);
 }

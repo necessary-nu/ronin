@@ -78,7 +78,6 @@ case	implicit_pattern_rule_warn.sh#script	extension	kati-extension	254724fe0651e
 case	makefile_list.mk#test1	defect	append-to-empty	b8790dbce543526b
 case	makefile_list.mk#test2	defect	append-to-empty	6ca60cc5d71101d3
 case	makefile_list.mk#test3	defect	append-to-empty	525a2f82927c1511
-case	multi_explicit_output_patterns_double_colon.mk#test	recorded	evaluation+corpus-todo	795dcf6f062fa02d
 case	multi_rule_order_only.mk#test2	defect	build-order	1bb6f2cdc5e12f75
 case	multiline_recipe.mk#test6	recorded	evaluation+corpus-todo	87c30c30f1d96f00
 case	ninja_normalized_path.mk#test2	defect	recipe-stream+exit-status	3e7af572b01ded7b

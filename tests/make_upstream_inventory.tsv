@@ -39,12 +39,12 @@ case	features/double_colon.diff.15	narration	no-work-line
 case	features/double_colon.diff.16	unclassified	ninja-progress+product-name+evaluation
 case	features/double_colon.diff.2	narration	ninja-progress
 case	features/double_colon.diff.3	narration	ninja-progress
-case	features/double_colon.diff.4	unclassified	ninja-progress+evaluation
-case	features/double_colon.diff.5	unclassified	ninja-progress+evaluation
-case	features/double_colon.diff.6	unclassified	ninja-progress+evaluation
-case	features/double_colon.diff.7	unclassified	ninja-progress+evaluation
+case	features/double_colon.diff.4	narration	ninja-progress
+case	features/double_colon.diff.5	narration	ninja-progress
+case	features/double_colon.diff.6	narration	ninja-progress
+case	features/double_colon.diff.7	narration	ninja-progress
 case	features/double_colon.diff.8	unclassified	product-name+evaluation
-case	features/double_colon.diff.9	unclassified	ninja-progress+evaluation
+case	features/double_colon.diff.9	narration	ninja-progress
 case	features/echoing.diff	narration	ninja-progress+recipe-echo
 case	features/echoing.diff.1	narration	ninja-progress
 case	features/echoing.diff.2	narration	ninja-progress+recipe-echo

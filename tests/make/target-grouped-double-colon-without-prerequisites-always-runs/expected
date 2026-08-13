@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # A grouped double-colon record that declares no prerequisites at all is out of
+| # date by definition, exactly as an ordinary double-colon rule is.
+| a b &:: ; @printf '%s\n' ran >> log
+file a kept 1
+| a
+file b kept 1
+| b
+file log touched 1
+| ran
