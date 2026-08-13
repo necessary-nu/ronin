@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # An included Makefile newer than what it is made from is already what it will
+| # be, so its rule does not run and the read is not started again: MAKE_RESTARTS
+| # stays the empty value a first read has.
+| all: ; @printf 'restarts=%s value=%s\n' '$(MAKE_RESTARTS)' '$(V)' > out
+| 
+| include gen.mk
+| 
+| gen.mk: gen.in ; @printf 'V := remade\n' > $@
+file gen.in kept 1
+| seed
+file gen.mk kept 1
+| V := current
+file out touched 1
+| restarts= value=current

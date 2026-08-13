@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # Every Makefile that has to be made is made before the read starts again, so
+| # two generated includes cost one restart between them rather than one each.
+| all: ; @printf 'restarts=%s first=%s second=%s\n' '$(MAKE_RESTARTS)' '$(A)' '$(B)' > out
+| 
+| -include a.mk
+| -include b.mk
+| 
+| a.mk: ; @printf 'A := a\n' > $@
+| b.mk: ; @printf 'B := b\n' > $@
+file a.mk touched 1
+| A := a
+file b.mk touched 1
+| B := b
+file out touched 1
+| restarts=1 first=a second=b

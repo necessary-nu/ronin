@@ -234,6 +234,7 @@ struct CompilationState<'a> {
     cache: HashMap<Vec<u8>, UnitSubgraph>,
     compiling: HashSet<Vec<u8>>,
     regenerations: Vec<Node>,
+    remakes: Vec<Node>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
 }
@@ -281,6 +282,7 @@ where
         cache: HashMap::new(),
         compiling: HashSet::new(),
         regenerations: Vec::new(),
+        remakes: Vec::new(),
         settled_boundaries,
         evaluation_boundaries: HashSet::new(),
     };
@@ -289,6 +291,7 @@ where
     Ok(Loaded {
         graph,
         regenerations: state.regenerations,
+        remakes: state.remakes,
         evaluation_boundaries: state.evaluation_boundaries,
         makeflags: root.makeflags,
     })
@@ -378,6 +381,9 @@ where
     for target in unit_regenerations {
         if !state.regenerations.contains(&target) {
             state.regenerations.push(target);
+        }
+        if !state.remakes.contains(&target) {
+            state.remakes.push(target);
         }
     }
 
@@ -842,6 +848,12 @@ pub struct Loaded {
     pub graph: BuildGraph,
     /// Compiler inputs this provisional graph knows how to build.
     regenerations: Vec<Node>,
+    /// The subset of those inputs that are Makefiles this read consulted.
+    ///
+    /// Building one of the others stages a recursive unit's prerequisites;
+    /// building one of these can change what the Makefile says, which is the
+    /// only thing that restarts the read.
+    remakes: Vec<Node>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
@@ -856,6 +868,16 @@ impl Loaded {
     #[must_use]
     pub fn regeneration_targets(&self) -> &[Node] {
         &self.regenerations
+    }
+
+    /// The Makefiles this read consulted that a rule says how to remake.
+    ///
+    /// A subset of [`Self::regeneration_targets`]. Whether building them
+    /// changed any of these files is what decides whether the read has to
+    /// happen again on the new text.
+    #[must_use]
+    pub(crate) fn remake_targets(&self) -> &[Node] {
+        &self.remakes
     }
 
     /// Recursive compiler boundaries satisfied by the provisional build.

@@ -7811,6 +7811,20 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-13T14:48:26.150134421Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T15:18:25.26886915Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "The GNU restart matrix, probed against 4.4.1 before writing anything, and what each cell landed as.\n\nRemade and restarted: an included Makefile older than its prerequisite (MAKE_RESTARTS=1, second read sees the new text); a missing -include with a rule; a `::` rule that names a prerequisite; the Makefile named by -f remaking itself from a Makefile.in; two generated includes in one read costing one restart between them; a generated include that itself includes a generated include costing two. Not remade: an include already newer than its prerequisite; a missing -include with no rule; a Makefile declared .PHONY; a `::` recipe with no prerequisites. Fatal: a required include with no rule, unchanged.\n\nWhat decides a restart is the Makefile's timestamp, not that its rule ran. A recipe that fires and puts the file back untouched settles the read (probe: `touch -d 2020-01-01 $@`, one run, MAKE_RESTARTS empty); a recipe that writes back byte-identical text restarts anyway. There is no cap and no cycle detection beyond the two refused shapes: a `gen.mk: force` rule that really rewrites the file restarts GNU Make forever, which a 5s probe confirms by timing out. Ronin stops at the existing hundred-pass ManifestRetryLimit instead, which is not fixture-able either way.\n\nMAKE_RESTARTS is undefined on the first read and `1` after one restart, with origin `environment` and recursive flavour, and it is not in a recipe's environment — GNU sets v_noexport on it precisely because it arrives through the exec. Ronin reads again in place rather than re-executing, so the count is recorded into the session's invocation environment, which lands on the same origin and flavour and never reaches a recipe. Probed byte for byte.\n\nImplementation. kati 74ebff8 records every Makefile the read reached and plans a regeneration root for each one that has a rule and is neither of the two refused shapes. Ronin's prepare_graph keeps the passes it already had for generated includes and now decides between them the way GNU Make does: build what the provisional graph offers, and go around again only if a Makefile's timestamp moved. A pass in which nothing moved is the final compilation, so it returns its own graph and the logs it already opened rather than costing an extra evaluation — Persistence is documented as open-once-per-graph and that is now honoured across both phases. Loaded::remake_targets separates the Makefiles from the prerequisites staged for a recursive unit, so recursive composition still drives its own loop and never counts as a restart.\n\nSixteen recorded cases carry the matrix. The marker this node owned, feature-restart-count, is resolved and deleted.\n\nThree cells stay divergent and are now nodes with recorded reproducers rather than scope creep: make-remaking-ignores-goal-switches (-n and -q must not stop a Makefile being made), make-optional-include-rule-failure (a failed optional include is not a failed build), make-remake-work-not-repeated (an always-out-of-date remake rule runs once per phase because the two phases are two scheduler runs).\n\nThe pcre2 no-regression replay could not be run: /data/pkg-build/work/pcre2*/build.overlay/0/upper is an overlay upper layer whose lower is gone, so Makefile.in and the sources are absent and GNU Make 4.4.1 fails on it too. Replayed instead against a complete configured Automake tree — reference/make-oracle/make-4.4.1, which is GNU Make's own autotools build — where `make -n` under both tools compiles the same single all-recursive step, neither runs config.status, and nothing in the tree is written. The five cases c6c544d left behind still pass."
+                            }
                         )
                     }
 
@@ -8346,6 +8360,51 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-remaking-ignores-goal-switches
+                title "Remake makefiles whatever -n, -q, -t and -B ask of the goals"
+                kind @fix
+                deps (make-included-makefile-restarts)
+                log (
+                    {
+                        at 2026-08-13T15:17:05.423911277Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Opened from make-included-makefile-restarts, which characterised the matrix and left this cell divergent.\n\nGNU Make disables -t, -q and -n while it brings the Makefiles up to date and restores them for the goals (remake.c update_goal_chain saves touch_flag/question_flag/just_print_flag and zeroes them unless the Makefile was also named on the command line), and it turns -B off after the first restart so an always-remade Makefile cannot loop (main.c:1702, always_make_flag = always_make_set && restarts == 0). Probed against 4.4.1: `make -n` really writes the generated include and then prints the goal recipe it would run; `make -q` really writes it and then answers about the goals with status 1; `make -n gen.mk` restores -n for gen.mk because it is a command-line target and prints `'gen.mk' is up to date`.\n\nRonin builds the compiler inputs through the ordinary scheduler with the invocation's own options, so -n describes the Makefile instead of making it and stops before the goals, and -q answers about the compiler inputs instead of the goals. Two recorded reproducers carry `divergence` markers naming this node: tests/make/feature-dry-run-still-remakes-a-makefile and tests/make/feature-question-still-remakes-a-makefile.\n\nThe work is not simply clearing dryrun for that build: regeneration targets mix Makefiles with the prerequisites staged for a recursive $(MAKE) unit, and `recursive-dry-run-writes-nothing` says the second kind must stay dry. Loaded::remake_targets already separates the two, so the shape of the fix is two builds, or one build over the Makefile subset with its own options. -B and -t are separately recorded as discovery-only cases (always-make-option, touch-option), so this node should say what, if anything, they mean here."
+                    }
+                )
+            }
+
+            {
+                id make-optional-include-rule-failure
+                title "Read on when an optional include's rule fails"
+                kind @fix
+                deps (make-included-makefile-restarts)
+                log (
+                    {
+                        at 2026-08-13T15:17:15.22539692Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Opened from make-included-makefile-restarts, which reached this cell while characterising Makefile remaking and found it already divergent before that change.\n\n`-include` says the file may be absent, and GNU Make carries that indifference into the rule that would have made it. read.c records the goaldep with RM_DONTCARE; remake.c inherits `dontcare` into the update, and main.c reports `Failed to remake makefile` only for a Makefile it cares about. Probed against 4.4.1: `-include gen.mk` with `gen.mk: ; printf 'gen ran\\n' > log; exit 1` runs the recipe, the recipe fails, and make goes on to build `all` and exit 0.\n\nRonin builds the compiler inputs through the ordinary scheduler and a failed input stops the build, so the goals are never reached and the run fails. Recorded reproducer with a `divergence` marker naming this node: tests/make/feature-optional-include-rule-failure-is-tolerated.\n\nkati already carries the required/optional distinction on MissingInclude and drops an optional include with no rule; what it does not carry across the compiler-input boundary is that an optional include's *failure* is tolerable. A required include is different and must keep failing."
+                    }
+                )
+            }
+
+            {
+                id make-remake-work-not-repeated
+                title "Keep remade Makefile work done when the goals reach it"
+                kind @fix
+                deps (make-included-makefile-restarts)
+                log (
+                    {
+                        at 2026-08-13T15:17:27.80126465Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Opened from make-included-makefile-restarts, whose delivery made this reachable.\n\nGNU Make brings the Makefiles up to date and then builds the goals inside one process, so a file it already updated is not considered again: remake.c's update_file returns early on a file whose `updated` flag is set. Ronin runs the two phases as two scheduler invocations over the same graph, and dirtiness is recomputed from scratch for the second. For an ordinary rule that costs nothing — the file is current and nothing runs — but a Makefile whose remake rule is always out of date runs its recipe once in each phase.\n\nRecorded reproducer with a `divergence` marker naming this node: tests/make/feature-remade-makefile-is-not-remade-again-for-the-goals. `gen.mk: force` with `force` phony appends one line to `log` under GNU Make and two under Ronin.\n\nAlso visible in the upstream suite: features/include.diff.37 (GNU Make's sv 63484 case, \"included makefiles are not intermediate\") moved narration to unclassified for exactly this reason — Ronin echoes the pattern recipe twice and then rebuilds test.x and test, where GNU Make echoes once and reports `test` up to date. That row is the movement to watch when this node lands.\n\nBuildGraph::mark_subgraphs_prebuilt is the existing machinery for \"work this invocation already did\", used by recursive staging, and is the obvious starting point. Note it is not sufficient on its own: it rewrites an edge's rule to phony but does not clear the always-dirty flag kati derives from is_phony and unconditional_double_colon, which is what keeps this chain dirty."
                     }
                 )
             }

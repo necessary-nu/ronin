@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # Make hands the restarted read its count through the environment, so
+| # MAKE_RESTARTS answers `environment` and is recursively flavoured. It is not
+| # passed on: a recipe's own environment does not have it.
+| all: ; @printf 'shell=%s value=%s origin=%s flavor=%s\n' "$${MAKE_RESTARTS-unset}" '$(MAKE_RESTARTS)' '$(origin MAKE_RESTARTS)' '$(flavor MAKE_RESTARTS)' > out
+| 
+| -include gen.mk
+| 
+| gen.mk: ; @printf '# made\n' > $@
+file gen.mk touched 1
+| # made
+file out touched 1
+| shell=unset value=1 origin=environment flavor=recursive

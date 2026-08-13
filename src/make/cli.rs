@@ -38,11 +38,13 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 mod interface;
+mod remake;
 mod subninja;
 use interface::{
     compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
     evaluated_invocation, makeflags_arguments, prepend_command_line_evals,
 };
+use remake::{CompilerInputBuild, Settlement, build_compiler_inputs};
 pub(super) use subninja::compile as compile_subninja;
 
 /// The makefiles GNU Make reads when no `-f` names one, in its own order.
@@ -54,6 +56,12 @@ const DEFAULT_MAKEFILES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
 /// is this invocation's depth, and the value handed to its own recipes is one
 /// deeper.
 const MAKELEVEL: &str = "MAKELEVEL";
+
+/// How many times the read has started over to pick up a remade Makefile.
+///
+/// Absent on the first read and `1` after one restart, which is what a Makefile
+/// branching on it is asking about.
+const MAKE_RESTARTS: &str = "MAKE_RESTARTS";
 
 /// The workings GNU Make's `--debug` selects, in the bits GNU Make holds them
 /// in. `a` is every one of them and `n` is none.
@@ -1373,21 +1381,26 @@ struct RootCompilation<'a> {
 enum PreparedGraph {
     Ready {
         graph: Box<BuildGraph>,
+        /// The logs already opened over that graph, when the compiler-input
+        /// build opened them. Ninja's logs are opened once per graph, so the
+        /// pass that settled hands its own on rather than leaving the goal
+        /// build to open a second set over the same nodes.
+        persistence: Option<Persistence>,
         invocation: Box<Invocation>,
         options: Box<BuildOptions>,
     },
     Finished(RunResult),
 }
 
-struct CompilerInputBuild<'a> {
-    loaded: crate::make::Loaded,
-    invocation: &'a Invocation,
-    options: BuildOptions,
-    directory: &'a Path,
-}
-
 /// Compile a stable graph, building source includes through Ninja between
 /// attempts when the provisional graph says how to produce them.
+///
+/// GNU Make reads the Makefiles, brings every one of them up to date the way it
+/// would any other target, and starts over from the beginning if that changed
+/// one of them — counting each start in `MAKE_RESTARTS`. This is that loop:
+/// each pass evaluates from a fresh session, builds what the provisional graph
+/// knows how to build, and goes around only when the build left the read's own
+/// inputs different from how it found them.
 fn prepare_graph(
     root: &RootCompilation<'_>,
     reported: &mut String,
@@ -1395,6 +1408,7 @@ fn prepare_graph(
     diagnostics: &mut Option<&mut dyn Write>,
 ) -> Result<PreparedGraph, Error> {
     let mut settled_boundaries = HashSet::new();
+    let mut restarts = 0_usize;
     for _ in 0..100 {
         let mut session = session_for(
             root.invocation,
@@ -1405,7 +1419,7 @@ fn prepare_graph(
         if let Some(contents) = root.makefile_contents {
             session.supply_makefile(root.makefile.as_os_str().to_owned(), contents.to_vec());
         }
-        record_invocation_variables(&mut session, root.invocation, root.level);
+        record_invocation_variables(&mut session, root.invocation, root.level, restarts);
         let compilation = compilation_context(
             root.invocation,
             root.directory.to_owned(),
@@ -1429,6 +1443,7 @@ fn prepare_graph(
         if loaded.regeneration_targets().is_empty() {
             return Ok(PreparedGraph::Ready {
                 graph: Box::new(loaded.graph),
+                persistence: None,
                 invocation: Box::new(effective_invocation),
                 options: Box::new(effective_options),
             });
@@ -1436,17 +1451,26 @@ fn prepare_graph(
         let compiler_inputs = CompilerInputBuild {
             loaded,
             invocation: &effective_invocation,
-            options: effective_options,
+            options: effective_options.clone(),
             directory: root.directory,
         };
-        if let Some(result) = build_compiler_inputs(
+        match build_compiler_inputs(
             compiler_inputs,
             reported,
             output,
             diagnostics,
             &mut settled_boundaries,
         )? {
-            return Ok(PreparedGraph::Finished(result));
+            Settlement::Finished(result) => return Ok(PreparedGraph::Finished(result)),
+            Settlement::Restart => restarts = restarts.saturating_add(1),
+            Settlement::Settled { graph, persistence } => {
+                return Ok(PreparedGraph::Ready {
+                    graph,
+                    persistence: Some(persistence),
+                    invocation: Box::new(effective_invocation),
+                    options: Box::new(effective_options),
+                });
+            }
         }
     }
 
@@ -1459,76 +1483,6 @@ fn prepare_graph(
         }
         .into(),
     )))
-}
-
-fn build_compiler_inputs(
-    request: CompilerInputBuild<'_>,
-    reported: &mut String,
-    output: &mut Option<&mut dyn Write>,
-    diagnostics: &mut Option<&mut dyn Write>,
-    settled_boundaries: &mut HashSet<EvaluationBoundary>,
-) -> Result<Option<RunResult>, Error> {
-    let CompilerInputBuild {
-        loaded,
-        invocation,
-        options,
-        directory,
-    } = request;
-    let targets = loaded.regeneration_targets().to_vec();
-    let boundaries = loaded.evaluation_boundaries().clone();
-    let mut graph = loaded.graph;
-    let (mut persistence, warning) = Persistence::open(&mut graph, directory)?;
-    reported.push_str(warning.as_deref().unwrap_or_default());
-    let mut build = Build::with_options(&mut graph, &mut persistence, options);
-    if let Some(sink) = output.as_deref_mut() {
-        build = build.output(sink);
-    }
-    if let Some(sink) = diagnostics.as_deref_mut() {
-        build = build.diagnostics(sink);
-    }
-    let planned = build.plan(&targets);
-    if invocation.questioning() {
-        let question = planned.map(|planned| planned.already_up_to_date());
-        let flushed = persistence.finish();
-        let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
-        if matches!(question, Ok(true)) && !boundaries.is_empty() {
-            settled_boundaries.extend(boundaries);
-            return Ok(None);
-        }
-        return Ok(Some(answered(std::mem::take(reported), question)));
-    }
-    let planned = match planned {
-        Ok(planned) => planned,
-        Err(failure) => {
-            let _ = persistence.finish();
-            return Ok(Some(abandoned(std::mem::take(reported), failure)));
-        }
-    };
-    if planned.already_up_to_date() && !boundaries.is_empty() {
-        persistence.finish()?;
-        settled_boundaries.extend(boundaries);
-        return Ok(None);
-    }
-    let disposable = planned.disposable();
-    let outcome = planned.run();
-    let flushed = persistence.finish();
-    let outcome = match outcome {
-        Ok(outcome) => outcome,
-        Err(failure) => return Ok(Some(abandoned(std::mem::take(reported), failure))),
-    };
-    flushed?;
-    discard_intermediates(&disposable, invocation.given(Switch::DryRun));
-    if outcome.exit_code() != 0 || invocation.given(Switch::DryRun) {
-        return Ok(Some(finished(
-            std::mem::take(reported),
-            false,
-            &outcome,
-            invocation.given(Switch::Silent),
-        )));
-    }
-    settled_boundaries.extend(boundaries);
-    reported.push_str(&String::from_utf8_lossy(outcome.output()));
-    Ok(None)
 }
 
 /// Run one Make invocation to its end.
@@ -1584,17 +1538,23 @@ pub(crate) fn run(
         makefile_contents: makefile_contents.as_deref(),
         level,
     };
-    let (mut graph, invocation, options) =
+    let (mut graph, opened, invocation, options) =
         match prepare_graph(&root, &mut reported, &mut output, &mut diagnostics)? {
             PreparedGraph::Ready {
                 graph,
+                persistence,
                 invocation,
                 options,
-            } => (*graph, *invocation, *options),
+            } => (*graph, persistence, *invocation, *options),
             PreparedGraph::Finished(result) => return Ok(result),
         };
-    let (mut persistence, warning) = Persistence::open(&mut graph, &directory)?;
-    reported.push_str(warning.as_deref().unwrap_or_default());
+    let mut persistence = if let Some(persistence) = opened {
+        persistence
+    } else {
+        let (persistence, warning) = Persistence::open(&mut graph, &directory)?;
+        reported.push_str(warning.as_deref().unwrap_or_default());
+        persistence
+    };
     let targets = graph.default_targets();
     let mut build = Build::with_options(&mut graph, &mut persistence, options);
     if let Some(sink) = output {
@@ -1633,8 +1593,21 @@ pub(crate) fn run(
 /// `$(findstring s,$(MAKEFLAGS))` is asking about this invocation and not about
 /// the one that spawned it, and the depth it sits at.
 // [spec:ronin:req:make.recursive-invocation+1]
-fn record_invocation_variables(session: &mut Session, invocation: &Invocation, level: usize) {
+fn record_invocation_variables(
+    session: &mut Session,
+    invocation: &Invocation,
+    level: usize,
+    restarts: usize,
+) {
     record_invocation(session, MAKELEVEL, level.to_string());
+    // GNU Make re-executes itself to read a remade Makefile and hands the new
+    // process a `MAKE_RESTARTS` count in its environment, which is why the
+    // variable's origin is the environment and why the first read has no such
+    // variable at all rather than a zero. Ronin reads again in place, so the
+    // count is recorded here instead of survived across an exec.
+    if restarts > 0 {
+        record_invocation(session, MAKE_RESTARTS, restarts.to_string());
+    }
     // Kati installs MAKEFLAGS as a file-origin recursive compiler variable.
     // Leaving an inherited environment binding beside it would make `-e`
     // incorrectly outrank that built-in definition.

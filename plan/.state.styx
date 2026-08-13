@@ -397,6 +397,7 @@ assertions (
     {id make-oracle-distro-divergence, kind @complete, author "brendan@necessary.nu", at 2026-08-12T13:52:40.111255655Z}
     {id make-prerequisite-free-rule-currency, kind @complete, author "brendan@necessary.nu", at 2026-08-13T13:30:14.727080472Z}
     {id make-posix-recipe-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-13T14:12:26.740234136Z}
+    {id make-included-makefile-restarts, kind @doing, author "brendan@necessary.nu", at 2026-08-13T14:48:26.150134421Z}
 )
 
 impl_evidence (

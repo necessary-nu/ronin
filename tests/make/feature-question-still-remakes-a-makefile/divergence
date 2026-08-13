@@ -1,0 +1,1 @@
+Ronin answers the question about the compiler inputs and stops, so the makefile is not made and the goals are never asked about; make-remaking-ignores-goal-switches.

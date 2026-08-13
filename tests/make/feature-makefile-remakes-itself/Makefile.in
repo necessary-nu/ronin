@@ -1,0 +1,5 @@
+all: ; @printf 'restarts=%s tag=%s\n' '$(MAKE_RESTARTS)' '$(TAG)' > out
+
+TAG := original
+
+Makefile: Makefile.in ; @sed 's/original/regenerated/' $< > $@

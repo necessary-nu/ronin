@@ -1,0 +1,8 @@
+# -q asks whether the goals are up to date without building them. The Makefiles
+# are built anyway, for the same reason -n builds them: the answer is about
+# goals that are not known until the read is complete.
+all: ; @printf 'restarts=%s value=%s\n' '$(MAKE_RESTARTS)' '$(V)' > out
+
+-include gen.mk
+
+gen.mk: ; @printf 'V := built\n' > $@

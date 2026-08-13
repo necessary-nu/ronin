@@ -54,7 +54,7 @@ pub(in crate::make) fn compile(
     let mut session = session_for(&invocation, &makefile, parent.jobs, &invoked_as);
     session.invocation_environment = Some(parent.environment.clone());
     let level = parent.level.saturating_add(1);
-    record_invocation_variables(&mut session, &invocation, level);
+    record_invocation_variables(&mut session, &invocation, level, 0);
     prepend_command_line_evals(&mut session, &invocation.evals)
         .map_err(|error| MakeError::Evaluate(error.to_string()))?;
 

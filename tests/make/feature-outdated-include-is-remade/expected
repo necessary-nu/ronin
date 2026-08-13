@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # An included Makefile older than what it is made from is brought up to date
+| # before the Makefile means what it will mean, and the read then starts again
+| # on the text that was written.
+| all: ; @printf 'restarts=%s value=%s\n' '$(MAKE_RESTARTS)' '$(V)' > out
+| 
+| include gen.mk
+| 
+| gen.mk: gen.in ; @printf 'V := remade\n' > $@
+file gen.in kept 1
+| seed
+file gen.mk touched 1
+| V := remade
+file out touched 1
+| restarts=1 value=remade

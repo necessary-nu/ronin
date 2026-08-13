@@ -1,0 +1,1 @@
+Ronin dry-runs the compiler-input build instead of running it, so the makefile is described rather than made and the goals are never reached; make-remaking-ignores-goal-switches.

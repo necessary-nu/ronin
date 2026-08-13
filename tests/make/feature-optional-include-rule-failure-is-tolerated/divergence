@@ -1,0 +1,1 @@
+Ronin stops the build on the failed compiler input rather than reading on without the optional include; make-optional-include-rule-failure.

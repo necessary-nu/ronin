@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile touched 5
+| all: ; @printf 'restarts=%s tag=%s\n' '$(MAKE_RESTARTS)' '$(TAG)' > out
+| 
+| TAG := regenerated
+| 
+| Makefile: Makefile.in ; @sed 's/regenerated/regenerated/' $< > $@
+file Makefile.in kept 5
+| all: ; @printf 'restarts=%s tag=%s\n' '$(MAKE_RESTARTS)' '$(TAG)' > out
+| 
+| TAG := original
+| 
+| Makefile: Makefile.in ; @sed 's/original/regenerated/' $< > $@
+file out touched 1
+| restarts=1 tag=regenerated

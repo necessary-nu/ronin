@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # MAKE_RESTARTS counts starts rather than remade files: the first read has no
+| # such variable, and each start over adds one. A generated Makefile that itself
+| # includes a generated Makefile takes two.
+| all: ; @printf 'restarts=%s first=%s second=%s\n' '$(MAKE_RESTARTS)' '$(A)' '$(B)' > out
+| 
+| -include one.mk
+| 
+| one.mk: ; @printf -- '-include two.mk\nA := one\n' > $@
+| two.mk: ; @printf 'B := two\n' > $@
+file one.mk touched 2
+| -include two.mk
+| A := one
+file out touched 1
+| restarts=2 first=one second=two
+file two.mk touched 1
+| B := two
