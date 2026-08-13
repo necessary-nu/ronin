@@ -1,0 +1,26 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # A restart is not a different build. The work staged so a recursive child can
+| # be evaluated at all — here the first sub-make of a pair, which has to have
+| # run before the second can be read — is still recognised as done after the
+| # read starts again for a remade Makefile.
+| all:
+| 	@$(MAKE) -f mid.mk
+| 
+| -include gen.mk
+| 
+| gen.mk: ; @printf 'V := built\n' > $@
+file first.mk kept 1
+| all: ; @printf 'first\n' >> log
+file gen.mk touched 1
+| V := built
+file log touched 2
+| first
+| second
+file mid.mk kept 3
+| all:
+| 	@$(MAKE) -f first.mk
+| 	@$(MAKE) -f second.mk
+file second.mk kept 1
+| all: ; @printf 'second\n' >> log

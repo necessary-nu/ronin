@@ -8481,6 +8481,42 @@ children (
                     }
                 )
             }
+
+            {
+                id make-restart-count-is-not-a-compilation-input
+                title "Keep the restart count out of a recursive child's identity"
+                kind @fix
+                sealed true
+                log (
+                    {
+                        at 2026-08-13T16:24:55.417979537Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while running the real-project gate at the end of the make-remaking-ignores-goal-switches / make-optional-include-rule-failure / make-remake-work-not-repeated dispatch. Pre-existing and bisected, not caused by any of those three.\n\nReproducer: `scripts/check-make-project.sh` — Ninja's own CMake-generated Unix Makefiles at -j8. At d645a55 it builds ninja and ninja_test in 21s. At 59155b8 (make-included-makefile-restarts) and every commit since, including beb364f which this dispatch started from, it dies with `ronin: manifest 'Makefile' dirty after 100 tries` after running the same `cmake -E cmake_depends … libninja-re2c.dir/DependInfo.cmake` a hundred times. Both binaries rebuilt from clean worktrees and run against the same build directory.\n\nMechanism, instrumented: each pass reports `remakes=0 staged=1 boundaries=1 settled=N` with N rising by one every pass. No Makefile is being remade at all — the loop is the recursive-composition boundary never settling. `record_invocation_variables` records MAKE_RESTARTS into `session.invocation_environment` (cli.rs:1609), `compilation_context` copies that environment into `CompilationContext::environment` (cli.rs:1651), and `extend_compilation_key` hashes the parent's whole environment into every recursive child's cache key (subninja.rs:160, `append_environment_key`). `EvaluationBoundary` is keyed on that compilation key, so every restart mints a fresh boundary and `settled_boundaries` can never contain the one the next pass asks about. CMake's `CMakeFiles/<t>.dir/all` recipe holds two `$(MAKE)` lines, so it always has a ChildGroup(0) boundary, and the depend step restages and reruns forever.\n\nGNU's answer, probed against 4.4.1: MAKE_RESTARTS is `v_noexport`, and a sub-make sees nothing — `$(MAKE_RESTARTS)` is empty in the child and `$$MAKE_RESTARTS` is empty in its recipes, while the parent's own second read sees `1`. So the count is not part of what a child is, and it must not be part of what identifies one.\n\nRonin already matches GNU on the observable side (the same probe gives the same empty answers), so this is only the compilation key — but that is the whole defect."
+                    }
+
+                    {
+                        at 2026-08-13T16:25:02.471015291Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-13T16:33:58.097130264Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Fixed in src/make/cli.rs: `compilation_context` now builds the descendant environment through `descendant_environment`, which drops `MAKE_RESTARTS`. One line of behaviour, and the reason is GNU's: the count is `v_noexport` there, so a child never sees it — probed, and Ronin already agreed on the observable side. Where Ronin disagreed was in identity, because a recursive child's compilation key hashes the environment it inherits and an `EvaluationBoundary` is keyed on that compilation key.\n\nReproducer, now a recorded case: feature-restart-keeps-recursive-staging-done. A root Makefile with a `-include` it has to make (so the read restarts once) whose goal runs one sub-make, and that sub-make's goal runs two more (so there is a ChildGroup boundary inside a *child* unit, whose key carries the parent environment — a boundary inside the root unit is keyed on directory, makefile and MAKEFLAGS alone and never showed the defect). GNU Make writes `first` then `second` to the log. beb364f writes `first` a hundred times and dies with `manifest 'Makefile' dirty after 100 tries`; with the fix it writes `first` then `second`.\n\nThe real-project gate, which is what found this, goes from that same hundred-try death to `built ninja 1.14.0.git from its own Makefile in 20s at -j8`.\n\nGates on the fix: build-intent corpus 362 cases, all passing; workspace 720/0; conformance 387 runs, 301 normalised identical / 86 differing, inventory unmoved; equivalence 297/276/0; upstream inventory unmoved at 1362 rows (unclassified 566, compiler 38, interface 169, narration 589); Ninja conformance 425 upstream + 10 differential + 86 build-outcome + 3 invocation-boundary, persistence and log-content; ronin lib+bins pedantic+nursery clean, kati `-D warnings` clean."
+                    }
+
+                    {
+                        at 2026-08-13T16:34:02.840662654Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
         )
         log (
             {

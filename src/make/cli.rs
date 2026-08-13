@@ -1639,12 +1639,26 @@ fn compilation_context(
         makeflags: propagated_makeflags(invocation),
         level,
         jobs,
-        environment: session
-            .invocation_environment
-            .clone()
-            .unwrap_or_else(|| std::env::vars_os().collect()),
+        // Everything this unit was evaluated with except how many times it has
+        // been read. GNU Make marks `MAKE_RESTARTS` no-export precisely so a
+        // child never sees it, and here it would do more than be visible: a
+        // recursive child's compilation is identified by the environment it
+        // inherits, so a count that rises with every restart would give the
+        // same child a new identity each time and the work staged for it would
+        // never be recognised as done.
+        environment: descendant_environment(session),
         recipe_environment,
     }
+}
+
+/// The environment a recursive child of this unit is compiled with.
+fn descendant_environment(session: &Session) -> Vec<(OsString, OsString)> {
+    let mut environment = session
+        .invocation_environment
+        .clone()
+        .unwrap_or_else(|| std::env::vars_os().collect());
+    environment.retain(|(name, _)| name != MAKE_RESTARTS);
+    environment
 }
 
 /// The exact MAKEFLAGS value this compilation unit hands to a semantic child.
@@ -1711,10 +1725,27 @@ mod interface_tests;
 #[cfg(test)]
 mod tests {
     use super::interface_tests::{parsed, parsed_under, refused};
-    use super::{Invocation, OutputSync, Shuffle, Switch};
+    use super::{Invocation, MAKE_RESTARTS, OutputSync, Shuffle, Switch, descendant_environment};
     use crate::build::JobLimit;
     use crate::util::BString;
+    use kati::session::Session;
+    use std::ffi::OsString;
     use std::path::PathBuf;
+
+    /// A recursive child is identified by the environment it inherits, and how
+    /// many times the parent has read its own Makefile is not part of what the
+    /// child is — GNU Make marks the count no-export for the same reason.
+    #[test]
+    fn child_does_not_inherit_restart_count() {
+        let mut session = Session::from_args(vec![OsString::from("make")]);
+        session.invocation_environment = Some(vec![
+            (OsString::from(MAKE_RESTARTS), OsString::from("2")),
+            (OsString::from("PATH"), OsString::from("/bin")),
+        ]);
+        let environment = descendant_environment(&session);
+        assert!(environment.iter().all(|(name, _)| name != MAKE_RESTARTS));
+        assert!(environment.iter().any(|(name, _)| name == "PATH"));
+    }
 
     // [spec:ronin:req:product.make-identity/test]
     #[test]
