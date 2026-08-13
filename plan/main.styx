@@ -8725,6 +8725,13 @@ children (
                     }
                 )
             }
+
+            {
+                id make-private-binding-keeps-the-public-value
+                title "Unwind a private and public binding of one name as a single nesting"
+                kind @fix
+                deps (make-private-variables make-pattern-specific-variable-application)
+            }
         )
         log (
             {
