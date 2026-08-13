@@ -230,11 +230,18 @@ struct ComposedUnit {
     complete: bool,
 }
 
+/// One unit's Makefiles, and the ones among them whose failure is forgiven.
+struct UnitRemakes {
+    all: Vec<Node>,
+    forgiven: Vec<Node>,
+}
+
 struct CompilationState<'a> {
     cache: HashMap<Vec<u8>, UnitSubgraph>,
     compiling: HashSet<Vec<u8>>,
     regenerations: Vec<Node>,
     remakes: Vec<Node>,
+    forgiven_remakes: Vec<Node>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
 }
@@ -283,6 +290,7 @@ where
         compiling: HashSet::new(),
         regenerations: Vec::new(),
         remakes: Vec::new(),
+        forgiven_remakes: Vec::new(),
         settled_boundaries,
         evaluation_boundaries: HashSet::new(),
     };
@@ -292,6 +300,7 @@ where
         graph,
         regenerations: state.regenerations,
         remakes: state.remakes,
+        forgiven_remakes: state.forgiven_remakes,
         evaluation_boundaries: state.evaluation_boundaries,
         makeflags: root.makeflags,
     })
@@ -323,7 +332,7 @@ where
             regeneration_nodes,
         } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
         reorder(shuffle, ev.session.flags.not_parallel, &mut nodes);
-        let regeneration_symbols = admit_regeneration_roots(&mut nodes, regeneration_nodes);
+        let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
         let exported =
             exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
         let command_line =
@@ -354,7 +363,13 @@ where
             return Err(MakeError::evaluate(&error));
         }
         let unit_regenerations = sink
-            .unit_nodes(&ev.session, &regeneration_symbols)
+            .unit_nodes(&ev.session, &regeneration_names.all)
+            .map_err(|error| {
+                sink.construction_failure()
+                    .map_or_else(|| MakeError::evaluate(&error), MakeError::Construct)
+            })?;
+        let unit_forgiven = sink
+            .unit_nodes(&ev.session, &regeneration_names.forgiven)
             .map_err(|error| {
                 sink.construction_failure()
                     .map_or_else(|| MakeError::evaluate(&error), MakeError::Construct)
@@ -365,25 +380,33 @@ where
             unit,
             exported,
             command_line,
-            unit_regenerations,
+            UnitRemakes {
+                all: unit_regenerations,
+                forgiven: unit_forgiven,
+            },
             makeflags,
             flag_environment,
         ))
     });
-    let (unit, exported, command_line, unit_regenerations, makeflags, flag_environment) =
-        match evaluated {
-            Ok(evaluated) => evaluated,
-            Err(error) => {
-                state.compiling.remove(&compilation_key);
-                return Err(error);
-            }
-        };
-    for target in unit_regenerations {
+    let (unit, exported, command_line, unit_remakes, makeflags, flag_environment) = match evaluated
+    {
+        Ok(evaluated) => evaluated,
+        Err(error) => {
+            state.compiling.remove(&compilation_key);
+            return Err(error);
+        }
+    };
+    for target in unit_remakes.all {
         if !state.regenerations.contains(&target) {
             state.regenerations.push(target);
         }
         if !state.remakes.contains(&target) {
             state.remakes.push(target);
+        }
+    }
+    for target in unit_remakes.forgiven {
+        if !state.forgiven_remakes.contains(&target) {
+            state.forgiven_remakes.push(target);
         }
     }
 
@@ -787,11 +810,25 @@ impl Draw {
 /// separate decision to make.
 fn admit_regeneration_roots(
     nodes: &mut Vec<kati::dep::NamedDepNode>,
-    regeneration_nodes: Vec<kati::dep::NamedDepNode>,
-) -> Vec<kati::symtab::Symbol> {
-    let symbols = regeneration_nodes.iter().map(|(name, _)| *name).collect();
-    nodes.extend(regeneration_nodes);
-    symbols
+    regeneration_roots: Vec<kati::dep::RegenerationRoot>,
+) -> RegenerationNames {
+    let mut names = RegenerationNames::default();
+    for root in regeneration_roots {
+        names.all.push(root.node.0);
+        if !root.required {
+            names.forgiven.push(root.node.0);
+        }
+        nodes.push(root.node);
+    }
+    names
+}
+
+/// The Makefiles this read consulted that a rule says how to remake, by name.
+#[derive(Default)]
+struct RegenerationNames {
+    all: Vec<kati::symtab::Symbol>,
+    /// The ones every `include` of which said the file need not be there.
+    forgiven: Vec<kati::symtab::Symbol>,
 }
 
 /// Reorder the goals, and each target's prerequisites, before the graph is cut.
@@ -854,6 +891,12 @@ pub struct Loaded {
     /// building one of these can change what the Makefile says, which is the
     /// only thing that restarts the read.
     remakes: Vec<Node>,
+    /// The Makefiles among those whose failure to be remade is forgiven.
+    ///
+    /// `-include` says the file may be absent, and GNU Make carries that
+    /// indifference into the rule that would have made it: the recipe runs, it
+    /// fails, nothing is reported and the read goes on without the include.
+    forgiven_remakes: Vec<Node>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
@@ -878,6 +921,16 @@ impl Loaded {
     #[must_use]
     pub(crate) fn remake_targets(&self) -> &[Node] {
         &self.remakes
+    }
+
+    /// The Makefiles among those the read said it did not need.
+    ///
+    /// A subset of [`Self::remake_targets`]. A rule that fails to make one of
+    /// these does not end the run and is not reported, and its file is not
+    /// looked at again to decide whether the read has to start over.
+    #[must_use]
+    pub(crate) fn forgiven_remake_targets(&self) -> &[Node] {
+        &self.forgiven_remakes
     }
 
     /// The compiler inputs that are not Makefiles: work staged so a recursive

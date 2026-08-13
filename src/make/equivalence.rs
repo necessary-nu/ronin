@@ -563,7 +563,7 @@ fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
     };
     // The two paths have to be handed the same roots, generated Makefiles
     // included, or the comparison stops covering the edges that make them.
-    nodes.extend(regeneration_nodes);
+    nodes.extend(regeneration_nodes.into_iter().map(|root| root.node));
     let mut sink = GraphSink::new();
     let mut semantics = EdgeSemantics::default();
     let emitted = {

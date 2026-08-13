@@ -402,6 +402,7 @@ assertions (
     {id make-posix-recipe-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-13T14:12:26.740234136Z}
     {id make-included-makefile-restarts, kind @complete, author "brendan@necessary.nu", at 2026-08-13T15:22:21.975530177Z}
     {id make-remaking-ignores-goal-switches, kind @complete, author "brendan@necessary.nu", at 2026-08-13T15:49:06.16272595Z}
+    {id make-optional-include-rule-failure, kind @complete, author "brendan@necessary.nu", at 2026-08-13T15:56:28.217626507Z}
 )
 
 impl_evidence (

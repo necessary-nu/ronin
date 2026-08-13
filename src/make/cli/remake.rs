@@ -58,10 +58,46 @@ enum Pass {
     Current,
     /// Commands ran and every one of them won.
     Ran(Outcome),
+    /// A command lost, and the read said it did not need what it was making.
+    Lost,
     /// The run is over, with this result.
     Finished(RunResult),
     /// The run is over having answered `-q` rather than built anything.
     Answered(Result<bool, Error>),
+}
+
+/// The Makefiles one read consulted, and what deciding about them takes.
+struct Makefiles<'a> {
+    /// Every Makefile a rule says how to remake, in the order the read reached
+    /// them.
+    remakes: &'a [Node],
+    /// The ones among those the read said it did not need.
+    forgiven: &'a [Node],
+    invocation: &'a Invocation,
+    options: &'a BuildOptions,
+    /// What this invocation's own command line named, which the switches a
+    /// Makefile assigned cannot tell us: the reparsed `MAKEFLAGS` invocation
+    /// carries switches alone.
+    goals: &'a [BString],
+    directory: &'a Path,
+}
+
+/// One subset of the Makefiles, and how it is brought up to date.
+struct Subset {
+    targets: Vec<Node>,
+    options: BuildOptions,
+    /// Whether a recipe that lost here ends the run.
+    forgive: bool,
+}
+
+/// What bringing the Makefiles up to date came to.
+enum Remaking {
+    /// The run is over, with this result.
+    Finished(RunResult),
+    /// A Makefile moved, so the read has to happen again on the new text.
+    Restart,
+    /// Every Makefile is already what it will be, so this read stands.
+    Settled,
 }
 
 /// The graph and the scheduler attachments every pass over it shares.
@@ -81,7 +117,12 @@ impl Passes<'_, '_, '_> {
     /// Nothing to do is reported rather than run, because for the Makefiles it
     /// is the decisive answer: no command ran, so no Makefile can have changed
     /// under this read.
-    fn run(&mut self, targets: &[Node], options: BuildOptions) -> Result<Pass, Error> {
+    fn run(
+        &mut self,
+        targets: &[Node],
+        options: BuildOptions,
+        forgive: bool,
+    ) -> Result<Pass, Error> {
         if targets.is_empty() {
             return Ok(Pass::Current);
         }
@@ -95,7 +136,7 @@ impl Passes<'_, '_, '_> {
         }
         let planned = match build.plan(targets) {
             Ok(planned) => planned,
-            Err(failure) => return Ok(self.abandon(failure)),
+            Err(failure) => return Ok(self.abandon(failure, forgive)),
         };
         if planned.already_up_to_date() {
             return Ok(Pass::Current);
@@ -103,17 +144,24 @@ impl Passes<'_, '_, '_> {
         let disposable = planned.disposable();
         let outcome = match planned.run() {
             Ok(outcome) => outcome,
-            Err(failure) => return Ok(self.abandon(failure)),
+            Err(failure) => return Ok(self.abandon(failure, forgive)),
         };
         discard_intermediates(&disposable, dryrun);
         if outcome.exit_code() != 0 {
-            let reported = std::mem::take(self.reported);
-            return Ok(Pass::Finished(finished(
-                reported,
-                false,
-                &outcome,
-                self.silent,
-            )));
+            if !forgive {
+                let reported = std::mem::take(self.reported);
+                return Ok(Pass::Finished(finished(
+                    reported,
+                    false,
+                    &outcome,
+                    self.silent,
+                )));
+            }
+            // The recipe really ran and really lost, and Ninja's account of
+            // that is honest narration to keep. What is dropped is the failure
+            // itself: the read asked for this file with `-include`.
+            self.narrate(&outcome);
+            return Ok(Pass::Lost);
         }
         Ok(Pass::Ran(outcome))
     }
@@ -133,52 +181,45 @@ impl Passes<'_, '_, '_> {
         Ok(Pass::Answered(question))
     }
 
-    fn abandon(&mut self, failure: Error) -> Pass {
+    fn abandon(&mut self, failure: Error, forgive: bool) -> Pass {
+        if forgive {
+            return Pass::Lost;
+        }
         Pass::Finished(abandoned(std::mem::take(self.reported), failure))
     }
 
     /// Bring every Makefile this read consulted up to date, whatever was asked
-    /// of the goals.
+    /// of the goals, and say whether that changed one of them.
     ///
-    /// Two subsets, because GNU Make asks them different questions: the ones
-    /// the command line named are goals as well and keep the invocation's own
-    /// switches, and every other one is made for real.
-    fn remake_makefiles(
-        &mut self,
-        remakes: &[Node],
-        invocation: &Invocation,
-        options: &BuildOptions,
-        goals: &[BString],
-    ) -> Result<Option<RunResult>, Error> {
-        let asked_about = named_as_goals(self.graph, remakes, goals);
-        let made = remakes
-            .iter()
-            .copied()
-            .filter(|target| !asked_about.contains(target))
-            .collect::<Vec<_>>();
-        // Under `-q` a Makefile the command line named is asked about and left
-        // alone: GNU Make records the question and carries on with the read
-        // rather than stopping the way it would for a goal.
-        let asked_about = if invocation.questioning() {
-            Vec::new()
-        } else {
-            asked_about
-        };
-        for (targets, options) in [
-            (made, remaking_options(options)),
-            (asked_about, options.clone()),
-        ] {
-            match self.run(&targets, options)? {
+    /// A recipe that ran without changing the file it names leaves the read
+    /// saying exactly what it said before, so GNU Make does not start over for
+    /// it — that is the difference between a Makefile that is remade and one
+    /// whose rule merely fired. A Makefile whose update lost does not start it
+    /// over either, however the recipe left the file: `any_remade` is raised
+    /// for a successful update alone (main.c), which is why each subset is
+    /// stamped around its own pass rather than all of them around the phase.
+    fn remake_makefiles(&mut self, makefiles: &Makefiles<'_>) -> Result<Remaking, Error> {
+        let mut restart = false;
+        for subset in makefiles.subsets(self.graph) {
+            let paths = paths_of(self.graph, &subset.targets);
+            let before = makefile_stamps(&paths, makefiles.directory);
+            match self.run(&subset.targets, subset.options, subset.forgive)? {
                 Pass::Ran(outcome) => self.narrate(&outcome),
-                Pass::Finished(result) => return Ok(Some(result)),
+                Pass::Lost => continue,
+                Pass::Finished(result) => return Ok(Remaking::Finished(result)),
                 Pass::Answered(question) => {
                     let reported = std::mem::take(self.reported);
-                    return Ok(Some(answered(reported, question)));
+                    return Ok(Remaking::Finished(answered(reported, question)));
                 }
                 Pass::Current => {}
             }
+            restart |= makefile_stamps(&paths, makefiles.directory) != before;
         }
-        Ok(None)
+        Ok(if restart {
+            Remaking::Restart
+        } else {
+            Remaking::Settled
+        })
     }
 
     /// Build the work staged so a recursive unit can be evaluated at all, under
@@ -197,7 +238,7 @@ impl Passes<'_, '_, '_> {
             return self.ask(staged, options);
         }
         let dryrun = options.dryrun;
-        let pass = self.run(staged, options)?;
+        let pass = self.run(staged, options, false)?;
         let Pass::Ran(outcome) = pass else {
             return Ok(pass);
         };
@@ -250,20 +291,79 @@ fn remaking_options(options: &BuildOptions) -> BuildOptions {
     }
 }
 
-/// The Makefiles this invocation also named on its own command line.
-///
-/// GNU Make restores `-n`, `-q` and `-t` for these while it remakes them: a
-/// Makefile the command line asked about is a goal as well, and what the
-/// invocation wanted to know about a goal is exactly what those switches ask.
-fn named_as_goals(graph: &BuildGraph, remakes: &[Node], goals: &[BString]) -> Vec<Node> {
-    remakes
+/// Where the graph says each of these targets lives.
+fn paths_of(graph: &BuildGraph, targets: &[Node]) -> Vec<Vec<u8>> {
+    targets
         .iter()
-        .copied()
-        .filter(|target| {
-            let path = graph.path(*target);
-            goals.iter().any(|goal| goal.as_slice() == path)
-        })
+        .map(|target| graph.path(*target).to_vec())
         .collect()
+}
+
+impl Makefiles<'_> {
+    /// The Makefiles in the groups GNU Make treats differently, in the order it
+    /// reaches them.
+    ///
+    /// Three, and the differences are all GNU Make's own. A Makefile the
+    /// command line also named is a goal as well, and keeps the switches the
+    /// invocation gave it (`file->cmd_target` in remake.c). A Makefile reached
+    /// only through `-include` is one whose absence the read said it could
+    /// live with, and GNU Make carries that all the way into the rule: the
+    /// recipe runs, it loses, and nothing is reported (`RM_DONTCARE`). Every
+    /// other one is made for real and its failure ends the run.
+    fn subsets(&self, graph: &BuildGraph) -> Vec<Subset> {
+        let asked_about = self
+            .remakes
+            .iter()
+            .copied()
+            .filter(|target| {
+                let path = graph.path(*target);
+                self.goals.iter().any(|goal| goal.as_slice() == path)
+            })
+            .collect::<Vec<_>>();
+        let forgiven = self
+            .forgiven
+            .iter()
+            .copied()
+            .filter(|target| !asked_about.contains(target))
+            .collect::<Vec<_>>();
+        let made = self
+            .remakes
+            .iter()
+            .copied()
+            .filter(|target| !asked_about.contains(target) && !forgiven.contains(target))
+            .collect::<Vec<_>>();
+        vec![
+            Subset {
+                targets: made,
+                options: remaking_options(self.options),
+                forgive: false,
+            },
+            Subset {
+                targets: forgiven,
+                // Every one of them is attempted, because GNU Make considers
+                // every Makefile it read before it decides anything, and one
+                // it does not need cannot stand in another's way.
+                options: BuildOptions {
+                    maxfail: usize::MAX,
+                    ..remaking_options(self.options)
+                },
+                forgive: true,
+            },
+            Subset {
+                // Under `-q` a Makefile the command line named is asked about
+                // and left alone: GNU Make records the question and carries on
+                // with the read rather than stopping the way it would for a
+                // goal.
+                targets: if self.invocation.questioning() {
+                    Vec::new()
+                } else {
+                    asked_about
+                },
+                options: self.options.clone(),
+                forgive: false,
+            },
+        ]
+    }
 }
 
 pub(super) fn build_compiler_inputs(
@@ -281,17 +381,21 @@ pub(super) fn build_compiler_inputs(
         goals,
     } = request;
     let remakes = loaded.remake_targets().to_vec();
+    let forgiven = loaded.forgiven_remake_targets().to_vec();
     let staged = loaded.staged_targets();
     let boundaries = loaded.evaluation_boundaries().clone();
     let mut graph = loaded.graph;
-    let makefiles = remakes
-        .iter()
-        .map(|node| graph.path(*node).to_vec())
-        .collect::<Vec<_>>();
     let (mut persistence, warning) = Persistence::open(&mut graph, directory)?;
     reported.push_str(warning.as_deref().unwrap_or_default());
-    let before = makefile_stamps(&makefiles, directory);
 
+    let makefiles = Makefiles {
+        remakes: &remakes,
+        forgiven: &forgiven,
+        invocation,
+        options: &options,
+        goals,
+        directory,
+    };
     let mut passes = Passes {
         graph: &mut graph,
         persistence: &mut persistence,
@@ -300,18 +404,16 @@ pub(super) fn build_compiler_inputs(
         reported,
         silent: invocation.given(Switch::Silent),
     };
-    let remade = passes.remake_makefiles(&remakes, invocation, &options, goals)?;
-    if let Some(result) = remade {
-        let _ = persistence.finish();
-        return Ok(Settlement::Finished(result));
-    }
-    // A recipe that ran without changing the file it names leaves the read
-    // saying exactly what it said before, so GNU Make does not start over for
-    // it — that is the difference between a Makefile that is remade and one
-    // whose rule merely fired.
-    if makefile_stamps(&makefiles, directory) != before {
-        persistence.finish()?;
-        return Ok(Settlement::Restart);
+    match passes.remake_makefiles(&makefiles)? {
+        Remaking::Finished(result) => {
+            let _ = persistence.finish();
+            return Ok(Settlement::Finished(result));
+        }
+        Remaking::Restart => {
+            persistence.finish()?;
+            return Ok(Settlement::Restart);
+        }
+        Remaking::Settled => {}
     }
 
     let mut passes = Passes {
@@ -339,10 +441,129 @@ pub(super) fn build_compiler_inputs(
             graph: Box::new(graph),
             persistence,
         }),
-        Pass::Current | Pass::Ran(_) => {
+        // Staged work is never forgiven, so `Lost` cannot arrive here; a
+        // recursive child whose parent's prerequisites did not build has
+        // nothing to be evaluated from.
+        Pass::Current | Pass::Ran(_) | Pass::Lost => {
             settled_boundaries.extend(boundaries);
             persistence.finish()?;
             Ok(Settlement::Restart)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Makefiles, remaking_options};
+    use crate::build::BuildOptions;
+    use crate::frontend::{BuildGraph, Node};
+    use crate::make::cli::interface_tests::parsed;
+    use crate::util::BString;
+    use std::path::Path;
+
+    fn nodes(graph: &mut BuildGraph, paths: &[&str]) -> Vec<Node> {
+        paths
+            .iter()
+            .map(|path| graph.node(path.as_bytes()).expect("a node"))
+            .collect()
+    }
+
+    fn named(graph: &BuildGraph, targets: &[Node]) -> Vec<String> {
+        targets
+            .iter()
+            .map(|target| String::from_utf8_lossy(graph.path(*target)).into_owned())
+            .collect()
+    }
+
+    /// A Makefile is made for real however the goals were asked about, and one
+    /// the command line also named keeps what the invocation gave it.
+    #[test]
+    fn dry_run_describes_goals_not_makefiles() {
+        let mut graph = BuildGraph::new();
+        let remakes = nodes(&mut graph, &["gen.mk", "asked.mk"]);
+        let invocation = parsed(&["make", "-n", "asked.mk"]);
+        let options = BuildOptions {
+            dryrun: true,
+            verbose: true,
+            ..BuildOptions::default()
+        };
+        let makefiles = Makefiles {
+            remakes: &remakes,
+            forgiven: &[],
+            invocation: &invocation,
+            options: &options,
+            goals: &[BString::from("asked.mk")],
+            directory: Path::new("."),
+        };
+
+        let subsets = makefiles.subsets(&graph);
+        assert_eq!(named(&graph, &subsets[0].targets), vec!["gen.mk"]);
+        assert!(!subsets[0].options.dryrun);
+        assert_eq!(named(&graph, &subsets[2].targets), vec!["asked.mk"]);
+        assert!(subsets[2].options.dryrun);
+        assert!(subsets[1].targets.is_empty());
+    }
+
+    /// `-q` asks about a Makefile the command line named rather than making it,
+    /// and leaves every other one to be made.
+    #[test]
+    fn question_leaves_its_named_makefile_alone() {
+        let mut graph = BuildGraph::new();
+        let remakes = nodes(&mut graph, &["gen.mk", "asked.mk"]);
+        let invocation = parsed(&["make", "-q", "asked.mk"]);
+        let options = BuildOptions::default();
+        let makefiles = Makefiles {
+            remakes: &remakes,
+            forgiven: &[],
+            invocation: &invocation,
+            options: &options,
+            goals: &[BString::from("asked.mk")],
+            directory: Path::new("."),
+        };
+
+        let subsets = makefiles.subsets(&graph);
+        assert_eq!(named(&graph, &subsets[0].targets), vec!["gen.mk"]);
+        assert!(subsets[2].targets.is_empty());
+    }
+
+    /// An optional include is its own subset, attempted to the end and forgiven.
+    #[test]
+    fn optional_include_is_forgiven_and_attempted() {
+        let mut graph = BuildGraph::new();
+        let remakes = nodes(&mut graph, &["needed.mk", "spare.mk"]);
+        let invocation = parsed(&["make"]);
+        let options = BuildOptions::default();
+        let makefiles = Makefiles {
+            remakes: &remakes,
+            forgiven: &remakes[1..],
+            invocation: &invocation,
+            options: &options,
+            goals: &[],
+            directory: Path::new("."),
+        };
+
+        let subsets = makefiles.subsets(&graph);
+        assert_eq!(named(&graph, &subsets[0].targets), vec!["needed.mk"]);
+        assert!(!subsets[0].forgive);
+        assert_eq!(named(&graph, &subsets[1].targets), vec!["spare.mk"]);
+        assert!(subsets[1].forgive);
+        assert_eq!(subsets[1].options.maxfail, usize::MAX);
+    }
+
+    /// Remaking a Makefile is a build, so nothing about it is described rather
+    /// than done, and everything else the invocation settled is kept.
+    #[test]
+    fn remaking_keeps_settings_but_not_description() {
+        let options = BuildOptions {
+            dryrun: true,
+            verbose: true,
+            maxfail: 7,
+            quiet: true,
+            ..BuildOptions::default()
+        };
+        let remaking = remaking_options(&options);
+        assert!(!remaking.dryrun && !remaking.verbose);
+        assert_eq!(remaking.maxfail, 7);
+        assert!(remaking.quiet);
     }
 }

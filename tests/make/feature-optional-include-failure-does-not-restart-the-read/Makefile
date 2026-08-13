@@ -1,0 +1,8 @@
+# A rule that lost does not start the read again, whatever it did to the file
+# on its way down: GNU Make counts a Makefile as remade only when its update
+# won. The include stays unread, so V is still empty when the goal runs.
+all: ; @printf 'v=%s restarts=%s\n' '$(V)' '$(MAKE_RESTARTS)' > out
+
+-include gen.mk
+
+gen.mk: ; @printf 'V := built\n' > $@; printf 'gen ran\n' >> log; exit 1

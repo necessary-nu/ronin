@@ -8413,12 +8413,34 @@ children (
                 title "Read on when an optional include's rule fails"
                 kind @fix
                 deps (make-included-makefile-restarts)
+                sealed true
                 log (
                     {
                         at 2026-08-13T15:17:15.22539692Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Opened from make-included-makefile-restarts, which reached this cell while characterising Makefile remaking and found it already divergent before that change.\n\n`-include` says the file may be absent, and GNU Make carries that indifference into the rule that would have made it. read.c records the goaldep with RM_DONTCARE; remake.c inherits `dontcare` into the update, and main.c reports `Failed to remake makefile` only for a Makefile it cares about. Probed against 4.4.1: `-include gen.mk` with `gen.mk: ; printf 'gen ran\\n' > log; exit 1` runs the recipe, the recipe fails, and make goes on to build `all` and exit 0.\n\nRonin builds the compiler inputs through the ordinary scheduler and a failed input stops the build, so the goals are never reached and the run fails. Recorded reproducer with a `divergence` marker naming this node: tests/make/feature-optional-include-rule-failure-is-tolerated.\n\nkati already carries the required/optional distinction on MissingInclude and drops an optional include with no rule; what it does not carry across the compiler-input boundary is that an optional include's *failure* is tolerable. A required include is different and must keep failing."
+                    }
+
+                    {
+                        at 2026-08-13T15:49:31.749822592Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-13T15:56:23.52664662Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "GNU 4.4.1, probed before anything moved.\n\n`-include gen.mk` with `gen.mk: ; printf 'gen ran\\n' > log; exit 1`: the recipe runs, it loses, and make says *nothing at all* — stderr is empty, there is no `Failed to remake makefile` and no `*** [Makefile:3: gen.mk] Error 1` — then builds the goals and exits 0. The same shape with `include` instead prints `Makefile:2: gen.mk: No such file or directory` and `make: *** [Makefile:3: gen.mk] Error 1` and exits 2. An optional include that is *present but stale* whose refresh rule fails is the same forgiveness: the recipe runs, loses silently, and the goal is built from the text already read (`v=old`).\n\nThe cell that was not in the node when it was filed: a failed optional update does not start the read again either, however the recipe left the file. Probed with a rule that writes `V := built` into gen.mk and then exits 1 — GNU reads once, `MAKE_RESTARTS` stays empty and `$(V)` stays empty, though gen.mk is on disk holding the new text. main.c is explicit about why: in the `us_failed` arm `any_remade` is raised from `file_mtime_no_search != makefile_mtimes[i]` only when `d->file->update_status == us_success`, and the DONTCARE branch beside it raises nothing.\n\nWhat changed. kati 69aea4c: `Evaluator::read_makefiles` is now `Vec<ReadMakefile>` rather than `Vec<Symbol>`, carrying whether any read of that file said it had to be there — raised by `include` and by the Makefile the invocation named, never lowered by a later `-include`. `plan_regeneration` returns `RegenerationRoot { node, required }`, so the answer travels with the root instead of being re-derived. Ronin: `Loaded::forgiven_remake_targets` is the subset, and `Makefiles::subsets` splits the remake phase into the three groups GNU treats differently — command-line-named (invocation's own switches), forgiven, and everything else. A forgiven pass runs with `maxfail: usize::MAX` because GNU considers every Makefile it read before deciding anything, and one it does not need cannot stand in another's way; a lost pass returns `Pass::Lost`, which keeps Ninja's account of the command that really ran and really lost, drops the failure, and skips the pass's own stamp comparison — which is where GNU's `us_success` condition lands.\n\nKnown approximation, deliberately not fixtured: Ronin's scheduler answers per pass, not per file, so a forgiven pass in which one optional Makefile is remade and another's rule loses does not restart the read where GNU would. `maxfail: usize::MAX` at least means every one of them is attempted. A single optional Makefile — which is every recorded case and the `-include $(DEPS)` shape in the wild — is exact.\n\nFixtures. feature-optional-include-rule-failure-is-tolerated now matches and its `divergence` file is deleted. Three new cases recorded from the pristine 4.4.1 oracle: feature-optional-include-failure-does-not-restart-the-read (gen.mk written by the losing recipe, `v= restarts=`, status 0), feature-optional-include-keeps-its-text-when-its-rule-fails (`v=old`, status 0), feature-required-include-rule-failure-stops-the-build (log written, no `out`, outcome failure — the guard that the forgiveness is only ever `-include`'s). Build-intent corpus 359 cases, all passing; kati 112/0; workspace 716/0; kati clippy `-D warnings` clean."
+                    }
+
+                    {
+                        at 2026-08-13T15:56:28.217626507Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
