@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # An assignment that defers keeps deferring: the goal is whatever the
+| # expression says once the whole makefile has been read.
+| CHOSEN := second
+| .DEFAULT_GOAL = $(CHOSEN)
+| 
+| first: ; @printf '%s\n' 'first ran' > first.out
+| second: ; @printf '%s\n' 'second ran' > out
+file out touched 1
+| second ran

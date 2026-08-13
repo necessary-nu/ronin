@@ -7376,6 +7376,27 @@ children (
                                 kind @note
                                 text "Correction to the preceding scope note: the unknown-goal fixture assigns .DEFAULT_GOAL = nosuchtarget. GNU Make honors that name as the graph root and then reports that no rule can make it; it is not the separate multi-target-value validation case."
                             }
+
+                            {
+                                at 2026-08-13T18:06:42.702330094Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T18:45:01.707545027Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Characterised against the 4.4.1 oracle before writing anything; thirty probes, each run through both binaries and compared. What GNU Make does:\n\nReading. `.DEFAULT_GOAL` exists before the first line of the first Makefile — `$(origin)` is `file`, `$(flavor)` is `simple`, value empty. It reads as the current choice at every point of the read, so the same `$(info)` before and after a rule answers `[]` then `[foo]`.\n\nChoosing. `check_specials` (read.c) offers each recorded target while the variable's *text* is empty. A `%` in the name ends the offer for that rule; a leading dot with no `/` after it is passed over and the next target of the same rule is still considered (`.foo bar:` chooses `bar`, `..dots:` is passed over, `sub/.deps:` is chosen). Included files record targets like any other and choose the goal; a target-specific assignment line records nothing and chooses nothing; pattern rules choose nothing; grouped `&:` and `::` rules choose their first target; a static pattern rule chooses its concrete target.\n\nAssigning. Assignment disarms selection for every later target; assigning empty re-arms it for the next one; the last assignment before the read ends is what counts. Armed on the text, not the expansion: `.DEFAULT_GOAL = $(EMPTY)` stays disarmed and then dies `*** No targets.` A recursive value is expanded at goal-resolution time, so `.DEFAULT_GOAL = $(CHOSEN)` follows a `CHOSEN` assigned anywhere in the read.\n\nResolving. Command-line goals bypass it entirely and `MAKECMDGOALS` never sees it. A command-line `.DEFAULT_GOAL=x` outranks the Makefile; an environment one is discarded, because the empty binding is installed at file origin over it — unless `-e`, where the environment outranks file and the environment value chooses. A value naming no rule dies `No rule to make target`; a value naming an existing file with no rule is `Nothing to be done`; two names die `.DEFAULT_GOAL contains more than one target` — but the whole value is looked up as a target first, so `a\\ xb` (one target, escaped space) resolves to that target.\n\nTwo behaviours deliberately not reproduced. `undefine .DEFAULT_GOAL` followed by any target segfaults GNU Make 4.4.1 (`default_goal_var->value` is freed and the selection check dereferences it); Ronin carries on with selection re-armed. And the suffix half of the eligibility check is not implemented — see make-default-goal-suffix-rejection, which owns tests/make/variable-default-goal-suffix-name.\n\nDelivered in kati 6efb7e2 on branch nplan/make-default-goal-variable-semantics: the variable is bound before the read (evaluate.rs), offered each rule's targets during it (eval.rs), and read back by dependency analysis (dep.rs), which leaves the resolved goals on the evaluator for the manifest's `default` line (ninja.rs). `first_rule` survives only for `--gen_all_targets`.\n\nTwo regressions caught by the gates and fixed before landing, both worth recording because they are the shape of this change's risk. The Makefiles a front end has to remake are appended to dependency analysis's roots, so reading the goals off the roots at emit time made them goals — caught by feature-optional-include-*. And splitting the value into words before looking it up as a name broke a target whose name holds an escaped space — caught by features/double_colon in the upstream suite.\n\nGates: build-intent corpus 383 cases green, ten new (origin/flavor, include, pattern, reserved names, recursive value, recursive-empty, two targets, command line, spaced name, and the suffix divergence); four owned divergence markers deleted; workspace 655 + kati 112 = 767 green; conformance 387 runs, 302 normalised identical / 85 differing, unmoved; equivalence 297/276/0; upstream inventory 1287 rows, three moved, all in variables/DEFAULT_GOAL and all improvements (test 1 and test 2 leave the unclassified class, test 5 stops building a goal GNU refuses); ronin lib+bins pedantic+nursery clean, kati `-D warnings` clean."
+                            }
+
+                            {
+                                at 2026-08-13T18:45:17.264520233Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
@@ -8622,6 +8643,35 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while characterising ordinary double-colon freshness; unrelated to it. On a pattern rule the double colon means \"terminal\", not \"one independent rule per record\": a terminal rule's prerequisites are never made by another implicit rule, so the rule applies only when they already exist.\n\nReproducer, GNU Make's own suite (tests/scripts/features/double_colon, sv 60188 subtest 1), with hello.z present and test.x absent:\n\n  all: hello.z\n  %.z:: test.x ; touch $@\n  %.x: ;\n\nGNU Make 4.4.1 prints \"Nothing to be done for 'all'.\" — %.x cannot supply test.x for a terminal rule, so %.z:: does not match. Ronin runs `touch hello.z`.\n\nRonin reaches this through the pattern-rule search rather than through a RuleMerger, so make-double-colon-rule-freshness neither caused nor touched it: that node's split is keyed on an explicit merger holding more than one record. The case is one of the three features/double_colon rows still recorded unclassified in tests/make_upstream_inventory.tsv."
+                    }
+                )
+            }
+
+            {
+                id make-default-goal-suffix-rejection
+                title "Pass over a suffix-named target when choosing the default goal"
+                kind @fix
+                deps (make-default-goal-variable-semantics)
+                log (
+                    {
+                        at 2026-08-13T18:42:43.672973977Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while characterising .DEFAULT_GOAL against GNU Make 4.4.1, and deliberately left out of that node: it needs a suffix list Ronin does not have.\n\nGNU Make's `check_specials` (reference/gnumake/src/read.c, the default-goal block) passes over a target on two more grounds than the leading-dot one Ronin now implements. A target whose name is exactly one of `.SUFFIXES`' prerequisites, and a target whose name is two of them concatenated, are both rejected — and the search moves on to the next target rather than stopping.\n\nReproducer, recorded as tests/make/variable-default-goal-suffix-name with a divergence file naming this node:\n\n  .SUFFIXES: foo bar\n  foo:    ; @printf 'foo ran\\n'    > foo.out\n  foobar: ; @printf 'foobar ran\\n' > foobar.out\n  zed:    ; @printf 'zed ran\\n'    > out\n\nGNU Make 4.4.1 builds `zed`: `foo` is a declared suffix and `foobar` is `foo` followed by `bar`. Ronin builds `foo`.\n\nWhy it was not done with the rest. The check reads `.SUFFIXES`' prerequisites as they stand at the moment each target is recorded — probed: `.SUFFIXES: foo` after the `foo:` rule does not reject it, and a bare `.SUFFIXES:` in between clears the list and re-admits it. Ronin's evaluator does not track that list at all; dep.rs reads suffix rules later, and Ronin has no built-in suffix list where GNU starts with thirty-odd entries. So a faithful check needs the list tracked through evaluation *and* the built-in defaults installed, which is the missing-Make-builtins gap. Half of it is worse than none: with only the Makefile's own declarations, a target named `foo.c` under `.SUFFIXES: foo` would still be chosen where GNU rejects it as `foo` + the built-in `.c`.\n\nReachability is the reason this is not urgent: with GNU's default list, every entry begins with a dot, so any name the suffix check could reject already begins with a dot and is rejected by the leading-dot rule first. It bites only where a Makefile declares a suffix that does not begin with a dot."
+                    }
+                )
+            }
+
+            {
+                id make-mixed-implicit-and-normal-rules
+                title "Read a mixed implicit and normal rule as deprecated rather than fatal"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-13T18:42:54.023575047Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while probing default-goal eligibility against GNU Make 4.4.1; unrelated to it.\n\nA rule whose target list mixes a pattern with a plain name is a deprecation in GNU Make, not a refusal. Reproducer:\n\n  a %.o: ; @echo mixed\n\nGNU Make 4.4.1 prints `Makefile:1: *** mixed implicit and normal rules: deprecated syntax` on stderr, reads on, records `a` as the default goal, and exits 0 having run the recipe. Ronin prints the same sentence and dies with status 2.\n\nkati/src-rs/rule.rs, in the static-pattern arm: `error_loc!(session, Some(&self.loc), \"*** mixed implicit and normal rules: deprecated syntax\")`. The text is right and the severity is not. GNU's own wording carries the `***` even though it continues, which is presumably why the port read it as fatal.\n\nWhat the fix has to settle before it is written: which of the two readings survives. GNU keeps the *normal* targets and drops the pattern ones — `a` gets the recipe and `%.o` does not become a pattern rule — so this is not merely downgrading a diagnostic to a warning, it is choosing what the rule compiles to. Probe the recipe's effect on both target shapes before changing the severity."
                     }
                 )
             }

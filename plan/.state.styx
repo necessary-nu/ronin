@@ -407,6 +407,7 @@ assertions (
     {id make-restart-count-is-not-a-compilation-input, kind @complete, author "brendan@necessary.nu", at 2026-08-13T16:34:02.840662654Z}
     {id make-delete-on-error-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-13T17:27:12.828743271Z}
     {id make-double-colon-rule-freshness, kind @complete, author "brendan@necessary.nu", at 2026-08-13T18:02:22.001936382Z}
+    {id make-default-goal-variable-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-13T18:45:17.264520233Z}
 )
 
 impl_evidence (

@@ -1,0 +1,6 @@
+# .DEFAULT_GOAL names one target. Two is a makefile asking for something Make
+# has no way to obey, and it says so rather than choosing one.
+.DEFAULT_GOAL := one two
+
+one: ; @printf '%s\n' 'one ran' > out
+two: ; @printf '%s\n' 'two ran' > out

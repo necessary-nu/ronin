@@ -1040,11 +1040,11 @@ case	targets/WAIT.diff.8	narration	ninja-progress
 case	targets/WAIT.diff.9	narration	ninja-progress
 case	targets/clean.diff	narration	ninja-progress
 case	variables/CURDIR.diff	narration	ninja-progress
-case	variables/DEFAULT_GOAL.diff	unclassified	product-name+evaluation
-case	variables/DEFAULT_GOAL.diff.1	unclassified	product-name+evaluation
+case	variables/DEFAULT_GOAL.diff	narration	ninja-progress
+case	variables/DEFAULT_GOAL.diff.1	narration	product-name+shared-refusal
 case	variables/DEFAULT_GOAL.diff.2	unclassified	product-name+evaluation
 case	variables/DEFAULT_GOAL.diff.3	narration	ninja-progress
-case	variables/DEFAULT_GOAL.diff.4	unclassified	ninja-progress+product-name+evaluation
+case	variables/DEFAULT_GOAL.diff.4	unclassified	product-name+evaluation
 case	variables/EXTRA_PREREQS.diff	unclassified	ninja-progress+evaluation
 case	variables/EXTRA_PREREQS.diff.1	unclassified	ninja-progress+evaluation
 case	variables/EXTRA_PREREQS.diff.10	unclassified	ninja-progress+evaluation

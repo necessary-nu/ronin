@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # A target whose name holds a space is one name. .DEFAULT_GOAL holds it as
+| # written, so the goal is that target rather than the words it is made of.
+| a\ xb: ; @printf '%s\n' 'spaced ran' > out
+file out touched 1
+| spaced ran

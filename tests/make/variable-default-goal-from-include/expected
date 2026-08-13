@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # A target read through include is recorded like any other, so the first one
+| # an included file holds is the default goal of the makefile that included it.
+| include included.mk
+| 
+| after: ; @printf '%s\n' 'after ran' > after.out
+file included.mk kept 1
+| included: ; @printf '%s\n' 'included ran' > out
+file out touched 1
+| included ran
