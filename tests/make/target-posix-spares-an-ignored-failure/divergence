@@ -1,1 +1,0 @@
-Ronin stops a .POSIX recipe after a prefixed ignored failure instead of continuing; make-posix-recipe-semantics.

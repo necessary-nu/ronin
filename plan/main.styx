@@ -7818,6 +7818,27 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-13T13:36:23.329973065Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T14:00:31.981623109Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "Characterized GNU Make 4.4.1's shell-flag matrix against the oracle and reference/gnumake/src before implementing. The mechanism is two-part and both parts were missing from kati.\n\n(1) `.SHELLFLAGS` is a real variable. GNU binds it in main.c at `-c`/origin default (NOT in default.c's catalogue, so `-R` leaves it), and `.POSIX:` rebinds it to `-ec` at origin default via check_specials (read.c:1905). Any stronger origin — a Makefile assignment before or after `.POSIX:`, a target-specific assignment, the command line — outranks the default and is used verbatim. kati had no such variable at all: `get_shell_flag()` was a hardcoded `is_posix ? \"-ec\" : \"-c\"` with a standing TODO.\n\n(2) The `-e` is dropped per recipe LINE, from the `-` prefix alone. job.c:1280 hands `construct_command_argv` only `cmds->lines_flags[command_line - 1]`, not the combined `flags` that also carries `.IGNORE`; job.c:3784 then reads `posix_pedantic && origin == o_default` and answers `-c` when COMMANDS_NOERROR is set on that line. So `-i` and `.IGNORE` (global or targeted) ignore the failure but leave `-e` in place — under `.POSIX:` such a recipe still stops at its first failing command and reports \"Error N (ignored)\". Only the `-` prefix relaxes the shell. Verified empirically: `.POSIX:` + `.IGNORE:` + `false ; echo body > out` succeeds without producing `out`, while the same line prefixed `-` produces it.\n\nImplemented in kati (no Ronin change needed). `.SHELLFLAGS` is bound in `GlobalVars::with_builtins` beside `.RECIPEPREFIX` — chosen over a separate installer in builtins.rs so every Session has it, matching GNU's \"defined before anything runs\"; `-R` does not reach it because `undefine_default_variables` only withdraws names in DEFAULT_VARIABLES. `.POSIX:` substitution rides the existing POSIX_VARIABLES table and its `claimable` origin gate, which is what makes an explicit assignment win for free. `get_shell_flag(dash_prefixed)` mirrors job.c's three branches; it is called from command.rs per line while `current_scope` still holds the rule's variables, so a target-specific `.SHELLFLAGS` is honoured without new plumbing. `Command` gained `shell_flag` and `dash_prefixed` — the latter because kati's existing `ignore_error` conflates the prefix with `-i`/`.IGNORE` and the shell-flag decision must not.\n\nThe manifest path needed a decision the direct path did not. kati fuses a whole recipe into ONE `sh <flags> \"script\"`, so per-line flags cannot be expressed directly. Rather than emit nested shell invocations (which would rewrite every recipe's command text), the strict flags govern the script and a line that asked for relaxed flags takes `-e` off inside its own subshell with `set +e`. This is exact: within one recipe the only possible divergence is `-c` vs `-ec` from the POSIX default, prefixed lines always already have a subshell (the prefix forces `ignore_error`, which `force_no_subshell` never coexists with), and scripts with no divergence are byte-identical to before. Under `.ONESHELL` there is genuinely one invocation and GNU reads the first line's prefix for the whole script, so no compensation is applied there — confirmed against the oracle in both directions."
+                            }
+
+                            {
+                                at 2026-08-13T14:12:26.740234136Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 

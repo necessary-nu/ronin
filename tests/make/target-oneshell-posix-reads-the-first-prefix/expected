@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| .POSIX:
+| .ONESHELL:
+| all:
+| 	-false ; echo body > out
+| 	echo done
+file out touched 1
+| body

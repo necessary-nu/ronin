@@ -1,1 +1,0 @@
-Kati does not let an explicit .SHELLFLAGS assignment override the .POSIX default; make-posix-recipe-semantics.

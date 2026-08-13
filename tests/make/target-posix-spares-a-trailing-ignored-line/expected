@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| .POSIX:
+| all:
+| 	echo start
+| 	-false ; echo body > out
+file out touched 1
+| body

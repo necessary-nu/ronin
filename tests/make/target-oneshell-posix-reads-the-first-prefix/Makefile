@@ -1,0 +1,5 @@
+.POSIX:
+.ONESHELL:
+all:
+	-false ; echo body > out
+	echo done

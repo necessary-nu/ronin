@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| .SHELLFLAGS = -c
+| .POSIX:
+| all: ; false ; echo body > out
+file out touched 1
+| body
