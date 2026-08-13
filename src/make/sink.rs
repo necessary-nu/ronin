@@ -87,6 +87,7 @@ pub(crate) struct PendingSubninja {
     completion_output: Option<Node>,
     intermediate: bool,
     disposable: bool,
+    delete_on_error: Vec<Node>,
     bindings: Vec<(Binding, Vec<u8>)>,
 }
 
@@ -460,6 +461,11 @@ impl GraphSink {
             bindings: std::mem::take(&mut pending.bindings),
         })?;
         self.graph.set_filesystem_only_freshness(edge);
+        // The wrapper edge is the one that will hold the parent's residual
+        // recipe once the children are composed, so a failure there is the
+        // failure that leaves the parent's own outputs half-made.
+        self.graph
+            .set_delete_on_error(edge, pending.delete_on_error.clone());
         Ok(edge)
     }
 
@@ -855,6 +861,7 @@ impl BuildSink for GraphSink {
         let inputs = self.node_list(names, edge.inputs)?;
         let order_only_inputs = self.node_list(names, edge.order_only_inputs)?;
         let validations = self.node_list(names, edge.validations)?;
+        let delete_on_error = self.node_list(names, edge.delete_on_error_outputs)?;
         let deferred = self.deferred_edge(names, edge)?;
         let outputs = if edge.completion_join {
             self.observed_members.insert(edge.output, completion_output);
@@ -901,6 +908,7 @@ impl BuildSink for GraphSink {
                 completion_output: edge.completion_join.then_some(completion_output),
                 intermediate: edge.intermediate,
                 disposable: edge.disposable,
+                delete_on_error,
                 bindings,
             });
             return Ok(());
@@ -933,6 +941,7 @@ impl BuildSink for GraphSink {
         match self.graph.add_edge(spec) {
             Ok(built) => {
                 self.graph.set_filesystem_only_freshness(built);
+                self.graph.set_delete_on_error(built, delete_on_error);
                 if let Some(deferred) = deferred {
                     self.graph.set_deferred_freshness(
                         built,

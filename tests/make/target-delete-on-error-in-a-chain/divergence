@@ -1,1 +1,0 @@
-Ronin does not remove a failed target in a dependency chain under .DELETE_ON_ERROR; make-delete-on-error-cleanup.

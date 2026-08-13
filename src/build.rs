@@ -117,6 +117,18 @@ pub(crate) enum EdgeResult {
     Failed,
 }
 
+/// How much of a stopped edge's work the build takes back.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Withdraw {
+    /// Every output, because the build itself was cut short: nothing running
+    /// when the signal arrived got to finish, so nothing it wrote is finished.
+    Everything,
+    /// Only the outputs `.DELETE_ON_ERROR` named. One command failed and the
+    /// build goes on around it, so what to take back is the Makefile's answer
+    /// rather than this one's.
+    DeleteOnError,
+}
+
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
 struct ReadyEdge {
     weight: CriticalPathWeight,
@@ -1176,6 +1188,45 @@ impl<'a> Builder<'a> {
                 == crate::subprocess::INTERRUPTED_EXIT_CODE
     }
 
+    /// Remove the outputs a stopped command had already written to.
+    ///
+    /// The test is GNU Make's own, in `delete_target`: an output goes only when
+    /// its timestamp is no longer the one the build read before the recipe ran.
+    /// A recipe that failed without ever reaching its target leaves the file
+    /// that was already there exactly as it found it, and a recipe that wrote
+    /// its target and then put the timestamp back has, as far as either tool
+    /// can tell, not written it.
+    ///
+    /// Nothing is said about it. `[spec:ronin:req:make.narration+1]` puts Make
+    /// mode's reporting in the manifest front end's shape, so GNU Make's
+    /// `*** Deleting file 'x'` is not owed; withdrawing a half-written output
+    /// is the same act on both paths through here, and the interrupt path has
+    /// always done it silently.
+    fn withdraw_outputs(&self, edge: EdgeId, old_mtimes: &[i64], which: Withdraw) {
+        let eligible = match which {
+            Withdraw::Everything => None,
+            Withdraw::DeleteOnError => Some(self.graph.delete_on_error(edge)),
+        };
+        if eligible.is_some_and(<[NodeId]>::is_empty) {
+            return;
+        }
+        let disk = self.disk.clone();
+        let completion_outputs = self.graph.deferred_freshness(edge).map_or_else(
+            || self.graph.edge(edge).out.as_slice(),
+            |state| &state.outputs,
+        );
+        for (output, old_mtime) in completion_outputs.iter().zip(old_mtimes) {
+            if eligible.is_some_and(|eligible| !eligible.contains(output)) {
+                continue;
+            }
+            let path = self.graph.node_path(*output).to_owned();
+            let path = path.to_path().expect("byte paths are valid on Unix");
+            if disk.stat(path).ok() != Some(*old_mtime) {
+                let _ = disk.remove_file(path);
+            }
+        }
+    }
+
     // [spec:ronin:def:build.nodedone-fn]
     // [spec:ronin:sem:build.nodedone-fn]
     // [spec:ronin:def:build.shouldprune-fn]
@@ -1300,22 +1351,7 @@ impl<'a> Builder<'a> {
             // finishes the command, which is why a build cut short by SIGTERM
             // prints no `FAILED:` line. Half-written outputs still go.
             if self.command_interrupted(status) {
-                let disk = self.disk.clone();
-                let completion_outputs = self.graph.deferred_freshness(edge).map_or_else(
-                    || self.graph.edge(edge).out.as_slice(),
-                    |state| &state.outputs,
-                );
-                for (output, old_mtime) in completion_outputs.iter().zip(&old_mtimes) {
-                    let path = self.graph.node_path(*output).to_owned();
-                    if disk
-                        .stat(path.to_path().expect("byte paths are valid on Unix"))
-                        .ok()
-                        != Some(*old_mtime)
-                    {
-                        let _ =
-                            disk.remove_file(path.to_path().expect("byte paths are valid on Unix"));
-                    }
-                }
+                self.withdraw_outputs(edge, &old_mtimes, Withdraw::Everything);
                 return Err(BuildError::Interrupted {
                     status: Some(status),
                 });
@@ -1329,6 +1365,11 @@ impl<'a> Builder<'a> {
             // A recipe whose errors Make was told to ignore leaves its target
             // made: the status has been reported and the build carries on.
             if !status.success() && !command.ignore_errors {
+                // Said after the failure is reported and before the build stops,
+                // which is where GNU Make says it too: the recipe has had its
+                // error printed, and what it half-wrote goes before anything
+                // downstream can find a file with that name and believe it.
+                self.withdraw_outputs(edge, &old_mtimes, Withdraw::DeleteOnError);
                 return Err(BuildError::SubcommandFailed {
                     edge,
                     command: command.command,

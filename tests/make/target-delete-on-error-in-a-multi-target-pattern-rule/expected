@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 6
+| # The rule makes both names from one recipe, and each name is protected by the
+| # pattern that spelled it rather than by the one the search matched.
+| .DELETE_ON_ERROR:
+| .PRECIOUS: %.kept
+| all: foo.gone foo.kept
+| %.gone %.kept: ; echo G > $*.gone ; echo K > $*.kept ; exit 1
+file foo.kept touched 1
+| K

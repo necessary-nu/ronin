@@ -405,6 +405,7 @@ assertions (
     {id make-optional-include-rule-failure, kind @complete, author "brendan@necessary.nu", at 2026-08-13T15:56:28.217626507Z}
     {id make-remake-work-not-repeated, kind @complete, author "brendan@necessary.nu", at 2026-08-13T16:23:56.53456572Z}
     {id make-restart-count-is-not-a-compilation-input, kind @complete, author "brendan@necessary.nu", at 2026-08-13T16:34:02.840662654Z}
+    {id make-delete-on-error-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-13T17:27:12.828743271Z}
 )
 
 impl_evidence (

@@ -503,6 +503,21 @@ impl BuildGraph {
             crate::graph::FreshnessHistory::FilesystemOnly;
     }
 
+    /// Name the outputs of `edge` that a failed command must not leave behind,
+    /// which is what a Makefile's `.DELETE_ON_ERROR` asks for.
+    ///
+    /// The eligible names rather than a switch: `.PRECIOUS` and `.PHONY` take
+    /// individual outputs off the list, so a grouped recipe may have to leave
+    /// one member and withdraw the rest. An empty list stores nothing.
+    ///
+    /// Nothing in a Ninja manifest says this, so a graph parsed from one never
+    /// carries it — the same bounded divergence `intermediate` and `disposable`
+    /// already have.
+    pub(crate) fn set_delete_on_error(&mut self, edge: Edge, outputs: Vec<Node>) {
+        self.arenas
+            .set_delete_on_error(edge.0, outputs.into_iter().map(|node| node.0).collect());
+    }
+
     /// The value `edge`'s own bindings give `name`, before its rule or the
     /// scope around it are consulted.
     ///

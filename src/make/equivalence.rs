@@ -541,6 +541,16 @@ fn differences(direct: &BuildGraph, parsed: &BuildGraph, semantics: &EdgeSemanti
     found
 }
 
+/// What one Makefile evaluation produced, when it produced two graphs.
+struct Both {
+    direct: BuildGraph,
+    parsed: BuildGraph,
+    semantics: EdgeSemantics,
+    /// Recursive rules the sink is still holding, which the boundary should
+    /// have recognised exactly as many of.
+    pending_subninjas: usize,
+}
+
 /// Evaluate one Makefile into both graphs and compare them.
 ///
 /// `directory` is where the manifest is written and read back from; `argv` is a
@@ -548,6 +558,31 @@ fn differences(direct: &BuildGraph, parsed: &BuildGraph, semantics: &EdgeSemanti
 // [spec:ronin:req:make.manifest-equivalence+1]
 // [spec:ronin:req:make.semantics+1]
 fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
+    match build_both(directory, argv) {
+        Ok(Both {
+            direct,
+            parsed,
+            semantics,
+            pending_subninjas,
+        }) => {
+            let mut found = differences(&direct, &parsed, &semantics);
+            if pending_subninjas != semantics.recursive.len() {
+                found.push(format!(
+                    "recursive rules: sink held {pending_subninjas}, boundary declared {}",
+                    semantics.recursive.len()
+                ));
+            }
+            Outcome::Compared(found)
+        }
+        Err(outcome) => outcome,
+    }
+}
+
+/// Send one evaluation to both sinks and read back what each produced.
+///
+/// Separate from the comparison so a test can ask about a property the
+/// comparison deliberately does not describe, and assert which side has it.
+fn build_both(directory: &Path, argv: Vec<OsString>) -> Result<Both, Outcome> {
     let _directory = super::compilation_directory_guard();
     let session = Session::from_args(argv);
     let manifest_path = directory.join("build.ninja");
@@ -559,7 +594,7 @@ fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
         regeneration_nodes,
     } = match evaluate(session) {
         Ok(evaluated) => evaluated,
-        Err(error) => return Outcome::NotAccepted(format!("{error:#}")),
+        Err(error) => return Err(Outcome::NotAccepted(format!("{error:#}"))),
     };
     // The two paths have to be handed the same roots, generated Makefiles
     // included, or the comparison stops covering the edges that make them.
@@ -578,28 +613,24 @@ fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
         emit_build(&nodes, &mut ev, &mut tee)
     };
     if let Err(error) = emitted {
-        return Outcome::NotAccepted(format!("{error:#}"));
+        return Err(Outcome::NotAccepted(format!("{error:#}")));
     }
     let pending_subninjas = sink.take_unit().subninjas.len();
     let direct = sink.into_graph();
     let parsed = load_manifest(directory, "build.ninja", ManifestOptions::default());
     match (direct, parsed) {
-        (Ok(direct), Ok(parsed)) => {
-            let mut found = differences(&direct, &parsed.graph, &semantics);
-            if pending_subninjas != semantics.recursive.len() {
-                found.push(format!(
-                    "recursive rules: sink held {pending_subninjas}, boundary declared {}",
-                    semantics.recursive.len()
-                ));
-            }
-            Outcome::Compared(found)
-        }
-        (Err(direct), Err(manifest)) => Outcome::BothRefused {
+        (Ok(direct), Ok(parsed)) => Ok(Both {
+            direct,
+            parsed: parsed.graph,
+            semantics,
+            pending_subninjas,
+        }),
+        (Err(direct), Err(manifest)) => Err(Outcome::BothRefused {
             direct: direct.to_string(),
             manifest: manifest.to_string(),
-        },
-        (Err(direct), Ok(_)) => Outcome::OnlyDirectRefused(direct.to_string()),
-        (Ok(_), Err(manifest)) => Outcome::OnlyManifestRefused(manifest.to_string()),
+        }),
+        (Err(direct), Ok(_)) => Err(Outcome::OnlyDirectRefused(direct.to_string())),
+        (Ok(_), Err(manifest)) => Err(Outcome::OnlyManifestRefused(manifest.to_string())),
     }
 }
 
@@ -626,6 +657,26 @@ impl Case {
     fn compare(&self) -> Outcome {
         compare(self.directory.path(), self.argv.clone())
     }
+
+    fn both(&self) -> Both {
+        match build_both(self.directory.path(), self.argv.clone()) {
+            Ok(both) => both,
+            Err(_) => panic!("the fixture did not produce two graphs"),
+        }
+    }
+}
+
+/// Every output either graph would withdraw if the command that makes it
+/// failed, as a sorted list of paths.
+fn withdrawn(graph: &BuildGraph) -> Vec<String> {
+    let arenas = graph.arenas();
+    let mut paths = arenas
+        .edge_ids()
+        .flat_map(|edge| arenas.delete_on_error(edge))
+        .map(|node| arenas.node_path(*node).to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 /// Assert that one Makefile produces the same graph both ways.
@@ -671,6 +722,48 @@ p ordered:
 \t@touch $@
 ",
         &[],
+    );
+}
+
+/// `.DELETE_ON_ERROR` is a property only the direct graph can hold, and this
+/// says so out loud rather than leaving it to be inferred from a comparison
+/// that passes.
+///
+/// Ninja has no notion of an output the build takes back when the command
+/// fails, so the writer has nothing to write and the parsed manifest carries
+/// none of it. That is the same bounded divergence `intermediate` and
+/// `disposable` already have, and like them it is outside what
+/// `make.manifest-equivalence` enumerates — the comparison below still agrees,
+/// which is the property that matters for the emitted manifest as an oracle.
+///
+/// The exclusions are asserted here too, because they are what makes the list
+/// per output rather than per edge: `kept` is `.PRECIOUS` and stays, `all` is
+/// `.PHONY` and names no file to take back.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn withdrawal_reaches_only_the_direct_graph() {
+    let case = Case::new(
+        "\
+.DELETE_ON_ERROR:
+.PRECIOUS: kept
+.PHONY: all
+all: gone kept
+gone kept &:
+\t@echo g > gone; echo k > kept; exit 1
+",
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(withdrawn(&both.direct), vec!["gone".to_owned()]);
+    assert!(
+        withdrawn(&both.parsed).is_empty(),
+        "a manifest has no way to say this, so reading one back must not invent it"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
     );
 }
 

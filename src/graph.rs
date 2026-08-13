@@ -8,6 +8,7 @@ mod intermediate;
 mod marks;
 mod path;
 mod validation;
+mod withdrawal;
 
 use crate::env::{Environment, EnvironmentId, Pool, PoolId, Rule, RuleId};
 use crate::error::GraphError;
@@ -153,6 +154,14 @@ pub(crate) struct Graph {
     validation_uses: crate::htab::RapidHashMap<NodeId, IdVec<EdgeId>>,
     deferred_freshness: crate::htab::RapidHashMap<EdgeId, DeferredFreshness>,
     completion_joins: crate::htab::RapidHashMap<EdgeId, NodeId>,
+    /// Outputs a failed command must not leave behind, for the edges that have
+    /// any.
+    ///
+    /// Beside the edge arena for the reason validations are beside the node
+    /// arena: `.DELETE_ON_ERROR` is a thing a Makefile either says or never
+    /// mentions, and an inline list would charge every edge in every manifest
+    /// for a Make feature almost none of them use.
+    delete_on_error: crate::htab::RapidHashMap<EdgeId, IdVec<NodeId>>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
     names: crate::names::Names,

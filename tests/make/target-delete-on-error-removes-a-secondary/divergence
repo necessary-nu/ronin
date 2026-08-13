@@ -1,1 +1,0 @@
-Ronin does not remove a failed .SECONDARY output under .DELETE_ON_ERROR; make-delete-on-error-cleanup.
