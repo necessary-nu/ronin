@@ -7213,6 +7213,20 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-13T19:00:21.08929308Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T19:31:08.587926471Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "GNU Make 4.4.1 RHS expansion timing and scope, probed against the oracle and confirmed in reference/gnumake (src/read.c record_target_var).\n\nTiming. The right-hand side is processed while the makefile is read, once per entry in the assignment's target list, left to right, whether or not any target ever matches: `%.neverusedext: S := $(shell ...)` still runs the shell. A two-pattern head `%.a %.b: SIDE := $(shell ...)` runs it twice — once per pattern, not once per matched target — matching the earlier finding that a side-effecting NAME also expands once per pattern.\n\nScope, and the asymmetry that was the defect. Only immediate flavours expand at read time, and where they expand depends on what the entry names:\n  - a PATTERN entry expands in the ambient/global scope. record_target_var calls allocated_variable_expand with no file scope pushed, so the pattern's own set is invisible — even a value the same pattern assigned on the line above. `N = global` + `%.o: N = from-pattern` + `%.o: X := $(N)` gives X=global.\n  - a NAMED-TARGET entry expands with that target's own variable set innermost, because record_target_var enters the file and pushes its set. `c.o: N = P` + `c.o: X := $(N)` gives X=P. Other targets' sets are not visible.\n\nRecursive `=` and `+=` values are not expanded at read time at all; they are stored as text and resolved against the scope chain when the target's variables are initialised.\n\nKati set current_scope to the pattern's Vars before eval_rhs, so pattern values read the scope being built. Fixed by separating the two roles the scope was serving: expansion reads the ambient chain, definition still lands in the pattern's set. `+=`/`?=` still read the rule scope for the value they build on, because a second assignment to one pattern accumulates onto the first — that is a lookup, not the value expansion."
+                            }
                         )
                     }
 
@@ -7419,6 +7433,20 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
+                            }
+
+                            {
+                                at 2026-08-13T19:00:16.756957072Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-13T19:30:55.428197982Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "GNU Make 4.4.1 application matrix, probed against the oracle and confirmed in reference/gnumake (src/variable.c: create_pattern_var, lookup_pattern_var, initialize_file_variables).\n\nOrder. For a target T the scopes apply weakest first: every pattern P in the pattern-variable list that matches T, then T's own named settings last. GNU keeps pattern_vars sorted by strlen(P) ascending with ties in definition order, walks it head to tail, and each entry overwrites the last into one accumulated set; that set is spliced between the file's own set and global. So the longest matching pattern wins, which for a fixed target is the same as the shortest stem, and equal-length patterns are decided by which was written first. Probed: `%-mt.x` vs `%.x` on foo-mt.x gives `shortpat longer`; `a%c` vs `%bc` on abc gives written order both ways round.\n\nStem. lookup_pattern_var skips any pattern with p->len > targlen, so a pattern variable needs a non-empty stem: `%.z` reaches `a.z` and not `.z`, and `foo%bar` does not reach `foobar`. Pattern *rules* do match the empty stem, so Pattern::matches alone was the wrong test.\n\n`+=`. Each scope's `+=` appends to what the scopes before it left, falling through to the global/inherited value when none did. `%.x: which += a` then `foo.x: which += b` gives `a b`; with a global it starts from the global.\n\nInheritance and private. Pattern values reach the target's prerequisites exactly as named target-specific ones do (they are on the same chain), and `private` still stops at the target's own recipe — probed, not regressed.\n\nFlavour and override. `:=` keeps its snapshot and `=` re-expands at use, through the pattern scope. `override` in a pattern or target assignment does not reorder anything; precedence stays positional.\n\nAdjacent defect found and fixed here because it is the same machinery: `+=` in a rule's own scope was double-counted, appending both at parse time to the scope-local value and again at build time to the ambient one. It is settled only when it built on a value the scope had already set outright; a run of `+=` with only each other to build on stays pending, which is what upstream features/targetvars TEST #9/#10 needs.\n\nAlso fixed: scope bindings were released front to back, which only became observable once two scopes could bind one name — the outer binding was restored first and the inner one left installed, leaking a pattern's value into the next sibling target built."
                             }
                         )
                     }

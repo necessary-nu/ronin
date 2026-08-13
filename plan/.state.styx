@@ -408,6 +408,8 @@ assertions (
     {id make-delete-on-error-cleanup, kind @complete, author "brendan@necessary.nu", at 2026-08-13T17:27:12.828743271Z}
     {id make-double-colon-rule-freshness, kind @complete, author "brendan@necessary.nu", at 2026-08-13T18:02:22.001936382Z}
     {id make-default-goal-variable-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-13T18:45:17.264520233Z}
+    {id make-pattern-specific-variable-application, kind @doing, author "brendan@necessary.nu", at 2026-08-13T19:00:16.756957072Z}
+    {id make-pattern-variable-assignment-scope, kind @doing, author "brendan@necessary.nu", at 2026-08-13T19:00:21.08929308Z}
 )
 
 impl_evidence (

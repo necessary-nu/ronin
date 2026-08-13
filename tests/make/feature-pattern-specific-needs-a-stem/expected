@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # A pattern variable applies only where the pattern leaves a stem to match, so
+| # `foo%bar` reaches `fooXbar` and not `foobar`, which it is longer than.
+| foo%bar: N = from-pattern
+| 
+| all: foobar fooXbar
+| foobar fooXbar: ; @printf '[%s]\n' '$(N)' > $@
+file fooXbar touched 1
+| [from-pattern]
+file foobar touched 1
+| []

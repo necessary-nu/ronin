@@ -1,0 +1,11 @@
+# Flavour survives the pattern scope: a `:=` keeps the value it had where it
+# was read, and a `=` is expanded where it is used.
+G = one
+
+%.r: S := $(G)
+%.r: R = $(G)
+
+G = two
+
+all: r.r
+r.r: ; @printf 'S=%s R=%s\n' '$(S)' '$(R)' > $@
