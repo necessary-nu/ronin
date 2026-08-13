@@ -8517,6 +8517,21 @@ children (
                     }
                 )
             }
+
+            {
+                id make-optional-include-failure-is-per-file
+                title "Forgive one optional include's failure without forgiving its neighbours"
+                kind @fix
+                deps (make-optional-include-rule-failure)
+                log (
+                    {
+                        at 2026-08-13T16:38:48.003491395Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Opened from make-optional-include-rule-failure, which delivered the forgiveness and recorded this as the one place it is coarser than GNU Make.\n\nGNU Make decides per Makefile. In main.c's `us_failed` arm it walks `read_files` and raises `any_remade` from `file_mtime_no_search (d->file) != makefile_mtimes[i]` for each entry whose own `update_status == us_success`, so a batch in which one optional include is remade and another's rule loses restarts the read for the first and says nothing about the second.\n\nRonin builds the forgiven Makefiles as one scheduler pass and gets one verdict for the whole pass, so `Passes::run` forgives all of them together and `remake_makefiles` skips the pass's stamp comparison entirely. The pass runs with `maxfail: usize::MAX`, so every one of them is still attempted — what is lost is only the restart the successful one should have caused. A single optional include, which is every recorded case and the `-include $(DEPS)` shape in the wild, is exact; two or more where one wins and one loses is not.\n\nNo reproducer recorded yet, because writing one means deciding what the fix is: either a per-target verdict out of the scheduler, or the forgiven Makefiles built one pass each (correct, and O(n) scheduler runs for `-include $(DEPS)`, which is the reason it was not done). Probe GNU for the mixed case first — two `-include`s, one rule that wins and one that loses — and record what MAKE_RESTARTS and the included values come to."
+                    }
+                )
+            }
         )
         log (
             {
