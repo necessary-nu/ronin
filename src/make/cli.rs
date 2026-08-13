@@ -1453,6 +1453,7 @@ fn prepare_graph(
             invocation: &effective_invocation,
             options: effective_options.clone(),
             directory: root.directory,
+            goals: &root.invocation.goals,
         };
         match build_compiler_inputs(
             compiler_inputs,

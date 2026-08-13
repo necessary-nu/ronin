@@ -8376,12 +8376,34 @@ children (
                 title "Remake makefiles whatever -n, -q, -t and -B ask of the goals"
                 kind @fix
                 deps (make-included-makefile-restarts)
+                sealed true
                 log (
                     {
                         at 2026-08-13T15:17:05.423911277Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Opened from make-included-makefile-restarts, which characterised the matrix and left this cell divergent.\n\nGNU Make disables -t, -q and -n while it brings the Makefiles up to date and restores them for the goals (remake.c update_goal_chain saves touch_flag/question_flag/just_print_flag and zeroes them unless the Makefile was also named on the command line), and it turns -B off after the first restart so an always-remade Makefile cannot loop (main.c:1702, always_make_flag = always_make_set && restarts == 0). Probed against 4.4.1: `make -n` really writes the generated include and then prints the goal recipe it would run; `make -q` really writes it and then answers about the goals with status 1; `make -n gen.mk` restores -n for gen.mk because it is a command-line target and prints `'gen.mk' is up to date`.\n\nRonin builds the compiler inputs through the ordinary scheduler with the invocation's own options, so -n describes the Makefile instead of making it and stops before the goals, and -q answers about the compiler inputs instead of the goals. Two recorded reproducers carry `divergence` markers naming this node: tests/make/feature-dry-run-still-remakes-a-makefile and tests/make/feature-question-still-remakes-a-makefile.\n\nThe work is not simply clearing dryrun for that build: regeneration targets mix Makefiles with the prerequisites staged for a recursive $(MAKE) unit, and `recursive-dry-run-writes-nothing` says the second kind must stay dry. Loaded::remake_targets already separates the two, so the shape of the fix is two builds, or one build over the Makefile subset with its own options. -B and -t are separately recorded as discovery-only cases (always-make-option, touch-option), so this node should say what, if anything, they mean here."
+                    }
+
+                    {
+                        at 2026-08-13T15:40:51.448631438Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-13T15:49:01.681219027Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "GNU 4.4.1, probed cell by cell before any code moved.\n\n`-n` writes the generated include for real and then prints the goal recipe it would run; `-q` writes it for real and then answers about the goals with status 1; `-t` runs the Makefile's recipe (not a touch — the probe's `gen.mk: gen.in ; printf ran >> log; cp $< $@` leaves `ran` in the log and the copied text in gen.mk) and then touches the goals; `-B` remakes an already-current include once and no more, because `always_make_flag = always_make_set && (restarts == 0)` (main.c:1702) turns it off after the first restart, which is what stops it looping forever. In every one of the four the switch stays visible in MAKEFLAGS through both reads — probed with `$(info ...)` — so nothing about the value the Makefile sees changes; only what the update does.\n\nThe exception GNU makes for itself is `file->cmd_target`: a Makefile the command line also named keeps the invocation's own switches (remake.c update_goal_chain saves touch/question/just_print and zeroes them only for the rest). Probed: `make -n gen.mk` prints the recipe, writes nothing, and says `'gen.mk' is up to date`; `make -t gen.mk` touches gen.mk to zero bytes rather than running its recipe; `make gen.mk` with no switch makes it, restarts, and reports it up to date once.\n\nWhat changed. src/make/cli/remake.rs is now two phases over one graph rather than one build over the union. `Loaded::staged_targets` names the other half — the prerequisites staged so a recursive $(MAKE) unit can be evaluated — and it keeps the invocation's own options, so `recursive-dry-run-writes-nothing` still writes nothing and `-q` over staged work still answers about it. The Makefiles go through `Passes::remake_makefiles`, which splits them again: the ones the command line named build under the invocation's options (and under `-q` are not built at all, since GNU records the question and carries on), and every other one builds with dryrun and verbose cleared. The goals list had to be threaded in separately: the `invocation` reaching this point is reparsed from the evaluated MAKEFLAGS and carries switches with no goals at all, which is why the first attempt at the cmd_target rule silently matched nothing.\n\n`-t` and `-B` need nothing here and are recorded as needing nothing: neither reaches Ronin's scheduler at all — they are accepted interface switches whose goal-stage behaviour is the discovery-only touch-option and always-make-option cases — so remaking was never suppressed for them and there is no loop for the `restarts == 0` rule to stop. If either is ever implemented, its implementation has to arrive with the remake-boundary exception, and this note is the record of what that exception is.\n\nFixtures. The two recorded reproducers, feature-dry-run-still-remakes-a-makefile and feature-question-still-remakes-a-makefile, now match and their `divergence` files are deleted. Two new cases recorded from the pristine 4.4.1 oracle: feature-dry-run-is-restored-for-a-makefile-goal (`make -n gen.mk` — nothing produced) and feature-question-is-answered-after-the-makefiles-are-made (`-q` where the goal is current once the Makefile has been made — gen.mk written, status 0). Build-intent corpus 356 cases, all passing; workspace 716/0."
+                    }
+
+                    {
+                        at 2026-08-13T15:49:06.16272595Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

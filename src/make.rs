@@ -880,6 +880,22 @@ impl Loaded {
         &self.remakes
     }
 
+    /// The compiler inputs that are not Makefiles: work staged so a recursive
+    /// unit can be evaluated at all.
+    ///
+    /// The other half of [`Self::regeneration_targets`]. GNU Make has no such
+    /// phase — it is how a `$(MAKE)` recipe's prerequisites reach the ground
+    /// before the child is compiled — so it is built under the invocation's own
+    /// switches rather than under the ones a Makefile is remade with.
+    #[must_use]
+    pub(crate) fn staged_targets(&self) -> Vec<Node> {
+        self.regenerations
+            .iter()
+            .copied()
+            .filter(|target| !self.remakes.contains(target))
+            .collect()
+    }
+
     /// Recursive compiler boundaries satisfied by the provisional build.
     #[must_use]
     pub(crate) const fn evaluation_boundaries(&self) -> &HashSet<EvaluationBoundary> {
