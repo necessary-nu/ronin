@@ -721,3 +721,95 @@ Makefile-set `-R` became byte-identical in the upstream inventory. The retained
 Zstd tree replays to a complete 76-edge dry-run graph whose object recipes are
 real `clang … -c -MMD -MP -o …` and `clang … -c -o …` commands, and builds a
 1.2 MB `libzstd.a` through Ronin's scheduler.
+
+## Automake's maintainer rule regenerates `Makefile.in` without automake
+
+Status: fixed
+
+Observed with Ronin revision `aabc300c868dbc397d5766720b3b09ea0bae9b55`
+while building PCRE2 10.47 at `pcre2@final` in Necessary OS run
+`1786539432179-211696` (81 built, 1 failed, 64 skipped; PCRE2 was the sole
+failure).
+
+At edge `[32/46]` Ronin ran Automake's `Makefile.in` maintainer regeneration
+recipe. Released tarballs ship a pregenerated `Makefile.in` and the build
+sandbox correctly has no automake, so the `missing` shim failed:
+
+```text
+[32/46] for dep in ${KATI_NEW_INPUTS}; do ... automake-1.16 --foreign Makefile
+FAILED: [code=127] Makefile.in
+/build/src/missing: 81: automake-1.16: not found
+WARNING: 'automake-1.16' is missing on your system.
+```
+
+GNU Make 4.4.1 does not run that rule. The cause is not timestamps: in the
+extracted tarball `Makefile.in` (mtime 1760960108) is strictly newer than
+every prerequisite named in the rule text — `aclocal.m4` (1760960106),
+`configure.ac` and `m4/*.m4` (1760960102 and 1760960105). It is the rule's
+shape. `configure` reported `whether to enable maintainer-specific portions
+of Makefiles... no`, so it substituted `@MAINTAINER_MODE_TRUE@` with `#`:
+
+```make
+$(srcdir)/Makefile.in: # $(srcdir)/Makefile.am  $(am__configure_deps)
+	@for dep in $?; do \
+	...
+```
+
+The `#` opens a comment, so the rule has *no* prerequisites at all. A
+single-colon rule with no prerequisites is up to date as soon as its target
+exists, which is precisely how Automake disables maintainer rebuilds. Kati
+strips that comment correctly; the defect was in Ronin's graph layer.
+
+`src/graph/deferred.rs` decides freshness for *deferred* edges — those whose
+recipe references `$?`, which Ronin lowers to `KATI_NEW_INPUTS` and resolves at
+the scheduling boundary. `recompute_deferred_freshness` forced the edge dirty
+whenever it had no ordinary prerequisites:
+
+```rust
+let mut timestamp_dirty = all_inputs_new || edge_data.non_order_only_inputs().is_empty();
+```
+
+That clause states GNU's double-colon rule — a `::` rule with no prerequisites
+runs every time — but it was applied to every deferred edge, so any
+single-colon rule with no prerequisites whose recipe mentions `$?` ran on every
+invocation even with its target present and `$?` empty. Automake's maintainer
+rule is exactly that shape, and remaking `Makefile.in` then cascaded into the
+`Makefile: $(srcdir)/Makefile.in $(top_builddir)/config.status` rule.
+
+A reduced case is:
+
+```make
+all: target
+
+target: # prereq
+	@echo RAN "[$?]"
+```
+
+With `target` present, GNU Make 4.4.1 reports `Nothing to be done for 'all'`.
+Ronin ran the recipe. Deleting the `$?` from the recipe made Ronin agree,
+which isolates the deferred path rather than comment parsing.
+
+Expected: an empty ordinary prerequisite list forces a run only for rules Make
+never considers current — phony targets, and double-colon rules that declared
+no prerequisites. Every other prerequisite-free rule is up to date once its
+target exists, whether or not its recipe reads `$?`. Double-colon rules with no
+prerequisites must keep running every time.
+
+Resolution: the empty-prerequisite clause is now gated on the edge's
+`always_dirty` flag, which kati already derives as
+`node.is_phony || node.unconditional_double_colon`, itself
+`is_double_colon && has commands && no inputs && no order-only inputs`. The
+signal existed; the graph was ignoring it. Five recorded build-intent cases
+cover the prerequisite-free `$?` rule, the commented-prerequisite Automake
+shape with a deliberately newer `dep`, the double-colon prerequisite-free rule
+that must still run, a strictly newer prerequisite that must still fire and
+name itself in `$?`, and equal timestamps that must not. The first two fail
+against the previous binary and pass now. The retained PCRE2 tree replays from
+46 scheduled edges to 44: both the `automake-1.16` regeneration and its
+cascaded `config.status Makefile` remake are gone, and GNU Make 4.4.1 on the
+same tree schedules neither. In GNU Make's own suite,
+`variables/EXTRA_PREREQS.diff.1` moved from `ninja-progress` to
+`no-work-line`, because with `all`, `tick` and `tack` all present as files —
+the state the suite's shared working directory produces — GNU Make says
+`'all' is up to date` and Ronin now says `no work to do` instead of rerunning
+the recipe.

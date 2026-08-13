@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 1
+| out: dep ; @printf '[%s]\n' '$?' > ran
+file dep kept 1
+| body
+file out kept 1
+| seed
+file ran touched 1
+| [dep]

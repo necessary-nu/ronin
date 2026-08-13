@@ -1046,7 +1046,7 @@ case	variables/DEFAULT_GOAL.diff.2	unclassified	product-name+evaluation
 case	variables/DEFAULT_GOAL.diff.3	narration	ninja-progress
 case	variables/DEFAULT_GOAL.diff.4	unclassified	ninja-progress+product-name+evaluation
 case	variables/EXTRA_PREREQS.diff	unclassified	ninja-progress+evaluation
-case	variables/EXTRA_PREREQS.diff.1	unclassified	ninja-progress+evaluation
+case	variables/EXTRA_PREREQS.diff.1	unclassified	no-work-line+evaluation
 case	variables/EXTRA_PREREQS.diff.10	unclassified	ninja-progress+evaluation
 case	variables/EXTRA_PREREQS.diff.11	unclassified	ninja-progress+evaluation
 case	variables/EXTRA_PREREQS.diff.12	unclassified	no-work-line+evaluation

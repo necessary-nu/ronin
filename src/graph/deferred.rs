@@ -169,7 +169,13 @@ where
         .expect("deferred capture populated runtime state");
     let baseline = state.baseline();
     let all_inputs_new = state.all_inputs_new();
-    let mut timestamp_dirty = all_inputs_new || edge_data.non_order_only_inputs().is_empty();
+    // An empty ordinary prerequisite list only forces a run for rules Make
+    // never considers current: phony targets and double-colon rules that
+    // declared no prerequisites. A single-colon rule with no prerequisites is
+    // up to date as soon as its target exists, so it must fall through to the
+    // timestamp comparison below rather than run on every invocation.
+    let mut timestamp_dirty =
+        all_inputs_new || (edge_data.always_dirty && edge_data.non_order_only_inputs().is_empty());
     for input in edge_data.non_order_only_inputs() {
         let input_state = runtime.node(*input);
         timestamp_dirty |= freshness.always_new_inputs.contains(input)

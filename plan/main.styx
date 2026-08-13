@@ -8828,4 +8828,48 @@ children (
             }
         )
     }
+
+    {
+        id make-prerequisite-free-rule-currency
+        title "Keep prerequisite-free rules current when their target exists"
+        priority 0
+        kind @fix
+        sealed true
+        log (
+            {
+                at 2026-08-13T13:04:11.686178419Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "priority pinned to 0 — operator override: Operator explicitly directed this session to fix the sole pcre2 failure from the monitored Necessary OS world-build run 1786539432179-211696 now."
+            }
+
+            {
+                at 2026-08-13T13:04:16.671681798Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-13T13:04:30.278259931Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Observed in Necessary OS world-build run 1786539432179-211696 (81 built / 1 failed / 64 skipped). The sole failure is pcre2 at edge [32/46]: Ronin scheduled Automake's `$(srcdir)/Makefile.in` maintainer regeneration rule, which invoked automake-1.16 through the `missing` shim and exited 127 because automake is absent from the build sandbox. GNU Make 4.4.1 does not run that rule at all. Root cause is NOT equal-mtime tie-breaking: in the extracted pcre2-10.47 tarball Makefile.in (1760960108) is strictly newer than every prerequisite (aclocal.m4 1760960106, configure.ac and m4/*.m4 1760960102/105). The rule text is `$(srcdir)/Makefile.in: # $(srcdir)/Makefile.am $(am__configure_deps)` — configure substituted @MAINTAINER_MODE_TRUE@ to `#` because maintainer mode is off, so Make's comment stripping leaves the rule with ZERO prerequisites. Kati strips that comment correctly. The defect is in Ronin's deferred-freshness path: src/graph/deferred.rs recompute_deferred_freshness forced `timestamp_dirty` whenever `edge_data.non_order_only_inputs().is_empty()`, applying GNU's double-colon \"no prerequisites means always run\" rule to every deferred edge. Deferred freshness is selected precisely when a recipe references `$?` (lowered to KATI_NEW_INPUTS at the scheduler boundary), so any single-colon rule with no prerequisites whose recipe mentions `$?` ran on every invocation even with its target present and `$?` empty — exactly the Automake maintainer rule. The clause entered in 0bbb6d4 (make-grouped-double-colon-actions) where it was correct for `::` rules only. Kati already distinguishes the two: node.unconditional_double_colon is `is_double_colon && has commands && no inputs && no order-only inputs`, and reaches the edge as `always_dirty` (kati/src-rs/ninja.rs:807)."
+            }
+
+            {
+                at 2026-08-13T13:29:45.197319745Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Fixed in src/graph/deferred.rs: the empty-ordinary-prerequisite clause in recompute_deferred_freshness is now gated on edge_data.always_dirty, which kati already derives as `node.is_phony || node.unconditional_double_colon`. The double-colon \"no prerequisites means always run\" semantics are preserved; single-colon prerequisite-free rules now fall through to the timestamp comparison. No kati change was needed — the signal already reached the edge; the graph was ignoring it.\n\nFive build-intent cases recorded from the pristine GNU Make 4.4.1 oracle: target-prerequisite-free-rule-is-up-to-date, target-commented-prerequisites-leave-no-inputs (Automake shape, with `dep` deliberately newer than `out`), target-double-colon-prerequisite-free-in-question, target-question-rule-runs-for-a-newer-prerequisite, target-equal-timestamps-keep-a-question-rule. Against the previous binary the first two fail (\"'ran' was produced and GNU Make produced no such file\") and the other three pass, so the pair isolates the defect and the trio guards the semantics that must not move.\n\nReplay of the retained PCRE2 tree (/data/pkg-build/work/pcre2--x86-64-x86-64-, overlay lower + upper merged with mtimes and the original .ninja_log): `make -n all-am` goes from 46 scheduled edges to 44. The failing automake-1.16 regeneration edge and its cascaded `config.status Makefile` remake are both gone; GNU Make 4.4.1 on the same tree schedules neither (0 automake mentions, 0 config.status-remake mentions). Remaining 44 edges are the compile/link recipes, which need the sandbox's /host/usr/bin/sh and /build/tools/bin/target-clang and are outside Make's scope.\n\nGates: cargo fmt --all --check clean; cargo check --workspace --all-targets clean; cargo test --workspace --no-fail-fast 713 passed / 0 failed; ronin pedantic+nursery Clippy reports zero findings in Ronin's own code (all 612 are kati, which is untouched and green under its own `cargo clippy -p kati --all-targets -- -D warnings`); Make build-intent oracle 339 recorded cases pass; Make conformance 387 runs, 301 normalised identical / 86 differing, all classified, unchanged from baseline; direct-vs-manifest equivalence 297 makefiles, 276 graphs, 0 disagreements; Ninja conformance all 425 upstream tests plus 10 differential, 86 build-outcome, 3 invocation-boundary, persistence and log-content cases.\n\nUpstream GNU Make inventory moved exactly one row of 1362, with class counts unchanged (unclassified 576, compiler 39, interface 175, narration 572): variables/EXTRA_PREREQS.diff.1 from ninja-progress+evaluation to no-work-line+evaluation. Audited to ground: the case is `a%: ; @echo .../$?/...` with `.EXTRA_PREREQS = tick tack` and goal `all`. Run in isolation the artifacts are byte-identical before and after, so the move comes from the suite's shared working directory, which the harness documents as leaving targets behind. With `all`, `tick` and `tack` all present as files, GNU Make 4.4.1 prints `make: 'all' is up to date.`, the previous binary printed a [1/1] progress line and ran the recipe, and the fixed binary prints `ronin: no work to do.` The row moved because Ronin stopped rerunning a prerequisite-free target whose file exists — the defect this node fixes — so the movement is the correction surfacing, and both families are narration class."
+            }
+
+            {
+                at 2026-08-13T13:30:14.727080472Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
+    }
 )
