@@ -9831,6 +9831,13 @@ children (
                         kind @note
                         text "Owns three rows, and they point in opposite directions, which is what identifies the mechanism: features/suffixrules.diff.4 and .5 (`no-rule-to-make`) and features/suffixrules.diff.6 (`refusal-not-made`). All three run the same makefile.\n\n  .SUFFIXES:\n  .SUFFIXES: .biz .baz\n  .baz.biz: foo.bar ; @echo make $@ from $<\n\nGNU reads a suffix-named rule that carries prerequisites as an ordinary rule for a file called `.baz.biz`, warns `ignoring prerequisites on suffix rule definition`, and installs no `.baz`-to-`.biz` suffix rule at all. So:\n\n  goal `.baz.biz` → GNU warns and builds it; Ronin refuses, `'.baz.biz' missing and no known rule to make it`.\n  goal `foo.biz`  → GNU refuses, `No rule to make target 'foo.biz'`; Ronin builds it from foo.baz.\n\nRonin has made exactly the opposite choice on both counts: it installs the suffix rule and loses the file target. One decision fixes both directions — a suffix-named rule with prerequisites is an ordinary rule — so the two row groups are one node rather than two.\n\nThe warning is narration and not owed. What is owed is which of the two targets exists."
                     }
+
+                    {
+                        at 2026-08-14T12:52:38.961128912Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 

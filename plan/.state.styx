@@ -439,6 +439,7 @@ assertions (
     {id make-second-expansion-pattern-first-percent, kind @complete, author "brendan@necessary.nu", at 2026-08-14T12:37:47.584885131Z}
     {id make-pattern-prerequisite-directory-stem, kind @complete, author "brendan@necessary.nu", at 2026-08-14T12:37:51.837509637Z}
     {id make-pattern-prerequisite-wildcards, kind @complete, author "brendan@necessary.nu", at 2026-08-14T12:37:56.076447388Z}
+    {id make-suffix-shaped-target-with-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-14T12:52:38.961128912Z}
 )
 
 impl_evidence (

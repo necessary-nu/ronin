@@ -997,3 +997,47 @@ it did before, the second invocation runs the one no-op recipe and nothing
 else — which is what `make --trace` shows GNU Make 4.4.1 doing on the same
 tree — and `make -j8 install` runs 11 install recipes with no compile or link
 edge among them.
+
+## $(file ...) is refused in rules; Linux headers_install needs the read form
+
+Status: open
+
+Observed with Ronin revision `2340cd4c6ababb3380f4ae87ba3eee9e74a45508`
+building `kernel-headers@seed` (linux-6.18.2 `headers_install`) for
+Necessary OS:
+
+```text
+ronin: /build/linux/Makefile:1337: $(file ...) is not supported in rules.
+```
+
+The refusal is Ronin's own message, and the feature it names is load-bearing
+for the kernel tree. The expansion chain that lands `$(file ...)` in recipe
+context:
+
+```make
+# scripts/Kbuild.include:72 — the *read* form
+read-file = $(subst $(newline),$(space),$(file < $1))
+
+# Makefile:379 — recursively expanded, so it expands wherever it is used
+KERNELRELEASE = $(call read-file, $(objtree)/include/config/kernel.release)
+
+# Makefile ~1337-1340 — recipes whose filechk bodies reference KERNELRELEASE
+include/generated/utsrelease.h: include/config/kernel.release FORCE
+	$(call filechk,utsrelease.h)
+```
+
+`filechk_utsrelease.h` interpolates `$(KERNELRELEASE)` into its shell text,
+so expanding the recipe requires evaluating `$(file < ...)` — a read, not a
+write. GNU Make has supported `$(file <)` since 4.2 (and `$(file >)` since
+4.0), both in any expansion context including recipes.
+
+This is a regression relative to the pre-delivery-series Ronin: the same
+kernel tree built `kernel-headers` successfully under the revision pinned
+before the evaluator-scope/argument/rule-catalogue work landed. It blocks
+`kernel-headers@seed`, and everything in the world sits above kernel-headers.
+
+At minimum the read form needs real support — open the file, substitute its
+contents, empty-string when absent per GNU semantics. The write forms
+(`$(file >...)`, `$(file >>...)`) are what the "not supported in rules"
+refusal presumably exists for; if writing stays unimplemented, the refusal
+should distinguish the two rather than reject reads it could serve.
