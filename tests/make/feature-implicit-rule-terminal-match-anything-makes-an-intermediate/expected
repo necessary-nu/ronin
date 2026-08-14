@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The same rule written terminal, which is what `::` means on a pattern rule.
+| # A terminal match-anything rule is allowed to make an intermediate, so `foo`
+| # is made from `foo.y`, used, and removed again.
+| all: foo.out
+| 
+| %.out: % ; @cat $< > $@
+| %:: %.y ; @cat $< > $@
+file foo.out touched 1
+| why
+file foo.y kept 1
+| why

@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # Chaining is tried before the compatibility pass too: `%.tsk: %.z` can invent
+| # `hello.z` from `hello.y`, and that beats `%.tsk: %` taking `hello` on trust
+| # despite being written second.
+| all: hello.tsk
+| 
+| %.tsk: % ; @printf '%s\n' compat > $@
+| %.tsk: %.z ; @printf '%s\n' chained > $@
+| %.z: %.y ; @cat $< > $@
+| unrelated: hello
+file hello.tsk touched 1
+| chained
+file hello.y kept 1
+| why
