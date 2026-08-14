@@ -58,6 +58,13 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 74 when `value` learned to read an automatic variable back: the base
+    // forms answer with the name they were set to, and the `D` and `F` forms
+    // with the `dir`/`notdir` expression GNU Make defined them from, rather than
+    // the whole function refusing. `value_at.mk#test` became byte-identical and
+    // left the recorded corpus-TODO class.
+    //
+    // Before that it moved
     // from 76 when an assignment made from inside a `foreach` or `call` binding
     // started landing in the global scope the binding shadows rather than being
     // refused or applied in place: `autovar_assign.mk#default` and
@@ -113,9 +120,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 74);
+    assert_eq!(cases.len(), 73);
     assert_eq!(by_class["defect"], 36);
-    assert_eq!(by_class["recorded"], 6);
+    assert_eq!(by_class["recorded"], 5);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);
 }

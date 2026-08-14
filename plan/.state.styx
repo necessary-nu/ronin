@@ -429,6 +429,7 @@ assertions (
     {id make-export-scope-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-14T04:31:25.119006382Z}
     {id make-recipe-eval-mutation-refusal, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:06:01.690436468Z}
     {id make-local-binding-assignment-scope, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:06:05.92501955Z}
+    {id make-automatic-variable-value-function, kind @doing, author "brendan@necessary.nu", at 2026-08-14T05:26:39.760933044Z}
 )
 
 impl_evidence (

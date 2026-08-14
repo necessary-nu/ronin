@@ -1,0 +1,28 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 13
+| # GNU Make sets the base automatic variables per file, in `set_file_variables`,
+| # as simple variables whose value is the name it just computed. A simple
+| # variable has no unexpanded text behind it, so reading one back with `value`
+| # yields the same text that expanding it does: `$(value @)` is `$@`.
+| .PHONY: all ord
+| all: a.in b.in | ord
+| 	@printf '%s\n' 'at [$(value @)]' 'lt [$(value <)]' 'hat [$(value ^)]' \
+| 		'plus [$(value +)]' 'star [$(value *)]' 'q [$(value ?)]' \
+| 		'bar [$(value |)]' 'expand at [$@]' 'expand hat [$^]' > out
+| 
+| a.in b.in: ; @: > $@
+| 
+| ord: ; @:
+file a.in touched 0
+file b.in touched 0
+file out touched 9
+| at [all]
+| lt [a.in]
+| hat [a.in b.in]
+| plus [a.in b.in]
+| star []
+| q [a.in b.in]
+| bar [ord]
+| expand at [all]
+| expand hat [a.in b.in]

@@ -8423,6 +8423,20 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-14T05:26:39.760933044Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-14T05:27:26.615522653Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "GNU Make 4.4.1 characterised against the pristine oracle before anything moved. The matrix has one shape, and the D/F question the node was written around has a definite answer.\n\nTwo kinds of automatic variable, built differently, and `value` is where the difference is visible.\n\nThe base forms — @ < ^ + * ? % | — are set per file in `set_file_variables` as SIMPLE variables whose value is the name just computed. A simple variable has no unexpanded text behind it, so `$(value @)` is exactly `$@`. Verified in an explicit rule (`at=[all] lt=[a.in] hat=[a.in b.in] plus=[a.in b.in] star=[] q=[a.in b.in] bar=[ord]`), in a pattern rule where `$(value *)` reads back the stem, and with an order-only prerequisite where `$(value |)` reads back the order-only list.\n\nThe D and F forms are NOT computed per file. `define_automatic_variables` (reference/gnumake/src/variable.c:991-1005) defines them ONCE, at startup, as RECURSIVE variables whose text is a literal dir/notdir expression over the base form. So `$(value @D)` returns the LITERAL text `$(patsubst %/,%,$(dir $@))` and `$(value @F)` returns `$(notdir $@)` — whatever the current target is, in a pattern rule as much as an explicit one. That is the definitive answer to the question the dispatch flagged: the D/F forms return literal text, not the computed path. The same holds for every derived form: `$(value <D)` is `$(patsubst %/,%,$(dir $<))`, `$(value ^F)` is `$(notdir $^)`, `$(value *D)` is `$(patsubst %/,%,$(dir $*))`.\n\nFlavor and origin tell the same story, and had to be checked because kati was self-contradictory here. Every automatic in scope has origin `automatic`. Flavor is what separates the kinds: base forms `simple`, D/F forms `recursive`. `$|` is the one with no D/F form at all, so `|D` reads as undefined/undefined rather than as an automatic — kati already had that right.\n\nThe binding forms were probed and already agree with GNU, which is dispatch #22's bindings-stack work holding: `$(value 1)` inside `$(call)` is the expanded argument text, flavor simple, origin automatic; a `$(foreach)` loop variable and a `$(let)` variable are the same. `$(value MAKEFILE_LIST)` is simple/file for contrast. Nested `$(value $(value X))` composes with no special case.\n\nkati's answers before the change: `$(value @)` and every other automatic errored outright with \"$(value @) is not implemented yet\". `$(flavor @)` and `$(flavor @D)` both said `undefined` while `$(origin)` was already saying `automatic` — incoherent, and the same \"what kind of variable is this\" question `value` asks, so it moved with it.\n\nWhat changed, all in kati. `AutoCommandVar::definition` returns the expression a D or F form was defined from and `None` for a base form, leaving the caller to evaluate; `AutoCommandVar::flavor` follows the same split. `value_func` routes an automatic through those instead of through the stored-text path that had nothing to return. `Variable::flavor` delegates. `Variable::string` keeps a diagnostic for the base forms, since reading one genuinely needs the rule in hand, but it now says that rather than claiming the function is unimplemented.\n\nScope held to the value function. Two adjacent defects found and filed rather than fixed: make-notdir-strips-a-root-directory (kati's basename leaves `/x.o` whole where GNU's notdir gives `x.o`, which also reaches `$(@F)`), and make-path-automatic-variables-defined-at-read-time (GNU has the D/F forms defined before any rule is chosen; kati registers every automatic from CommandEvaluator::new, so outside a recipe they read as undefined). `$%` remains unsupported in kati — pre-existing and untouched, so `$(value %)` now reports the same \"isn't supported yet\" that `$%` itself does rather than a different message.\n\nOwned markers: none. No divergence file under tests/make/*/divergence names the value function or an automatic variable; the node's concrete scope was the recorded corpus case value_at.mk#test, which now matches GNU byte for byte and has lost its fix-me annotation and its inventory row."
+                            }
                         )
                     }
 
@@ -9475,6 +9489,34 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Split out of make-recipe-eval-mutation-refusal, which characterised recipe-time `$(eval)` and found this cell short. An `export` is session state rather than graph shape, so the refusal boundary lets it through — and GNU Make honours it in the very recipe that wrote it, because the child's environment is built from the export set at the moment the job is started, after the recipe text has been expanded.\n\nRonin builds the recipe environment once, at compile time: `src/make.rs` calls `exported_environment(&mut ev)` and hands the answer to `sink.set_recipe_environment` before any recipe is expanded. Lazy recipe expansion means the `$(eval export V)` now really does run — at launch — but by then the environment prefix the edge carries is fixed, so the variable never reaches the shell.\n\nOwns tests/make/function-eval-in-a-recipe-exports-a-variable (recorded, divergence marker). Reproducer:\n\n    V = exported-value\n    all:\n    \t$(eval export V)\n    \t@printf '%s\\n' \"V=[$$V]\" > out\n\nGNU writes `V=[exported-value]`; Ronin writes `V=[]`.\n\nThe same shape reaches `unexport` at recipe time, and probably a recipe-time assignment to a name that was already exported — worth probing both before deciding whether the environment has to be recomputed per edge at launch or only when the expansion touched the export set."
+                    }
+                )
+            }
+
+            {
+                id make-notdir-strips-a-root-directory
+                title "Strip a root directory in notdir and the F automatic variables"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T05:21:59.062711553Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while characterising the value function over automatic variables (make-automatic-variable-value-function).\n\nkati's basename does not strip a directory that is the filesystem root, so a\nname whose only directory part is `/` comes back whole. GNU Make's notdir keeps\nnothing before the last slash.\n\nReproducer, `$(notdir /x.o)`:\n\n  all: ; @echo 'notdir=[$(notdir /x.o)] dir=[$(dir /x.o)]'\n\n  GNU 4.4.1  notdir=[x.o]   dir=[/]\n  Ronin      notdir=[/x.o]  dir=[/]\n\nThe same basename backs the `F` automatic variables, so `$(@F)` for a target\n`/x.o` reads `/x.o` where GNU Make reads `x.o`:\n\n  .PHONY: /x.o\n  /x.o: ; @echo 'atD=[$(@D)] atF=[$(@F)]'\n\n  GNU 4.4.1  atD=[] atF=[x.o]\n  Ronin      atD=[] atF=[/x.o]\n\n`$(dir)` and the `D` forms already agree, including the root case, so the defect\nis basename's alone. Fix it in kati's strutil::basename."
+                    }
+                )
+            }
+
+            {
+                id make-path-automatic-variables-defined-at-read-time
+                title "Define the D and F automatic variables before any rule runs"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T05:22:11.626559477Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while characterising the value function over automatic variables (make-automatic-variable-value-function).\n\nGNU Make defines the `D` and `F` automatic variables once, at startup, in\n`define_automatic_variables` (reference/gnumake/src/variable.c). They are\nordinary recursive variables holding a `dir`/`notdir` expression, so they are\ndefined everywhere a makefile can look — including at read time, before any rule\nhas been chosen. Only the base forms are per-file, set in `set_file_variables`.\n\nkati registers every automatic variable from `CommandEvaluator::new`, so none of\nthem exists until a recipe is being expanded. In recipe context the two tools\nnow agree on all of value, flavor and origin. Outside one they do not:\n\n  $(info atD=[$(value @D)] flavor=[$(flavor @D)] origin=[$(origin @D)])\n  $(info at=[$(value @)] flavor=[$(flavor @)] origin=[$(origin @)])\n  all: ; @:\n\n  GNU 4.4.1  atD=[$(patsubst %/,%,$(dir $@))] flavor=[recursive] origin=[automatic]\n             at=[] flavor=[undefined] origin=[undefined]\n  Ronin      atD=[] flavor=[undefined] origin=[undefined]\n             at=[] flavor=[undefined] origin=[undefined]\n\nThe base forms already agree at read time — both read as undefined — so the gap\nis the `D` and `F` forms only. Defining them at session start needs no rule in\nhand, because their value is literal text that only refers to the base form;\n`$(@D)` at read time then expands through an undefined `$@` to the empty string,\nwhich is what GNU Make produces.\n\nDeferred from the value-function node because it is a variable-lifecycle change\nrather than a change to what `value` reports, and the owned corpus case is\nrecipe-context only."
                     }
                 )
             }
