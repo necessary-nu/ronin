@@ -10016,6 +10016,7 @@ children (
                 title "Require the prerequisites .EXTRA_PREREQS adds"
                 kind @fix
                 deps (make-build-intent-gate)
+                sealed true
                 log (
                     {
                         at 2026-08-14T06:03:09.147964985Z
@@ -10030,6 +10031,21 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-14T15:27:43.763379473Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-14T15:28:11.386837982Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered in ronin 7500bd3, kati f90f42b.\n\nvariables/EXTRA_PREREQS.diff.7 moves compiler/refusal-not-made to narration/shared-refusal, and the whole suite file moves with it: all 13 rows are narration now, 6 of them plain `ninja-progress` (the content agrees and only the progress line differs). .8 and .9 became shared-refusal, .10-.12 ninja-progress.\n\nImplemented in kati/src-rs/dep.rs as a port of GNU's `snap_file`. The extras join the existing hidden-prerequisite pass — the one grouped `&:` peers already use — so they reach the graph, the freshness test, VPATH and `.WAIT`, and never `actual_inputs`, which is what the automatic variables read.\n\nGNU 4.4.1 matrix, probed cell by cell against reference/make-oracle:\n\n  - global form applies to every name the read made a target; a file that is only somebody's prerequisite gets none\n  - target-specific form REPLACES the global rather than adding to it\n  - the lookup does not fall back, so a target carrying any OTHER target-specific variable is left with no extras at all. `all: FOO = bar` beside a global `.EXTRA_PREREQS = glob` builds without glob. That is the implementation (`if (f->variables) … else if (f->is_target)`) rather than the documentation, and it is ported because a makefile written against 4.4.1 depends on it\n  - a list naming its own target drops WHOLE, not just the offending entry\n  - `|` in the value splits compared from order-only, as `split_prereqs` does\n  - excluded from $^, $?, $<, $+ AND $| (ignore_automatic_vars, not ignore_mtime) — so an extra newer than the target DOES force a rebuild\n  - expanded once the last makefile is closed; no second expansion (`$$(EP)` stays literal)\n  - reaches a target made by a pattern rule (GNU splices it in `snap_implicit_rules`); a pattern-target-specific `.EXTRA_PREREQS` is a no-op\n  - takes no part in choosing an implicit rule; never becomes the default goal\n  - applies to `::` records, each on its own\n  - crosses the recursive fence: a sub-make's own value applies in its own unit\n\nSeven oracle-recorded cases under tests/make/extra-prereqs-*.\n\nOne thing worth recording: the order-only `|` split was a regression this node introduced and then fixed before landing. Before the change `.EXTRA_PREREQS` was ignored entirely, so `= | tick` agreed with GNU by accident; implementing the feature without the split made Ronin refuse a literal `|` as a prerequisite name. Caught by probing the cell rather than by any gate — nothing in the corpus writes it."
+                        after_done true
+                    }
                 )
             }
 
@@ -10038,6 +10054,7 @@ children (
                 title "Refuse a word index too large to be one"
                 kind @fix
                 deps (make-build-intent-gate)
+                sealed true
                 log (
                     {
                         at 2026-08-14T06:03:13.111626097Z
@@ -10052,6 +10069,21 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-14T15:27:48.497715545Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-14T15:28:28.292278467Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered in ronin 7500bd3, kati fa699e4.\n\nfunctions/word.diff.4 moves compiler/refusal-not-made to narration/shared-refusal; functions/word.diff moves unclassified to narration/ninja-progress as well.\n\nThe triage's reading was right and the cause was narrower than \"no range check\". kati read the index with `s.parse::<usize>()`, so every value up to 2^64 parsed successfully and became an index no list could have — the scan simply ran off the end and answered empty. GNU reads it with `strtoll` and reports the ERANGE as its own diagnostic. (The C++ `src/func.cc` still carries the older `long`/`LONG_MAX` shape, but `src-rs` is the live code.)\n\nReplaced `get_numeric_value_for_func` with a port of GNU's `parse_numeric`, which settles four cells rather than the one reported:\n\n  - whitespace off BOTH ends: `$(word  3 ,…)` is 3. We trimmed only the left, so we were refusing a makefile GNU accepts — a divergence in the opposite direction, found while probing\n  - overflow either way is `'…' out of range`; accumulation is signed and checked so i64::MIN is not itself an overflow\n  - an empty value says `empty value` rather than quoting nothing\n  - a negative index reaches word's own \"must be greater than 0\" (GNU checks `i < 1` after parsing) instead of being called non-numeric\n\n`$(wordlist)` takes the same parser plus its two boundaries: start < 1 and stop < 0 are fatal and name the number PARSED, not the text written — so `$(wordlist 000,…)` refuses '0'. A stop of zero and a stop below the start stay empty. Also fixed the malformed trailing backtick in kati's old wordlist message.\n\nWording follows GNU 4.4.1 as `$(intcmp)` already does: GNU's words, kati's backtick quoting. GNU renamed these from \"non-numeric\" to \"invalid\" when it added the range check.\n\nAll 24 word/wordlist boundary cells now agree with the oracle. Three fixtures: word-index-out-of-range, wordlist-index-out-of-range, word-index-boundaries (the six accepted cells).\n\nCorpus side effect: this retires the last `message-text` difference. err_word_non_numeric.mk now says what GNU says and differs only in quote style — its digest is identical to err_word_zero.mk's, and both are exit-status+stop-suffix+quote-style. The empty family record was removed from tests/make_corpus_inventory.tsv."
+                        after_done true
+                    }
                 )
             }
 
@@ -10060,6 +10092,7 @@ children (
                 title "Refuse a jobserver style that names nothing"
                 kind @fix
                 deps (make-interface-surface)
+                sealed true
                 log (
                     {
                         at 2026-08-14T06:03:22.36803552Z
@@ -10073,6 +10106,21 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-14T15:27:53.013431388Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-14T15:28:43.63876285Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered in ronin 7500bd3. No kati change — this is Ronin's CLI, as the node predicted.\n\nfeatures/jobserver.diff.8 moves compiler/refusal-not-made to narration/shared-refusal.\n\nGNU 4.4.1 matrix, probed against reference/make-oracle:\n\n  - accepts exactly `fifo` and `pipe`, case-sensitive. `FIFO`, `Pipe`, `sem` are all refused\n  - `unknown jobserver auth style 'X'.  Stop.`, exit 2, and NO usage block after it (unlike a malformed option, which prints usage)\n  - an empty value is refused earlier and differently: `the '--jobserver-style' option requires a non-empty string argument`, WITH usage\n  - last one wins: `--jobserver-style=pipe --jobserver-style=foo` refuses, the reverse order builds\n  - MAKEFLAGS carries `--jobserver-auth=…` (fifo:/path or 3,4), never `--jobserver-style` itself\n\nThe cell that matters and is easy to miss: GNU checks the value inside `jobserver_setup`, which it only reaches when `job_slots > 1`. So `--jobserver-style=nonsense` alone, with `-j1`, or with a bare `-j` (infinite) is never looked at and never refused. The check belongs to the jobserver, not to the option parser. Replicated: `src/make/cli.rs` records the style during parsing and checks it in `parse` once both option streams have been read, gated on the effective job count being a fixed count above one.\n\nBoth streams the CLI reads are covered — argv and MAKEFLAGS from the environment, in either combination. What is NOT covered is a style a Makefile's own MAKEFLAGS appends, because the CLI has finished by then; filed as make-makefile-set-jobserver-style, which is the same question as make-makefile-set-no-builtin-rules.\n\nThree fixtures: jobserver-style-unknown (refuses), jobserver-style-known (fifo builds), jobserver-style-unchecked-without-a-jobserver (`-j1` builds despite a nonsense style — the gating cell).\n\nNote on shape: `parse_arguments` crossed clippy's 100-line limit, so the option's handling was extracted to `read_jobserver_style`; that then put cli.rs one over the 50-function density gate, so the usage-less refusal was inlined at its single call site rather than kept as a `fatal` helper. Both fixed structurally, no bypasses."
+                        after_done true
                     }
                 )
             }
