@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # On the immediate path the held-aside directory is part of the name before the
+| # glob runs, so the wildcard is matched one directory down.
+| all: lib/bye.x
+| 
+| %.x: 6%* ; @printf '%s\n' '$(sort $^)' > log; touch $@
+file lib/6bye1 kept 0
+file lib/6bye2 kept 0
+file lib/bye.x touched 0
+file log touched 1
+| lib/6bye1 lib/6bye2

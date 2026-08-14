@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # A wildcard matching nothing is kept exactly as it was written rather than
+| # dropped, so the prerequisite is a name the search then has to account for.
+| all: a.four
+| 
+| %.four: %.t* ; @printf '%s\n' '$^' > log; touch $@
+| 
+| .PHONY: a.t*
+file a.four touched 0
+file log touched 1
+| a.t*
