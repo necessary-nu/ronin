@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # A pattern rule written for bare names that matched a name carrying a
+| # directory holds the directory aside: only what is left of the stem goes where
+| # the `%` stands, and the directory goes in front of the whole prerequisite. A
+| # prerequisite naming no stem takes neither.
+| all: lib/bye.x
+| 
+| %.x: 6% 11%12 %9 sub/%.c nopercent.c ; @printf '%s\n' '$^' > log; printf 'stem=%s\n' '$*' >> log; touch $@
+file lib/11bye12 kept 0
+file lib/6bye kept 0
+file lib/bye.x touched 0
+file lib/bye9 kept 0
+file lib/sub/bye.c kept 0
+file log touched 2
+| lib/6bye lib/11bye12 lib/bye9 lib/sub/bye.c nopercent.c
+| stem=lib/bye
+file nopercent.c kept 0

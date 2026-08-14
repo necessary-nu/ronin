@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file 6lib/bye kept 0
+file Makefile kept 6
+| # The directory split lives in the implicit search alone. A static pattern rule
+| # substitutes the whole stem where the `%` stands, directories and all, so the
+| # same rule text reads a different name depending on how it was reached.
+| all: lib/bye.x
+| 
+| lib/bye.x: %.x: 6% ; @printf '%s\n' '$^' > log; printf 'stem=%s\n' '$*' >> log; touch $@
+file lib/bye.x touched 0
+file log touched 2
+| 6lib/bye
+| stem=lib/bye

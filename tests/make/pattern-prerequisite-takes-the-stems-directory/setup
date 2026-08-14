@@ -1,0 +1,6 @@
+mkdir -p lib/sub
+: > lib/6bye
+: > lib/11bye12
+: > lib/bye9
+: > lib/sub/bye.c
+: > nopercent.c

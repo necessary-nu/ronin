@@ -437,6 +437,7 @@ assertions (
     {id make-pattern-search-specific-rule-match, kind @complete, author "brendan@necessary.nu", at 2026-08-14T09:42:51.576358131Z}
     {id make-makefile-set-no-builtin-rules, kind @complete, author "brendan@necessary.nu", at 2026-08-14T09:42:56.631551918Z}
     {id make-second-expansion-pattern-first-percent, kind @doing, author "brendan@necessary.nu", at 2026-08-14T11:57:34.841026367Z}
+    {id make-pattern-prerequisite-directory-stem, kind @doing, author "brendan@necessary.nu", at 2026-08-14T12:09:55.205339673Z}
 )
 
 impl_evidence (
