@@ -95,7 +95,7 @@ fn fixture_directory(label: &str) -> std::path::PathBuf {
 fn sweep_stale_fixtures() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        let stale = std::time::Duration::from_secs(60 * 60);
+        let stale = std::time::Duration::from_hours(1);
         let Ok(entries) = fs::read_dir(std::env::temp_dir()) else {
             return;
         };

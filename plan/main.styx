@@ -10252,6 +10252,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-14T16:15:37.038813964Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The second cost this node recorded is settled: `scripts/check-ninja-conformance.sh` runs again, first try.\n\nIts first phase is `cargo test --all-targets`, which is why eight consecutive attempts flapped when this test did. On the fixed tree the whole script passed on the first run made of it — phase 1 clean (681 passed, 0 failed, 1 ignored for the ronin package; 845 passed under `--workspace --all-targets`), then the Windows type check, then 425 pinned upstream tests, 10 differential, 86 build-outcome, 3 invocation-boundary, persistence and log content. 85 seconds end to end. Nobody has to invoke the conformance example directly to get past the suite any more.\n\nFull workspace suite, three consecutive sandboxed runs on the fixed tree: 794 passed / 0 failed / 1 ignored each time, 54s, 60s, 57s. 794 is the 793 baseline plus make_port's new round-trip test.\n\nOne thing found afterwards and fixed in the same file: `sweep_stale_fixtures` wrote `Duration::from_secs(60 * 60)`, which clippy's pedantic `duration_suboptimal_units` reads as a smaller unit than it needs — `Duration::from_hours(1)` says the same thing. It was the only new clippy finding anywhere in the dispatch; ronin lib+bins are back to zero under pedantic+nursery, and kati to zero under `-D warnings`."
+                        after_done true
+                    }
                 )
             }
 
