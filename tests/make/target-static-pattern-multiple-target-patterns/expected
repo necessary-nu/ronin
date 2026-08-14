@@ -1,0 +1,6 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 3
+| all: a.o
+| a.c: ; echo body > $@
+| a.o: %.o %.q: %.c ; printf 'stem=[%s]\n' '$*' > $@

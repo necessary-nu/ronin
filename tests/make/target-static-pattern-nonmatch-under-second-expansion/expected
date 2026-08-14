@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| .SECONDEXPANSION:
+| all: mismatch
+| present.c: ; echo body > $@
+| mismatch: %.o: $$*.c present.c ; printf 'stem=[%s] all=[%s]\n' '$*' '$^' > $@
+file mismatch touched 1
+| stem=[mismatch] all=[]

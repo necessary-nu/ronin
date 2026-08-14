@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| all: mismatch a.o
+| a.c a.dep: ; echo body > $@
+| a.o mismatch: %.o: %.c | %.dep ; printf 'name=[%s] all=[%s] order=[%s]\n' '$@' '$^' '$|' > $@
+file a.c touched 1
+| body
+file a.dep touched 1
+| body
+file a.o touched 1
+| name=[a.o] all=[a.c] order=[a.dep]
+file mismatch touched 1
+| name=[mismatch] all=[] order=[]

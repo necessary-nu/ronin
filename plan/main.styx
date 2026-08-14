@@ -8013,6 +8013,27 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-14T01:04:06.821386619Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-14T01:04:18.599914457Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "GNU 4.4.1 matrix, probed cell by cell against the pinned oracle. A static-pattern target that misses the target pattern is diagnosed by `record_files` through `error`, not `fatal`: the message goes to stderr, the read continues, and make still exits 0. What the target keeps and loses is decided by one `else` in read.c — the prerequisite chain is copied only in the branch the mismatch diagnostic skipped, while the stem is set unconditionally a few lines later by substituting the name into a bare `%`. So the nonmatching target keeps its recipe, keeps whatever prerequisites other rules gave it, takes NONE of the static pattern's prerequisites (normal, order-only, and the deferred chain under .SECONDEXPANSION alike), and reads `$*` as its own whole name rather than as the empty string a failed match would give. Its matching siblings in the same target list are unaffected and get ordinary stems. Errors, by contrast, are reserved for a malformed rule rather than a mismatched target: two patterns in the target-pattern position and a target pattern with no `%` are both `*** ... Stop.` at exit 2, and GNU reaches neither after a match test — it settles the pattern while parsing the line and only tests targets later, so a two-pattern rule dies on that alone with no mismatch warning first."
+                            }
+
+                            {
+                                at 2026-08-14T01:04:31.950292517Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Ronin's divergence was narrower than the marker read, and worse where it landed. The parse-time warning was already right; the failure was downstream. `apply_output_pattern` substituted the target into the prerequisite pattern through `Pattern::append_subst`, whose non-match branch returns the input unchanged — so `mismatch: %.o: %.c` gave `mismatch` its own name as a prerequisite and the build died on `dependency cycle: mismatch -> mismatch`. Under .SECONDEXPANSION the same target instead got a prerequisite built from an empty stem. Both are now decided by one predicate, `prerequisites_reach`, applied at `apply_output_pattern` and at each of the three deferred-prerequisite sites plus `declared_by`, which is the same question GNU's `else` asks. `$*` moved from `Pattern::stem` to substitution into a bare `%`, which is how GNU derives the stem and is the only spelling that answers both cells: identical for a target that matched, the whole name for one that did not.\n\nProbing the empty-stem cell found a live panic underneath. `Pattern::match_impl` tested prefix and suffix without checking they fit side by side, so `%.o` \"matched\" `.o` and `Pattern::stem` then computed `str.len() - pat.len()` and overflowed, and `a%a` \"matched\" `a` and produced a reversed slice. Neither needs a static pattern to reach: `$(patsubst a%a,X%X,a)` panicked outright. Fixed with GNU's own length test in `pattern_matches` and by taking the subtraction last, and pinned by `pattern-halves-cannot-overlap`, which records the plain patsubst answers."
+                            }
                         )
                     }
 
@@ -9173,6 +9194,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Carried out of make-pattern-peer-restart-convergence, whose defect — the read that never settled — is fixed under make-grouped-pattern-targets. That node's note listed two things a fix owed: a run that does not diverge, and GNU's warning. The first is delivered and gates; this is the second, and it is a different kind of thing, so it is a node rather than a loose end.\n\nWhat GNU does, measured against the 4.4.1 oracle. A pattern rule with several target patterns whose recipe writes only some of them is not a failure: the build succeeds, and Make says\n\n    Makefile:5: warning: pattern recipe did not update peer target 'a.h'.\n\nonce per unwritten peer, naming the line the rule was written on. An explicit grouped `&:` rule in the same shape says nothing at all — the warning is the pattern form's alone. Both the implicit form (`%.c %.h:`) and the pattern `&:` form warn.\n\nReproducer, tests/make/multi-target-pattern-recipe-may-leave-a-peer-unmade, recorded from GNU Make 4.4.1. It gates the build intent the two tools agree on — success, one file written, the other absent — and it cannot gate the warning: the build-intent harness compares files and never stderr, which is what makes this observable only through the upstream inventory.\n\nTwo costs to weigh before starting. The observation is the executor's — whether the recipe moved the file — so it needs the peer's mtime compared after the command, where src/build.rs already keeps `old_mtimes` for its outputs, plus the rule's source location, which the graph does not currently keep for an edge. And it adds a line to stderr, which scripts/check-make-upstream.sh compares: expect rows to move, and expect some of them to move toward Make rather than away.\n"
+                    }
+                )
+            }
+
+            {
+                id make-mixed-implicit-and-normal-rule-severity
+                title "Warn and continue for a rule mixing pattern and plain targets"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T01:05:12.449250182Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while probing make-static-pattern-nonmatch-semantics; kept out of that node because it is a different diagnostic in a different function, decided before any target pattern exists.\n\nGNU 4.4.1 spells this two ways and means two different severities. read.c:2126 is `fatal` \"mixed implicit and normal rules\" — a pattern rule whose target list has a plain member, which really does stop. read.c:2310 is `error` \"*** mixed implicit and normal rules: deprecated syntax\" — a plain rule whose target list has an unescaped `%` — and `error` prints and returns, so the read continues and make exits 0 having built everything else.\n\nRonin makes the second fatal. kati/src-rs/eval.rs:1368 raises `error_loc!` as soon as a target list is neither all patterns nor none, which covers both of GNU's cases with the harsher one.\n\nReproducer, where GNU exits 0 having written `out` and Ronin exits 2 having written nothing:\n\n    all: ; printf done > out\n    mismatch.c mismatch.dep %.c: ; touch $@\n\nOracle:  Makefile:2: *** mixed implicit and normal rules: deprecated syntax / printf done > out / exit 0\nRonin:   ronin: Makefile:2: mixed implicit and normal rules: deprecated syntax / exit 2\n\nWorth checking while fixing: GNU reduces escaped percents in the surviving target names on that path, so the continuing case needs the target list it leaves behind checked, not just the exit status."
                     }
                 )
             }

@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| all: lib.a
+| prefix.c: ; echo body > $@
+| lib.a: lib%.a: prefix%.c ; printf 'stem=[%s] first=[%s]\n' '$*' '$<' > $@
+file lib.a touched 1
+| stem=[] first=[prefix.c]
+file prefix.c touched 1
+| body
