@@ -9235,6 +9235,13 @@ children (
                         kind @note
                         text "Filed from make-shell-function-evaluation, which hit it while recording a fixture.\n\ntests/make_port.rs writes a recording that says whether a produced file ended in a newline and then reads it back as though it always did. `render` counts `content.lines().count() + usize::from(!content.is_empty() && !content.ends_with('\\n'))`, so a file holding \"srr\" is recorded as `file tick touched 2` with one content line — the count is one greater than the lines present, and that is the whole of the signal. `parse`'s `flush` ignores it: it joins the content lines with '\\n' and appends one whenever the result is non-empty.\n\nSo a case whose build leaves a file without a trailing newline can never match its own recording. Recording it succeeds, and the very next run of the gate fails with `'tick' holds \"srr\" where GNU Make left \"srr\\n\"` — a difference the harness invented, and one that reads as a Ronin defect.\n\nReproducer: any case whose recipe is `@printf 'x' > out`. Record it, then run the gate.\n\nThe fix is in the reader rather than the writer: the count is already there to be read, and `flush` should append the newline only when the recorded count matches the number of content lines.\n\nWorked around for now by writing the one fixture that needed it — function-shell-runs-once-for-a-simple-value — with `echo` rather than `echo -n`, which is not a fix and hides the next one."
                     }
+
+                    {
+                        at 2026-08-14T09:46:07.023327405Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Hit again while writing make-builtin-rule-catalogue's cases (2026-08-14), and worked around rather than fixed, which is worth recording as a second sighting with a fresh reproducer.\n\nA case whose recipe was `@printf anymatch > $@` recorded as `file all touched 2` with one `| anymatch` line, and replayed as `anymatch\\n`. The gate then failed the case against the very oracle run that recorded it: \"'all' holds \\\"anymatch\\\" where GNU Make left \\\"anymatch\\\\n\\\"\". `render` counts the missing final newline into the line count and `parse` puts one back, so no file without a trailing newline can round-trip — and the line count it already writes is the place the information could live.\n\nThe workaround was to make the case's recipe write `'anymatch\\n'`, which is fine for a case about pattern-rule striking and would not be fine for a case about what a recipe writes. tests/make/pattern-search-cancelled-rule-strikes-nothing carries it."
+                    }
                 )
             }
 
