@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # Remaking a makefile starts the read over from the beginning, and the wildcard
+| # on the way through runs again: the second pass finds the file the remaking
+| # recipe made, where the first pass found nothing.
+| $(file >> log,[$(wildcard *.probe)])
+| include gen.mk
+| 
+| gen.mk: ; @printf 'x\n' > made.probe; printf '# generated\n' > $@
+| all: ; @true
+file gen.mk touched 1
+| # generated
+file log touched 2
+| []
+| [made.probe]
+file made.probe touched 1
+| x

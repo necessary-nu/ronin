@@ -418,6 +418,7 @@ assertions (
     {id make-makefile-list-initialization, kind @complete, author "brendan@necessary.nu", at 2026-08-13T21:26:14.330417918Z}
     {id make-lazy-recipe-expansion, kind @complete, author "brendan@necessary.nu", at 2026-08-13T22:35:56.254395338Z}
     {id make-precious-intermediate-retention, kind @complete, author "brendan@necessary.nu", at 2026-08-13T23:20:09.489238109Z}
+    {id make-wildcard-cache-coherence, kind @doing, author "brendan@necessary.nu", at 2026-08-13T23:24:37.117921048Z}
 )
 
 impl_evidence (

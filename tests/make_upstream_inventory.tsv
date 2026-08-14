@@ -27,8 +27,8 @@ case	features/conditionals.diff.4	narration	ninja-progress
 case	features/default_names.diff	narration	ninja-progress
 case	features/default_names.diff.1	narration	ninja-progress
 case	features/default_names.diff.2	narration	ninja-progress
-case	features/dircache.diff	interface	ninja-progress+makeflags-content
-case	features/dircache.diff.1	interface	ninja-progress+makeflags-content
+case	features/dircache.diff	narration	ninja-progress
+case	features/dircache.diff.1	narration	ninja-progress
 case	features/double_colon.diff	narration	ninja-progress
 case	features/double_colon.diff.1	narration	ninja-progress
 case	features/double_colon.diff.10	narration	ninja-progress

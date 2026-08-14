@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # The command between two wildcards need not be on a line of its own: the
+| # second wildcard of a single expansion reads what the shell call beside it
+| # left behind.
+| seen := $(wildcard *.mid)$(shell printf 'x\n' > made.mid; printf '|')$(wildcard *.mid)
+| 
+| all: ; @printf '[%s]\n' '$(seen)' > out
+file made.mid touched 1
+| x
+file out touched 1
+| [|made.mid]

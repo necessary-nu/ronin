@@ -108,5 +108,5 @@ case	warn_extra_trailings.mk#default	recorded	evaluation+corpus-todo+exit-status
 case	warn_output_pattern_mismatch.mk#test	defect	quote-style	432e6f655b1c5010
 case	werror_find_emulator.sh#script	extension	find-emulator	76e2b0ef3186089c
 case	werror_overriding_commands.sh#script	extension	kati-extension+quote-style	22634edd5aae0c1a
-case	wildcard_cache.mk#test	recorded	evaluation+corpus-todo	db8677f9a98065fd
+case	wildcard_cache.mk#test	recorded	evaluation+corpus-todo	17c2c302595bb6bd
 case	writable.sh#script	extension	kati-extension	6063eaf7c8245121
