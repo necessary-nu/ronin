@@ -9714,6 +9714,27 @@ children (
                         kind @note
                         text "Owns two rows: features/patternrules.diff.58 and .70.\n\nReproducer against the pristine oracle:\n\n  .SECONDEXPANSION:\n  all: bye.x\n  %.x: $$(wordlist 1, 99, %1%2%) ; $(info $@ from $^)\n  .PHONY: bye1%2%\n\nGNU prints `bye.x from bye1%2%`. Ronin refuses with `'bye1bye2%', needed by 'bye.x', missing and no known rule to make it`, which names the bug outright: the stem `bye` was substituted for the second `%` as well as the first.\n\nOnly the first `%` in a prerequisite pattern is the placeholder; every later one is a literal percent. The immediate path already knows this — the same makefile without `.SECONDEXPANSION:` and without the `$$` agrees with GNU — so this is the deferred prerequisite path having its own substitution that does not carry the rule.\n\n`make-pattern-rule-deferred-prerequisite-identity` and `make-second-expansion-patterns` are the neighbours that already touch this path."
                     }
+
+                    {
+                        at 2026-08-14T11:57:34.841026367Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-14T11:57:53.6308745Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Where the second `%` picked up the stem, and what `$(*F)` needs before the sister node can land.\n\nThe first-`%`-only law was already written down and already right. `stem_references` rewrites the first `%` of each whitespace-separated segment of a deferred word to `$*` and leaves the rest alone, which is exactly what `implicit.c` does when it walks a word replacing `%` with `$*` and then skips to the next blank before looking again. Probed both halves of that: `%a %b` inside one `$(wordlist ...)` gives `byea byeb` in GNU and in Ronin — each segment's first `%` goes, so the rule is per segment and not per word.\n\nThe stem arrived twice because nothing said the deferred expansion had finished the job. `can_pick_implicit_rule` installs the expanded names on the cloned rule (`rule.inputs = inputs`) but leaves `output_patterns` holding `%.x`, and `fill_dep_node_from_rule` then runs `apply_output_pattern` over those finished names — a second `append_subst` against the same pattern. `bye1%2%` was already correct; the second pass read its literal `%` as a placeholder and made `bye1bye2%`. That is why the bug needs a `$` to appear: without one the list is not deferred at all, `rule.inputs` keeps the pattern text, and the single substitution in `apply_output_pattern` is the only one there is.\n\nSo the fix is not in the substitution but in saying when substitution is over. `Rule::prerequisites_are_resolved` records that the implicit search has already filled this rule's `%` in for the name it matched, and `apply_output_pattern` hands such a list back untouched. It matches GNU's shape: `pattern_search` builds the prerequisite names itself and hands the file a finished `struct dep` chain, while an explicit or static pattern rule keeps its pattern text and is substituted where it is read.\n\nSecond finding, from the `$$(*D)` probe the dispatch asked for: the deferred expansion binds `@ < ^ + | *` and nothing else, so `$(*F)` and `$(*D)` in a deferred prerequisite expand to nothing. GNU prints `bye.c` and `lib.c` for `%.x: $$(*F).c` and `%.x: $$(*D).c` against `lib/bye.x`; Ronin refuses both. GNU defines these once at startup as recursive variables over the base form — `$(notdir $*)` and `$(patsubst %/,%,$(dir $*))` — so binding them here as recursive variables holding that same text is the whole fix, and they track whatever `*` is bound to without a second computation. `$|` keeps no D or F form, which the register site already says.\n\nThis is not only parity for its own sake: `make-pattern-prerequisite-directory-stem` needs `$(*F)` to work, because GNU's deferred path substitutes `$(*F)` rather than `$*` whenever it is holding a directory aside. That node is blocked behind this one."
+                    }
+
+                    {
+                        at 2026-08-14T12:06:57.404199196Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Fixtures recorded from the pristine 4.4.1 oracle through `tests/make_port.rs`, three of them:\n\n  second-expansion-pattern-prerequisite-first-percent — the node's own reproducer, `%.x: $$(wordlist 1, 99, %1%2%)` against `bye.x`, log `bye1%2%`.\n  second-expansion-pattern-prerequisite-percent-per-segment — `%a %b` inside one reference, log `byea byeb`, which pins the rule as per segment rather than per word so a later simplification cannot quietly make it per word.\n  second-expansion-pattern-prerequisite-stem-path-forms — `$$(*F).c $$(*D).c` against `lib/bye.x`, log `bye.c lib.c`.\n\nRecording moved no other case's expectation. `dep::tests::only_the_first_percent_of_a_segment_stands_for_the_stem` covers `stem_references` directly, since the fixtures reach it only through a whole build."
+                    }
                 )
             }
 
