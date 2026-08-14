@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| .EXTRA_PREREQS = tick
+| %.o: %.c
+| 	@cat $^ > $@
+| tick:
+| 	@touch tick
+file foo.c kept 1
+| src
+file foo.o touched 1
+| src
+file tick touched 0

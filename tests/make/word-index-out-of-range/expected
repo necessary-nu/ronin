@@ -1,0 +1,6 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 3
+| FOO = a b c
+| all:
+| 	@echo $(word 9999999999999999999,$(FOO)) > out

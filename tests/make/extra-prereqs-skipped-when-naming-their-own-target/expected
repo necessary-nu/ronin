@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| .EXTRA_PREREQS = tick all tack
+| all:
+| 	@echo done > out
+| tick tack:
+| 	@touch $@
+file out touched 1
+| done

@@ -443,6 +443,9 @@ assertions (
     {id make-link-library-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-14T13:52:03.489264705Z}
     {id make-default-goal-suffix-rejection, kind @complete, author "brendan@necessary.nu", at 2026-08-14T13:52:08.1721427Z}
     {id make-file-function-in-recipes, kind @complete, author "brendan@necessary.nu", at 2026-08-14T14:13:28.351380619Z}
+    {id make-extra-prereqs-are-real-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-14T15:14:52.045500152Z}
+    {id make-word-index-out-of-range, kind @doing, author "brendan@necessary.nu", at 2026-08-14T15:14:58.257495271Z}
+    {id make-jobserver-style-is-checked, kind @doing, author "brendan@necessary.nu", at 2026-08-14T15:15:03.772177746Z}
 )
 
 impl_evidence (

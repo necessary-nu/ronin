@@ -352,6 +352,14 @@ struct Invocation {
     /// What `-O` asked for, which is not a switch: it has four values and the
     /// one it settles on travels to a sub-make by name.
     output_sync: Option<OutputSync>,
+    /// The last `--jobserver-style` written, kept only to be checked.
+    ///
+    /// `make-single-ninja-scheduler` settled that one Ninja scheduler replaces
+    /// the recursive jobserver, so the style selects nothing here. It is still
+    /// read, because an argument GNU Make would have rejected must not be taken
+    /// for one it would have accepted: a makefile guarding on the refusal would
+    /// otherwise take the wrong branch.
+    jobserver_style: Option<BString>,
 }
 
 impl Invocation {
@@ -371,6 +379,7 @@ impl Invocation {
             switches: 0,
             negated: 0,
             output_sync: None,
+            jobserver_style: None,
         }
     }
 
@@ -717,6 +726,12 @@ const fn reported(text: String) -> RunResult {
     }
 }
 
+/// The styles GNU Make 4.4.1 knows how to set a jobserver up in.
+///
+/// Case-sensitive and closed: `jobserver_setup` takes the fifo path for `fifo`
+/// (and for no style at all), the pipe path for `pipe`, and refuses the rest.
+const JOBSERVER_STYLES: [&[u8]; 2] = [b"fifo", b"pipe"];
+
 fn refuse(message: impl std::fmt::Display) -> Action {
     Action::Immediate(RunResult {
         stdout: Vec::new(),
@@ -747,6 +762,31 @@ fn value(
         }
         .into()
     })
+}
+
+/// Record `--jobserver-style`'s value, attached or standing alone.
+///
+/// Recorded rather than consumed as a no-op: what it names is checked once both
+/// option streams have been read, because whether GNU Make looks at the value at
+/// all depends on the job count they settle on. An empty value is the one thing
+/// refused on sight, which GNU does before the jobserver is ever reached.
+fn read_jobserver_style(
+    invocation: &mut Invocation,
+    option: &[u8],
+    arguments: &[BString],
+    index: &mut usize,
+) -> Result<Option<Action>, Error> {
+    let style = match option.strip_prefix(b"--jobserver-style=") {
+        Some(attached) => BString::from(attached),
+        None => value(arguments, index, b"", "--jobserver-style")?,
+    };
+    if style.is_empty() {
+        return Ok(Some(refuse(
+            "the '--jobserver-style' option requires a non-empty string argument",
+        )));
+    }
+    invocation.jobserver_style = Some(style);
+    Ok(None)
 }
 
 /// `-j`'s argument, which GNU Make lets stand alone only when it is a number.
@@ -957,6 +997,23 @@ fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error
     if invocation.debugging() == 0 {
         invocation.switches &= !Switch::Debug.bit();
     }
+    // GNU Make checks the style inside `jobserver_setup`, which it reaches only
+    // with more than one job slot to hand out. So `--jobserver-style=nonsense`
+    // alone, or with `-j1`, or with a bare `-j`, is never looked at and never
+    // refused — the check is the jobserver's, not the option parser's.
+    if let Some(style) = &invocation.jobserver_style
+        && matches!(invocation.effective_jobs(), Some(JobLimit::Fixed(jobs)) if jobs.get() > 1)
+        && !JOBSERVER_STYLES.contains(&style.as_bytes())
+    {
+        // Stated on its own rather than through `refuse`: this is not a
+        // malformed option, so GNU prints no usage after it.
+        let message = format_args!("unknown jobserver auth style '{}'", style.to_str_lossy());
+        return Ok(Action::Immediate(RunResult {
+            stdout: Vec::new(),
+            stderr: format!("{}\n", crate::util::diagnostic(PRODUCT_NAME, message)).into_bytes(),
+            exit_code: ABANDONED,
+        }));
+    }
     Ok(Action::Execute(Box::new(invocation)))
 }
 
@@ -1018,6 +1075,15 @@ fn parse_arguments(
             }
             b"--jobs" => {
                 invocation.set_jobs(source, jobs_value(arguments, &mut index, b"")?);
+            }
+            option
+                if option == b"--jobserver-style" || option.starts_with(b"--jobserver-style=") =>
+            {
+                if let Some(action) =
+                    read_jobserver_style(invocation, option, arguments, &mut index)?
+                {
+                    return Ok(Some(action));
+                }
             }
             b"--load-average" | b"--max-load" => {
                 invocation.load = Some(load_value(arguments, &mut index, b"")?);

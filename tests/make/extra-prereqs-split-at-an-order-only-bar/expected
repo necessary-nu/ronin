@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| .EXTRA_PREREQS = norm | tick
+| all: | oo
+| 	@printf "bar=[$|] caret=[$^]\n" > out
+| norm oo tick: FOO = bar
+| norm oo tick:
+| 	@touch $@
+file norm touched 0
+file oo touched 0
+file out touched 1
+| bar=[oo] caret=[]
+file tick touched 0

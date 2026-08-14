@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| .EXTRA_PREREQS = glob
+| all: .EXTRA_PREREQS = tick
+| all:
+| 	@echo done > out
+| tick: FOO = bar
+| tick:
+| 	@touch tick
+file out touched 1
+| done
+file tick touched 0
