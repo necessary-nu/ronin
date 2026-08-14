@@ -1,0 +1,7 @@
+# The search asks the filesystem and nothing else. `made_foo.a` is a target
+# this makefile could make and comes from the earlier element, and it loses to
+# an `exists_foo.b` that is already there — the rule is never consulted and
+# never runs.
+.LIBPATTERNS = made_%.a exists_%.b
+all: -lfoo ; @printf '%s\n' 'from $<' > out
+made_foo.a: ; @touch $@

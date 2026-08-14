@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # Between two answers that both came from a vpath, the earliest vpath entry
+| # wins whichever element reached it — the element order does not get a say.
+| # `second_%.b` is the later element and takes it, because `vpath %.b vd1` is
+| # the earlier directive.
+| vpath %.b vd1
+| vpath %.a vd2
+| .LIBPATTERNS = first_%.a second_%.b
+| all: -lfoo ; @printf '%s\n' 'from $<' > out
+file out touched 1
+| from vd1/second_foo.b
+file vd1/second_foo.b kept 0
+file vd2/first_foo.a kept 0

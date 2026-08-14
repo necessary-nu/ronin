@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The same makefile with the two vpath directives swapped, which is what makes
+| # the previous case evidence rather than a coincidence: the answer follows the
+| # directive order and nothing else about it changed.
+| vpath %.a vd2
+| vpath %.b vd1
+| .LIBPATTERNS = first_%.a second_%.b
+| all: -lfoo ; @printf '%s\n' 'from $<' > out
+file out touched 1
+| from vd2/first_foo.a
+file vd1/second_foo.b kept 0
+file vd2/first_foo.a kept 0

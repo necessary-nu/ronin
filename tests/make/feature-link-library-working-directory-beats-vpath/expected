@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # A hit in the working directory ends the search there and then, so it beats a
+| # vpath hit an EARLIER element already recorded. The vpath answers are only
+| # ever provisional.
+| vpath %.a vd
+| .LIBPATTERNS = first_%.a second_%.b
+| all: -lfoo ; @printf '%s\n' 'from $<' > out
+file out touched 1
+| from second_foo.b
+file second_foo.b kept 0
+file vd/first_foo.a kept 0

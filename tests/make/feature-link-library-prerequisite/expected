@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # A prerequisite spelled `-lNAME` is not a file name. Make substitutes NAME
+| # into each whitespace-separated element of `.LIBPATTERNS` and searches for the
+| # results, and the prerequisite becomes what it found — which is what `$<` and
+| # `$^` are then worth.
+| .LIBPATTERNS = mtest_%.a
+| all: -lfoo ; @printf '%s\n' 'from $< all=$^' > out
+file mtest_foo.a kept 0
+file out touched 1
+| from mtest_foo.a all=mtest_foo.a

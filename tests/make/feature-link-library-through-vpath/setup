@@ -1,0 +1,2 @@
+mkdir -p a1 b1 a2 b2 b3
+touch a1/lib1.a a1/libc.a b1/lib1.so a2/lib2.a b2/lib2.so lib3.a b3/lib3.so

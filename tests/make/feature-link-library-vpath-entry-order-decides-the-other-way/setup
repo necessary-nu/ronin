@@ -1,0 +1,1 @@
+mkdir -p vd1 vd2 && touch vd2/first_foo.a vd1/second_foo.b

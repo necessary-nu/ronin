@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file -lfoo kept 0
+file Makefile kept 5
+| # The search is the last resort and not the first. A file actually named
+| # `-lfoo` is what the prerequisite means, however well `.LIBPATTERNS` would
+| # have resolved it.
+| .LIBPATTERNS = mtest_%.a
+| all: -lfoo ; @printf '%s\n' 'from $<' > out
+file mtest_foo.a kept 0
+file out touched 1
+| from -lfoo
