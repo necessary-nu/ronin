@@ -9250,6 +9250,7 @@ children (
                 id make-oracle-recording-trailing-newline
                 title "Record a produced file that has no trailing newline"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-13T20:44:09.279800376Z
@@ -9263,6 +9264,35 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Hit again while writing make-builtin-rule-catalogue's cases (2026-08-14), and worked around rather than fixed, which is worth recording as a second sighting with a fresh reproducer.\n\nA case whose recipe was `@printf anymatch > $@` recorded as `file all touched 2` with one `| anymatch` line, and replayed as `anymatch\\n`. The gate then failed the case against the very oracle run that recorded it: \"'all' holds \\\"anymatch\\\" where GNU Make left \\\"anymatch\\\\n\\\"\". `render` counts the missing final newline into the line count and `parse` puts one back, so no file without a trailing newline can round-trip — and the line count it already writes is the place the information could live.\n\nThe workaround was to make the case's recipe write `'anymatch\\n'`, which is fine for a case about pattern-rule striking and would not be fine for a case about what a recipe writes. tests/make/pattern-search-cancelled-rule-strikes-nothing carries it."
+                    }
+
+                    {
+                        at 2026-08-14T15:51:17.026764801Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-14T15:56:48.268113764Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Fixed in the reader, which is where the signal already was, and no recording had to be re-made to accept it.\n\nTHE ASYMMETRY, and which way it had to be closed. `render` writes `file <path> <mark> <count>` where the count is `content.lines().count() + usize::from(!content.is_empty() && !content.ends_with('\\n'))` — one greater than the content lines that follow exactly when the last line carried no terminator. `parse`'s `flush` never read the count: it joined the lines and appended a newline to anything non-empty. Fixing the writer instead would have meant a new signal and a re-recording of all 645; the count is already written, already correct, and already in every recording, so the reader was the side that could change without touching the corpus. `parse` now carries the count through `pending` and appends the terminator only when `!lines.is_empty() && recorded == lines.len()`; a `file` line with no count at all (no such recording exists, but the reader is the compatibility surface) falls back to what it used to assume.\n\nTwo shapes round-trip that could not before, and the second was not in the node's account. A file ending `srr` records as count 2 with one content line and now reads back as `srr`. A file that is nothing but a newline records as count 1 with one empty content line, and used to read back as nothing at all, because the join was empty and the old rule keyed on emptiness rather than on the count — which is why the fix keys on `lines.is_empty()` and not on `content.is_empty()`.\n\nPROOF THAT NO RECORDING NEEDED RE-MAKING, which was the risk worth measuring rather than asserting. Before the fix, a scan of all 645 recordings found: zero with count == lines + 1 (the unmatchable shape — the workarounds are why), zero with a single empty content line (the other shape the reader now reads differently), zero with an unparseable or absent count. So the new reader parses all 645 to exactly what the old one did. Then the corpus was re-recorded from the pinned oracle in full, and `git status` reported exactly one changed `expected` — the case this node's workaround lived in, which was edited on purpose. Every other recording came back byte-identical.\n\nTHE WORKAROUND, undone. `feature-file-read-removes-one-trailing-newline` hid two of its inputs behind a leading dot, which is how this harness is told not to list a file, because neither could be recorded as itself. They are ordinary visible files now — `no-newline` holding `a` and `only-newline` holding `\\n` — the Makefile reads them by their plain names, and the recording carries `file no-newline kept 2` with one content line and `file only-newline kept 1` with one empty one. The case is now a test of the fix as well as of `func_file`: with the reader reverted and the fixture left visible, make_port fails with `feature-file-read-removes-one-trailing-newline: 'no-newline' holds \"a\" where GNU Make left \"a\\n\"` — the harness inventing a difference, in the exact words of the first sighting.\n\nThe other two workarounds are left where they are, and are no longer load-bearing. `function-shell-runs-once-for-a-simple-value` writes with `echo` rather than `echo -n`, and `pattern-search-cancelled-rule-strikes-nothing` writes `'anymatch\\n'`; neither case is about what a recipe writes, so re-recording them would change no claim. What has changed is that a future case about exactly that no longer has to be bent.\n\nA round-trip test now pins the format from inside: `make_recording_reads_back_what_the_build_left` renders and re-parses ten contents — empty, one newline, two, `srr`, `srr\\n`, `a\\nb`, `a\\nb\\n`, `a\\n\\nb`, `a\\n\\n`, `a\\n\\n\\n` — and asserts each reads back as itself. make_port is 4 tests now, 635 gated cases of 645, all matching."
+                    }
+
+                    {
+                        at 2026-08-14T15:56:58.453119066Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-14T15:57:32.221496549Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Erratum to the note above: the round-trip test is `make_recording_round_trips_every_ending`. The name it was written under read as a sentence and the commit gate refused it."
+                        after_done true
                     }
                 )
             }

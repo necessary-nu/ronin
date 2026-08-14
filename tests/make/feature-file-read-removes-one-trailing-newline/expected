@@ -20,19 +20,23 @@ file Makefile kept 23
 | 	@$(call show,one-newline) > out
 | 	@$(call show,two-newlines) >> out
 | 	@$(call show,three-newlines) >> out
-| 	@$(call show,.no-newline) >> out
-| 	@$(call show,.only-newline) >> out
+| 	@$(call show,no-newline) >> out
+| 	@$(call show,only-newline) >> out
 | 	@$(call show,empty) >> out
 | 	@$(call show,absent) >> out
 file empty kept 0
+file no-newline kept 2
+| a
 file one-newline kept 1
 | a
+file only-newline kept 1
+| 
 file out touched 7
 | one-newline=[a]
 | two-newlines=[a<NL>]
 | three-newlines=[a<NL><NL>]
-| .no-newline=[a]
-| .only-newline=[]
+| no-newline=[a]
+| only-newline=[]
 | empty=[]
 | absent=[]
 file three-newlines kept 3

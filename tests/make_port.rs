@@ -354,6 +354,10 @@ fn render(observed: &Observed, version: &str) -> String {
         let mark = if entry.touched { "touched" } else { "kept" };
         match &entry.content {
             Content::Text(content) => {
+                // One greater than the number of content lines below exactly
+                // when the last line carries no terminator: `lines()` yields
+                // the same lines either way, so this count is the only place
+                // that difference can live, and `parse` reads it back out.
                 let lines = content.lines().count()
                     + usize::from(!content.is_empty() && !content.ends_with('\n'));
                 writeln!(text, "file {path} {mark} {lines}").expect("writing to a String");
@@ -369,16 +373,29 @@ fn render(observed: &Observed, version: &str) -> String {
     text
 }
 
+/// What a `file` line said before its content lines: the path, whether the
+/// build wrote it, and how many lines the file held.
+type PendingFile = (String, bool, Option<usize>, Vec<String>);
+
 fn parse(text: &str, id: &str) -> Observed {
     let mut succeeded = None;
     let mut files = BTreeMap::new();
-    let mut pending: Option<(String, bool, Vec<String>)> = None;
+    let mut pending: Option<PendingFile> = None;
 
-    let flush = |pending: &mut Option<(String, bool, Vec<String>)>,
-                 files: &mut BTreeMap<String, Entry>| {
-        if let Some((path, touched, lines)) = pending.take() {
+    let flush = |pending: &mut Option<PendingFile>, files: &mut BTreeMap<String, Entry>| {
+        if let Some((path, touched, recorded, lines)) = pending.take() {
             let mut content = lines.join("\n");
-            if !content.is_empty() {
+            // The recorded count is one greater than the lines that follow it
+            // exactly when the file ended without a terminator, so a file that
+            // ends `srr` reads back as `srr` rather than as `srr\n`, and one
+            // holding a single newline reads back as `\n` rather than as
+            // nothing. A recording made before the count was written falls back
+            // to what the reader used to assume.
+            let terminated = recorded.map_or_else(
+                || !content.is_empty(),
+                |recorded| !lines.is_empty() && recorded == lines.len(),
+            );
+            if terminated {
                 content.push('\n');
             }
             files.insert(
@@ -393,7 +410,7 @@ fn parse(text: &str, id: &str) -> Observed {
 
     for line in text.lines() {
         if let Some(rest) = line.strip_prefix("| ") {
-            let (_, _, lines) = pending
+            let (_, _, _, lines) = pending
                 .as_mut()
                 .unwrap_or_else(|| panic!("{id}: a content line with no file"));
             lines.push(rest.to_owned());
@@ -426,7 +443,8 @@ fn parse(text: &str, id: &str) -> Observed {
             Some("file") => {
                 let path = words.next().expect("a file path").to_owned();
                 let touched = words.next() == Some("touched");
-                pending = Some((path, touched, Vec::new()));
+                let recorded = words.next().and_then(|count| count.parse().ok());
+                pending = Some((path, touched, recorded, Vec::new()));
             }
             Some("opaque") => {
                 let path = words.next().expect("a file path").to_owned();
@@ -448,6 +466,37 @@ fn parse(text: &str, id: &str) -> Observed {
     Observed {
         succeeded: succeeded.unwrap_or_else(|| panic!("{id}: no outcome recorded")),
         files,
+    }
+}
+
+/// Whatever a build leaves in a file, the recording of it reads back as itself.
+///
+/// This is the gate on the gate. A reader that put a terminator back on every
+/// non-empty file made a case whose output ends without one impossible to
+/// record: recording succeeded, and the next run failed the case against the
+/// very oracle run that had recorded it. Two dispatches worked around it by
+/// rewriting the fixture — `echo` for `echo -n`, a hidden input for a visible
+/// one — which is how a harness defect gets read as a product one.
+#[test]
+fn make_recording_round_trips_every_ending() {
+    for content in [
+        "", "\n", "\n\n", "srr", "srr\n", "a\nb", "a\nb\n", "a\n\nb", "a\n\n", "a\n\n\n",
+    ] {
+        let observed = Observed {
+            succeeded: true,
+            files: BTreeMap::from([(
+                "out".to_owned(),
+                Entry {
+                    touched: true,
+                    content: Content::Text(content.to_owned()),
+                },
+            )]),
+        };
+        let text = render(&observed, "GNU Make 4.4.1");
+        let Content::Text(read_back) = &parse(&text, "round-trip").files["out"].content else {
+            panic!("{content:?} read back as something other than text");
+        };
+        assert_eq!(read_back, content, "recorded as:\n{text}");
     }
 }
 

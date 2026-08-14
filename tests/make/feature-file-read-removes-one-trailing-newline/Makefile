@@ -17,7 +17,7 @@ all:
 	@$(call show,one-newline) > out
 	@$(call show,two-newlines) >> out
 	@$(call show,three-newlines) >> out
-	@$(call show,.no-newline) >> out
-	@$(call show,.only-newline) >> out
+	@$(call show,no-newline) >> out
+	@$(call show,only-newline) >> out
 	@$(call show,empty) >> out
 	@$(call show,absent) >> out
