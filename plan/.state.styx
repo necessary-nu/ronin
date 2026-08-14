@@ -446,6 +446,7 @@ assertions (
     {id make-extra-prereqs-are-real-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-14T15:27:43.763379473Z}
     {id make-word-index-out-of-range, kind @complete, author "brendan@necessary.nu", at 2026-08-14T15:27:48.497715545Z}
     {id make-jobserver-style-is-checked, kind @complete, author "brendan@necessary.nu", at 2026-08-14T15:27:53.013431388Z}
+    {id make-stdin-refusal-test-races-its-write, kind @complete, author "brendan@necessary.nu", at 2026-08-14T15:43:32.952292673Z}
 )
 
 impl_evidence (

@@ -1,7 +1,7 @@
 #![cfg(all(unix, feature = "make"))]
 
 use std::fs;
-use std::io::Write as _;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
@@ -436,6 +436,14 @@ fn builtin_compile_variables_drive_recipes() {
 }
 
 /// Feed a Makefile through standard input and report what the run said and did.
+///
+/// A run that refuses its arguments before reading standard input is one of the
+/// outcomes tested here, and it closes the pipe while this write is still in
+/// flight. The resulting `EPIPE` is that refusal arriving on the writing side,
+/// not a failure of the harness: nothing was owed a reader. Whether the refusal
+/// happened is decided by what the run said and what it left on disk, which is
+/// where every assertion about it belongs — so a broken pipe delivers nothing
+/// and says so, and any other write error is still a fault.
 fn piped_make(directory: &Path, arguments: &[&str], source: &str) -> (bool, String) {
     let mut child = make_command(directory)
         .args(arguments)
@@ -444,12 +452,15 @@ fn piped_make(directory: &Path, arguments: &[&str], source: &str) -> (bool, Stri
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(source.as_bytes())
-        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    match stdin.write_all(source.as_bytes()) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::BrokenPipe => {}
+        Err(error) => panic!("{arguments:?}: writing to standard input: {error}"),
+    }
+    // A run that does read standard input reads to the end of it, so the write
+    // handle has to be closed before waiting rather than when the call returns.
+    drop(stdin);
     let output = child.wait_with_output().unwrap();
     let reported = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
@@ -464,6 +475,14 @@ fn make_refuses_standard_input_twice() {
     let directory = test_directory("stdin-twice");
     fs::write(directory.join("bye.mk"), "def: ; @printf bye > out\n").unwrap();
 
+    // Standard input announces itself if it is ever read, so "before it reads a
+    // byte" is asserted by what the run says rather than by which side of the
+    // pipe won the race. A run that reads this refuses for the wrong reason and
+    // fails the assertion below; one that never reads it never sees it, whether
+    // the write was delivered into the pipe's buffer or took EPIPE.
+    let source = "$(error standard input was read before the invocation was refused)\n\
+                  all: ; @printf hello > out\n";
+
     for spelling in [
         vec!["-fbye.mk", "-f-", "-f-"],
         vec!["-fbye.mk", "-f", "-", "-f", "-"],
@@ -471,8 +490,7 @@ fn make_refuses_standard_input_twice() {
         vec!["-fbye.mk", "--file", "-", "--makefile", "-"],
         vec!["-fbye.mk", "--file=-", "--makefile=-"],
     ] {
-        let (succeeded, reported) =
-            piped_make(&directory, &spelling, "all: ; @printf hello > out\n");
+        let (succeeded, reported) = piped_make(&directory, &spelling, source);
         assert!(!succeeded, "{spelling:?} was accepted: {reported}");
         assert!(
             reported.contains("Makefile from standard input specified twice"),

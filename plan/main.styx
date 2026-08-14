@@ -10259,12 +10259,41 @@ children (
                 id make-stdin-refusal-test-races-its-write
                 title "Stop the standard-input refusal test racing its own write"
                 kind @test
+                sealed true
                 log (
                     {
                         at 2026-08-14T11:40:29.473454593Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "`make_refuses_standard_input_twice` fails intermittently, and the failure is the test's own harness rather than the product. `piped_make` (tests/make_regressions.rs) spawns the tool with a piped stdin and then `write_all(...).unwrap()`s the makefile into it. What the test asserts is that Ronin refuses an invocation naming standard input twice *before it reads a byte of it* — so when Ronin wins that race, it has already exited, the pipe has no reader, and the write takes EPIPE and panics at the unwrap.\n\nMeasured on a loaded host, 15 runs of the suite each: 3 failures on this branch and 4 on the tree at 825c9f0, always this test, always the same unwrap. So it is neither new nor mine — it was found while measuring whether make-remade-target-is-re-observed had worsened the scheduler flapper beside it.\n\nThe fix is in the harness: a write to a pipe whose reader has gone is one of the outcomes this test is about, so `piped_make` should treat a broken pipe as a successful delivery of nothing rather than as a panic, and the refusal assertions should stand as they are. Both spellings of the race must keep failing the test if Ronin ever reads the makefile before refusing."
+                    }
+
+                    {
+                        at 2026-08-14T15:40:12.718459052Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-14T15:42:43.566248192Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Probe note: checking lint acceptance."
+                    }
+
+                    {
+                        at 2026-08-14T15:43:12.031931541Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "(The one-line entry above it is a stray probe of the note tool — an `errata` entry is refused by lint here, and the write had to be retried as a `note`. It carries no content; this entry is the record.)\n\n\"Race\" understates it, and the node's title and its first note should be read with this correction. Measured at fff05e4 before touching anything: 4 failures in 5 sandboxed runs of the test alone, on an otherwise quiet host, always `Os { code: 32, kind: BrokenPipe }` at the `write_all(...).unwrap()`. That is not an intermittent scheduling race, it is the ordinary outcome. The behaviour under test is Ronin refusing `-f- -f-` BEFORE reading a byte of standard input, so when the product is correct the child has already exited and the pipe has no reader by the time the parent reaches its write. The test failed because the product worked. The earlier 3-in-15 figure was measured under full-suite load, which slows Ronin's exit enough for the parent to win more often — load made the test look better, not worse, which is the opposite of the scheduler flapper beside it.\n\nTwo things follow, and both are in the fix.\n\nFirst, `piped_make` treats `ErrorKind::BrokenPipe` as delivery of nothing, panics on any other write error, and drops the write handle before waiting. The previous spelling dropped a temporary at the end of the statement; a named handle has to be dropped explicitly, and the ordering test needs the EOF that drop provides.\n\nSecond, tolerating EPIPE alone would leave this node's own requirement unasserted. With the old piped source (`all: ; @printf hello > out`) a Ronin that read standard input before refusing would still refuse, still build nothing, and still pass, so nothing would fail. Standard input now announces itself if it is ever read: the piped source is `$(error standard input was read before the invocation was refused)` above that rule. A run that reads it refuses for the wrong reason and fails the `contains(\"Makefile from standard input specified twice\")` assertion; a run that never reads it never sees it, whether the write landed in the pipe's buffer or took EPIPE. Delivery and detection cannot disagree — EPIPE only happens once the read end is gone, and a child still able to read gets the whole 100-odd bytes into an empty pipe buffer. Verified from the other side by hand: `-fbye.mk -f-` prints `ronin: -:1: standard input was read before the invocation was refused.` and exits 2, while `-fbye.mk -f- -f-` prints `ronin: Makefile from standard input specified twice`. The assertion discriminates them.\n\nStability: 20 sandboxed runs of `make_refuses_standard_input_twice` and `make_orders_standard_input_among_files` together, 0 failures, against 4-in-5 for the refusal test alone at the base. No product code was touched."
+                    }
+
+                    {
+                        at 2026-08-14T15:43:32.952292673Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
