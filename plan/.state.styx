@@ -424,7 +424,7 @@ assertions (
     {id make-pattern-peer-restart-convergence, kind @complete, author "brendan@necessary.nu", at 2026-08-14T00:41:40.942980857Z}
     {id make-static-pattern-nonmatch-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-14T01:06:27.893713693Z}
     {id make-pattern-rule-cancellation, kind @complete, author "brendan@necessary.nu", at 2026-08-14T01:42:21.998182785Z}
-    {id make-continuation-expansion, kind @doing, author "brendan@necessary.nu", at 2026-08-14T02:02:04.495392235Z}
+    {id make-continuation-expansion, kind @complete, author "brendan@necessary.nu", at 2026-08-14T02:28:31.087189546Z}
 )
 
 impl_evidence (
