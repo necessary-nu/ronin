@@ -1,1 +1,0 @@
-Kati does not export a target-specific variable to that target's recipe; make-export-scope-semantics.

@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # `private` withholds the binding from every scope that reaches this one
+| # through a parent, and a prerequisite's recipe is one of those scopes.
+| all: base ; @printf 'all=%s\n' "$$P" > all-out
+| all: private export P = p
+| base: ; @printf 'base=%s\n' "$$P" > base-out
+file all-out touched 1
+| all=p
+file base-out touched 1
+| base=

@@ -74,6 +74,7 @@ impl LateCommands for PendingRecipes {
             &expanded.shell_flags,
             &expanded.script,
             output,
+            &expanded.recipe_environment,
         );
         // [spec:ronin:req:make.narration+1]
         // The same choice the sink makes for a recipe it expanded itself:

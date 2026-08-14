@@ -1019,90 +1019,38 @@ impl Loaded {
     }
 }
 
+/// The environment changes Make's export set makes to a child's, as bytes the
+/// front end can put in an `env` prefix or hand to a semantic child compiler.
+///
+/// The decision itself is Make semantics and lives in kati beside the variable
+/// store it reads; this is the translation of its answer into the front end's
+/// string type.
 fn exported_environment(
     ev: &mut kati::eval::Evaluator,
 ) -> Result<Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>, kati::anyhow::Error> {
+    Ok(as_environment(&kati::export::exported_environment(
+        ev,
+        None,
+        kati::export::ChildKind::Recipe,
+    )?))
+}
+
+/// One of kati's environment deltas as the front end's own strings.
+fn as_environment(
+    changes: &[kati::export::EnvironmentChange],
+) -> Vec<(std::ffi::OsString, Option<std::ffi::OsString>)> {
     use std::os::unix::ffi::OsStringExt;
-    let mut exports = ev.exports.clone();
-
-    // Environment variables are exported by default. Untouched bindings need
-    // no entry here: retaining the compiler's inherited environment preserves
-    // their raw bytes without evaluating Make syntax inside them. A replacement
-    // or `undefine`, however, must override that inherited value for recipes
-    // and semantic children. GNU Make deliberately exempts SHELL from this
-    // inherited export attribute unless an export directive names it.
-    let inherited_environment = ev
-        .session
-        .invocation_environment
-        .clone()
-        .unwrap_or_else(|| std::env::vars_os().collect());
-    for (name, _) in inherited_environment {
-        if name.as_os_str().as_encoded_bytes() == b"SHELL" {
-            continue;
-        }
-        let symbol = ev
-            .session
-            .intern(name.as_os_str().as_encoded_bytes().to_vec());
-        if exports.contains_key(&symbol) {
-            continue;
-        }
-        let change = match ev.session.peek_global_var(symbol) {
-            Some(variable)
-                if matches!(
-                    variable.read().origin(),
-                    kati::var::VarOrigin::Environment | kati::var::VarOrigin::EnvironmentOverride
-                ) =>
-            {
-                None
-            }
-            Some(_) => Some(true),
-            None => Some(false),
-        };
-        if let Some(is_exported) = change {
-            exports.insert(symbol, is_exported);
-        }
-    }
-
-    // `.EXPORT_ALL_VARIABLES` names nothing, so it is the set of variables the
-    // Makefile itself defined. GNU Make leaves the built-in defaults out: with
-    // it declared, `CC` is still unset in a recipe.
-    if ev.session.flags.export_all_variables {
-        for (name, var) in ev
-            .session
-            .globals
-            .matching(|var| var.read().origin() == kati::var::VarOrigin::File)
-        {
-            let _ = var;
-            exports.entry(name).or_insert(true);
-        }
-    }
-    let mut exported = Vec::new();
-    let mut names = exports.into_iter().collect::<Vec<_>>();
-    // By name, because a map's order is not one and a recipe's environment
-    // should not depend on which way the hash fell.
-    names.sort_by_cached_key(|(name, _)| name.as_bytes(&ev.session));
-    for (name, is_exported) in names {
-        // A recipe cannot reach a `private` variable, and a recipe's environment
-        // is the recipe's: `private export F = g` reaches `$(shell)` and nothing
-        // a rule runs.
-        if ev
-            .session
-            .peek_global_var(name)
-            .is_some_and(|var| var.read().is_private)
-        {
-            continue;
-        }
-        let value = if is_exported {
-            Some(std::ffi::OsString::from_vec(ev.eval_var(name)?.to_vec()))
-        } else {
-            None
-        };
-        exported.push((
-            std::ffi::OsString::from_vec(name.as_bytes(&ev.session).to_vec()),
-            value,
-        ));
-    }
-    Ok(exported)
+    changes
+        .iter()
+        .map(|(name, value)| {
+            (
+                std::ffi::OsString::from_vec(name.to_vec()),
+                value
+                    .as_ref()
+                    .map(|value| std::ffi::OsString::from_vec(value.to_vec())),
+            )
+        })
+        .collect()
 }
 
 fn evaluated_flag_variables(

@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # Every environment GNU Make builds carries MAKELEVEL one deeper than its own,
+| # and takes the depth from the invocation rather than from the variable, so a
+| # makefile that assigns MAKELEVEL changes what it reads and not what its
+| # children are told.
+| MAKELEVEL = 9
+| $(file >shell-out,[$(shell echo $$MAKELEVEL)])
+| all: ; @printf 'recipe=[%s] make=[%s]\n' "$$MAKELEVEL" "$(MAKELEVEL)" > out
+file out touched 1
+| recipe=[1] make=[9]
+file shell-out touched 1
+| [1]

@@ -14,7 +14,7 @@ fn layout() -> CommandLayout {
 
 #[test]
 fn an_inline_script_is_quoted() {
-    let launched = layout().launch(b"/bin/sh", b"-c", b"echo hi", b"out");
+    let launched = layout().launch(b"/bin/sh", b"-c", b"echo hi", b"out", &[]);
     assert_eq!(launched.command, b"/bin/sh -c \"echo hi\"".to_vec());
     assert!(launched.response_file.is_none());
 }
@@ -30,7 +30,7 @@ fn directory_and_env_prefix_it() {
         PathBuf::new(),
         false,
     );
-    let launched = layout.launch(b"/bin/sh", b"-c", b"true", b"out");
+    let launched = layout.launch(b"/bin/sh", b"-c", b"true", b"out", &[]);
     assert_eq!(
         String::from_utf8(launched.command).expect("ascii"),
         "cd 'sub dir' && env -u 'DROP' 'KEEP=value' /bin/sh -c \"true\""
@@ -40,7 +40,7 @@ fn directory_and_env_prefix_it() {
 #[test]
 fn a_long_script_becomes_a_file() {
     let script = vec![b'x'; 100 * 1000 + 1];
-    let launched = layout().launch(b"/bin/sh", b"-c", &script, b"out");
+    let launched = layout().launch(b"/bin/sh", b"-c", &script, b"out", &[]);
     assert_eq!(launched.command, b"/bin/sh out.rsp".to_vec());
     let (path, content) = launched.response_file.expect("a response file");
     assert_eq!(path, b"out.rsp".to_vec());
@@ -52,7 +52,7 @@ fn a_long_script_becomes_a_file() {
 #[test]
 fn an_awkward_rsp_path_is_quoted() {
     let script = vec![b'x'; 100 * 1000 + 1];
-    let launched = layout().launch(b"/bin/sh", b"-c", &script, b"out dir/a b");
+    let launched = layout().launch(b"/bin/sh", b"-c", &script, b"out dir/a b", &[]);
     assert_eq!(
         String::from_utf8(launched.command).expect("ascii"),
         "/bin/sh 'out dir/a b.rsp'"
@@ -72,7 +72,7 @@ fn a_child_rsp_is_rooted() {
         false,
     );
     let script = vec![b'x'; 100 * 1000 + 1];
-    let launched = layout.launch(b"/bin/sh", b"-c", &script, b"out");
+    let launched = layout.launch(b"/bin/sh", b"-c", &script, b"out", &[]);
     assert_eq!(
         String::from_utf8(launched.command).expect("ascii"),
         "cd 'sub' && /bin/sh /root/out.rsp"
@@ -89,7 +89,7 @@ fn a_quoted_env_value_survives() {
         PathBuf::new(),
         true,
     );
-    let launched = layout.launch(b"/bin/sh", b"-c", b"true", b"out");
+    let launched = layout.launch(b"/bin/sh", b"-c", b"true", b"out", &[]);
     assert_eq!(
         String::from_utf8(launched.command).expect("ascii"),
         "env 'Q=it'\\''s' /bin/sh -c \"true\""

@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # `override` is a stronger origin than a plain assignment and not a weaker one,
+| # so a bare export reaches it too.
+| override OV = ov
+| FV = fv
+| export
+| all: ; @printf 'OV=%s FV=%s\n' "$$OV" "$$FV" > out
+file out touched 1
+| OV=ov FV=fv

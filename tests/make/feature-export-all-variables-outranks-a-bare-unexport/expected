@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # `.EXPORT_ALL_VARIABLES:` is a target, and its targets are read after the
+| # whole makefile is, so it settles the same switch last however early it is
+| # written.
+| one = 1
+| .EXPORT_ALL_VARIABLES:
+| unexport
+| all: ; @printf 'one=%s\n' "$$one" > out
+file out touched 1
+| one=1

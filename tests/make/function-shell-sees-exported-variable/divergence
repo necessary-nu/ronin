@@ -1,1 +1,0 @@
-Kati's shell function does not see Makefile-exported variables during evaluation; make-export-scope-semantics.

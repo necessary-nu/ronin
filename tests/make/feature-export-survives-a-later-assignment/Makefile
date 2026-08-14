@@ -1,0 +1,11 @@
+# GNU Make redefines a variable in place, and the export attribute is not among
+# the fields a redefinition overwrites — so the value a child sees is the one
+# the name had when the child started, and `undefine` is what actually forgets.
+V = one
+export V
+V = two
+W = one
+export W
+undefine W
+W = two
+all: ; @printf 'V=[%s] W=[%s]\n' "$$V" "$$W" > out

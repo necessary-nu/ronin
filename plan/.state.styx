@@ -426,6 +426,7 @@ assertions (
     {id make-pattern-rule-cancellation, kind @complete, author "brendan@necessary.nu", at 2026-08-14T01:42:21.998182785Z}
     {id make-continuation-expansion, kind @complete, author "brendan@necessary.nu", at 2026-08-14T02:28:31.087189546Z}
     {id make-vpath-gpath-output-location, kind @complete, author "brendan@necessary.nu", at 2026-08-14T03:11:20.970686924Z}
+    {id make-export-scope-semantics, kind @doing, author "brendan@necessary.nu", at 2026-08-14T04:28:32.473762779Z}
 )
 
 impl_evidence (

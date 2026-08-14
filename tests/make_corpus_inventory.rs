@@ -58,6 +58,11 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 77 when the export directives were completed: `export_export.mk#test`
+    // — `export=PASS` followed by a bare `export export` — became byte-identical
+    // and left the recorded corpus-TODO class.
+    //
+    // Before that it moved
     // from 78 when a recipe's continuation line began losing the recipe prefix
     // it carries, as GNU Make drops it before the line reaches the shell:
     // `multiline_recipe.mk#test6` became byte-identical and left the recorded
@@ -100,9 +105,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 77);
+    assert_eq!(cases.len(), 76);
     assert_eq!(by_class["defect"], 36);
-    assert_eq!(by_class["recorded"], 9);
+    assert_eq!(by_class["recorded"], 8);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);
 }

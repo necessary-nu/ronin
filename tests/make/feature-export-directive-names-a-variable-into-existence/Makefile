@@ -1,0 +1,5 @@
+# `export NAME` with nothing to export defines the name as an empty file-origin
+# variable, which `$(origin)` reports and `?=` then declines to overwrite.
+export UNDEF
+$(file >origin-out,$(origin UNDEF))
+all: ; @printf 'U=[%s]\n' "$$UNDEF" > out

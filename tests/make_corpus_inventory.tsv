@@ -62,7 +62,6 @@ case	err_two_else.mk#default	defect	exit-status+stop-suffix+quote-style	70089480
 case	err_unmatched_endef.mk#default	defect	exit-status+stop-suffix+quote-style	6315ae60a8dca1b9
 case	err_word_non_numeric.mk#test	defect	message-text+exit-status	72a521f90bc617fa
 case	err_word_zero.mk#test	defect	exit-status+stop-suffix+quote-style	2598ebb59369d1f0
-case	export_export.mk#test	recorded	evaluation+corpus-todo	f3c9e7eb3521e92c
 case	fail_ignore_error.mk#test	defect	exit-status+identity-prefix+error-location	b7dbcb23b62bb0d8
 case	fail_subshell_in_recipe.mk#test	defect	exit-status+identity-prefix+error-location	b7dbcb23b62bb0d8
 case	file_func.sh#script	artefact	corpus-version-gate+quote-style	78977ad7edcc91dd

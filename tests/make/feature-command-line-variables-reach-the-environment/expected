@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # A command-line value is exported without being asked, and travels in
+| # MAKEFLAGS as well, so a child reads it either way.
+| all: ; @printf 'CLV=[%s]\n' "$$CLV" > out
+file out touched 1
+| CLV=[cv]

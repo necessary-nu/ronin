@@ -107,33 +107,29 @@ impl CommandLayout {
     }
 
     /// The `cd` and `env` that put a command where Make would have run it.
-    fn prefix(&self) -> Vec<u8> {
+    ///
+    /// `scoped` is what one target's own `export` changes about the unit's
+    /// answer. It is applied after the unit's, and `env` reads its arguments
+    /// in order, so the target's word is the last one on any name both name.
+    fn prefix(&self, scoped: &[kati::export::EnvironmentChange]) -> Vec<u8> {
         let mut command = Vec::new();
         if !self.command_directory.as_os_str().is_empty() {
             command.extend_from_slice(b"cd ");
             Self::push_shell_word(&mut command, self.command_directory.as_os_str().as_bytes());
             command.extend_from_slice(b" && ");
         }
-        if !self.recipe_environment.is_empty() {
-            command.extend_from_slice(b"env");
-            for (name, value) in &self.recipe_environment {
-                if value.is_none() {
-                    command.extend_from_slice(b" -u ");
-                    Self::push_shell_word(&mut command, name);
-                }
-            }
-            for (name, value) in &self.recipe_environment {
-                if let Some(value) = value {
-                    let mut assignment = Vec::with_capacity(name.len() + value.len() + 1);
-                    assignment.extend_from_slice(name);
-                    assignment.push(b'=');
-                    assignment.extend_from_slice(value);
-                    command.push(b' ');
-                    Self::push_shell_word(&mut command, &assignment);
-                }
-            }
-            command.push(b' ');
-        }
+        let unit = self
+            .recipe_environment
+            .iter()
+            .map(|(name, value)| {
+                (
+                    Bytes::copy_from_slice(name),
+                    value.as_ref().map(|value| Bytes::copy_from_slice(value)),
+                )
+            })
+            .chain(scoped.iter().cloned())
+            .collect::<Vec<_>>();
+        command.extend_from_slice(&kati::export::environment_prefix(&unit));
         command
     }
 
@@ -161,8 +157,9 @@ impl CommandLayout {
         shell_flags: &[u8],
         script: &[u8],
         output: &[u8],
+        scoped: &[kati::export::EnvironmentChange],
     ) -> LaunchedScript {
-        let mut command = self.prefix();
+        let mut command = self.prefix(scoped);
         command.extend_from_slice(shell);
         command.push(b' ');
         if script.len() > RESPONSE_FILE_THRESHOLD {
@@ -768,8 +765,8 @@ impl GraphSink {
 
     /// The shell prefix that gives a compilation unit its Make `-C` working
     /// directory and environment without moving Ronin's executor.
-    fn command_prefix(&self) -> Template {
-        Template::literal(&self.layout().prefix())
+    fn command_prefix(&self, scoped: &[kati::export::EnvironmentChange]) -> Template {
+        Template::literal(&self.layout().prefix(scoped))
     }
 
     /// Everything about this unit that a command line is built around, kept
@@ -795,10 +792,11 @@ impl GraphSink {
         shell: &[u8],
         shell_flags: &[u8],
         command: SinkCommand<'_>,
+        scoped: &[kati::export::EnvironmentChange],
     ) -> Vec<(Binding, Template)> {
         match command {
             SinkCommand::Inline(script) => {
-                let mut command = self.command_prefix();
+                let mut command = self.command_prefix(scoped);
                 command.push_literal(shell);
                 command.push_literal(b" ");
                 command.push_literal(shell_flags);
@@ -819,7 +817,7 @@ impl GraphSink {
                 }
                 response_file.push_variable(self.bindings.out);
                 response_file.push_literal(b".rsp");
-                let mut command = self.command_prefix();
+                let mut command = self.command_prefix(scoped);
                 command.push_literal(shell);
                 command.push_literal(b" ");
                 if !self.unit.root && !self.root_directory.as_os_str().is_empty() {
@@ -855,7 +853,12 @@ impl GraphSink {
             SinkCommand::Inline(script) => Some(script),
             SinkCommand::ResponseFile(_) => None,
         });
-        let mut bindings = self.command_bindings(rule.shell, rule.shell_flags, command);
+        let mut bindings = self.command_bindings(
+            rule.shell,
+            rule.shell_flags,
+            command,
+            rule.recipe_environment,
+        );
         // [spec:ronin:req:make.narration+1]
         // Prefer what the Makefile said. Otherwise narrate a short inline
         // recipe with its own expanded text, without exposing the environment
