@@ -1513,28 +1513,27 @@ impl<'a> Builder<'a> {
             }
         }
         self.runtime.edge_mut(edge).set_command_dirty(false);
+        // An invented file's outputs stood in for the newest thing behind them
+        // while the file was not there. The command has now been run and the
+        // outputs stat'd, so whatever they hold is theirs and a later scan must
+        // not substitute over it.
+        self.runtime.edge_mut(edge).set_absent_intermediate(false);
         let unchanged_outputs = old_mtimes
             .iter()
             .zip(&new_mtimes)
             .map(|(old, new)| old == new)
             .collect::<Vec<_>>();
         let deferred = deferred_outputs.is_some();
-        let pruned = if deferred {
-            !self.options.dryrun
-        } else {
-            command.restat && !self.options.dryrun && unchanged_outputs.iter().any(|same| *same)
-        };
-        let all_pruned = if deferred {
-            !self.options.dryrun
-                && !self
-                    .graph
-                    .deferred_freshness(edge)
-                    .is_some_and(|freshness| freshness.always_dirty_output)
-                && new_mtimes.iter().all(|mtime| *mtime != 0)
-                && unchanged_outputs.iter().all(|same| *same)
-        } else {
-            command.restat && !self.options.dryrun && unchanged_outputs.iter().all(|same| *same)
-        };
+        let freshness::Settled { pruned, all_pruned } = self.settled(
+            edge,
+            &freshness::Outcome {
+                deferred,
+                restat: command.restat,
+                new_mtimes: &new_mtimes,
+                unchanged: &unchanged_outputs,
+                started: command_start_mtime,
+            },
+        );
         let mut record_mtime = command_start_mtime;
         if !self.options.dryrun && (command.restat || command.generator || deferred) {
             record_mtime = record_mtime.max(new_mtimes.iter().copied().max().unwrap_or_default());
@@ -2008,6 +2007,7 @@ impl<'a> Builder<'a> {
 mod command;
 pub(crate) use command::{LateCommand, LateCommands};
 mod deferred;
+mod freshness;
 mod reporter;
 mod status;
 #[cfg(test)]

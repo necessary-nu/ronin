@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| app: mid ; cat mid > $@
+| mid: gen ; cat gen > $@
+| gen: stamp ; @:
+file app kept 1
+| body
+file gen kept 1
+| body
+file mid kept 1
+| body
+file stamp kept 0

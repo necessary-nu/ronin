@@ -121,6 +121,18 @@ pub(crate) struct Edge {
     /// Whether the build throws this edge's outputs away once it has finished
     /// with them, which every intermediate but a `.SECONDARY` one is.
     pub(crate) disposable: bool,
+    /// Whether what the outputs did is read off the disk once the command has
+    /// run, rather than taken from the command having run.
+    ///
+    /// GNU Make stats a target it has just remade and compares the timestamp
+    /// it then has against the targets that read it, so a recipe that ran
+    /// without moving its target leaves them up to date. Ninja's `restat` asks
+    /// for the same second look but grants the outcome only to an output whose
+    /// timestamp did not move at all, where Make lets the comparison decide,
+    /// so the two are not the same property and an edge carries this one
+    /// itself.
+    // [spec:ronin:req:make.remade-target-re-observed]
+    pub(crate) outputs_reobserved: bool,
     pub(crate) freshness_history: FreshnessHistory,
     partitions: EdgePartitions,
 }
@@ -412,10 +424,14 @@ where
     let edge_data = graph.edge(edge);
 
     let out_of_date = if absent_intermediate {
+        // The substitution is redone rather than kept, because what it stands
+        // in for moves: a scan after the newest thing behind an absent
+        // intermediate was itself remade must see the timestamp that thing now
+        // has. The recorded flag is cleared the moment the edge's own command
+        // observes real outputs, so nothing here can overwrite an mtime the
+        // file actually acquired.
         for output in &edge_data.out {
-            if runtime.node(*output).mtime().is_missing() {
-                runtime.node_mut(*output).set_mtime(newest_input);
-            }
+            runtime.node_mut(*output).set_mtime(newest_input);
         }
         input_dirty
     } else if graph.is_phony_rule(edge_data.rule) {
@@ -730,6 +746,7 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         always_dirty: false,
         intermediate: false,
         disposable: false,
+        outputs_reobserved: false,
         freshness_history: FreshnessHistory::default(),
         partitions: EdgePartitions::default(),
     });

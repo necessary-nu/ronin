@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| app: gen ; echo remade > $@
+| gen: ; @:
+| .PHONY: gen
+file app touched 1
+| remade
+file gen kept 1
+| body

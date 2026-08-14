@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| app: gen ; echo remade > $@
+| gen: stamp ; @:
+file app touched 1
+| remade
+file stamp kept 0

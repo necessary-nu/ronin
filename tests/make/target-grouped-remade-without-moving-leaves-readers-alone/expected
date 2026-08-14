@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| app: a b ; cat a b > $@
+| a b &: stamp ; @:
+file a kept 1
+| one
+file app kept 1
+| stale
+file b kept 1
+| two
+file stamp kept 0

@@ -904,7 +904,7 @@ which is expanded after it.
 
 ## pcre2test links before libpcre2-posix.la finishes under -j
 
-Status: open
+Status: fixed
 
 Observed with Ronin revision `c35b0fdb8b16afd6ba5d6a1acbd472d88997cc49`
 (plus the lazy-recipe-expansion repin) while building pcre2 10.47 for
@@ -958,3 +958,42 @@ dirstamp machinery are the untested remainder).
 
 This failed `pcre2` and skipped 64 nodes behind it, including sudo-rs and
 systemd.
+
+Resolution: it was not a race, and the suggested next step answered the
+question the other way. The `pcre2test` edge does carry the
+`libpcre2-posix.la` input and Ronin does order the two strictly. What put the
+link where it could lose was that the link had no business running at all.
+
+Ronin propagated "this edge's recipe ran" as "this edge's outputs changed".
+GNU Make does not: it stats a target it has just remade and lets the timestamp
+it then finds decide what the targets reading it do. Every autoconf tree
+carries `src/config.h: src/stamp-h1`, whose recipe is `@test -f $@ || ...` —
+it runs on every invocation, because `stamp-h1` is permanently newer, and it
+moves nothing. Under the old reading that single no-op cascaded a full rebuild
+of the whole tree, every invocation: a second `make -j8` on a finished pcre2
+reran all 42 edges where GNU Make reran none. `make install` therefore carried
+that rebuild along with the install recipes in one graph — 91 edges where GNU
+runs 11 — and among them `install-libLTLIBRARIES` has libtool relink the
+shared library, which removes `./.libs/libpcre2-posix.so` for a few
+milliseconds. The `pcre2test` link, which should have been settled long before
+and was present only because of the spurious rebuild, was in that graph
+looking for exactly that file.
+
+The fix is Ronin's graph engine; kati is unchanged. A Make command edge
+carries `outputs_reobserved`, and once such an edge's command has run the
+engine hands the question back to the timestamp comparison instead of
+asserting a change. Two targets are not re-observed, because neither is a file
+an answer can be read off: a phony one, and one the recipe left absent, which
+GNU reads as infinitely new. The property is deliberately wider than Ninja's
+`restat`, which grants the same outcome only to an output whose mtime did not
+move at all: GNU also spares the reader of a target that moved backwards, or
+forwards but still short of it. Eight cells of GNU's behaviour are recorded as
+build-intent cases, `tests/make/target-remade-*` among them, and
+`a_stamp_recipe_that_moves_nothing_rebuilds_nothing` holds the shape above
+across three invocations.
+
+On the reconstructed pcre2 10.47 the from-scratch build runs the same 45 edges
+it did before, the second invocation runs the one no-op recipe and nothing
+else — which is what `make --trace` shows GNU Make 4.4.1 doing on the same
+tree — and `make -j8 install` runs 11 install recipes with no compile or link
+edge among them.

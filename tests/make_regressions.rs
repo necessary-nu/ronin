@@ -320,6 +320,65 @@ fn symlink_freshness_ignores_old_build_log() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Every autoconf tree carries `config.h: stamp-h1` with a recipe that does
+/// nothing when the header is already there. Its prerequisite is permanently
+/// newer, so the recipe runs on every invocation and the header never moves —
+/// and a build that reads "the recipe ran" as "the header changed" recompiles
+/// the entire tree, every time, forever. In pcre2 that put the `pcre2test`
+/// link into the same graph as `make install`, whose libtool relink removes
+/// `.libs/libpcre2-posix.so` for a few milliseconds, and the link found it
+/// missing.
+///
+/// The invocations after the first are the whole point: one is the state, three
+/// is the claim that the state is a fixed point.
+// [spec:ronin:req:make.remade-target-re-observed/test]
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn an_unmoved_stamp_rebuilds_nothing() {
+    let directory = test_directory("stamp-no-cascade");
+    fs::write(
+        directory.join("Makefile"),
+        "all: app\n\
+         app: config.h\n\
+         \t@echo run >> app.runs\n\
+         \t@touch app\n\
+         config.h: stamp-h1\n\
+         \t@test -f $@ || echo made > $@\n",
+    )
+    .unwrap();
+    write_at(&directory, "config.h", "header\n", 100);
+    write_at(&directory, "app", "built\n", 150);
+    write_at(&directory, "stamp-h1", "", 200);
+
+    for invocation in 1..=3 {
+        let output = make_command(&directory).output().unwrap();
+        let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "invocation {invocation}: {reported}"
+        );
+        assert!(
+            !directory.join("app.runs").exists(),
+            "invocation {invocation} remade app though config.h never moved: {reported}"
+        );
+    }
+
+    // The other half of the claim: re-observing is not the same as never
+    // rebuilding, so a header that does move still reaches what reads it.
+    write_at(&directory, "config.h", "header\n", 300);
+    let output = make_command(&directory).output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("app.runs")).unwrap(),
+        "run\n",
+        "a moved header must remake what reads it: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Zstd's object rules consist of nothing but GNU Make's built-in compile
 /// variables. Undefined, the C rule lost both its compiler and its output
 /// argument and ran `MMD`; the assembler rule became the source path alone and

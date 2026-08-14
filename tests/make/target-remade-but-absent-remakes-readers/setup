@@ -1,0 +1,4 @@
+echo stale > app
+: > stamp
+touch -d '2020-01-02 00:00' app
+touch -d '2020-01-03 00:00' stamp

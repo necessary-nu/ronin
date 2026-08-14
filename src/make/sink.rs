@@ -609,7 +609,10 @@ impl GraphSink {
             disposable: pending.disposable,
             bindings: std::mem::take(&mut pending.bindings),
         })?;
-        self.graph.set_filesystem_only_freshness(edge);
+        // A recursive target is a target: what the child Make left on disk is
+        // what the parent's other targets read, not the fact that a sub-build
+        // ran.
+        self.graph.set_make_target_freshness(edge);
         // The wrapper edge is the one that will hold the parent's residual
         // recipe once the children are composed, so a failure there is the
         // failure that leaves the parent's own outputs half-made.
@@ -1134,7 +1137,12 @@ impl BuildSink for GraphSink {
                 if let Some(recipe) = deferred_recipe {
                     self.deferred_edges.push((built, recipe));
                 }
-                self.graph.set_filesystem_only_freshness(built);
+                // Every Make target is one GNU Make decides from the disk, and
+                // looks at again once its recipe has run whatever the recipe
+                // did, so this is what Make is here rather than something a
+                // Makefile asks for. `.KATI_RESTAT` is a separate and narrower
+                // request that still emits its own `restat` binding.
+                self.graph.set_make_target_freshness(built);
                 self.graph.set_delete_on_error(built, delete_on_error);
                 self.graph.set_peer_outputs(built, peer_outputs);
                 if let Some(deferred) = deferred {

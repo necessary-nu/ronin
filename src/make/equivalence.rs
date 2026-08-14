@@ -698,6 +698,12 @@ fn disposable(graph: &BuildGraph) -> Vec<String> {
     outputs_where(graph, |edge| edge.disposable)
 }
 
+/// Every output either graph reads off the disk again once its command has
+/// run, as a sorted list of paths.
+fn reobserved(graph: &BuildGraph) -> Vec<String> {
+    outputs_where(graph, |edge| edge.outputs_reobserved)
+}
+
 /// Every output either graph is allowed to find missing, as a sorted list of
 /// paths.
 fn intermediate(graph: &BuildGraph) -> Vec<String> {
@@ -939,6 +945,53 @@ clean:
 \trm -rf out
 ",
         &[],
+    );
+}
+
+/// Every Make edge is one whose outputs the build looks at again once its
+/// command has run, and only the direct graph says so.
+///
+/// The manifest keeps saying `restat` for `.KATI_RESTAT` and for nothing else,
+/// because that binding is what the Makefile asked for and the property here
+/// is what Make is. The comparison is deliberately silent about the property,
+/// as it is about peers and `.DELETE_ON_ERROR`: a manifest has no way to state
+/// it, so a graph read back from one must not appear to have lost it.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
+// [spec:ronin:req:make.remade-target-re-observed/test]
+#[test]
+fn reobservation_reaches_only_the_direct_graph() {
+    let case = Case::new(
+        "\
+all: out asked
+out: in
+\t@cat in > out
+asked: in
+\t@cat in > asked
+in:
+\t@touch in
+asked: .KATI_RESTAT := 1
+",
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(
+        reobserved(&both.direct),
+        vec![
+            "all".to_owned(),
+            "asked".to_owned(),
+            "in".to_owned(),
+            "out".to_owned()
+        ],
+        "every Make edge carries it, whether or not the Makefile asked for restat"
+    );
+    assert!(
+        reobserved(&both.parsed).is_empty(),
+        "a manifest has no way to say this, so reading one back must not invent it"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
     );
 }
 

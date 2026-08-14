@@ -49,6 +49,18 @@ manifest-derived graph is.
 > Ninja's own way to say it is a dependency on a path nothing produces — so a
 > graph parsed from a manifest never carries it.
 
+> [spec:ronin:req:make.remade-target-re-observed]
+> A target whose recipe has just run is observed again on disk, and the
+> timestamp it then has is what decides whether the targets that read it are
+> out of date. A recipe that ran without moving its target leaves them up to
+> date, as GNU Make's does. Two targets are never observed and so always count
+> as remade: a phony one, which is not a file, and one the recipe left absent,
+> which GNU Make reads as infinitely new. Ninja's `restat` is a narrower
+> request for the same second look — it grants the outcome only to an output
+> whose timestamp did not move at all — so an edge carries this property
+> itself, stated when the graph is constructed, and a graph parsed from a
+> manifest never carries it.
+
 > [spec:ronin:req:make.manifest-equivalence+1]
 > For any Makefile the front end accepts, the graph built directly and the
 > graph obtained by parsing that front end's emitted Ninja manifest are

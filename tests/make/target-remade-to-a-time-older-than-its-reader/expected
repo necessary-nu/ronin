@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| app: gen ; cat gen > $@
+| gen: stamp ; touch -d '2020-01-01 12:00' gen
+file app kept 1
+| stale
+file gen kept 1
+| body
+file stamp kept 0

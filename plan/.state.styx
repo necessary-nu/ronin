@@ -739,4 +739,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
     )}
+    {id make-remade-target-is-re-observed, covered_rules (
+        make.remade-target-re-observed
+    ), covered_claims (
+        {impl_name target-impl, rule make.remade-target-re-observed}
+    )}
 )

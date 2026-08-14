@@ -499,15 +499,34 @@ impl BuildGraph {
         Edge(edge)
     }
 
-    /// Use only live filesystem mtimes when deciding whether `edge` is dirty.
+    /// Decide `edge`'s currency the way GNU Make decides a target's: from what
+    /// is on the disk, before its recipe runs and again after.
     ///
-    /// GNU Make does not make its recipe history part of target freshness. A
-    /// direct Make graph still records Ninja-compatible history for timings
-    /// and tools, but an older record cannot override equal on-disk mtimes.
+    /// Before, because GNU Make does not make its recipe history part of
+    /// target freshness. A direct Make graph still records Ninja-compatible
+    /// history for timings and tools, but an older record cannot override
+    /// equal on-disk mtimes.
+    ///
+    /// After, because GNU Make stats a target it has just remade and lets the
+    /// timestamp it then finds decide what the targets reading it do. A recipe
+    /// that ran without moving its target — autoconf's universal
+    /// `config.h: stamp-h1` is one — leaves them up to date; without that, the
+    /// first no-op recipe in a tree cascades a full rebuild through everything
+    /// behind it, on every invocation. An edge that runs no command never
+    /// reaches the question.
+    ///
+    /// Nothing in a Ninja manifest says either half, so a graph parsed from one
+    /// carries neither — the same bounded divergence `intermediate` and
+    /// `disposable` already have. `restat` is the near neighbour of the second
+    /// half rather than the same thing: it asks for the second look on one rule
+    /// and grants the outcome only to an output whose timestamp did not move at
+    /// all.
     // [spec:ronin:req:make.state-outside-the-tree+2]
-    pub(crate) fn set_filesystem_only_freshness(&mut self, edge: Edge) {
-        self.arenas.edge_mut(edge.0).freshness_history =
-            crate::graph::FreshnessHistory::FilesystemOnly;
+    // [spec:ronin:req:make.remade-target-re-observed]
+    pub(crate) fn set_make_target_freshness(&mut self, edge: Edge) {
+        let stored = self.arenas.edge_mut(edge.0);
+        stored.freshness_history = crate::graph::FreshnessHistory::FilesystemOnly;
+        stored.outputs_reobserved = true;
     }
 
     /// Name the outputs of `edge` that a failed command must not leave behind,
