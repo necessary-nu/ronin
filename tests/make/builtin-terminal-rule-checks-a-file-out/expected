@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # The catalogue's terminal rules are the one place Make makes a file with no
+| # source to build from: `%:: %,v` checks it out of RCS. `CO` is given here so
+| # the case records the checkout rather than needing one installed.
+| all: foo
+file foo touched 1
+| version one
+file foo,v kept 1
+| version one

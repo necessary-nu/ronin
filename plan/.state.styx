@@ -433,7 +433,9 @@ assertions (
     {id make-conformance-oracle-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-14T06:49:21.596588034Z}
     {id make-every-makefile-argument-is-read, kind @complete, author "brendan@necessary.nu", at 2026-08-14T07:29:11.835734675Z}
     {id make-match-anything-rule-chaining, kind @complete, author "brendan@necessary.nu", at 2026-08-14T08:08:36.672579845Z}
-    {id make-builtin-rule-catalogue, kind @doing, author "brendan@necessary.nu", at 2026-08-14T08:23:17.95565994Z}
+    {id make-builtin-rule-catalogue, kind @complete, author "brendan@necessary.nu", at 2026-08-14T09:43:01.256008411Z}
+    {id make-pattern-search-specific-rule-match, kind @complete, author "brendan@necessary.nu", at 2026-08-14T09:42:51.576358131Z}
+    {id make-makefile-set-no-builtin-rules, kind @complete, author "brendan@necessary.nu", at 2026-08-14T09:42:56.631551918Z}
 )
 
 impl_evidence (

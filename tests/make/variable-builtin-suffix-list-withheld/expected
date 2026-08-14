@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 1
+| all: ; @printf '[%s]\n[%s] [%s]\n' '$(SUFFIXES)' '$(origin SUFFIXES)' '$(flavor SUFFIXES)' > out
+file out touched 2
+| []
+| [default] [simple]

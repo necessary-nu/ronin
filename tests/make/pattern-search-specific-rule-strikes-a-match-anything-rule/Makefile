@@ -1,0 +1,9 @@
+# A pattern rule with neither prerequisites nor a recipe can make nothing, and
+# that is not what it is for: matching a name with a target that is not a bare
+# `%` withdraws every match-anything rule from that search. `-r` is here so
+# the only rule doing the striking is the one written above.
+%: ; @printf 'anymatch\n' > $@
+
+%.tex:
+
+all: foo.tex

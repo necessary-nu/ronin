@@ -1,0 +1,1 @@
+printf "source\n" > foo.zig

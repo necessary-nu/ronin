@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 3
+| # `-r` withholds the whole catalogue, so the link rule that would have made
+| # `hello` out of `hello.c` is not there to be found.
+| all: hello
+file hello.c kept 1
+| int main(void) { return 0; }

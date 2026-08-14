@@ -1,0 +1,11 @@
+printf 'int main(void) { return 0; }\n' > hello.c
+cat > .cc-stub <<'STUB'
+#!/bin/sh
+out=; prev=
+for argument in "$@"; do
+    if [ "$prev" = -o ]; then out=$argument; fi
+    prev=$argument
+done
+printf 'ran: %s\n' "$*" > "$out"
+STUB
+chmod +x .cc-stub

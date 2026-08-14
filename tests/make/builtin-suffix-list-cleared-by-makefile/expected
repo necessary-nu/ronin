@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 5
+| # A bare `.SUFFIXES:` empties the list every suffix rule is derived from, so
+| # the link rule that would have made `hello` is never created.
+| .SUFFIXES:
+| 
+| all: hello
+file hello.c kept 1
+| int main(void) { return 0; }

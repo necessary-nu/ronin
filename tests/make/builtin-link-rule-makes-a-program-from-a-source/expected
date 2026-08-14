@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # Nothing here says how to make `hello`. GNU Make's catalogue does: the null
+| # suffix rule `%: %.c` links a program from one source file, which is the
+| # oldest idiom Make has.
+| all: hello
+file hello touched 1
+| linked: hello.c -o hello
+file hello.c kept 1
+| int main(void) { return 0; }

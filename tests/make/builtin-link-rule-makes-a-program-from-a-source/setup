@@ -1,0 +1,13 @@
+printf 'int main(void) { return 0; }\n' > hello.c
+cat > .cc-stub <<'STUB'
+#!/bin/sh
+# Stands in for the C driver so the case records what the rule asked for
+# rather than what this host's compiler emits.
+out=; prev=
+for argument in "$@"; do
+    if [ "$prev" = -o ]; then out=$argument; fi
+    prev=$argument
+done
+printf 'linked: %s\n' "$*" > "$out"
+STUB
+chmod +x .cc-stub

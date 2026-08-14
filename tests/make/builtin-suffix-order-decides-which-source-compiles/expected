@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # Two sources could make `foo.o`. `.SUFFIXES` puts `.c` before `.cc`, and the
+| # rules are derived in that order, so the C source wins.
+| all: foo.o
+file foo.c kept 1
+| int main(void) { return 0; }
+file foo.cc kept 1
+| int main(void) { return 0; }
+file foo.o touched 1
+| ran: -c -o foo.o foo.c
