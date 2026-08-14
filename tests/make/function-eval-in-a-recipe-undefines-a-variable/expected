@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| X = present
+| all:
+| 	$(eval undefine X)
+| 	@printf '%s\n' 'X=[$(X)] origin=$(origin X)' > out
+file out touched 1
+| X=[] origin=undefined

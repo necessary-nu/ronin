@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # A rule-specific assignment is not a rule, so it is not refused.
+| all:
+| 	$(eval all: LOCAL = set-in-recipe)
+| 	@printf '%s\n' 'LOCAL=[$(LOCAL)]' > out
+file out touched 1
+| LOCAL=[set-in-recipe]

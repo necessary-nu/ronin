@@ -33,7 +33,6 @@ family	recipe-wording	GNU Make 4.x says "recipe" where 3.8x said "commands"; kat
 family	stop-suffix	GNU Make appends "  Stop." to the fatal diagnostic it dies on; kati prints the diagnostic alone.
 
 case	allow_rules.sh#script	extension	kati-extension	62b40b7a4d65360d
-case	autovar_assign.mk#default	recorded	evaluation+corpus-todo+exit-status	8c1c6960cfc5a279
 case	blank_line_before_command.mk#test	recorded	recipe-stream+corpus-todo+exit-status	1c0003fa1be5e1da
 case	call_with_whitespace.mk#test	defect	quote-style	a70ab0c62ed68238
 case	circular_dep.mk#test	defect	identity-prefix	595f0714ab1a00bb
@@ -77,7 +76,6 @@ case	nothing_to_do.mk#default	defect	quote-style	4e30afa7c8c67be8
 case	order_only.mk#test2	defect	dependent-attribution+exit-status	acea0f9d65049abb
 case	override.mk#test	defect	quote-style+recipe-wording	0b34aabd728de507
 case	override_export.mk#test	defect	exit-status+identity-prefix+error-location	d9383b7d59c1efc9
-case	param.mk#test	recorded	evaluation+corpus-todo	13f0b4ba3b524f6f
 case	phony_looks_real.sh#script	extension	kati-extension	ece3130b7320fa89
 case	readonly_global.sh#script	extension	kati-extension	fc4ed561a8ea601f
 case	readonly_global_missing.sh#script	extension	kati-extension	024857f9cbf8b36d

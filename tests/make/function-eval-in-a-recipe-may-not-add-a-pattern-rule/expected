@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 4
+| # So is a pattern rule: it says how to make things, which the graph has settled.
+| all:
+| 	$(eval %.o: %.c ; @true)
+| 	@printf '%s\n' 'ran' > out

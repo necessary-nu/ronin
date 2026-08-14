@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| define NEWLINE
+| 
+| 
+| endef
+| all: ; $(eval define D$(NEWLINE)macro body$(NEWLINE)endef)
+| 	@printf '%s\n' 'D=[$(value D)]' > out
+file out touched 1
+| D=[macro body]

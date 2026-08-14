@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| V = exported-value
+| all:
+| 	$(eval export V)
+| 	@printf '%s\n' "V=[$$V]" > out
+file out touched 1
+| V=[exported-value]

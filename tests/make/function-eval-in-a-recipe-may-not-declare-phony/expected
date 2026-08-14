@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 4
+| # A special target is a rule like any other, and reaches the same refusal.
+| all:
+| 	$(eval .PHONY: fake)
+| 	@printf '%s\n' 'ran' > out

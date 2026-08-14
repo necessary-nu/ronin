@@ -437,7 +437,7 @@ case	features/se_explicit.diff.3	unclassified	no-work-line+evaluation
 case	features/se_explicit.diff.30	narration	ninja-progress+no-work-line
 case	features/se_explicit.diff.4	narration	ninja-progress
 case	features/se_explicit.diff.5	narration	no-work-line
-case	features/se_explicit.diff.6	compiler	product-name+no-rule-to-make
+case	features/se_explicit.diff.6	unclassified	product-name+evaluation
 case	features/se_explicit.diff.7	narration	ninja-progress
 case	features/se_explicit.diff.8	narration	ninja-progress
 case	features/se_explicit.diff.9	narration	ninja-progress
@@ -662,7 +662,7 @@ case	functions/eval.diff.4	narration	ninja-progress
 case	functions/eval.diff.5	narration	ninja-progress
 case	functions/eval.diff.6	narration	ninja-progress
 case	functions/eval.diff.7	narration	ninja-progress
-case	functions/eval.diff.8	unclassified	no-work-line+evaluation
+case	functions/eval.diff.8	unclassified	product-name+evaluation
 case	functions/file.diff	narration	ninja-progress
 case	functions/file.diff.1	narration	ninja-progress
 case	functions/file.diff.10	narration	ninja-progress

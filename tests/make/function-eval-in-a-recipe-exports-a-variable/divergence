@@ -1,0 +1,3 @@
+Ronin fixes a recipe's environment when it compiles the graph, so an export the
+recipe itself performs never reaches its shell;
+make-recipe-time-export-reaches-the-environment.

@@ -58,6 +58,14 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 76 when an assignment made from inside a `foreach` or `call` binding
+    // started landing in the global scope the binding shadows rather than being
+    // refused or applied in place: `autovar_assign.mk#default` and
+    // `param.mk#test` became byte-identical and left the recorded corpus-TODO
+    // class. They are the two cases the vendored corpus wrote the defect down
+    // in, each headed by the corpus's own fix-me annotation.
+    //
+    // Before that it moved
     // from 77 when the export directives were completed: `export_export.mk#test`
     // — `export=PASS` followed by a bare `export export` — became byte-identical
     // and left the recorded corpus-TODO class.
@@ -105,9 +113,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 76);
+    assert_eq!(cases.len(), 74);
     assert_eq!(by_class["defect"], 36);
-    assert_eq!(by_class["recorded"], 8);
+    assert_eq!(by_class["recorded"], 6);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);
 }

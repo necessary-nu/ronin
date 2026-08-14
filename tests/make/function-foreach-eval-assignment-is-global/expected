@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # The loop binding is scoped; what an assignment inside the loop defines is not.
+| $(foreach v,a b,$(eval seen_$(v) = yes))
+| all: ; @printf '%s\n' 'seen_a=[$(seen_a)] seen_b=[$(seen_b)] v=[$(v)] origin=$(origin v)' > out
+file out touched 1
+| seen_a=[yes] seen_b=[yes] v=[] origin=undefined

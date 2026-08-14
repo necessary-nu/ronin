@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # Two bindings of one name, and the assignment still lands outside both.
+| trace := $(foreach n,1 2,$(foreach n,x y,$(eval n = deep)[$(n)])(outer $(n)))
+| all: ; @printf '%s\n' '$(trace)' 'after [$(n)] $(origin n)' > out
+file out touched 2
+| [x] [y](outer 1) [x] [y](outer 2)
+| after [deep] file

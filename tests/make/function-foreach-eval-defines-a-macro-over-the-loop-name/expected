@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| define NEWLINE
+| 
+| 
+| endef
+| d = outer
+| $(foreach d,a b,$(eval define d$(NEWLINE)deep$(NEWLINE)endef))
+| all: ; @printf '%s\n' 'd=[$(d)] $(flavor d) $(origin d)' > out
+file out touched 1
+| d=[deep] recursive file

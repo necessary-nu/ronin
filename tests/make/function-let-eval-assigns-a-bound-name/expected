@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| y = outer
+| inner := $(let y z,1 2,[$(y)]$(eval y = hijack)[$(y)][$(origin y)])
+| all: ; @printf '%s\n' '$(inner)' 'after [$(y)] $(origin y)' > out
+file out touched 2
+| [1][1][automatic]
+| after [hijack] file
