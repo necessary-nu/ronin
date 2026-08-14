@@ -9589,6 +9589,13 @@ children (
                         kind @note
                         text "Two more rows attributed here by make-match-anything-rule-chaining (2026-08-14): features/implicit_search.diff.78 and .80, which that node held.\n\nBoth stay `compiler no-rule-to-make`, but what they are blocked on has changed and is now exactly this node. With the compatibility pass delivered, the search reaches the same rule GNU does and the refusal moves one target inwards:\n\n  .78  all: hello.tsk / %.tsk: %; $(info $@ from $<) / unrelated: hello\n       GNU: `f77 hello.f -o hello`, then `hello.tsk from hello`.\n       Ronin was `'hello.tsk', needed by 'all'`; it is now `'hello', needed by 'hello.tsk'`.\n  .80  the same with `%.tsk: % %.x` and `%.x: %.xx` beside it, same movement.\n\n`hello` is taken on trust because `unrelated: hello` writes it down, so `%.tsk: %` applies; what is then missing is the built-in link rule `%: %.f` this node's second family covers. Neither row needs anything further from the pattern search."
                     }
+
+                    {
+                        at 2026-08-14T08:23:17.95565994Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
                 )
             }
 

@@ -901,3 +901,60 @@ Make 4.4.1 and Ronin now record the same two values: empty for the
 `pybuilddir.txt` rule's own recipe, which is expanded before the file exists,
 and the built `$(abs_builddir)` path for the `checksharedmods` recipe,
 which is expanded after it.
+
+## pcre2test links before libpcre2-posix.la finishes under -j
+
+Status: open
+
+Observed with Ronin revision `c35b0fdb8b16afd6ba5d6a1acbd472d88997cc49`
+(plus the lazy-recipe-expansion repin) while building pcre2 10.47 for
+Necessary OS.
+
+The build fails at the `pcre2test` link:
+
+```text
+[46/49] echo "  CCLD    " libpcre2-posix.la;... --mode=link ... -o libpcre2-posix.la ...
+  CCLD     libpcre2-posix.la
+[47/49] ... --mode=link ... -o pcre2test src/pcre2test-pcre2test.o libpcre2-8.la libpcre2-posix.la ...
+FAILED: [code=1] pcre2test
+clang: error: no such file or directory: './.libs/libpcre2-posix.so'
+```
+
+The install step that runs moments later finds `.libs/libpcre2-posix.so.*`
+present and installs the library normally, so the artifact exists almost
+immediately after the failed link — the `pcre2test` edge ran while (or
+before) the `libpcre2-posix.la` edge completed, where GNU Make orders them
+strictly.
+
+The generated rule chain (pcre2 `Makefile.in`, automake output):
+
+```make
+am__DEPENDENCIES_1 =
+@WITH_PCRE2_8_TRUE@am__append_37 = libpcre2-8.la libpcre2-posix.la   # line 136
+pcre2test_DEPENDENCIES = $(am__DEPENDENCIES_1) $(am__append_37) \    # line 517
+	$(am__append_38) $(am__append_39) $(am__DEPENDENCIES_7)
+pcre2test$(EXEEXT): $(pcre2test_OBJECTS) $(pcre2test_DEPENDENCIES) $(EXTRA_pcre2test_DEPENDENCIES)  # line 2067
+```
+
+Two minimal imitations of that shape were tried against this revision and
+**both behave correctly** — Ronin waits and the build passes — so the
+defect is not the obvious one:
+
+1. A prerequisite list built from a defined-empty variable plus
+   conditional-append variables (`$(am__DEPENDENCIES_1) $(am__append_37)
+   ...`), with a slow library rule and a fast consumer.
+2. The same, adding automake's remaining texture: `$(EXEEXT)` in the
+   target name, an `_OBJECTS` variable chain, an empty
+   `EXTRA_*_DEPENDENCIES`, undefined appends in the middle of the list,
+   and a trailing space after the prerequisite list.
+
+Suggested next step from the maintainer's side: dump the constructed graph
+for the pcre2 tree and check whether `pcre2test` carries the
+`libpcre2-posix.la` input edge at all. If the edge exists, the defect is
+in scheduling or completion detection rather than parsing; if it is
+absent, the drop involves something the imitations above do not capture
+(the full automake preamble, `.SUFFIXES`/pattern interaction, or the
+dirstamp machinery are the untested remainder).
+
+This failed `pcre2` and skipped 64 nodes behind it, including sudo-rs and
+systemd.
