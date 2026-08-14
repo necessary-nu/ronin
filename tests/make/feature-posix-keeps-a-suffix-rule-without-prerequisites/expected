@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The POSIX rejection is about prerequisites and not about `.POSIX:` itself.
+| # A pair written the way POSIX asks for is converted under it as always.
+| .POSIX:
+| .SUFFIXES:
+| .SUFFIXES: .biz .baz
+| 
+| .baz.biz: ; @printf '%s\n' 'made $@ from $<' > out
+file foo.baz kept 0
+file out touched 1
+| made foo.biz from foo.baz

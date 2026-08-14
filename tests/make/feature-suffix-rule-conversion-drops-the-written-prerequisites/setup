@@ -1,0 +1,3 @@
+touch -d '-20 seconds' foo.baz
+touch -d '-10 seconds' foo.biz
+touch foo.bar

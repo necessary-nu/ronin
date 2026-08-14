@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # `.c.o:` defines the built-in-shaped suffix rule and names a file called
+| # `.c.o`. Asking for that file by name runs the rule's recipe with no stem
+| # anywhere in it.
+| .c.o: ; @printf '%s\n' 'asked for $@' > out
+file out touched 1
+| asked for .c.o

@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # Passing the pair over withdraws the pattern rule and nothing else: the rule
+| # still names a file called `.baz.biz`, and asking for it runs the recipe with
+| # the prerequisites as written.
+| .POSIX:
+| .SUFFIXES:
+| .SUFFIXES: .biz .baz
+| 
+| .baz.biz: foo.bar ; @printf '%s\n' 'made $@ from $<' > out
+file foo.bar kept 0
+file foo.baz kept 0
+file out touched 1
+| made .baz.biz from foo.bar
