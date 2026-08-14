@@ -9692,6 +9692,7 @@ children (
                 title "Prefix a pattern prerequisite with the stem's directory"
                 kind @fix
                 deps (make-build-intent-gate)
+                sealed true
                 log (
                     {
                         at 2026-08-14T06:02:05.623901172Z
@@ -9720,6 +9721,13 @@ children (
                         kind @note
                         text "What changed, and the four fixtures recorded from the pristine oracle.\n\n`PatternMatch` is the split itself: a directory the search is holding aside and what `%` stood for once it came off. `PatternMatch::of` replaces the bare `Pattern::matches` at every point in the implicit search — `ordered_candidates`, `can_pick_implicit_rule`, `implicit_chain_exists` — so matching, specificity and substitution all read one law instead of three readings of a pattern. `strutil::substitute_stem` is the byte shuffle, kept beside `Pattern` because it needs `find_percent` and deliberately not on it: `$(patsubst)` has no directory rule and must not acquire one.\n\nThree consequences worth naming:\n\nCandidate lookup. The rule index is keyed by the literal a pattern begins with, so `b%.x` is filed under `b` and a walk for `lib/bye.x` never reached it. `candidate_pool` asks the index about the file part as well and drops the duplicates, which is what GNU Make gets for free by having no index and comparing every rule to the name twice over.\n\n`$*` at recipe time. It was recomputed by substituting the target back into the pattern, and no substitution can produce `lib/ye` from `b%.x` and `lib/bye.x`. `DepNode::stem` now carries what the search read, which is GNU's own shape — `pattern_search` computes `stem_str` and hands it to `set_file_variables`. The old reading stays as the fallback for explicit and static pattern rules, where it is right and where a static pattern target that missed its pattern depends on it.\n\nOrder-only prerequisites. They take the same split, probed and confirmed, so they are resolved beside the ordinary ones rather than left for `apply_output_pattern`.\n\nFIXTURES\n\n  pattern-prerequisite-takes-the-stems-directory — `6% 11%12 %9 sub/%.c nopercent.c` against `lib/bye.x` in one rule, so the directory law and the no-percent exemption are pinned side by side. Log `lib/6bye lib/11bye12 lib/bye9 lib/sub/bye.c nopercent.c`, stem `lib/bye`.\n  pattern-prerequisite-directory-not-taken-by-a-static-pattern-rule — the same `%.x: 6%` reached as a static pattern rule, giving `6lib/bye`. This is the fixture that stops the law leaking out of the implicit search.\n  pattern-target-literal-matches-the-file-part — `l%.x` and `b%.x` offered together for `lib/bye.x`; GNU takes the second and leaves stem `lib/ye`. Pins both directions of the matching change.\n  second-expansion-pattern-prerequisite-takes-the-stems-directory — `$$(EMPTY)6% $$*.d`, so the deferred split and the whole stem `$$*` still reads are pinned against each other.\n\nRecording moved no existing case's expectation.\n\nUnit tests: `a_pattern_without_a_directory_matches_the_file_part` covers the split, both matching directions and the three prerequisite shapes; `a_trailing_slash_belongs_to_the_directory_it_names` covers where the split falls; `only_the_first_percent_of_a_segment_stands_for_the_stem` gained the `$(*F)` and no-percent-no-directory cases."
                     }
+
+                    {
+                        at 2026-08-14T12:37:51.837509637Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -9728,6 +9736,7 @@ children (
                 title "Substitute the stem into only the first percent of a deferred prerequisite"
                 kind @fix
                 deps (make-build-intent-gate)
+                sealed true
                 log (
                     {
                         at 2026-08-14T06:02:10.298405412Z
@@ -9756,6 +9765,13 @@ children (
                         kind @note
                         text "Fixtures recorded from the pristine 4.4.1 oracle through `tests/make_port.rs`, three of them:\n\n  second-expansion-pattern-prerequisite-first-percent — the node's own reproducer, `%.x: $$(wordlist 1, 99, %1%2%)` against `bye.x`, log `bye1%2%`.\n  second-expansion-pattern-prerequisite-percent-per-segment — `%a %b` inside one reference, log `byea byeb`, which pins the rule as per segment rather than per word so a later simplification cannot quietly make it per word.\n  second-expansion-pattern-prerequisite-stem-path-forms — `$$(*F).c $$(*D).c` against `lib/bye.x`, log `bye.c lib.c`.\n\nRecording moved no other case's expectation. `dep::tests::only_the_first_percent_of_a_segment_stands_for_the_stem` covers `stem_references` directly, since the fixtures reach it only through a whole build."
                     }
+
+                    {
+                        at 2026-08-14T12:37:47.584885131Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -9764,6 +9780,7 @@ children (
                 title "Expand a wildcard in a pattern rule's prerequisite"
                 kind @fix
                 deps (make-build-intent-gate)
+                sealed true
                 log (
                     {
                         at 2026-08-14T06:02:18.732445457Z
@@ -9791,6 +9808,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Delivery, fixtures, and the inventory audit for the whole dispatch.\n\nCHANGE. `resolved_prerequisites` builds a matched rule's prerequisite names in one place: substitute under the directory split, then hand the result to `glob_word`, which already tests for the same `?*[` GNU Make's `parse_file_seq` tests for and already keeps the name when nothing matched. Ordinary and order-only prerequisites both go through it, because GNU walks one `rule->deps` chain and globs every entry of it — probed with `%.x: dep | oo*`, which now agrees.\n\nFIXTURES\n\n  pattern-prerequisite-wildcard-expands-after-substitution — the node's own reproducer; log `a.three a.two`.\n  pattern-prerequisite-wildcard-with-no-match-keeps-the-name — log `a.t*`, pinning that a wildcard matching nothing is a name and not a dropped prerequisite.\n  pattern-prerequisite-wildcard-globs-below-the-stems-directory — `%.x: 6%*` against `lib/bye.x`, log `lib/6bye1 lib/6bye2`, pinning that on this path the directory is part of the name before the glob runs.\n\nRecording moved no existing case's expectation.\n\nUPSTREAM INVENTORY, audited row by row. 1287 cases before and after. Eleven rows changed and every one of them improved; nothing regressed.\n\n  compiler     18 → 11\n  unclassified 194 → 190\n  narration    1030 → 1041\n  interface    45 → 45\n\nThe seven owned rows all left the compiler class for narration:\n\n  features/patternrules.diff.46 .47 .64 .65 — make-pattern-prerequisite-directory-stem\n  features/patternrules.diff.58 .70 — make-second-expansion-pattern-first-percent\n  features/rule_glob.diff.1 — this node\n\nFour more moved unclassified → narration without being owned, and both groups are accounted for by this dispatch rather than being unexplained drift:\n\n  features/se_implicit.diff.3 — second-expansion implicit rules, which is where the first-percent law and the newly bound `$(*F)` both land\n  variables/automatic.diff.1 .2 .3 — the automatic variables, which is where `DepNode::stem` and the D and F bindings land\n\nThe three known flappers did not flap and needed no restoring: features/reinvoke.diff.2, features/patternrules.diff.34 and features/parallelism.diff.1 are all byte-identical to their recorded rows. targets/clean still dies in the driver with signal 6, as it did before."
+                    }
+
+                    {
+                        at 2026-08-14T12:37:56.076447388Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
