@@ -9,9 +9,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 static NEXT_PLAN: AtomicUsize = AtomicUsize::new(0);
 
 fn plan_graph(source: &str) -> Graph {
+    // Named the way fixture_directory explains: a pid namespace hands out the
+    // same pid to every run, so the clock is what keeps two runs apart.
     let path = std::env::temp_dir().join(format!(
-        "ronin-plan-test-{}-{}.ninja",
+        "ronin-plan-test-{}-{}-{}.ninja",
         std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos()),
         NEXT_PLAN.fetch_add(1, Ordering::Relaxed)
     ));
     fs::write(
@@ -50,13 +55,75 @@ fn add_plan_target(plan: &mut Plan, graph: &Graph, runtime: &RuntimeState, path:
     plan.add_target(graph, runtime, node).unwrap();
 }
 
+/// A temp-directory name no other run can be holding.
+///
+/// The pid alone is not enough. Under `scripts/sandboxed` a run has its own pid
+/// namespace, so `std::process::id()` is a small number that repeats exactly
+/// from one run to the next — and a test that panics before its
+/// `remove_dir_all` leaves its outputs behind under a name the next run will
+/// choose again. That is how one flake became three deterministic failures: the
+/// second run found the first run's `slow` already on disk and failed before it
+/// had scheduled anything. So the name carries the clock as well, and the
+/// directory is made with `create_dir` rather than `create_dir_all`: a name that
+/// already exists is a name to walk away from, never one to build in.
+fn fixture_directory(label: &str) -> std::path::PathBuf {
+    sweep_stale_fixtures();
+    loop {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_nanos());
+        let directory = std::env::temp_dir().join(format!(
+            "ronin-build-{label}-{}-{stamp}-{}",
+            std::process::id(),
+            NEXT_PLAN.fetch_add(1, Ordering::Relaxed)
+        ));
+        match fs::create_dir(&directory) {
+            Ok(()) => return directory,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => panic!("creating {}: {error}", directory.display()),
+        }
+    }
+}
+
+/// Remove what earlier runs left behind, once per process.
+///
+/// Unique names mean a leftover can no longer poison anything, so this is
+/// housekeeping rather than correctness — but a suite that panics leaks a
+/// directory every time, and nothing else would ever collect them. Only our own
+/// names are considered, and only ones untouched for an hour, so a fixture
+/// another process is using right now is never a candidate.
+fn sweep_stale_fixtures() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let stale = std::time::Duration::from_secs(60 * 60);
+        let Ok(entries) = fs::read_dir(std::env::temp_dir()) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if !name.starts_with("ronin-build-") && !name.starts_with("ronin-plan-test-") {
+                continue;
+            }
+            let idle = entry
+                .metadata()
+                .and_then(|metadata| metadata.modified())
+                .ok()
+                .and_then(|when| SystemTime::now().duration_since(when).ok());
+            if idle.is_some_and(|idle| idle > stale) {
+                let path = entry.path();
+                let _ = if path.is_dir() {
+                    fs::remove_dir_all(&path)
+                } else {
+                    fs::remove_file(&path)
+                };
+            }
+        }
+    });
+}
+
 fn build_fixture(label: &str, manifest: &str) -> (Graph, std::path::PathBuf) {
-    let directory = std::env::temp_dir().join(format!(
-        "ronin-build-{label}-{}-{}",
-        std::process::id(),
-        NEXT_PLAN.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(&directory).unwrap();
+    let directory = fixture_directory(label);
     let path = directory.join("build.ninja");
     fs::write(
         &path,
@@ -1695,9 +1762,23 @@ fn ronin_build_acquires_and_releases_jobserver_tokens() {
 #[test]
 // [spec:ronin:req:compat.scheduling/test]
 fn ronin_scheduler_releases_dependents_on_each_completion() {
+    // A dependent is released when its own prerequisite finishes, not when the
+    // wave it started with does. The two are told apart by a handshake rather
+    // than by a stopwatch: `after` is ready as soon as `fast` finishes, and
+    // `slow` will not finish until `after` has run, so releasing dependents only
+    // at the end of the wave leaves neither able to proceed. `slow` gives up
+    // waiting after ten seconds so the test reports rather than hangs, and what
+    // it reports is `after`'s own `test ! -e slow` failing the build — the
+    // assertion is that `after` ran while `slow` was still running, and it is
+    // made by the build's outcome. A loaded host makes this slower and never
+    // makes it fail, which is the whole difference from the wall-clock margin
+    // this replaces.
     let (mut graph, directory) = build_fixture(
         "completion-driven",
-        "rule fast\n  command = sleep 0.03; touch $out\nrule slow\n  command = sleep 0.30; touch $out\nrule after\n  command = test ! -e $dir/slow && touch $out\nbuild $dir/fast: fast\nbuild $dir/slow: slow\nbuild $dir/after: after $dir/fast\n",
+        "rule fast\n  command = touch $out\n\
+         rule slow\n  command = i=0; while [ ! -e $dir/after ] && [ $$i -lt 1000 ]; do sleep 0.01; i=$$((i + 1)); done; touch $out\n\
+         rule after\n  command = test ! -e $dir/slow && touch $out\n\
+         build $dir/fast: fast\nbuild $dir/slow: slow\nbuild $dir/after: after $dir/fast\n",
     );
     let after = directory.join("after").to_string_lossy().into_owned();
     let slow = directory.join("slow").to_string_lossy().into_owned();
@@ -1708,7 +1789,9 @@ fn ronin_scheduler_releases_dependents_on_each_completion() {
     let mut builder = Builder::new(&mut graph, options);
     builder.add_target(&after).unwrap();
     builder.add_target(&slow).unwrap();
-    builder.build().unwrap();
+    builder
+        .build()
+        .expect("'after' was held until 'slow' had finished: dependents were released with the wave rather than on their own prerequisite's completion");
     assert_eq!(builder.commands_ran.len(), 3);
     drop(builder);
     assert!(directory.join("after").exists());
