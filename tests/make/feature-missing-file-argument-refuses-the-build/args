@@ -1,0 +1,1 @@
+-f present.mk -f absent.mk all

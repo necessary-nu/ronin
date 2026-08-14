@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file first.mk kept 3
+| # The files named by -f are read into one evaluation, in order, so an
+| # assignment in an earlier one is in scope while a later one is read.
+| WHO := first
+file out touched 1
+| first-then-second [first.mk second.mk]
+file second.mk kept 2
+| WHERE := $(WHO)-then-second
+| all: ; @printf '%s\n' '$(WHERE) [$(MAKEFILE_LIST)]' > out

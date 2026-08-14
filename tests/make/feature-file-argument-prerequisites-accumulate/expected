@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file first.mk kept 4
+| # Prerequisites declared across the files accumulate on the one target, exactly
+| # as they would if the two files had been concatenated.
+| all: early
+| early: ; @printf '%s\n' early >> out
+file out touched 3
+| late
+| early
+| done
+file second.mk kept 2
+| all: late ; @printf '%s\n' done >> out
+| late: ; @printf '%s\n' late >> out

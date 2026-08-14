@@ -431,6 +431,7 @@ assertions (
     {id make-local-binding-assignment-scope, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:06:05.92501955Z}
     {id make-automatic-variable-value-function, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:29:25.036933669Z}
     {id make-conformance-oracle-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-14T06:49:21.596588034Z}
+    {id make-every-makefile-argument-is-read, kind @doing, author "brendan@necessary.nu", at 2026-08-14T06:55:55.652445107Z}
 )
 
 impl_evidence (

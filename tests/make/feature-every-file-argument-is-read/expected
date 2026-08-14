@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file one.mk kept 2
+| # Every -f is read, not only the last: a goal defined in any of them is known.
+| ONE: ; @printf '%s\n' from-one > out
+file out touched 1
+| from-two
+file three.mk kept 1
+| THREE: ; @printf '%s\n' from-three > out
+file two.mk kept 1
+| TWO: ; @printf '%s\n' from-two > out

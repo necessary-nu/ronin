@@ -768,7 +768,7 @@ fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSi
         residue: Leftovers::default(),
         refused_fatally: false,
     };
-    let mut note = |family: &'static str, families: &mut Vec<&'static str>| {
+    let note = |family: &'static str, families: &mut Vec<&'static str>| {
         if !families.contains(&family) {
             families.push(family);
         }

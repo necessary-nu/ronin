@@ -339,7 +339,9 @@ pub(super) fn prepend_command_line_evals(
         return Ok(());
     }
 
-    let Some(makefile_name) = session.flags.makefile.clone() else {
+    // The first Makefile read, which is where GNU Make's own `-E` fragments
+    // land: they precede everything the invocation named, not each file.
+    let Some(makefile_name) = session.flags.makefiles.first().cloned() else {
         return Ok(());
     };
     // A Makefile that is absent or will not open is not this function's failure

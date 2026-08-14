@@ -375,3 +375,85 @@ fn builtin_compile_variables_drive_recipes() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// Feed a Makefile through standard input and report what the run said and did.
+fn piped_make(directory: &Path, arguments: &[&str], source: &str) -> (bool, String) {
+    let mut child = make_command(directory)
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(source.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    (output.status.success(), reported)
+}
+
+/// There is one standard input, and a read that may start over. GNU Make
+/// refuses an invocation naming it twice, however the two were spelled, and
+/// refuses before it reads a byte of it.
+#[test]
+fn make_refuses_standard_input_twice() {
+    let directory = test_directory("stdin-twice");
+    fs::write(directory.join("bye.mk"), "def: ; @printf bye > out\n").unwrap();
+
+    for spelling in [
+        vec!["-fbye.mk", "-f-", "-f-"],
+        vec!["-fbye.mk", "-f", "-", "-f", "-"],
+        vec!["-fbye.mk", "-f-", "--file=-"],
+        vec!["-fbye.mk", "--file", "-", "--makefile", "-"],
+        vec!["-fbye.mk", "--file=-", "--makefile=-"],
+    ] {
+        let (succeeded, reported) =
+            piped_make(&directory, &spelling, "all: ; @printf hello > out\n");
+        assert!(!succeeded, "{spelling:?} was accepted: {reported}");
+        assert!(
+            reported.contains("Makefile from standard input specified twice"),
+            "{spelling:?} refused for another reason: {reported}"
+        );
+        assert!(!directory.join("out").exists(), "{spelling:?} built anyway");
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// One `-f-` among several files is read in its turn, and the default goal
+/// still comes from the first file named rather than from standard input.
+#[test]
+fn make_orders_standard_input_among_files() {
+    let directory = test_directory("stdin-among-files");
+    fs::write(directory.join("bye.mk"), "def: ; @printf bye > out\n").unwrap();
+
+    let (succeeded, reported) = piped_make(
+        &directory,
+        &["-f", "bye.mk", "-f-"],
+        "all: ; @printf hello > out\n",
+    );
+    assert!(succeeded, "{reported}");
+    assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "bye");
+
+    let (succeeded, reported) = piped_make(
+        &directory,
+        &["-f-", "-f", "bye.mk"],
+        "all: ; @printf hello > out\n",
+    );
+    assert!(succeeded, "{reported}");
+    assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "hello");
+
+    // Named as a goal, standard input's rule is reached from either position.
+    let (succeeded, reported) = piped_make(
+        &directory,
+        &["-f", "bye.mk", "-f-", "all"],
+        "all: ; @printf hello > out\n",
+    );
+    assert!(succeeded, "{reported}");
+    assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "hello");
+    fs::remove_dir_all(directory).unwrap();
+}

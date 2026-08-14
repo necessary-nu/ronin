@@ -1,0 +1,6 @@
+oracle GNU Make 4.4.1
+outcome failure
+file present.mk kept 3
+| # A file named by -f that is not there is a target make cannot reach, so the
+| # run is refused rather than continued on the files that were readable.
+| all: ; @printf '%s\n' built > out

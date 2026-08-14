@@ -152,15 +152,11 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             "reading current directory for Make compilation: {error}"
         ))
     })?;
-    let makefile = session
-        .flags
-        .makefile
-        .as_ref()
-        .map(|makefile| makefile.as_encoded_bytes())
-        .unwrap_or_default();
     let mut key = directory.as_os_str().as_encoded_bytes().to_vec();
-    key.push(0);
-    key.extend_from_slice(makefile);
+    for makefile in &session.flags.makefiles {
+        key.push(0);
+        key.extend_from_slice(makefile.as_encoded_bytes());
+    }
     let environment = session
         .invocation_environment
         .clone()

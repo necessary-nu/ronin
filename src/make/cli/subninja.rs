@@ -1,7 +1,7 @@
 //! Turn one statically expanded `$(MAKE)` command into a child compilation.
 
 use super::{
-    Action, MAKELEVEL, compilation_key, default_makefile, parse, path_of,
+    Action, MAKELEVEL, compilation_key, named_makefiles, parse, path_of,
     prepend_command_line_evals, propagated_makeflags, record_invocation_variables, session_for,
 };
 use crate::make::{Compilation, CompilationContext, MakeError};
@@ -39,19 +39,16 @@ pub(in crate::make) fn compile(
     for selected in &invocation.directories {
         directory = compilation_directory(&directory, selected)?;
     }
-    let makefile = invocation
-        .makefile
-        .clone()
-        .or_else(|| default_makefile(&directory))
-        .ok_or_else(|| {
-            MakeError::Evaluate(format!(
-                "no makefile found for recursive compilation in '{}'",
-                directory.display()
-            ))
-        })?;
+    let makefiles = named_makefiles(&invocation, &directory);
+    if makefiles.is_empty() {
+        return Err(MakeError::Evaluate(format!(
+            "no makefile found for recursive compilation in '{}'",
+            directory.display()
+        )));
+    }
     let invoked_as =
         path_of(words[0].as_bytes()).map_err(|error| MakeError::Evaluate(error.to_string()))?;
-    let mut session = session_for(&invocation, &makefile, parent.jobs, &invoked_as);
+    let mut session = session_for(&invocation, &makefiles, parent.jobs, &invoked_as);
     session.invocation_environment = Some(parent.environment.clone());
     let level = parent.level.saturating_add(1);
     record_invocation_variables(&mut session, &invocation, level, 0);
@@ -62,11 +59,7 @@ pub(in crate::make) fn compile(
         .strip_prefix(&parent.root_directory)
         .map_or_else(|_| directory.clone(), Path::to_owned);
     let makeflags = propagated_makeflags(&invocation);
-    let mut cache_key = compilation_key(
-        &directory,
-        makefile.as_os_str().as_encoded_bytes(),
-        &makeflags,
-    );
+    let mut cache_key = compilation_key(&directory, &makefiles, &makeflags);
     extend_compilation_key(
         &mut cache_key,
         command,

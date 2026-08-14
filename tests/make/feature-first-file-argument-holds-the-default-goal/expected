@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file one.mk kept 3
+| # With no goal named, the default comes from the first file that declares one,
+| # even though later files declare targets of their own.
+| ONE: ; @printf '%s\n' from-one > out
+file out touched 1
+| from-one
+file three.mk kept 1
+| THREE: ; @printf '%s\n' from-three > out
+file two.mk kept 1
+| TWO: ; @printf '%s\n' from-two > out

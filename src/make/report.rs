@@ -28,6 +28,19 @@ pub(super) fn no_makefile() -> RunResult {
     }
 }
 
+/// What an invocation that names standard input twice reports.
+///
+/// There is one standard input and a read that may happen more than once, so
+/// the second `-f-` is a request that cannot be honoured however the two were
+/// spelled. GNU Make refuses it before reading anything, and so does this.
+pub(super) fn duplicate_standard_input() -> RunResult {
+    RunResult {
+        stdout: Vec::new(),
+        stderr: ordinary_diagnostic("Makefile from standard input specified twice"),
+        exit_code: ABANDONED,
+    }
+}
+
 /// Render a compiler rejection through Ronin's ordinary diagnostic shape.
 ///
 /// Kati identifies Makefile locations correctly, but its standalone reporter

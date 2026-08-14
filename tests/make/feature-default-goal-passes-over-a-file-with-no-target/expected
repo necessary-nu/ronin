@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file out touched 1
+| hello-first
+file rules.mk kept 2
+| first: ; @printf '%s\n' '$(GREETING)-first' > out
+| second: ; @printf '%s\n' second > out
+file settings.mk kept 3
+| # The first file declares no target, so the default goal falls to the first
+| # target of the next file that does.
+| GREETING := hello

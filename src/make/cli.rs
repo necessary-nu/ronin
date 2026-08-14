@@ -24,8 +24,8 @@ use crate::cli::{PRODUCT_NAME, RunResult, Runner};
 use crate::error::CliError;
 use crate::frontend::{Build, BuildGraph, Persistence};
 use crate::make::report::{
-    ABANDONED, abandoned, answered, discard_intermediates, finished, no_makefile,
-    ordinary_diagnostic,
+    ABANDONED, abandoned, answered, discard_intermediates, duplicate_standard_input, finished,
+    no_makefile, ordinary_diagnostic,
 };
 use crate::make::{EvaluationBoundary, Shuffle};
 use crate::util::{BString, ByteSlice, terminated};
@@ -39,16 +39,15 @@ use std::path::{Path, PathBuf};
 
 mod interface;
 mod remake;
+mod selection;
 mod subninja;
 use interface::{
     compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
     evaluated_invocation, makeflags_arguments, prepend_command_line_evals,
 };
 use remake::{CompilerInputBuild, Settlement, build_compiler_inputs};
+use selection::{DEFAULT_MAKEFILES, STANDARD_INPUT, is_standard_input, named_makefiles};
 pub(super) use subninja::compile as compile_subninja;
-
-/// The makefiles GNU Make reads when no `-f` names one, in its own order.
-const DEFAULT_MAKEFILES: [&str; 3] = ["GNUmakefile", "makefile", "Makefile"];
 
 /// How deep in a recursive Make tree this invocation is.
 ///
@@ -316,7 +315,11 @@ struct Invocation {
     directories: Vec<PathBuf>,
     /// Where `-I` says to look for an `include`, in the order given.
     include_dirs: Vec<PathBuf>,
-    makefile: Option<PathBuf>,
+    /// The Makefiles `-f` named, in the order it named them. GNU Make reads
+    /// every one of them as though they had been concatenated, so this is a
+    /// list and the order is the semantics: the default goal comes from the
+    /// first file that declares an eligible target, not the last.
+    makefiles: Vec<PathBuf>,
     goals: Vec<BString>,
     /// `VAR=value` in command-line order, which is the order Make applies them.
     variables: Vec<Bytes>,
@@ -356,7 +359,7 @@ impl Invocation {
         Self {
             directories: Vec::new(),
             include_dirs: Vec::new(),
-            makefile: None,
+            makefiles: Vec::new(),
             goals: Vec::new(),
             variables: Vec::new(),
             evals: Vec::new(),
@@ -897,7 +900,7 @@ fn attached_long(
         .strip_prefix(b"--file=")
         .or_else(|| option.strip_prefix(b"--makefile="))
     {
-        invocation.makefile = Some(path_of(named)?);
+        invocation.makefiles.push(path_of(named)?);
     } else if let Some(named) = option.strip_prefix(b"--directory=") {
         invocation.directories.push(path_of(named)?);
     } else if let Some(named) = option.strip_prefix(b"--include-dir=") {
@@ -1021,7 +1024,7 @@ fn parse_arguments(
             }
             b"--file" | b"--makefile" => {
                 let named = value(arguments, &mut index, b"", "--file")?;
-                invocation.makefile = Some(path_of(named.as_bytes())?);
+                invocation.makefiles.push(path_of(named.as_bytes())?);
             }
             b"--directory" => {
                 let named = value(arguments, &mut index, b"", "--directory")?;
@@ -1120,7 +1123,7 @@ fn read_cluster(
                 if option == b'I' {
                     invocation.include_dir(named.as_bytes())?;
                 } else if option == b'f' {
-                    invocation.makefile = Some(path_of(named.as_bytes())?);
+                    invocation.makefiles.push(path_of(named.as_bytes())?);
                 } else {
                     invocation.directories.push(path_of(named.as_bytes())?);
                 }
@@ -1164,19 +1167,11 @@ fn classify_word(invocation: &mut Invocation, word: &BString) {
     }
 }
 
-/// The first of GNU Make's default makefiles that exists in `directory`.
-fn default_makefile(directory: &Path) -> Option<PathBuf> {
-    DEFAULT_MAKEFILES
-        .iter()
-        .map(PathBuf::from)
-        .find(|candidate| directory.join(candidate).is_file())
-}
-
 /// The evaluation session one Make invocation describes.
 // [spec:ronin:req:make.recursive-invocation+1]
 fn session_for(
     invocation: &Invocation,
-    makefile: &Path,
+    makefiles: &[PathBuf],
     jobs: usize,
     invoked_as: &Path,
 ) -> Session {
@@ -1185,7 +1180,10 @@ fn session_for(
     let makeflags = Bytes::from(compiler_flags.base.into_bytes());
     let make_overrides = Bytes::from(compiler_flags.overrides.into_bytes());
     session.flags = Flags {
-        makefile: Some(makefile.as_os_str().to_owned()),
+        makefiles: makefiles
+            .iter()
+            .map(|makefile| makefile.as_os_str().to_owned())
+            .collect(),
         num_jobs: jobs,
         num_cpus: jobs,
         is_silent_mode: invocation.given(Switch::Silent),
@@ -1370,10 +1368,12 @@ fn make_named_invocation(arguments: &[BString], executable: &Path) -> PathBuf {
 
 struct RootCompilation<'a> {
     invocation: &'a Invocation,
-    makefile: &'a Path,
+    /// Every Makefile this invocation reads, in order.
+    makefiles: &'a [PathBuf],
     invoked_as: &'a Path,
     directory: &'a Path,
     options: &'a BuildOptions,
+    /// What standard input held, when one of `makefiles` is `-`.
     makefile_contents: Option<&'a [u8]>,
     level: usize,
 }
@@ -1415,12 +1415,12 @@ fn prepare_graph(
     for _ in 0..100 {
         let mut session = session_for(
             root.invocation,
-            root.makefile,
+            root.makefiles,
             job_count(root.options),
             root.invoked_as,
         );
         if let Some(contents) = root.makefile_contents {
-            session.supply_makefile(root.makefile.as_os_str().to_owned(), contents.to_vec());
+            session.supply_makefile(STANDARD_INPUT.into(), contents.to_vec());
         }
         record_invocation_variables(&mut session, root.invocation, root.level, restarts);
         let compilation = compilation_context(
@@ -1486,7 +1486,12 @@ fn prepare_graph(
         }
     }
 
-    let path = BString::from(root.makefile.as_os_str().as_encoded_bytes().to_vec());
+    let path = BString::from(
+        root.makefiles
+            .first()
+            .map(|makefile| makefile.as_os_str().as_encoded_bytes())
+            .unwrap_or_default(),
+    );
     Ok(PreparedGraph::Finished(abandoned(
         std::mem::take(reported),
         CliError::ManifestRetryLimit {
@@ -1520,14 +1525,22 @@ pub(crate) fn run(
     let level: usize = level.trim().parse().unwrap_or(0);
     let options = build_options(&invocation, runner, working_directory)?;
 
-    let Some(makefile) = invocation
-        .makefile
-        .clone()
-        .or_else(|| default_makefile(&directory))
-    else {
+    let makefiles = named_makefiles(&invocation, &directory);
+    if makefiles.is_empty() {
         return Ok(no_makefile());
-    };
-    let makefile_contents = if makefile == Path::new("-") {
+    }
+    // Standard input is drained once and replayed into every read, because a
+    // Makefile remade between reads sends the whole read around again and the
+    // pipe is gone by then. Two of them cannot be told apart afterwards, so
+    // the refusal comes before the draining rather than after it.
+    let named_stdin = makefiles
+        .iter()
+        .filter(|named| is_standard_input(named))
+        .count();
+    if named_stdin > 1 {
+        return Ok(duplicate_standard_input());
+    }
+    let makefile_contents = if named_stdin == 1 {
         let mut contents = Vec::new();
         std::io::stdin()
             .read_to_end(&mut contents)
@@ -1543,7 +1556,7 @@ pub(crate) fn run(
     // provenance or restart behavior crosses into the executor.
     let root = RootCompilation {
         invocation: &invocation,
-        makefile: &makefile,
+        makefiles: &makefiles,
         invoked_as: &invoked_as,
         directory: &directory,
         options: &options,
@@ -1681,10 +1694,12 @@ fn propagated_makeflags(invocation: &Invocation) -> String {
     compiler_flag_variables(invocation).makeflags
 }
 
-fn compilation_key(directory: &Path, makefile: &[u8], makeflags: &str) -> Vec<u8> {
+fn compilation_key(directory: &Path, makefiles: &[PathBuf], makeflags: &str) -> Vec<u8> {
     let mut key = directory.as_os_str().as_encoded_bytes().to_vec();
-    key.push(0);
-    key.extend_from_slice(makefile);
+    for makefile in makefiles {
+        key.push(0);
+        key.extend_from_slice(makefile.as_os_str().as_encoded_bytes());
+    }
     key.push(0);
     key.extend_from_slice(makeflags.as_bytes());
     key
@@ -1712,13 +1727,8 @@ fn evaluated(
             exit_code: ABANDONED,
         });
     }
-    let makefile = session
-        .flags
-        .makefile
-        .as_ref()
-        .map(|makefile| makefile.as_encoded_bytes())
-        .unwrap_or_default();
-    let cache_key = compilation_key(&context.directory, makefile, &context.makeflags);
+    let makefiles: Vec<PathBuf> = session.flags.makefiles.iter().map(PathBuf::from).collect();
+    let cache_key = compilation_key(&context.directory, &makefiles, &context.makeflags);
     let compilation = crate::make::Compilation {
         session,
         shuffle,
@@ -1777,7 +1787,7 @@ mod tests {
         assert_eq!(invocation.jobs, JobLimit::fixed(8));
         assert!(invocation.given(Switch::KeepGoing));
         assert!(invocation.given(Switch::DryRun));
-        assert_eq!(invocation.makefile, Some(PathBuf::from("other.mk")));
+        assert_eq!(invocation.makefiles, vec![PathBuf::from("other.mk")]);
         assert_eq!(invocation.goals, vec![BString::from("all")]);
         assert_eq!(
             invocation.variables,

@@ -165,7 +165,8 @@ fn eval_fragments_reach_compilation() {
     let makefile = directory.path().join("Makefile");
     std::fs::write(&makefile, "").unwrap();
     let invoked_as = Path::new("make");
-    let mut session = super::session_for(&invocation, &makefile, 1, invoked_as);
+    let mut session =
+        super::session_for(&invocation, std::slice::from_ref(&makefile), 1, invoked_as);
     super::record_invocation_variables(&mut session, &invocation, 0, 0);
     let context = super::compilation_context(
         &invocation,
@@ -210,7 +211,12 @@ fn generated_include_is_provisional_graph_root() {
     .unwrap();
 
     let invocation = parsed(&["make"]);
-    let mut session = super::session_for(&invocation, &makefile, 1, Path::new("make"));
+    let mut session = super::session_for(
+        &invocation,
+        std::slice::from_ref(&makefile),
+        1,
+        Path::new("make"),
+    );
     super::record_invocation_variables(&mut session, &invocation, 0, 0);
     let context = super::compilation_context(
         &invocation,
