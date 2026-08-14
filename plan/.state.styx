@@ -422,7 +422,7 @@ assertions (
     {id make-grouped-pattern-targets, kind @complete, author "brendan@necessary.nu", at 2026-08-14T00:41:45.341629084Z}
     {id make-pattern-peer-is-not-intermediate, kind @complete, author "brendan@necessary.nu", at 2026-08-14T00:41:36.675099955Z}
     {id make-pattern-peer-restart-convergence, kind @complete, author "brendan@necessary.nu", at 2026-08-14T00:41:40.942980857Z}
-    {id make-static-pattern-nonmatch-semantics, kind @doing, author "brendan@necessary.nu", at 2026-08-14T01:04:06.821386619Z}
+    {id make-static-pattern-nonmatch-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-14T01:06:27.893713693Z}
 )
 
 impl_evidence (

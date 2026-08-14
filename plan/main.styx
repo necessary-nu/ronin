@@ -8034,6 +8034,13 @@ children (
                                 kind @note
                                 text "Ronin's divergence was narrower than the marker read, and worse where it landed. The parse-time warning was already right; the failure was downstream. `apply_output_pattern` substituted the target into the prerequisite pattern through `Pattern::append_subst`, whose non-match branch returns the input unchanged — so `mismatch: %.o: %.c` gave `mismatch` its own name as a prerequisite and the build died on `dependency cycle: mismatch -> mismatch`. Under .SECONDEXPANSION the same target instead got a prerequisite built from an empty stem. Both are now decided by one predicate, `prerequisites_reach`, applied at `apply_output_pattern` and at each of the three deferred-prerequisite sites plus `declared_by`, which is the same question GNU's `else` asks. `$*` moved from `Pattern::stem` to substitution into a bare `%`, which is how GNU derives the stem and is the only spelling that answers both cells: identical for a target that matched, the whole name for one that did not.\n\nProbing the empty-stem cell found a live panic underneath. `Pattern::match_impl` tested prefix and suffix without checking they fit side by side, so `%.o` \"matched\" `.o` and `Pattern::stem` then computed `str.len() - pat.len()` and overflowed, and `a%a` \"matched\" `a` and produced a reversed slice. Neither needs a static pattern to reach: `$(patsubst a%a,X%X,a)` panicked outright. Fixed with GNU's own length test in `pattern_matches` and by taking the subtraction last, and pinned by `pattern-halves-cannot-overlap`, which records the plain patsubst answers."
                             }
+
+                            {
+                                at 2026-08-14T01:06:27.893713693Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
