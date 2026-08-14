@@ -1,0 +1,7 @@
+mkdir -p alpha beta
+printf 'first\n' > one.c
+printf 'second\n' > two.c
+printf 'old one\n' > alpha/one.o
+printf 'old two\n' > beta/two.o
+touch -d '2020-01-01 00:00' alpha/one.o beta/two.o
+touch -d '2021-01-01 00:00' one.c two.c

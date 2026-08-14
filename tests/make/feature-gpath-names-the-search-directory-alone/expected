@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # The directory GPATH is asked about is the one the search joined to the name,
+| # not the whole prefix that join produced: a target carrying a directory of its
+| # own is still answered by the search directory.
+| VPATH = build
+| GPATH = build
+| 
+| all: sub/out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| sub/out.o: sub/out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+file build/sub/out.o touched 1
+| build/sub/out.o from sub/out.c
+file seen touched 1
+| all sees build/sub/out.o
+file sub/out.c kept 1
+| source

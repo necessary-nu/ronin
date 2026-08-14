@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # Each name is answered by the directory it was found in: kept where GPATH
+| # names that directory, remade here where it does not.
+| VPATH = alpha beta
+| GPATH = beta
+| 
+| all: one.o two.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| one.o: one.c ; @printf '%s from %s\n' '$@' '$<' > $@
+| two.o: two.c ; @printf '%s from %s\n' '$@' '$<' > $@
+file alpha/one.o kept 1
+| old one
+file beta/two.o touched 1
+| beta/two.o from two.c
+file one.c kept 1
+| first
+file one.o touched 1
+| one.o from one.c
+file seen touched 1
+| all sees one.o beta/two.o
+file two.c kept 1
+| second

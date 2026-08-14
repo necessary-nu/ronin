@@ -425,6 +425,7 @@ assertions (
     {id make-static-pattern-nonmatch-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-14T01:06:27.893713693Z}
     {id make-pattern-rule-cancellation, kind @complete, author "brendan@necessary.nu", at 2026-08-14T01:42:21.998182785Z}
     {id make-continuation-expansion, kind @complete, author "brendan@necessary.nu", at 2026-08-14T02:28:31.087189546Z}
+    {id make-vpath-gpath-output-location, kind @doing, author "brendan@necessary.nu", at 2026-08-14T02:32:12.036909572Z}
 )
 
 impl_evidence (

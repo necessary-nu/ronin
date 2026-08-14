@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The directive form of the search reaches GPATH the same way the variable does.
+| vpath %.o build
+| GPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o: out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+file build/out.o touched 1
+| build/out.o from out.c
+file out.c kept 1
+| source
+file seen touched 1
+| all sees build/out.o

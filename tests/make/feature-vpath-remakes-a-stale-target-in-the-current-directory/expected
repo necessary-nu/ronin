@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # Without GPATH the directory search only says where an older copy is lying:
+| # a target that has to be remade is remade here, under the name as written.
+| VPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o: out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file out.o touched 1
+| out.o from out.c
+file seen touched 1
+| all sees out.o

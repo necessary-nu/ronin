@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # The other half of the same rule: naming the directory the found path ends up
+| # in, rather than the one the search looked in, answers nothing.
+| VPATH = build
+| GPATH = build/sub
+| 
+| all: sub/out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| sub/out.o: sub/out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+file build/sub/out.o kept 1
+| old
+file seen touched 1
+| all sees sub/out.o
+file sub/out.c kept 1
+| source
+file sub/out.o touched 1
+| sub/out.o from sub/out.c

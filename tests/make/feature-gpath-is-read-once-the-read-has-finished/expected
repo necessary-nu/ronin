@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # GPATH is read after the whole Makefile has been, so it reaches a variable the
+| # lines below it define.
+| VPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o: out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+| 
+| GPATH = $(kept)
+| kept = build
+file build/out.o touched 1
+| build/out.o from out.c
+file out.c kept 1
+| source
+file seen touched 1
+| all sees build/out.o

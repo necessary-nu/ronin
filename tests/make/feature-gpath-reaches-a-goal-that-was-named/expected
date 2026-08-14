@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # A goal is a file like any other, so a goal found in a GPATH directory is
+| # remade there rather than here.
+| VPATH = build
+| GPATH = build
+| 
+| out.o: out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+file build/out.o touched 1
+| build/out.o from out.c
+file out.c kept 1
+| source

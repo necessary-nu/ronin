@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # GPATH answers a question the directory search asked. Nothing found means
+| # nothing to answer, so the target is made here as it always was.
+| GPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o: out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file out.o touched 1
+| out.o from out.c
+file seen touched 1
+| all sees out.o
