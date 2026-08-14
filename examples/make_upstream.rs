@@ -63,7 +63,27 @@ struct Family {
     reason: &'static str,
 }
 
-const FAMILIES: [Family; 19] = [
+const FAMILIES: [Family; 24] = [
+    Family {
+        name: "fatal-decoration",
+        class: Class::Narration,
+        reason: "Make wraps a fatal diagnostic in `*** ` and `  Stop.`; Ronin states the same thing plainly, so the decoration is taken off before the two are compared.",
+    },
+    Family {
+        name: "not-remade-line",
+        class: Class::Narration,
+        reason: "Make's keep-going summary, naming a goal it gave up on after a prerequisite failed; Ronin's counterpart is its own stopped line.",
+    },
+    Family {
+        name: "debug-trace",
+        class: Class::Narration,
+        reason: "GNU Make's --debug trace, which Ronin does not produce. Recognised only when the run asked for debug output, because the suite writes these expectations as bare regexes.",
+    },
+    Family {
+        name: "refusal-not-made",
+        class: Class::Compiler,
+        reason: "compiler candidate: GNU Make refused the run outright and Ronin went on to build. The refusal is the whole of Make's output, so what Ronin built is work Make never authorised.",
+    },
     Family {
         name: "recipe-error-line",
         class: Class::Narration,
@@ -77,7 +97,7 @@ const FAMILIES: [Family; 19] = [
     Family {
         name: "recipe-echo",
         class: Class::Narration,
-        reason: "Make echoes the recipe line it is about to run; Ronin prints a progress line instead. Recognised by reading the makefile the case ran, not by guessing.",
+        reason: "Make echoes the recipe line it is about to run; Ronin names the same command in its progress counter. Recognised from the counter's own payload, or from the makefile the case ran — not by guessing.",
     },
     Family {
         name: "ninja-failure-block",
@@ -138,6 +158,11 @@ const FAMILIES: [Family; 19] = [
         name: "no-makefile-found",
         class: Class::Compiler,
         reason: "compiler candidate: Ronin found no Makefile to read where GNU Make found one.",
+    },
+    Family {
+        name: "command-not-found-text",
+        class: Class::Narration,
+        reason: "both tools failed to run the same missing command and said so differently: Make execs it itself and reports the errno, Ronin goes through a shell and reports what the shell said.",
     },
     Family {
         name: "io-error-text",
@@ -229,13 +254,56 @@ enum Side {
     Theirs,
 }
 
-/// What a line contributes: the family it belongs to, and what is left of it.
+/// What one line of a diff contributes.
 ///
 /// Narration is not simply deleted. A diagnostic keeps its body and loses only
 /// the name in front, so two tools saying the same thing about the same problem
 /// cancel out while two tools saying *different* things still show up. Deleting
 /// the whole line would hide a wrong message behind a right prefix.
-fn normalise(line: &str, side: Side, source: &Source) -> (Option<&'static str>, Option<String>) {
+#[derive(Default)]
+struct Contribution {
+    /// The family the line belongs to, where it has one.
+    family: Option<&'static str>,
+    /// What is left of the line once narration is accounted for.
+    residue: Option<String>,
+    /// Whether the tool marked the line as its own rather than a recipe's
+    /// output: it wore a product name, or it opens with a source location.
+    /// This is what tells a refusal apart from a build that ran.
+    diagnostic: bool,
+    /// The command a progress line named. Ronin prints `[1/2] cc -c foo.c`
+    /// where Make echoes `cc -c foo.c`, so the counter's payload is the
+    /// counterpart of the recipe line Make echoed — evidence from the same run,
+    /// which is better than reading a makefile the suite may since have
+    /// rewritten.
+    payload: Option<String>,
+}
+
+impl Contribution {
+    /// A line wholly explained by one narration family.
+    fn narration(family: &'static str) -> Self {
+        Self {
+            family: Some(family),
+            ..Self::default()
+        }
+    }
+}
+
+/// Whether a line opens with `path:line: `, the way both tools mark a
+/// diagnostic they can attribute to a place in a makefile.
+fn names_a_location(line: &str) -> bool {
+    let Some((head, rest)) = line.split_once(':') else {
+        return false;
+    };
+    if head.is_empty() || head.contains(' ') {
+        return false;
+    }
+    let Some((number, _)) = rest.split_once(": ") else {
+        return false;
+    };
+    !number.is_empty() && number.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn normalise(line: &str, side: Side, source: &Source) -> Contribution {
     let trimmed = line.trim_start();
     // The name comes off first, because every shape below can wear one and a
     // shape is not recognisable through it. The suite writes our name into its
@@ -251,37 +319,67 @@ fn normalise(line: &str, side: Side, source: &Source) -> (Option<&'static str>, 
         }
     }
     if side == Side::Ours {
-        if is_progress_line(body) {
-            return (Some("ninja-progress"), None);
+        if let Some(payload) = progress_payload(body) {
+            return Contribution {
+                family: Some("ninja-progress"),
+                payload: Some(payload.to_owned()),
+                ..Contribution::default()
+            };
         }
         // Ninja's failure block is three lines: the banner, the command it ran,
         // and Ronin's own stopped line. The middle one is the command echoed
         // back, not anything the recipe printed.
         if body.starts_with("FAILED:")
             || body.contains("build stopped:")
-            || body.starts_with("/bin/sh -c \"")
+            || is_shell_invocation(body)
         {
-            return (Some("ninja-failure-block"), None);
+            return Contribution::narration("ninja-failure-block");
         }
         if body.contains("no work to do") {
-            return (Some("no-work-line"), None);
+            return Contribution::narration("no-work-line");
         }
     } else {
+        // Make's fatal diagnostics wear a decoration Ronin's do not: `*** ` in
+        // front of the message and `  Stop.` after it. Taken off rather than
+        // used to delete the line, for the same reason the product name is:
+        // what the two tools *said* is the thing worth comparing, and once the
+        // decoration is gone `missing separator.` is the same sentence on both
+        // sides.
+        if let Some(undecorated) = undecorated_fatal(body) {
+            return Contribution {
+                family: Some("fatal-decoration"),
+                diagnostic: named.is_some() || names_a_location(&undecorated),
+                residue: Some(undecorated),
+                payload: None,
+            };
+        }
         // Make's counterpart to the failure block, naming the makefile line and
         // the target and giving the recipe's own status: `*** [Makefile:3: all]
         // Error 1`, or the same with `(ignored)` when `-` or `-i` withdrew it.
         if recipe_error_line(body) {
-            return (Some("recipe-error-line"), None);
+            return Contribution::narration("recipe-error-line");
         }
         if body.contains("Nothing to be done") {
-            return (Some("no-work-line"), None);
+            return Contribution::narration("no-work-line");
+        }
+        // What Make says under -k about a goal it abandoned. Ronin's stopped
+        // line is its counterpart and is already narration.
+        if body.starts_with("Target '") && body.ends_with("not remade because of errors.") {
+            return Contribution::narration("not-remade-line");
+        }
+        // GNU Make's debug trace. The suite writes these expectations as bare
+        // regexes, which is too weak a shape to read on its own — `/Updating
+        // makefiles/` is also something a recipe could print — so it counts
+        // only when the run asked for debug output in the first place.
+        if source.debug && body.len() > 2 && body.starts_with('/') && body.ends_with('/') {
+            return Contribution::narration("debug-trace");
         }
         // Make's other way of saying it did nothing, for a goal that already
         // exists or whose recipe expanded to no command at all. Ronin has no
         // counterpart: it either says nothing or, having made an edge for the
         // goal, counts it and prints `[1/1] build all`.
         if up_to_date_line(body) {
-            return (Some("up-to-date-line"), None);
+            return Contribution::narration("up-to-date-line");
         }
         // The recipe, echoed. Make prints each line before running it and Ronin
         // prints a progress line instead, so this is the counterpart of
@@ -290,13 +388,64 @@ fn normalise(line: &str, side: Side, source: &Source) -> (Option<&'static str>, 
         // The makefile the test wrote does say, and it is on disk beside the
         // diff, so it is read rather than guessed at.
         if source.recipe.iter().any(|line| echoes(line, body)) {
-            return (Some("recipe-echo"), None);
+            return Contribution::narration("recipe-echo");
         }
     }
     if body.contains("Entering directory") || body.contains("Leaving directory") {
-        return (Some("directory-announce"), None);
+        return Contribution::narration("directory-announce");
     }
-    (named, Some(body.to_owned()))
+    Contribution {
+        family: named,
+        diagnostic: named.is_some() || names_a_location(body),
+        residue: Some(body.to_owned()),
+        payload: None,
+    }
+}
+
+/// Make's fatal wrapper taken off a diagnostic, if it wore one.
+///
+/// `*** ` in front of the message and `  Stop.` behind it, with the location
+/// Make already put ahead of the `***` left where it was.
+fn undecorated_fatal(body: &str) -> Option<String> {
+    let stopped = body.strip_suffix("  Stop.")?;
+    let opening = stopped.find("*** ")?;
+    let (location, message) = stopped.split_at(opening);
+    Some(format!("{location}{}", &message["*** ".len()..]))
+}
+
+/// The command a Ninja progress line named, if the line is one.
+fn progress_payload(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix('[')?;
+    let (counter, payload) = rest.split_once("] ")?;
+    let (finished, total) = counter.split_once('/')?;
+    (!finished.is_empty()
+        && !total.is_empty()
+        && finished.bytes().all(|byte| byte.is_ascii_digit())
+        && total.bytes().all(|byte| byte.is_ascii_digit()))
+    .then_some(payload)
+}
+
+/// Whether a line is the shell command Ninja's failure block echoes back.
+///
+/// `/bin/sh -c "…"`, and the same behind the `env` that carries `MAKEFLAGS`,
+/// `MAKELEVEL` and `MFLAGS` into a recipe's environment. The `env` prefix
+/// arrived with those variables and took the whole block out of this family
+/// until it was read here too.
+fn is_shell_invocation(line: &str) -> bool {
+    let mut rest = line;
+    if let Some(after) = line.strip_prefix("env ") {
+        rest = after;
+        while let Some(assignment) = rest.strip_prefix('\'') {
+            let Some((binding, tail)) = assignment.split_once('\'') else {
+                return false;
+            };
+            if !binding.contains('=') {
+                return false;
+            }
+            rest = tail.trim_start_matches(' ');
+        }
+    }
+    rest.starts_with("/bin/sh -c \"")
 }
 
 /// Whether `printed` is what `recipe` looks like once Make expanded it.
@@ -367,25 +516,6 @@ fn literal_fragments(recipe: &str) -> Vec<String> {
         fragments.push(current);
     }
     fragments
-}
-
-/// `[3/7] ` — Ninja's counter, which a Makefile never asked for.
-fn is_progress_line(line: &str) -> bool {
-    let Some(rest) = line.strip_prefix('[') else {
-        return false;
-    };
-    let Some((counter, _)) = rest.split_once("] ") else {
-        return false;
-    };
-    match counter.split_once('/') {
-        Some((finished, total)) => {
-            !finished.is_empty()
-                && !total.is_empty()
-                && finished.bytes().all(|b| b.is_ascii_digit())
-                && total.bytes().all(|b| b.is_ascii_digit())
-        }
-        None => false,
-    }
 }
 
 /// `*** [Makefile:3: all] Error 1`, with or without a leading `***` and with or
@@ -493,6 +623,10 @@ struct Source {
     /// option-shaped words be read as that variable's value rather than as
     /// something a recipe printed.
     reads_makeflags: bool,
+    /// Whether the run asked for GNU Make's debug trace, from the command line
+    /// or from a `MAKEFLAGS` the makefile sets. Without it a bare regex in the
+    /// expected output is not evidence of anything.
+    debug: bool,
 }
 
 impl Source {
@@ -501,6 +635,9 @@ impl Source {
         let Ok(command) = fs::read_to_string(&run) else {
             return Self::default();
         };
+        let invoked_with_debug = command
+            .split_ascii_whitespace()
+            .any(|word| word == "-d" || word == "--debug" || word.starts_with("--debug="));
         let mut words = command.split_ascii_whitespace();
         let mut makefile = None;
         while let Some(word) = words.next() {
@@ -510,12 +647,19 @@ impl Source {
             }
         }
         let Some(makefile) = makefile else {
-            return Self::default();
+            return Self {
+                debug: invoked_with_debug,
+                ..Self::default()
+            };
         };
         let Ok(text) = fs::read_to_string(tests.join(makefile)) else {
-            return Self::default();
+            return Self {
+                debug: invoked_with_debug,
+                ..Self::default()
+            };
         };
         Self {
+            debug: invoked_with_debug || text.contains("--debug"),
             recipe: text
                 .lines()
                 .filter_map(|line| line.strip_prefix('\t'))
@@ -566,33 +710,99 @@ fn quoted(line: &str) -> Option<&str> {
     rest.split_once('\'').map(|(name, _)| name)
 }
 
-fn classify(divergence: &Divergence, source: &Source) -> Verdict {
-    let mut families = Vec::new();
-    let mut note = |family: &'static str| {
-        if !families.contains(&family) {
-            families.push(family);
-        }
-    };
+/// What Ronin's half of a diff came to.
+struct OurSide {
+    families: Vec<&'static str>,
+    residue: Leftovers,
+    /// The commands its progress counters named, which are what Make says by
+    /// echoing a recipe line.
+    commands: Vec<String>,
+    /// Whether it refused an option, and so never ran the build at all.
+    refused_an_option: bool,
+}
 
-    let mut residual_actual = Vec::new();
-    let mut refused = false;
-    for line in &divergence.actual {
+/// Read Ronin's lines into narration, leftovers, and the commands it ran.
+fn read_our_side(lines: &[String], source: &Source) -> OurSide {
+    let mut side = OurSide {
+        families: Vec::new(),
+        residue: Leftovers::default(),
+        commands: Vec::new(),
+        refused_an_option: false,
+    };
+    for line in lines {
         if line.contains("invalid option")
             || line.contains("unrecognized option")
             || line.starts_with("usage: ronin")
         {
-            refused = true;
+            side.refused_an_option = true;
             continue;
         }
-        let (family, kept) = normalise(line, Side::Ours, source);
-        if let Some(family) = family {
-            note(family);
+        let contribution = normalise(line, Side::Ours, source);
+        if let Some(family) = contribution.family {
+            if !side.families.contains(&family) {
+                side.families.push(family);
+            }
         }
-        if let Some(kept) = kept {
-            residual_actual.push(kept);
+        if let Some(payload) = contribution.payload {
+            side.commands.push(payload);
+        }
+        if let Some(kept) = contribution.residue {
+            side.residue.push(kept, contribution.diagnostic);
         }
     }
-    if refused {
+    side
+}
+
+/// What GNU Make's half came to, read against what Ronin already said.
+struct TheirSide {
+    families: Vec<&'static str>,
+    residue: Leftovers,
+    /// Whether any of its diagnostics wore Make's fatal wrapper, which is how
+    /// a refusal is told from a complaint it carried on past.
+    refused_fatally: bool,
+}
+
+fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSide {
+    let mut side = TheirSide {
+        families: Vec::new(),
+        residue: Leftovers::default(),
+        refused_fatally: false,
+    };
+    let mut note = |family: &'static str, families: &mut Vec<&'static str>| {
+        if !families.contains(&family) {
+            families.push(family);
+        }
+    };
+    for line in lines {
+        let contribution = normalise(line, Side::Theirs, source);
+        if let Some(family) = contribution.family {
+            side.refused_fatally |= family == "fatal-decoration";
+            note(family, &mut side.families);
+        }
+        let Some(kept) = contribution.residue else {
+            continue;
+        };
+        // Make echoed a recipe line and Ronin named the same command in its
+        // progress counter. The two are each tool's way of saying it is about
+        // to run that command, so they cancel — but only for a line Ronin did
+        // not also print as output, which already cancels against itself.
+        if !ours.residue.lines.contains(&kept)
+            && ours
+                .commands
+                .iter()
+                .any(|command| *command == kept || command.contains(&kept))
+        {
+            note("recipe-echo", &mut side.families);
+            continue;
+        }
+        side.residue.push(kept, contribution.diagnostic);
+    }
+    side
+}
+
+fn classify(divergence: &Divergence, source: &Source) -> Verdict {
+    let ours = read_our_side(&divergence.actual, source);
+    if ours.refused_an_option {
         // Exclusive, and deliberately so. Once Ronin has refused the option the
         // test passed, it did not run the build, so nothing else in the diff is
         // evidence about anything: the whole of the output is missing for one
@@ -606,23 +816,45 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
             actual: Vec::new(),
         };
     }
+    let theirs = read_their_side(&divergence.expected, source, &ours);
 
-    let mut residual_expected = Vec::new();
-    for line in &divergence.expected {
-        let (family, kept) = normalise(line, Side::Theirs, source);
-        if let Some(family) = family {
-            note(family);
+    let mut families = ours.families;
+    let mut note = |family: &'static str| {
+        if !families.contains(&family) {
+            families.push(family);
         }
-        if let Some(kept) = kept {
-            residual_expected.push(kept);
-        }
+    };
+    for family in theirs.families {
+        note(family);
     }
+    let mut residual_actual = ours.residue;
+    let mut residual_expected = theirs.residue;
+
+    // Both tools refused, and every line either of them left is a diagnostic
+    // rather than a build. A refusal is a refusal whatever it is worded like:
+    // each tool decided to build nothing, which is the same decision, and
+    // `make.narration` puts the sentence each chose outside the contract.
+    let both_refused = theirs.refused_fatally
+        && residual_expected.all_diagnostics()
+        && residual_actual.all_diagnostics();
+    // Make refused and Ronin built anyway. The opposite case, and not narration
+    // at all: the refusal was the whole of Make's output, so anything Ronin ran
+    // is work Make never authorised.
+    let built_through_refusal = theirs.refused_fatally
+        && !residual_expected.lines.is_empty()
+        && !ours.commands.is_empty()
+        && !residual_actual.diagnostics.iter().any(|marked| *marked);
 
     // Name what the residue is, where it has a recognisable shape. Each of
     // these was a slice of `evaluation` — the family that means nothing more
     // than "not recognised" — and naming one turns a share of that number into
     // a work item somebody can pick up.
-    let residue = || residual_actual.iter().chain(residual_expected.iter());
+    let residue = || {
+        residual_actual
+            .lines
+            .iter()
+            .chain(residual_expected.lines.iter())
+    };
     let mut named_residue = false;
     for (marker, family) in [
         ("doesn't support", "unsupported-feature"),
@@ -633,10 +865,33 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
         ("missing separator", "parse-failure"),
         ("(os error ", "io-error-text"),
     ] {
-        if residue().any(|line| line.contains(marker)) {
+        // Not when Make refused too: `parse-failure` and its neighbours mean
+        // Ronin could not read something Make read, and a makefile Make also
+        // rejected is not that.
+        if !both_refused && residue().any(|line| line.contains(marker)) {
             note(family);
             named_residue = true;
         }
+    }
+    // Both tools tried to run a command that is not there. Make execs it and
+    // reports the errno against the command's own name; Ronin hands it to a
+    // shell, which reports it in the shell's words. Matched by the command
+    // rather than by either sentence, so a case where only one side failed
+    // still shows up.
+    if residual_expected
+        .lines
+        .iter()
+        .filter_map(|line| line.strip_suffix(": No such file or directory"))
+        .any(|command| {
+            residual_actual
+                .lines
+                .iter()
+                .filter_map(|line| shell_could_not_find(line))
+                .any(|missing| missing == command)
+        })
+    {
+        note("command-not-found-text");
+        named_residue = true;
     }
     if let Some(refusal) = refusal_of(&divergence.actual) {
         note(match refusal_target(&divergence.expected) {
@@ -648,21 +903,42 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
     }
     // A residue that is nothing but switches and assignments is a makefile
     // having printed MAKEFLAGS and got a different answer. Recognised by shape
-    // rather than by the case's name, so it holds wherever it happens.
+    // rather than by the case's name, so it holds wherever it happens. A
+    // makefile that reads the variable may also have written a sentence around
+    // the value — `at parse time 'rR -- FOO=bar'` — so for one that does, a
+    // quoted flag list counts as well as a bare one.
     if !named_residue
         && residue().next().is_some()
-        && residue().all(|line| is_flag_list(line, source.reads_makeflags))
+        && residue().all(|line| {
+            is_flag_list(line, source.reads_makeflags)
+                || (source.reads_makeflags && quotes_a_flag_list(line))
+        })
     {
         note("makeflags-content");
         named_residue = true;
     }
 
+    // Read after the families above so the more particular ones still get to
+    // name the case; this only reports what is left.
+    if both_refused || built_through_refusal {
+        if !named_residue {
+            note(if both_refused {
+                "shared-refusal"
+            } else {
+                "refusal-not-made"
+            });
+        }
+        named_residue = true;
+        residual_expected.lines.clear();
+        residual_actual.lines.clear();
+    }
+
     if named_residue {
         // Already explained. Adding `evaluation` on top would put the case back
         // in the bucket that means "not recognised" and undo the naming.
-    } else if residual_actual == residual_expected {
+    } else if residual_actual.lines == residual_expected.lines {
         // Nothing left once both narrations are accounted for.
-    } else if sorted(&residual_actual) == sorted(&residual_expected) {
+    } else if sorted(&residual_actual.lines) == sorted(&residual_expected.lines) {
         // The same lines in a different order, which is Make interleaving each
         // recipe line with what running it printed.
         note("recipe-interleave");
@@ -675,18 +951,63 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
         // difference was narration even though no single line named a family.
         families.push("ninja-progress");
     }
-    let class = families
+    Verdict {
+        class: verdict_class(&families),
+        families,
+        expected: residual_expected.lines,
+        actual: residual_actual.lines,
+    }
+}
+
+/// One side's leftovers, and which of them that tool marked as its own.
+///
+/// The two travel together because the comparison that decides a case is over
+/// the lines, while the question of whether a tool refused or built is over the
+/// marks. Keeping the marks beside the lines rather than inside them leaves the
+/// comparison exactly as it was.
+#[derive(Default)]
+struct Leftovers {
+    lines: Vec<String>,
+    diagnostics: Vec<bool>,
+}
+
+impl Leftovers {
+    fn push(&mut self, line: String, diagnostic: bool) {
+        self.lines.push(line);
+        self.diagnostics.push(diagnostic);
+    }
+
+    /// Whether this side said something, and everything it said was a
+    /// diagnostic — which is what a tool that refused looks like.
+    fn all_diagnostics(&self) -> bool {
+        !self.lines.is_empty() && self.diagnostics.iter().all(|marked| *marked)
+    }
+}
+
+/// A case is classified by its strongest evidence.
+fn verdict_class(families: &[&'static str]) -> Class {
+    families
         .iter()
-        .filter_map(|name| FAMILIES.iter().find(|f| f.name == *name))
+        .filter_map(|name| FAMILIES.iter().find(|family| family.name == *name))
         .map(|family| family.class)
         .max()
-        .unwrap_or(Class::Narration);
-    Verdict {
-        families,
-        class,
-        expected: residual_expected,
-        actual: residual_actual,
+        .unwrap_or(Class::Narration)
+}
+
+/// The command a shell reported missing: `/bin/sh: 1: ./thing: not found`.
+fn shell_could_not_find(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("/bin/sh: ")?;
+    let (number, rest) = rest.split_once(": ")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
     }
+    rest.strip_suffix(": not found")
+}
+
+/// Whether a line is a sentence with `MAKEFLAGS` quoted inside it.
+fn quotes_a_flag_list(line: &str) -> bool {
+    let mut quoted = line.split('\'').skip(1).step_by(2).peekable();
+    quoted.peek().is_some() && quoted.all(|value| value.is_empty() || is_flag_list(value, true))
 }
 
 fn sorted(lines: &[String]) -> Vec<String> {
@@ -936,8 +1257,8 @@ mod tests {
     /// A case whose makefile reads MAKEFLAGS, with no recipe lines.
     fn reads_makeflags() -> Source {
         Source {
-            recipe: Vec::new(),
             reads_makeflags: true,
+            ..Source::default()
         }
     }
 
@@ -999,18 +1320,18 @@ mod tests {
     /// wearing one was kept as though it were a recipe's output.
     #[test]
     fn a_name_is_peeled_before_a_shape_is_read() {
-        let (family, kept) = normalise("ronin: [Makefile:3: all] Error 1", Side::Theirs, &unread());
-        assert_eq!(family, Some("recipe-error-line"));
-        assert_eq!(kept, None);
+        let contribution = normalise("ronin: [Makefile:3: all] Error 1", Side::Theirs, &unread());
+        assert_eq!(contribution.family, Some("recipe-error-line"));
+        assert_eq!(contribution.residue, None);
 
-        let (family, kept) = normalise(
+        let contribution = normalise(
             "ronin: *** No rule to make target 'x'.  Stop.",
             Side::Ours,
             &unread(),
         );
-        assert_eq!(family, Some("product-name"));
+        assert_eq!(contribution.family, Some("product-name"));
         assert_eq!(
-            kept.as_deref(),
+            contribution.residue.as_deref(),
             Some("*** No rule to make target 'x'.  Stop.")
         );
     }
@@ -1026,11 +1347,109 @@ mod tests {
         };
         assert_eq!(classify(&same, &unread()).class, Class::Narration);
 
+        // Only one of them refused, so what the other said is not accounted
+        // for and the case stays in the bucket that says so.
         let different = Divergence {
             expected: lines(&["make: *** No rule to make target 'x'.  Stop."]),
-            actual: lines(&["ronin: *** something else entirely.  Stop."]),
+            actual: lines(&["something else entirely"]),
         };
         assert_eq!(classify(&different, &unread()).class, Class::Unclassified);
+    }
+
+    /// Two fatal refusals are one decision worded twice.
+    ///
+    /// This narrows the rule above, and deliberately. Make wraps a fatal
+    /// diagnostic in `*** ` and `  Stop.`, so a run where both tools left
+    /// nothing but diagnostics and one of Make's wore that wrapper is a run
+    /// where each tool decided to build nothing — the same decision, whatever
+    /// sentence either chose for it, and `make.narration` puts the sentence
+    /// outside the contract. Measured on the suite: GNU Make calls
+    /// `ifeq(a,b)` a missing separator on the line it appears and Ronin calls
+    /// the `endif` below it extraneous, and neither builds anything.
+    ///
+    /// The reading is only available because Make refused too. When Make
+    /// refused and Ronin went on to build, the same evidence says the opposite,
+    /// and that is a compiler candidate rather than narration.
+    #[test]
+    fn two_refusals_are_one_decision() {
+        let both = Divergence {
+            expected: lines(&["f.mk:2: *** missing separator.  Stop."]),
+            actual: lines(&["ronin: f.mk:4: extraneous `endif'."]),
+        };
+        let verdict = classify(&both, &unread());
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(verdict.families.contains(&"shared-refusal"));
+    }
+
+    /// The same evidence read the other way. Make refused and Ronin went on to
+    /// build, so what it built is work Make never authorised.
+    #[test]
+    fn an_ignored_refusal_is_a_gap() {
+        let ignored = Divergence {
+            expected: lines(&["make: *** No targets.  Stop."]),
+            actual: lines(&["[1/1] printf hello", "hello"]),
+        };
+        let verdict = classify(&ignored, &unread());
+        assert_eq!(verdict.class, Class::Compiler);
+        assert!(verdict.families.contains(&"refusal-not-made"));
+    }
+
+    /// Make's fatal wrapper comes off so the sentence underneath can be
+    /// compared, and stays off only where it was actually worn.
+    #[test]
+    fn a_fatal_wrapper_comes_off() {
+        assert_eq!(
+            super::undecorated_fatal("f.mk:2: *** missing separator.  Stop.").as_deref(),
+            Some("f.mk:2: missing separator.")
+        );
+        assert_eq!(
+            super::undecorated_fatal("*** No targets.  Stop.").as_deref(),
+            Some("No targets.")
+        );
+        // A recipe's failure line carries the stars without the full stop, and
+        // has its own family.
+        assert_eq!(
+            super::undecorated_fatal("*** [Makefile:3: all] Error 1"),
+            None
+        );
+        assert_eq!(super::undecorated_fatal("cc -c foo.c"), None);
+    }
+
+    /// The counter's payload is the command Ronin is about to run, which is the
+    /// same thing Make says by echoing the recipe line. Reading it off the run
+    /// beats reading the makefile: one script writes a makefile several times
+    /// over, and only the last of them is still on disk when this runs.
+    #[test]
+    fn a_counter_names_the_recipe() {
+        let echoed = Divergence {
+            expected: lines(&["touch hello.z"]),
+            actual: lines(&["[1/1] touch hello.z"]),
+        };
+        let verdict = classify(&echoed, &unread());
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(verdict.families.contains(&"recipe-echo"));
+
+        // A command Ronin never named is still unexplained.
+        let unexplained = Divergence {
+            expected: lines(&["touch hello.z"]),
+            actual: lines(&["[1/1] touch something.else"]),
+        };
+        assert_eq!(classify(&unexplained, &unread()).class, Class::Unclassified);
+    }
+
+    /// The `env` that carries MAKEFLAGS into a recipe's environment sits in
+    /// front of the shell Ninja's failure block echoes back. Reading the block
+    /// through it is what keeps the block narration; it was not, once those
+    /// variables started being exported.
+    #[test]
+    fn the_block_reads_through_env() {
+        assert!(super::is_shell_invocation(r#"/bin/sh -c "exit 1""#));
+        assert!(super::is_shell_invocation(
+            r#"env 'MAKEFLAGS=i' 'MAKELEVEL=1' 'MFLAGS=-i' /bin/sh -c "exit 1""#
+        ));
+        // Not anything at all that begins with `env`.
+        assert!(!super::is_shell_invocation("env | sort"));
+        assert!(!super::is_shell_invocation("echo /bin/sh -c \"x\""));
     }
 
     /// A refused option explains the whole of a diff, because the build never
@@ -1084,12 +1503,12 @@ mod tests {
     #[test]
     fn a_shape_is_narration_only_on_the_side_that_makes_it() {
         assert_eq!(
-            normalise("[1/2] build all", Side::Ours, &unread()).0,
+            normalise("[1/2] build all", Side::Ours, &unread()).family,
             Some("ninja-progress")
         );
-        let (family, kept) = normalise("[1/2] build all", Side::Theirs, &unread());
-        assert_eq!(family, None);
-        assert_eq!(kept.as_deref(), Some("[1/2] build all"));
+        let contribution = normalise("[1/2] build all", Side::Theirs, &unread());
+        assert_eq!(contribution.family, None);
+        assert_eq!(contribution.residue.as_deref(), Some("[1/2] build all"));
     }
 
     /// A recipe is written with variables and echoed with them expanded, so the
@@ -1175,15 +1594,18 @@ mod tests {
     /// date.`, where Ronin makes an edge for it and prints `[1/1] build all`.
     #[test]
     fn up_to_date_is_narration() {
-        let (family, kept) = normalise("make: 'all' is up to date.", Side::Theirs, &unread());
-        assert_eq!(family, Some("up-to-date-line"));
-        assert_eq!(kept, None);
+        let contribution = normalise("make: 'all' is up to date.", Side::Theirs, &unread());
+        assert_eq!(contribution.family, Some("up-to-date-line"));
+        assert_eq!(contribution.residue, None);
 
         // Only on Make's side, like every other shape here: Ronin does not say
         // it, so a line like this from us is something a recipe printed.
-        let (family, kept) = normalise("'all' is up to date.", Side::Ours, &unread());
-        assert_eq!(family, None);
-        assert_eq!(kept.as_deref(), Some("'all' is up to date."));
+        let contribution = normalise("'all' is up to date.", Side::Ours, &unread());
+        assert_eq!(contribution.family, None);
+        assert_eq!(
+            contribution.residue.as_deref(),
+            Some("'all' is up to date.")
+        );
 
         // It explains only itself. Output Ronin produced and Make did not still
         // leaves the case unclassified rather than disappearing behind it.

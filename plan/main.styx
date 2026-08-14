@@ -7279,6 +7279,13 @@ children (
                                 kind @note
                                 text "Re-ran the pinned GNU Make 4.4.1 discovery suite after inline recipes became their own descriptions. The versioned inventory remains 1,306 rows, but three targets/WAIT rows (diff, diff.1, diff.2) are now provably narration-only instead of unclassified evaluation/failure candidates: the visible recipe establishes that their selected work agrees. Counts move from 522 unclassified / 68 compiler / 103 interface / 613 narration to 519 / 68 / 103 / 616. options/dash-B.diff.7 and variables/automatic.diff.7 remain unclassified; only their runner facet changed from ninja-progress to no-work-line. No new compiler or interface leaf is warranted."
                             }
+
+                            {
+                                at 2026-08-14T06:05:35.904533992Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Triage pass of 2026-08-14, against the same 1,287-row snapshot. Counts move 475/36/38/738 (unclassified/compiler/interface/narration) to 215/50/45/977. Two full runs from fresh disposable worktrees; the second exited 0 against the first's recording, and the three watched flapper rows held their class.\n\nThe classification is produced by the classifier, not edited into the tsv, so every move below is a recogniser in examples/make_upstream.rs with a unit test.\n\nWHAT WAS DRAINED (260 rows out of unclassified)\n\nThe largest single cause was a regression this backlog introduced. Ninja's failure block echoes the command it ran, and `make-makeflags-in-recipe-environment` put `env 'MAKEFLAGS=…' 'MAKELEVEL=…' 'MFLAGS=…'` in front of `/bin/sh -c \"…\"`, which the `ninja-failure-block` recogniser matched by prefix. 87 cases had been quietly falling out of narration ever since. The recogniser now reads through the assignments.\n\nThe most useful new evidence is that Ronin's progress counter carries the command it is about to run, which is precisely what Make says by echoing the recipe line. The counter's payload now cancels Make's echo. This is better evidence than the existing `recipe-echo` path, which reads the makefile off disk: one suite script writes `errors.mk` several times over and only the last version survives to be read, so the older sub-tests could never match. Cancellation is applied only to lines that do not already cancel against our own output, which is what stopped it stealing 19 cases that were narration for a different reason.\n\nMake wraps a fatal diagnostic in `*** ` and `  Stop.` and Ronin states the same thing plainly. The decoration now comes off before the two sides are compared, on the same principle the product name already came off — what a tool said is the thing worth comparing, not how it dressed it.\n\nTwo fatal refusals are one decision worded twice. Where both sides left nothing but diagnostics and one of Make's wore the fatal wrapper, the case is `shared-refusal`. This deliberately narrows the older rule that two tools saying different things must not cancel, and the narrowing is argued in the test that replaced it: each tool decided to build nothing, which is the same decision, and `make.narration` puts the sentence outside the contract. It is only available because Make refused too — the opposite case became a compiler family, below.\n\nSmaller recognisers: GNU's `--debug` trace, gated on the run actually asking for debug output because the suite writes those expectations as bare regexes; Make's keep-going summary `Target 'x' not remade because of errors.`; a missing command reported by Make's exec and by our shell, matched on the command rather than either wording; and a MAKEFLAGS value quoted inside a sentence a makefile printed around it.\n\nWHAT WAS FOUND (23 rows that were hiding, not resting)\n\nThe `refusal-not-made` family is new and is the point of the exercise. Make refused the run outright and Ronin went on to build: the refusal was the whole of Make's output, so anything Ronin ran is work Make never authorised. These had been sitting in `unclassified` looking like output noise. Every one is a real divergence and every one is now owned.\n\nCOMPILER BUCKET: 50 rows, all owned or reclassified\n\nReclassified with evidence — 9 rows. All nine `parse-failure` rows were shared refusals: both tools reject the same makefile, at the same line in six of them. `parse-failure` means \"Ronin could not read what Make read\", which is false when Make refused too, so the marker no longer fires on a shared refusal. misc/failure.diff.3 and .6 refuse at different lines for different reasons — GNU calls `ifeq(foo,bar)` a missing separator, Ronin calls the `endif` below it extraneous — and no makefile could be constructed where one builds and the other does not.\n\nNewly owned — 41 rows across eleven new nodes filed under make-subsumption, each with a reproducer minimised against reference/make-oracle/make-4.4.1/make:\n\n  make-every-makefile-argument-is-read (19) — only the last -f is read; the default goal must come from the first\n  make-match-anything-rule-chaining (7) — the implicit search will not chain through a `%:` rule\n  make-builtin-rule-catalogue (4) — the fork bootstraps `.c.o` and `.cc.o` and nothing else; the link rules are missing entirely\n  make-pattern-prerequisite-directory-stem (4) — a directory stem must be prefixed, not substituted in place\n  make-suffix-shaped-target-with-prerequisites (3) — and it fails in both directions at once\n  make-link-library-prerequisites (3) — `-lNAME` and .LIBPATTERNS\n  make-second-expansion-pattern-first-percent (2) — the stem goes in the first `%` only\n  make-makefile-set-no-builtin-rules (2) — `-r` from a makefile's MAKEFLAGS arrives after the rules are installed\n  make-pattern-prerequisite-wildcards (1), make-extra-prereqs-are-real-prerequisites (1), make-word-index-out-of-range (1), make-jobserver-style-is-checked (1)\n\nAttributed to an existing open node — 1 row. features/double_colon.diff.16 is make-terminal-pattern-rule-needs-an-existing-prerequisite, noted there.\n\nWHAT REMAINS: 215 rows, and why\n\nThe remainder is a long tail rather than a bucket: 59 test scripts, largest group 13. The family-shaped work is done, and draining further needs per-case reproducers rather than recognisers. Five themes are identified, with the question each is blocked on:\n\n  22 rows — Make announces removing an intermediate (`rm test.int`) and Ronin removes it silently. Probed: the filesystem effect agrees, both tools delete the file, so this is narration. Blocked on recognising it safely — Make's announcement is `rm` followed by bare names, which is also exactly what an echoed recipe running `rm` looks like, and the payload cancellation does not help because Make prints this one itself.\n\n  17 rows — MAKEFLAGS content the shape recogniser will not read, mostly `-Ilocaltmp` and `--warn-undefined-variables` missing from ours. Blocked on whether their absence is deliberate; if it is, these are interface observations and not residue.\n\n  13 rows — Make remade a makefile and Ronin did not. Overlaps make-every-makefile-argument-is-read; blocked on that node landing, after which they should be re-read rather than classified now.\n\n  8 rows — a suite regex expectation with no counterpart, outside the debug-trace gate.\n\n  7 rows — GNU-only warnings (jobserver, pattern peer, suffix-rule prerequisites). Narration in effect, but each is evidence for a specific open node and worth leaving visible until those land.\n\n  148 rows — everything else, led by features/include (12), misc/bs-nl (11), features/suffixrules (8) and variables/automatic (7). misc/bs-nl belongs with make-recipe-continuation-bytes, make-posix-continuation-blanks and make-recipe-expanded-newline, all open.\n\nThis node's definition of done requires no unclassified rows to remain, so it stays open. What it now owns is a bounded and themed 215 rather than an undifferentiated 475."
+                            }
                         )
                     }
 
@@ -9072,6 +9079,13 @@ children (
                         kind @note
                         text "Found while characterising ordinary double-colon freshness; unrelated to it. On a pattern rule the double colon means \"terminal\", not \"one independent rule per record\": a terminal rule's prerequisites are never made by another implicit rule, so the rule applies only when they already exist.\n\nReproducer, GNU Make's own suite (tests/scripts/features/double_colon, sv 60188 subtest 1), with hello.z present and test.x absent:\n\n  all: hello.z\n  %.z:: test.x ; touch $@\n  %.x: ;\n\nGNU Make 4.4.1 prints \"Nothing to be done for 'all'.\" — %.x cannot supply test.x for a terminal rule, so %.z:: does not match. Ronin runs `touch hello.z`.\n\nRonin reaches this through the pattern-rule search rather than through a RuleMerger, so make-double-colon-rule-freshness neither caused nor touched it: that node's split is keyed on an explicit merger holding more than one record. The case is one of the three features/double_colon rows still recorded unclassified in tests/make_upstream_inventory.tsv."
                     }
+
+                    {
+                        at 2026-08-14T06:03:36.931538471Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Upstream-residue triage (2026-08-14) attributes features/double_colon.diff.16 to this node, in the `refusal-not-made` family — Make refused the run and Ronin built anyway, which is the direction this node exists to correct.\n\n  all: hello.z\n  %.z:: %.x; touch $@\n  %.x: ;\n  unrelated: hello.x\n\nGNU refuses: `No rule to make target 'hello.x', needed by 'hello.z'`. Ronin runs `touch hello.z`.\n\n`%.z::` is terminal, so its prerequisite `hello.x` has to exist already; it may not be invented by the `%.x: ;` rule below. Ronin applies the terminal rule anyway and then satisfies its prerequisite by chaining, which is the two halves of this node's claim failing together.\n\nWorth reading against `make-match-anything-rule-chaining`, filed by the same triage: that node widens the implicit search to chain through `%:` rules, and this one is the constraint that has to be in place first or the widening will take cases like this one with it."
+                    }
                 )
             }
 
@@ -9214,6 +9228,13 @@ children (
                         kind @note
                         text "Filed from make-shell-function-evaluation, which met it as the residue on functions/shell.diff.14 and .15 in the upstream inventory.\n\nGNU Make's construct_command_argv_internal (job.c) tokenizes a command itself and execs it directly whenever nothing in it is shell syntax: no character from `#;\"*?[]&|<>(){}$\\`^`, no shell builtin as the first word, an IFS of only whitespace, and .SHELLFLAGS of `-c` or `-ec`. Only a line that fails one of those tests reaches `goto slow` and is handed to $(SHELL). kati always builds `SHELL -c 'line'`.\n\nWhat that changes is who reports a failure and in whose words. Reproducer, in a recipe:\n\n    all: ; ./nosuchprogram arg\n\nGNU Make: `make: ./nosuchprogram: No such file or directory` then `make: *** [Makefile:1: all] Error 127`. Ronin: `/bin/sh: 1: ./nosuchprogram: not found`, because the shell is the one that failed to find it. The same split shows in $(shell):\n\n    $(shell ./nosuchprogram there)\n\nwhere GNU Make prints its own diagnostic and Ronin prints the shell's.\n\nBoth agree on the status — 127 either way — so this is about the diagnostic, the process tree, and one less fork per simple recipe line, not about what gets built. It reaches recipes and $(shell) alike, so it belongs where the argv is constructed rather than in either caller."
                     }
+
+                    {
+                        at 2026-08-14T06:03:43.523386008Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Upstream-residue triage (2026-08-14) gives this node ten rows of family evidence, now classified `command-not-found-text` and narration rather than unclassified residue.\n\nWhere a recipe names a command that is not there, GNU execs it itself and reports the errno against the command's own name — `./foobarbazbozblat: No such file or directory` — while Ronin hands the line to a shell and reports what the shell said: `/bin/sh: 1: ./foobarbazbozblat: not found`. Both fail the recipe with status 127, so the build outcome agrees and only the sentence differs; the classifier now recognises the pair by matching the command named on each side rather than by either wording, so a case where only one tool failed still shows up.\n\nThat is why they are narration and not this node's debt. What they do record is the observable consequence of always going through a shell, which is what this node proposes to stop doing for a command with no shell syntax in it. Running such a command directly would move these ten rows from an agreed-outcome-differently-worded family to exact agreement, so they are a reasonable acceptance check for the change and a reason to expect the diagnostic to change shape when it lands."
+                    }
                 )
             }
 
@@ -9327,6 +9348,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while auditing inventory movement for make-wildcard-cache-coherence, and unrelated to it.\n\n`features/parallelism.diff.1` alternates between `narration ninja-progress` and `narration ninja-progress+recipe-interleave` on consecutive runs of `scripts/check-make-upstream.sh` with nothing changed in between. Reproduced by running the gate twice and diffing the two `--update` outputs: the second run also moved `features/patternrules.diff.34`, which is the already-known flapper, and moved this row back.\n\nThe class does not change — it is narration either way — so this is not a compiler question. The family does, and the gate fails on family drift, which means every dispatch that touches Make now has to decide whether this row moved for its own reason. That is the cost worth removing.\n\nThe case is a `-j` test, and `recipe-interleave` is recognised by line order: \"Make interleaves each recipe line with the output of running it, and Ronin runs the recipe as one script\". Under parallelism the order the classifier reads is a race, so the fix is on the classifier's side rather than the executor's — either the family is not decidable for a parallel case and should not be assigned, or it needs an order-insensitive comparison. Third known flapper, after `features/reinvoke.diff.2` and `features/patternrules.diff.34`; the three probably want one answer between them.\n\nReproducer: `scripts/sandboxed scripts/check-make-upstream.sh --update` twice, diffing `tests/make_upstream_inventory.tsv` after each."
+                    }
+
+                    {
+                        at 2026-08-14T06:03:54.320557085Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Upstream-residue triage (2026-08-14) revisited the flapping rows while reclassifying the inventory, and reports no change needed here.\n\nAcross two full runs from fresh disposable worktrees the three watched rows held their class: features/parallelism.diff.1 narration, features/patternrules.diff.34 and features/reinvoke.diff.2 unclassified. The verification run exited 0 against the recording run, so `settled()` did not have to absorb a flip in either direction.\n\nTwo of the three did change their family list, and not by flapping: patternrules.diff.34 and reinvoke.diff.2 both gained `recipe-echo`. That is the triage's new evidence path — Ninja's progress counter carries the command it is about to run, so the counter's payload cancels the recipe line Make echoed — and it fires deterministically. `settled()` still only forgives `recipe-interleave`, which is correct and was not widened.\n\nSo the standing question this node holds — whether `recipe-interleave` needs a family of its own or a sturdier comparison — is unchanged by the reclassification. The count fell from 4 rows to 4 rows; nothing here was resolved by accident."
                     }
                 )
             }
@@ -9524,6 +9552,201 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while characterising the value function over automatic variables (make-automatic-variable-value-function).\n\nGNU Make defines the `D` and `F` automatic variables once, at startup, in\n`define_automatic_variables` (reference/gnumake/src/variable.c). They are\nordinary recursive variables holding a `dir`/`notdir` expression, so they are\ndefined everywhere a makefile can look — including at read time, before any rule\nhas been chosen. Only the base forms are per-file, set in `set_file_variables`.\n\nkati registers every automatic variable from `CommandEvaluator::new`, so none of\nthem exists until a recipe is being expanded. In recipe context the two tools\nnow agree on all of value, flavor and origin. Outside one they do not:\n\n  $(info atD=[$(value @D)] flavor=[$(flavor @D)] origin=[$(origin @D)])\n  $(info at=[$(value @)] flavor=[$(flavor @)] origin=[$(origin @)])\n  all: ; @:\n\n  GNU 4.4.1  atD=[$(patsubst %/,%,$(dir $@))] flavor=[recursive] origin=[automatic]\n             at=[] flavor=[undefined] origin=[undefined]\n  Ronin      atD=[] flavor=[undefined] origin=[undefined]\n             at=[] flavor=[undefined] origin=[undefined]\n\nThe base forms already agree at read time — both read as undefined — so the gap\nis the `D` and `F` forms only. Defining them at session start needs no rule in\nhand, because their value is literal text that only refers to the base form;\n`$(@D)` at read time then expands through an undefined `$@` to the empty string,\nwhich is what GNU Make produces.\n\nDeferred from the value-function node because it is a variable-lifecycle change\nrather than a change to what `value` reports, and the owned corpus case is\nrecipe-context only."
+                    }
+                )
+            }
+
+            {
+                id make-builtin-rule-catalogue
+                title "Install GNU Make's catalogue of built-in rules"
+                kind @feat
+                deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-14T06:01:43.575507671Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns four rows of the 2026-08-14 upstream inventory: features/implicit_search.diff.71, .72, .75 and .76, all `no-rule-to-make`.\n\nMechanism, read off the fork rather than inferred: `kati/src-rs/evaluate.rs` bootstraps `.SUFFIXES: .o .c .cc` and exactly two suffix rules, `.c.o` and `.cc.o`, under a comment promising more built-in rules later. The variable half is already there — `kati/src-rs/builtins.rs` defines `COMPILE.c`, `LINK.c`, `COMPILE.cc`, `LINK.cc`, `COMPILE.C`, `COMPILE.cpp`, `OUTPUT_OPTION` and friends — so what is missing is the rules that use them, not the macros.\n\nMeasured against reference/make-oracle/make-4.4.1/make, one empty source file and `all: <target>`:\n\n  hello.f + `all: hello`   → GNU `f77 hello.f -o hello`; Ronin refuses.\n  hello.f + `all: hello.o` → GNU `f77 -c hello.f`;      Ronin refuses.\n\nTwo families of gap, and the second is the wider one:\n\n  Object rules missing for .cpp .C .f .F .p .r .s .S .mod .l .y .w — every suffix GNU compiles to .o except .c and .cc.\n\n  Link rules missing entirely: `%: %.c`, `%: %.cc`, `%: %.f`, `%: %.p`, `%: %.sh`, `%: %.mod`. `all: hello` with hello.c beside it is the oldest idiom in Make and Ronin has no rule for it, which is a larger exposure than the exotic suffixes and is what the four owned rows actually exercise.\n\nTake GNU Make's `default.c` as the catalogue rather than the manual: the fork's own comment already records that the manual and default.c disagree and that default.c is the one that runs."
+                    }
+                )
+            }
+
+            {
+                id make-match-anything-rule-chaining
+                title "Chain an implicit rule through a match-anything rule"
+                kind @fix
+                deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-14T06:01:51.948780781Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns seven rows: features/implicit_search.diff.48, .49, .58, .78, .80 and features/patternrules.diff.1, .6.\n\nReproducer, minimised against the pristine oracle:\n\n  all: foo foo.out\n  %: %.in ; @echo MADE $@\n  %.out: % ; @echo MADE $@\n  foo.in: ; @touch foo.in\n\nGNU makes both — `MADE foo`, then `MADE foo.out`. Ronin refuses: `'foo.out', needed by 'all', missing and no known rule to make it`.\n\nThe discriminator is that `foo` is itself made by a match-anything rule. Probed either side of it:\n\n  Ordinary chaining works. `%.out: %.mid` over `%.mid: %.in` builds on both tools, which is `make-implicit-rule-chaining` already delivered.\n  An explicit rule for `foo` works. Replace `%: %.in` with `foo: ; @echo made foo` and Ronin chains `%.out: %` onto it happily.\n  No rule for `foo` at all refuses on both tools, so the refusal itself is not the difference.\n\nSo the missing step is narrow: when the implicit search for `foo.out` asks whether prerequisite `foo` can be made, Ronin does not count a match-anything rule (`%:` with prerequisites) among the ways it could be. GNU does, subject to the nonterminal-match-anything constraints in its own pattern_search.\n\nNote the neighbourhood before implementing. `make-pattern-search-specific-rule-match` is the opposite direction — a specific pattern that must reject a match-anything rule — and `make-terminal-pattern-rule-needs-an-existing-prerequisite` is the constraint that stops the chaining being unconditional. Widening the search without those two in view would trade these seven rows for others."
+                    }
+                )
+            }
+
+            {
+                id make-pattern-prerequisite-directory-stem
+                title "Prefix a pattern prerequisite with the stem's directory"
+                kind @fix
+                deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-14T06:02:05.623901172Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns four rows: features/patternrules.diff.46, .47, .64 and .65.\n\nWhen a pattern rule's stem carries a directory, GNU splits it: the directory goes in front of the whole prerequisite name and only the remainder is substituted for the `%`. Ronin substitutes the whole stem where the `%` stands, which agrees with GNU whenever `%` is the first character of the prerequisite and disagrees otherwise. That is why the suite's cases look arbitrary — they are the ones whose prerequisite patterns begin with a literal.\n\nBisected against the oracle with `all: lib/bye.x` and `%.x: <prereq>`, stem `lib/bye`:\n\n  prereq `%1%2%`  → both say `lib/bye1%2%`   (agrees: % is first)\n  prereq `%9`     → both say `lib/bye9`      (agrees: % is first)\n  prereq `6%`     → GNU `lib/6bye`;  Ronin refuses (would be `6lib/bye`)\n  prereq `11%12`  → GNU `lib/11bye12`; Ronin refuses (would be `11lib/bye12`)\n\nThe refusal rather than a wrong name is incidental: the misplaced name matches no target, so the rule is rejected and the search runs out. A `.PHONY` declaration naming GNU's spelling is what makes the difference visible as a refusal instead of silence.\n\nOnly the first `%` of a prerequisite is the stem placeholder; the rest are literal. That is the same law `make-second-expansion-pattern-first-percent` records for the deferred path, and the two should be read together even though they sit on different code paths."
+                    }
+                )
+            }
+
+            {
+                id make-second-expansion-pattern-first-percent
+                title "Substitute the stem into only the first percent of a deferred prerequisite"
+                kind @fix
+                deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-14T06:02:10.298405412Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns two rows: features/patternrules.diff.58 and .70.\n\nReproducer against the pristine oracle:\n\n  .SECONDEXPANSION:\n  all: bye.x\n  %.x: $$(wordlist 1, 99, %1%2%) ; $(info $@ from $^)\n  .PHONY: bye1%2%\n\nGNU prints `bye.x from bye1%2%`. Ronin refuses with `'bye1bye2%', needed by 'bye.x', missing and no known rule to make it`, which names the bug outright: the stem `bye` was substituted for the second `%` as well as the first.\n\nOnly the first `%` in a prerequisite pattern is the placeholder; every later one is a literal percent. The immediate path already knows this — the same makefile without `.SECONDEXPANSION:` and without the `$$` agrees with GNU — so this is the deferred prerequisite path having its own substitution that does not carry the rule.\n\n`make-pattern-rule-deferred-prerequisite-identity` and `make-second-expansion-patterns` are the neighbours that already touch this path."
+                    }
+                )
+            }
+
+            {
+                id make-pattern-prerequisite-wildcards
+                title "Expand a wildcard in a pattern rule's prerequisite"
+                kind @fix
+                deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-14T06:02:18.732445457Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns one row: features/rule_glob.diff.1.\n\nReproducer against the pristine oracle, with a.two and a.three on disk:\n\n  .PHONY: all\n  all: a.four\n  %.four : %.t* ; @echo $@: $(sort $^)\n\nGNU prints `a.four: a.three a.two`. Ronin refuses: `'a.four', needed by 'all', missing and no known rule to make it`.\n\nA pattern rule's prerequisite may hold shell wildcards, which are expanded after the stem is substituted — here `%.t*` becomes `a.t*` and then globs to the two files. Ronin substitutes the stem and then looks for a file literally named `a.t*`.\n\n`make-prerequisite-globbing` already delivered this for an ordinary rule's prerequisite list; this is the same expansion on the implicit-rule path, where it has to happen after substitution rather than at read time."
+                    }
+                )
+            }
+
+            {
+                id make-suffix-shaped-target-with-prerequisites
+                title "Read a suffix-named rule that carries prerequisites as an ordinary rule"
+                kind @fix
+                deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-14T06:02:24.706802135Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns three rows, and they point in opposite directions, which is what identifies the mechanism: features/suffixrules.diff.4 and .5 (`no-rule-to-make`) and features/suffixrules.diff.6 (`refusal-not-made`). All three run the same makefile.\n\n  .SUFFIXES:\n  .SUFFIXES: .biz .baz\n  .baz.biz: foo.bar ; @echo make $@ from $<\n\nGNU reads a suffix-named rule that carries prerequisites as an ordinary rule for a file called `.baz.biz`, warns `ignoring prerequisites on suffix rule definition`, and installs no `.baz`-to-`.biz` suffix rule at all. So:\n\n  goal `.baz.biz` → GNU warns and builds it; Ronin refuses, `'.baz.biz' missing and no known rule to make it`.\n  goal `foo.biz`  → GNU refuses, `No rule to make target 'foo.biz'`; Ronin builds it from foo.baz.\n\nRonin has made exactly the opposite choice on both counts: it installs the suffix rule and loses the file target. One decision fixes both directions — a suffix-named rule with prerequisites is an ordinary rule — so the two row groups are one node rather than two.\n\nThe warning is narration and not owed. What is owed is which of the two targets exists."
+                    }
+                )
+            }
+
+            {
+                id make-vpath-prerequisite-resolves-to-a-target
+                title "Find a prerequisite through vpath when the found name has a rule"
+                kind @fix
+                deps (make-vpath-search)
+                log (
+                    {
+                        at 2026-08-14T06:02:35.113011836Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns one row: features/vpath.diff.1.\n\nReproducer against the pristine oracle, with an empty vpath-d/ directory:\n\n  vpath %.te vpath-d/\n  .SECONDARY:\n  default: vpath-d/a vpath-d/b\n  vpath-d/a: fail.te\n  vpath-d/b : fail.te\n  vpath-d/fail.te:\n\nGNU says `Nothing to be done for 'default'`. Ronin refuses: `'fail.te', needed by 'vpath-d/a', missing and no known rule to make it`.\n\n`fail.te` exists nowhere on disk, so the vpath search cannot succeed on a file test alone. GNU's search also accepts a name it can reach — `vpath-d/fail.te` is a target the makefile declares, with an empty recipe — and that is the candidate it takes. Ronin's vpath search looks only for files that already exist, so it never offers the directory that would have named a known target.\n\n`make-vpath-search` delivered the file-existence half. This is the half where the found name is a target rather than a file, and it should be read alongside `make-vpath-name-survives-only-a-current-target`, which is about discarding a found name again."
+                    }
+                )
+            }
+
+            {
+                id make-link-library-prerequisites
+                title "Resolve a -lNAME prerequisite through .LIBPATTERNS"
+                kind @feat
+                deps (make-vpath-search)
+                log (
+                    {
+                        at 2026-08-14T06:02:40.907653859Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns three rows: variables/LIBPATTERNS.diff, variables/LIBPATTERNS.diff.1 and features/vpath.diff.3.\n\nReproducer against the pristine oracle, with mtest_foo.a on disk:\n\n  .LIBPATTERNS = mtest_%.a\n  all: -lfoo ; @echo \"build $@ from $<\"\n\nGNU prints `build all from mtest_foo.a`. Ronin refuses: `'-lfoo', needed by 'all', missing and no known rule to make it`.\n\nA prerequisite spelled `-lNAME` is not a file name: Make substitutes NAME into each whitespace-separated pattern of `.LIBPATTERNS` and searches for the results, through vpath as well as in the working directory, taking the first that exists or can be made. `.LIBPATTERNS` itself is not defined in the fork either, so both the variable and the prerequisite rewriting are missing.\n\nvpath.diff.3 is the same feature reached through the search path rather than the current directory — `all: -l1 -lc -l2 -l3` over several `vpath` lines — so it belongs here and not with the vpath nodes.\n\nLIBPATTERNS.diff.1 additionally expects `\\.LIBPATTERNS element 'mtest_foo.a' is not a pattern` for an element with no `%` in it. That diagnostic is narration; what it is evidence of is that a non-pattern element is skipped rather than taken literally."
+                    }
+                )
+            }
+
+            {
+                id make-every-makefile-argument-is-read
+                title "Read every makefile the command line names, not only the last"
+                kind @fix
+                deps (make-interface-surface)
+                log (
+                    {
+                        at 2026-08-14T06:02:54.617123299Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns nineteen rows — the largest single group the triage found — all in options/dash-f: .1, .3, .4, and .5 through .20.\n\nRonin keeps only the last `-f` and forgets the ones before it. Reproduced against the pristine oracle with three makefiles, one target each:\n\n  make -f one.mk -f two.mk -f three.mk TWO\n      GNU `from-two`; Ronin `'TWO' missing and no known rule to make it`.\n  make -f one.mk -f two.mk -f three.mk\n      GNU `from-one`; Ronin `from-three`.\n\nTwo claims, and the second is easy to lose: every named makefile is read, and the default goal comes from the first of them rather than the last.\n\nSixteen of the nineteen rows (.5 through .20) are the same defect wearing a different face. The suite spells stdin twice — `-fbye.mk -f- -f-`, and every mixture of `-f-`, `-f -`, `--file -` and `--makefile -` — and expects `Makefile from standard input specified twice.  Stop.` Ronin reads only the last of them, so it never has two stdin makefiles to object to and builds `hello, world` instead. The duplicate-stdin refusal falls out of reading them all; it is a facet of this node rather than a node of its own.\n\noptions/dash-f.diff.4 is the third face: `-fbye.mk -fR -` where R does not exist. GNU reports `R: No such file or directory`, then remakes bye.mk from bye.mk.src — real filesystem work, `touch bye.mk.src` and `touch bye.mk` — before refusing with `No rule to make target 'R'`. Ronin answers `makefile not found` and does nothing. Both refuse in the end, so the divergence that matters is the work GNU did on the way: a makefile named on the command line is a target Make tries to remake before giving up on it.\n\n`make-included-makefile-restarts` already delivered remaking for included makefiles; this is the same obligation for the ones `-f` names."
+                    }
+                )
+            }
+
+            {
+                id make-makefile-set-no-builtin-rules
+                title "Withdraw the built-in rules when a makefile's MAKEFLAGS asks"
+                kind @fix
+                deps (make-makefile-set-makeflags)
+                log (
+                    {
+                        at 2026-08-14T06:02:59.838611626Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns two rows: options/dash-r.diff.1 and options/dash-r.diff.4.\n\nReproducer against the pristine oracle, with xxx.c on disk and the makefile holding only:\n\n  MAKEFLAGS += -r\n\n  make xxx.o → GNU refuses, `No rule to make target 'xxx.o'`; Ronin runs `cc -c -o xxx.o xxx.c`.\n\n`-r` on the command line already works — `make -r xxx.o` refuses on both tools — so this is `-r` arriving from a MAKEFLAGS the makefile sets, after the built-in rules have already been installed. `kati/src-rs/evaluate.rs` writes the `.c.o` and `.cc.o` bootstrap rules under `if !session.flags.no_builtin_rules`, which is read once before the makefile is parsed and never revisited.\n\n`make-makefile-set-makeflags` delivered the decoding of a makefile-assigned MAKEFLAGS into the switches it names. This is the one switch whose effect is already spent by the time the decoding happens, so it needs the built-in rules withdrawn rather than merely the flag recorded."
+                    }
+                )
+            }
+
+            {
+                id make-extra-prereqs-are-real-prerequisites
+                title "Require the prerequisites .EXTRA_PREREQS adds"
+                kind @fix
+                deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-14T06:03:09.147964985Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns one row: variables/EXTRA_PREREQS.diff.7.\n\nThe makefile is the whole reproducer:\n\n  .EXTRA_PREREQS = tick tack\n  .PHONY: all\n  all: ; @echo ${.EXTRA_PREREQS} $^\n\nNothing makes `tick` or `tack`. GNU refuses: `No rule to make target 'tick', needed by 'all'`. Ronin prints `tick tack` and exits 0 — it read the variable back but never made its contents prerequisites of the goal.\n\n`.EXTRA_PREREQS` adds prerequisites that are ordered and required like any other, and are only left out of `$^` and `$?`. Ronin appears to have the second half without the first, which is the safe-looking direction and the wrong one: a build that should have stopped runs instead."
+                    }
+                )
+            }
+
+            {
+                id make-word-index-out-of-range
+                title "Refuse a word index too large to be one"
+                kind @fix
+                deps (make-build-intent-gate)
+                log (
+                    {
+                        at 2026-08-14T06:03:13.111626097Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns one row: functions/word.diff.4.\n\n  word-e4: ; @echo $(word 9999999999999999999,$(FOO))\n\nGNU refuses at read time: `invalid first argument to 'word' function: '9999999999999999999' out of range.  Stop.` Ronin returns the empty string and the recipe runs.\n\nThe neighbouring cases already agree — `$(word abc,…)` and `$(word 1a,…)` are refused by both tools as non-numeric, and the wording difference there is narration this triage now records as `shared-refusal`. What is missing is the range check on a value that is all digits but does not fit, which is a different rejection from a non-numeric one and is the only one of the group Ronin lets through.\n\nSmall, but it is the compiler accepting a makefile GNU rejects, so it belongs on the intent side rather than the wording side."
+                    }
+                )
+            }
+
+            {
+                id make-jobserver-style-is-checked
+                title "Refuse a jobserver style that names nothing"
+                kind @fix
+                deps (make-interface-surface)
+                log (
+                    {
+                        at 2026-08-14T06:03:22.36803552Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Owns one row: features/jobserver.diff.8.\n\n  make --jobserver-style=foo -j8\n\nGNU refuses: `unknown jobserver auth style 'foo'.  Stop.` Ronin accepts the argument and builds.\n\n`make-single-ninja-scheduler` settled that Ronin replaces recursive Make jobservers with one Ninja scheduler, so `--jobserver-style` has nothing to select and is rightly a no-op. Accepting a value that names nothing is a separate matter: an argument Make would have rejected should not be read as one it would have taken, or a makefile guarding on the refusal takes the wrong branch.\n\nThe narrow fix is to check the value against the styles Make knows and refuse the rest, while continuing to do nothing with the ones it accepts."
                     }
                 )
             }
