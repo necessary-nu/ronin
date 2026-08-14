@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # The two loops range over the same list, so a suffix joined to itself rejects
+| # a target of that name too.
+| .SUFFIXES:
+| .SUFFIXES: foo
+| foofoo: ; @printf '%s\n' 'foofoo ran' > out
+| zed:    ; @printf '%s\n' 'zed ran'    > out
+file out touched 1
+| zed ran

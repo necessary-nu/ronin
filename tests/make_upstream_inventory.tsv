@@ -570,11 +570,11 @@ case	features/suffixrules.diff.14	narration	product-name+fatal-decoration+shared
 case	features/suffixrules.diff.15	narration	ninja-progress+no-work-line
 case	features/suffixrules.diff.2	narration	ninja-progress
 case	features/suffixrules.diff.3	narration	ninja-progress
-case	features/suffixrules.diff.4	compiler	product-name+no-rule-to-make
-case	features/suffixrules.diff.5	compiler	product-name+no-rule-to-make
-case	features/suffixrules.diff.6	compiler	ninja-progress+fatal-decoration+refusal-not-made
-case	features/suffixrules.diff.7	unclassified	ninja-progress+evaluation
-case	features/suffixrules.diff.8	unclassified	no-work-line+up-to-date-line+evaluation
+case	features/suffixrules.diff.4	narration	ninja-progress
+case	features/suffixrules.diff.5	narration	ninja-progress
+case	features/suffixrules.diff.6	narration	product-name+fatal-decoration+shared-refusal
+case	features/suffixrules.diff.7	narration	ninja-progress
+case	features/suffixrules.diff.8	narration	no-work-line+up-to-date-line
 case	features/suffixrules.diff.9	narration	ninja-progress
 case	features/targetvars.diff	narration	ninja-progress+recipe-echo
 case	features/targetvars.diff.1	unclassified	ninja-progress+evaluation
@@ -636,7 +636,7 @@ case	features/varnesting.diff.1	unclassified	product-name+evaluation
 case	features/vpath.diff	narration	ninja-progress
 case	features/vpath.diff.1	compiler	product-name+no-work-line+no-rule-to-make
 case	features/vpath.diff.2	narration	ninja-progress
-case	features/vpath.diff.3	compiler	product-name+no-rule-to-make
+case	features/vpath.diff.3	narration	ninja-progress
 case	features/vpath.diff.4	unclassified	ninja-progress+evaluation
 case	features/vpathgpath.diff	narration	no-work-line
 case	features/vpathplus.diff	unclassified	no-work-line+evaluation
@@ -1074,8 +1074,8 @@ case	variables/INCLUDE_DIRS.diff.2	narration	ninja-progress
 case	variables/INCLUDE_DIRS.diff.3	narration	ninja-progress
 case	variables/INCLUDE_DIRS.diff.4	unclassified	ninja-progress+evaluation
 case	variables/INCLUDE_DIRS.diff.5	unclassified	ninja-progress+evaluation
-case	variables/LIBPATTERNS.diff	compiler	product-name+no-rule-to-make
-case	variables/LIBPATTERNS.diff.1	compiler	product-name+no-rule-to-make
+case	variables/LIBPATTERNS.diff	narration	ninja-progress
+case	variables/LIBPATTERNS.diff.1	unclassified	product-name+ninja-progress+evaluation
 case	variables/MAKE.diff	narration	ninja-progress+recipe-echo+directory-announce
 case	variables/MAKECMDGOALS.diff	narration	ninja-progress
 case	variables/MAKECMDGOALS.diff.1	narration	ninja-progress

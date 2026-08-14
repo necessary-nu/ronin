@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # The single-suffix test is guarded by the suffix not beginning with a dot, so
+| # a declared `.foo` does not reject a target named `.foo`. Reachable only
+| # through a name carrying a slash, since a bare `.foo` is rejected for its
+| # leading dot a line earlier.
+| .SUFFIXES:
+| .SUFFIXES: .foo
+| sub/.foo: ; @printf '%s\n' 'dotfoo ran' > out
+| zed:      ; @printf '%s\n' 'zed ran'    > out
+file out touched 1
+| dotfoo ran
