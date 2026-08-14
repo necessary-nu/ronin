@@ -430,6 +430,7 @@ assertions (
     {id make-recipe-eval-mutation-refusal, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:06:01.690436468Z}
     {id make-local-binding-assignment-scope, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:06:05.92501955Z}
     {id make-automatic-variable-value-function, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:29:25.036933669Z}
+    {id make-conformance-oracle-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-14T06:49:21.596588034Z}
 )
 
 impl_evidence (

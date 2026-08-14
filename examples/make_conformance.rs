@@ -10,10 +10,35 @@
 //! status and stdout/stderr are retained here to discover evaluator gaps; they
 //! are not Ronin's Make build-intent conformance gate.
 //!
+//! Which GNU Make. The version string does not name a build: Debian's
+//! `make-dfsg 4.4.1-2`, Fedora's, Arch's and the source the Free Software
+//! Foundation released all answer `GNU Make 4.4.1`, and they do not answer
+//! every question alike. So the oracle is the build
+//! `scripts/build-make-oracle.sh` makes from the release tarball, named by its
+//! path rather than found on `PATH`, and it is checked against the record the
+//! build-intent corpus keeps of that build before a single case runs —
+//! `[spec:ronin:req:make.oracle-provenance]`. `--make` names another copy of
+//! that build; `--other-make` measures a different build deliberately, says how
+//! it departs from the record, and refuses to rewrite the inventory from it.
+//!
 //! See `[dec:ronin:make-compiles-to-ninja]` and
 //! `[dec:ronin:ninja-compatibility-oracle]`.
 
 #![deny(missing_docs, unreachable_pub)]
+
+/// Which Make the recording was made by, and whether this one is it. Included
+/// by path from the build-intent corpus, which owns it: there is one oracle
+/// for this repository, and a second copy of the probe would be a second
+/// answer to the same question.
+///
+/// The two allowances are what including a module rather than importing a
+/// crate costs, and they are scoped to it. This harness reads the record and
+/// never writes one, so much of the module is dead here and live in the
+/// recorder; and its items are `pub` for the recorder, which reaches them
+/// through a private module of its own.
+#[path = "../tests/support/oracle.rs"]
+#[allow(dead_code, unreachable_pub)]
+mod oracle;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
@@ -24,9 +49,15 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-/// The oracle this corpus is pinned to. Moving it reruns the corpus and
-/// reclassifies whatever moves; it is not a default to fall back from.
-const ORACLE_VERSION: &str = "GNU Make 4.4.1";
+/// Where `scripts/build-make-oracle.sh` leaves the build the record names.
+/// Gitignored, like the pinned Ninja beside it: rebuildable from the tarball
+/// that script checksums, and named here so the gate has an oracle without
+/// being told where one is.
+const BUILT_ORACLE: &str = "reference/make-oracle/make-4.4.1/make";
+
+/// Where the record of that build lives: beside the build-intent corpus, which
+/// is where recording enforces it. One oracle, one record, read by both gates.
+const ORACLE_RECORD_DIRECTORY: &str = "tests/make";
 
 const INVENTORY_PATH: &str = "tests/make_corpus_inventory.tsv";
 const INVENTORY: &str = include_str!("../tests/make_corpus_inventory.tsv");
@@ -55,6 +86,10 @@ struct FrontEnd {
 
 struct Config {
     make: PathBuf,
+    /// Whether the Make above is claimed to be the build this corpus is
+    /// classified against. `--other-make` says it is not, which is how another
+    /// build is measured without the run being mistaken for the gate.
+    pinned: bool,
     front_end: FrontEnd,
     corpus: PathBuf,
     work: PathBuf,
@@ -65,7 +100,8 @@ impl Default for Config {
     fn default() -> Self {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         Self {
-            make: PathBuf::from("make"),
+            make: root.join(BUILT_ORACLE),
+            pinned: true,
             front_end: FrontEnd {
                 binary: root.join("target/release/rkati"),
                 arguments: Vec::new(),
@@ -90,6 +126,10 @@ impl Config {
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
                 "--make" => config.make = PathBuf::from(value("--make", &mut arguments)?),
+                "--other-make" => {
+                    config.make = PathBuf::from(value("--other-make", &mut arguments)?);
+                    config.pinned = false;
+                }
                 "--front-end" => {
                     config.front_end.binary = PathBuf::from(value("--front-end", &mut arguments)?);
                 }
@@ -102,16 +142,46 @@ impl Config {
                 "--update" => config.update = true,
                 "--help" | "-h" => {
                     println!(
-                        "usage: make_conformance [--make FILE] [--front-end FILE] \
-                         [--front-end-arg ARG]... [--corpus DIR] [--work DIR] [--update]"
+                        "usage: make_conformance [--make FILE | --other-make FILE] \
+                         [--front-end FILE] [--front-end-arg ARG]... [--corpus DIR] \
+                         [--work DIR] [--update]"
                     );
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown argument '{argument}'")),
             }
         }
+        config.make = absolute_program(&config.make)?;
+        // Lexically, so that a make-named symbolic link to Ronin stays the
+        // name Make mode is selected by. A front end is never looked up on
+        // PATH: `make` there is the host's, which is the one thing this
+        // harness must not silently run as the tool under test.
+        config.front_end.binary = std::path::absolute(&config.front_end.binary)
+            .map_err(|error| format!("{}: {error}", config.front_end.binary.display()))?;
         Ok(config)
     }
+}
+
+/// A program named the way it will be spawned: by absolute path, with a bare
+/// name looked up on `PATH` the way `execvp` would.
+///
+/// Two reasons, both of which this harness has been bitten by. A case runs in
+/// a scratch directory rather than the repository root, so a relative path
+/// names nothing by the time the case spawns it. And the corpus reads the name
+/// it is handed: seven scripts print a canned expectation *instead of* running
+/// the tool when that name starts with `make`, and three makefiles skip
+/// themselves when `$(MAKE)` is exactly `make`. A Make named by its path is
+/// measured; a Make named `make` is asked to describe itself.
+fn absolute_program(program: &Path) -> Result<PathBuf, String> {
+    if program.to_string_lossy().contains('/') {
+        return std::path::absolute(program)
+            .map_err(|error| format!("{}: {error}", program.display()));
+    }
+    let path = env::var_os("PATH").ok_or_else(|| "PATH is not set".to_owned())?;
+    env::split_paths(&path)
+        .map(|directory| directory.join(program))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| format!("{} is not on PATH", program.display()))
 }
 
 /// One corpus run: a `.mk` file built with one of its `testN` targets, or a
@@ -166,34 +236,80 @@ struct Recorded {
     digest: u64,
 }
 
+/// What the run is measured against, once the Make in front of it has been
+/// asked who it is.
+struct Oracle {
+    /// Prose naming the build, from the record rather than from the program:
+    /// nothing a Make answers says where it was built from.
+    build: String,
+    version: String,
+    /// Every way this Make is not the one the record names. Empty in a gate
+    /// run, because a gate run refuses to start otherwise.
+    departures: Vec<String>,
+}
+
 /// Refuse to run against whatever Make happens to be installed.
 ///
 /// A gate that silently compares against a different oracle, or against no
-/// oracle at all, is worse than one that does not run.
-fn verify_oracle(make: &Path) -> Result<(), String> {
-    let output = Command::new(make)
-        .arg("--version")
-        .output()
-        .map_err(|error| format!("{} is not runnable: {error}", make.display()))?;
-    if !output.status.success() {
+/// oracle at all, is worse than one that does not run. The version string is
+/// not that check: four builds of 4.4.1 answer it identically and disagree
+/// about `ARFLAGS` under `.POSIX:`, about the host they name and about the
+/// functions they carry. What identifies the build is the record the
+/// build-intent corpus keeps of it, so this asks the same questions of the
+/// same Make and refuses on any answer that differs.
+// [spec:ronin:req:make.oracle-provenance]
+fn identify(root: &Path, config: &Config) -> Result<Oracle, String> {
+    let make = &config.make;
+    if !make.is_file() {
         return Err(format!(
-            "{} --version failed with {:?}",
-            make.display(),
-            output.status.code()
+            "no Make oracle at {}.\nBuild it with scripts/build-make-oracle.sh, which fetches \
+             the release the corpus is classified against and builds it there.",
+            make.display()
         ));
     }
-    let banner = String::from_utf8_lossy(&output.stdout);
-    let first = banner.lines().next().unwrap_or_default().trim();
-    if first == ORACLE_VERSION {
-        Ok(())
-    } else {
-        Err(format!(
-            "the semantics oracle is pinned at '{ORACLE_VERSION}' but {} reports '{first}'.\n\
-             Install the pinned version or pass --make; the corpus is not run against \
-             an unpinned Make.",
+    let recorded = oracle::read(&root.join(ORACLE_RECORD_DIRECTORY))?;
+    // Ahead of the probe, which asks for functions an older Make does not have
+    // and would fail inside it rather than say why. A run that named another
+    // build deliberately goes on to probe it anyway: the version reaches that
+    // run as a departure like any other.
+    let reported = oracle::version(make);
+    if config.pinned && reported != recorded.version {
+        return Err(format!(
+            "the oracle is '{}' and {} reports '{reported}'.\n\
+             Build it with scripts/build-make-oracle.sh, or measure this one deliberately \
+             with --other-make.",
+            recorded.version,
             make.display()
-        ))
+        ));
     }
+
+    let departures = oracle::differences(&recorded, &oracle::probe(make));
+    admissible(config.pinned, &recorded.build, make, &departures)?;
+    Ok(Oracle {
+        build: recorded.build,
+        version: recorded.version,
+        departures,
+    })
+}
+
+/// Whether the run may go on against this Make, and what to say when it may
+/// not.
+///
+/// A departure is fatal to a run that claimed to have the oracle and is the
+/// finding of one that said it had another build, so the same list decides
+/// both. Separated from the probe because the decision is worth testing and
+/// the probe needs a Make.
+fn admissible(pinned: bool, build: &str, make: &Path, departures: &[String]) -> Result<(), String> {
+    if !pinned || departures.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} is not the Make this corpus is classified against ({build}):\n  {}\n\n\
+         Build that one with scripts/build-make-oracle.sh, or measure this one deliberately \
+         with --other-make, which reports its departures instead of recording from it.",
+        make.display(),
+        departures.join("\n  ")
+    ))
 }
 
 /// The `testN` targets a `.mk` file declares, in the vendored harness's terms.
@@ -697,6 +813,10 @@ const INVENTORY_HEADER: &str = "\
 # `scripts/check-make-conformance.sh --update`; the class and family columns are
 # a judgement and are edited by hand.
 #
+# The oracle is upstream 4.4.1 built by `scripts/build-make-oracle.sh`, named by
+# its path and checked against `tests/make/oracle.provenance` before any of this
+# is written.  A distribution's build answers `GNU Make 4.4.1` too and is not it.
+#
 # class    defect     a real difference from GNU Make that Make mode must fix
 #          recorded   the corpus itself annotates the case as not matching Make
 #                     (`# TODO` at the head of the file, as run_test.go reads it)
@@ -712,13 +832,30 @@ const INVENTORY_HEADER: &str = "\
 
 ";
 
-/// Say which tool the numbers below are about, and which cases could not be
-/// asked about it at all.
+/// Say which two tools the numbers below are about, and which cases could not
+/// be asked about them at all.
 ///
-/// Both lines are provenance rather than decoration: two runs against
-/// different front ends have different denominators, and a total quoted
-/// without them cannot be compared with another.
-fn announce(front_end: &FrontEnd, refused: &[Case]) {
+/// Every line is provenance rather than decoration: two runs against different
+/// front ends have different denominators, two runs against different builds
+/// of 4.4.1 have different oracles, and a total quoted without them cannot be
+/// compared with another.
+fn announce(oracle: &Oracle, config: &Config, refused: &[Case]) {
+    println!("oracle:      {}", config.make.display());
+    if oracle.departures.is_empty() {
+        println!("             {}", oracle.build);
+    } else {
+        // Never the recorded prose in this case: it names a build this Make
+        // has just been shown not to be, and the classification below is the
+        // recorded build's rather than this one's.
+        println!(
+            "             not the build the corpus is classified against ({}):",
+            oracle.build
+        );
+        for departure in &oracle.departures {
+            println!("             {departure}");
+        }
+    }
+    let front_end = &config.front_end;
     let mut spelled = front_end.binary.display().to_string();
     for argument in &front_end.arguments {
         spelled.push(' ');
@@ -746,8 +883,9 @@ fn report(
     divergences: &[Divergence],
     families: &BTreeMap<String, Family>,
     known: &BTreeMap<String, Recorded>,
+    version: &str,
 ) -> Result<(), String> {
-    println!("corpus:      {total} runs against {ORACLE_VERSION}");
+    println!("corpus:      {total} runs against {version}");
     println!(
         "raw:         {verbatim} identical byte for byte, {} differing",
         total - verbatim
@@ -865,7 +1003,16 @@ fn indent(text: &str) -> String {
 }
 
 fn run(config: &Config) -> Result<(), String> {
-    verify_oracle(&config.make)?;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    if config.update && !config.pinned {
+        return Err(
+            "--update rewrites the classification from what this run observed, so it needs the \
+             Make the corpus is classified against. --other-make measures a build without \
+             recording from it."
+                .to_owned(),
+        );
+    }
+    let oracle = identify(root, config)?;
     if !config.front_end.binary.is_file() {
         return Err(format!(
             "the front end {} does not exist; build it first",
@@ -884,11 +1031,11 @@ fn run(config: &Config) -> Result<(), String> {
     let (refused, cases): (Vec<Case>, Vec<Case>) = cases
         .into_iter()
         .partition(|case| case.self_detecting && !exercisable);
-    announce(&config.front_end, &refused);
+    announce(&oracle, config, &refused);
     prepare_work(config)?;
     let (verbatim, divergences) = run_corpus(config, &cases)?;
     if config.update {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(INVENTORY_PATH);
+        let path = root.join(INVENTORY_PATH);
         write_inventory(&path, &families, &known, &divergences)?;
         println!("wrote {} rows to {}", divergences.len(), path.display());
         return Ok(());
@@ -905,7 +1052,14 @@ fn run(config: &Config) -> Result<(), String> {
             }
         }
     }
-    report(cases.len(), verbatim, &divergences, &families, &known)
+    report(
+        cases.len(),
+        verbatim,
+        &divergences,
+        &families,
+        &known,
+        &oracle.version,
+    )
 }
 
 fn main() {
@@ -919,10 +1073,54 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        FrontEnd, case_directory_name, declared_targets, names_kati, normalize, parse_inventory,
-        self_detecting, tool_identity,
+        FrontEnd, absolute_program, admissible, case_directory_name, declared_targets, names_kati,
+        normalize, parse_inventory, self_detecting, tool_identity,
     };
     use std::path::{Path, PathBuf};
+
+    /// The property the ten name-reading cases in the corpus depend on: what a
+    /// case is handed is a path, so `grep -q "^make"` and `ifeq ($(MAKE)...,
+    /// make4)` cannot match it and the oracle is run rather than described.
+    #[test]
+    fn an_oracle_is_named_by_path() {
+        let resolved = absolute_program(Path::new("make")).expect("a make on PATH");
+        assert!(resolved.is_absolute(), "{}", resolved.display());
+        assert_eq!(
+            resolved.file_name().and_then(|name| name.to_str()),
+            Some("make")
+        );
+    }
+
+    #[test]
+    fn a_relative_program_is_absolutised() {
+        let resolved = absolute_program(Path::new("reference/make-oracle/make-4.4.1/make"))
+            .expect("a lexical absolutisation");
+        assert!(resolved.is_absolute(), "{}", resolved.display());
+        assert!(resolved.ends_with("reference/make-oracle/make-4.4.1/make"));
+    }
+
+    #[test]
+    fn a_program_off_path_is_refused() {
+        let error = absolute_program(Path::new("ronin-no-such-make")).unwrap_err();
+        assert!(error.contains("is not on PATH"), "{error}");
+    }
+
+    /// The refusal is the whole of what pinning the oracle buys, so it is
+    /// tested in both directions: a run that claimed the oracle stops on any
+    /// departure, and a run that said it had another build carries the same
+    /// departures as its finding.
+    #[test]
+    fn a_departure_stops_a_pinned_run() {
+        let make = Path::new("/usr/bin/make");
+        let departure =
+            [r#"under .POSIX: ARFLAGS is "-rvU", and the record has no such default"#.to_owned()];
+
+        assert!(admissible(true, "upstream 4.4.1", make, &[]).is_ok());
+        assert!(admissible(false, "upstream 4.4.1", make, &departure).is_ok());
+        let refusal = admissible(true, "upstream 4.4.1", make, &departure).unwrap_err();
+        assert!(refusal.contains("-rvU"), "{refusal}");
+        assert!(refusal.contains("--other-make"), "{refusal}");
+    }
 
     #[test]
     fn a_script_that_greps_its_tools_name_is_recognised() {

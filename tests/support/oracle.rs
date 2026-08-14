@@ -11,6 +11,12 @@
 //! So the corpus keeps the oracle's answers to the questions builds of 4.4.1
 //! are known to differ on, and recording refuses when the Make in front of it
 //! answers differently. [spec:ronin:req:make.oracle-provenance]
+//!
+//! There is one oracle for this repository, so this is shared rather than
+//! reimplemented: `tests/make_port.rs` compiles it as the build-intent
+//! corpus's recorder, and `examples/make_conformance.rs` includes the same
+//! file by path to check the Make it is about to classify the vendored corpus
+//! against.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -178,7 +184,10 @@ struct Answers {
 /// built-in variables are installed for a recipe to read and `$(file ...)`
 /// writes them without a shell between us and the bytes.
 fn ask(oracle: &Path, posix: bool) -> Answers {
-    let scratch = std::env::temp_dir().join("ronin-make-oracle-probe");
+    // Per process: two harnesses now probe, and a shared path one of them
+    // deletes under the other would be a flake with no explanation in it.
+    let scratch =
+        std::env::temp_dir().join(format!("ronin-make-oracle-probe-{}", std::process::id()));
     let _ = fs::remove_dir_all(&scratch);
     fs::create_dir_all(&scratch).expect("a directory to probe the oracle in");
 
@@ -234,7 +243,11 @@ fn record_answer(line: &str, into: &mut Answers) {
     }
 }
 
-fn version(oracle: &Path) -> String {
+/// The first line of `--version`, which is what a build says about itself
+/// before it is asked anything harder. Not an identity — four builds answer
+/// this alike — but it is the cheapest way to tell a 4.3 from a 4.4.1, and it
+/// answers before the probe below asks for functions an older Make lacks.
+pub fn version(oracle: &Path) -> String {
     let reported = Command::new(oracle)
         .arg("--version")
         .output()

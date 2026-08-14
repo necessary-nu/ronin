@@ -58,6 +58,20 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 73 when the oracle stopped being whatever `make` on PATH resolved to
+    // and became upstream 4.4.1, built from the release tarball and named by
+    // its path. Neither tool changed. The corpus reads the name it is handed:
+    // three makefiles skip themselves with `$(error test skipped)` when
+    // `$(MAKE)` is exactly `make`, and seven scripts print a canned expectation
+    // *instead of* running the tool when that name starts with `make`. A Make
+    // named by its path runs all ten cases for the first time.
+    // `err_export_override.mk#default`, `err_override_export.mk#default` and
+    // `wildcard_cache.mk#test` became byte-identical — what had been recorded
+    // against them was GNU Make's skip diagnostic against kati's real run — and
+    // the seven `kati-extension` scripts kept differing, now against a GNU Make
+    // that ran rather than against the corpus's opinion of what it would say.
+    //
+    // Before that it moved
     // from 74 when `value` learned to read an automatic variable back: the base
     // forms answer with the name they were set to, and the `D` and `F` forms
     // with the `dir`/`notdir` expression GNU Make defined them from, rather than
@@ -120,9 +134,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 73);
-    assert_eq!(by_class["defect"], 36);
-    assert_eq!(by_class["recorded"], 5);
+    assert_eq!(cases.len(), 70);
+    assert_eq!(by_class["defect"], 34);
+    assert_eq!(by_class["recorded"], 4);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);
 }

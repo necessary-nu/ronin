@@ -7,8 +7,10 @@ recorded from one of them, and until the record described below existed it
 could not say which — so a re-record on another host would have overwritten one
 distribution's answers with another's without a word.
 
-This document is what each of them answers differently, and how the corpus was
-classified when the oracle moved to the released source.
+This document is what each of them answers differently, and how Ronin's two
+Make corpora — the build-intent one under `tests/make` and the vendored kati
+one under `kati/testcase` — were classified when the oracle moved to the
+released source.
 [`[spec:ronin:req:make.oracle-provenance]`](spec/ronin/make.md).
 
 ## The oracle
@@ -34,6 +36,14 @@ installs at `default` origin, the values `.POSIX:` changes, and the features it
 offers. Recording refuses when the Make in front of it answers differently, so
 moving the oracle is an edit to that record — `MAKE_PORT_ORACLE_MOVE` — rather
 than a silent overwrite.
+
+There is one such record because there is one oracle. Both gates that need a
+Make read it through `tests/support/oracle.rs`: `tests/make_port.rs` when it
+records the build-intent corpus, and `examples/make_conformance.rs` before it
+classifies the vendored kati corpus. The third consumer,
+`scripts/check-make-upstream.sh`, needs none — its oracle is GNU Make's own
+test suite at commit `d66a65a`, a Perl driver it hands Ronin and nothing else;
+it never runs a Make.
 
 Between the four builds, three lines of that record do the discriminating:
 
@@ -139,6 +149,57 @@ matches the released source.
 **Corpus.** 0 of 324 cases differ, again with the distribution's own userland.
 No case reaches `$(guile ...)`, so the extra function is a capability the
 corpus never asks about rather than a behavioural difference within it.
+
+## The vendored kati corpus
+
+`examples/make_conformance.rs` runs the 387 cases under `kati/testcase` twice
+and classifies every difference in `tests/make_corpus_inventory.tsv`. It used
+to resolve its Make from `PATH` and admit it on the version string alone —
+exactly the weakness the record above exists to close — so the inventory was
+recorded against Debian's build. It now defaults to the binary
+`scripts/build-make-oracle.sh` leaves behind, checks it against the record
+before a single case runs, and refuses on any departure. `--other-make` points
+it at a build that is deliberately not the oracle: the departures are printed
+as a header, and `--update` refuses, so no other build can rewrite the
+classification.
+
+**Oracle.** Nothing in this corpus tells Debian's build apart from upstream.
+The two runs agree case for case, byte for byte, because the only behavioural
+departure between them is `ARFLAGS` under `.POSIX:` and the corpus has exactly
+one `.POSIX:` case — `posix_var.mk`, which declares it to observe what
+`override SHELL := echo` does to `$(shell ...)` and never mentions `ARFLAGS`,
+`ar` or an archive member. `-rvU` had nowhere to show.
+
+**Name.** Ten rows moved anyway, and not one of them for a reason about a build
+of Make. The corpus reads the name of the tool it is handed. Seven scripts —
+`final_global`, `final_rule`, `final_rule2`, `readonly_global`,
+`readonly_global_missing`, `readonly_rule`, `readonly_rule_missing` — test it
+with `grep -q "^make"` and print a canned expectation *instead of* running the
+tool when it matches. Three makefiles — `err_export_override.mk`,
+`err_override_export.mk`, `wildcard_cache.mk` — hold `ifeq
+($(MAKE)$(MAKEVER),make4)` and answer `$(error test skipped)`. Both tests match
+the bare word `make` and neither matches a path, so under the old default GNU
+Make described itself in ten cases and ran in none of them:
+
+| Cases | Was | Is |
+| --- | --- | --- |
+| 3 makefiles | GNU Make skipped itself; kati ran | both run, and agree — rows removed |
+| 7 scripts | kati against the corpus's canned Make text | kati against a GNU Make that ran |
+
+`final_rule.sh` is the shape of it. Handed `make`, the script prints
+`Makefile:3: *** cannot assign to readonly variable: FOO` and exits 0 without
+starting anything; handed a path, GNU Make runs and says `Nothing to be done
+for 'all'`, which is what it actually does with kati's `$=` final-assignment
+syntax. The recorded difference had been kati's `  Stop.` suffix against a
+sentence the corpus wrote for it. The seven stay `extension` — the feature is
+still kati's alone — but their Make side is now evidence rather than opinion.
+
+One host dependency remains, and it is symmetric: twelve corpus makefiles
+compute `MAKEVER` from `$(shell make --version)`, which is the host's Make
+whichever oracle is passed. Both tools evaluate the same `$(shell ...)` and
+take the same branch, so it moves the corpus's own gates together rather than
+tilting the comparison. The three cases where it was *not* symmetric were the
+three above, and those tested `$(MAKE)` rather than `MAKEVER`.
 
 ## Summary
 

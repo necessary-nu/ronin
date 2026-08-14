@@ -9750,6 +9750,34 @@ children (
                     }
                 )
             }
+
+            {
+                id make-corpus-host-make-shellout
+                title "Take the host's Make out of the vendored corpus's own gates"
+                kind @test
+                log (
+                    {
+                        at 2026-08-14T06:48:29.219879149Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while pointing the vendored-corpus gate at the pristine oracle (make-conformance-oracle-identity). Twelve makefiles under kati/testcase open with `MAKEVER:=$(shell make --version | grep \"Make [0-9]\" | sed -E 's/.*Make ([0-9]).*/\\1/')` and branch on it: comment_in_command, include_glob_order, posix_var, multi_implicit_output_patterns, multiline_recipe, implicit_pattern_rule_prefix, var_with_space, wildcard, shell_var_with_args, and — until this pass removed their rows — err_export_override, err_override_export and wildcard_cache. That `$(shell make ...)` is the host's Make on PATH whatever `--make` names, so the corpus still asks a program the gate does not identify which branch to take.\n\nIt is symmetric today and therefore not a defect: both tools evaluate the same `$(shell ...)` and land in the same branch, so it moves the corpus's own gates together rather than tilting the comparison, and this host's `make` is 4.4.1 like the oracle. It stops being symmetric the moment a host has 3.81, or no make at all, on PATH — the corpus would then take its 3.x branch or its empty-MAKEVER branch for both tools and the inventory would drift for a reason about the host rather than about either tool.\n\nThe obvious fix is for `observe` in examples/make_conformance.rs to prepend a directory holding a `make` link to the pinned oracle onto PATH for both runs, so the corpus's own shell-out reaches the oracle. Two things to check before doing it: the three `ifeq ($(MAKE)$(MAKEVER),make4)` cases are insensitive now only because `$(MAKE)` is an absolute path, and a PATH-injected `make` must not change what `$(MAKE)` expands to; and the corpus's recursive `submake` cases must keep reaching the tool under test rather than the injected link. Re-record and audit any row that moves, as this pass did."
+                    }
+                )
+            }
+
+            {
+                id make-release-clippy-runnable
+                title "Make the release script's clippy step runnable again"
+                kind @chore
+                log (
+                    {
+                        at 2026-08-14T06:48:45.631578515Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Measured 2026-08-14 while running the gates for make-conformance-oracle-identity; both findings pre-date that work and neither was introduced by it.\n\n`scripts/check-make-conformance.sh` is fine. The two clippy lines in scripts/check-release.sh are not:\n\n  cargo clippy --all-targets -- -D warnings -W clippy::pedantic -W clippy::nursery\n  cargo clippy -p kati --all-targets -- -D warnings\n\nThe first fails with 638 errors in `kati` and never reaches Ronin's own findings. The lint flags reach every crate cargo builds, and kati is a path dependency, so the pedantic and nursery groups are applied to exactly the vendored fork the second line exists to spare — the comment above it says so in as many words. `--no-deps` is what the flags need; the dispatches have been running `cargo clippy --lib --bins --no-deps -- -D warnings -W clippy::pedantic -W clippy::nursery` for some time, and it is clean.\n\nThe second fails on one finding, in the fork and pre-existing: `unused import: crate::symtab::Interner` at kati/src-rs/command.rs:883, inside a `#[cfg(test)]` module, so it only fires on the `--all-targets` build. Deleting the line is the whole of the fix; it wants a kati commit and a submodule pin, which is why it has not been taken in passing by a node that had no other reason to touch kati.\n\nWorth noting for whoever takes this: with `--no-deps`, examples are still outside the lib+bins scope the dispatches use, and `tests/support/oracle.rs` carries four `assigning_clones` and one `struct_field_names` nursery finding that `examples/make_conformance.rs` now compiles. They are the shared module's, not the harness's. `rest.clone_into(&mut into.host)` for `into.host = rest.to_owned()` in a parser that runs three times is not an improvement, so the right answer is probably to scope the group rather than to take the suggestion."
+                    }
+                )
+            }
         )
         log (
             {
@@ -10257,12 +10285,34 @@ children (
         title "Record which Make the vendored-corpus run measures against"
         kind @test
         deps (make-oracle-identity-record make-conformance-corpus)
+        sealed true
         log (
             {
                 at 2026-08-12T13:29:30.331398533Z
                 author "brendan@necessary.nu"
                 kind @note
                 text "The 387-run vendored-corpus gate (examples/make_conformance.rs, scripts/check-make-conformance.sh) resolves its oracle as `make` on PATH with a `--make` override, and admits it on the same evidence the build-intent corpus used to: the first line of `--version` equalling \"GNU Make 4.4.1\". Debian's, Fedora's, Arch's and the released source all pass that check, so tests/make_corpus_inventory.tsv records 387 live comparisons against whichever one the host had — Debian's, here. Pointing it at reference/make-oracle and giving it the same provenance record the build-intent corpus now carries would reclassify the inventory, so it is deliberately not folded into the pass that established the pin. The upstream-suite gate needs nothing: its oracle is GNU Make's own test suite, pinned by git commit d66a65a, and it runs Ronin rather than any Make binary."
+            }
+
+            {
+                at 2026-08-14T06:18:40.95176801Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-14T06:49:17.843217277Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Delivered. The 387-run vendored-corpus gate now names the Make it measures against, checks it, and the inventory is re-recorded from the pristine build.\n\nHOW THE ORACLE IS RESOLVED. Shared, not reimplemented: examples/make_conformance.rs includes tests/support/oracle.rs with `#[path]`, so the probe, the record format and the difference report are the build-intent recorder's own code, and both gates read one record — tests/make/oracle.provenance. Including a module rather than importing a crate costs two allowances, scoped to the include and argued there: `dead_code`, because this harness reads the record and never writes one, and `unreachable_pub`, because the module's items are `pub` for the recorder while the example denies that. A parallel implementation would have been a second answer to the question the record exists to settle. oracle.rs itself gains only a paragraph saying it is shared, `pub fn version` for a legible pre-probe check, and a per-process probe scratch directory so two harnesses cannot delete each other's.\n\nThe default oracle is reference/make-oracle/make-4.4.1/make, and scripts/check-make-conformance.sh runs scripts/build-make-oracle.sh first, so the gate builds its own oracle rather than borrowing the host's. Enforcement is the full probe, not the version string: version, MAKE_HOST, .FEATURES, every default-origin variable and every value .POSIX: changes. Verified — `--make /usr/bin/make` now refuses with `under .POSIX: ARFLAGS is \"-rvU\", and the record has no such default`, which is Debian's patch and nothing else. `--make` still names another copy of the recorded build. `--other-make` is the deliberate second build: its departures print as a header, the run proceeds as a report, and `--update` refuses so no other build can rewrite the classification. The oracle is also absolutised before it is spawned, by path if it has one and through PATH the way execvp would otherwise, because a case runs in a scratch directory where a relative path names nothing.\n\nTHE DELTA, AND WHERE IT CAME FROM. Debian → pristine moved nothing. The two runs are identical in every count and in every listed problem, because the corpus's only `.POSIX:` case is posix_var.mk, which declares it to watch what `override SHELL := echo` does to `$(shell ...)` and never mentions ARFLAGS, ar or an archive member. The one behavioural departure between the builds had nowhere to show.\n\nTen rows moved anyway, all for the oracle's NAME rather than its build, because the corpus reads the name it is handed:\n\n  Seven scripts test `grep -q \"^make\"` and print a canned expectation *instead of* running the tool when it matches — final_global, final_rule, final_rule2, readonly_global, readonly_global_missing, readonly_rule, readonly_rule_missing. Under the old default their oracle side was a sentence the corpus wrote about Make; it is now GNU Make running. Demonstrated on final_rule.sh: handed `make` the script prints `Makefile:3: *** cannot assign to readonly variable: FOO` and exits 0 having started nothing; handed a path, GNU Make runs and says `Nothing to be done for 'all'`, which is what it really does with kati's `$=` syntax. The front-end side is byte-identical in both — rkati's path never matched `^make` — so only the digests moved. Class stays `extension`, family stays `kati-extension`, and the family's description gained the second mechanism it now covers.\n\n  Three makefiles hold `ifeq ($(MAKE)$(MAKEVER),make4)` and answer `$(error test skipped)` — err_export_override.mk, err_override_export.mk, wildcard_cache.mk. `$(MAKE)` is the invoked name, so GNU Make skipped itself in all three and kati never did; what had been recorded as a difference was Make's skip diagnostic against kati's real run. Named by a path, GNU Make runs them and agrees byte for byte, so the rows are gone. wildcard_cache.mk's own corpus comment — \"GNU make 4 agrees with ckati\" — is what the run now shows.\n\nNothing moved away from agreement, and no row changed class or family. 73 → 70 differing, 314 → 317 identical of 387; defect 36 → 34, recorded 5 → 4, extension 31, artefact 1. Counts re-pinned in tests/make_corpus_inventory.rs with the reason written into the running history there.\n\nTHE THIRD CONSUMER. scripts/check-make-upstream.sh runs no Make: cargo builds, then `perl run_make_tests.pl -make <scratch>/bin/make` where that link is Ronin, then the classifier, which spawns nothing at all. The driver's own `$make_path = \"make\"` fallback at run_make_tests.pl:399 is unreachable because -make is always passed, and its other bare `make` is VMS-only. Confirmed rather than assumed.\n\nRESIDUE, DOCUMENTED. Twelve corpus makefiles still compute MAKEVER from `$(shell make --version)`, which is the host's Make whatever --make names. It is symmetric — both tools evaluate the same $(shell ...) and take the same branch — so it moves the corpus's own gates together rather than tilting the comparison, and docs/make-oracle-divergences.md says so. Filed as make-corpus-host-make-shellout.\n\nGATES. fmt clean. cargo check --workspace --all-targets clean apart from two pre-existing warnings (kati/src-rs/command.rs:883 unused import, examples/make_upstream.rs:771 unused mut). Workspace tests 769 passed / 0 failed, which carries the build-intent gate's 540 cases (550 recorded case directories less the 10 discovery-only) untouched. Clippy lib+bins pedantic+nursery --no-deps clean; `cargo clippy -p kati --all-targets -- -D warnings` still fails on that one pre-existing unused import, red at base and left alone rather than dragging a submodule pin into a harness change — filed as make-release-clippy-runnable along with the --no-deps defect in scripts/check-release.sh. Conformance gate green against the new default: 387 runs, 317 identical, 70 differing. Equivalence 297 makefiles / 278 graphs / 0 disagreements. Upstream 1287 rows, unclassified 215 / compiler 50 / interface 45 / narration 977, inventory file unchanged. No flapper fired.\n\nNo repin: nothing in kati or Ronin's runtime changed. This is harness, classification and prose."
+            }
+
+            {
+                at 2026-08-14T06:49:21.596588034Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
