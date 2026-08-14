@@ -223,6 +223,7 @@ pub(crate) struct PendingSubninja {
     intermediate: bool,
     disposable: bool,
     delete_on_error: Vec<Node>,
+    peer_outputs: Vec<Node>,
     bindings: Vec<(Binding, Vec<u8>)>,
 }
 
@@ -617,6 +618,8 @@ impl GraphSink {
         // failure that leaves the parent's own outputs half-made.
         self.graph
             .set_delete_on_error(edge, pending.delete_on_error.clone());
+        self.graph
+            .set_peer_outputs(edge, pending.peer_outputs.clone());
         Ok(edge)
     }
 
@@ -1060,6 +1063,7 @@ impl BuildSink for GraphSink {
         let order_only_inputs = self.node_list(names, edge.order_only_inputs)?;
         let validations = self.node_list(names, edge.validations)?;
         let delete_on_error = self.node_list(names, edge.delete_on_error_outputs)?;
+        let peer_outputs = self.node_list(names, edge.peer_outputs)?;
         let deferred = self.deferred_edge(names, edge)?;
         let outputs = if edge.completion_join {
             self.observed_members.insert(edge.output, completion_output);
@@ -1091,6 +1095,7 @@ impl BuildSink for GraphSink {
                 intermediate: edge.intermediate,
                 disposable: edge.disposable,
                 delete_on_error,
+                peer_outputs,
                 bindings,
             });
             return Ok(());
@@ -1128,6 +1133,7 @@ impl BuildSink for GraphSink {
                 }
                 self.graph.set_filesystem_only_freshness(built);
                 self.graph.set_delete_on_error(built, delete_on_error);
+                self.graph.set_peer_outputs(built, peer_outputs);
                 if let Some(deferred) = deferred {
                     self.graph.set_deferred_freshness(
                         built,

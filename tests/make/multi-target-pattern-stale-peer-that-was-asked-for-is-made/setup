@@ -1,0 +1,6 @@
+echo body > a.in
+echo current > a.c
+echo stale > a.h
+touch -d '2020-01-01 00:00' a.h
+touch -d '2020-01-02 00:00' a.in
+touch -d '2020-01-03 00:00' a.c

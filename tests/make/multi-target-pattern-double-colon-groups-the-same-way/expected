@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # A `::' pattern rule is the terminal kind rather than a second record, so
+| # several target patterns on one still mean one recipe for all of them.
+| all: hello.tab.c hello.tab.h
+| hello.y: ; echo body > $@
+| %.tab.c %.tab.h:: %.y ; echo 'at=$@' >> log ; cat $< > $*.tab.c ; cat $< > $*.tab.h
+file hello.tab.c touched 1
+| body
+file hello.tab.h touched 1
+| body
+file hello.y touched 1
+| body
+file log touched 1
+| at=hello.tab.c

@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # A recipe that writes one of the names it was given is not a failure: Make
+| # warns about the peer it did not update and the build succeeds.
+| all: a.c a.h
+| a.in: ; echo body > $@
+| %.c %.h: %.in ; cat $< > $*.c
+file a.c touched 1
+| body
+file a.in touched 1
+| body

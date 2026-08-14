@@ -7962,6 +7962,34 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-14T00:39:27.306599434Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-14T00:40:56.823180797Z
+                                author "brendan@necessary.nu"
+                                kind @decision
+                                text "GNU Make 4.4.1 characterised against the pristine oracle first, and the matrix says the grouping was never the missing piece — telling the group's members apart was.\n\n  cell                                            GNU 4.4.1\n  `%.tab.c %.tab.h: %.y`, both asked for          one run, `$@` = the first\n  `%.tab.c %.tab.h &: %.y`, both asked for        identical in every respect\n  `%.c %.h:: %.in` (terminal), `&::`              identical too\n  `$@`                                            the name whose own state\n                                                  reached the rule\n  `$*`                                            the stem, whichever name it was\n  peer absent, nobody asked for it                nothing to be done\n  peer absent, asked for                          the recipe runs\n  peer stale, asked for, target current           the recipe runs\n  peer asked for by a later rule                  a target of its own from then on\n  `-j4`                                           one job, never two\n  recipe writes only one of the names             success, plus a warning\n  the same shape on an explicit `&:` rule         no warning, and the whole group\n                                                  is one decision\n  peer of an invented intermediate                kept; only the invented name goes\n  `.PRECIOUS: %.w` on the peer                    changes nothing — already kept\n\nSo `&:` on a pattern rule asks for what several target patterns already meant, exactly as the manual says, and the two forms are indistinguishable through the oracle. The real division is between pattern grouping and explicit `&:` grouping: an explicit group is one decision over all its members, and a pattern rule is one recipe over targets that each decide for themselves. `implicit.c` is where that is written down — the peers go into `also_make` and each gets `is_target = 1`, \"so that this file is not treated as intermediate by the pattern rule search algorithm\".\n\nRonin had the recipe right and the identity wrong. kati recorded every peer as an ordinary implicit output, so a name nobody asked for was indistinguishable from one that was: absent, it made the edge dirty forever; present, it was swept up beside the intermediate the search had invented. Both owned symptoms fall out of that one confusion, and so do the two adjacent nodes.\n\nThe change is a list, not a flag, for the reason `.DELETE_ON_ERROR` already carries one: the distinction is per output. kati's DepNode gains `peer_outputs`, a name reached in its own right is retained out of it while the graph is walked, and the sink publishes it. Ronin keeps it beside the edge arena in `src/graph/peer.rs` and reads it in two places: the freshness comparison skips peers, and `Plan::disposable_outputs` spares them. Peers stay outputs — the edge is still what writes them, and a failed recipe still withdraws them.\n\nMarkers. All three owned or adjacent markers are gone: target-grouped-pattern-with-intermediates (this node), multi-target-pattern-peer-is-not-intermediate and include-remade-by-a-multi-target-pattern-rule (the two adjacent nodes, both closed with this).\n\nFixtures, eleven recorded from the oracle. Ten gate: multi-target-pattern-rule-runs-once-for-both, -grouped-rule-runs-once-for-both, -double-colon-groups-the-same-way, -grouped-double-colon-groups-the-same-way, -absent-peer-is-not-asked-about, -absent-peer-that-was-asked-for-is-made, -stale-peer-that-was-asked-for-is-made, -peer-reached-later-is-a-target-of-its-own, -rule-is-one-job-in-parallel, -recipe-may-leave-a-peer-unmade. The eleventh, multi-target-pattern-trigger-is-the-name-that-was-out-of-date, is the reproducer for the one cell that did not close and carries a divergence marker. Two Ronin tests assert the compiled graph directly — which output is the peer, and that being asked for by name takes it off the list — and say that a parsed manifest carries neither.\n\nWhat did not close, and why it is a node rather than a silence. `$@` still names the first output the walk reached where GNU names the one that was out of date. Everything else in the automatic-variable cell agrees, and from scratch the two answers coincide, which is why the other ten fixtures gate. It is a run-time binding question rather than a compilation one — `$@` is substituted when kati compiles the recipe — so it is filed as make-multi-target-pattern-trigger-identity with the reproducer above. GNU's peer warning is filed beside it as make-pattern-peer-warning: its build intent gates, its text cannot, and adding a line to stderr moves upstream inventory rows, which is a decision worth taking on its own.\n"
+                            }
+
+                            {
+                                at 2026-08-14T00:41:13.172823307Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Gates, all run under scripts/sandboxed.\n\n  cargo fmt --all --check                        clean\n  cargo check --workspace --all-targets          clean\n  cargo test --workspace                         750 passed, 1 ignored, 0 failed\n  cargo test --workspace --all-targets           790 passed, 787 at baseline;\n                                                 the three added are this\n                                                 node's own — one in\n                                                 src/graph/peer.rs and two in\n                                                 src/make/equivalence.rs\n  clippy, ronin lib+bins --no-deps, pedantic\n    and nursery                                  clean\n  clippy -p kati --all-targets -D warnings       clean\n  Make build-intent oracle                       441 cases run, 430 at\n                                                 baseline; 430 must match and\n                                                 do, 11 are marked as diverging\n                                                 and do. Eleven fixtures added,\n                                                 three markers removed, one\n                                                 added for the follow-up\n  scripts/check-make-conformance.sh              387 runs, 309 identical /\n                                                 78 differing — the baseline\n                                                 exactly\n  scripts/check-make-equivalence.sh              297 makefiles, 276 graphs\n                                                 compared, 0 disagreements\n  scripts/check-make-upstream.sh                 1287 rows, unclassified 504 /\n                                                 compiler 37 / interface 44 /\n                                                 narration 702 — every count\n                                                 the baseline's, exit 0, run\n                                                 twice\n\nNot one upstream inventory row moved, which is worth saying because movement was expected: GNU's own features/patternrules cases are where the grouped shapes live. They are there — 72 rows for that file alone — but the rows Ronin differs on differ over narration, and the change is to which files a build leaves behind rather than to what it prints while leaving them.\n\nThe known flapper features/patternrules.diff.34 is the upstream face of make-pattern-peer-restart-convergence, which this change closes. It held its recorded value, ninja-progress+no-work-line+up-to-date-line+evaluation, across two full gate runs — the `no work to do` face, which is the converged one. Dispatch #14 recorded four focused runs splitting two-and-two between that and `dirty after 100 tries`; the reproducer that made the second face is now deterministic and green in the build-intent corpus. The other two flappers, features/reinvoke.diff.2 and features/parallelism.diff.1, did not flap in these runs and were not touched.\n\nThe combined Clippy line in scripts/check-release.sh is red as it was before, on examples and tests this change does not touch.\n"
+                            }
+
+                            {
+                                at 2026-08-14T00:41:45.341629084Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Doing → Done (nplan complete)"
+                            }
                         )
                     }
 
@@ -9039,12 +9067,27 @@ children (
                 id make-pattern-peer-is-not-intermediate
                 title "Keep the peer output a multi-target pattern rule also made"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-13T23:16:10.19383936Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while completing make-precious-intermediate-retention, and deliberately not folded into it: the mechanism is a different one, and the reproducer says nothing about .PRECIOUS.\n\nWhen the implicit search invents a name from a rule with several target patterns, GNU Make treats only the name it matched as intermediate. `implicit.c` puts each other pattern's name into `also_make` and sets `new->file->is_target = 1` on it with the comment \"so that this file is not treated as intermediate by the pattern rule search algorithm\" — so `remove_intermediates` never sees it and the peer survives the build.\n\nReproducer, tests/make/multi-target-pattern-peer-is-not-intermediate, recorded from GNU Make 4.4.1 and carrying a divergence marker:\n\n    all: hello.tsk\n    hello.x: ; echo body > $@\n    %.z %.w: %.x ; cat $< > $*.z; cat $< > $*.w\n    %.tsk: %.z ; cat $< > $@\n\nGNU Make prints `rm hello.z` and leaves `hello.w`. Ronin deletes both.\n\nWhere it lives. Kati carries disposability as one flag per DepNode, and `dep.rs` records the other patterns' names as that node's `implicit_outputs`; `Plan::disposable_outputs` in src/build.rs then takes every output of every disposable edge. Both halves are the approximation: the peer is a second output of the same edge and has no flag of its own. The narrow fix is to discard only the name the search asked for; the wider one is to carry the disposable names per output the way `delete_on_error_outputs` already does. Read the mark_delete_on_error comment in kati/src-rs/dep.rs first — the same \"the exclusions are per output and not per edge\" argument applies, and it was written for the other half of the same question.\n\nA `.PRECIOUS` pattern naming the peer does not change the answer either way, because GNU already keeps the peer and Ronin already deletes it; retention by `.PRECIOUS` on the matched pattern does happen to keep both, since the whole edge stops being disposable."
+                    }
+
+                    {
+                        at 2026-08-14T00:41:21.984314209Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Closed with make-grouped-pattern-targets, which needed the same distinction this node asked for and could not be settled without it.\n\nThe wider of the two fixes this node's own note offered is the one taken: the names are carried per output rather than the sweep being narrowed per edge, which is what `delete_on_error_outputs` already does and for the reason the mark_delete_on_error comment gives. kati's DepNode records a pattern rule's peers separately from its ordinary implicit outputs, and `Plan::disposable_outputs` in src/build.rs spares them — the edge stays disposable, and the invented name still goes.\n\nReproducer tests/make/multi-target-pattern-peer-is-not-intermediate now matches GNU Make 4.4.1 and its divergence marker is gone. `hello.z` is swept up; `hello.w` is left where the recipe wrote it.\n"
+                    }
+
+                    {
+                        at 2026-08-14T00:41:36.675099955Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -9067,12 +9110,27 @@ children (
                 id make-pattern-peer-restart-convergence
                 title "Stop re-reading when a remade include's peer never appears"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-13T23:16:44.763215877Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while auditing the upstream GNU Make inventory for make-precious-intermediate-retention, and unrelated to that node's change — it reproduces identically with the change reverted.\n\n`features/patternrules.diff.34` is the upstream case, and it flaps: the same binary produces `ronin: no work to do.` on some runs and `ronin: manifest '...' dirty after 100 tries` on others, which is why the recorded inventory row disagrees with a fresh run about as often as it agrees. In a clean directory the failure is deterministic.\n\nReproducer, tests/make/include-remade-by-a-multi-target-pattern-rule, recorded from GNU Make 4.4.1 and carrying a divergence marker:\n\n    all:;\n    include gta\n    %a %b : ; touch $*a\n\nGNU Make remakes the include once — `touch gta`, then `warning: pattern recipe did not update peer target 'gtb'`, then `'all' is up to date.` — and exits 0. Ronin runs `touch gta` a hundred times and dies with `ronin: manifest 'Makefile' dirty after 100 tries`, exit 2.\n\nThe rule has two target patterns and its recipe makes only one of the two names. GNU notices — that warning is `pattern recipe did not update peer target` — and stops. Ronin's regeneration loop re-reads, finds the peer still missing, decides the edge is dirty again, and never converges. So it is the same multi-target-pattern peer gap as make-pattern-peer-is-not-intermediate seen from the regeneration side rather than the deletion side, and the two are worth reading together; they are separate nodes because a fix for either does not obviously give the other.\n\nTwo things a fix owes: a run that does not diverge, and GNU's peer warning, which is the only reason a reader would understand why the recipe ran once and stopped."
+                    }
+
+                    {
+                        at 2026-08-14T00:41:32.827753026Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Closed with make-grouped-pattern-targets. This node's own note said it and make-pattern-peer-is-not-intermediate were the same gap seen from two sides and that a fix for either might not give the other; in the event one fix gave both, because the missing thing was under both of them — a pattern rule's peer had no identity separate from the outputs the makefile asked for.\n\nThe read settles now because the peer is no longer part of what makes the edge dirty. `gta` is remade once, exists, and has nothing else to be compared against; `gtb` stays absent and is nobody's reason to run anything. Reproducer tests/make/include-remade-by-a-multi-target-pattern-rule matches GNU Make 4.4.1 and its divergence marker is gone.\n\nThe second thing this node's note said a fix owed — GNU's `pattern recipe did not update peer target` warning — is not delivered here and is re-scoped to make-pattern-peer-warning with its own oracle-recorded reproducer. It is a run-time observation printed to stderr, so nothing in the build-intent corpus can gate it and adding it moves upstream inventory rows; that is a decision worth taking deliberately rather than as a rider. The defect this node is named for — the read that never converged — is gone, and the upstream row it flapped on held its recorded value across two full gate runs.\n"
+                    }
+
+                    {
+                        at 2026-08-14T00:41:40.942980857Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -9087,6 +9145,34 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while auditing inventory movement for make-wildcard-cache-coherence, and unrelated to it.\n\n`features/parallelism.diff.1` alternates between `narration ninja-progress` and `narration ninja-progress+recipe-interleave` on consecutive runs of `scripts/check-make-upstream.sh` with nothing changed in between. Reproduced by running the gate twice and diffing the two `--update` outputs: the second run also moved `features/patternrules.diff.34`, which is the already-known flapper, and moved this row back.\n\nThe class does not change — it is narration either way — so this is not a compiler question. The family does, and the gate fails on family drift, which means every dispatch that touches Make now has to decide whether this row moved for its own reason. That is the cost worth removing.\n\nThe case is a `-j` test, and `recipe-interleave` is recognised by line order: \"Make interleaves each recipe line with the output of running it, and Ronin runs the recipe as one script\". Under parallelism the order the classifier reads is a race, so the fix is on the classifier's side rather than the executor's — either the family is not decidable for a parallel case and should not be assigned, or it needs an order-insensitive comparison. Third known flapper, after `features/reinvoke.diff.2` and `features/patternrules.diff.34`; the three probably want one answer between them.\n\nReproducer: `scripts/sandboxed scripts/check-make-upstream.sh --update` twice, diffing `tests/make_upstream_inventory.tsv` after each."
+                    }
+                )
+            }
+
+            {
+                id make-multi-target-pattern-trigger-identity
+                title "Name the out-of-date target in a multi-target pattern rule's $@"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T00:40:12.084104601Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while completing make-grouped-pattern-targets, and deliberately not folded into it: the grouping question is about which names one edge owns, and this one is about which of them the recipe is told it is making. Different mechanism, and the first is settled without it.\n\nGNU Make's `$@` in a pattern rule with several target patterns is the name whose own state reached the rule, which need not be the first one the rule writes. Measured against the 4.4.1 oracle:\n\n    all: a.c a.h\n    %.c %.h: %.in ; echo 'at=$@' >> log ; cat $< > $*.c ; cat $< > $*.h\n\nwith `a.in` old, `a.c` current and `a.h` absent, GNU considers `a.c` first, finds it up to date, moves on to `a.h`, and runs the recipe with `$@` = `a.h`. Ronin runs the same recipe with `$@` = `a.c`. From scratch — both absent — the two agree on the first name, which is why every other cell of the matrix gates today.\n\nReproducer, tests/make/multi-target-pattern-trigger-is-the-name-that-was-out-of-date, recorded from GNU Make 4.4.1 and carrying a divergence marker.\n\nThe rule that reproduces GNU's answer is small: among the edge's outputs that decide its freshness (`Graph::peer_outputs` names the ones that do not), in walk order, the trigger is the first that is missing or older than the newest ordinary input. What is not small is binding it. `$@` is substituted into the recipe when kati compiles it, so a run-time answer needs the automatic variable bound at launch rather than at compile: src/make/recipe.rs already expands a held recipe as its edge starts, so the deferral path exists, but the edge would have to be forced onto it and kati told which output to bind. That reaches every recipe's expansion, which is why it is a node and not a paragraph.\n"
+                    }
+                )
+            }
+
+            {
+                id make-pattern-peer-warning
+                title "Warn when a pattern recipe leaves a peer target unmade"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T00:40:28.892452243Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Carried out of make-pattern-peer-restart-convergence, whose defect — the read that never settled — is fixed under make-grouped-pattern-targets. That node's note listed two things a fix owed: a run that does not diverge, and GNU's warning. The first is delivered and gates; this is the second, and it is a different kind of thing, so it is a node rather than a loose end.\n\nWhat GNU does, measured against the 4.4.1 oracle. A pattern rule with several target patterns whose recipe writes only some of them is not a failure: the build succeeds, and Make says\n\n    Makefile:5: warning: pattern recipe did not update peer target 'a.h'.\n\nonce per unwritten peer, naming the line the rule was written on. An explicit grouped `&:` rule in the same shape says nothing at all — the warning is the pattern form's alone. Both the implicit form (`%.c %.h:`) and the pattern `&:` form warn.\n\nReproducer, tests/make/multi-target-pattern-recipe-may-leave-a-peer-unmade, recorded from GNU Make 4.4.1. It gates the build intent the two tools agree on — success, one file written, the other absent — and it cannot gate the warning: the build-intent harness compares files and never stderr, which is what makes this observable only through the upstream inventory.\n\nTwo costs to weigh before starting. The observation is the executor's — whether the recipe moved the file — so it needs the peer's mtime compared after the command, where src/build.rs already keeps `old_mtimes` for its outputs, plus the rule's source location, which the graph does not currently keep for an edge. And it adds a line to stderr, which scripts/check-make-upstream.sh compares: expect rows to move, and expect some of them to move toward Make rather than away.\n"
                     }
                 )
             }

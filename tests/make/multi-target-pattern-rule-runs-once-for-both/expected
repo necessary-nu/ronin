@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # One pattern rule spelling two target patterns is one recipe that makes both,
+| # so asking for both runs it once, and `$@' is the target that reached it.
+| all: hello.tab.c hello.tab.h
+| hello.y: ; echo body > $@
+| %.tab.c %.tab.h: %.y ; echo 'at=$@ stem=$*' >> log ; cat $< > $*.tab.c ; cat $< > $*.tab.h
+file hello.tab.c touched 1
+| body
+file hello.tab.h touched 1
+| body
+file hello.y touched 1
+| body
+file log touched 1
+| at=hello.tab.c stem=hello

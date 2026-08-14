@@ -1043,12 +1043,26 @@ impl<'a> Builder<'a> {
     /// The intermediate files this plan is going to create, which is GNU Make's
     /// own test for which of them it may delete afterwards: one it was never
     /// going to make is not one it put there.
+    ///
+    /// A peer output is spared however the edge that writes it is classified.
+    /// Make enters the other targets of a multi-target pattern rule as targets
+    /// in their own right, and being a target is what being intermediate is
+    /// the absence of — so a build that sweeps up the invented file leaves the
+    /// name written beside it.
     pub(crate) fn disposable_outputs(&self) -> Vec<BString> {
         self.plan
             .wanted_edges(self.graph)
             .into_iter()
             .filter(|edge| self.graph.edge(*edge).disposable)
-            .flat_map(|edge| self.graph.edge(edge).out.iter().copied())
+            .flat_map(|edge| {
+                let peers = self.graph.peer_outputs(edge);
+                self.graph
+                    .edge(edge)
+                    .out
+                    .iter()
+                    .filter(|output| !peers.contains(output))
+                    .copied()
+            })
             .map(|output| self.graph.node_path(output).to_owned())
             .collect()
     }

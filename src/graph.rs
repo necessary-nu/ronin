@@ -7,6 +7,7 @@ mod index;
 mod intermediate;
 mod marks;
 mod path;
+mod peer;
 mod validation;
 mod withdrawal;
 
@@ -161,6 +162,10 @@ pub(crate) struct Graph {
     /// mentions, and an inline list would charge every edge in every manifest
     /// for a Make feature almost none of them use.
     delete_on_error: crate::htab::RapidHashMap<EdgeId, IdVec<NodeId>>,
+    /// Outputs a recipe makes only on the way to making something else, for the
+    /// edges that have any. Beside the arena for the reason `delete_on_error`
+    /// is: almost no edge in almost any graph has one.
+    peer_outputs: crate::htab::RapidHashMap<EdgeId, IdVec<NodeId>>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
     names: crate::names::Names,
@@ -375,6 +380,10 @@ where
     }
 
     let edge_data = graph.edge(edge);
+    // What the recipe also writes on the way is not what decides whether it has
+    // to run: GNU Make asks that of each name it was asked for, and a pattern
+    // rule's other targets are entered beside them rather than among them.
+    let peers = graph.peer_outputs(edge);
     let mut input_dirty = false;
     let mut newest_input = FileTime::MISSING;
     for input in edge_data.non_order_only_inputs() {
@@ -395,6 +404,7 @@ where
             || edge_data
                 .out
                 .iter()
+                .filter(|output| !peers.contains(output))
                 .all(|output| runtime.node(*output).mtime().is_missing()));
     runtime
         .edge_mut(edge)
@@ -422,7 +432,11 @@ where
     } else {
         let mut oldest_output: Option<FileTime> = None;
         let mut oldest_recorded_output: Option<FileTime> = None;
-        for output in &edge_data.out {
+        for output in edge_data
+            .out
+            .iter()
+            .filter(|output| !peers.contains(output))
+        {
             let output = runtime.node(*output);
             oldest_output = Some(
                 oldest_output.map_or_else(|| output.mtime(), |oldest| oldest.min(output.mtime())),

@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # The peer nothing asked for is not part of deciding whether the recipe runs:
+| # `a.c' is current, so its absence leaves the build with nothing to do.
+| all: a.c
+| %.c %.h: %.in ; echo ran >> log ; cat $< > $*.c ; cat $< > $*.h
+file a.c kept 1
+| current
+file a.in kept 1
+| body

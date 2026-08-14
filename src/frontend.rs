@@ -525,6 +525,22 @@ impl BuildGraph {
             .set_delete_on_error(edge.0, outputs.into_iter().map(|node| node.0).collect());
     }
 
+    /// Declare which of `edge`'s outputs the recipe makes only on the way to
+    /// making one that was asked for — GNU Make's `also_make`.
+    ///
+    /// They stay outputs: the edge is what writes them, and a failed recipe
+    /// withdraws them like any other. What they are not is part of the question
+    /// the edge answers before it runs, nor part of what the build sweeps up
+    /// afterwards. An empty list stores nothing.
+    ///
+    /// Nothing in a Ninja manifest says this, so a graph parsed from one never
+    /// carries it — the same bounded divergence `intermediate` and `disposable`
+    /// already have.
+    pub(crate) fn set_peer_outputs(&mut self, edge: Edge, outputs: Vec<Node>) {
+        self.arenas
+            .set_peer_outputs(edge.0, outputs.into_iter().map(|node| node.0).collect());
+    }
+
     /// The value `edge`'s own bindings give `name`, before its rule or the
     /// scope around it are consulted.
     ///

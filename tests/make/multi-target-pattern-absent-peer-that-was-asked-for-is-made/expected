@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # The same absence, asked about: `a.h' is a goal of its own, so it is remade
+| # however current the target beside it is.
+| all: a.c a.h
+| %.c %.h: %.in ; echo ran >> log ; cat $< > $*.c ; cat $< > $*.h
+file a.c touched 1
+| body
+file a.h touched 1
+| body
+file a.in kept 1
+| body
+file log touched 1
+| ran

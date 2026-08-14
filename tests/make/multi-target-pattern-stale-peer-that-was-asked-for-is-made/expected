@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # Staleness is read off the name that was asked for, not off the group: `a.c'
+| # is newer than the prerequisite and `a.h' is older, and the recipe runs.
+| all: a.c a.h
+| %.c %.h: %.in ; echo ran >> log ; cat $< > $*.c ; cat $< > $*.h
+file a.c touched 1
+| body
+file a.h touched 1
+| body
+file a.in kept 1
+| body
+file log touched 1
+| ran

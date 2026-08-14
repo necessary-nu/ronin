@@ -419,6 +419,9 @@ assertions (
     {id make-lazy-recipe-expansion, kind @complete, author "brendan@necessary.nu", at 2026-08-13T22:35:56.254395338Z}
     {id make-precious-intermediate-retention, kind @complete, author "brendan@necessary.nu", at 2026-08-13T23:20:09.489238109Z}
     {id make-wildcard-cache-coherence, kind @complete, author "brendan@necessary.nu", at 2026-08-14T00:02:17.239295061Z}
+    {id make-grouped-pattern-targets, kind @complete, author "brendan@necessary.nu", at 2026-08-14T00:41:45.341629084Z}
+    {id make-pattern-peer-is-not-intermediate, kind @complete, author "brendan@necessary.nu", at 2026-08-14T00:41:36.675099955Z}
+    {id make-pattern-peer-restart-convergence, kind @complete, author "brendan@necessary.nu", at 2026-08-14T00:41:40.942980857Z}
 )
 
 impl_evidence (

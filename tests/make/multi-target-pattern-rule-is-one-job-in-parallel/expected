@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # Two outputs from one recipe is one job however many of them were asked for.
+| all: hello.tab.c hello.tab.h
+| hello.y: ; echo body > $@
+| %.tab.c %.tab.h: %.y ; echo ran >> log ; cat $< > $*.tab.c ; cat $< > $*.tab.h
+file hello.tab.c touched 1
+| body
+file hello.tab.h touched 1
+| body
+file hello.y touched 1
+| body
+file log touched 1
+| ran

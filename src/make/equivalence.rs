@@ -679,6 +679,19 @@ fn withdrawn(graph: &BuildGraph) -> Vec<String> {
     paths
 }
 
+/// Every output either graph makes only on the way to making one that was
+/// asked for, as a sorted list of paths.
+fn peers(graph: &BuildGraph) -> Vec<String> {
+    let arenas = graph.arenas();
+    let mut paths = arenas
+        .edge_ids()
+        .flat_map(|edge| arenas.peer_outputs(edge))
+        .map(|node| arenas.node_path(*node).to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
+}
+
 /// Every output either graph would delete once the build has finished with it,
 /// as a sorted list of paths.
 fn disposable(graph: &BuildGraph) -> Vec<String> {
@@ -841,6 +854,75 @@ hello.x other.x:
         differences(&both.direct, &both.parsed, &both.semantics),
         Vec::<String>::new()
     );
+}
+
+/// A pattern rule's other target is an output of the same edge, and only the
+/// direct graph knows it is one the recipe merely writes on the way.
+///
+/// Two names from one recipe, one of them asked for. `hello.z` completes the
+/// chain to `hello.tsk`, so the search invented it and the build sweeps it up;
+/// `hello.w` is the peer, which GNU Make enters as a target of its own and
+/// therefore neither sweeps up nor consults when it decides whether the recipe
+/// has to run. Both are outputs on both sides — a manifest can say that much —
+/// and which of them is the peer is the part only the direct graph carries.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn peers_reach_only_the_direct_graph() {
+    let case = Case::new(
+        "\
+all: hello.tsk
+hello.x:
+\t@echo body > $@
+%.z %.w: %.x
+\t@cat $< > $*.z; cat $< > $*.w
+%.tsk: %.z
+\t@cat $< > $@
+",
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(peers(&both.direct), vec!["hello.w".to_owned()]);
+    assert_eq!(
+        disposable(&both.direct),
+        vec!["hello.w".to_owned(), "hello.z".to_owned()],
+        "the edge is disposable; sparing the peer is the build's reading of this list"
+    );
+    assert!(
+        peers(&both.parsed).is_empty(),
+        "a manifest has no way to say this, so reading one back must not invent it"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
+    );
+}
+
+/// Being reached by name is what stops an output being a peer, whichever of
+/// the rule's names the search matched first.
+///
+/// `hello.z` is the goal, so the search matches `%.z` and `hello.w` arrives
+/// beside it — but `use` then asks for `hello.w` itself, and from there GNU
+/// Make decides that name from that name. Nothing is left to spare.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn asking_by_name_makes_a_target() {
+    let case = Case::new(
+        "\
+all: hello.z use
+hello.x:
+\t@echo body > $@
+%.z %.w: %.x
+\t@cat $< > $*.z; cat $< > $*.w
+use: hello.w
+\t@cat $< > $@
+",
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(peers(&both.direct), Vec::<String>::new());
 }
 
 /// Both sides say `.PHONY`; only the spelling differs, and the comparison

@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # `hello.z' is reached first and makes `hello.w' beside it, but `use' asks for
+| # `hello.w' by name, so its absence is a reason to run the recipe again even
+| # though `hello.z' is current.
+| all: hello.z use
+| hello.x: ; echo body > $@
+| %.z %.w: %.x ; echo ran >> log ; cat $< > $*.z ; cat $< > $*.w
+| use: hello.w ; cat $< > $@
+file hello.w touched 1
+| body
+file hello.x kept 1
+| body
+file hello.z touched 1
+| body
+file log touched 1
+| ran
+file use touched 1
+| body
