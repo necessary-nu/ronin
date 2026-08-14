@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| all:
+| 	@echo "a\
+| 		b" > out
+| 	@echo "c\
+| 	  d" >> out
+| 	@echo "e\
+|   f" >> out
+file out touched 3
+| a	b
+| c  d
+| e  f

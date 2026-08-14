@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| FOO = value
+| spanned = $(FO$\
+|   O)
+| all: ; @printf '%s\n' '$(spanned)' > out
+file out touched 1
+| value

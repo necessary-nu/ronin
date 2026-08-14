@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| .RECIPEPREFIX = :
+| all:
+| :@echo "a\
+| :b" > out
+| :@echo "c\
+| ::d" >> out
+| :@echo "e\
+| 	f" >> out
+file out touched 3
+| ab
+| c:d
+| e	f

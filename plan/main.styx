@@ -8115,6 +8115,20 @@ children (
                                 kind @note
                                 text "sealed — decomposition asserted complete (nplan seal)"
                             }
+
+                            {
+                                at 2026-08-14T02:02:04.495392235Z
+                                author "brendan@necessary.nu"
+                                kind @status
+                                text "Todo → Doing (nplan start)"
+                            }
+
+                            {
+                                at 2026-08-14T02:22:12.682540694Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "GNU Make 4.4.1 matrix, probed cell by cell against reference/make-oracle/make-4.4.1/make before any change.\n\nVariable, define, conditional, include and rule lines all fold the same way, because GNU folds the whole logical line once (misc.c collapse_continuations) before it reads any of it. A run of backslashes ending a line continues it only when the run is odd; half the run survives (`a\\\\\\` folds to `a\\`, `a\\\\\\\\\\` to `a\\\\`), and the newline together with the blanks on both sides of it becomes exactly one space. An even run does not continue the line at all, which is why `A = a\\\\` followed by `  b` is a missing separator in both tools.\n\nBecause the fold happens first, a `$` written against the continuation takes as its name whatever the fold left beside it: a space, so `x$\\<nl>  y` is `x` then the (unset) variable named \" \" then `y`, which is `xy`; or, when the run leaves backslashes, the first of them, so `x$\\\\\\<nl>  y` is `x y`. The same rule is what makes `$(FO$\\<nl>  O)` read `FOO` and `$(subst $\\<nl>  ,X,a b)` substitute an empty string.\n\nA recipe is the exception in both halves. GNU does not fold there — the backslash and the newline both go to the shell — and the only thing it removes is one recipe prefix character following the newline (job.c start_job_command), which is `.RECIPEPREFIX` and nothing else: a second tab stays, spaces stay, and under `.RECIPEPREFIX = >` a tab is ordinary text. A recipe written after a literal `;` is continued the same way. `.POSIX:` changes nothing about a recipe continuation in 4.4.1 — recorded byte for byte identical — but it does change a variable's: the blanks before the fold are then kept.\n\nDelivered in kati: expr.rs now folds an odd backslash run by halving it and reads a `$` against a continuation as GNU does; strutil.rs gained strip_recipe_prefix_continuations, applied to a recipe line in parser.rs and to a `;` recipe in eval.rs through a recipe_prefix recorded on RuleStmt at read time; ninja.rs translate_command now lets a comment end its line rather than carrying the comment's last byte into the text after it.\n\nFour adjacent defects filed rather than fixed here: make-recipe-expanded-newline, make-recipe-continuation-bytes, make-posix-continuation-blanks, make-trailing-dollar-in-a-value."
+                            }
                         )
                     }
 
@@ -9257,6 +9271,62 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while probing make-pattern-rule-cancellation's matrix; pre-existing and untouched by it.\n\nGNU's `pattern_search` keeps a flag, `specific_rule_matched` (implicit.c:264). Any pattern rule target that is not a bare `%` sets it when it matches the name (implicit.c:405), including a rule with neither prerequisites nor a recipe — implicit.c:409 says in so many words that such a rule \"exists solely to set specific_rule_matched when it matches\". Once the candidate list is sorted, implicit.c:435 walks it again and strikes out every non-terminal rule that has a bare `%` target. So a specific pattern that matched, even one that cannot make anything, withdraws the match-anything rules from that search.\n\nProbed against 4.4.1 with -r, the two forms come apart exactly where the flag says they should:\n\n  `%: ; @printf anymatch > $@` with `%.tex:` beside it, goal `all: foo.tex` — GNU: `*** No rule to make target 'foo.tex'`. The bare `%.tex:` matched, set the flag, and the `%` rule was struck out.\n\n  the same with `%.tex: %.w` instead — GNU builds foo.tex with the `%` recipe. A rule with prerequisites and no recipe is skipped at implicit.c:320, one line before the flag could be set, so it never reaches the target loop and the `%` rule survives.\n\nRonin builds foo.tex from `%` in both, so the first probe is the reproducer. `matches_anything` in kati/src-rs/dep.rs already names the bare-`%` test; what is missing is the pass that uses it against a specific match, and the fact that a recipe-less rule with no prerequisites still has to be walked far enough to set the flag even though `ordered_candidates` now refuses to collect it."
+                    }
+                )
+            }
+
+            {
+                id make-recipe-expanded-newline
+                title "Keep an expanded newline inside the recipe line it arrived in"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T02:21:32.803250236Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while delivering make-continuation-expansion. GNU Make splits a recipe into command lines at read time, so a newline that only appears once a variable is expanded stays inside the command line that referenced it and reaches the shell as a newline. Ronin splits the expanded buffer instead (kati/src-rs/command.rs, find_end_of_line over the evaluated recipe), so the same newline becomes a second command joined with ` && `.\n\nReproducer, where GNU Make 4.4.1 fails with an unterminated quoted string and Ronin succeeds with a value that is not GNU's:\n\n    define NL\n\n\n    endef\n    all:\n    <tab>@printf '%s' 'a$(NL)b' | od -c > out\n\nSame defect from a define body carrying an even backslash run before its newline (`define A` / `a\\\\` / `b` / `endef`), and from `$\\<newline>` written in a recipe, where the reference to the variable named `\\` leaves the newline behind."
+                    }
+                )
+            }
+
+            {
+                id make-recipe-continuation-bytes
+                title "Hand the shell the backslash and newline a recipe continuation keeps"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T02:21:38.325423978Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while delivering make-continuation-expansion, which fixed the recipe prefix half of this cell and left the byte fidelity. GNU Make hands the shell both the backslash and the newline of a recipe continuation — read.c's eval copies the recipe line verbatim and only job.c strips one recipe prefix after the newline — so the shell decides what they mean. Outside quotes the shell removes them, which is why most recipes agree; inside single quotes it keeps them, and there Ronin differs.\n\n    all:\n    <tab>@printf '%s' 'a\\\n    <tab>b' | od -c > out\n\nGNU writes four bytes, `a \\ \\n b`. Ronin writes two, `ab`: kati/src-rs/ninja.rs translate_command deletes the pair when it flattens the recipe to one line.\n\nThe flattening is not gratuitous. A Ninja manifest binding cannot carry a newline — there is no escape for one, and `$` before a newline is a continuation that yields nothing — so keeping the bytes means deciding what the retained manifest writer does with a recipe it can no longer spell. That decision, not the graph sink's own command text, is the work here; scripts/check-make-equivalence.sh compares the two paths and would report it."
+                    }
+                )
+            }
+
+            {
+                id make-posix-continuation-blanks
+                title "Keep the blanks a continuation follows when .POSIX: is in force"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T02:21:47.471538436Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while delivering make-continuation-expansion. GNU Make's collapse_continuations (misc.c) discards the blanks already written before a folded newline only when posix_pedantic is off; under `.POSIX:` each backslash-newline becomes a space and the blanks in front of it stay.\n\n    .POSIX:\n    A = a   \\\n      b\n    all: ; @printf '%s' '$(A)' | od -c > out\n\nGNU writes six bytes, `a` and three spaces and the fold's space and `b`. Ronin writes three, `a b`.\n\nkati/src-rs/eval.rs already threads `is_posix` into collapse_rule_continuations for rule text; the variable path folds in kati/src-rs/expr.rs, which runs during parsing and so cannot see a `.POSIX:` the evaluator has not reached yet. GNU sets posix_pedantic when it reads the target, which is why its folding of every later line already knows. Closing this means giving the parser that read-time knowledge, which is why it is its own node rather than part of the fold fix."
+                    }
+                )
+            }
+
+            {
+                id make-trailing-dollar-in-a-value
+                title "Keep a dollar that ends a variable's value"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-14T02:21:51.264176569Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while probing the dollar cells for make-continuation-expansion, and not itself a continuation defect: a `$` with nothing after it is kept by GNU Make as a literal dollar, and Ronin drops it.\n\n    A := x$\n    all: ; @printf '%s' '$(A)' | od -c > out\n\nGNU writes `x$`, Ronin writes `x`. Same in a define body (`define A` / `x$` / `endef`).\n\nkati/src-rs/expr.rs parse_expr_impl_ext breaks out of its scan at `if i + 1 >= s.len()` with `i` still on the dollar, so the trailing literal it then pushes stops short of it. In a recipe the two tools already agree, because there a `$` before a closing quote is a reference to the variable named `'` and both read it that way."
                     }
                 )
             }

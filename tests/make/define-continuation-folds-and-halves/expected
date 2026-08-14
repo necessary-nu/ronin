@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 13
+| define plain
+| a\
+|   b
+| endef
+| define kept
+| a\\\
+|   b
+| endef
+| define dollared
+| x$\
+|   y
+| endef
+| all: ; @printf '%s\n' '$(plain)' '$(kept)' '$(dollared)' > out
+file out touched 3
+| a b
+| a\ b
+| xy

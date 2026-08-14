@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| appended = $(subst $\
+|   ,X,a b)
+| chosen = $(if x$\
+|   ,yes,no)
+| all: ; @printf '%s\n' '$(appended)' '$(chosen)' > out
+file out touched 2
+| a bX
+| yes

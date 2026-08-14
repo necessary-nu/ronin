@@ -73,7 +73,6 @@ case	func_backslash.mk#test	defect	quote-style	89a7baefb28487f2
 case	ignore_error.mk#test	defect	identity-prefix+error-location	a7a1c3b1ed8e8e57
 case	implicit_pattern_rule_warn.sh#script	extension	kati-extension	254724fe0651e623
 case	multi_rule_order_only.mk#test2	defect	build-order	1bb6f2cdc5e12f75
-case	multiline_recipe.mk#test6	recorded	evaluation+corpus-todo	87c30c30f1d96f00
 case	ninja_normalized_path.mk#test2	defect	recipe-stream+exit-status	3e7af572b01ded7b
 case	nothing_to_do.mk#default	defect	quote-style	4e30afa7c8c67be8
 case	order_only.mk#test2	defect	dependent-attribution+exit-status	acea0f9d65049abb

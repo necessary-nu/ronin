@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| one = a\\\
+|   b
+| two = a\\\\\
+|   b
+| three = a\\\\\\\
+|   b
+| all: ; @printf '%s\n' '$(one)' '$(two)' '$(three)' > out
+file out touched 3
+| a\ b
+| a\\ b
+| a\\\ b

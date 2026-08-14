@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| all:
+| 	@echo before > out
+| 	@ # echo hidden\
+| 	# still hidden
+| 	@echo after >> out
+file out touched 2
+| before
+| after
