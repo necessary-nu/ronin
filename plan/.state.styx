@@ -427,8 +427,8 @@ assertions (
     {id make-continuation-expansion, kind @complete, author "brendan@necessary.nu", at 2026-08-14T02:28:31.087189546Z}
     {id make-vpath-gpath-output-location, kind @complete, author "brendan@necessary.nu", at 2026-08-14T03:11:20.970686924Z}
     {id make-export-scope-semantics, kind @complete, author "brendan@necessary.nu", at 2026-08-14T04:31:25.119006382Z}
-    {id make-recipe-eval-mutation-refusal, kind @doing, author "brendan@necessary.nu", at 2026-08-14T04:51:44.538331009Z}
-    {id make-local-binding-assignment-scope, kind @doing, author "brendan@necessary.nu", at 2026-08-14T04:51:48.420786064Z}
+    {id make-recipe-eval-mutation-refusal, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:06:01.690436468Z}
+    {id make-local-binding-assignment-scope, kind @complete, author "brendan@necessary.nu", at 2026-08-14T05:06:05.92501955Z}
 )
 
 impl_evidence (
