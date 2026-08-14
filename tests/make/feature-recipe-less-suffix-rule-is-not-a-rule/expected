@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 6
+| # The suffix pair is looked up as a file and one with no recipe is passed over,
+| # so this never becomes a rule and nothing knows how to make the target.
+| .SUFFIXES: .src .gen
+| .src.gen:
+| 
+| all: foo.gen
+file foo.src kept 1
+| source

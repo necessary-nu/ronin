@@ -1,0 +1,2 @@
+printf 'source\n' > foo.src
+printf 'alternative\n' > foo.alt

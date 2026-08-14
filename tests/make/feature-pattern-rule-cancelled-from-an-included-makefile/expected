@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 6
+| # Which makefile the recipe-less rule was written in does not matter: every
+| # rule joins one list as it is read.
+| %.gen: %.src ; @printf '%s\n' built > $@
+| include cancel.mk
+| 
+| all: foo.gen
+file cancel.mk kept 1
+| %.gen: %.src
+file foo.src kept 1
+| source

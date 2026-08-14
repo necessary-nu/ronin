@@ -192,7 +192,7 @@ case	features/implicit_search.diff.73	narration	product-name+shared-refusal
 case	features/implicit_search.diff.74	narration	product-name+shared-refusal
 case	features/implicit_search.diff.75	compiler	product-name+no-rule-to-make
 case	features/implicit_search.diff.76	compiler	product-name+no-rule-to-make
-case	features/implicit_search.diff.77	unclassified	no-work-line+product-name+evaluation
+case	features/implicit_search.diff.77	narration	product-name+refusal-attribution
 case	features/implicit_search.diff.78	compiler	product-name+no-rule-to-make
 case	features/implicit_search.diff.79	narration	product-name+shared-refusal
 case	features/implicit_search.diff.8	unclassified	ninja-progress+ninja-failure-block+recipe-error-line+evaluation
@@ -390,7 +390,7 @@ case	features/patternrules.diff.69	narration	ninja-progress+no-work-line
 case	features/patternrules.diff.7	unclassified	ninja-progress+evaluation
 case	features/patternrules.diff.70	compiler	product-name+no-work-line+no-rule-to-make
 case	features/patternrules.diff.71	narration	ninja-progress+no-work-line
-case	features/patternrules.diff.8	unclassified	no-work-line+product-name+evaluation
+case	features/patternrules.diff.8	narration	product-name+shared-refusal
 case	features/patternrules.diff.9	narration	ninja-progress
 case	features/quoting.diff	narration	ninja-progress
 case	features/recursion.diff	unclassified	ninja-progress+directory-announce+evaluation
@@ -635,9 +635,9 @@ case	features/vpath.diff.3	compiler	product-name+no-rule-to-make
 case	features/vpath.diff.4	unclassified	ninja-progress+evaluation
 case	features/vpathgpath.diff	narration	no-work-line
 case	features/vpathplus.diff	unclassified	no-work-line+evaluation
-case	features/vpathplus.diff.1	unclassified	no-work-line+recipe-error-line+evaluation
-case	features/vpathplus.diff.2	unclassified	no-work-line+evaluation
-case	features/vpathplus.diff.3	unclassified	no-work-line+evaluation
+case	features/vpathplus.diff.1	unclassified	ninja-progress+ninja-failure-block+recipe-error-line+evaluation
+case	features/vpathplus.diff.2	unclassified	ninja-progress+evaluation
+case	features/vpathplus.diff.3	unclassified	ninja-progress+evaluation
 case	functions/abspath.diff	narration	ninja-progress
 case	functions/addprefix.diff	narration	ninja-progress
 case	functions/addsuffix.diff	narration	ninja-progress
@@ -1304,4 +1304,4 @@ case	variables/undefine.diff	narration	ninja-progress
 case	variables/undefine.diff.1	narration	ninja-progress
 case	variables/undefine.diff.2	narration	ninja-progress
 case	variables/undefine.diff.3	unclassified	product-name+evaluation
-case	variables/undefine.diff.4	narration	ninja-progress+no-work-line
+case	variables/undefine.diff.4	narration	ninja-progress

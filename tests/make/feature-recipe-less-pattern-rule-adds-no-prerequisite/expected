@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # A pattern rule with prerequisites and no recipe is passed over by the search
+| # entirely, so it adds nothing to a target another rule makes: extra.h is no
+| # prerequisite of foo.gen however early the rule naming it was written.
+| %.gen: extra.h
+| %.gen: %.src ; @printf 'from %s\n' '$^' > $@
+| 
+| all: foo.gen
+file extra.h kept 1
+| header
+file foo.gen touched 1
+| from foo.src
+file foo.src kept 1
+| source

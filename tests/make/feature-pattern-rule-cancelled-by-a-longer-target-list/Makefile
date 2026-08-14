@@ -1,0 +1,7 @@
+# Every target of the old rule has to be one of the new rule's targets, and not
+# the other way round, so a two-target redeclaration withdraws the one-target
+# rule it covers.
+%.gen: %.src ; @printf '%s\n' built > $@
+%.gen %.log: %.src
+
+all: foo.gen

@@ -1,0 +1,1 @@
+printf 'int main(void) { return 0; }\n' > foo.c

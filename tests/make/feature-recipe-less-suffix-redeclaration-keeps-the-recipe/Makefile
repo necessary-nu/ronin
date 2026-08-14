@@ -1,0 +1,7 @@
+# What was converted is the recipe the suffix pair holds, and writing the pair
+# again without one does not take that recipe away, so the rule still runs.
+.SUFFIXES: .src .gen
+.src.gen: ; @printf '%s\n' built > $@
+.src.gen:
+
+all: foo.gen
