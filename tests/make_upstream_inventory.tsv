@@ -682,7 +682,7 @@ case	functions/file.diff.18	narration	product-name+fatal-decoration+shared-refus
 case	functions/file.diff.19	narration	product-name+fatal-decoration+shared-refusal
 case	functions/file.diff.2	narration	ninja-progress
 case	functions/file.diff.20	narration	product-name+fatal-decoration+shared-refusal
-case	functions/file.diff.21	unclassified	product-name+up-to-date-line+evaluation
+case	functions/file.diff.21	narration	ninja-progress+up-to-date-line
 case	functions/file.diff.3	narration	ninja-progress
 case	functions/file.diff.4	narration	product-name+fatal-decoration+shared-refusal
 case	functions/file.diff.5	narration	ninja-progress

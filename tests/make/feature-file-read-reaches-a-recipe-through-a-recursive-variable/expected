@@ -1,0 +1,31 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 20
+| # The Linux kernel's `read-file`, reduced. `scripts/Kbuild.include` defines it
+| # as `$(subst $(newline),$(space),$(file < $1))`, a recursively expanded
+| # `KERNELRELEASE` calls it, and a recipe interpolates `KERNELRELEASE` — so
+| # expanding the recipe is what reads the file. There is nowhere to defer the
+| # read to: its result has to reach the `subst` around it.
+| define newline
+| 
+| 
+| endef
+| empty :=
+| space := $(empty) $(empty)
+| read-file = $(subst $(newline),$(space),$(file < $1))
+| KERNELRELEASE = $(call read-file, kernel.release)
+| CONFIGURED = $(call read-file, two-lines)
+| 
+| all: utsrelease.h
+| 
+| utsrelease.h: kernel.release two-lines
+| 	@printf 'UTS_RELEASE "%s"\n' '$(KERNELRELEASE)' > $@
+| 	@printf 'CONFIGURED [%s]\n' '$(CONFIGURED)' >> $@
+file kernel.release kept 1
+| 6.18.2-necessary
+file two-lines kept 2
+| CONFIG_ONE=y
+| CONFIG_TWO=m
+file utsrelease.h touched 2
+| UTS_RELEASE "6.18.2-necessary"
+| CONFIGURED [CONFIG_ONE=y CONFIG_TWO=m]

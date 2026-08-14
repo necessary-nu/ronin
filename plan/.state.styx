@@ -442,6 +442,7 @@ assertions (
     {id make-suffix-shaped-target-with-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-14T13:51:59.228730605Z}
     {id make-link-library-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-14T13:52:03.489264705Z}
     {id make-default-goal-suffix-rejection, kind @complete, author "brendan@necessary.nu", at 2026-08-14T13:52:08.1721427Z}
+    {id make-file-function-in-recipes, kind @complete, author "brendan@necessary.nu", at 2026-08-14T14:13:28.351380619Z}
 )
 
 impl_evidence (

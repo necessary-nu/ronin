@@ -1,0 +1,3 @@
+# `target` is newer than its prerequisite, so its recipe has nothing to do.
+touch -d '2020-01-01T00:00:00' dep
+touch -d '2020-01-02T00:00:00' target

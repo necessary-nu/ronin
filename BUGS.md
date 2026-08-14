@@ -1000,7 +1000,7 @@ edge among them.
 
 ## $(file ...) is refused in rules; Linux headers_install needs the read form
 
-Status: open
+Status: fixed
 
 Observed with Ronin revision `2340cd4c6ababb3380f4ae87ba3eee9e74a45508`
 building `kernel-headers@seed` (linux-6.18.2 `headers_install`) for
@@ -1041,3 +1041,115 @@ contents, empty-string when absent per GNU semantics. The write forms
 (`$(file >...)`, `$(file >>...)`) are what the "not supported in rules"
 refusal presumably exists for; if writing stays unimplemented, the refusal
 should distinguish the two rather than reject reads it could serve.
+
+Resolution: the regression claim above is wrong, and that has to be said before
+anything else, because it sent the search for a cause into work that had
+nothing to do with it. The refusal is upstream kati's, `src/func.cc:934`:
+
+```c++
+void FileFunc_(const std::vector<Value*>& args, Evaluator* ev, ...) {
+  if (ev->avoid_io()) {
+    ev->Error("*** $(file ...) is not supported in rules.");
+  }
+```
+
+It came across into the Rust port as `if ev.avoid_io` in `file_func_impl` and
+was never touched afterwards. The bare `avoid_io` guard is there at every
+revision this entry could mean — `8c269f6`, `1cd853c`, `10f2e0c`, `a7b9da0` —
+so the evaluator-scope, argument and rule-catalogue work landed beside it
+rather than causing it. `MAKE_VERSION` answered `4.4.1` at all of them too, and
+`scripts/Kbuild.include` gates on
+`ifneq ($(filter-out 4.0 4.1,$(MAKE_VERSION)),)`, so Kbuild took the
+`$(file <)` branch rather than the `$(shell cat)` fallback throughout. Whatever
+let an earlier revision finish `kernel-headers`, it was not a `$(file ...)`
+that was served.
+
+What the refusal actually is: a manifest writer's, stated at the evaluator.
+`avoid_io` means a recipe is being compiled into text that some later run of
+some other program will execute, and in that position the function genuinely
+cannot be honoured — a write would land while the manifest is written instead
+of while the build runs, and a read would answer from a tree the build has not
+made yet. That is a true sentence about a destination. kati had one
+destination, so it was written as a fact about the function.
+
+Ronin has two, and `$(shell)` in a recipe was already split along that line.
+This is the same split for `$(file ...)`: `FileEvaluation { Refused,
+Expansion }` on `BuildSink`. kati's `--ninja` manifest writer answers `Refused`
+and prints the same refusal it always did, which is the right answer for it.
+kati's own executor answers `Expansion`. Ronin's `GraphSink` answers
+`Expansion`, because Ronin runs the build in the process that expanded the
+recipe — the position GNU Make is in when it expands one.
+
+Both forms are served there, not only the read the kernel needs.
+`file_read_func` is now GNU's `func_file`: one trailing line terminator
+removed and no more, a carriage return taken with it so a CRLF file reads back
+as its last line, an absent file read as nothing rather than as an error, a
+directory reported against the `read:` rather than the `open:` because opening
+one succeeds and reading it does not. A write happens before the recipe's first
+line runs and is visible to a `$(wildcard)` further down that same recipe,
+which is what GNU's `++command_count` in `func_file` is for. Six cases record
+it against the oracle, `feature-file-read-reaches-a-recipe-through-a-recursive-variable`
+among them — the kernel's `read-file`/`KERNELRELEASE`/`filechk` chain reduced,
+byte-identical to GNU Make 4.4.1. GNU's own suite agrees from the other side:
+`functions/file` case 21 is `all:;$(info $(file <  out1  ))`, and it moves out
+of the upstream inventory's unclassified bucket into narration, where the whole
+of the remaining difference is Ninja's progress line.
+
+One thing is traded rather than won. A recipe Ronin cannot hold unexpanded —
+one naming `$?`, one feeding a depfile, a recursive child's, a grouped
+target's — is expanded while the graph is built, and its file operation now
+happens there instead of stopping the build. For a target that is already up to
+date and never runs, GNU performs no operation at all while Ronin performs one,
+writing the unresolved `${KATI_NEW_INPUTS}` marker where `$?` should be. That
+is strictly better than the hard stop it replaces and strictly worse than
+silence: a refusal became an early write.
+`feature-file-write-in-a-recipe-that-does-not-run` records it with a
+`divergence` sidecar, and `make-recipe-file-operation-at-launch-only` owns
+closing it. A recursive child's recipes carry the same trade `$(shell)` already
+carries there, under `make-recursive-child-recipes-expand-at-launch`.
+
+Fixed here is the refusal. Whether `kernel-headers@seed` now completes is for
+the next world build to say, and the entry below is the question standing
+between the two.
+
+## A `headers_install` goal reaches a rule only `archprepare` wants
+
+Status: open
+
+Left over from the entry above, which explained the refusal without explaining
+what met it.
+
+The refusal fired at the Linux Makefile's `include/generated/utsrelease.h`
+recipe while `kernel-headers@seed` built `headers_install`. Nothing on that
+goal's chain asks for that file. From the same kernel tree:
+
+```make
+headers_install: headers
+headers: $(version_h) scripts_unifdef uapi-asm-generic archheaders
+
+archprepare: outputmakefile archheaders archscripts scripts \
+	include/config/kernel.release asm-generic $(version_h) \
+	include/generated/utsrelease.h include/generated/compile.h ...
+
+include/generated/utsrelease.h: include/config/kernel.release FORCE
+	$(call filechk,utsrelease.h)
+```
+
+`$(version_h)` is `include/generated/uapi/linux/version.h` — a different file
+with a different recipe. `utsrelease.h` is reachable from `archprepare` and
+from nothing the goal names, so a compiler that expands only what its goal
+reaches should never have read that line.
+
+Two readings, wanting different fixes. Either Ronin compiles recipes it has no
+goal for, which is a defect in its own right that `$(file ...)` merely made
+audible; or the kernel reaches `archprepare` from `headers_install` by a route
+the top-level Makefile does not show, in which case there is nothing to fix and
+this note is the answer. It is also the likelier explanation for the earlier
+revision that finished this build than any change to `$(file ...)`, since the
+refusal was present at that revision too.
+
+Deciding it wants the constructed graph for a `headers_install` goal dumped and
+compared against `make -n headers_install` on the same tree, which has not been
+done. With `$(file ...)` served the line expands either way, so this is now a
+question about what work is being done rather than about whether the build
+stops.

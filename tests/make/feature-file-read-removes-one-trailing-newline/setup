@@ -1,0 +1,13 @@
+# Written here rather than committed so the bytes are the ones the case means.
+#
+# Two of them are named with a leading dot, which is how this harness is told
+# not to list a file. A recording renders contents through `str::lines` and
+# reads them back with a newline restored, so neither a file that ends without
+# one nor a file that is nothing but one can be recorded as itself. They are
+# inputs rather than answers, and the answers they produce are in `out`.
+printf 'a\n' > one-newline
+printf 'a\n\n' > two-newlines
+printf 'a\n\n\n' > three-newlines
+printf 'a' > .no-newline
+printf '\n' > .only-newline
+printf '' > empty

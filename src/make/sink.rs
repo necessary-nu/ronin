@@ -11,8 +11,8 @@ use crate::frontend::{
 };
 use kati::anyhow;
 use kati::build_sink::{
-    BuildSink, DeferredRecipeId, NewInputsTiming, RecipeExpansion, RuleId, ShellEvaluation,
-    SinkCommand, SinkEdge, SinkPool, SinkRule,
+    BuildSink, DeferredRecipeId, FileEvaluation, NewInputsTiming, RecipeExpansion, RuleId,
+    ShellEvaluation, SinkCommand, SinkEdge, SinkPool, SinkRule,
 };
 use kati::bytes::Bytes;
 use kati::strutil::escape_shell;
@@ -965,6 +965,22 @@ impl BuildSink for GraphSink {
 
     fn shell_evaluation(&self) -> ShellEvaluation {
         ShellEvaluation::Expansion
+    }
+
+    /// This process runs the build, so a `$(file ...)` a recipe carries is
+    /// performed here, at the moment the recipe is expanded, exactly as GNU
+    /// Make performs it. Nothing about it needs a shell, and nothing about it
+    /// can be written into one: a read has to hand its result back to the
+    /// expansion that asked for it, which is why kati refused the whole
+    /// function rather than deferring it the way it defers `$(shell)`.
+    ///
+    /// The Linux kernel is the tree that needs this. `read-file` in
+    /// `scripts/Kbuild.include` is `$(subst $(newline),$(space),$(file < $1))`,
+    /// `KERNELRELEASE` calls it recursively, and `filechk_utsrelease.h`
+    /// interpolates `KERNELRELEASE` into a recipe — so expanding that recipe
+    /// reads a file, and refusing to read it stops `headers_install`.
+    fn file_evaluation(&self) -> FileEvaluation {
+        FileEvaluation::Expansion
     }
 
     /// GNU Make expands a recipe when it is about to run it, and this graph is

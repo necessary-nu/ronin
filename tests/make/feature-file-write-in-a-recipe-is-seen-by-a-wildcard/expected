@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # The write changed a directory, and GNU Make counts it as a command for that
+| # reason and no other — `++command_count` in `func_file`, with a comment
+| # saying so. A `$(wildcard)` further down the same recipe therefore looks
+| # again, and finds what the line above it wrote.
+| all:
+| 	@printf 'before [%s]\n' '$(wildcard *.written)' > out
+| 	$(file > made.written,contents)
+| 	@printf 'after [%s]\n' '$(wildcard *.written)' >> out
+file made.written touched 1
+| contents
+file out touched 2
+| before []
+| after [made.written]
