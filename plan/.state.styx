@@ -439,9 +439,9 @@ assertions (
     {id make-second-expansion-pattern-first-percent, kind @complete, author "brendan@necessary.nu", at 2026-08-14T12:37:47.584885131Z}
     {id make-pattern-prerequisite-directory-stem, kind @complete, author "brendan@necessary.nu", at 2026-08-14T12:37:51.837509637Z}
     {id make-pattern-prerequisite-wildcards, kind @complete, author "brendan@necessary.nu", at 2026-08-14T12:37:56.076447388Z}
-    {id make-suffix-shaped-target-with-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-14T12:52:38.961128912Z}
-    {id make-link-library-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-14T12:59:38.117984186Z}
-    {id make-default-goal-suffix-rejection, kind @doing, author "brendan@necessary.nu", at 2026-08-14T13:48:25.237422523Z}
+    {id make-suffix-shaped-target-with-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-14T13:51:59.228730605Z}
+    {id make-link-library-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-14T13:52:03.489264705Z}
+    {id make-default-goal-suffix-rejection, kind @complete, author "brendan@necessary.nu", at 2026-08-14T13:52:08.1721427Z}
 )
 
 impl_evidence (
