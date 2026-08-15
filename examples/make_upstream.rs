@@ -427,13 +427,17 @@ fn progress_payload(line: &str) -> Option<&str> {
 
 /// Whether a line is the shell command Ninja's failure block echoes back.
 ///
-/// `/bin/sh -c "…"`, and the same behind the `env` that carries `MAKEFLAGS`,
-/// `MAKELEVEL` and `MFLAGS` into a recipe's environment. The `env` prefix
-/// arrived with those variables and took the whole block out of this family
-/// until it was read here too.
+/// `/bin/sh -c "…"`, and the same behind the two words the launcher line has
+/// grown in front of it: the `env` that carries `MAKEFLAGS`, `MAKELEVEL` and
+/// `MFLAGS` into a recipe's environment, and the `exec` that replaces the
+/// intermediate shell so a signalled child is reported as a signal rather than
+/// as `exit 143`. Each arrived with a change to how a recipe is launched and
+/// each took the whole block out of this family until it was read here too, so
+/// both are stripped in the order they are written rather than either being
+/// folded into the other.
 fn is_shell_invocation(line: &str) -> bool {
-    let mut rest = line;
-    if let Some(after) = line.strip_prefix("env ") {
+    let mut rest = line.strip_prefix("exec ").unwrap_or(line);
+    if let Some(after) = rest.strip_prefix("env ") {
         rest = after;
         while let Some(assignment) = rest.strip_prefix('\'') {
             let Some((binding, tail)) = assignment.split_once('\'') else {
@@ -1437,18 +1441,26 @@ mod tests {
         assert_eq!(classify(&unexplained, &unread()).class, Class::Unclassified);
     }
 
-    /// The `env` that carries MAKEFLAGS into a recipe's environment sits in
-    /// front of the shell Ninja's failure block echoes back. Reading the block
-    /// through it is what keeps the block narration; it was not, once those
-    /// variables started being exported.
+    /// The `exec` that replaces the intermediate shell and the `env` that
+    /// carries MAKEFLAGS into a recipe's environment both sit in front of the
+    /// shell Ninja's failure block echoes back. Reading the block through them
+    /// is what keeps the block narration; it was not, first when those
+    /// variables started being exported and again when the launcher was
+    /// dropped in favour of `exec`.
     #[test]
-    fn the_block_reads_through_env() {
+    fn the_block_reads_through_its_launcher() {
         assert!(super::is_shell_invocation(r#"/bin/sh -c "exit 1""#));
         assert!(super::is_shell_invocation(
             r#"env 'MAKEFLAGS=i' 'MAKELEVEL=1' 'MFLAGS=-i' /bin/sh -c "exit 1""#
         ));
-        // Not anything at all that begins with `env`.
+        assert!(super::is_shell_invocation(
+            r#"exec env 'MAKEFLAGS=' 'MAKELEVEL=1' 'MFLAGS=' /bin/sh -c "exit 1""#
+        ));
+        // `exec` on its own, for a recipe with nothing to export.
+        assert!(super::is_shell_invocation(r#"exec /bin/sh -c "exit 1""#));
+        // Not anything at all that begins with either word.
         assert!(!super::is_shell_invocation("env | sort"));
+        assert!(!super::is_shell_invocation("exec 3< thing"));
         assert!(!super::is_shell_invocation("echo /bin/sh -c \"x\""));
     }
 
