@@ -452,6 +452,7 @@ assertions (
     {id make-notdir-strips-a-root-directory, kind @doing, author "brendan@necessary.nu", at 2026-08-14T16:23:34.747375931Z}
     {id make-trailing-dollar-in-a-value, kind @doing, author "brendan@necessary.nu", at 2026-08-15T09:48:03.87235131Z}
     {id make-environment-origin-precedes-the-switches, kind @doing, author "brendan@necessary.nu", at 2026-08-15T10:02:50.503284939Z}
+    {id make-shadowed-name-is-not-self-reference, kind @doing, author "brendan@necessary.nu", at 2026-08-15T10:13:37.873660887Z}
 )
 
 impl_evidence (
