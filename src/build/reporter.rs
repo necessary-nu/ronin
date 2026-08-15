@@ -272,6 +272,17 @@ impl Reporter {
     /// Appends nothing when the repaint is skipped, which lets the caller
     /// avoid the write entirely rather than write zero bytes.
     pub(super) fn paint(&mut self, out: &mut Vec<u8>, progress: &BuildState) {
+        self.paint_as_of(out, progress, Instant::now());
+    }
+
+    /// Paint as of `now` rather than as of whenever this was reached.
+    ///
+    /// The budget is a claim about two instants, so the moment it is judged
+    /// against is an input like any other. Reading the clock here would make a
+    /// test of the budget a test of how fast the host ran it — which is what
+    /// this seam exists to keep out of the suite; the one caller in the product
+    /// passes the clock.
+    fn paint_as_of(&mut self, out: &mut Vec<u8>, progress: &BuildState, now: Instant) {
         let Self::Cargo(style) = self else {
             return;
         };
@@ -279,7 +290,6 @@ impl Reporter {
         let Some(bar) = style.bar.as_mut() else {
             return;
         };
-        let now = Instant::now();
         if !bar.may_paint(now) {
             return;
         }
@@ -787,11 +797,22 @@ mod tests {
     }
 
     fn painted(reporter: &mut Reporter, finished: usize, total: usize) -> String {
+        painted_as_of(reporter, finished, total, Instant::now())
+    }
+
+    /// What the bar paints when it is told the time, so a test of the repaint
+    /// budget states both instants instead of reading one off the host.
+    fn painted_as_of(
+        reporter: &mut Reporter,
+        finished: usize,
+        total: usize,
+        now: Instant,
+    ) -> String {
         let mut progress = BuildState::new(BuildOptions::default());
         progress.finished = finished;
         progress.total = total;
         let mut out = Vec::new();
-        reporter.paint(&mut out, &progress);
+        reporter.paint_as_of(&mut out, &progress, now);
         String::from_utf8(out).expect("the bar renders as text")
     }
 
@@ -846,21 +867,43 @@ mod tests {
         assert!(again.is_empty());
     }
 
+    /// Three paints at instants this test names: the first, one a tick inside
+    /// the interval, and one exactly at it.
+    ///
+    /// Every instant is stated rather than sampled. Asking the clock how long
+    /// the host took to reach the second statement — which is what this test
+    /// did — asserts that the machine is fast rather than that the budget is
+    /// honoured, and a loaded host that spends more than the interval between
+    /// two lines of test code fails a bar that behaved perfectly.
     // [spec:ronin:req:product.output-style/test]
     #[test]
     fn repainting_inside_the_budget_is_refused() {
         let mut reporter = Reporter::new(OutputStyle::Cargo, true);
-        assert!(!painted(&mut reporter, 1, 4).is_empty());
+        let first = Instant::now();
+        assert!(
+            !painted_as_of(&mut reporter, 1, 4, first).is_empty(),
+            "a bar that has never been painted has no budget to spend"
+        );
         assert_eq!(
-            painted(&mut reporter, 2, 4),
+            painted_as_of(
+                &mut reporter,
+                2,
+                4,
+                first + REPAINT_INTERVAL - Duration::from_millis(1)
+            ),
             "",
             "a repaint this soon is skipped"
         );
-        bar_state(&mut reporter).painted_at =
-            Instant::now().checked_sub(REPAINT_INTERVAL + Duration::from_millis(1));
         assert!(
-            !painted(&mut reporter, 3, 4).is_empty(),
-            "the budget refills"
+            !painted_as_of(&mut reporter, 3, 4, first + REPAINT_INTERVAL).is_empty(),
+            "the budget refills once the interval has passed"
+        );
+        // The refused paint must also leave the budget where it found it, or
+        // two skipped repaints in a row would spend the interval between them.
+        assert_eq!(
+            bar_state(&mut reporter).painted_at,
+            Some(first + REPAINT_INTERVAL),
+            "a paint records the instant it was judged against"
         );
     }
 
