@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| .PHONY: all /x.o /y
+| all: /x.o
+| /x.o: /y
+| 	@printf '[%s]\n' '$@' '$(@D)' '$(@F)' '$<' '$(<D)' '$(<F)' '$(^F)' > out
+| /y: ; @:
+file out touched 7
+| [/x.o]
+| []
+| [x.o]
+| [/y]
+| []
+| [y]
+| [y]

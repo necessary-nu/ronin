@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 1
+| all: ; @printf '[%s]\n' '$(notdir /x.o)' '$(notdir //x)' '$(notdir /)' '$(notdir ///)' '$(notdir a/)' '$(notdir x)' '$(notdir /a/b)' '$(notdir /x.o a/b /y /)' > out
+file out touched 8
+| [x.o]
+| [x]
+| []
+| []
+| []
+| [x]
+| [b]
+| [x.o b y ]
