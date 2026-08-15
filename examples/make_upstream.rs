@@ -783,10 +783,10 @@ fn read_our_side(lines: &[String], source: &Source) -> OurSide {
             continue;
         }
         let contribution = normalise(line, Side::Ours, source);
-        if let Some(family) = contribution.family {
-            if !side.families.contains(&family) {
-                side.families.push(family);
-            }
+        if let Some(family) = contribution.family
+            && !side.families.contains(&family)
+        {
+            side.families.push(family);
         }
         if let Some(payload) = contribution.payload {
             side.commands.push(payload);

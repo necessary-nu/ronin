@@ -471,6 +471,7 @@ assertions (
     {id make-upstream-failure-block-narration-unrecognised, kind @doing, author "brendan@necessary.nu", at 2026-08-15T18:20:59.639601541Z}
     {id make-upstream-parallelism-interleave-flaps, kind @doing, author "brendan@necessary.nu", at 2026-08-15T18:23:11.607497176Z}
     {id make-corpus-host-make-shellout, kind @doing, author "brendan@necessary.nu", at 2026-08-15T18:25:14.106921968Z}
+    {id make-release-clippy-runnable, kind @doing, author "brendan@necessary.nu", at 2026-08-15T18:26:07.525127021Z}
 )
 
 impl_evidence (
