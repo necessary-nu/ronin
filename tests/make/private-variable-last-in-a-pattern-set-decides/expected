@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 11
+| V = outer
+| W = outer
+| %.p: V = early-public
+| a.%: private V = late-private
+| %.q: private W = early-private
+| b.%: W = late-public
+| all: a.p b.q
+| a.p: dep.a ; @printf 'V=[%s]\n' '$(V)' > ap.out
+| dep.a: ; @printf 'V=[%s]\n' '$(V)' > depa.out
+| b.q: dep.b ; @printf 'W=[%s]\n' '$(W)' > bq.out
+| dep.b: ; @printf 'W=[%s]\n' '$(W)' > depb.out
+file ap.out touched 1
+| V=[late-private]
+file bq.out touched 1
+| W=[late-public]
+file depa.out touched 1
+| V=[outer]
+file depb.out touched 1
+| W=[late-public]

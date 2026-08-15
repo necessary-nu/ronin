@@ -1,3 +1,0 @@
-Ronin drops a target-specific variable a recipe assigns: the rule-variable table
-left the evaluator when the graph was compiled, so nothing reads the write;
-make-recipe-time-target-variable-reaches-the-scope.

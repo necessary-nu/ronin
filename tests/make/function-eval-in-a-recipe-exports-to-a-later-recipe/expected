@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 15
+| # The export set is read when a child is started, so what a recipe says about
+| # it reaches every child started afterwards, its own included.
+| export A = a-value
+| B = b-value
+| C = c-value
+| all: later
+| later: setter
+| setter:
+| 	$(eval unexport A)
+| 	$(eval export B)
+| 	$(eval C = c-updated)
+| 	$(eval export C)
+| 	@printf 'A=[%s] B=[%s] C=[%s]\n' "$$A" "$$B" "$$C" > setter.out
+| later:
+| 	@printf 'A=[%s] B=[%s] C=[%s]\n' "$$A" "$$B" "$$C" > later.out
+file later.out touched 1
+| A=[] B=[b-value] C=[c-updated]
+file setter.out touched 1
+| A=[] B=[b-value] C=[c-updated]
