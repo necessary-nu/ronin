@@ -631,6 +631,33 @@ struct Source {
     /// or from a `MAKEFLAGS` the makefile sets. Without it a bare regex in the
     /// expected output is not evidence of anything.
     debug: bool,
+    /// Whether the run asked for several recipes at once, from the command
+    /// line or from a `MAKEFLAGS` the makefile sets. When it did, the order
+    /// two lines came out in is the scheduler's answer rather than either
+    /// tool's, so it cannot be read as evidence about them.
+    concurrent: bool,
+}
+
+/// Whether a word is a `-j` spelling that asks for more than one recipe at a
+/// time.
+///
+/// GNU's option takes its count attached — `-j4`, `--jobs=4` — so a separate
+/// word after it is a target rather than a count and is not read as one. No
+/// count at all is unbounded; `-j1` is the sequential default said out loud,
+/// and a test that pins the job count to one is not asking for a race.
+fn runs_concurrently(word: &str) -> bool {
+    let count = if word == "-j" || word == "--jobs" {
+        ""
+    } else if let Some(rest) = word.strip_prefix("--jobs=") {
+        rest
+    } else if let Some(rest) = word.strip_prefix("-j") {
+        rest
+    } else {
+        return false;
+    };
+    count
+        .parse::<usize>()
+        .map_or(count.is_empty(), |count| count > 1)
 }
 
 impl Source {
@@ -642,6 +669,7 @@ impl Source {
         let invoked_with_debug = command
             .split_ascii_whitespace()
             .any(|word| word == "-d" || word == "--debug" || word.starts_with("--debug="));
+        let invoked_concurrently = command.split_ascii_whitespace().any(runs_concurrently);
         let mut words = command.split_ascii_whitespace();
         let mut makefile = None;
         while let Some(word) = words.next() {
@@ -653,17 +681,30 @@ impl Source {
         let Some(makefile) = makefile else {
             return Self {
                 debug: invoked_with_debug,
+                concurrent: invoked_concurrently,
                 ..Self::default()
             };
         };
         let Ok(text) = fs::read_to_string(tests.join(makefile)) else {
             return Self {
                 debug: invoked_with_debug,
+                concurrent: invoked_concurrently,
                 ..Self::default()
             };
         };
         Self {
             debug: invoked_with_debug || text.contains("--debug"),
+            // A makefile can ask for the jobs itself — `MAKEFLAGS += -j4` is
+            // the shape the suite uses to check that it can — and a case that
+            // does gets its concurrency from nowhere else. Read off a line
+            // that names the variable rather than off the whole text, so a
+            // recipe that happens to pass `-j` to something else is not
+            // mistaken for the run's own job count.
+            concurrent: invoked_concurrently
+                || text.lines().any(|line| {
+                    line.contains("MAKEFLAGS")
+                        && line.split_ascii_whitespace().any(runs_concurrently)
+                }),
             recipe: text
                 .lines()
                 .filter_map(|line| line.strip_prefix('\t'))
@@ -937,14 +978,23 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
         residual_actual.lines.clear();
     }
 
+    let same_lines = residual_actual.lines == residual_expected.lines;
+    let permuted = sorted(&residual_actual.lines) == sorted(&residual_expected.lines);
     if named_residue {
         // Already explained. Adding `evaluation` on top would put the case back
         // in the bucket that means "not recognised" and undo the naming.
-    } else if residual_actual.lines == residual_expected.lines {
-        // Nothing left once both narrations are accounted for.
-    } else if sorted(&residual_actual.lines) == sorted(&residual_expected.lines) {
-        // The same lines in a different order, which is Make interleaving each
-        // recipe line with what running it printed.
+    } else if same_lines || (permuted && source.concurrent) {
+        // Nothing left once both narrations are accounted for. A concurrent
+        // run reaches this by the second route as well: the same lines in a
+        // different order is Make interleaving each recipe line with what
+        // running it printed while Ronin runs the recipe as one script, which
+        // is a property of the two tools only when the run was sequential.
+        // Under `-j` the order is the scheduler's, so two runs of one case
+        // landed either side of this test with nothing having changed and the
+        // family became a coin flip the inventory recorded. Both readings say
+        // the same lines came out of both tools; a concurrent run is simply
+        // not entitled to the further claim about which came out first.
+    } else if permuted {
         note("recipe-interleave");
     } else {
         note("evaluation");
@@ -1222,16 +1272,19 @@ fn main() -> std::process::ExitCode {
 
 /// The inventory without the one family a rerun can decide differently.
 ///
-/// `recipe-interleave` says the same lines came out in a different order. Some
-/// of the suite's cases arrange for exactly that — features/parallelism has
-/// three recipes rendezvous through files under -j4, and they have to overlap
-/// to finish at all — so which lands first is the scheduler's and not a
-/// property of the code being observed. Recording a coin flip and then failing
-/// when it lands the other way makes the discovery inventory report noise.
+/// `recipe-interleave` says the same lines came out in a different order, and
+/// the cases that used to flap on it were the ones that asked for concurrency:
+/// features/parallelism has three recipes rendezvous through files under `-j4`
+/// and they have to overlap to finish at all, so which lands first is the
+/// scheduler's and not a property of the code being observed. That source is
+/// now settled where the family is decided rather than here — `classify` will
+/// not draw the family from a concurrent run's line order at all — so this is
+/// a backstop rather than the answer, kept for order nondeterminism that has
+/// some cause other than `-j` and would otherwise fail a gate on a rerun.
 ///
 /// Only this family, and only within a class: a case that changed what it is
 /// still fails. This was taken out once when .WAIT stopped being the only
-/// source of it, which was wrong — the cause is any case that asks for
+/// source of it, which was wrong — the cause was any case that asked for
 /// concurrency, and .WAIT was just the one that happened to be flapping.
 fn settled(inventory: &str) -> String {
     inventory
@@ -1262,6 +1315,15 @@ mod tests {
     fn reads_makeflags() -> Source {
         Source {
             reads_makeflags: true,
+            ..Source::default()
+        }
+    }
+
+    /// A case that asked for several recipes at once, so the order its lines
+    /// came out in is the scheduler's answer rather than either tool's.
+    fn concurrent() -> Source {
+        Source {
+            concurrent: true,
             ..Source::default()
         }
     }
@@ -1489,6 +1551,49 @@ mod tests {
         let verdict = classify(&shuffled, &unread());
         assert_eq!(verdict.class, Class::Narration);
         assert!(verdict.families.contains(&"recipe-interleave"));
+    }
+
+    /// Under `-j` the order is the scheduler's, so the same case classified
+    /// itself differently on consecutive runs with nothing changed. A
+    /// concurrent run gets the same answer either way round: the lines are
+    /// accounted for, and no family is drawn from which of them landed first.
+    #[test]
+    fn a_concurrent_run_names_no_interleaving() {
+        let ordered = Divergence {
+            expected: lines(&["one", "two"]),
+            actual: lines(&["one", "two"]),
+        };
+        let shuffled = Divergence {
+            expected: lines(&["one", "two"]),
+            actual: lines(&["two", "one"]),
+        };
+        for divergence in [&ordered, &shuffled] {
+            let verdict = classify(divergence, &concurrent());
+            assert_eq!(verdict.class, Class::Narration);
+            assert_eq!(verdict.families, vec!["ninja-progress"]);
+        }
+        // A residue that is not the same lines at all is still unexplained,
+        // whatever the job count was.
+        let different = Divergence {
+            expected: lines(&["one", "two"]),
+            actual: lines(&["one", "three"]),
+        };
+        assert_eq!(
+            classify(&different, &concurrent()).class,
+            Class::Unclassified
+        );
+    }
+
+    /// The job count is read where one is written, so a case that pins itself
+    /// to one recipe at a time keeps the order as evidence.
+    #[test]
+    fn a_pinned_job_count_is_sequential() {
+        for word in ["-j", "-j4", "--jobs", "--jobs=10"] {
+            assert!(super::runs_concurrently(word), "{word}");
+        }
+        for word in ["-j1", "--jobs=1", "-k", "hello", "-jobs", ""] {
+            assert!(!super::runs_concurrently(word), "{word}");
+        }
     }
 
     /// The suite writes `diff -c`, whose halves are split by the `--- N,M ----`
