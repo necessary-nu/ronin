@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| define BSNL
+| \
+| 
+| endef
+| all:
+| 	@printf '%s' 'a$(BSNL)b' | od -An -c > out
+file out touched 1
+|    a       b

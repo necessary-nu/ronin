@@ -1,0 +1,6 @@
+make-recipe-line-is-its-own-shell. GNU Make runs each of a recipe's command
+lines as its own shell, so the first ends inside an unterminated quote and the
+build dies. Ronin joins them into one script as `( a ) && ( b )`, and the join's
+own bytes land inside the quote, so the command parses and writes a file GNU
+Make never writes. The expansion is not what makes the difference — the literal
+counterpart, recipe-newline-inside-a-quoted-word, diverges identically.

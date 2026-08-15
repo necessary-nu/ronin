@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| define NL
+| 
+| 
+| endef
+| all:
+| 	@X=1$(NL)echo "[$$X]" > out
+file out touched 1
+| []

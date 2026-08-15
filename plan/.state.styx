@@ -463,6 +463,7 @@ assertions (
     {id make-bare-secondary-still-builds, kind @complete, author "brendan@necessary.nu", at 2026-08-15T14:51:48.565784913Z}
     {id make-multi-target-pattern-trigger-identity, kind @complete, author "brendan@necessary.nu", at 2026-08-15T14:51:53.132682588Z}
     {id make-empty-expansion-runs-nothing, kind @doing, author "brendan@necessary.nu", at 2026-08-15T15:17:20.253300062Z}
+    {id make-recipe-expanded-newline, kind @doing, author "brendan@necessary.nu", at 2026-08-15T15:49:01.771423477Z}
 )
 
 impl_evidence (

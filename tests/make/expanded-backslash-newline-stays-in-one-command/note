@@ -1,0 +1,4 @@
+A backslash before the newline is the one case that does not split. job.c's
+slow path tests `*p == '\\' && p[1] == '\n'` before it tests for a newline and
+preserves both bytes for the shell, so the command line continues rather than
+ending.

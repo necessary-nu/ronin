@@ -1,0 +1,7 @@
+A newline arriving from an expansion is a command-line boundary exactly as a
+newline written in the makefile is: GNU Make's construct_command_argv stops at
+the first raw newline in the expanded text and hands the rest back through
+child->command_ptr, so `X=1` is set in a shell that has already exited by the
+time the next line runs. Ronin joins the two lines into one script and wraps
+each in `( )`, which agrees here and in every shape make-recipe-one-shell-per-line
+probed.
