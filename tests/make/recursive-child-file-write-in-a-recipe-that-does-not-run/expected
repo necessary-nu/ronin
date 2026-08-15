@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 1
+| all: ; @$(MAKE) --no-print-directory -C sub
+file sub/Makefile kept 3
+| target: dep
+| 	$(file > written,value)
+| 	@printf 'ran\n' >> log
+file sub/dep kept 1
+| x
+file sub/target kept 1
+| x

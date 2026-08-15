@@ -986,15 +986,15 @@ impl BuildSink for GraphSink {
     /// GNU Make expands a recipe when it is about to run it, and this graph is
     /// run by the process that built it, so it can do the same.
     ///
-    /// Only for the root compilation unit. A recursive child's recipes are
-    /// evaluated in its own session and its own directory, neither of which
-    /// outlives its compilation, so those are expanded where they always were.
+    /// For a recursive `$(MAKE)` child's recipes as much as for the root's. A
+    /// child is compiled by a session of its own in a directory of its own,
+    /// and both are retained past the compilation that made them —
+    /// `PendingRecipes` holds one per unit and an edge finds the one that owns
+    /// it — so a child's recipe is expanded in the session that read it and in
+    /// the directory it was read from, which is what GNU Make's child process
+    /// would have done.
     fn recipe_expansion(&self) -> RecipeExpansion {
-        if self.unit.root {
-            self.expansion
-        } else {
-            RecipeExpansion::Construction
-        }
+        self.expansion
     }
 
     fn start(&mut self, pools: &[SinkPool<'_>]) -> anyhow::Result<()> {

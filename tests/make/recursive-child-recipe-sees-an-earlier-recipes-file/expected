@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 1
+| all: ; @$(MAKE) --no-print-directory -C sub
+file sub/Makefile kept 3
+| all: made
+| 	@printf 'wildcard saw: %s\n' '$(wildcard *.made)' > report
+| made: ; @touch first.made; touch $@
+file sub/first.made touched 0
+file sub/made touched 0
+file sub/report touched 1
+| wildcard saw: first.made

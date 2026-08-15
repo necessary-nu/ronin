@@ -231,10 +231,6 @@ struct CompiledUnit {
     subgraph: UnitSubgraph,
     makeflags: String,
     complete: bool,
-    /// The root unit's unexpanded recipes and the session that holds them.
-    /// Only the root defers: a recursive child's session and working directory
-    /// do not outlive its own compilation.
-    pending_recipes: Option<recipe::PendingRecipes>,
 }
 
 struct ComposedUnit {
@@ -276,6 +272,13 @@ fn unit_remakes(
 struct CompilationState<'a> {
     cache: HashMap<Vec<u8>, UnitSubgraph>,
     compiling: HashSet<Vec<u8>>,
+    /// Every unit's unexpanded recipes, gathered as the units are compiled.
+    ///
+    /// One collection for the whole compilation, because the graph is one
+    /// graph and an edge belongs to exactly one unit. A unit reached from the
+    /// cache contributed its recipes the one time it was compiled, and the
+    /// edges it produced are the edges the cache hands back.
+    pending_recipes: recipe::PendingRecipes,
     regenerations: Vec<Node>,
     remakes: Vec<Node>,
     forgiven_remakes: Vec<Node>,
@@ -285,7 +288,30 @@ struct CompilationState<'a> {
     evaluation_boundaries: HashSet<EvaluationBoundary>,
 }
 
+/// One unit's unexpanded recipes and everything expanding them will need,
+/// carried out of the closure that read the Makefile.
+type UnitRecipes = (
+    kati::eval::Evaluator,
+    kati::ninja::DeferredRecipes,
+    sink::CommandLayout,
+    Vec<(Edge, kati::build_sink::DeferredRecipeId)>,
+);
+
 impl CompilationState<'_> {
+    /// Hold one unit's unexpanded recipes for as long as the build may still
+    /// start one of them.
+    ///
+    /// Taken after the unit has compiled rather than inside the directory guard
+    /// that compiled it, because what is retained is the session and not the
+    /// directory: where the recipes expand is recorded here, and entered again
+    /// when one of them is asked for.
+    fn retain(&mut self, recipes: Option<UnitRecipes>, directory: &std::path::Path) {
+        if let Some((session, deferred, layout, edges)) = recipes {
+            self.pending_recipes
+                .admit(session, deferred, layout, directory.to_owned(), &edges);
+        }
+    }
+
     /// Record one unit's Makefiles among everything this compilation has to
     /// build before the read can be trusted, keeping the order they were
     /// reached in and never naming one twice.
@@ -353,6 +379,7 @@ where
     let mut state = CompilationState {
         cache: HashMap::new(),
         compiling: HashSet::new(),
+        pending_recipes: recipe::PendingRecipes::new(),
         regenerations: Vec::new(),
         remakes: Vec::new(),
         forgiven_remakes: Vec::new(),
@@ -361,7 +388,7 @@ where
         evaluation_boundaries: HashSet::new(),
     };
     let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
-    let pending_recipes = root.pending_recipes;
+    let pending_recipes = (!state.pending_recipes.is_empty()).then_some(state.pending_recipes);
     let graph = sink.into_graph().map_err(MakeError::Construct)?;
     Ok(Loaded {
         graph,
@@ -443,9 +470,9 @@ where
         let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names, refusal)?;
         let unit = sink.take_unit();
         ev.finish().map_err(|error| MakeError::evaluate(&error))?;
-        let pending_recipes = (!deferred.is_empty()).then(|| {
-            recipe::PendingRecipes::new(ev, deferred, layout, &sink.take_deferred_edges())
-        });
+        let deferred_edges = sink.take_deferred_edges();
+        let pending_recipes =
+            (!deferred.is_empty()).then_some((ev, deferred, layout, deferred_edges));
         Ok((
             unit,
             exported,
@@ -464,6 +491,7 @@ where
                 return Err(error);
             }
         };
+    state.retain(pending_recipes, &context.directory);
     state.admit(unit_remakes);
 
     let mut descendant_context = context;
@@ -489,7 +517,6 @@ where
         subgraph: composed.subgraph,
         makeflags,
         complete: composed.complete,
-        pending_recipes,
     })
 }
 

@@ -21,39 +21,122 @@ use crate::util::BString;
 use kati::build_sink::DeferredRecipeId;
 use kati::eval::Evaluator;
 use kati::ninja::DeferredRecipes as KatiRecipes;
+use std::path::{Path, PathBuf};
 
-/// The evaluation session a build's unexpanded recipes belong to.
-///
-/// Held for as long as the build may still start one of them. A recipe is
-/// expanded against the variables the session that read the Makefile holds,
-/// which is the whole reason the session outlives compilation: an expansion
-/// against anything else would be a different expansion.
-// [spec:ronin:req:make.no-ambient-state]
-pub(crate) struct PendingRecipes {
+/// One compilation unit's unexpanded recipes, and everything expanding one of
+/// them needs that the recipe itself does not carry.
+struct RecipeUnit {
+    /// The evaluation session that read this unit's Makefile.
+    ///
+    /// A recipe is expanded against the variables that session holds, which is
+    /// the whole reason the session outlives compilation: an expansion against
+    /// anything else would be a different expansion. A recursive `$(MAKE)`
+    /// child has a session of its own, read from its own Makefile with its own
+    /// `MAKEFLAGS` and its own exports, so it is retained beside the root's
+    /// rather than folded into it.
+    // [spec:ronin:req:make.no-ambient-state]
     session: Evaluator,
     recipes: KatiRecipes,
     layout: CommandLayout,
-    edges: RapidHashMap<EdgeId, DeferredRecipeId>,
+    /// Where this unit's Makefile was read, and so where its recipes expand.
+    ///
+    /// Absolute, because `-C` is canonicalised when the child invocation is
+    /// resolved. The root's is the process's own directory and costs nothing;
+    /// a child's is entered for the length of the expansion.
+    directory: PathBuf,
+}
+
+/// Every unexpanded recipe a build may still have to expand, and the sessions
+/// that own them.
+///
+/// Held by the destination for as long as the build may still start one of
+/// them. One collection covers the whole compilation rather than one per unit,
+/// because the graph is one graph: an edge is looked up by its own identity
+/// and finds the unit whose Makefile wrote it.
+pub(crate) struct PendingRecipes {
+    units: Vec<RecipeUnit>,
+    edges: RapidHashMap<EdgeId, (usize, DeferredRecipeId)>,
 }
 
 impl PendingRecipes {
-    /// Retain `session` and the recipes it left unexpanded, keyed by the edge
-    /// that runs each one.
-    pub(crate) fn new(
+    pub(crate) fn new() -> Self {
+        Self {
+            units: Vec::new(),
+            edges: RapidHashMap::default(),
+        }
+    }
+
+    /// Retain one unit's session and the recipes it left unexpanded, keyed by
+    /// the edge that runs each one.
+    pub(crate) fn admit(
+        &mut self,
         session: Evaluator,
         recipes: KatiRecipes,
         layout: CommandLayout,
+        directory: PathBuf,
         edges: &[(crate::frontend::Edge, DeferredRecipeId)],
-    ) -> Self {
-        Self {
+    ) {
+        let unit = self.units.len();
+        self.units.push(RecipeUnit {
             session,
             recipes,
             layout,
-            edges: edges
+            directory,
+        });
+        self.edges.extend(
+            edges
                 .iter()
-                .map(|(edge, recipe)| (edge.id(), *recipe))
-                .collect(),
-        }
+                .map(|(edge, recipe)| (edge.id(), (unit, *recipe))),
+        );
+    }
+
+    /// Whether any recipe was left for this to expand.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.edges.is_empty()
+    }
+}
+
+/// Run `expand` with `directory` as the process directory.
+///
+/// GNU Make's recursive child runs in its own `-C` directory, so a
+/// `$(wildcard)` or a `$(shell)` in one of its recipes reads that directory
+/// rather than the parent's. Ronin runs the whole graph from the root with one
+/// process directory that every parallel spawn observes at the moment it
+/// forks, which is why `make-process-directory-isolation` ruled out moving the
+/// process during execution — and why this uses the very guard that node
+/// built. The directory is entered for the length of one expansion, under the
+/// exclusive lock a spawn takes the shared side of, so no spawn can observe
+/// it; the guard is released before the command this produces is launched.
+///
+/// A unit already sitting in the process directory pays none of it. That is
+/// the root always, and a child invoked without `-C` as well.
+fn expanded_in<T>(
+    directory: &Path,
+    expand: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let entered = std::env::current_dir()
+        .map_err(|error| format!("reading the current directory to expand a recipe: {error}"))?;
+    if entered == directory {
+        return expand();
+    }
+    let _process = super::compilation_directory_guard();
+    std::env::set_current_dir(directory).map_err(|error| {
+        format!(
+            "entering '{}' to expand a recipe: {error}",
+            directory.display()
+        )
+    })?;
+    let expanded = expand();
+    // Restored whatever the expansion said, because leaving the process
+    // somewhere else would misdirect every command after it, and reported only
+    // when there was nothing worse to report.
+    match (expanded, std::env::set_current_dir(&entered)) {
+        (expanded, Ok(())) => expanded,
+        (Err(failure), Err(_)) => Err(failure),
+        (Ok(_), Err(error)) => Err(format!(
+            "returning to '{}' after expanding a recipe: {error}",
+            entered.display()
+        )),
     }
 }
 
@@ -64,13 +147,20 @@ impl LateCommands for PendingRecipes {
         output: &[u8],
         trigger: &[u8],
     ) -> Result<LateBinding, String> {
-        let Some(recipe) = self.edges.get(&edge).copied() else {
+        let Some((unit, recipe)) = self.edges.get(&edge).copied() else {
             return Ok(LateBinding::Settled);
         };
-        let expanded = self
-            .recipes
-            .expand(&mut self.session, recipe, trigger)
-            .map_err(|failure| super::report::diagnostic_body(&failure))?;
+        let RecipeUnit {
+            session,
+            recipes,
+            layout,
+            directory,
+        } = &mut self.units[unit];
+        let expanded = expanded_in(directory, || {
+            recipes
+                .expand(session, recipe, trigger)
+                .map_err(|failure| super::report::diagnostic_body(&failure))
+        })?;
         let Some(expanded) = expanded else {
             return Ok(LateBinding::Settled);
         };
@@ -81,7 +171,7 @@ impl LateCommands for PendingRecipes {
         if expanded.runs_nothing {
             return Ok(LateBinding::Nothing);
         }
-        let launched = self.layout.launch(
+        let launched = layout.launch(
             &expanded.shell,
             &expanded.shell_flags,
             &expanded.script,

@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 1
+| all: ; @$(MAKE) --no-print-directory -C sub
+file sub/Makefile kept 1
+| all: ; @printf 'here is %s and beside it %s\n' '$(shell basename $$(pwd))' '$(wildcard seed.txt)' > report
+file sub/report touched 1
+| here is sub and beside it seed.txt
+file sub/seed.txt kept 1
+| seed
