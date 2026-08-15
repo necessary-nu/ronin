@@ -468,10 +468,10 @@ assertions (
     {id make-signal-killed-recipe-deletion, kind @complete, author "brendan@necessary.nu", at 2026-08-15T17:00:47.599557658Z}
     {id make-vpath-prerequisite-resolves-to-a-target, kind @complete, author "brendan@necessary.nu", at 2026-08-15T17:36:02.255582719Z}
     {id make-mixed-implicit-and-normal-rule-severity, kind @complete, author "brendan@necessary.nu", at 2026-08-15T17:52:01.750320257Z}
-    {id make-upstream-failure-block-narration-unrecognised, kind @doing, author "brendan@necessary.nu", at 2026-08-15T18:20:59.639601541Z}
-    {id make-upstream-parallelism-interleave-flaps, kind @doing, author "brendan@necessary.nu", at 2026-08-15T18:23:11.607497176Z}
-    {id make-corpus-host-make-shellout, kind @doing, author "brendan@necessary.nu", at 2026-08-15T18:25:14.106921968Z}
-    {id make-release-clippy-runnable, kind @doing, author "brendan@necessary.nu", at 2026-08-15T18:26:07.525127021Z}
+    {id make-upstream-failure-block-narration-unrecognised, kind @complete, author "brendan@necessary.nu", at 2026-08-15T18:32:56.589291299Z}
+    {id make-upstream-parallelism-interleave-flaps, kind @complete, author "brendan@necessary.nu", at 2026-08-15T18:32:58.130669095Z}
+    {id make-corpus-host-make-shellout, kind @complete, author "brendan@necessary.nu", at 2026-08-15T18:32:59.906819821Z}
+    {id make-release-clippy-runnable, kind @complete, author "brendan@necessary.nu", at 2026-08-15T18:33:01.675429641Z}
 )
 
 impl_evidence (
