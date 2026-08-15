@@ -1938,7 +1938,32 @@ mod tests {
     // [spec:ronin:req:compat.cli-and-tools/test]
     #[test]
     fn runner_resolves_the_last_change_without_mutating_process_cwd() {
-        let original_directory = std::env::current_dir().unwrap();
+        // Where the process is, read while nothing is allowed to be standing
+        // somewhere else.
+        //
+        // What this test claims is that Ninja's `-C` is resolved by the runner
+        // and never by the process, and the evidence for it is a process-global
+        // the product is entitled to move: a Make compilation evaluates each
+        // unit from its own directory, and a deferred recipe expands in the
+        // directory of the unit that wrote it. Both restore what they found,
+        // and both hold `COMPILATION_DIRECTORY` exclusively across the move —
+        // which is what that lock is for. A libtest binary runs all of it at
+        // once, so reading the global without the shared side is reading a
+        // value another thread is allowed to be halfway through changing, and
+        // the assertion then fails naming a scratch directory this test never
+        // heard of. `Runner::from_process` reads the same global under the same
+        // guard; a test asserting on it is owed no less.
+        //
+        // Taken for the read alone and not across the run, which is what keeps
+        // this a claim about the runner rather than a lock that makes it true:
+        // `run` launches commands, and `subprocess::spawn` takes the shared
+        // side for itself at the moment it forks.
+        let process_directory = || {
+            #[cfg(all(unix, feature = "make"))]
+            let _stable = crate::make::stable_process_directory_guard();
+            std::env::current_dir().unwrap()
+        };
+        let original_directory = process_directory();
         let base = std::env::temp_dir().join(format!(
             "ronin-runner-directory-{}-{}",
             std::process::id(),
@@ -1980,7 +2005,7 @@ mod tests {
         );
         assert!(working_directory.join(".ninja_log").exists());
         assert!(working_directory.join(".ninja_deps").exists());
-        assert_eq!(std::env::current_dir().unwrap(), original_directory);
+        assert_eq!(process_directory(), original_directory);
 
         let error = runner
             .run(&[
@@ -1992,7 +2017,7 @@ mod tests {
             ])
             .unwrap_err();
         assert_eq!(error.to_string(), "invalid -j parameter");
-        assert_eq!(std::env::current_dir().unwrap(), original_directory);
+        assert_eq!(process_directory(), original_directory);
         fs::remove_dir_all(base).unwrap();
     }
 
