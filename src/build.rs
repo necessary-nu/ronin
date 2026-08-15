@@ -584,6 +584,12 @@ pub(crate) struct Builder<'a> {
     deps_log: Option<&'a mut crate::deps::DepsLog>,
     targets: Vec<NodeId>,
     executed_edges: BTreeSet<EdgeId>,
+    /// The edges this build reached and found to have no command at all,
+    /// because the front end read the recipe as the edge launched and it came
+    /// to nothing. Kept apart from the edges that ran, because an edge that
+    /// ran nothing wrote nothing — which is what a dry run has to know before
+    /// standing in for the update a prerequisite would have made.
+    ran_nothing_edges: BTreeSet<EdgeId>,
     /// The edges this build settled as failed, whether the command said so or
     /// the launch never happened. Read by a caller that has to decide about
     /// each target separately rather than about the build as a whole.
@@ -648,6 +654,7 @@ impl<'a> Builder<'a> {
             deps_log,
             targets: Vec::new(),
             executed_edges: BTreeSet::new(),
+            ran_nothing_edges: BTreeSet::new(),
             failed_edges: BTreeSet::new(),
             command_cache: Vec::new(),
             command_scratch: Vec::new(),
@@ -1106,9 +1113,18 @@ impl<'a> Builder<'a> {
         Made::Nothing
     }
 
-    fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<PreparedEdge> {
+    /// Get `edge` ready to run, or say that there is nothing to run.
+    ///
+    /// A front end that binds commands at launch is the only thing that can
+    /// answer the second way, and it answers it by having read a recipe that
+    /// came to nothing. Nothing below this point happens for such an edge: no
+    /// output directory is created, no response file is written, and the edge
+    /// is not recorded as executed — a build that ran no command made nothing.
+    fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<Option<PreparedEdge>> {
         let mut command = self.take_command(edge)?;
-        self.bind_late_command(edge, &mut command)?;
+        if self.bind_late_command(edge, &mut command)? == Runs::Nothing {
+            return Ok(None);
+        }
         let launch_command = self.deferred_launch_command(edge, &command.command);
         let launch_rspfile_content =
             self.deferred_response_file_content(edge, &command.rspfile_content);
@@ -1207,7 +1223,11 @@ impl<'a> Builder<'a> {
         if self.output_sink.is_none() {
             self.commands_ran.push(command.command.clone());
         }
-        Ok(PreparedEdge {
+        // Said here rather than by the caller, so that the one edge with no
+        // command has no place to be announced from: an edge is reported as
+        // started exactly when this returns something to start.
+        self.command_started(edge, &command)?;
+        Ok(Some(PreparedEdge {
             edge,
             old_mtimes,
             command,
@@ -1215,7 +1235,7 @@ impl<'a> Builder<'a> {
             command_start_mtime,
             start_millis: self.progress.offset_millis(),
             _response_file: response_file,
-        })
+        }))
     }
 
     /// Whether a finished command says the build was cut short rather than that
@@ -1899,12 +1919,26 @@ impl<'a> Builder<'a> {
                 } else {
                     None
                 };
-                let prepared = self.prepare_edge(edge).and_then(|prepared| {
-                    self.command_started(edge, &prepared.command)?;
-                    Ok(prepared)
-                });
-                match prepared {
-                    Ok(prepared) => {
+                match self.prepare_edge(edge) {
+                    // The recipe was read as the edge was launched and held no
+                    // command line. Nothing runs, nothing is reported, and the
+                    // count of work loses the edge that turned out not to be
+                    // any — the same accounting a deferred edge gets when its
+                    // freshness test comes out negative.
+                    Ok(None) => {
+                        if let Some(slot) = slot {
+                            slot.release();
+                        }
+                        if !self.settle_unrun_edge(
+                            edge,
+                            &mut failures,
+                            failure_limit,
+                            &mut last_error,
+                        ) {
+                            break;
+                        }
+                    }
+                    Ok(Some(prepared)) => {
                         let command = prepared.launch_command.clone();
                         match processes.spawn(edge, command, use_console, self.options.dryrun) {
                             Ok(()) => {
@@ -2038,7 +2072,8 @@ impl<'a> Builder<'a> {
 }
 
 mod command;
-pub(crate) use command::{LateCommand, LateCommands};
+use command::Runs;
+pub(crate) use command::{LateBinding, LateCommand, LateCommands};
 mod deferred;
 mod freshness;
 mod reporter;

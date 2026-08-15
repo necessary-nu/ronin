@@ -534,3 +534,59 @@ fn make_orders_standard_input_among_files() {
     assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "hello");
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// GNU Make expands a recipe, finds it came to no command line at all, runs
+/// nothing and reports the target up to date. What the run says about it is
+/// narration; what it does not say is a command it never ran.
+///
+/// GNU Make 4.4.1 on `EMPTY =` / `all: ; $(EMPTY)` prints
+/// `make: 'all' is up to date.` and nothing else.
+#[test]
+fn empty_expansion_reports_no_command() {
+    let directory = test_directory("empty-expansion");
+    fs::write(directory.join("Makefile"), "EMPTY =\nall: ; $(EMPTY)\n").unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert!(output.status.success(), "{reported}");
+    assert!(
+        !reported.contains("/bin/sh"),
+        "an empty expansion reached a shell: {reported}"
+    );
+    assert!(
+        reported.contains("no work to do"),
+        "a build that ran nothing did not say so: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A dry run stands in for the update a prerequisite's command would have
+/// made, because it does not run the command that would make it. A recipe
+/// holding no command line makes no such update in either run, so the
+/// dependent stays as up to date as it already was.
+///
+/// GNU Make's own suite reaches this shape as options/dash-n tests 2 and 3,
+/// where 4.4.1 answers `'a' is up to date.` with and without `-n`.
+#[test]
+fn dry_run_stops_at_empty_expansion() {
+    let directory = test_directory("empty-expansion-dry-run");
+    fs::write(
+        directory.join("Makefile"),
+        "EMPTY =\na: b ; echo made > $@\nb: c ; $(EMPTY)\n",
+    )
+    .unwrap();
+    write_at(&directory, "b", "", 1_000);
+    write_at(&directory, "a", "", 2_000);
+    write_at(&directory, "c", "", 3_000);
+
+    for arguments in [&[][..], &["-n"][..]] {
+        let output = make_command(&directory).args(arguments).output().unwrap();
+        let reported = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(output.status.success(), "{arguments:?}: {reported}");
+        assert!(
+            !reported.contains("echo made"),
+            "{arguments:?}: remade a target GNU Make leaves alone: {reported}"
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}

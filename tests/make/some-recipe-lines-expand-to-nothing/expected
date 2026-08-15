@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| EMPTY =
+| all:
+| 	echo one > out1
+| 	$(EMPTY)
+| 	echo two > out2
+file out1 touched 1
+| one
+file out2 touched 1
+| two

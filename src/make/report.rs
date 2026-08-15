@@ -152,7 +152,7 @@ pub(super) fn finished(
     }
     if let Some((reason, _)) = outcome.stopped.as_ref() {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: build stopped: {reason}.\n").as_bytes());
-    } else if up_to_date && stdout.is_empty() && !silent {
+    } else if (up_to_date || !outcome.ran_a_command()) && stdout.is_empty() && !silent {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: no work to do.\n").as_bytes());
     }
     RunResult {

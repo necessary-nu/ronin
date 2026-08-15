@@ -14,7 +14,7 @@
 //! shapes the graph — and the engine asks for one as it launches its edge.
 
 use super::sink::CommandLayout;
-use crate::build::{LateCommand, LateCommands};
+use crate::build::{LateBinding, LateCommand, LateCommands};
 use crate::graph::EdgeId;
 use crate::htab::RapidHashMap;
 use crate::util::BString;
@@ -63,17 +63,24 @@ impl LateCommands for PendingRecipes {
         edge: EdgeId,
         output: &[u8],
         trigger: &[u8],
-    ) -> Result<Option<LateCommand>, String> {
+    ) -> Result<LateBinding, String> {
         let Some(recipe) = self.edges.get(&edge).copied() else {
-            return Ok(None);
+            return Ok(LateBinding::Settled);
         };
         let expanded = self
             .recipes
             .expand(&mut self.session, recipe, trigger)
             .map_err(|failure| super::report::diagnostic_body(&failure))?;
         let Some(expanded) = expanded else {
-            return Ok(None);
+            return Ok(LateBinding::Settled);
         };
+        // Every line of the recipe expanded to nothing. GNU Make walks past
+        // them all in `job_next_command`, starts no shell, and counts the
+        // target as remade — so the edge is complete without a command, and
+        // the run that reaches it says the target is up to date.
+        if expanded.runs_nothing {
+            return Ok(LateBinding::Nothing);
+        }
         let launched = self.layout.launch(
             &expanded.shell,
             &expanded.shell_flags,
@@ -95,7 +102,7 @@ impl LateCommands for PendingRecipes {
             Some((path, content)) => (Some(BString::from(path)), BString::from(content)),
             None => (None, BString::default()),
         };
-        Ok(Some(LateCommand {
+        Ok(LateBinding::Run(LateCommand {
             command: BString::from(launched.command),
             description,
             rspfile,

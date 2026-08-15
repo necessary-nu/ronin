@@ -13,6 +13,19 @@ enum DeferredWork {
     Run,
 }
 
+/// Why an edge the build reached finished without a command having run.
+#[derive(Clone, Copy)]
+pub(super) enum Unrun {
+    /// A deferred edge whose prerequisites turned out not to be newer than its
+    /// outputs once they had all settled.
+    Skipped,
+    /// A deferred phony edge: work that happened, in the only sense a phony
+    /// edge ever does work.
+    Phony,
+    /// The recipe was read as the edge launched and held no command line.
+    NoCommand,
+}
+
 #[derive(Clone, Copy)]
 enum NewInputsReferenceContext {
     /// The recipe is nested in the outer shell's double-quoted `-c` argument.
@@ -48,7 +61,13 @@ fn replace_all(source: &[u8], needle: &[u8], replacement: &[u8]) -> BString {
 }
 
 impl Plan {
-    pub(super) fn reportable_work_count(&self, graph: &Graph, runtime: &RuntimeState) -> usize {
+    /// The edges this plan would report as work, in the order the graph holds
+    /// them.
+    pub(super) fn reportable_work_edges(
+        &self,
+        graph: &Graph,
+        runtime: &RuntimeState,
+    ) -> Vec<EdgeId> {
         self.wanted
             .iter()
             .zip(graph.edge_ids())
@@ -64,7 +83,12 @@ impl Plan {
                 let rule = graph.edge(*edge).rule;
                 rule.is_some() && !graph.is_phony_rule(rule)
             })
-            .count()
+            .map(|(_, edge)| edge)
+            .collect()
+    }
+
+    pub(super) fn reportable_work_count(&self, graph: &Graph, runtime: &RuntimeState) -> usize {
+        self.reportable_work_edges(graph, runtime).len()
     }
 }
 
@@ -109,11 +133,19 @@ impl Builder<'_> {
         // have made. Reaching a candidate means such work was planned, so the
         // deferred contract carries that hypothetical update across the same
         // boundary.
+        //
+        // Unless every prerequisite that would have made one turned out to
+        // have no command. A recipe read at launch and found to hold nothing
+        // updates its target under a dry run exactly as much as it does under
+        // a build — not at all — so there is no hypothetical update left to
+        // carry, and a dependent that was only a candidate on account of it is
+        // as up to date as GNU Make says it is.
         if self.options.dryrun
             && self
                 .runtime
                 .deferred(edge)
                 .is_some_and(crate::runtime::DeferredRuntime::candidate_only)
+            && !self.every_input_ran_nothing(edge)
         {
             should_run = true;
         }
@@ -127,6 +159,23 @@ impl Builder<'_> {
             return DeferredWork::Activate(activations);
         }
         DeferredWork::Run
+    }
+
+    /// Whether every one of this edge's ordinary prerequisites is written by an
+    /// edge the build reached and found to have no command.
+    ///
+    /// Conservative in the one direction that matters: a prerequisite nothing
+    /// generates, or one whose generator did have a command, answers no and
+    /// leaves the dry run's assumption exactly where it was.
+    fn every_input_ran_nothing(&self, edge: EdgeId) -> bool {
+        let inputs = self.graph.edge(edge).non_order_only_inputs();
+        !inputs.is_empty()
+            && inputs.iter().all(|input| {
+                self.graph
+                    .node(*input)
+                    .generator
+                    .is_some_and(|generator| self.ran_nothing_edges.contains(&generator))
+            })
     }
 
     fn deferred_new_inputs_value(&self, edge: EdgeId) -> Vec<u8> {
@@ -180,17 +229,30 @@ impl Builder<'_> {
         self.resolve_deferred_new_inputs(edge, content, NewInputsReferenceContext::ResponseFile)
     }
 
-    fn finish_deferred_without_command(
+    /// Complete an edge the build reached and did not run.
+    ///
+    /// However it got here the outputs are whatever they already were: they
+    /// are re-stat'd rather than assumed, and the edge is settled as clean,
+    /// because nothing wrote them.
+    ///
+    /// What differs is whether the dependents are told. A dry run does not
+    /// write the outputs a command would have written, so re-reading them
+    /// there would say every dependent is up to date when the point of the
+    /// exercise is to say what would run — which is why [`Unrun::Skipped`] and
+    /// [`Unrun::Phony`] leave the dependents alone under `-n`. An edge with no
+    /// command is the case where the two runs agree: nothing was going to be
+    /// written either way, so the dependents are told in both.
+    pub(super) fn finish_without_command(
         &mut self,
         edge: EdgeId,
-        executed: bool,
+        how: Unrun,
     ) -> BuildResult<(bool, Vec<NodeId>)> {
-        let outputs = self
-            .graph
-            .deferred_freshness(edge)
-            .expect("deferred completion has metadata")
-            .outputs
-            .clone();
+        let executed = matches!(how, Unrun::Phony);
+        let deferred = self.graph.deferred_freshness(edge).is_some();
+        let outputs = self.graph.deferred_freshness(edge).map_or_else(
+            || self.graph.edge(edge).out.clone(),
+            |freshness| freshness.outputs.clone(),
+        );
         let disk = self.disk.clone();
         let mut logical_mtime = FileTime::MISSING;
         for output in outputs {
@@ -203,10 +265,36 @@ impl Builder<'_> {
             state.set_mtime(logical_mtime);
             state.set_dirty(false);
         }
-        self.runtime.deferred_mut(edge).settle();
+        if deferred {
+            self.runtime.deferred_mut(edge).settle();
+        }
         self.runtime.edge_mut(edge).set_command_dirty(false);
         self.runtime.edge_mut(edge).set_restat_clean(!executed);
-        Ok((!self.options.dryrun, Vec::new()))
+        let told = matches!(how, Unrun::NoCommand) || !self.options.dryrun;
+        Ok((told, Vec::new()))
+    }
+
+    /// Settle an edge whose recipe was read as it launched and held no command
+    /// line, and say whether the build may carry on.
+    ///
+    /// The edge is taken out of the count of work first: it was counted when
+    /// the plan was made, because a plan cannot know what a recipe expands to,
+    /// and reporting it as work now would leave a progress line short forever.
+    pub(super) fn settle_unrun_edge(
+        &mut self,
+        edge: EdgeId,
+        failures: &mut usize,
+        failure_limit: usize,
+        last_error: &mut Option<BuildError>,
+    ) -> bool {
+        self.ran_nothing_edges.insert(edge);
+        self.progress.total = self.progress.total.saturating_sub(1);
+        let result = self.finish_without_command(edge, Unrun::NoCommand);
+        if let Err(error) = self.settle_edge(edge, result) {
+            *failures += 1;
+            *last_error = Some(error);
+        }
+        *failures < failure_limit
     }
 
     /// Resolve late work before the ordinary scheduler dispatches an edge.
@@ -224,7 +312,7 @@ impl Builder<'_> {
                 if rule.is_some() && !self.graph.is_phony_rule(rule) {
                     self.progress.total = self.progress.total.saturating_sub(1);
                 }
-                let result = self.finish_deferred_without_command(edge, false);
+                let result = self.finish_without_command(edge, Unrun::Skipped);
                 if let Err(error) = self.settle_edge(edge, result) {
                     *failures += 1;
                     *last_error = Some(error);
@@ -248,7 +336,7 @@ impl Builder<'_> {
                 false
             }
             DeferredWork::Run if self.graph.is_phony_rule(self.graph.edge(edge).rule) => {
-                let result = self.finish_deferred_without_command(edge, true);
+                let result = self.finish_without_command(edge, Unrun::Phony);
                 if let Err(error) = self.settle_edge(edge, result) {
                     *failures += 1;
                     *last_error = Some(error);

@@ -134,6 +134,26 @@ pub(crate) struct LateCommand {
     pub(crate) ignore_errors: bool,
 }
 
+/// Whether an edge the build reached has a command to run at all.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum Runs {
+    Command,
+    Nothing,
+}
+
+/// What a front end answered about an edge it binds this late.
+pub(crate) enum LateBinding {
+    /// This edge's command was settled when the graph was built.
+    Settled,
+    /// Run this instead of whatever the graph is holding.
+    Run(LateCommand),
+    /// There is no command: the front end read the recipe and it came to
+    /// nothing. The edge is complete the moment it is reached — no process, no
+    /// output written, and nothing to report about a command that does not
+    /// exist. GNU Make reaches the same state through `cs_not_started`.
+    Nothing,
+}
+
 /// A front end that binds an edge's command when the build is about to run it.
 ///
 /// The engine asks once per edge, after the edge's prerequisites have been
@@ -142,8 +162,9 @@ pub(crate) struct LateCommand {
 /// diagnostic, and no front-end vocabulary crosses it in either direction.
 // [spec:ronin:req:make.compiler-boundary]
 pub(crate) trait LateCommands {
-    /// The command for `edge`, whose single output is `output`, or `None` when
-    /// this edge's command was settled when the graph was built.
+    /// The command for `edge`, whose single output is `output`, or
+    /// [`LateBinding::Settled`] when this edge's command was settled when the
+    /// graph was built.
     ///
     /// `trigger` names the output the edge is being run on behalf of, which is
     /// the same name for every edge but one writing several the graph reached
@@ -161,7 +182,7 @@ pub(crate) trait LateCommands {
         edge: EdgeId,
         output: &[u8],
         trigger: &[u8],
-    ) -> Result<Option<LateCommand>, String>;
+    ) -> Result<LateBinding, String>;
 }
 
 pub(super) struct PreparedEdge {
@@ -240,9 +261,58 @@ impl Builder<'_> {
         &mut self,
         edge: EdgeId,
         command: &mut CommandSpec,
-    ) -> BuildResult<()> {
+    ) -> BuildResult<Runs> {
+        match self.late_binding(edge)? {
+            LateBinding::Settled => Ok(Runs::Command),
+            LateBinding::Nothing => Ok(Runs::Nothing),
+            LateBinding::Run(bound) => {
+                command.description = bound.description;
+                command.command = bound.command;
+                command.rspfile = bound.rspfile;
+                command.rspfile_content = bound.rspfile_content;
+                command.ignore_errors = bound.ignore_errors;
+                Ok(Runs::Command)
+            }
+        }
+    }
+
+    /// Whether any edge of this build turned out to have a command.
+    ///
+    /// Asked once the build is over, because an edge whose recipe is read as
+    /// it launches can only be found to have no command by launching it.
+    pub(crate) fn ran_a_command(&self) -> bool {
+        !self.executed_edges.is_empty()
+    }
+
+    /// Whether the plan holds anything that would really run.
+    ///
+    /// GNU Make's `-q` is not a question about the plan: `start_job_command`
+    /// answers "something to do" only once a recipe line has been expanded and
+    /// come out as text, so a recipe that expands to nothing answers zero, and
+    /// the expansion happens — a `$(shell)` in such a recipe runs under `-q`
+    /// exactly as it does under a build. The walk stops at the first edge that
+    /// would run, which is where GNU Make stops asking too.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the front end says about a recipe it could not expand.
+    pub(crate) fn interrogate(&mut self) -> BuildResult<bool> {
+        if self.plan.is_empty() {
+            return Ok(true);
+        }
+        for edge in self.plan.reportable_work_edges(self.graph, &self.runtime) {
+            if !matches!(self.late_binding(edge)?, LateBinding::Nothing) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Ask the front end for this edge's command, if there is a front end to
+    /// ask.
+    pub(super) fn late_binding(&mut self, edge: EdgeId) -> BuildResult<LateBinding> {
         let Some(recipes) = self.late_commands.as_deref_mut() else {
-            return Ok(());
+            return Ok(LateBinding::Settled);
         };
         let output = self
             .graph
@@ -255,18 +325,9 @@ impl Builder<'_> {
             || output.clone(),
             |output| self.graph.node_path(output).to_vec(),
         );
-        let bound = recipes
+        recipes
             .command(edge, &output, &trigger)
-            .map_err(|diagnostic| BuildError::LateCommand { diagnostic })?;
-        let Some(bound) = bound else {
-            return Ok(());
-        };
-        command.description = bound.description;
-        command.command = bound.command;
-        command.rspfile = bound.rspfile;
-        command.rspfile_content = bound.rspfile_content;
-        command.ignore_errors = bound.ignore_errors;
-        Ok(())
+            .map_err(|diagnostic| BuildError::LateCommand { diagnostic })
     }
 
     pub(super) fn refresh_command_hash(&mut self, edge: EdgeId) -> BuildResult<()> {

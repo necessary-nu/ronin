@@ -351,7 +351,7 @@ case	features/patternrules.diff.29	narration	ninja-progress+recipe-echo
 case	features/patternrules.diff.3	narration	ninja-progress+ninja-failure-block+recipe-error-line
 case	features/patternrules.diff.30	narration	ninja-progress+recipe-echo
 case	features/patternrules.diff.31	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/patternrules.diff.32	narration	ninja-progress+up-to-date-line
+case	features/patternrules.diff.32	narration	no-work-line+up-to-date-line
 case	features/patternrules.diff.33	narration	ninja-progress
 case	features/patternrules.diff.34	unclassified	ninja-progress+no-work-line+recipe-echo+up-to-date-line+evaluation
 case	features/patternrules.diff.35	unclassified	ninja-progress+recipe-echo+evaluation
@@ -824,7 +824,7 @@ case	misc/failure.diff.7	narration	product-name+fatal-decoration+shared-refusal
 case	misc/failure.diff.8	narration	product-name+fatal-decoration+shared-refusal
 case	misc/general1.diff	narration	ninja-progress
 case	misc/general2.diff	narration	ninja-progress
-case	misc/general3.diff	narration	ninja-progress+no-work-line
+case	misc/general3.diff	narration	no-work-line
 case	misc/general3.diff.1	narration	ninja-progress
 case	misc/general3.diff.10	narration	ninja-progress+ninja-failure-block+recipe-error-line
 case	misc/general3.diff.11	unclassified	ninja-progress+ninja-failure-block+evaluation
@@ -920,8 +920,8 @@ case	options/dash-k.diff.2	narration	product-name+shared-refusal
 case	options/dash-l.diff	narration	ninja-progress
 case	options/dash-n.diff	narration	ninja-progress+recipe-echo
 case	options/dash-n.diff.1	unclassified	no-work-line+evaluation
-case	options/dash-n.diff.2	narration	ninja-progress+up-to-date-line
-case	options/dash-n.diff.3	narration	ninja-progress+up-to-date-line
+case	options/dash-n.diff.2	narration	no-work-line+up-to-date-line
+case	options/dash-n.diff.3	narration	no-work-line+up-to-date-line
 case	options/dash-n.diff.4	unclassified	ninja-progress+evaluation
 case	options/dash-n.diff.5	unclassified	ninja-progress+no-work-line+recipe-echo+evaluation
 case	options/dash-q.diff.9	narration	product-name+fatal-decoration+shared-refusal

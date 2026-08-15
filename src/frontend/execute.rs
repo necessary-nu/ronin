@@ -311,6 +311,22 @@ impl Planned<'_> {
         self.builder.already_up_to_date()
     }
 
+    /// Whether the plan would really run anything, asking the front end about
+    /// every command it binds as an edge launches.
+    ///
+    /// This is what a Make `-q` answers. It differs from
+    /// [`Planned::already_up_to_date`] for exactly the edges whose command is
+    /// not known until it is asked for: a recipe that expands to no command
+    /// line is planned work that is not work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] when a front end could not produce a command it
+    /// was asked for.
+    pub(crate) fn interrogate(&mut self) -> Result<bool, Error> {
+        Ok(self.builder.interrogate()?)
+    }
+
     /// The files this plan will create only to complete a chain of implicit
     /// rules, which GNU Make deletes once it has finished with them.
     ///
@@ -355,11 +371,13 @@ impl Planned<'_> {
                 None
             }
         };
+        let ran_a_command = self.builder.ran_a_command();
         Ok(Outcome {
             stopped,
             regenerated,
             unmade,
             output,
+            ran_a_command,
         })
     }
 }
@@ -370,6 +388,7 @@ pub struct Outcome {
     regenerated: Vec<Node>,
     unmade: Vec<Node>,
     output: Vec<u8>,
+    ran_a_command: bool,
 }
 
 impl Outcome {
@@ -381,6 +400,16 @@ impl Outcome {
     #[must_use]
     pub fn stopped(&self) -> Option<String> {
         self.stopped.as_ref().map(|(reason, _)| reason.to_string())
+    }
+
+    /// Whether the build ever had a command to run.
+    ///
+    /// A plan can hold an edge whose command is only read as the edge is
+    /// launched, and reading it is what discovers that there is no command —
+    /// so how much work a build did is a fact about the build rather than
+    /// about the plan, and only the finished build can be asked.
+    pub(crate) const fn ran_a_command(&self) -> bool {
+        self.ran_a_command
     }
 
     /// The front end's own diagnostic, when what stopped the build was a
