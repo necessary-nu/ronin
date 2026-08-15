@@ -453,9 +453,9 @@ assertions (
     {id make-trailing-dollar-in-a-value, kind @complete, author "brendan@necessary.nu", at 2026-08-15T10:50:13.249902842Z}
     {id make-environment-origin-precedes-the-switches, kind @complete, author "brendan@necessary.nu", at 2026-08-15T10:50:17.673502622Z}
     {id make-shadowed-name-is-not-self-reference, kind @complete, author "brendan@necessary.nu", at 2026-08-15T10:50:22.111468067Z}
-    {id make-private-binding-keeps-the-public-value, kind @doing, author "brendan@necessary.nu", at 2026-08-15T11:59:44.677669891Z}
-    {id make-recipe-time-target-variable-reaches-the-scope, kind @doing, author "brendan@necessary.nu", at 2026-08-15T12:00:29.484479819Z}
-    {id make-recipe-time-export-reaches-the-environment, kind @doing, author "brendan@necessary.nu", at 2026-08-15T12:00:57.475150682Z}
+    {id make-private-binding-keeps-the-public-value, kind @complete, author "brendan@necessary.nu", at 2026-08-15T12:02:55.140217991Z}
+    {id make-recipe-time-target-variable-reaches-the-scope, kind @complete, author "brendan@necessary.nu", at 2026-08-15T12:02:56.885293405Z}
+    {id make-recipe-time-export-reaches-the-environment, kind @complete, author "brendan@necessary.nu", at 2026-08-15T12:03:01.66624019Z}
 )
 
 impl_evidence (

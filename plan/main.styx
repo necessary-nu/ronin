@@ -9166,6 +9166,7 @@ children (
                 title "Unwind a private and public binding of one name as a single nesting"
                 kind @fix
                 deps (make-private-variables make-pattern-specific-variable-application)
+                sealed true
                 log (
                     {
                         at 2026-08-15T11:59:44.677669891Z
@@ -9179,6 +9180,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Re-verified failing at 22b3366 before implementing, as the handoff asked: the errata's reproducer still gave dep9:[outer] where GNU gives dep9:[pub]. The three scope reworks since (LIFO guards, VarExport/target_environment, the bindings stack) had not reached it.\n\nProbing GNU first was what made the fix right, because the errata's own sketch — unwind the run and lay the surviving public bindings down again — is wrong on a cell the errata did not have. The model is not a stack of bindings with the private ones removed. It is `initialize_file_variables` (src/variable.c:591) building a chain of exactly two sets in front of the parent's:\n\n    file->variables       the target's own name bound it       next_is_parent = 0\n    file->pat_variables   every matching pattern, accumulated  next_is_parent = 1\n    parent's chain / global_setlist\n\nEach is a hash table, so a name bound twice inside one set keeps only the last binding — the pattern loop is `do { v = define_variable_loc(...) } while ((p = lookup_pattern_var (p, ...)))`, every iteration into the same set. `lookup_variable` (src/variable.c:459) then walks:\n\n    v = hash_find_item (set->table, &var_key);\n    if (v && (!is_parent || !v->private_var))\n      return v;\n    is_parent |= setlist->next_is_parent;\n\nTwo things fall out, and both are cells a flat model gets wrong. A private binding is *stepped over*, not stopped at: the loop carries on to the next set rather than hiding the name. And `private` is answered per set, on whichever binding the set is left holding — so an earlier public binding overwritten by a later private one in the same set is simply gone.\n\nThe matrix, probed against the oracle with a global V = outer, target q.p, prerequisite dep9, all now fixtures:\n\n  pattern private, target public         q.p:[pub]      dep9:[pub]\n  target private, pattern public         q.p:[priv]     dep9:[pub]      steps over\n  two patterns, public then private      q.p:[privpat]  dep9:[outer]    last in the set decides\n  two patterns, private then public      q.p:[pubpat]   dep9:[pubpat]\n  both private                           q.p:[privtgt]  dep9:[outer]\n  pattern private only                   q.p:[priv]     dep9:[outer]\n  target private only                    q.p:[priv]     dep9:[outer]\n  neither private                        q.p:[pubtgt]   dep9:[pubtgt]\n\nRonin had the first, third and fourth wrong. The errata's sketch would have fixed the first and left the third: keeping every public binding lets a public one show through the private one that overwrote it.\n\nFixed in kati/src-rs/dep.rs. `scopes_for` now returns a `RuleScopes` — patterns and the target's own scope kept apart rather than concatenated into one `Vec` — so a binding can be tagged with the set it came from as it is installed. `apply_rule_vars` records one ordered `Vec<RuleBinding>` carrying the guard, the set, the symbol, the value and the private flag, in place of the two lists it kept before. `release_private` takes the run, reduces it to one surviving binding per name per set, walks own-then-pattern skipping private, unwinds the whole run LIFO and lays down only what the walk found. `ScopedVar::scope` was added so a guard can say which scope to install into again.\n\nSecond expansion reads the same scopes flattened, `private` and all, which is what it should: it is the target's own expansion, so `is_parent` is never set.\n\nTwo fixtures recorded: private-variable-pattern-and-target-are-one-nesting (the errata's case and its mirror) and private-variable-last-in-a-pattern-set-decides (the two multi-pattern cells). The prerequisite names in the first had to stop matching the patterns — `dep.p` matches `%.p` and reads the private binding out of its own set, which is correct and not what the case is about.\n\nOne adjacent cell found and filed rather than fixed: a target-specific `+=` under a private pattern binding. GNU walks the chain a second time when the variable is expanded (`variable_append`, src/expand.c:511) and applies the same private rule there, so the base differs per reader; Ronin resolves the append once at install time. make-target-specific-append-reads-the-readers-scope has the reproducer."
+                    }
+
+                    {
+                        at 2026-08-15T12:02:55.140217991Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -9687,6 +9695,7 @@ children (
                 id make-recipe-time-target-variable-reaches-the-scope
                 title "Apply a target-specific variable a recipe assigns"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-14T04:52:06.261480398Z
@@ -9708,6 +9717,13 @@ children (
                         kind @note
                         text "The timing matrix, probed against the oracle before implementing. Launch order is the whole question, so every case forces it with a prerequisite chain rather than trusting the scheduler:\n\n  target already expanded    no effect          its recipe is text by the time the eval runs\n  the target running now     visible            on a LATER line of the same recipe\n  a target expanded later    visible\n  that later target's prereqs visible in GNU    Ronin still misses this one; filed separately\n  an existing target-specific binding  overridden\n  `:=` at recipe time        simple, expanded where the eval is\n  `+=` at recipe time        appended to what the target inherits\n\nGNU needs no special case for any of it. `record_target_var` reaches the file's variable set by name at any point in the run, and `initialize_file_variables` has already put that set in front of the recipe's chain, so a write lands where the next expansion reads. \"Already expanded\" is not a rule GNU enforces either — it falls out of the recipe being text by then.\n\nFixed in three places, all kati.\n\n`make_dep` hands the evaluator `planned_scopes`, a `Symbol -> Arc<Vars>` table taken from `DepBuilder::done` once the graph is built. That is the route back the node's handoff said was missing: `Evaluator::rule_vars` left with the graph, so a recipe-time write had been landing in a table nothing consults again. `record_rule_specific_assign` prefers the planned scope when `rules_snapped`, and falls back to the old table otherwise — before the graph exists there is nothing to reach.\n\n`settle_append` finishes a `+=` that has no build-time pass left to finish it. `apply_rule_vars` normally appends a pending `+=` to what the target inherits while it installs rule variables; a recipe-time assignment arrives after that pass has run, so the same paste is made against the same chain at assign time. Without it `$(eval tgt: X += more)` gave the target `more` alone, the inherited value dropped.\n\nThe third is the one that made the matrix's first cell right, and it is not in the assignment path at all. `expansion_can_reach_make` answered `true` for `$(eval)` unconditionally, which kept every recipe holding one out of launch expansion — so such a recipe was expanded while the graph was being compiled, before any recipe ran. That was invisible while a recipe-time eval changed nothing; with this node it decides the timing outright, and got it backwards: a target that ran BEFORE the setter saw the assignment, because the setter's recipe had been expanded first. `$(eval)` is now walked like any other function. It expands to nothing, so it contributes no recipe text, and a `$(MAKE)` it can reach is one written inside its own argument, which is in the tree. `call` and `value` still answer `true` — they reach a variable by a name they are given, which is not. A variable an `$(eval)` defines that a later line expands to `$(MAKE)` is beyond any static walk; the check `DeferredRecipes::expand_with` already makes after expanding catches that and refuses rather than handing the executor a nested Make.\n\nThree fixtures: the divergence marker on function-eval-in-a-recipe-sets-a-target-variable is deleted, function-eval-in-a-recipe-reaches-a-later-target records the three timing cells and both flavours, function-eval-in-a-recipe-overrides-a-target-variable records the override.\n\nThe prerequisite cell is make-recipe-time-target-variable-reaches-prerequisites: it needs node scopes to be links rather than copies, which is a change to the type every scope is expressed in."
                     }
+
+                    {
+                        at 2026-08-15T12:02:56.885293405Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -9715,6 +9731,7 @@ children (
                 id make-recipe-time-export-reaches-the-environment
                 title "Put a variable a recipe exports into that recipe's environment"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-14T04:52:19.96123265Z
@@ -9735,6 +9752,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "The timing matrix, probed against the oracle. The node's premise held and the matrix is wider than the two cells it named — what a recipe changes about the export set is not only an `export`:\n\n  `$(eval export V)`, same recipe's later line   the child sees it\n  `$(eval export V)`, a later recipe's child     sees it\n  `$(eval export W = x)`                          sees it, value and all\n  `$(eval unexport A)` on an exported name        withdrawn, from this recipe on\n  `$(eval C = new)` on an already-exported name   the NEW value reaches children\n  `$(shell)` in a later expansion                 already right before this node\n\nThe fourth and fifth are the ones the node's handoff asked to probe before choosing an implementation, and they settle it: the trigger is not the `export` directive, it is any change to what the export set would answer. GNU has no trigger at all — `target_environment` reads the export set when the job starts, so everything any earlier recipe did is already in it, including a plain assignment to an exported name.\n\nRonin settles the compilation unit's environment once, before any recipe runs, and hands it to the sink. There is already a per-edge correction on top of it — `node_environment` calls `scoped_environment` at launch — but that walks the node's own scope, and a recipe-time export marks the global binding, which is not in it.\n\nFixed by naming the names the settlement can no longer be trusted for. `Evaluator::exports_after_snap` collects a name whenever a global assignment lands or `mark_exported` runs while `rules_snapped` — the two choke points, and `export V = x` goes through the first. `export::late_environment` turns that list into environment changes at launch: the current answer for each name, or a withdrawal where the name is no longer exported or no longer there. `node_environment` puts those in front of the scope's own changes, so a target-specific binding still has the last word, which is the order the unit's answer and the scope's already stood in.\n\nOnly what a recipe touched, rather than the whole export set recomputed per job: the settled answer is still right for every name nothing has since spoken about, and recomputing it per edge would cost a walk of every global.\n\nRecipes carrying `$(eval)` reach launch expansion at all only because of the `expansion_can_reach_make` change made under make-recipe-time-target-variable-reaches-the-scope. Without it this node's own reproducer expands while the graph is compiled, and the export lands before the environment is settled rather than after — right answer, wrong reason, and wrong for every later recipe.\n\nTwo fixtures: the divergence marker on function-eval-in-a-recipe-exports-a-variable is deleted, and function-eval-in-a-recipe-exports-to-a-later-recipe records the unexport, the export and the reassignment reaching both the writing recipe and a later one."
+                    }
+
+                    {
+                        at 2026-08-15T12:03:01.66624019Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
