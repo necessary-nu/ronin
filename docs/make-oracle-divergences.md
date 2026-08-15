@@ -194,12 +194,25 @@ syntax. The recorded difference had been kati's `  Stop.` suffix against a
 sentence the corpus wrote for it. The seven stay `extension` — the feature is
 still kati's alone — but their Make side is now evidence rather than opinion.
 
-One host dependency remains, and it is symmetric: twelve corpus makefiles
-compute `MAKEVER` from `$(shell make --version)`, which is the host's Make
-whichever oracle is passed. Both tools evaluate the same `$(shell ...)` and
-take the same branch, so it moves the corpus's own gates together rather than
-tilting the comparison. The three cases where it was *not* symmetric were the
-three above, and those tested `$(MAKE)` rather than `MAKEVER`.
+**The corpus's own Make.** Twelve makefiles compute `MAKEVER` from `$(shell
+make --version)` and branch on it — `comment_in_command`, `include_glob_order`,
+`posix_var`, `multi_implicit_output_patterns`, `multiline_recipe`,
+`implicit_pattern_rule_prefix`, `var_with_space`, `wildcard`,
+`shell_var_with_args`, `err_export_override`, `err_override_export` and
+`wildcard_cache`. That `make` is a bare name, so it used to be the host's,
+whichever oracle was passed. It was symmetric — both tools evaluated the same
+`$(shell ...)` and took the same branch — and therefore tilted nothing; what it
+did was let a program the gate does not identify choose what twelve cases test.
+
+The harness now puts a `make` link to the pinned oracle in front of `PATH` for
+both runs, so the corpus asks the build the record names. Measured rather than
+argued: with a `make` on `PATH` that answers `GNU Make 3.81`, the gate before
+this went 318/69 → 317/70 and refused with an unclassified difference in
+`shell_var_with_args.mk#test`; with the link it is 318/69 and green, identical
+to a run on a host whose `make` is 4.4.1. Neither tool is reached through the
+link — both are spawned by absolute path, so `$(MAKE)` is still the path each
+was invoked with, the seven `^make` scripts still see a path, and
+`submake_basic.mk` still recurses into the tool under test.
 
 ## Summary
 

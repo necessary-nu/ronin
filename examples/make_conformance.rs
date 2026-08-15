@@ -42,6 +42,7 @@ mod oracle;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
+use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -422,14 +423,35 @@ fn case_directory_name(id: &str) -> String {
     id.replace('#', "__")
 }
 
+/// The directory the run puts in front of `PATH`, holding a `make` that is the
+/// pinned oracle.
+///
+/// Twelve corpus makefiles open with `MAKEVER := $(shell make --version | ...)`
+/// and branch on the answer. That `make` is a bare name, so it is whatever is on
+/// `PATH` — the host's, whichever Make the harness was told to measure against.
+/// It is symmetric, since both tools evaluate the same `$(shell ...)`, so it
+/// tilts nothing; what it does is decide which branch the corpus takes from
+/// something the gate does not identify. On a host carrying 3.81, or none at
+/// all, twelve cases would quietly change what they test for a reason about the
+/// machine rather than about either tool.
+///
+/// So the oracle answers instead. Not the tool under test: the question the
+/// corpus is asking is "which GNU Make am I written against", and the answer
+/// this gate can stand behind is the one build it identifies. Both runs get the
+/// same link for the same reason they get the same `LC_ALL`.
+fn path_head(work: &Path) -> PathBuf {
+    work.join("bin")
+}
+
 /// Run one tool on one case in `directory`, which is already empty.
 fn observe(
     tool: &Path,
     extra: &[String],
     case: &Case,
     directory: &Path,
-    corpus: &Path,
+    config: &Config,
 ) -> Result<Observation, String> {
+    let corpus = &config.corpus;
     let mut command = Command::new(if case.script { Path::new("bash") } else { tool });
     if case.script {
         // A script runs the tool itself, so what it is handed has to be the
@@ -465,6 +487,11 @@ fn observe(
         // GNU Make quotes with the locale's directional marks. Pinning the
         // locale keeps a quoting difference a real difference.
         .env("LC_ALL", "C")
+        // A bare `make` inside the corpus reaches the oracle rather than the
+        // host. Neither tool is spawned through this — both are named by an
+        // absolute path, so `$(MAKE)` is still the path each was invoked with
+        // and the one recursive case still recurses into the tool under test.
+        .env("PATH", search_path(&path_head(&config.work))?)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -486,6 +513,13 @@ fn observe(
         files,
         verbatim,
     })
+}
+
+/// The inherited `PATH` with `head` in front of it.
+fn search_path(head: &Path) -> Result<OsString, String> {
+    let inherited = env::var_os("PATH").unwrap_or_default();
+    let entries = std::iter::once(head.to_path_buf()).chain(env::split_paths(&inherited));
+    env::join_paths(entries).map_err(|error| format!("building PATH for a case: {error}"))
 }
 
 /// Spawn and reap, reporting a hang instead of waiting on one.
@@ -753,7 +787,7 @@ fn run_case(config: &Config, case: &Case) -> Result<Outcome, String> {
     ] {
         let _ = fs::remove_dir_all(&directory);
         fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
-        observations.push(observe(tool, extra, case, &directory, &config.corpus)?);
+        observations.push(observe(tool, extra, case, &directory, config)?);
     }
     let _ = fs::remove_dir_all(config.work.join("out").join(case_directory_name(&case.id)));
     let actual = observations.pop().expect("both tools observed");
@@ -775,6 +809,16 @@ fn prepare_work(config: &Config) -> Result<(), String> {
         std::os::unix::fs::symlink(&config.corpus, &link)
             .map_err(|error| format!("linking the corpus into the work tree: {error}"))?;
     }
+    // Once, here, rather than per case: every worker thread reads it and none
+    // writes it, and a link replaced under a case that is already running is
+    // the kind of flake nothing in the output would explain. See `path_head`
+    // for why the corpus needs a `make` it can name.
+    let head = path_head(&config.work);
+    fs::create_dir_all(&head).map_err(|error| error.to_string())?;
+    let make = head.join("make");
+    let _ = fs::remove_file(&make);
+    std::os::unix::fs::symlink(&config.make, &make)
+        .map_err(|error| format!("linking the oracle onto the cases' PATH: {error}"))?;
     Ok(())
 }
 
