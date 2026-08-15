@@ -451,6 +451,7 @@ assertions (
     {id make-oracle-recording-trailing-newline, kind @complete, author "brendan@necessary.nu", at 2026-08-14T15:56:58.453119066Z}
     {id make-notdir-strips-a-root-directory, kind @doing, author "brendan@necessary.nu", at 2026-08-14T16:23:34.747375931Z}
     {id make-trailing-dollar-in-a-value, kind @doing, author "brendan@necessary.nu", at 2026-08-15T09:48:03.87235131Z}
+    {id make-environment-origin-precedes-the-switches, kind @doing, author "brendan@necessary.nu", at 2026-08-15T10:02:50.503284939Z}
 )
 
 impl_evidence (

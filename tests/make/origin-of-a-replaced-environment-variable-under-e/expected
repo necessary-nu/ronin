@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # Writing to the name is what asks `-e` to decide, and the answer is the
+| # environment: the assignment is declined and the origin says so.
+| LC_ALL = from-file
+| all: ; @printf '%s\n' '$(origin LC_ALL)' '$(LC_ALL)' > out
+file out touched 2
+| environment override
+| C
