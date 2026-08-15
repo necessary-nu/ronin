@@ -58,13 +58,18 @@ impl PendingRecipes {
 }
 
 impl LateCommands for PendingRecipes {
-    fn command(&mut self, edge: EdgeId, output: &[u8]) -> Result<Option<LateCommand>, String> {
+    fn command(
+        &mut self,
+        edge: EdgeId,
+        output: &[u8],
+        trigger: &[u8],
+    ) -> Result<Option<LateCommand>, String> {
         let Some(recipe) = self.edges.get(&edge).copied() else {
             return Ok(None);
         };
         let expanded = self
             .recipes
-            .expand(&mut self.session, recipe)
+            .expand(&mut self.session, recipe, trigger)
             .map_err(|failure| super::report::diagnostic_body(&failure))?;
         let Some(expanded) = expanded else {
             return Ok(None);

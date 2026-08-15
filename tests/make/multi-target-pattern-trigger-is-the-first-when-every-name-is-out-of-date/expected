@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # Nothing is there, so the first name the walk reaches is also the first
+| # that has to be made — which is why a build from scratch never shows the
+| # question this node is about.
+| all: a.c a.h
+| %.c %.h: %.in ; echo 'at=$@ stem=$*' >> log ; cat $< > $*.c ; cat $< > $*.h
+file a.c touched 1
+| body
+file a.h touched 1
+| body
+file a.in kept 1
+| body
+file log touched 1
+| at=a.c stem=a

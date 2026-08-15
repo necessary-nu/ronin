@@ -26,6 +26,7 @@ pub(crate) use index::{allocate_node, mknode, nodeget};
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 pub(crate) use path::{nodepath_bytes, shell_escape_path};
+pub(crate) use peer::trigger_output;
 use std::io;
 use std::path::Path;
 
@@ -319,7 +320,7 @@ where
             source,
         }
     })?;
-    runtime.node_mut(node).set_mtime(FileTime::observed(mtime));
+    runtime.node_mut(node).observe(FileTime::observed(mtime));
     Ok(())
 }
 

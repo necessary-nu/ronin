@@ -1,1 +1,0 @@
-Ronin builds nothing when a bare .SECONDARY makes every target intermediate; make-bare-secondary-still-builds.

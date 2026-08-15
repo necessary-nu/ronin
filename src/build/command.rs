@@ -145,12 +145,23 @@ pub(crate) trait LateCommands {
     /// The command for `edge`, whose single output is `output`, or `None` when
     /// this edge's command was settled when the graph was built.
     ///
+    /// `trigger` names the output the edge is being run on behalf of, which is
+    /// the same name for every edge but one writing several the graph reached
+    /// separately. A front end whose recipes name the target they are making
+    /// binds that name to this one; `output` stays what the edge writes first,
+    /// because a response file belongs to the edge rather than to the run.
+    ///
     /// # Errors
     ///
     /// A rendered diagnostic, when the front end could not produce the
     /// command. The build stops with it, as it would for a command that could
     /// not be started.
-    fn command(&mut self, edge: EdgeId, output: &[u8]) -> Result<Option<LateCommand>, String>;
+    fn command(
+        &mut self,
+        edge: EdgeId,
+        output: &[u8],
+        trigger: &[u8],
+    ) -> Result<Option<LateCommand>, String>;
 }
 
 pub(super) struct PreparedEdge {
@@ -240,8 +251,12 @@ impl Builder<'_> {
             .first()
             .map(|output| self.graph.node_path(*output).to_vec())
             .unwrap_or_default();
+        let trigger = crate::graph::trigger_output(self.graph, &self.runtime, edge).map_or_else(
+            || output.clone(),
+            |output| self.graph.node_path(output).to_vec(),
+        );
         let bound = recipes
-            .command(edge, &output)
+            .command(edge, &output, &trigger)
             .map_err(|diagnostic| BuildError::LateCommand { diagnostic })?;
         let Some(bound) = bound else {
             return Ok(());

@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The two names are reached through rules of their own rather than side by
+| # side on one prerequisite list. It changes nothing: a.c is current, so it
+| # is a.h that reaches the rule needing to be made.
+| all: x y
+| x: a.c ; @echo x
+| y: a.h ; @echo y
+| %.c %.h: %.in ; echo 'at=$@ stem=$*' >> log ; cat $< > $*.c ; cat $< > $*.h
+file a.c touched 1
+| body
+file a.h touched 1
+| body
+file a.in kept 1
+| body
+file log touched 1
+| at=a.h stem=a

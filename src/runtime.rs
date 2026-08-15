@@ -74,6 +74,7 @@ pub(crate) struct NodeRuntime {
     logged_command_hash: CommandHash,
     dirty: bool,
     dyndep_pending: bool,
+    absent_on_disk: bool,
 }
 
 impl Default for NodeRuntime {
@@ -84,6 +85,7 @@ impl Default for NodeRuntime {
             logged_command_hash: CommandHash::MISSING,
             dirty: false,
             dyndep_pending: false,
+            absent_on_disk: false,
         }
     }
 }
@@ -119,6 +121,27 @@ impl NodeRuntime {
 
     pub(crate) const fn set_dirty(&mut self, dirty: bool) {
         self.dirty = dirty;
+    }
+
+    /// Record what the filesystem answered for this name.
+    ///
+    /// The only way [`Self::absent_on_disk`] is written, which is what makes it
+    /// mean the syscall rather than the scan: every other mtime a node acquires
+    /// stands in for something and would spoil the answer.
+    pub(crate) const fn observe(&mut self, mtime: FileTime) {
+        self.mtime = mtime;
+        self.absent_on_disk = mtime.is_missing();
+    }
+
+    /// Whether the last look at the filesystem found nothing under this name.
+    ///
+    /// Kept apart from [`Self::mtime`] because the scan writes over that one: a
+    /// file the graph is allowed not to have stands in the newest timestamp
+    /// behind it, and a phony output stands in its inputs'. What was actually
+    /// there is still the question GNU Make asks to decide a target must be
+    /// made, so it is recorded where the syscall answers it and nowhere else.
+    pub(crate) const fn absent_on_disk(self) -> bool {
+        self.absent_on_disk
     }
 
     pub(crate) const fn dyndep_pending(self) -> bool {

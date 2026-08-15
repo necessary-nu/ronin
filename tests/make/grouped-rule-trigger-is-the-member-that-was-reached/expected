@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # The control for the pattern form beside it. An explicit `&:' group is one
+| # decision over all its targets, so reaching any of them runs the recipe for
+| # the name that was reached — a.c here, though a.c is the current one and
+| # a.h is the one missing.
+| all: a.c a.h
+| a.c a.h &: a.in ; echo 'at=$@' >> log ; cat $< > a.c ; cat $< > a.h
+file a.c touched 1
+| body
+file a.h touched 1
+| body
+file a.in kept 1
+| body
+file log touched 1
+| at=a.c

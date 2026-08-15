@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # A bare .SECONDARY beside a .PRECIOUS pattern: the chain still runs, and
+| # neither reason to keep hello.z is a reason not to make it.
+| .SECONDARY:
+| .PRECIOUS: %.z
+| all: hello.tsk
+| hello.x: ; echo body > $@
+| %.z: %.x ; cat $< > $@
+| %.tsk: %.z ; cat $< > $@
+file hello.tsk touched 1
+| body
+file hello.x touched 1
+| body
+file hello.z touched 1
+| body

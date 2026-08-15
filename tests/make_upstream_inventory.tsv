@@ -41,7 +41,7 @@ case	features/double_colon.diff.11	narration	ninja-progress
 case	features/double_colon.diff.13	narration	ninja-progress+recipe-echo
 case	features/double_colon.diff.14	narration	no-work-line
 case	features/double_colon.diff.15	narration	no-work-line
-case	features/double_colon.diff.16	compiler	ninja-progress+fatal-decoration+refusal-not-made
+case	features/double_colon.diff.16	narration	product-name+fatal-decoration+shared-refusal
 case	features/double_colon.diff.2	narration	ninja-progress
 case	features/double_colon.diff.3	narration	ninja-progress
 case	features/double_colon.diff.4	narration	ninja-progress

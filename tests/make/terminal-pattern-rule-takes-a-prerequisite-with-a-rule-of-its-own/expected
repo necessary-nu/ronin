@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # A terminal rule's prerequisite need not be on disk when the rule is chosen:
+| # a name some rule promises to make ought to exist, and the bar the terminal
+| # rule sets is only on searching for an implicit rule it has not got.
+| all: hello.z
+| %.z:: test.x ; cat $< > $@
+| test.x: ; echo made-x > $@
+file hello.z touched 1
+| made-x
+file test.x touched 1
+| made-x

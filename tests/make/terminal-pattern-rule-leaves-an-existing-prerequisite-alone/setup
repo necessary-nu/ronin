@@ -1,0 +1,4 @@
+printf 'old-x\n' > hello.x
+printf 'new-y\n' > hello.y
+touch -d '2020-01-01 00:00' hello.x
+touch -d '2021-01-01 00:00' hello.y

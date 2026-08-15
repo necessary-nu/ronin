@@ -1,0 +1,4 @@
+# The catalogue's `%:: %,v' matches every name there is, and terminal is what
+# stops it inventing the `foo,v' it would need. With nothing checked in there
+# is no rule for `foo' at all.
+all: foo

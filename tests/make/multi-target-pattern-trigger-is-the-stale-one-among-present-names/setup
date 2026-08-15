@@ -1,0 +1,6 @@
+printf 'body\n' > a.h
+printf 'body\n' > a.in
+printf 'body\n' > a.c
+touch -d '2020-01-01 00:00' a.h
+touch -d '2021-01-01 00:00' a.in
+touch -d '2022-01-01 00:00' a.c

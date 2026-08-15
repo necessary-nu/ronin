@@ -1042,7 +1042,7 @@ impl<'a> Builder<'a> {
             if let Some(mtime) = *mtime {
                 self.runtime
                     .node_mut(*node)
-                    .set_mtime(FileTime::observed(mtime));
+                    .observe(FileTime::observed(mtime));
             }
         }
     }
@@ -1458,7 +1458,7 @@ impl<'a> Builder<'a> {
                     })?;
                 self.runtime
                     .node_mut(*output)
-                    .set_mtime(FileTime::observed(mtime));
+                    .observe(FileTime::observed(mtime));
                 logical_mtime = logical_mtime.max(FileTime::observed(mtime));
                 new_mtimes.push(mtime);
             }
@@ -1483,7 +1483,7 @@ impl<'a> Builder<'a> {
                         )
                     })?;
                 let output = self.runtime.node_mut(output);
-                output.set_mtime(FileTime::observed(mtime));
+                output.observe(FileTime::observed(mtime));
                 output.set_dirty(false);
                 output.set_logged_command_hash(edge_hash);
                 new_mtimes.push(mtime);

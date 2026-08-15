@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # The same files as the case this node is named for, with the goals the
+| # other way round: a.h is reached first and is the one out of date, so both
+| # readings agree and $@ is a.h for two reasons rather than one.
+| all: a.h a.c
+| %.c %.h: %.in ; echo 'at=$@ stem=$*' >> log ; cat $< > $*.c ; cat $< > $*.h
+file a.c touched 1
+| body
+file a.h touched 1
+| body
+file a.in kept 1
+| body
+file log touched 1
+| at=a.h stem=a

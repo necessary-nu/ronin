@@ -1,0 +1,7 @@
+# `hello.z' is reached before `other', so the terminal rule is what first
+# reaches `hello.x' and bars the `%.x:' rule from ever making it. `other' then
+# has no way to get its own prerequisite and the build is refused.
+all: hello.z other
+%.z:: %.x ; touch $@
+%.x: ; touch $@
+other: hello.x ; touch other

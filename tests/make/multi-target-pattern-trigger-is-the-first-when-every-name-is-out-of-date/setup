@@ -1,0 +1,2 @@
+printf 'body\n' > a.in
+touch -d '2020-01-01 00:00' a.in

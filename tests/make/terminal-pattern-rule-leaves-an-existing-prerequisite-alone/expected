@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # `hello.x' is there but out of date against `hello.y'. A terminal rule took
+| # it as it found it, so nothing remakes it and `hello.z' is made from the old
+| # contents.
+| all: hello.z
+| %.z:: %.x ; cat $< > $@
+| %.x: %.y ; cat $< > $@
+file hello.x kept 1
+| old-x
+file hello.y kept 1
+| new-y
+file hello.z touched 1
+| old-x

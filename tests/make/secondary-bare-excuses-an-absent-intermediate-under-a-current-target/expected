@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # hello.z is gone and hello.tsk is current, so its absence is excused and
+| # nothing runs — the half of the intermediate machinery a bare .SECONDARY
+| # does not change.
+| .SECONDARY:
+| all: hello.tsk
+| hello.x: ; echo body > $@
+| %.z: %.x ; cat $< > $@
+| %.tsk: %.z ; cat $< > $@
+file hello.tsk kept 1
+| body
+file hello.x kept 1
+| body

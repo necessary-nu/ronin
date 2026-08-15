@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # Three target patterns with the middle name the only one missing.
+| all: a.c a.h a.k
+| %.c %.h %.k: %.in ; echo 'at=$@ stem=$*' >> log ; cat $< > $*.c ; cat $< > $*.h ; cat $< > $*.k
+file a.c touched 1
+| body
+file a.h touched 1
+| body
+file a.in kept 1
+| body
+file a.k touched 1
+| body
+file log touched 1
+| at=a.h stem=a
