@@ -529,19 +529,25 @@ impl BuildGraph {
         stored.outputs_reobserved = true;
     }
 
-    /// Name the outputs of `edge` that a failed command must not leave behind,
-    /// which is what a Makefile's `.DELETE_ON_ERROR` asks for.
+    /// Name the outputs of `edge` a stopped command may be made to give back,
+    /// and say whether an ordinary failure is reason enough to take them.
     ///
     /// The eligible names rather than a switch: `.PRECIOUS` and `.PHONY` take
     /// individual outputs off the list, so a grouped recipe may have to leave
-    /// one member and withdraw the rest. An empty list stores nothing.
+    /// one member and withdraw the rest. They are named whatever `on_error`
+    /// says, because a recipe killed by a signal is cleaned up after without
+    /// `.DELETE_ON_ERROR` having asked.
     ///
     /// Nothing in a Ninja manifest says this, so a graph parsed from one never
-    /// carries it — the same bounded divergence `intermediate` and `disposable`
-    /// already have.
-    pub(crate) fn set_delete_on_error(&mut self, edge: Edge, outputs: Vec<Node>) {
-        self.arenas
-            .set_delete_on_error(edge.0, outputs.into_iter().map(|node| node.0).collect());
+    /// calls this at all — the same bounded divergence `intermediate` and
+    /// `disposable` already have — and an edge nobody answered for keeps
+    /// Ninja's answer, which is that a cut-short command gives everything back.
+    pub(crate) fn set_withdrawal(&mut self, edge: Edge, outputs: Vec<Node>, on_error: bool) {
+        self.arenas.set_withdrawal(
+            edge.0,
+            outputs.into_iter().map(|node| node.0).collect(),
+            on_error,
+        );
     }
 
     /// Declare which of `edge`'s outputs the recipe makes only on the way to

@@ -1,0 +1,3 @@
+echo old > out
+sleep 0.05
+touch dep

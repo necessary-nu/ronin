@@ -111,6 +111,13 @@ impl CommandLayout {
     /// `scoped` is what one target's own `export` changes about the unit's
     /// answer. It is applied after the unit's, and `env` reads its arguments
     /// in order, so the target's word is the last one on any name both name.
+    ///
+    /// `exec` sits between the two because that is the last point where the
+    /// launching shell still has something of its own to do. `cd` is the
+    /// shell's own builtin and has to run in the shell that is about to be
+    /// replaced; `env` is a program, and one that replaces itself with what it
+    /// was given, so everything from there on is a single process. What that
+    /// buys is in [`Self::launch`].
     fn prefix(&self, scoped: &[kati::export::EnvironmentChange]) -> Vec<u8> {
         let mut command = Vec::new();
         if !self.command_directory.as_os_str().is_empty() {
@@ -118,6 +125,7 @@ impl CommandLayout {
             Self::push_shell_word(&mut command, self.command_directory.as_os_str().as_bytes());
             command.extend_from_slice(b" && ");
         }
+        command.extend_from_slice(b"exec ");
         let unit = self
             .recipe_environment
             .iter()
@@ -151,6 +159,15 @@ impl CommandLayout {
     /// The same choice the sink makes while emitting: a script short enough to
     /// pass as an argument is quoted into one, and one too long reaches the
     /// shell as a file instead.
+    ///
+    /// Either way the command runs in place of the shell that launched it,
+    /// which is what the `exec` from [`Self::prefix`] is for and the only
+    /// reason it is there. GNU Make waits on the recipe's own shell, so a
+    /// recipe a signal killed is a signalled child and Make can see that it
+    /// was; a launcher that stayed alive to report the death would report
+    /// `128 + signal` and exit normally, which is what a recipe that ran
+    /// `exit 143` looks like too. Replacing the launcher leaves one process
+    /// where Make has one, and the two answers stay apart.
     pub(crate) fn launch(
         &self,
         shell: &[u8],
@@ -203,6 +220,16 @@ pub(crate) struct SubninjaInvocation {
     pub(crate) shell_flags: Vec<u8>,
 }
 
+/// What one edge's stopped recipe may give back, and when it must.
+///
+/// The two travel together because they are one answer in GNU Make: the names
+/// `delete_target` would not refuse, and whether an ordinary failure is reason
+/// enough to ask for them or only a signal is.
+struct PendingWithdrawal {
+    outputs: Vec<Node>,
+    on_error: bool,
+}
+
 /// A recursive recipe held until all its child Makefiles have been compiled.
 pub(crate) struct PendingSubninja {
     pub(crate) invocations: Vec<SubninjaInvocation>,
@@ -219,7 +246,7 @@ pub(crate) struct PendingSubninja {
     completion_output: Option<Node>,
     intermediate: bool,
     disposable: bool,
-    delete_on_error: Vec<Node>,
+    withdrawal: PendingWithdrawal,
     peer_outputs: Vec<Node>,
     bindings: Vec<(Binding, Vec<u8>)>,
 }
@@ -616,8 +643,11 @@ impl GraphSink {
         // The wrapper edge is the one that will hold the parent's residual
         // recipe once the children are composed, so a failure there is the
         // failure that leaves the parent's own outputs half-made.
-        self.graph
-            .set_delete_on_error(edge, pending.delete_on_error.clone());
+        self.graph.set_withdrawal(
+            edge,
+            pending.withdrawal.outputs.clone(),
+            pending.withdrawal.on_error,
+        );
         self.graph
             .set_peer_outputs(edge, pending.peer_outputs.clone());
         Ok(edge)
@@ -1084,7 +1114,10 @@ impl BuildSink for GraphSink {
         let inputs = self.node_list(names, edge.inputs)?;
         let order_only_inputs = self.node_list(names, edge.order_only_inputs)?;
         let validations = self.node_list(names, edge.validations)?;
-        let delete_on_error = self.node_list(names, edge.delete_on_error_outputs)?;
+        let withdrawal = PendingWithdrawal {
+            outputs: self.node_list(names, edge.withdrawable_outputs)?,
+            on_error: edge.delete_on_error,
+        };
         let peer_outputs = self.node_list(names, edge.peer_outputs)?;
         let deferred = self.deferred_edge(names, edge)?;
         let outputs = if edge.completion_join {
@@ -1116,7 +1149,7 @@ impl BuildSink for GraphSink {
                 completion_output: edge.completion_join.then_some(completion_output),
                 intermediate: edge.intermediate,
                 disposable: edge.disposable,
-                delete_on_error,
+                withdrawal,
                 peer_outputs,
                 bindings,
             });
@@ -1159,7 +1192,8 @@ impl BuildSink for GraphSink {
                 // Makefile asks for. `.KATI_RESTAT` is a separate and narrower
                 // request that still emits its own `restat` binding.
                 self.graph.set_make_target_freshness(built);
-                self.graph.set_delete_on_error(built, delete_on_error);
+                self.graph
+                    .set_withdrawal(built, withdrawal.outputs, withdrawal.on_error);
                 self.graph.set_peer_outputs(built, peer_outputs);
                 if let Some(deferred) = deferred {
                     self.graph.set_deferred_freshness(

@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 3
+| .PRECIOUS: out
+| all: out
+| out: ; echo body > $@ ; kill -TERM $$$$
+file out touched 1
+| body

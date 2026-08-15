@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 3
+| .PRECIOUS: g2
+| all: g1 g2
+| g1 g2 &: ; echo x > g1 ; echo y > g2 ; kill -TERM $$$$
+file g2 touched 1
+| y

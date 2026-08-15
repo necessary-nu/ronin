@@ -1373,6 +1373,10 @@ fn build_options(
     // reports a recipe that exits 130 as `Error 130` and goes on under -k
     // exactly as it would for any other status.
     options.command_status_interrupts = false;
+    // GNU Make reaps a recipe its own signal killed and reports it like any
+    // other failure — `*** [Makefile:2: out] Terminated`, and on under -k. Only
+    // a signal delivered to Make itself ends the build.
+    options.recipe_signal_fails = true;
     Ok(options)
 }
 

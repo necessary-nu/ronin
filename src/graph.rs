@@ -29,6 +29,7 @@ pub(crate) use path::{nodepath_bytes, shell_escape_path};
 pub(crate) use peer::trigger_output;
 use std::io;
 use std::path::Path;
+use withdrawal::Withdrawal;
 
 arena_id!(NodeId, pub(in crate::graph));
 arena_id!(EdgeId, pub(in crate::graph));
@@ -167,16 +168,21 @@ pub(crate) struct Graph {
     validation_uses: crate::htab::RapidHashMap<NodeId, IdVec<EdgeId>>,
     deferred_freshness: crate::htab::RapidHashMap<EdgeId, DeferredFreshness>,
     completion_joins: crate::htab::RapidHashMap<EdgeId, NodeId>,
-    /// Outputs a failed command must not leave behind, for the edges that have
-    /// any.
+    /// What a stopped command may be made to give back, for the edges a front
+    /// end answered for.
     ///
     /// Beside the edge arena for the reason validations are beside the node
-    /// arena: `.DELETE_ON_ERROR` is a thing a Makefile either says or never
-    /// mentions, and an inline list would charge every edge in every manifest
-    /// for a Make feature almost none of them use.
-    delete_on_error: crate::htab::RapidHashMap<EdgeId, IdVec<NodeId>>,
+    /// arena: withdrawal exclusions are a thing a Makefile states and a
+    /// manifest cannot, and an inline list would charge every edge in every
+    /// manifest for a Make feature no Ninja build has.
+    ///
+    /// An edge missing from here is one nothing narrowed, which is every edge
+    /// of a Ninja manifest: Ninja withdraws whatever a cut-short command wrote
+    /// and has no `.PRECIOUS` to except from it. An edge present with an empty
+    /// list is one a Makefile narrowed to nothing.
+    withdrawal: crate::htab::RapidHashMap<EdgeId, Withdrawal>,
     /// Outputs a recipe makes only on the way to making something else, for the
-    /// edges that have any. Beside the arena for the reason `delete_on_error`
+    /// edges that have any. Beside the arena for the reason `withdrawal`
     /// is: almost no edge in almost any graph has one.
     peer_outputs: crate::htab::RapidHashMap<EdgeId, IdVec<NodeId>>,
     phony_rule: Option<RuleId>,

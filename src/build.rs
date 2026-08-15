@@ -81,6 +81,18 @@ pub(crate) struct BuildOptions {
     /// so the Make front end turns this off rather than inheriting a number
     /// Ninja's enum happens to have spent.
     pub(crate) command_status_interrupts: bool,
+    /// Whether a recipe killed by a signal is a command that failed rather than
+    /// a build that was cut short.
+    ///
+    /// Ninja reads a child killed by `SIGINT`, `SIGTERM` or `SIGHUP` as the
+    /// Ctrl-C it got too — the signal went to the process group, so the child
+    /// dying of it says the build is over — and stops where it stands without a
+    /// `FAILED:` line. GNU Make separates the two: a signal sent to *make*
+    /// runs `fatal_error_signal`, while a child that merely died of one is
+    /// reaped by `reap_children`, reported as `*** [target] Terminated`, and
+    /// left to the ordinary failure path. So the Make front end turns this on
+    /// and the question becomes whether this process was signalled too.
+    pub(crate) recipe_signal_fails: bool,
     pub(crate) working_directory: crate::os::WorkingDirectory,
 }
 
@@ -106,6 +118,7 @@ impl Default for BuildOptions {
             jobserver: None,
             serve_jobserver: false,
             command_status_interrupts: true,
+            recipe_signal_fails: false,
             working_directory: crate::os::WorkingDirectory::default(),
         }
     }
@@ -117,15 +130,18 @@ pub(crate) enum EdgeResult {
     Failed,
 }
 
-/// How much of a stopped edge's work the build takes back.
+/// Why a stopped edge's work is being taken back, which decides how much of it
+/// goes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Withdraw {
-    /// Every output, because the build itself was cut short: nothing running
-    /// when the signal arrived got to finish, so nothing it wrote is finished.
-    Everything,
-    /// Only the outputs `.DELETE_ON_ERROR` named. One command failed and the
-    /// build goes on around it, so what to take back is the Makefile's answer
-    /// rather than this one's.
+    /// The command never got to finish: the build was cut short under it, or a
+    /// signal killed the recipe itself. Nothing it wrote is finished, so all of
+    /// it goes — bar the outputs a front end excepted, which is GNU Make's
+    /// `.PRECIOUS` and `.PHONY` reaching the same `delete_target` a signal does.
+    Stopped,
+    /// The command ran to a non-zero exit. The build goes on around it, so
+    /// whether what it wrote goes is `.DELETE_ON_ERROR`'s answer and not this
+    /// one's.
     DeleteOnError,
 }
 
@@ -1251,7 +1267,14 @@ impl<'a> Builder<'a> {
     // [spec:ronin:req:product.build-outcome]
     fn command_interrupted(&self, status: std::process::ExitStatus) -> bool {
         if status_interrupted(status) {
-            return true;
+            // A recipe of GNU Make's dies of a signal for two quite different
+            // reasons, and Make tells them apart by who was signalled. Ctrl-C
+            // reaches the whole process group, so this process has the same
+            // signal recorded against it and the build really was cut short.
+            // A recipe that killed itself, or that something else killed,
+            // leaves this process untouched and is simply a command that
+            // failed.
+            return !self.options.recipe_signal_fails || crate::signal::interrupted().is_some();
         }
         self.options.command_status_interrupts
             && crate::subprocess::exit_status_code(status)
@@ -1274,7 +1297,13 @@ impl<'a> Builder<'a> {
     /// always done it silently.
     fn withdraw_outputs(&self, edge: EdgeId, old_mtimes: &[i64], which: Withdraw) {
         let eligible = match which {
-            Withdraw::Everything => None,
+            // No entry is a manifest front end leaving the question alone, and
+            // Ninja's answer to it is that everything a cut-short command wrote
+            // goes. An entry narrowed to nothing is a Makefile's answer.
+            Withdraw::Stopped => self
+                .graph
+                .withdrawal(edge)
+                .map(|withdrawal| withdrawal.outputs.as_slice()),
             Withdraw::DeleteOnError => Some(self.graph.delete_on_error(edge)),
         };
         if eligible.is_some_and(<[NodeId]>::is_empty) {
@@ -1421,15 +1450,21 @@ impl<'a> Builder<'a> {
             // finishes the command, which is why a build cut short by SIGTERM
             // prints no `FAILED:` line. Half-written outputs still go.
             if self.command_interrupted(status) {
-                self.withdraw_outputs(edge, &old_mtimes, Withdraw::Everything);
+                self.withdraw_outputs(edge, &old_mtimes, Withdraw::Stopped);
                 return Err(BuildError::Interrupted {
                     status: Some(status),
                 });
             }
+            let signal = self
+                .options
+                .recipe_signal_fails
+                .then(|| crate::subprocess::signalled_exit_code(status))
+                .flatten();
             self.command_finished(
                 edge,
                 &command,
-                (!status.success()).then(|| crate::subprocess::exit_status_code(status)),
+                (!status.success())
+                    .then(|| signal.unwrap_or_else(|| crate::subprocess::exit_status_code(status))),
                 &visible_output,
             )?;
             // A recipe whose errors Make was told to ignore leaves its target
@@ -1439,7 +1474,21 @@ impl<'a> Builder<'a> {
                 // which is where GNU Make says it too: the recipe has had its
                 // error printed, and what it half-wrote goes before anything
                 // downstream can find a file with that name and believe it.
-                self.withdraw_outputs(edge, &old_mtimes, Withdraw::DeleteOnError);
+                //
+                // GNU Make asks `exit_sig != 0 || delete_on_error`, two reasons
+                // and not one. A recipe that died of a signal never reached the
+                // end of its own script, so what it wrote is unfinished whatever
+                // the Makefile said; a recipe that chose its exit status is
+                // taken at its word, and only `.DELETE_ON_ERROR` overrides it.
+                self.withdraw_outputs(
+                    edge,
+                    &old_mtimes,
+                    if signal.is_some() {
+                        Withdraw::Stopped
+                    } else {
+                        Withdraw::DeleteOnError
+                    },
+                );
                 return Err(BuildError::SubcommandFailed {
                     edge,
                     command: command.command,
@@ -2030,6 +2079,22 @@ impl<'a> Builder<'a> {
                 failures += 1;
                 last_error = Some(error);
                 if interrupted {
+                    // The command that reported has given back what it wrote,
+                    // and every other command still running is in exactly the
+                    // same position: it was cut short mid-recipe and what it
+                    // left is unfinished. GNU Make says so in one loop —
+                    // `fatal_error_signal` walks the whole child list calling
+                    // `delete_child_targets` — where leaving the loop here
+                    // would otherwise let a sibling's half-written output
+                    // outlive the build that abandoned it. They have already
+                    // been signalled, at the top of this loop.
+                    for prepared in running.iter().flatten() {
+                        self.withdraw_outputs(
+                            prepared.edge,
+                            &prepared.old_mtimes,
+                            Withdraw::Stopped,
+                        );
+                    }
                     break;
                 }
             }

@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 2
+| all: out
+| out: ; echo a > other ; echo body > $@ ; kill -TERM $$$$
+file other touched 1
+| a

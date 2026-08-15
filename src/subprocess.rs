@@ -796,6 +796,37 @@ mod libc_signal {
     pub(super) const SIGTERM: i32 = rustix::process::Signal::TERM.as_raw();
 }
 
+/// The signal that killed a command, if one did.
+///
+/// Only ever answered for the process the build itself waited on, so it says a
+/// recipe died this way exactly when no shell stood between the two to turn the
+/// death into an exit status of its own. That is why Make mode runs its recipe
+/// shell in place of the shell that launched it: a shell reports a signalled
+/// child as `128 + signal` and exits normally, which a recipe that plainly ran
+/// `exit 143` is indistinguishable from.
+pub(crate) fn killed_by_signal(status: std::process::ExitStatus) -> Option<i32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        status.signal()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = status;
+        None
+    }
+}
+
+/// What Make mode reports for a command a signal killed.
+///
+/// `128 + signal`, the number a shell exits with when the command it ran died
+/// that way — so the status a recipe carries out is the one it would have
+/// carried out had a shell reported it, and running the recipe shell directly
+/// to see the signal does not change the number anyone reads.
+pub(crate) fn signalled_exit_code(status: std::process::ExitStatus) -> Option<i32> {
+    killed_by_signal(status).map(|signal| 128_i32.wrapping_add(signal))
+}
+
 /// Ninja's interpretation of a finished child's wait status.
 ///
 /// A child that exited reports its own code, transparently — this is the number
@@ -929,7 +960,10 @@ pub(crate) fn needs_shell(command: &[u8]) -> bool {
         // Nothing to run: let the shell produce its own answer for that.
         return true;
     };
-    first.contains(&b'=')
+    // `exec` is the shell's, not a program on the path: it says the command
+    // should replace the shell rather than run under it, and spawning it
+    // directly would look for a file by that name and not find one.
+    first == b"exec" || first.contains(&b'=')
 }
 
 /// Whether a failed direct spawn should be retried through the shell.
@@ -1525,6 +1559,17 @@ mod launcher_tests {
     fn an_empty_command_is_left_to_the_shell() {
         assert!(needs_shell(b""));
         assert!(needs_shell(b"   "));
+    }
+
+    // [spec:ronin:req:compat.process-integration/test]
+    #[test]
+    fn a_leading_exec_needs_the_shell() {
+        // `exec` is the shell's builtin for "run this in my place", and
+        // spawning it directly would look for a program by that name.
+        assert!(needs_shell(b"exec /bin/sh recipe.rsp"));
+        // Not the builtin: the word is an argument or part of a longer name.
+        assert!(!needs_shell(b"/usr/bin/exec-thing a"));
+        assert!(!needs_shell(b"cmd exec"));
     }
 
     // [spec:ronin:req:compat.process-integration/test]
