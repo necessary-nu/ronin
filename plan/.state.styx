@@ -449,10 +449,10 @@ assertions (
     {id make-stdin-refusal-test-races-its-write, kind @complete, author "brendan@necessary.nu", at 2026-08-14T15:43:32.952292673Z}
     {id make-scheduler-completion-test-is-timing-fragile, kind @complete, author "brendan@necessary.nu", at 2026-08-14T15:49:56.164506702Z}
     {id make-oracle-recording-trailing-newline, kind @complete, author "brendan@necessary.nu", at 2026-08-14T15:56:58.453119066Z}
-    {id make-notdir-strips-a-root-directory, kind @doing, author "brendan@necessary.nu", at 2026-08-14T16:23:34.747375931Z}
-    {id make-trailing-dollar-in-a-value, kind @doing, author "brendan@necessary.nu", at 2026-08-15T09:48:03.87235131Z}
-    {id make-environment-origin-precedes-the-switches, kind @doing, author "brendan@necessary.nu", at 2026-08-15T10:02:50.503284939Z}
-    {id make-shadowed-name-is-not-self-reference, kind @doing, author "brendan@necessary.nu", at 2026-08-15T10:13:37.873660887Z}
+    {id make-notdir-strips-a-root-directory, kind @complete, author "brendan@necessary.nu", at 2026-08-15T10:50:07.517758933Z}
+    {id make-trailing-dollar-in-a-value, kind @complete, author "brendan@necessary.nu", at 2026-08-15T10:50:13.249902842Z}
+    {id make-environment-origin-precedes-the-switches, kind @complete, author "brendan@necessary.nu", at 2026-08-15T10:50:17.673502622Z}
+    {id make-shadowed-name-is-not-self-reference, kind @complete, author "brendan@necessary.nu", at 2026-08-15T10:50:22.111468067Z}
 )
 
 impl_evidence (
