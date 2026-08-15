@@ -10965,6 +10965,7 @@ children (
                 id make-process-cwd-tests-race-each-other
                 title "Stop two tests racing over the process working directory"
                 kind @test
+                sealed true
                 log (
                     {
                         at 2026-08-14T15:49:45.338885756Z
@@ -10992,6 +10993,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Shape of the fix settled by the density gate, and re-measured in its final form.\n\nThe guarded read began as a helper function in the cli test module and the commit gate refused it: src/cli.rs stands at exactly 50 counted functions, and `exempt-test-scope` spares a `#[test]` but not a plain helper beside one, so the helper was the fifty-first. It is now a closure inside the one test that makes the claim, which is where the discipline belongs anyway — the explanation sits with the assertion it explains rather than one scroll away from it.\n\nRe-measured in that form against the same adversary, because the code changed shape after the first measurement: 6 failures in 6 with the guard removed, 0 in 6 with it. Same numbers as the helper form."
+                    }
+
+                    {
+                        at 2026-08-15T23:08:36.525743409Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
