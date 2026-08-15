@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # The name GNU Make deprecates is not thrown away: it becomes an ordinary
+| # target spelt with a percent in it, carrying this rule's recipe, and asking
+| # for it by that spelling runs the recipe.
+| a %.o: ; @printf 'ran %s\n' '$@' > out
+file out touched 1
+| ran %.o

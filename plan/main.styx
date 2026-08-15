@@ -9207,20 +9207,6 @@ children (
             }
 
             {
-                id make-mixed-implicit-and-normal-rules
-                title "Read a mixed implicit and normal rule as deprecated rather than fatal"
-                kind @fix
-                log (
-                    {
-                        at 2026-08-13T18:42:54.023575047Z
-                        author "brendan@necessary.nu"
-                        kind @note
-                        text "Found while probing default-goal eligibility against GNU Make 4.4.1; unrelated to it.\n\nA rule whose target list mixes a pattern with a plain name is a deprecation in GNU Make, not a refusal. Reproducer:\n\n  a %.o: ; @echo mixed\n\nGNU Make 4.4.1 prints `Makefile:1: *** mixed implicit and normal rules: deprecated syntax` on stderr, reads on, records `a` as the default goal, and exits 0 having run the recipe. Ronin prints the same sentence and dies with status 2.\n\nkati/src-rs/rule.rs, in the static-pattern arm: `error_loc!(session, Some(&self.loc), \"*** mixed implicit and normal rules: deprecated syntax\")`. The text is right and the severity is not. GNU's own wording carries the `***` even though it continues, which is presumably why the port read it as fatal.\n\nWhat the fix has to settle before it is written: which of the two readings survives. GNU keeps the *normal* targets and drops the pattern ones — `a` gets the recipe and `%.o` does not become a pattern rule — so this is not merely downgrading a diagnostic to a warning, it is choosing what the rule compiles to. Probe the recipe's effect on both target shapes before changing the severity."
-                    }
-                )
-            }
-
-            {
                 id make-private-binding-keeps-the-public-value
                 title "Unwind a private and public binding of one name as a single nesting"
                 kind @fix
@@ -9671,12 +9657,41 @@ children (
                 id make-mixed-implicit-and-normal-rule-severity
                 title "Warn and continue for a rule mixing pattern and plain targets"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-14T01:05:12.449250182Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while probing make-static-pattern-nonmatch-semantics; kept out of that node because it is a different diagnostic in a different function, decided before any target pattern exists.\n\nGNU 4.4.1 spells this two ways and means two different severities. read.c:2126 is `fatal` \"mixed implicit and normal rules\" — a pattern rule whose target list has a plain member, which really does stop. read.c:2310 is `error` \"*** mixed implicit and normal rules: deprecated syntax\" — a plain rule whose target list has an unescaped `%` — and `error` prints and returns, so the read continues and make exits 0 having built everything else.\n\nRonin makes the second fatal. kati/src-rs/eval.rs:1368 raises `error_loc!` as soon as a target list is neither all patterns nor none, which covers both of GNU's cases with the harsher one.\n\nReproducer, where GNU exits 0 having written `out` and Ronin exits 2 having written nothing:\n\n    all: ; printf done > out\n    mismatch.c mismatch.dep %.c: ; touch $@\n\nOracle:  Makefile:2: *** mixed implicit and normal rules: deprecated syntax / printf done > out / exit 0\nRonin:   ronin: Makefile:2: mixed implicit and normal rules: deprecated syntax / exit 2\n\nWorth checking while fixing: GNU reduces escaped percents in the surviving target names on that path, so the continuing case needs the target list it leaves behind checked, not just the exit status."
+                    }
+
+                    {
+                        at 2026-08-15T17:37:14.091933293Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Consolidation, settled before any code was written. This node and make-mixed-implicit-and-normal-rules are one defect filed twice, five hours apart, by two probes that arrived at the same `error_loc!`.\n\nThe other node was filed 2026-08-13 out of a default-goal probe, titled \"Read a mixed implicit and normal rule as deprecated rather than fatal\", with the reproducer `a %.o: ; @echo mixed` — GNU prints the deprecation on stderr, records `a` as the default goal, runs the recipe and exits 0; Ronin prints the same sentence and dies with status 2. It also carried one claim that the oracle disproves: that \"GNU keeps the normal targets and drops the pattern ones\". It does not drop them. `%.o` becomes an ordinary target spelt with a percent in it, carrying the same recipe and the same prerequisites, and `make '%.o'` runs it.\n\nThis node is the same defect characterised correctly and further: it names both of GNU's sites (read.c:2126 and read.c:2310), both severities, the exact kati site that collapses them, and the escaped-percent question the continuing path raises. Everything the other node had is here or is wrong.\n\nSo the other node is removed rather than completed beside this one. Two nodes for one defect is two things to read and one of them misleading; keeping the accurate one and recording what the removed one contributed is the shape that leaves the plan smaller and no less true. Its reproducer is not lost — it is the fixture mixed-rule-deprecated-name-is-an-ordinary-target, recorded from the oracle."
+                    }
+
+                    {
+                        at 2026-08-15T17:37:24.328946357Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-15T17:51:55.937225474Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "The matrix, established against the pristine 4.4.1 oracle before anything was written. Every cell was run through both binaries.\n\nWHICH SEVERITY A LINE REACHES is decided by which kind of target came FIRST, which the filing did not say and which is the whole shape of the fix. GNU reads `filenames->name`, asks `find_percent_cached`, and branches on the answer before it looks at any other target.\n\n  a %.o:        `Makefile:1: *** mixed implicit and normal rules: deprecated syntax`, exit 0, `a` built\n  %.o a:        `Makefile:1: *** mixed implicit and normal rules.  Stop.`, exit 2, nothing built\n\nNote the two sentences differ: the fatal one has no `: deprecated syntax`. read.c:2126 and read.c:2310, and the message at 2126 is not historical — it is what 4.4.1 prints today.\n\nWHAT THE DEPRECATED NAME BECOMES, which is the cell the removed sibling node had wrong. It is not dropped. `find_percent_cached` reduces it, `enter_file` records it, `f->cmds = cmds` and `f->is_target = 1` — an ordinary target spelt with a percent in it:\n\n  a %.o: ; @printf 'ran %s\\n' '$@' > out, goal `%.o`   runs, $@ is `%.o`\n  all: foo.o beside a %.o: rule                        No rule to make target 'foo.o'. Not a pattern\n  a %.o: b                                             `a` is made from `b`. Recipe and prerequisites both shared\n  a %.o %.d:                                           the diagnostic twice, once per offending name\n  a %.o::                                              same deprecation, reads on\n  a foo%bar:                                           a percent anywhere in the name, not only leading\n  .a %.o:                                              deprecation, then `No targets` — a name with any `%` in it\n                                                       BREAKS the default-goal loop (read.c:1940) rather than\n                                                       being skipped, so `a` in `\\%.o a:` never becomes the goal\n\nTHE OTHER HALF WAS READING THE PERCENT AT ALL. GNU asks `find_percent`, never \"is there a percent here\": a backslash escapes the wildcard and the escaping is compressed out of the recorded name.\n\n  b\\%c d: ; ...          two plain targets, no diagnostic, exit 0.  Ronin was fatal\n  %.o \\%.x: ; ...        pattern rule with a plain target: FATAL.   Ronin built it happily\n  \\%.o a: ; ...          two plain targets, no diagnostic\n  \\%.o: V = one          an ordinary target-specific binding on `%.o`\n\nRonin got all four wrong, in both directions, because `is_pattern_rule` is `memchr(b'%')`.\n\nTHE CELL THAT MOVED THE CODE. GNU says nothing at all about a mixed target list on a target-specific assignment, in either order:\n\n  a %.o: V = one         silent, both bindings land, exit 0\n  %.o a: V = one         silent, both bindings land, exit 0.       Ronin was fatal\n\nBecause both diagnostics live in `record_files`, which a variable definition never reaches. So the check cannot stay in `parse_rule_targets`, which runs before kati knows whether the line is a rule. The parse now carries out what it found — `RuleTargets { targets, is_pattern_rule, disagreeing }` — and `check_mixed_targets` raises it in `eval_rule` after the assignment branch, beside the `prerequisites cannot be defined in recipes` refusal, which is there for exactly the same reason and which GNU also puts at the top of `record_files`. That ordering is GNU's too: `snapped_deps` is refused first, then the percent is read.\n\nONE NEIGHBOURING SENTENCE CORRECTED. `%.o: %.q: %.c` is GNU's THIRD site, read.c:2103, and it says `mixed implicit and static pattern rules`. rule.rs answered it with the plain-target sentence, naming a defect the line does not have. Same severity, same family, one string literal — corrected here rather than filed, because shipping a fix for this family that leaves a sibling misnamed is worse than the scope it saves. It cannot be fixtured: the build-intent harness compares files, both tools are fatal, and the message is the whole difference.\n\nWHERE THE FIX WENT, in kati d49463e on branch nplan/make-mixed-implicit-and-normal-rule-severity. `strutil::find_percent` was already there for `Pattern` and only needed exposing. `parse_rule_targets` reduces every target name through it and records whether a wildcard survived; `RuleTargets` carries the first target's answer and how many later ones disagreed; `check_mixed_targets` is the two severities. `is_pattern_rule` is no longer used in eval.rs.\n\nFIXTURES, nine, all recorded from the oracle: mixed-rule-deprecated-name-is-an-ordinary-target (the removed sibling's reproducer, carried forward), -reads-on-and-builds-what-follows (this node's own), -with-a-pattern-first-stops-the-read, -escaped-percent-is-an-ordinary-target, -escaped-percent-does-not-complete-a-pattern-rule, -shares-the-recipe-and-the-prerequisites, -target-specific-assignment-is-not-a-rule, -double-colon-is-deprecated-too, -deprecated-name-is-not-a-pattern. Each was written so the harness can see it: a case where both tools merely refuse is not a gate, so the ones that turn on a refusal were given a goal above them that is or is not reached.\n\nROW AUDIT. Two moved, both this change's, both toward Make: features/statipattrules.diff.66 and .67, unclassified `product-name+no-work-line+evaluation` -> narration `ninja-progress+no-work-line`. They are the last two cases in GNU's own statipattrules script, the pair headed \"Escaped %\", and they are the escaped-percent reading exactly. Nothing else moved. The compiler bucket stays at ZERO: 1287 rows at 226 unclassified / 0 compiler / 41 interface / 1020 narration.\n\nONE CELL LEFT DIVERGENT AND FILED. `a b: \\%.o: %.c` — GNU refuses with `target pattern contains no '%'` and Ronin accepts. That is `find_percent` deciding whether a static rule's target pattern is a pattern at all, a different question in a different function, and make-static-pattern-escaped-percent has it with the reproducer.\n\nGATES. fmt clean; cargo check --workspace --all-targets clean; workspace tests 803 passed; clippy ronin lib+bins pedantic/nursery --no-deps clean and kati -D warnings clean; make_port 4/4 over 736 cases with no existing recording rewritten; conformance 318 identical / 69 differing, unmoved; equivalence 297 makefiles, 278 graphs, 0 disagreements, unmoved; real-project gate built ninja 1.14.0.git in 22s."
+                    }
+
+                    {
+                        at 2026-08-15T17:52:01.750320257Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -11059,6 +11074,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while auditing make-vpath-prerequisite-resolves-to-a-target's row movement; pre-existing and not that change's.\n\n57 rows in tests/make_upstream_inventory.tsv moved narration -> unclassified between c5c9eb0, which last recorded the file, and 1362509. Established rather than assumed: a run built at HEAD with the vpath change reverted gives 228 unclassified / 1 compiler / 41 interface / 1017 narration, and the recorded file said 171/1/41/1074. So the drift was already in the tree when this dispatch started, and the vpath change moved exactly one row on top of it.\n\nEvery one of the 57 carries `ninja-failure-block` and every one gained `evaluation` — the classifier's name for \"after taking off everything I recognise, something is left that I cannot name\". They span features/implicit_search (13), variables/MAKEFLAGS (28), functions/error, features/errors, features/output-sync, features/parallelism, features/patternrules, features/vpathplus, features/include, features/se_explicit, features/se_implicit, features/se_statpat, misc/general3 and options/dash-k.\n\nThe cause is 9294140, which stopped interposing a launcher between Ronin and the recipe so a signalled child could be told from `exit 143`. The FAILED block's command line changed shape with it. Now:\n\n  [1/1] exit 1\n  FAILED: [code=1] all\n  exec env 'MAKEFLAGS=' 'MAKELEVEL=1' 'MFLAGS=' /bin/sh -c \"exit 1\"\n  ronin: build stopped: subcommand failed.\n\nagainst GNU's single `make: *** [Makefile:1: all] Error 1`. The `exec env ... /bin/sh -c` spelling is what the `recipe-echo` and `shared-refusal` recognisers no longer see through, so what they used to strip now survives into the residue.\n\nThe work is in examples/make_upstream — the recognisers, not the compiler. Nothing about the build is wrong; the inventory has simply stopped being able to say so, and 57 rows of unnameable residue is 57 rows nobody can triage."
+                    }
+                )
+            }
+
+            {
+                id make-static-pattern-escaped-percent
+                title "Read a static rule's target pattern with the escaping resolved"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-15T17:51:18.841118293Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while establishing make-mixed-implicit-and-normal-rule-severity's matrix against the pristine 4.4.1 oracle; left out of it because it is the same reading deciding a different question.\n\nReproducer:\n\n    a b: \\%.o: %.c ; @echo \"ran[$@]\" >> log\n\nGNU: `Makefile:1: *** target pattern contains no '%'.  Stop.`, exit 2.\nRonin: two warnings that `a' and `b' do not match the target pattern, then it builds `a` and exits 0.\n\n`\\%` is an escaped percent, so `\\%.o` is the literal name `%.o` and carries no wildcard at all. A static pattern rule whose target pattern has no wildcard is not a rule, and GNU refuses it on exactly that ground. Ronin asks `is_pattern_rule` — `memchr(b'%')` — which cannot tell an escaped percent from a wildcard, so it accepts the pattern, builds a `Pattern` whose own `find_percent` then reduces it to the literal `%.o`, and reports that neither target matches it.\n\nThe fix is the same one the severity node made on the rule-target side: rule.rs's `is_pattern_rule(&target_pattern...)` becomes `find_percent(...)`'s answer, and the reduced text is what `Pattern::new` should be handed rather than re-deriving. `strutil::find_percent` is already public after that node.\n\nWorth checking while fixing, because both are the same call site's neighbours: `dep.rs`'s `.PRECIOUS` split also uses `is_pattern_rule` over a name, and `.PRECIOUS: \\%.o` should name a file rather than a pattern. Not probed."
                     }
                 )
             }

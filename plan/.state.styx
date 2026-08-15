@@ -467,6 +467,7 @@ assertions (
     {id make-recursive-child-recipes-expand-at-launch, kind @complete, author "brendan@necessary.nu", at 2026-08-15T16:18:16.627523807Z}
     {id make-signal-killed-recipe-deletion, kind @complete, author "brendan@necessary.nu", at 2026-08-15T17:00:47.599557658Z}
     {id make-vpath-prerequisite-resolves-to-a-target, kind @complete, author "brendan@necessary.nu", at 2026-08-15T17:36:02.255582719Z}
+    {id make-mixed-implicit-and-normal-rule-severity, kind @complete, author "brendan@necessary.nu", at 2026-08-15T17:52:01.750320257Z}
 )
 
 impl_evidence (

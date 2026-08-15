@@ -1,0 +1,5 @@
+# A plain rule with a pattern among its targets is deprecated syntax rather
+# than a refusal: GNU Make says so on stderr, reads the rest of the makefile,
+# builds the default goal and exits 0.
+all: ; printf done > out
+mismatch.c mismatch.dep %.c: ; touch $@

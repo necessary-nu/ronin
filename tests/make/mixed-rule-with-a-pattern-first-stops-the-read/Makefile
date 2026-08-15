@@ -1,0 +1,5 @@
+# The other way round is the other severity. A pattern rule carrying a target
+# that names one file has no rule to compile, so the read stops there and the
+# goal above it is never built.
+all: ; @printf done > out
+%.o a: ; @touch $@

@@ -1,0 +1,5 @@
+# The deprecated name shares everything the rule has: the recipe and the
+# prerequisites both, so the plain target is built from the same prerequisite
+# the rule wrote once.
+a %.o: b ; @printf 'ran %s from %s\n' '$@' '$^' > out
+b: ; @printf b > $@

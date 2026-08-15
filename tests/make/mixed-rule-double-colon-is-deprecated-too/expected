@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| # The double-colon spelling reaches the same deprecation and reads on the same
+| # way.
+| a %.o:: ; @printf 'ran %s\n' '$@' > out
+file out touched 1
+| ran a
