@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| U$ := b
+| V$X := c
+| N := U$
+| all: ; @printf '[%s]\n' '$(U)' '$(origin U)' '$(V)' '$(N)' '$($(N))' > out
+file out touched 5
+| [b]
+| [file]
+| [c]
+| [U$]
+| []
