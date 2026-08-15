@@ -9667,8 +9667,9 @@ children (
 
             {
                 id make-recipe-expanded-newline
-                title "Keep an expanded newline inside the recipe line it arrived in"
+                title "Establish what an expanded newline does to a recipe line"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-14T02:21:32.803250236Z
@@ -9689,6 +9690,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "The premise this node was filed on is false, and probing it against reference/make-oracle/make-4.4.1/make is what showed that. Nothing was changed in the product; what the node produced is the corrected matrix, seven recorded fixtures, and the real defect underneath, filed as make-recipe-line-is-its-own-shell.\n\nWHAT THE NODE SAID. That GNU Make splits a recipe into command lines at read time, so a newline appearing only once a variable is expanded stays inside the command line that referenced it and reaches the shell as a newline.\n\nWHAT GNU MAKE DOES. It splits again after expanding. `new_job` expands each recipe line into `child->command_lines[i]`; `start_job_command` hands that text to `construct_command_argv`, which stops at the first raw newline and writes its position back through `restp`, and `child->command_ptr` is left pointing past it so `job_next_command` picks the remainder up as the next command line. An expansion-produced newline is therefore a command-line boundary exactly as a written one is, and each side of it runs in a shell of its own.\n\nProbed, and the probes are the fixtures: `X=1$(NL)echo \"[$$X]\"` writes `[]`, so the assignment did not survive to the second line; `$(NL)$(NL)` skips the empty line between, because `job_next_command` walks past an empty one; `-` on the recipe line ignores the failure of every line it produced; `.ONESHELL:` keeps them in one shell and `[1]` is written. Two cells are echo and so are narration here: `@` written on the recipe line silences every line the expansion produced, because `lines_flags` is per written line, while an `@` at the start of a later expanded chunk silences only that chunk, because `start_job_command` re-reads the prefix characters at the head of each one.\n\nOne case does not split, and the node's own second shape is it. A backslash immediately before the newline is tested for first — job.c's slow path matches `*p == '\\\\' && p[1] == '\\n'` above its newline case and preserves both bytes — so `define A` / `a\\\\` / `b` / `endef` interpolated into a recipe stays one command line, which is why that shape produced no divergence in either tool. The third shape, `$\\` against a newline written in a recipe, likewise agrees: both tools resolve the reference to the (unset) variable named `\\` and both leave the newline as a boundary.\n\nWHERE RONIN ALREADY AGREES. kati's `CommandEvaluator::eval` runs `find_end_of_line` over the evaluated recipe and drops the lines that came out empty, which is `job_next_command` — so the splitting matches, and so does the per-line prefix parsing. Every cell above matches GNU Make 4.4.1 byte for byte.\n\nWHERE IT DOES NOT, AND WHY IT IS NOT THIS NODE. Ronin joins the command lines into one script as `( a ) && ( b )` and runs one shell. That agrees with GNU Make whenever each line is a complete shell command, which make-recipe-one-shell-per-line established over seven shapes, and disagrees when a line's syntax is left open — the join's own bytes then land inside the quote and make a command out of two fragments. GNU Make fails; Ronin writes a file. The literal-newline counterpart diverges identically, with no expansion anywhere in it, which is the finding: the defect is the joining and not the timing of the split. make-recipe-line-is-its-own-shell owns it, with both reproducers carrying divergence markers that name it.\n\nFIXTURES, all recorded from 4.4.1: expanded-newline-starts-a-new-command-line, expanded-newline-under-one-shell-keeps-the-shell, expanded-newlines-skip-the-empty-lines-between, expanded-newline-keeps-the-lines-ignore-errors, expanded-backslash-newline-stays-in-one-command — five cells where the two tools agree, now held there — and expanded-newline-inside-a-quoted-word plus recipe-newline-inside-a-quoted-word, which carry the divergence."
+                    }
+
+                    {
+                        at 2026-08-15T15:53:48.055568064Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
