@@ -456,7 +456,9 @@ assertions (
     {id make-private-binding-keeps-the-public-value, kind @complete, author "brendan@necessary.nu", at 2026-08-15T12:02:55.140217991Z}
     {id make-recipe-time-target-variable-reaches-the-scope, kind @complete, author "brendan@necessary.nu", at 2026-08-15T12:02:56.885293405Z}
     {id make-recipe-time-export-reaches-the-environment, kind @complete, author "brendan@necessary.nu", at 2026-08-15T12:03:01.66624019Z}
-    {id make-circular-dependency-is-dropped, kind @doing, author "brendan@necessary.nu", at 2026-08-15T13:03:42.810230596Z}
+    {id make-circular-dependency-is-dropped, kind @complete, author "brendan@necessary.nu", at 2026-08-15T13:23:29.813756622Z}
+    {id make-remake-before-refusing-a-makefile, kind @complete, author "brendan@necessary.nu", at 2026-08-15T13:23:33.956459652Z}
+    {id make-optional-include-failure-is-per-file, kind @complete, author "brendan@necessary.nu", at 2026-08-15T13:23:38.276525695Z}
 )
 
 impl_evidence (

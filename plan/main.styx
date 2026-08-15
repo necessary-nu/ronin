@@ -9029,6 +9029,7 @@ children (
                 title "Forgive one optional include's failure without forgiving its neighbours"
                 kind @fix
                 deps (make-optional-include-rule-failure)
+                sealed true
                 log (
                     {
                         at 2026-08-13T16:38:48.003491395Z
@@ -9042,6 +9043,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Delivered per-file, without the O(n) scheduler runs the node feared.\n\nProbed the mixed case first, as the node asked. GNU, with `-include one.mk` and `-include two.mk` and `$(info)` reporting `MAKE_RESTARTS` on each pass:\n\n  one wins, two loses    two passes. restarts=[1], ONE=yes, TWO empty. two's rule is attempted AGAIN on the second pass, loses again, is forgiven again, and no third pass. exit 0\n  one loses, two wins    same shape mirrored: restarts=[1], one re-attempted and re-forgiven\n  both win               two passes, restarts=[1]\n  both lose              ONE pass. restarts empty. Both attempted, both forgiven, exit 0\n  rule writes the file then exits 1   NO restart, single or alongside a sibling failure — the file is on disk and the read still stands\n\nThat last cell is the one that decides the implementation. `main.c`'s `us_failed` arm raises `any_remade` from `file_mtime_no_search(d->file) != makefile_mtimes[i]` only for entries whose own `update_status == us_success`; a `RM_DONTCARE` entry that failed contributes nothing however it left the disk. So comparing every stamp on a lost pass would have been wrong, and the verdict really is per file: its own recipe ran and won, and its mtime moved.\n\nShape delivered: the forgiven Makefiles still build as one scheduler pass. What changed is that the pass now reports which targets it lost over. `Builder` records `failed_edges` where a failure is settled, `Outcome::unmade()` names the requested targets whose own edge is among them, `Pass::Lost` carries that list out, and `remake_makefiles` compares the stamps target by target, skipping the ones that lost. A target whose command never ran because a prerequisite failed is deliberately not in the list — nothing was tried and nothing moved, so the mtime test answers correctly on its own.\n\n`Remaking::Settled` narrowed to match its own documentation: it now carries the targets the update reached and won, rather than the whole subset (which is what it carried when every target won) or none of it (which is what a lost pass used to contribute).\n\nThree fixtures: optional-include-restarts-though-another-failed, two-failed-optional-includes-do-not-restart, optional-include-written-by-a-failing-rule-does-not-restart. The existing forgiveness and restart fixtures are unchanged and green, including feature-optional-include-rule-failure-is-tolerated, feature-one-restart-for-several-remade-includes and feature-makefile-rule-that-leaves-the-file-alone-does-not-restart.\n\nOne adjacent difference found while probing and filed rather than fixed: with `-include one.mk` and `all: one.mk`, GNU refuses the goal with `No rule to make target 'one.mk', needed by 'all'` after the forgiven attempt, where Ronin re-runs the rule and fails on it. Both exit 2; the wording and the second attempt differ. Pre-existing, unchanged by this work. See make-a-forgiven-makefile-is-not-remade-for-the-goals."
+                    }
+
+                    {
+                        at 2026-08-15T13:23:38.276525695Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -10350,6 +10358,7 @@ children (
                 title "Bring the readable makefiles up to date before refusing the missing one"
                 kind @fix
                 deps (make-included-makefile-restarts)
+                sealed true
                 log (
                     {
                         at 2026-08-14T07:22:28.374905344Z
@@ -10364,6 +10373,13 @@ children (
                         kind @note
                         text "Delivered, and the ordering the node asked about turned out to be positional rather than all-or-nothing.\n\nProbed against the oracle. GNU walks `read_files` in the order it read them and brings each one up to date in turn, so what precedes the refusal is decided by where the unmakeable makefile sits in that order:\n\n  include nope.mk / include gen.mk (gen.mk backdated, has a rule)\n    -> refuses immediately; gen.mk is NOT remade, gen.src is not made\n  include gen.mk / include nope.mk\n    -> `GENSRC`, `GEN`, then `Makefile:2: nope.mk: No such file or directory` and `*** No rule to make target 'nope.mk'.  Stop.`, exit 2\n  two missing required includes\n    -> the first one named, and only that one\n  the node's own reproducer (Makefile remakes itself, `include nope.mk`)\n    -> MKSRC, REMAKE, then the refusal, exit 2, Makefile.src on disk\n  the `-f` face (`make -fbye.mk -fR -`)\n    -> `R: No such file or directory`, `touch bye.mk.src`, `touch bye.mk`, then the refusal\n\nSo `complain()` ends the run from where the update reaches it — which also confirms the node's probe that there is no restart: the refusal wins over `main.c`'s `any_remade -> re_exec` test even when the makefile ahead of it really was remade.\n\nShape delivered: `plan_regeneration` no longer raises. It returns `(roots, Option<anyhow::Error>)` and stops collecting at the first unmakeable required makefile — the `break` is what reproduces the positional cells above, because the roots collected before it are exactly the ones GNU remakes. kati's `Evaluated` and Ronin's `Loaded` gained a `refusal`, `CompilationState::admit` keeps the first, and `prepare_graph` raises it: before the build when there is nothing to build, and after `build_compiler_inputs` on both `Settled` and `Restart`. A goal-analysis failure that arrives while a refusal is pending loses to the refusal, because GNU refuses from inside the makefile update and never looks at a goal.\n\nkati's own binary has no makefile-remaking phase, so `rkati` raises the refusal the moment `evaluate` returns — which is what it did before and is why err_include.mk#default is still exit 2. (It briefly was not; caught by the Make-conformance gate.)\n\nRows: options/dash-f.diff.4 moved unclassified -> narration, now differing only in `ronin:` for `make:`, the progress lines, and the `*** `/`Stop.` decoration. features/include.diff.17 moved with it unasked — GNU echoes `echo > inc1` and then refuses over inc2, and Ronin now does the same work before the same refusal.\n\nThree fixtures: makefiles-are-remade-before-a-missing-one-is-refused, a-makefile-ahead-of-a-refused-one-is-remade, a-makefile-behind-a-refused-one-is-not-remade.\n\nNot matched, and filed: for a makefile reached through an `include` line GNU holds the `No such file or directory` complaint back and prints it with the refusal, after the remaking; Ronin still prints it during the read. The `-f` face already matches, which is why the owned row does. See make-an-unopenable-include-is-reported-where-gnu-reports-it."
                     }
+
+                    {
+                        at 2026-08-15T13:23:33.956459652Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -10371,6 +10387,7 @@ children (
                 id make-circular-dependency-is-dropped
                 title "Drop a circular dependency and carry on rather than refusing the build"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-14T08:07:23.904704606Z
@@ -10391,6 +10408,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Probed the whole matrix against reference/make-oracle/make-4.4.1/make, then delivered the drop in kati. Every cell below is now byte-identical in effect; the residue is Ronin's `[N/M]` progress lines and `ronin:` for `make:`.\n\nThe matrix, and what GNU does:\n\n  a: b / b: a          `make: Circular b <- a dependency dropped.`, made b, made a, exit 0\n  a: a (self)          `make: Circular a <- a dependency dropped.` — NOT silent, exit 0\n  a->b->c->a           `Circular c <- a dependency dropped.`, c b a, exit 0\n  b: | a (order-only)  identical drop and wording; order-only is on the same list, marked rather than held apart\n  reached twice        one warning only: the edge is unlinked from the list, so the second reader finds it already gone\n  two back edges       both dropped, each announced, in prerequisite order\n  -j4                  identical to -j1; the drop serialises what is left\n  diamond              no drop at all: an already-finished target is not an ancestor\n  invented intermediate (the two owned rows) `Circular hello.o <- hello.tsk dependency dropped.`, both recipes run\n\n`$^` is the load-bearing cell. The drop is `file->deps` surgery (remake.c:608 and :1167 unlink the entry), and that list is what the automatic variables read, so the *dependent* loses the prerequisite for good and the target it pointed at keeps all of its own: for `a: b c` / `b: a`, GNU gives `b hat=[]` and `a hat=[b c] q=[b c] plus=[b c]`. Ronin matches exactly. That is also the answer to the note's \"where does it live\" question: `$^` is bound from the DepNode's `actual_inputs` at command-expansion time, so the drop has to be a kati-layer edit and not a Ronin graph-layer one.\n\nDelivered in kati/src-rs/dep.rs as `DepBuilder::drop_circular_dependencies`, run at the end of `build` over the regeneration roots in read order and then the goals in goal order, each target's `deps` then `order_onlys` in written order — an iterative DFS with GNU's own `updating`/`updated` pair, keyed on the planned record's identity, which is what makes a `::` target's separate actions one target the way `is_updating`'s double-colon base does. A back edge is announced with `warn_loc!(.., None, ..)`, which renders as `ronin: Circular X <- Y dependency dropped.` — GNU's `error(NILF, ..)` shape — and removed from both the edge list and the name list beside it.\n\nNinja-native graphs keep refusing: `src/graph.rs` is untouched, `build a: cp b` / `build b: cp a` still says `dependency cycle: a -> b -> a` and exits 1, and the graph-equivalence gate stays at 0 disagreements.\n\nRows: features/implicit_search.diff.48 and .49 both moved unclassified -> narration. Two more moved with them, unowned and unasked for: features/double_colon.diff.8 (`Circular d <- d`) and, from the same work, the vendored corpus's circular_dep.mk#test became byte-identical and left the Make-conformance inventory.\n\nSix fixtures under tests/make/: circular-dependency-is-dropped, -leaves-the-prerequisite-list, circular-self-dependency-is-dropped, -through-an-order-only-edge, -is-dropped-once-for-two-readers, -through-an-invented-intermediate.\n\nOne cell does not match and is filed rather than fixed: options/shuffle.diff.9 stayed unclassified. GNU walks the *shuffled* prerequisite list when it drops (`d = du->shuf ? du->shuf : du`, remake.c:596), so `--shuffle=reverse` changes which edge goes; Ronin's shuffle is applied in src/make.rs after `evaluate` returns, which is after the drop. See make-shuffle-reaches-the-circular-drop."
+                    }
+
+                    {
+                        at 2026-08-15T13:23:29.813756622Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
