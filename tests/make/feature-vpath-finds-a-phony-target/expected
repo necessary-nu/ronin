@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # A phony name is a target, so the search answers with it, and what the
+| # dependent reads is the found path.
+| vpath %.te d/
+| .PHONY: d/fail.te
+| all: fail.te
+| 	@printf 'all from %s\n' '$<' > seen
+file seen touched 1
+| all from d/fail.te

@@ -466,6 +466,7 @@ assertions (
     {id make-recipe-expanded-newline, kind @complete, author "brendan@necessary.nu", at 2026-08-15T15:53:48.055568064Z}
     {id make-recursive-child-recipes-expand-at-launch, kind @complete, author "brendan@necessary.nu", at 2026-08-15T16:18:16.627523807Z}
     {id make-signal-killed-recipe-deletion, kind @complete, author "brendan@necessary.nu", at 2026-08-15T17:00:47.599557658Z}
+    {id make-vpath-prerequisite-resolves-to-a-target, kind @complete, author "brendan@necessary.nu", at 2026-08-15T17:36:02.255582719Z}
 )
 
 impl_evidence (

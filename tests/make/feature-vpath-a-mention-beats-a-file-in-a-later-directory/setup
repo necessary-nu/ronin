@@ -1,0 +1,2 @@
+mkdir -p d1 d2
+printf real > d2/fail.te

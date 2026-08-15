@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # The search accepts a name it can reach as well as one already on disk:
+| # `fail.te` is nowhere, but the makefile declares `vpath-d/fail.te` as a target,
+| # and a target the makefile declares is an answer the search is allowed to give.
+| vpath %.te vpath-d/
+| .SECONDARY:
+| default: vpath-d/a vpath-d/b
+| vpath-d/a: fail.te
+| vpath-d/b : fail.te
+| vpath-d/fail.te:

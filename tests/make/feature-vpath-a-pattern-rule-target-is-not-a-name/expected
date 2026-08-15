@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # A pattern is not a name. `d/%.te` says how a name in that directory could be
+| # made and never writes one down, so the search passes the directory over and
+| # the implicit rule search runs on the name as written.
+| VPATH = d
+| all: fail.te
+| 	@printf 'all from %s\n' '$<' > seen
+| %.te: ; @printf 'here\n' > $@
+| d/%.te: ; @printf 'there\n' > $@
+file fail.te touched 1
+| here
+file seen touched 1
+| all from fail.te
