@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| real:
+| 	@printf '%s\n' 'fromextra=[$(FROM_EXTRA)]' 'list=[$(MAKEFILE_LIST)]' \
+| 	  'goal=[$(.DEFAULT_GOAL)]' > out
+file extra.mk kept 3
+| FROM_EXTRA = yes
+| extra-first:
+| 	@echo extra-first ran > extra.out
+file out touched 3
+| fromextra=[yes]
+| list=[extra.mk Makefile]
+| goal=[real]

@@ -1080,7 +1080,7 @@ case	variables/MAKE.diff	narration	ninja-progress+recipe-echo+directory-announce
 case	variables/MAKECMDGOALS.diff	narration	ninja-progress
 case	variables/MAKECMDGOALS.diff.1	narration	ninja-progress
 case	variables/MAKECMDGOALS.diff.2	narration	ninja-progress+recipe-echo
-case	variables/MAKEFILES.diff	unclassified	ninja-progress+evaluation
+case	variables/MAKEFILES.diff	narration	ninja-progress
 case	variables/MAKEFILES.diff.1	narration	ninja-progress
 case	variables/MAKEFLAGS.diff.1	unclassified	ninja-progress+recipe-echo+evaluation
 case	variables/MAKEFLAGS.diff.100	narration	ninja-progress+up-to-date-line

@@ -38,13 +38,15 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 mod interface;
+mod jobserver_style;
 mod remake;
 mod selection;
 mod subninja;
 use interface::{
-    compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
+    ArgumentSource, compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
     evaluated_invocation, makeflags_arguments, prepend_command_line_evals,
 };
+use jobserver_style::{carried_switches, read_jobserver_style, unknown_jobserver_style};
 use remake::{CompilerInputBuild, Settlement, build_compiler_inputs};
 use selection::{DEFAULT_MAKEFILES, STANDARD_INPUT, is_standard_input, named_makefiles};
 pub(super) use subninja::compile as compile_subninja;
@@ -430,7 +432,9 @@ impl Invocation {
 
     const fn set_jobs(&mut self, source: ArgumentSource, jobs: JobLimit) {
         match source {
-            ArgumentSource::Inherited => self.inherited_jobs = Some(jobs),
+            ArgumentSource::Inherited | ArgumentSource::Makefile => {
+                self.inherited_jobs = Some(jobs);
+            }
             ArgumentSource::CommandLine => self.jobs = Some(jobs),
         }
     }
@@ -726,12 +730,6 @@ const fn reported(text: String) -> RunResult {
     }
 }
 
-/// The styles GNU Make 4.4.1 knows how to set a jobserver up in.
-///
-/// Case-sensitive and closed: `jobserver_setup` takes the fifo path for `fifo`
-/// (and for no style at all), the pipe path for `pipe`, and refuses the rest.
-const JOBSERVER_STYLES: [&[u8]; 2] = [b"fifo", b"pipe"];
-
 fn refuse(message: impl std::fmt::Display) -> Action {
     Action::Immediate(RunResult {
         stdout: Vec::new(),
@@ -762,31 +760,6 @@ fn value(
         }
         .into()
     })
-}
-
-/// Record `--jobserver-style`'s value, attached or standing alone.
-///
-/// Recorded rather than consumed as a no-op: what it names is checked once both
-/// option streams have been read, because whether GNU Make looks at the value at
-/// all depends on the job count they settle on. An empty value is the one thing
-/// refused on sight, which GNU does before the jobserver is ever reached.
-fn read_jobserver_style(
-    invocation: &mut Invocation,
-    option: &[u8],
-    arguments: &[BString],
-    index: &mut usize,
-) -> Result<Option<Action>, Error> {
-    let style = match option.strip_prefix(b"--jobserver-style=") {
-        Some(attached) => BString::from(attached),
-        None => value(arguments, index, b"", "--jobserver-style")?,
-    };
-    if style.is_empty() {
-        return Ok(Some(refuse(
-            "the '--jobserver-style' option requires a non-empty string argument",
-        )));
-    }
-    invocation.jobserver_style = Some(style);
-    Ok(None)
 }
 
 /// `-j`'s argument, which GNU Make lets stand alone only when it is a number.
@@ -968,13 +941,6 @@ fn attached_long(
     Ok(true)
 }
 
-/// Which of Make's two option streams one word came from.
-#[derive(Clone, Copy)]
-enum ArgumentSource {
-    Inherited,
-    CommandLine,
-}
-
 /// Read one Make command line, over whatever a parent make put in `MAKEFLAGS`.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.interface-compatibility]
@@ -997,17 +963,9 @@ fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error
     if invocation.debugging() == 0 {
         invocation.switches &= !Switch::Debug.bit();
     }
-    // GNU Make checks the style inside `jobserver_setup`, which it reaches only
-    // with more than one job slot to hand out. So `--jobserver-style=nonsense`
-    // alone, or with `-j1`, or with a bare `-j`, is never looked at and never
-    // refused — the check is the jobserver's, not the option parser's.
-    if let Some(style) = &invocation.jobserver_style
-        && matches!(invocation.effective_jobs(), Some(JobLimit::Fixed(jobs)) if jobs.get() > 1)
-        && !JOBSERVER_STYLES.contains(&style.as_bytes())
-    {
+    if let Some(message) = unknown_jobserver_style(&invocation) {
         // Stated on its own rather than through `refuse`: this is not a
         // malformed option, so GNU prints no usage after it.
-        let message = format_args!("unknown jobserver auth style '{}'", style.to_str_lossy());
         return Ok(Action::Immediate(RunResult {
             stdout: Vec::new(),
             stderr: format!("{}\n", crate::util::diagnostic(PRODUCT_NAME, message)).into_bytes(),
@@ -1108,13 +1066,10 @@ fn parse_arguments(
                 let _ = value(arguments, &mut index, b"", "--what-if")?;
             }
             option if option.starts_with(b"--") => {
-                if !attached_long(invocation, source, option, arguments, &mut index)?
-                    && !accept_noop_long(option, arguments, &mut index)?
+                if let Some(action) =
+                    read_other_long(invocation, source, option, arguments, &mut index)?
                 {
-                    return Ok(Some(refuse(format_args!(
-                        "unrecognized option '{}'",
-                        option.to_str_lossy()
-                    ))));
+                    return Ok(Some(action));
                 }
             }
             _ => {
@@ -1128,6 +1083,28 @@ fn parse_arguments(
         index += 1;
     }
     Ok(None)
+}
+
+/// A long option none of the spellings above claimed: one carrying its value
+/// after an `=`, one Make accepts and does nothing with, or one it does not
+/// know at all.
+fn read_other_long(
+    invocation: &mut Invocation,
+    source: ArgumentSource,
+    option: &[u8],
+    arguments: &[BString],
+    index: &mut usize,
+) -> Result<Option<Action>, Error> {
+    if attached_long(invocation, source, option, arguments, index)?
+        || accept_noop_long(option, arguments, index)?
+        || !source.refuses_an_unknown_switch()
+    {
+        return Ok(None);
+    }
+    Ok(Some(refuse(format_args!(
+        "unrecognized option '{}'",
+        option.to_str_lossy()
+    ))))
 }
 
 /// One `-abc` group, which is several switches unless one of them takes an
@@ -1195,7 +1172,9 @@ fn read_cluster(
                 }
             }
             _ => {
-                if !accept_noop_short(option, argument, &mut short, arguments, index)? {
+                if !accept_noop_short(option, argument, &mut short, arguments, index)?
+                    && source.refuses_an_unknown_switch()
+                {
                     return Ok(Some(refuse(format_args!(
                         "invalid option -- '{}'",
                         char::from(option)
@@ -1243,6 +1222,7 @@ fn session_for(
 ) -> Session {
     let mut session = Session::new();
     let compiler_flags = compiler_flag_variables(invocation);
+    let carried = Bytes::from(carried_switches(&compiler_flags.base, invocation).into_bytes());
     let makeflags = Bytes::from(compiler_flags.base.into_bytes());
     let make_overrides = Bytes::from(compiler_flags.overrides.into_bytes());
     session.flags = Flags {
@@ -1263,12 +1243,12 @@ fn session_for(
         // A parent's assignments and this invocation's own, in that order,
         // which is the order Make applies them.
         cl_vars: invocation.variables.clone(),
-        makeflags: Some(makeflags.clone()),
+        makeflags: Some(makeflags),
         make_overrides: Some(make_overrides.clone()),
         makeflags_assignment: Some(kati::flags::MakeflagsAssignment {
             decoder: decode_makefile_makeflags,
-            protected: makeflags.clone(),
-            effective: makeflags,
+            protected: carried.clone(),
+            effective: carried,
             has_overrides: !make_overrides.is_empty(),
         }),
         // One word, and that word is a path. GNU Make answers `$(MAKE)` this

@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| MAKEFILES =
+| EMPTY_SET := $(shell env | grep -c '^MAKEFILES=' || true)
+| all:
+| 	@printf 'emptyset=[$(EMPTY_SET)]\n' > out
+| 	@printf 'child=[%s]\n' "$$(env | grep -c '^MAKEFILES=' || true)" >> out
+file out touched 2
+| emptyset=[1]
+| child=[1]

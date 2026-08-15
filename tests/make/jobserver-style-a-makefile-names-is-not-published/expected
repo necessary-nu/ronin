@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| MAKEFLAGS += --jobserver-style=pipe
+| all:
+| 	@printf 'style=[$(findstring jobserver-style,$(MAKEFLAGS))]\n' > out
+file out touched 1
+| style=[]

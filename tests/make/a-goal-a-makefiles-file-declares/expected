@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| real:
+| 	@echo real ran > out
+file extra.mk kept 2
+| extra-first:
+| 	@echo extra-first ran > out
+file out touched 1
+| extra-first ran

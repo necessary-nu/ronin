@@ -1,0 +1,6 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 3
+| MAKEFLAGS += --jobserver-style=foo
+| all:
+| 	@echo ran > out

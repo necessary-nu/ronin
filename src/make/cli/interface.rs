@@ -1,12 +1,36 @@
 //! Inputs shared by Make's command-line parser and kati compilation.
 
-use super::{Action, ArgumentSource, Invocation, JobLimit, Switch, parse, parse_arguments};
+use super::jobserver_style::{carried_switches, unknown_jobserver_style};
+use super::{Action, Invocation, JobLimit, Switch, parse, parse_arguments};
 use crate::Error;
 use crate::build::BuildOptions;
 use crate::error::CliError;
 use crate::util::{BString, ByteSlice};
 use kati::bytes::Bytes;
 use kati::session::Session;
+
+/// Which of Make's option streams one word came from.
+///
+/// GNU Make decodes the command line and the inherited `MAKEFLAGS` at
+/// `o_command`, and a makefile's own `MAKEFLAGS` at `o_env` once the read is
+/// over. Only the command-line origin dies for a word it cannot read —
+/// `if (bad && origin == o_command) print_usage (bad)` in main.c
+/// `decode_switches`, with `opterr` set the same way so nothing is printed
+/// either. A switch a newer or older Make wrote into a makefile is skipped and
+/// the build goes on.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum ArgumentSource {
+    Inherited,
+    CommandLine,
+    Makefile,
+}
+
+impl ArgumentSource {
+    /// Whether a switch this stream names and Make does not know ends the run.
+    pub(super) const fn refuses_an_unknown_switch(self) -> bool {
+        !matches!(self, Self::Makefile)
+    }
+}
 
 /// The Make interface variables one compiler invocation presents to source.
 pub(super) struct CompilerFlagVariables {
@@ -212,9 +236,8 @@ pub(super) fn decode_makefile_makeflags(
         let value = std::str::from_utf8(value)
             .map_err(|_| "MAKEFLAGS contains non-UTF-8 option bytes".to_owned())?;
         let arguments = assigned_makeflags_arguments(value);
-        if let Some(action) =
-            parse_arguments(&mut invocation, &arguments, ArgumentSource::Inherited)
-                .map_err(|error| error.to_string())?
+        if let Some(action) = parse_arguments(&mut invocation, &arguments, ArgumentSource::Makefile)
+            .map_err(|error| error.to_string())?
         {
             let diagnostic = match action {
                 Action::Immediate(result) => String::from_utf8_lossy(&result.stderr).into_owned(),
@@ -226,19 +249,25 @@ pub(super) fn decode_makefile_makeflags(
                 diagnostic
             });
         }
-        if !invocation.goals.is_empty() {
-            let goal = invocation.goals.remove(0);
-            return Err(format!(
-                "MAKEFLAGS contains non-option word '{}'",
-                goal.to_str_lossy()
-            ));
-        }
+        // A word that is not a switch names a goal, and GNU Make enters a goal
+        // only for the command line — `handle_non_switch_argument` guards that
+        // half with `origin == o_command`, so a word left over here is dropped.
+        // It is what a switch this Make does not know left behind.
+        invocation.goals.clear();
     }
     if invocation.debugging() == 0 {
         invocation.switches &= !Switch::Debug.bit();
     }
+    // GNU Make reaches `jobserver_setup` after the whole read, so a style named
+    // here is checked against the job count the read finally settles on — which
+    // is why the style is carried from assignment to assignment rather than
+    // judged where it is written.
+    if let Some(refusal) = unknown_jobserver_style(&invocation) {
+        return Err(refusal);
+    }
     let flags = compiler_flag_variables(&invocation);
     Ok(kati::flags::DecodedMakeflags {
+        carried: Bytes::from(carried_switches(&flags.base, &invocation).into_bytes()),
         makeflags: Bytes::from(flags.base.into_bytes()),
         mflags: Bytes::from(flags.mflags.into_bytes()),
         is_dry_run: invocation.given(Switch::DryRun),

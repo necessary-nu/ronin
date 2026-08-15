@@ -472,6 +472,10 @@ assertions (
     {id make-upstream-parallelism-interleave-flaps, kind @complete, author "brendan@necessary.nu", at 2026-08-15T18:32:58.130669095Z}
     {id make-corpus-host-make-shellout, kind @complete, author "brendan@necessary.nu", at 2026-08-15T18:32:59.906819821Z}
     {id make-release-clippy-runnable, kind @complete, author "brendan@necessary.nu", at 2026-08-15T18:33:01.675429641Z}
+    {id make-assignment-operator-scan-skips-a-reference, kind @complete, author "brendan@necessary.nu", at 2026-08-15T21:26:06.343539014Z}
+    {id make-unknown-switch-in-a-makefiles-makeflags, kind @complete, author "brendan@necessary.nu", at 2026-08-15T21:26:53.166687691Z}
+    {id make-makefiles-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-15T21:29:00.116383955Z}
+    {id make-makefile-set-jobserver-style, kind @complete, author "brendan@necessary.nu", at 2026-08-15T21:29:42.877513083Z}
 )
 
 impl_evidence (
