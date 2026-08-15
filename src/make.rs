@@ -35,6 +35,7 @@ mod layout_tests;
 #[cfg(test)]
 mod shuffle_tests;
 
+pub use kati::shuffle::Shuffle;
 pub use sink::GraphSink;
 
 /// The GNU Make release whose vocabulary this front end speaks.
@@ -419,8 +420,11 @@ where
         ));
     }
     let context = compilation.context.clone();
-    let session = compilation.session;
-    let shuffle = compilation.shuffle;
+    let mut session = compilation.session;
+    // `--shuffle` is Make's own reordering rather than this frontend's: the
+    // walk that drops circular prerequisites reads the order it chose, so the
+    // evaluator has to be told before it plans.
+    session.flags.shuffle = compilation.shuffle;
     let evaluated = in_directory(&context.directory, || {
         let Evaluated {
             mut ev,
@@ -429,7 +433,6 @@ where
             refusal,
         } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
         let refusal = refusal.as_ref().map(MakeError::evaluate);
-        reorder(shuffle, ev.session.flags.not_parallel, &mut nodes);
         let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
         let exported =
             exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
@@ -792,99 +795,6 @@ fn in_directory<T>(
     }
 }
 
-/// What `--shuffle` reorders the goals and each target's prerequisites by.
-///
-/// The point of it is that the order a Makefile happens to write is not one it
-/// may rely on: a build that only works in written order has a dependency it
-/// never stated, and a run in some other order is what finds it. A seed settles
-/// the permutation completely, so a run that found something can be repeated.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Shuffle {
-    /// Build in the order the Makefile wrote.
-    #[default]
-    None,
-    /// Ask for a shuffle and get that same order. GNU Make keeps this apart
-    /// from asking for none at all, and so does the value a sub-make inherits.
-    Identity,
-    /// Back to front.
-    Reverse,
-    /// The permutation this seed names.
-    Seed(u32),
-}
-
-impl Shuffle {
-    /// What `--shuffle`'s argument asks for, in GNU Make's spellings, which it
-    /// compares without regard to case. `None` for a word that is neither a
-    /// mode nor a seed.
-    ///
-    /// `random` is settled here rather than carried as a request, so that what
-    /// travels onward names the permutation this run actually used.
-    #[must_use]
-    pub fn requested(spec: &[u8]) -> Option<Self> {
-        Some(match spec.to_ascii_lowercase().as_slice() {
-            b"none" => Self::None,
-            b"identity" => Self::Identity,
-            b"reverse" => Self::Reverse,
-            b"random" => {
-                use std::hash::{BuildHasher, Hasher};
-                let entropy = std::collections::hash_map::RandomState::new()
-                    .build_hasher()
-                    .finish();
-                #[expect(clippy::cast_possible_truncation, reason = "any 32 bits will do")]
-                Self::Seed(entropy as u32)
-            }
-            digits => Self::Seed(
-                std::str::from_utf8(digits)
-                    .ok()
-                    .and_then(|digits| digits.parse().ok())?,
-            ),
-        })
-    }
-
-    /// How a sub-make is told what this one did.
-    ///
-    /// The seed it settled on rather than the word that asked for one, which is
-    /// what makes a tree of makes reproduce a run that failed. `None` for the
-    /// mode that reorders nothing, which travels as nothing.
-    #[must_use]
-    pub fn spelling(self) -> Option<String> {
-        match self {
-            Self::None => None,
-            Self::Identity => Some("identity".to_owned()),
-            Self::Reverse => Some("reverse".to_owned()),
-            Self::Seed(seed) => Some(seed.to_string()),
-        }
-    }
-}
-
-/// The draws one shuffle is made of.
-enum Draw {
-    Reverse,
-    /// `SplitMix64`, whose whole state is the seed: the permutation follows
-    /// from it and from the order the graph is walked in, and nothing else.
-    Random(u64),
-}
-
-impl Draw {
-    fn permute<T>(&mut self, items: &mut [T]) {
-        match self {
-            Self::Reverse => items.reverse(),
-            Self::Random(state) => {
-                for index in 0..items.len() {
-                    *state = state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-                    let mut draw = *state;
-                    draw = (draw ^ (draw >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-                    draw = (draw ^ (draw >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-                    draw ^= draw >> 31;
-                    let picked = usize::try_from(draw % items.len() as u64)
-                        .expect("a remainder of a list length fits a length");
-                    items.swap(index, picked);
-                }
-            }
-        }
-    }
-}
-
 /// Add the generated Makefiles to the roots the graph walk has to reach, and
 /// answer with the names by which the frontend asks for them back.
 ///
@@ -913,54 +823,6 @@ struct RegenerationNames {
     all: Vec<kati::symtab::Symbol>,
     /// The ones every `include` of which said the file need not be there.
     forgiven: Vec<kati::symtab::Symbol>,
-}
-
-/// Reorder the goals, and each target's prerequisites, before the graph is cut.
-///
-/// The order the graph is walked in here is the order its edges are minted in,
-/// and among edges that are equally ready the scheduler takes the one minted
-/// first — so reordering the walk is what reorders the build.
-///
-/// Done here rather than in the scheduler because it is what the Makefile asked
-/// to be built, not how the build runs: the recipes are already expanded by this
-/// point, so `$^` and `$<` keep the order the Makefile wrote whatever this does
-/// to the order they are built in. Which is GNU Make's rule too.
-///
-/// `.NOTPARALLEL` takes it back. A Makefile saying its own recipes cannot
-/// overlap is describing an order, and reordering it would read past what it
-/// said.
-///
-/// `.WAIT` needs no exception, where GNU Make leaves a list holding one alone:
-/// the evaluator has already turned each barrier into order-only prerequisites,
-/// so the order it asked for is in the graph rather than in the list, and
-/// survives being reordered.
-fn reorder(shuffle: Shuffle, not_parallel: bool, nodes: &mut [kati::dep::NamedDepNode]) {
-    let mut draw = match shuffle {
-        Shuffle::None | Shuffle::Identity => return,
-        Shuffle::Reverse => Draw::Reverse,
-        Shuffle::Seed(seed) => Draw::Random(u64::from(seed)),
-    };
-    if not_parallel {
-        return;
-    }
-    draw.permute(nodes);
-    let mut seen = std::collections::HashSet::new();
-    let mut work = nodes
-        .iter()
-        .rev()
-        .map(|(_, node)| std::sync::Arc::clone(node))
-        .collect::<Vec<_>>();
-    while let Some(node) = work.pop() {
-        let mut node = node.lock();
-        if !seen.insert(node.output) {
-            continue;
-        }
-        draw.permute(&mut node.deps);
-        draw.permute(&mut node.order_onlys);
-        for (_, dep) in node.deps.iter().chain(node.order_onlys.iter()).rev() {
-            work.push(std::sync::Arc::clone(dep));
-        }
-    }
 }
 
 /// A Makefile compiled into the complete graph the engine executes.

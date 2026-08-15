@@ -962,7 +962,7 @@ case	options/shuffle.diff.5	narration	ninja-progress
 case	options/shuffle.diff.6	narration	ninja-progress
 case	options/shuffle.diff.7	narration	ninja-progress
 case	options/shuffle.diff.8	narration	ninja-progress
-case	options/shuffle.diff.9	unclassified	product-name+ninja-progress+evaluation
+case	options/shuffle.diff.9	narration	product-name+ninja-progress
 case	options/warn-undefined-variables.diff	narration	no-work-line+up-to-date-line
 case	options/warn-undefined-variables.diff.1	narration	ninja-progress
 case	options/warn-undefined-variables.diff.2	unclassified	ninja-progress+evaluation
