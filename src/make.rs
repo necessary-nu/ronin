@@ -242,10 +242,15 @@ struct ComposedUnit {
     complete: bool,
 }
 
-/// One unit's Makefiles, and the ones among them whose failure is forgiven.
+/// One unit's Makefiles: the ones among them whose failure is forgiven, and the
+/// required one nothing can make.
 struct UnitRemakes {
     all: Vec<Node>,
     forgiven: Vec<Node>,
+    /// GNU Make brings the Makefiles ahead of this one up to date and then ends
+    /// the run over it, so it is carried alongside them rather than raised in
+    /// their place.
+    refusal: Option<MakeError>,
 }
 
 /// Where this unit's Makefiles ended up in the shared graph.
@@ -253,6 +258,7 @@ fn unit_remakes(
     sink: &mut GraphSink,
     names: &Session,
     regenerations: &RegenerationNames,
+    refusal: Option<MakeError>,
 ) -> Result<UnitRemakes, MakeError> {
     let mut looked_up = |symbols: &[kati::symtab::Symbol]| {
         sink.unit_nodes(names, symbols).map_err(|error| {
@@ -263,6 +269,7 @@ fn unit_remakes(
     Ok(UnitRemakes {
         all: looked_up(&regenerations.all)?,
         forgiven: looked_up(&regenerations.forgiven)?,
+        refusal,
     })
 }
 
@@ -272,6 +279,8 @@ struct CompilationState<'a> {
     regenerations: Vec<Node>,
     remakes: Vec<Node>,
     forgiven_remakes: Vec<Node>,
+    /// The first required Makefile any unit of this compilation could not make.
+    refusal: Option<MakeError>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
 }
@@ -293,6 +302,9 @@ impl CompilationState<'_> {
             if !self.forgiven_remakes.contains(&target) {
                 self.forgiven_remakes.push(target);
             }
+        }
+        if self.refusal.is_none() {
+            self.refusal = remakes.refusal;
         }
     }
 }
@@ -345,6 +357,7 @@ where
         remakes: Vec::new(),
         forgiven_remakes: Vec::new(),
         settled_boundaries,
+        refusal: None,
         evaluation_boundaries: HashSet::new(),
     };
     let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
@@ -356,6 +369,7 @@ where
         regenerations: state.regenerations,
         remakes: state.remakes,
         forgiven_remakes: state.forgiven_remakes,
+        refusal: state.refusal,
         evaluation_boundaries: state.evaluation_boundaries,
         makeflags: root.makeflags,
     })
@@ -385,7 +399,9 @@ where
             mut ev,
             mut nodes,
             regeneration_nodes,
+            refusal,
         } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
+        let refusal = refusal.as_ref().map(MakeError::evaluate);
         reorder(shuffle, ev.session.flags.not_parallel, &mut nodes);
         let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
         let exported =
@@ -424,7 +440,7 @@ where
         // what wraps every command this unit produces, and a recipe expanded
         // later has to be wrapped in exactly the same thing.
         let layout = sink.layout();
-        let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names)?;
+        let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names, refusal)?;
         let unit = sink.take_unit();
         ev.finish().map_err(|error| MakeError::evaluate(&error))?;
         let pending_recipes = (!deferred.is_empty()).then(|| {
@@ -938,6 +954,13 @@ pub struct Loaded {
     /// indifference into the rule that would have made it: the recipe runs, it
     /// fails, nothing is reported and the read goes on without the include.
     forgiven_remakes: Vec<Node>,
+    /// A required Makefile the read could not open and no rule can make.
+    ///
+    /// GNU Make refuses over one of these from inside the update that brings
+    /// the Makefiles up to date: the ones it reached first are remade, and
+    /// then the run ends — without restarting the read, however much that
+    /// remaking changed.
+    refusal: Option<MakeError>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
@@ -984,6 +1007,17 @@ impl Loaded {
     #[must_use]
     pub(crate) fn forgiven_remake_targets(&self) -> &[Node] {
         &self.forgiven_remakes
+    }
+
+    /// The required Makefile nothing can make, which ends the run.
+    ///
+    /// Taken rather than read, because raising it is what the caller does with
+    /// it and it is raised once. The Makefiles this read reached before it are
+    /// in [`Self::remake_targets`] and are brought up to date first: GNU Make
+    /// refuses from inside that update, so the work ahead of the refusal is
+    /// done and the read never starts over however much of it moved.
+    pub(crate) const fn take_refusal(&mut self) -> Option<MakeError> {
+        self.refusal.take()
     }
 
     /// The compiler inputs that are not Makefiles: work staged so a recursive

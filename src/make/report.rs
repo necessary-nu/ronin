@@ -88,6 +88,20 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
     }
 }
 
+/// What a run that ended over a required Makefile nothing can make reports.
+///
+/// The same ending as [`abandoned`], but reached after work rather than instead
+/// of it: GNU Make brings the Makefiles it reached before that one up to date
+/// and refuses from inside that update, so whatever the remaking narrated is
+/// already in `reported` and goes out in front of the refusal.
+pub(super) fn refused_makefile(reported: String, failure: impl Display) -> RunResult {
+    RunResult {
+        stdout: terminated(reported),
+        stderr: ordinary_diagnostic(failure),
+        exit_code: ABANDONED,
+    }
+}
+
 /// What `-q` reports, which is a status and nothing else.
 ///
 /// GNU Make's question mode runs no recipe and says nothing about the build:

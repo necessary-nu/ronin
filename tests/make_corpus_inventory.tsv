@@ -38,7 +38,6 @@ family	stop-suffix	GNU Make appends "  Stop." to the fatal diagnostic it dies on
 case	allow_rules.sh#script	extension	kati-extension	62b40b7a4d65360d
 case	blank_line_before_command.mk#test	recorded	recipe-stream+corpus-todo+exit-status	1c0003fa1be5e1da
 case	call_with_whitespace.mk#test	defect	quote-style	a70ab0c62ed68238
-case	circular_dep.mk#test	defect	identity-prefix	595f0714ab1a00bb
 case	define_with_comments.mk#test	defect	quote-style	def36077f32e4d2b
 case	delete_on_error.mk#test	recorded	evaluation+corpus-todo+exit-status	92054fe56b1cc1e0
 case	deprecated_export.mk#test	extension	kati-extension	6f76de783020faaf

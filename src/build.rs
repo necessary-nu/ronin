@@ -555,6 +555,20 @@ impl Plan {
     }
 }
 
+/// What a build did about one target's command.
+#[derive(PartialEq, Eq)]
+pub(crate) enum Made {
+    /// It ran, won, and a `restat` rule did not then find the output unchanged.
+    Regenerated,
+    /// It ran and lost.
+    Failed,
+    /// Neither. Nothing ran for this target — either it was already current, or
+    /// something it needed failed before its own command was reached — or a
+    /// `restat` found the output unchanged. Either way the file on disk is what
+    /// it was, which is what a caller asking is about to look at.
+    Nothing,
+}
+
 // [spec:ronin:def:build.job]
 pub(crate) struct Builder<'a> {
     graph: &'a mut Graph,
@@ -570,6 +584,10 @@ pub(crate) struct Builder<'a> {
     deps_log: Option<&'a mut crate::deps::DepsLog>,
     targets: Vec<NodeId>,
     executed_edges: BTreeSet<EdgeId>,
+    /// The edges this build settled as failed, whether the command said so or
+    /// the launch never happened. Read by a caller that has to decide about
+    /// each target separately rather than about the build as a whole.
+    failed_edges: BTreeSet<EdgeId>,
     command_cache: Vec<Option<CommandSpec>>,
     command_scratch: Vec<u8>,
     progress: BuildState,
@@ -630,6 +648,7 @@ impl<'a> Builder<'a> {
             deps_log,
             targets: Vec::new(),
             executed_edges: BTreeSet::new(),
+            failed_edges: BTreeSet::new(),
             command_cache: Vec::new(),
             command_scratch: Vec::new(),
             progress,
@@ -1067,12 +1086,24 @@ impl<'a> Builder<'a> {
             .collect()
     }
 
-    /// Whether the build ran the command that generates `node`, and a `restat`
-    /// rule did not then find the output unchanged.
-    pub(crate) fn regenerated(&self, node: NodeId) -> bool {
-        self.graph.node(node).generator.is_some_and(|edge| {
-            self.executed_edges.contains(&edge) && !self.runtime.edge(edge).restat_clean()
-        })
+    /// What this build did about the command that generates `node`.
+    ///
+    /// One target's own answer. Ninja asks it about the manifest it generated
+    /// its own input from, and only of a build that finished; a caller that let
+    /// a build carry on past a failure has to ask it of each target separately,
+    /// because the build as a whole stopping says nothing about which of them
+    /// stopped it.
+    pub(crate) fn made(&self, node: NodeId) -> Made {
+        let Some(edge) = self.graph.node(node).generator else {
+            return Made::Nothing;
+        };
+        if self.failed_edges.contains(&edge) {
+            return Made::Failed;
+        }
+        if self.executed_edges.contains(&edge) && !self.runtime.edge(edge).restat_clean() {
+            return Made::Regenerated;
+        }
+        Made::Nothing
     }
 
     fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<PreparedEdge> {
@@ -1705,6 +1736,7 @@ impl<'a> Builder<'a> {
                     .edge_finished(self.graph, &self.runtime, edge, EdgeResult::Succeeded)
             }
             Err(error) => {
+                self.failed_edges.insert(edge);
                 self.plan
                     .edge_finished(self.graph, &self.runtime, edge, EdgeResult::Failed)?;
                 Err(error)
@@ -1899,6 +1931,7 @@ impl<'a> Builder<'a> {
                         if let Some(slot) = slot {
                             slot.release();
                         }
+                        self.failed_edges.insert(edge);
                         self.plan.edge_finished(
                             self.graph,
                             &self.runtime,

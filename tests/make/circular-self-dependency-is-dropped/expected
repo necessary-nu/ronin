@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # A target that names itself is the same loop with one edge in it, and is
+| # dropped the same way rather than passing silently.
+| all: a
+| a: a ; @printf 'a ran hat=[$^]\n' > out
+file out touched 1
+| a ran hat=[]

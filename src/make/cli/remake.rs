@@ -20,7 +20,7 @@ use crate::build::BuildOptions;
 use crate::cli::RunResult;
 use crate::frontend::{Build, BuildGraph, Node, Outcome, Persistence};
 use crate::make::EvaluationBoundary;
-use crate::make::report::{abandoned, answered, discard_intermediates, finished};
+use crate::make::report::{abandoned, answered, discard_intermediates, finished, refused_makefile};
 use bstr::BString;
 use std::collections::HashSet;
 use std::io::Write;
@@ -62,7 +62,9 @@ enum Pass {
     /// Commands ran and every one of them won.
     Ran(Outcome),
     /// A command lost, and the read said it did not need what it was making.
-    Lost,
+    /// The targets it lost over come with it, because every other target of
+    /// the pass was still made and the read has to decide about each of them.
+    Lost(Vec<Node>),
     /// The run is over, with this result.
     Finished(RunResult),
     /// The run is over having answered `-q` rather than built anything.
@@ -160,8 +162,9 @@ impl Passes<'_, '_, '_> {
             // The recipe really ran and really lost, and Ninja's account of
             // that is honest narration to keep. What is dropped is the failure
             // itself: the read asked for this file with `-include`.
+            let unmade = outcome.unmade().to_vec();
             self.narrate(&outcome);
-            return Pass::Lost;
+            return Pass::Lost(unmade);
         }
         Pass::Ran(outcome)
     }
@@ -183,7 +186,9 @@ impl Passes<'_, '_, '_> {
 
     fn abandon(&mut self, failure: Error, forgive: bool) -> Pass {
         if forgive {
-            return Pass::Lost;
+            // Nothing ran, so no Makefile of the pass can have moved and there
+            // is nothing to name as lost.
+            return Pass::Lost(Vec::new());
         }
         Pass::Finished(abandoned(std::mem::take(self.reported), failure))
     }
@@ -194,27 +199,43 @@ impl Passes<'_, '_, '_> {
     /// A recipe that ran without changing the file it names leaves the read
     /// saying exactly what it said before, so GNU Make does not start over for
     /// it — that is the difference between a Makefile that is remade and one
-    /// whose rule merely fired. A Makefile whose update lost does not start it
-    /// over either, however the recipe left the file: `any_remade` is raised
-    /// for a successful update alone (main.c), which is why each subset is
-    /// stamped around its own pass rather than all of them around the phase.
+    /// whose rule merely fired. A Makefile whose own update lost does not start
+    /// it over either, however the recipe left the file: `any_remade` is raised
+    /// for a successful update alone (main.c).
+    ///
+    /// GNU Make asks that of each Makefile and not of the batch. A pass where
+    /// one `-include` is remade and another's rule loses is a pass in which
+    /// the read must start over, for the one that won — the loser is forgiven
+    /// and says nothing, rather than speaking for its neighbours. So the
+    /// stamps are compared file by file, and a file whose own recipe lost is
+    /// left out of the comparison however it left the disk behind it: a rule
+    /// that writes its target and then exits non-zero starts nothing over.
     fn remake_makefiles(&mut self, makefiles: &Makefiles<'_>) -> Remaking {
         let mut restart = false;
         let mut remade = Vec::new();
         for mut subset in makefiles.subsets(self.graph) {
             let paths = paths_of(self.graph, &subset.targets);
             let before = makefile_stamps(&paths, makefiles.directory);
-            match self.run(&subset.targets, subset.options, subset.forgive) {
-                Pass::Ran(outcome) => self.narrate(&outcome),
-                Pass::Lost => continue,
+            let unmade = match self.run(&subset.targets, subset.options, subset.forgive) {
+                Pass::Ran(outcome) => {
+                    self.narrate(&outcome);
+                    Vec::new()
+                }
+                Pass::Lost(unmade) => unmade,
                 Pass::Finished(result) => return Remaking::Finished(result),
                 Pass::Answered(question) => {
                     let reported = std::mem::take(self.reported);
                     return Remaking::Finished(answered(reported, question));
                 }
-                Pass::Current => {}
-            }
-            restart |= makefile_stamps(&paths, makefiles.directory) != before;
+                Pass::Current => Vec::new(),
+            };
+            let after = makefile_stamps(&paths, makefiles.directory);
+            restart |= subset
+                .targets
+                .iter()
+                .zip(before.iter().zip(&after))
+                .any(|(target, (before, after))| before != after && !unmade.contains(target));
+            subset.targets.retain(|target| !unmade.contains(target));
             remade.append(&mut subset.targets);
         }
         if restart {
@@ -373,6 +394,12 @@ pub(super) fn build_compiler_inputs(
         goals,
     } = request;
     let mut loaded = loaded;
+    // GNU Make refuses over a required Makefile nothing can make from inside
+    // the update this function is: the Makefiles the read reached before that
+    // one are brought up to date, and then the run ends. It ends on a restart
+    // as well as on a settlement, because `complain()` gets there before
+    // `main.c` reaches the test that would have sent the read around again.
+    let refusal = loaded.take_refusal();
     let mut recipes = loaded.take_pending_recipes().map(Box::new);
     let remakes = loaded.remake_targets().to_vec();
     let forgiven = loaded.forgiven_remake_targets().to_vec();
@@ -406,13 +433,24 @@ pub(super) fn build_compiler_inputs(
         }
         Remaking::Restart => {
             persistence.finish()?;
-            return Ok(Settlement::Restart);
+            return Ok(refusal.map_or(Settlement::Restart, |refusal| {
+                Settlement::Finished(refused_makefile(std::mem::take(reported), refusal))
+            }));
         }
         // Bringing a Makefile up to date is work the rest of the run has
         // already had done for it, and GNU Make does the whole of it inside
         // one process. Ronin reads again in place, so the goals reach the same
         // graph and have to be told the same thing.
-        Remaking::Settled(remade) => graph.mark_makefiles_remade(&remade),
+        Remaking::Settled(remade) => {
+            if let Some(refusal) = refusal {
+                persistence.finish()?;
+                return Ok(Settlement::Finished(refused_makefile(
+                    std::mem::take(reported),
+                    refusal,
+                )));
+            }
+            graph.mark_makefiles_remade(&remade);
+        }
     }
 
     let mut passes = Passes {
@@ -445,7 +483,7 @@ pub(super) fn build_compiler_inputs(
         // Staged work is never forgiven, so `Lost` cannot arrive here; a
         // recursive child whose parent's prerequisites did not build has
         // nothing to be evaluated from.
-        Pass::Current | Pass::Ran(_) | Pass::Lost => {
+        Pass::Current | Pass::Ran(_) | Pass::Lost(_) => {
             settled_boundaries.extend(boundaries);
             persistence.finish()?;
             Ok(Settlement::Restart)

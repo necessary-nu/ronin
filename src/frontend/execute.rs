@@ -338,12 +338,15 @@ impl Planned<'_> {
     // [spec:ronin:req:frontend.graph-construction]
     pub fn run(mut self) -> Result<Outcome, Error> {
         let result = self.builder.build();
-        let regenerated = self
-            .targets
-            .iter()
-            .copied()
-            .filter(|target| self.builder.regenerated(target.0))
-            .collect();
+        let mut regenerated = Vec::new();
+        let mut unmade = Vec::new();
+        for target in &self.targets {
+            match self.builder.made(target.0) {
+                crate::build::Made::Regenerated => regenerated.push(*target),
+                crate::build::Made::Failed => unmade.push(*target),
+                crate::build::Made::Nothing => {}
+            }
+        }
         let output = std::mem::take(&mut self.builder.build_output);
         let stopped = match result {
             Err(BuildError::Stopped { reason, status }) => Some((reason, status)),
@@ -355,6 +358,7 @@ impl Planned<'_> {
         Ok(Outcome {
             stopped,
             regenerated,
+            unmade,
             output,
         })
     }
@@ -364,6 +368,7 @@ impl Planned<'_> {
 pub struct Outcome {
     pub(crate) stopped: Option<(BuildStop, i32)>,
     regenerated: Vec<Node>,
+    unmade: Vec<Node>,
     output: Vec<u8>,
 }
 
@@ -407,6 +412,16 @@ impl Outcome {
     #[must_use]
     pub fn regenerated(&self) -> &[Node] {
         &self.regenerated
+    }
+
+    /// Which of the targets asked for the build tried to make and did not.
+    ///
+    /// The other half of the same question, for a build allowed to carry on
+    /// past a failure: `stopped` says the build as a whole did not finish,
+    /// while this says which targets it is true of. A target whose command was
+    /// never reached is not here — nothing was tried, and nothing changed.
+    pub(crate) fn unmade(&self) -> &[Node] {
+        &self.unmade
     }
 
     /// The build's output, when no sink was there to stream it.

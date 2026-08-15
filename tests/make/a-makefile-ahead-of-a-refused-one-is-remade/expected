@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 9
+| # And the mirror of it: one included before the missing one is reached first,
+| # so its rule runs and its work stands, and only then does the run end.
+| include gen.mk
+| include nope.mk
+| 
+| all: ; @printf 'all ran\n' > out
+| 
+| gen.mk: gen.src ; @printf 'gen\n' >> log; touch gen.mk
+| gen.src: ; @printf 'src\n' >> log; touch gen.src
+file gen.mk touched 1
+| V := stale
+file gen.src touched 0
+file log touched 2
+| src
+| gen

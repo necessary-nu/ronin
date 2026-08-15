@@ -1,0 +1,10 @@
+# The refusal happens where the update reaches it, so it is the read order that
+# decides how much work precedes it: a makefile included after the missing one
+# is never brought up to date at all.
+include nope.mk
+include gen.mk
+
+all: ; @printf 'all ran\n' > out
+
+gen.mk: gen.src ; @printf 'gen\n' >> log; touch gen.mk
+gen.src: ; @printf 'src\n' >> log; touch gen.src

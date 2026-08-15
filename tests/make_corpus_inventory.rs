@@ -58,6 +58,12 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 70 when a circular dependency stopped being refused and started
+    // being dropped, the way GNU Make drops the one edge it was standing on
+    // when it noticed and carries on building: `circular_dep.mk#test` became
+    // byte-identical and left the defect class.
+    //
+    // Before that it moved
     // from 73 when the oracle stopped being whatever `make` on PATH resolved to
     // and became upstream 4.4.1, built from the release tarball and named by
     // its path. Neither tool changed. The corpus reads the name it is handed:
@@ -134,8 +140,8 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 70);
-    assert_eq!(by_class["defect"], 34);
+    assert_eq!(cases.len(), 69);
+    assert_eq!(by_class["defect"], 33);
     assert_eq!(by_class["recorded"], 4);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);

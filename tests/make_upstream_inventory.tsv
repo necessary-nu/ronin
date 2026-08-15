@@ -48,7 +48,7 @@ case	features/double_colon.diff.4	narration	ninja-progress
 case	features/double_colon.diff.5	narration	ninja-progress
 case	features/double_colon.diff.6	narration	ninja-progress
 case	features/double_colon.diff.7	narration	ninja-progress
-case	features/double_colon.diff.8	unclassified	product-name+evaluation
+case	features/double_colon.diff.8	narration	product-name+ninja-progress
 case	features/double_colon.diff.9	narration	ninja-progress
 case	features/echoing.diff	narration	ninja-progress+recipe-echo
 case	features/echoing.diff.1	narration	ninja-progress
@@ -165,8 +165,8 @@ case	features/implicit_search.diff.44	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.45	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.46	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.47	narration	ninja-progress+no-work-line
-case	features/implicit_search.diff.48	unclassified	product-name+no-work-line+evaluation
-case	features/implicit_search.diff.49	unclassified	product-name+no-work-line+evaluation
+case	features/implicit_search.diff.48	narration	product-name+ninja-progress+no-work-line
+case	features/implicit_search.diff.49	narration	product-name+ninja-progress+no-work-line
 case	features/implicit_search.diff.5	narration	ninja-progress+no-work-line
 case	features/implicit_search.diff.50	narration	product-name+fatal-decoration+shared-refusal
 case	features/implicit_search.diff.51	narration	product-name+fatal-decoration+shared-refusal
@@ -220,7 +220,7 @@ case	features/include.diff.13	narration	product-name+fatal-decoration+shared-ref
 case	features/include.diff.14	narration	product-name+fatal-decoration+shared-refusal
 case	features/include.diff.15	narration	ninja-progress+recipe-echo
 case	features/include.diff.16	narration	product-name+fatal-decoration+shared-refusal
-case	features/include.diff.17	unclassified	product-name+fatal-decoration+evaluation
+case	features/include.diff.17	narration	ninja-progress+product-name+recipe-echo+fatal-decoration+shared-refusal
 case	features/include.diff.18	unclassified	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+evaluation
 case	features/include.diff.19	narration	product-name+fatal-decoration+shared-refusal
 case	features/include.diff.2	narration	product-name+fatal-decoration+shared-refusal
@@ -908,7 +908,7 @@ case	options/dash-f.diff.29	narration	ninja-progress+recipe-echo+up-to-date-line
 case	options/dash-f.diff.3	narration	ninja-progress
 case	options/dash-f.diff.30	narration	ninja-progress+recipe-echo+up-to-date-line
 case	options/dash-f.diff.31	narration	ninja-progress+recipe-echo+up-to-date-line
-case	options/dash-f.diff.4	unclassified	product-name+fatal-decoration+evaluation
+case	options/dash-f.diff.4	narration	product-name+ninja-progress+recipe-echo+fatal-decoration+shared-refusal
 case	options/dash-f.diff.5	narration	product-name+fatal-decoration+shared-refusal
 case	options/dash-f.diff.6	narration	product-name+fatal-decoration+shared-refusal
 case	options/dash-f.diff.7	narration	product-name+fatal-decoration+shared-refusal
@@ -962,7 +962,7 @@ case	options/shuffle.diff.5	narration	ninja-progress
 case	options/shuffle.diff.6	narration	ninja-progress
 case	options/shuffle.diff.7	narration	ninja-progress
 case	options/shuffle.diff.8	narration	ninja-progress
-case	options/shuffle.diff.9	unclassified	product-name+evaluation
+case	options/shuffle.diff.9	unclassified	product-name+ninja-progress+evaluation
 case	options/warn-undefined-variables.diff	narration	no-work-line+up-to-date-line
 case	options/warn-undefined-variables.diff.1	narration	ninja-progress
 case	options/warn-undefined-variables.diff.2	unclassified	ninja-progress+evaluation

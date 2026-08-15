@@ -1,0 +1,4 @@
+# A target that names itself is the same loop with one edge in it, and is
+# dropped the same way rather than passing silently.
+all: a
+a: a ; @printf 'a ran hat=[$^]\n' > out

@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # The dropped edge is unlinked from the list it was on, and that list is what
+| # the automatic variables are read from — so the target whose prerequisite was
+| # dropped never sees it again, while the target it pointed at keeps all of its
+| # own.
+| all: a
+| a: b c ; @printf 'a hat=[$^] q=[$?] plus=[$+]\n' > a.out
+| b: a ; @printf 'b hat=[$^] plus=[$+]\n' > b.out
+| c: ; @printf 'c\n' > c.out
+file a.out touched 1
+| a hat=[b c] q=[b c] plus=[b c]
+file b.out touched 1
+| b hat=[] plus=[]
+file c.out touched 1
+| c

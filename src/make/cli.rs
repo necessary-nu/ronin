@@ -25,7 +25,7 @@ use crate::error::CliError;
 use crate::frontend::{Build, BuildGraph, Persistence};
 use crate::make::report::{
     ABANDONED, abandoned, answered, discard_intermediates, duplicate_standard_input, finished,
-    no_makefile, ordinary_diagnostic,
+    no_makefile, ordinary_diagnostic, refused_makefile,
 };
 use crate::make::{EvaluationBoundary, Shuffle};
 use crate::util::{BString, ByteSlice, terminated};
@@ -1511,6 +1511,15 @@ fn prepare_graph(
         let effective_options = evaluated_build_options(root.options, &effective_invocation);
         if loaded.regeneration_targets().is_empty() {
             let mut loaded = loaded;
+            // GNU Make refuses over a required makefile nothing can make from
+            // inside the update that brings the makefiles up to date, and a
+            // read with nothing to remake reaches it with no work to do first.
+            if let Some(refusal) = loaded.take_refusal() {
+                return Ok(PreparedGraph::Finished(refused_makefile(
+                    std::mem::take(reported),
+                    refusal,
+                )));
+            }
             let recipes = loaded.take_pending_recipes().map(Box::new);
             return Ok(PreparedGraph::Ready {
                 graph: Box::new(loaded.graph),
