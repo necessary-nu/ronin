@@ -1148,10 +1148,7 @@ impl<'a> Builder<'a> {
             || self.graph.edge(edge).out.clone(),
             |freshness| freshness.outputs.clone(),
         );
-        let old_mtimes = completion_outputs
-            .iter()
-            .map(|output| self.runtime.node(*output).mtime().raw())
-            .collect::<Vec<_>>();
+        let old_mtimes = self.mtimes_the_outputs_hold(edge, &completion_outputs);
 
         for output in &completion_outputs {
             let path = self.graph.node_path(*output).to_owned();

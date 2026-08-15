@@ -476,7 +476,8 @@ assertions (
     {id make-unknown-switch-in-a-makefiles-makeflags, kind @complete, author "brendan@necessary.nu", at 2026-08-15T21:26:53.166687691Z}
     {id make-makefiles-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-15T21:29:00.116383955Z}
     {id make-makefile-set-jobserver-style, kind @complete, author "brendan@necessary.nu", at 2026-08-15T21:29:42.877513083Z}
-    {id make-repaint-budget-test-reads-the-wall-clock, kind @doing, author "brendan@necessary.nu", at 2026-08-15T22:04:21.438478904Z}
+    {id make-repaint-budget-test-reads-the-wall-clock, kind @complete, author "brendan@necessary.nu", at 2026-08-15T22:31:31.998553908Z}
+    {id make-delete-on-error-races-a-secondary, kind @doing, author "brendan@necessary.nu", at 2026-08-15T22:31:49.865709494Z}
 )
 
 impl_evidence (

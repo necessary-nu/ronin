@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 17
+| # The `target-delete-on-error-removes-a-secondary` case, with the coincidence it
+| # depended on made deliberate. That case flapped: a build holds an absent
+| # intermediate's place with the timestamp of the newest thing behind it, and a
+| # recipe that finishes inside the same filesystem timestamp tick as that
+| # prerequisite writes a file whose mtime equals the stand-in exactly — so the
+| # withdrawal concluded the recipe had never written its target and left it. Here
+| # the recipe restores the timestamp itself, so the collision happens on every
+| # host at every speed rather than once in a run of them.
+| #
+| # GNU Make deletes it either way: `delete_target` compares against what the file
+| # itself last was, and a file that was not there was nothing at all.
+| .DELETE_ON_ERROR:
+| .SECONDARY: hello.z
+| all: hello.tsk
+| hello.x: ; echo body > $@
+| %.z: %.x ; cat $< > $@ ; touch -r $< $@ ; exit 1
+| %.tsk: %.z ; cat $< > $@
+file hello.x touched 1
+| body

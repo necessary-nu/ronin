@@ -7,8 +7,13 @@
 //! machinery answers them from the outputs it was told to watch. The three
 //! answers are decided here rather than inside the several hundred lines that
 //! finish an edge.
+//!
+//! The timestamps the command started from are decided here too, because they
+//! are half of every comparison above and the only half a running command
+//! cannot be asked about afterwards.
 
-use super::{Builder, EdgeId};
+use super::{Builder, EdgeId, FileTime, NodeId};
+use crate::util::ByteSlice as _;
 
 /// What a finished command's outputs came to.
 pub(super) struct Settled {
@@ -36,6 +41,46 @@ pub(super) struct Outcome<'a> {
 }
 
 impl Builder<'_> {
+    /// What each of `outputs` was before this edge's command runs, which is
+    /// what says afterwards whether the command wrote it.
+    ///
+    /// Ordinarily the scan's own answer, which every output already carries.
+    /// An invented intermediate that is not on disk is the exception: it has
+    /// been given the newest thing behind it to stand in for it, and
+    /// `recompute_dirty` writes that substitution onto the output's own mtime,
+    /// which is what makes its absence invisible to whatever reads it. That
+    /// value is a prerequisite's timestamp rather than one the output ever had,
+    /// so a withdrawal must not be asked about it — a recipe that finishes
+    /// inside the same filesystem timestamp tick as the prerequisite it copied
+    /// leaves a file whose mtime equals the stand-in exactly, and the
+    /// withdrawal would conclude the recipe never wrote its target and leave a
+    /// half-made file behind. Timestamps are far coarser than that question
+    /// needs — Linux stamps them from the timer tick, so on a 250Hz kernel
+    /// every write inside the same 4ms lands on one value — which is what made
+    /// this read as a race rather than as the certainty it is.
+    ///
+    /// So the disk is asked, for those edges alone: what a withdrawal compares
+    /// against is what the output itself was, and only an edge that
+    /// substituted has lost it. A stat that fails answers `MISSING`, which
+    /// withdraws whatever is found afterwards — the safe direction for a file
+    /// a stopped recipe may have half-written.
+    pub(super) fn mtimes_the_outputs_hold(&self, edge: EdgeId, outputs: &[NodeId]) -> Vec<i64> {
+        let substituted = self.runtime.edge(edge).absent_intermediate();
+        outputs
+            .iter()
+            .map(|output| {
+                if substituted {
+                    let path = self.graph.node_path(*output);
+                    self.disk
+                        .stat(path.to_path().expect("byte paths are valid on Unix"))
+                        .unwrap_or_else(|_| FileTime::MISSING.raw())
+                } else {
+                    self.runtime.node(*output).mtime().raw()
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn settled(&self, edge: EdgeId, outcome: &Outcome<'_>) -> Settled {
         if self.options.dryrun {
             return Settled {
