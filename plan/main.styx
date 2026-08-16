@@ -11596,6 +11596,42 @@ children (
                     }
                 )
             }
+
+            {
+                id make-progress-total-shrinks-to-the-work
+                title "Shrink the progress total to the work that will actually run"
+                kind @fix
+                sealed true
+                log (
+                    {
+                        at 2026-08-16T00:54:02.406423645Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "Filed on an explicit operator decision, 2026-08-16: \"the total should be shrunk to what is actually GOING TO RUN\".\n\nThe complaint, from a sed aarch64 install log: `[1/79]` … `[4/79]` and then the build stops. Seventy-nine edges were planned, four ran, and the total never moved.\n\nNATIVE NINJA IS THE AUTHORITY here, under make.narration (\"a Ninja graph is narrated Ninja's way\"), so the convention was probed against reference/ninja-build/ninja 1.14.0.git rather than reasoned about. Ninja's total shrinks the moment an edge leaves the plan, and only lines printed after the prune carry the smaller number:\n\n    rule stamp        (restat = 1, output mtime pinned)\n    build base: stamp src\n    build o1..o8: copy base\n    build z: copy o1..o8 zsrc\n\n  touch src zsrc; ninja -j1\n    [1/10] touch -m -d @1000000000 base\n    [2/2]  touch z\n\nThe mechanism is Plan::CleanNode (build.cc:314): when a restat leaves an output unchanged and a consumer's inputs are all clean, the consumer's want becomes kWantNothing, `--command_edges_`, and `status_->EdgeRemovedFromPlan(edge)` — which is the exact mirror of EdgeAddedToPlan, decrementing total_edges_ AND the ETA bookkeeping (status_printer.cc:89-114). N never exceeds the final M by this route: CleanNode skips edges already erased from want_ (finished ones), and an edge it does prune had pending inputs and so had never started.\n\nRonin prints `[2/10]` on the same manifest — a Ninja-conformance bug, not only a Make one — and `[2/10]` in Make mode on the Makefile of the same shape. One mechanism is behind both.\n\nThis is a CONSISTENCY fix, not a rule bump. `[spec:ronin:sem:build.nodedone-fn]` already says the pruning path \"removes its non-phony total from the status count\"; Ronin's Plan::release_dependents settles the pruned consumer as complete without taking it out of the count."
+                    }
+
+                    {
+                        at 2026-08-16T00:54:09.451345607Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-16T11:54:43.908508356Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "DELIVERED. One mechanism behind both graph kinds, in Ronin alone — kati is not involved, because the count of work is the runner's.\n\n`Plan::release_dependents` is Ronin's `Plan::CleanNode`: a dependent reached with every input settled and no dirty output is one a `restat` took out of the work. It settled such an edge as complete and left `wanted` standing, so `command_edge_count` — and therefore the progress total — still counted it. It now calls the new `Plan::unwant` (kWantNothing: the edge stays a dependency barrier and stops being work) and returns the pruned command edges, which `edge_finished` hands to the caller. `Builder::settle_edge` passes them to `forget_pruned_work`, and `BuildState::forget_edge` is the exact mirror of the two `expect_` calls, because Ninja's `EdgeRemovedFromPlan` is the exact mirror of `EdgeAddedToPlan` — the ETA weighting loses the edge along with the count, or `%P` would chase a total that no longer exists.\n\nThe two Make-mode paths that already decremented the total by hand — a recipe that expanded to no command, and a deferred edge whose freshness test came out negative — now go through the same `Plan::unwant` via `forget_unrun_edge`, so `wanted` and the count cannot drift apart. That matters beyond tidiness: the deferred-activation path recomputes the total from `command_edge_count`, and an edge pruned without being unwanted would have come back.\n\nWHY THE SED CASE NEVER SHRANK. Its prunes were not the Skip path that already decremented; they were consumers going clean under `release_dependents`, which is the path that did not. The same fixture reproduces in both languages:\n\n  before   ninja [1/10] [2/2]    ronin manifest [1/10] [2/10]    ronin make [1/10] [2/10]\n  after    ninja [1/10] [2/2]    ronin manifest [1/10] [2/2]     ronin make [1/10] [2/2]\n\nand the two-chain shape is byte-identical to `reference/ninja-build/ninja` now: [1/8] [2/5] [3/5] [4/5] [5/5].\n\nFIXTURES. tests/cli.rs `a_pruned_edge_leaves_the_progress_total` (the manifest, whose expected two lines are the reference ninja's own output on that manifest) and `make_mode_drops_a_re_observed_edge_from_the_progress_total` (the same shape as a Makefile — the reported case). src/build/tests.rs `plan_names_the_command_edges_a_restat_pruned` pins the plan-level answer directly.\n\nGATES. fmt, check, clippy three passes, doc, workspace tests 864/0 (861 + the three above). Ninja conformance: 425 upstream tests, 10 differential, 86 outcome, 3 invocation-boundary, persistence and log-content — all pass. Make conformance 318/69 normalised, unmoved. Equivalence 297 makefiles / 278 graphs / 0 disagreements. make_port 4/0. Upstream inventory 1287 rows at 167/0/41/1079, unmoved, compiler zero. Real-project gate built ninja 1.14.0.git from its own Makefile in 23s at -j8.\n\nNOT MOVED, and worth saying because the brief expected it might: no inventory row moved. The narration families read the progress line's payload, not its counter, so shrinking the total changes no classification.\n\nPRE-EXISTING RED, not this node's: `nplan port check --wave 4` fails at 0/170 on every wave. Confirmed identical on a pristine worktree at 0065e35, so scripts/check-release.sh has been stopping there before it reaches the conformance and performance steps; those were run individually here."
+                    }
+
+                    {
+                        at 2026-08-16T11:54:48.76750394Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
         )
         log (
             {

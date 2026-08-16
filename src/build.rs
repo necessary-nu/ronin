@@ -501,13 +501,27 @@ impl Plan {
         }
     }
 
+    /// Take an edge out of the work this plan still expects to run, and say
+    /// whether it was expected. This is Ninja's `kWantNothing`: the edge stays
+    /// in the plan as a dependency barrier and stops being work.
+    pub(crate) fn unwant(&mut self, edge: EdgeId) -> bool {
+        if std::mem::replace(&mut self.wanted[edge.index()], false) {
+            self.wanted_count -= 1;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Settle a finished edge and answer with the command edges its finishing
+    /// took out of the plan, which the caller owes the progress count.
     pub(crate) fn edge_finished(
         &mut self,
         graph: &Graph,
         runtime: &RuntimeState,
         edge: EdgeId,
         result: EdgeResult,
-    ) -> BuildResult<()> {
+    ) -> BuildResult<Vec<EdgeId>> {
         if !std::mem::replace(&mut self.running[edge.index()], false) {
             return Err(BuildError::EdgeNotRunning { edge });
         }
@@ -519,13 +533,29 @@ impl Plan {
         }
         if result == EdgeResult::Failed {
             self.failures += 1;
-            return Ok(());
+            return Ok(Vec::new());
         }
-        self.release_dependents(graph, runtime, edge);
-        Ok(())
+        Ok(self.release_dependents(graph, runtime, edge))
     }
 
-    fn release_dependents(&mut self, graph: &Graph, runtime: &RuntimeState, finished: EdgeId) {
+    /// Unblock what the finished edge was holding, and prune what it turned out
+    /// not to have dirtied.
+    ///
+    /// A dependent reached with every input settled and no dirty output is the
+    /// case Ninja's `Plan::CleanNode` handles: a `restat` found the input
+    /// unchanged, so the consumer is no longer work. Ninja both drops its want
+    /// and tells the status printer the plan lost an edge, which is why its
+    /// total shrinks mid-build; the pruned command edges are returned so the
+    /// caller can do the same. Such an edge had a pending input a moment ago
+    /// and so had never started — nothing already counted as finished is ever
+    /// taken away.
+    fn release_dependents(
+        &mut self,
+        graph: &Graph,
+        runtime: &RuntimeState,
+        finished: EdgeId,
+    ) -> Vec<EdgeId> {
+        let mut pruned = Vec::new();
         let mut work = vec![finished];
         while let Some(edge) = work.pop() {
             for index in 0..self.dependents[edge.index()].len() {
@@ -544,33 +574,19 @@ impl Plan {
                         .push(ReadyEdge::new(self.weight[dependent.index()], dependent));
                 } else if !std::mem::replace(&mut self.completed[dependent.index()], true) {
                     self.completed_count += 1;
+                    let rule = graph.edge(dependent).rule;
+                    if self.unwant(dependent) && rule.is_some() && !graph.is_phony_rule(rule) {
+                        pruned.push(dependent);
+                    }
                     work.push(dependent);
                 }
             }
         }
+        pruned
     }
 
     pub(crate) const fn more_to_do(&self) -> bool {
         self.failures != 0 || self.completed_count < self.tracked_count
-    }
-
-    pub(crate) fn command_edge_count(&self, graph: &Graph) -> usize {
-        self.command_edges(graph).count()
-    }
-
-    /// Every planned edge that will actually run a command.
-    pub(crate) fn command_edges<'a>(
-        &'a self,
-        graph: &'a Graph,
-    ) -> impl Iterator<Item = EdgeId> + 'a {
-        self.wanted
-            .iter()
-            .zip(graph.edge_ids())
-            .filter(|(wanted, edge)| {
-                let rule = graph.edge(*edge).rule;
-                **wanted && rule.is_some() && !graph.is_phony_rule(rule)
-            })
-            .map(|(_, edge)| edge)
     }
 
     pub(crate) const fn is_empty(&self) -> bool {
@@ -1805,8 +1821,19 @@ impl<'a> Builder<'a> {
                     self.recompute_planned_after_dyndep(&loaded_dyndeps)?;
                     self.plan.refresh_dependencies(self.graph, &self.runtime)?;
                 }
-                self.plan
-                    .edge_finished(self.graph, &self.runtime, edge, EdgeResult::Succeeded)
+                let pruned = self.plan.edge_finished(
+                    self.graph,
+                    &self.runtime,
+                    edge,
+                    EdgeResult::Succeeded,
+                )?;
+                status::forget_pruned_work(
+                    &mut self.progress,
+                    self.graph,
+                    self.build_log.as_deref(),
+                    &pruned,
+                );
+                Ok(())
             }
             Err(error) => {
                 self.failed_edges.insert(edge);

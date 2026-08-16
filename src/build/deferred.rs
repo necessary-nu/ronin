@@ -274,12 +274,28 @@ impl Builder<'_> {
         Ok((told, Vec::new()))
     }
 
+    /// Take an edge the build reached and did not run out of the work it
+    /// expects, the way a `restat` prune takes a consumer out of it.
+    ///
+    /// It was counted when the plan was made, because a plan cannot know what a
+    /// recipe expands to or what a prerequisite's command will leave behind;
+    /// counting it still would leave the progress line reaching for work that
+    /// is not coming.
+    pub(super) fn forget_unrun_edge(&mut self, edge: EdgeId) {
+        let rule = self.graph.edge(edge).rule;
+        let counted = rule.is_some() && !self.graph.is_phony_rule(rule);
+        if self.plan.unwant(edge) && counted {
+            super::status::forget_pruned_work(
+                &mut self.progress,
+                self.graph,
+                self.build_log.as_deref(),
+                &[edge],
+            );
+        }
+    }
+
     /// Settle an edge whose recipe was read as it launched and held no command
     /// line, and say whether the build may carry on.
-    ///
-    /// The edge is taken out of the count of work first: it was counted when
-    /// the plan was made, because a plan cannot know what a recipe expands to,
-    /// and reporting it as work now would leave a progress line short forever.
     pub(super) fn settle_unrun_edge(
         &mut self,
         edge: EdgeId,
@@ -288,7 +304,7 @@ impl Builder<'_> {
         last_error: &mut Option<BuildError>,
     ) -> bool {
         self.ran_nothing_edges.insert(edge);
-        self.progress.total = self.progress.total.saturating_sub(1);
+        self.forget_unrun_edge(edge);
         let result = self.finish_without_command(edge, Unrun::NoCommand);
         if let Err(error) = self.settle_edge(edge, result) {
             *failures += 1;
@@ -308,10 +324,7 @@ impl Builder<'_> {
     ) -> bool {
         match self.deferred_work(edge) {
             DeferredWork::Skip => {
-                let rule = self.graph.edge(edge).rule;
-                if rule.is_some() && !self.graph.is_phony_rule(rule) {
-                    self.progress.total = self.progress.total.saturating_sub(1);
-                }
+                self.forget_unrun_edge(edge);
                 let result = self.finish_without_command(edge, Unrun::Skipped);
                 if let Err(error) = self.settle_edge(edge, result) {
                     *failures += 1;

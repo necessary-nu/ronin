@@ -98,6 +98,26 @@ impl BuildState {
         self.unpredictable_remaining += 1;
     }
 
+    /// Note that an edge left the plan without running, given what the log says
+    /// it cost last time.
+    ///
+    /// The exact mirror of the two `expect_` calls, because Ninja's
+    /// `EdgeRemovedFromPlan` is the exact mirror of `EdgeAddedToPlan`: the
+    /// count of work loses the edge and so does the weighting that predicts
+    /// how much of the work is left. Leaving the prediction behind would have
+    /// `%P` chasing a total that no longer exists.
+    pub(crate) const fn forget_edge(&mut self, previous_millis: Option<i64>) {
+        self.total = self.total.saturating_sub(1);
+        if let Some(previous) = previous_millis {
+            self.predictable_total = self.predictable_total.saturating_sub(1);
+            self.predictable_remaining = self.predictable_remaining.saturating_sub(1);
+            self.predictable_millis_total -= previous;
+            self.predictable_millis_remaining -= previous;
+        } else {
+            self.unpredictable_remaining = self.unpredictable_remaining.saturating_sub(1);
+        }
+    }
+
     /// Account for an edge that just finished, given what it cost last time.
     pub(crate) const fn retire_edge(&mut self, elapsed: i64, previous_millis: Option<i64>) {
         self.spent_millis += elapsed;
@@ -127,6 +147,21 @@ pub(crate) fn previous_duration(
     })
 }
 
+/// Take command edges the plan pruned out of the work the progress line
+/// counts, so `[N/M]` measures what is going to run rather than what was
+/// planned before the build learned better.
+// [spec:ronin:sem:build.nodedone-fn]
+pub(crate) fn forget_pruned_work(
+    state: &mut BuildState,
+    graph: &Graph,
+    log: Option<&BuildLog>,
+    edges: &[EdgeId],
+) {
+    for &edge in edges {
+        state.forget_edge(previous_duration(graph, log, edge));
+    }
+}
+
 /// Tell the progress state what the plan is expected to cost.
 pub(crate) fn seed_prediction(
     state: &mut BuildState,
@@ -139,6 +174,27 @@ pub(crate) fn seed_prediction(
             Some(previous) => state.expect_timed_edge(previous),
             None => state.expect_untimed_edge(),
         }
+    }
+}
+
+impl Plan {
+    pub(crate) fn command_edge_count(&self, graph: &Graph) -> usize {
+        self.command_edges(graph).count()
+    }
+
+    /// Every planned edge that will actually run a command.
+    pub(crate) fn command_edges<'a>(
+        &'a self,
+        graph: &'a Graph,
+    ) -> impl Iterator<Item = EdgeId> + 'a {
+        self.wanted
+            .iter()
+            .zip(graph.edge_ids())
+            .filter(|(wanted, edge)| {
+                let rule = graph.edge(*edge).rule;
+                **wanted && rule.is_some() && !graph.is_phony_rule(rule)
+            })
+            .map(|(_, edge)| edge)
     }
 }
 

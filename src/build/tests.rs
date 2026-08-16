@@ -320,6 +320,37 @@ fn ninja_plan_basic() {
     assert!(plan.find_work(&graph).is_none());
 }
 
+/// A `restat` that rewrote its output with the content it already had leaves
+/// the consumer clean, and Ninja's `Plan::CleanNode` takes it out of the plan
+/// rather than running it. The plan names the command edges it pruned so the
+/// progress line can stop counting work that is not coming.
+#[test]
+fn plan_names_the_pruned_command_edges() {
+    let graph = plan_graph("build out: cat mid\nbuild mid: cat in\n");
+    let mut runtime = mark_dirty(&graph, &["mid", "out"]);
+    let mut plan = Plan::default();
+    add_plan_target(&mut plan, &graph, &runtime, b"out");
+    plan.prepare_queue(&graph);
+    assert_eq!(plan.command_edge_count(&graph), 2);
+    let edge = plan.find_work(&graph).unwrap();
+    assert_eq!(output_path(&graph, edge), "mid");
+    let out = nodeget(&graph, b"out").unwrap();
+    runtime.node_mut(out).set_dirty(false);
+    let pruned = plan
+        .edge_finished(&graph, &runtime, edge, EdgeResult::Succeeded)
+        .unwrap();
+    assert_eq!(
+        pruned
+            .iter()
+            .map(|edge| output_path(&graph, *edge))
+            .collect::<Vec<_>>(),
+        ["out"]
+    );
+    assert_eq!(plan.command_edge_count(&graph), 1);
+    assert!(plan.find_work(&graph).is_none());
+    assert!(!plan.more_to_do());
+}
+
 /// A clean phony edge is still a scheduling barrier.  `CMake` emits this shape
 /// for generated headers: the object waits on a clean order-only phony, whose
 /// transitive phony input is dirty because the header generator must run.

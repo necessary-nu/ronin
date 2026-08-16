@@ -483,6 +483,7 @@ assertions (
     {id make-an-unopenable-include-is-reported-where-gnu-reports-it, kind @complete, author "brendan@necessary.nu", at 2026-08-16T00:40:49.726868799Z}
     {id make-a-forgiven-makefile-is-not-remade-for-the-goals, kind @complete, author "brendan@necessary.nu", at 2026-08-16T00:40:54.415794835Z}
     {id make-semicolon-does-not-stop-an-assignment-scan, kind @complete, author "brendan@necessary.nu", at 2026-08-16T00:40:59.105793643Z}
+    {id make-progress-total-shrinks-to-the-work, kind @complete, author "brendan@necessary.nu", at 2026-08-16T11:54:48.76750394Z}
 )
 
 impl_evidence (
