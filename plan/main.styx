@@ -11116,6 +11116,7 @@ children (
                 id make-target-specific-append-reads-the-readers-scope
                 title "Resolve a target-specific append against the scope that reads it"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-15T11:59:27.317152705Z
@@ -11137,6 +11138,13 @@ children (
                         kind @note
                         text "Reproducer re-verified at dec8ddc before implementing: dep9:[priv more] where GNU gives dep9:[outer more].\n\nTHE MATRIX, seventeen cells probed against the pristine 4.4.1 oracle before any code moved. Global `V = g`, target `a.o`, prerequisite `dep` (named so it matches no pattern), one column for a.o's own recipe and one for dep's:\n\n  pattern         target            a.o        dep\n  `V += p`        `private V += t`  g p t      g p       ✓ already\n  `private V += p` `V += t`         g p t      g t       ✗\n  `V += p`        `V += t`          g p t      g p t     ✓ control\n  `V += p`        `V = t`           t          t         ✓ control\n  `private V = p` `V += t`          p t        g t       ✗ the node's own case\n  `private V += p` (no global)      p t        t         ✗\n  `private V += p` `private V += t` g p t      g         ✓ already\n  `private V := p` `V += t`         p t        g t       ✗\n  `private V += p` `V += t1; += t2` g p t1 t2  g t1 t2   ✗\n  `private V += p` `V = own; += t`  own t      own t     ✓ the own set settles it\n  two patterns, private then public, then `V += t`  g p1 p2 t   g p1 p2 t   ✓\n  two patterns, public then private, then `V += t`  g p1 p2 t   g t         ✗\n  `private V += p`, prerequisite has `dep: V += d`  g p t       g t d       ✗\n  `private V += p`, grandchild prerequisite         g p t       g t (both)  ✗\n\nThree things the matrix says that a flat model cannot. The base of a `+=` is walked per reader — `variable_append` (src/expand.c:511) recurses outward under the reader's own `local`, so the private binding the target's own recipe appended onto is stepped over by anything reading across the parent link. A set is one hash slot per name, so which of two patterns carries `private` does not matter: only what the set is LEFT holding does, which is why public-then-private hides the whole accumulated set and private-then-public shows all of it. And a non-append binding in a set stops the outward walk entirely, so `a.o: V = own` beside `a.o: V += t` settles to one string both readers share — `do_variable_definition` clears `append` when the set already holds a non-appending binding.\n\nDELIVERED, kati/src-rs/dep.rs only. `RuleBinding` carries a second value: `guard` installs what the target's own recipe reads, and `public` is what a reader across the parent link reads. `apply_rule_vars` computes both, tracking the outward view in three parts — `pending` for the set being installed (a set pastes onto its own slot whether or not the slot is private), `public_now` for the sets already committed, and `outer` for what stood before the run began, taken as each name is first met because the scope is installed into as the walk goes. `commit_public` folds a whole set at a time and drops it entirely when the set is left holding `private`, which is the \"last writer decides\" cell. `release_private` lays down `public` rather than the value the target itself saw. The appended text is taken back out of the join by byte offset rather than expanded a second time, so a `$(shell)` in a `+=` still runs once.\n\nEvery cell above now matches.\n\nFIXTURES, three, oracle-recorded: a-target-specific-append-reads-its-base-where-it-is-read (four names in one case: private simple base, private append base, no base at all, and the nothing-private control), a-private-pattern-binding-hides-an-append-by-its-last-writer (both orders of the two-pattern set), a-target-specific-append-private-in-every-set-reaches-the-global (both sets private, target-only private, and the same answer read again from a grandchild).\n\nFILED RATHER THAN FOLDED IN: GNU expands the appended TEXT in the reader's scope too, not only its base. `a.o: V += <$(W)>` beside `a.o: W = aoW` and `dep: W = depW` gives GNU `a.o:[g p <aoW>]` and `dep:[g <depW>]`; Ronin now has the base right and still reads `<aoW>` in both, because the tail is expanded once where it is installed. That is a different mechanism — when the text expands, not which base the walk finds — and needs the binding to stay lazy rather than settle to a string. make-target-specific-append-expands-its-tail-where-it-is-read has the reproducer."
                     }
+
+                    {
+                        at 2026-08-16T13:46:22.437050161Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -11144,6 +11152,7 @@ children (
                 id make-recipe-time-target-variable-reaches-prerequisites
                 title "Let a recipe-time target variable reach that target's prerequisites"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-15T11:59:38.528128288Z
@@ -11164,6 +11173,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Reproducer re-verified at dec8ddc: kid:[outer] where GNU gives kid:[to-parent].\n\nTHE MATRIX, thirteen cells against the pristine oracle, every order forced with a prerequisite chain rather than left to the scheduler:\n\n  the target the eval names                     visible\n  its prerequisite, not yet expanded            visible\n  its prerequisite's prerequisite               visible, through the chain\n  an order-only prerequisite                    visible -- one list in GNU\n  a prerequisite already expanded when it ran   NOT visible, and GNU agrees\n  a prerequisite that bound the name itself     its own binding wins\n  a prerequisite whose own binding is `private` its own for itself, the write for its children\n  a pattern binding the prerequisite inherited  the write shadows it\n  `private` on the recipe-time assignment       the named target only\n  `+=` at recipe time                           the whole appended value travels\n  the eval names a prerequisite, not the parent reaches that one and below, not the parent\n  a name two targets ask for, reached first by the setter's target       takes the write\n  a name two targets ask for, reached first by another target            does not\n\nThe last pair is the cell that decides the shape. GNU inherits along `file->parent`, which `update_file` sets the first time a name is reached and never moves — so whether the write lands is a question about which parent got there first, not about which targets name it. `all: p2 p1` with `p2: setter shared` and `p1: shared` gives shared:[to-p2]; writing `all: p1 p2` with the setter under p1 gives shared:[outer] while p2 still reads to-p2.\n\nWHY IT IS NOT THE FIX THE NODE SKETCHED. The filing proposed making `Vars` carry a parent and having lookup walk it — the type every scope in the evaluator is expressed in. That is not needed, because Ronin's copies are all taken before any recipe runs: the only thing that can arrive afterwards is one write, and a write can be carried down the same link a lookup would have walked up. So the link is recorded and the write is pushed, rather than every read being made to walk.\n\nDELIVERED, kati. `DepNode::planning_parent` is GNU's `file->parent`, set in `build_plan` where the memoised return is what makes the first caller the parent — the same rule, in the same place. `DepNode::own_rule_vars` records each name the node bound in its own right and whether that binding survived `release_private`, which now reports it. `make_dep` hands the evaluator `PlannedScope` — the scope, the own-name map, and the targets whose parent this is — in place of the bare `Arc<Vars>`. `Evaluator::inherit_planned_assignment` walks the links after a recipe-time assignment lands.\n\nTwo questions decide how far the walk goes and they are not the same one, which is the `private` cell above: a target that bound the name itself does not take the write, because its own binding is what its recipe reads; but only a PUBLIC binding of its own stops the walk there, because a private one is stepped over by whatever reads across the link. A `private` recipe-time assignment is not carried at all.\n\nEvery cell above now matches.\n\nFIXTURES, three, oracle-recorded: a-recipe-time-target-variable-reaches-that-targets-prerequisites (kid, grandchild, a target with its own binding, and one already expanded), a-recipe-time-target-variable-follows-the-parent-that-reached-first (the shared-name cell that pins the link rather than the prerequisite list), a-recipe-time-target-variable-is-stepped-over-where-it-is-private (a private binding on the way down, a private assignment, and `+=`)."
+                    }
+
+                    {
+                        at 2026-08-16T13:46:28.62307451Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -11283,6 +11299,7 @@ children (
                 id make-explicit-rule-stem-from-a-known-suffix
                 title "Read $* off a known suffix for an explicit rule's target"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-15T14:47:36.168613665Z
@@ -11304,6 +11321,13 @@ children (
                         kind @note
                         text "THE MATRIX, ten cells against the pristine oracle, and GNU's own source says the rule outright — `set_file_variables` (src/commands.c:97) walks `enter_file(\".SUFFIXES\")->deps` in list order and stops at the first entry the name ends with, guarded by `len > slen`.\n\n  cell                                                    GNU 4.4.1\n  `a.c` explicit, `.c` on the built-in list               a\n  `b.q` explicit, `.q` not on it                          empty\n  the same after `.SUFFIXES: .q`                          a and b -- adding moves it\n  the same after a bare `.SUFFIXES:`                      both empty -- clearing withdraws it\n  `.SUFFIXES: .z .a.z`, target `foo.a.z`                  foo.a\n  `.SUFFIXES: .a.z .z`, target `foo.a.z`                  foo -- ORDER, not longest match\n  `sub/a.c`, and its `D` and `F` forms                    sub/a, sub, a\n  a target named `.c`, the suffix itself                  empty -- the name must be longer\n  `a.c::` and `b.c c.c &:`                                a, and b for the member `$@` bound\n  an implicit match, and a static pattern rule            unchanged -- their own answers\n\nThe order cell is the one worth having: two suffixes can both fit only when one ends the other, and then which answer comes out is the list's order. That makes it a real read of `.SUFFIXES` rather than a table lookup, and it is why the two `.SUFFIXES` cells above are not decoration.\n\nDELIVERED. `Session::suffixes` holds the list as the read left it, published by `DepBuilder::read_suffix_list` where the field used to live on the builder — `$*` reads it while a recipe expands, long after the builder is gone, so the builder is no longer the right owner of it. The three other readers (the built-in pair install, the declared-pair split, the suffix-rule ordering) read it from the session now; one list, one place.\n\n`AutoCommand::Star` gains the third arm the filing predicted, after the pattern arm and not before it: a static pattern rule has an `output_pattern` and its own answer, and only a rule with neither a recorded stem nor a pattern reaches the suffix walk. The walk is GNU's — first entry the name ends with, name strictly longer than the suffix.\n\nEvery cell above now matches.\n\nFIXTURES, three, oracle-recorded: an-explicit-rules-stem-is-the-target-without-a-known-suffix (known, unknown, the bare-suffix name, and the `D`/`F` division of a nested one), a-rewritten-suffix-list-moves-an-explicit-rules-stem (clear, add, and both chained orders in one case), one-recipe-over-several-targets-reads-its-stem-off-the-name-it-bound (`::` and `&:`).\n\nUPSTREAM INVENTORY: the two rows the filing said this was worth a node for, both moved. variables/automatic.diff.4 and .diff.5 go unclassified → narration, and their family list drops `evaluation` and keeps only `ninja-progress` — the evaluation difference was `$*` and there is nothing left but the progress line. Total unmoved at 1283; unclassified 167 → 165, narration 1079 → 1081, compiler stays ZERO, interface stays 37."
                     }
+
+                    {
+                        at 2026-08-16T13:46:33.606557092Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -11311,6 +11335,7 @@ children (
                 id make-deferred-freshness-hides-a-multi-target-peer
                 title "See an absent group member on a rule whose recipe reads $?"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-15T14:47:59.445485514Z
@@ -11331,6 +11356,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Reproducer re-verified at dec8ddc as the handoff asked, before touching anything: `ronin: no work to do.` where GNU runs the recipe. The deferred machinery's several reworks since the filing had not reached it, and the control case with no `$?` in the recipe still ran in both tools — so the discriminator named in the filing is still the discriminator.\n\nWHERE IT WAS. `deferred_freshness_outputs` in kati/src-rs/ninja.rs named exactly one output for a non-grouped deferred edge: `node.recipe_output`. `capture_deferred_freshness` stats that list and nothing else, and `is_virtual_output` has already taken every output of such an edge out of the scan's own stat loop — so a pattern rule's second target pattern was looked at by neither. Absent, and invisible.\n\nTHE FIX is the division the ordinary path already makes and this one had not been given. `recompute_edge_dirty_with` compares `edge.out` filtered by `graph.peer_outputs(edge)`; the deferred list now says the same thing — the node's recipe output and its implicit outputs, less the peers. A peer is a name nobody asked for, so no state of its can send the recipe to the shell, and a name later asked for in its own right stops being one.\n\nTHE MATRIX, six cells against the pristine oracle, `a.in` old throughout:\n\n  a.c current, a.h absent, both asked for      runs\n  a.c current, a.h absent, only a.c asked for  nothing to be done -- a.h is a peer\n  a.c current, a.h present and behind a.in     runs\n  both present and both ahead of a.in          nothing to be done\n  the same six with no `$?` in the recipe      identical -- the control set\n\nAll six now match, and `$?` itself is right where the recipe runs (`q=a.in`).\n\nFIXTURES, two, oracle-recorded: a-deferred-freshness-rule-sees-an-absent-second-target (an absent second target and a stale second target, two stems in one case) and a-deferred-freshness-rule-passes-over-a-peer-nobody-asked-for (the peer exception and the everything-current control, which together are why the fix is a filter and not \"every output\").\n\nNOT DELIVERED, and filed rather than left silent. `$@` on such an edge is still the first name: GNU binds `at=a.h`, Ronin binds `at=a.c`. That is the other side of make-multi-target-pattern-trigger-identity, which bound `$@` from `trigger_output` as the edge launches and recorded in its own note that a `$?` recipe never reaches that binding — the recipe is expanded while the graph is compiled, so the name is chosen before any timestamp is known. Closing it needs `$@` to become a launch-time substitution the way `${KATI_NEW_INPUTS}` already is, which is a change to what the command text carries and what the executor binds. make-deferred-freshness-binds-at-before-the-timestamps-are-known has the reproducer. Both fixtures here read `$*` and `$?` and not `$@`, which is exactly the line the two nodes divide on."
+                    }
+
+                    {
+                        at 2026-08-16T13:46:38.463589344Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
