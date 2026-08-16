@@ -593,6 +593,7 @@ assertions (
     {id make-child-automatic-variables-are-child-relative, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:53:57.388534369Z}
     {id make-recipe-line-is-its-own-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:54:01.819532669Z}
     {id make-simple-command-without-a-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:54:06.818469836Z}
+    {id make-shuffled-drop-unlinks-the-position-not-the-edge, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:04:25.662292439Z}
 )
 
 impl_evidence (
