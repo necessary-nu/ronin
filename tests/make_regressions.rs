@@ -690,6 +690,117 @@ fn named_makefile_complains_at_the_read() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// Whether this host lets an unreadable file be unreadable.
+///
+/// Running as root defeats mode 000, and a test that turns into its own
+/// opposite is worse than one that does not run. The question is asked by trying
+/// rather than by comparing user ids, because that is the property the case
+/// needs.
+fn permissions_are_enforced(directory: &Path) -> bool {
+    let probe = directory.join(".permission-probe");
+    fs::write(&probe, "x").unwrap();
+    let mut permissions = fs::metadata(&probe).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o000);
+    fs::set_permissions(&probe, permissions).unwrap();
+    let enforced = fs::read(&probe).is_err();
+    let mut permissions = fs::metadata(&probe).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o600);
+    fs::set_permissions(&probe, permissions).unwrap();
+    fs::remove_file(&probe).unwrap();
+    enforced
+}
+
+/// A required `include` that would not open is a makefile the read did not get,
+/// not a failure of the read — and GNU Make records it by giving the file the
+/// timestamp of one that is not there (`eval_makefile` writes `deps->file->
+/// last_mtime = NONEXISTENT_MTIME` beside the errno, read.c:409).
+///
+/// Which is what makes its own rule run. `secret.mk` exists and cannot be read;
+/// a recipe with no prerequisites would be up to date the moment its target
+/// exists, so only the nonexistent timestamp puts it out of date. GNU Make 4.4.1
+/// on this case runs the rule, restarts the read on the repaired file, and
+/// builds `all` with the variable that file defines.
+///
+/// The build-intent corpus cannot hold this one: mode 000 is not a thing a
+/// committed file can be, and a run as root would record the opposite case
+/// without saying so.
+#[test]
+fn unreadable_include_repaired_by_its_rule() {
+    let directory = test_directory("unreadable-include-repaired");
+    if !permissions_are_enforced(&directory) {
+        fs::remove_dir_all(directory).unwrap();
+        return;
+    }
+    fs::write(
+        directory.join("Makefile"),
+        "include secret.mk\nsecret.mk: ; @echo GEN; chmod 644 secret.mk; echo X=1 >> secret.mk\nall: ; @echo ALL-$(X)\n",
+    )
+    .unwrap();
+    let secret = directory.join("secret.mk");
+    fs::write(&secret, "").unwrap();
+    let mut permissions = fs::metadata(&secret).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o000);
+    fs::set_permissions(&secret, permissions).unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &["all"]);
+    assert!(succeeded, "{reported}");
+    assert!(
+        reported.contains("GEN"),
+        "the rule for an unreadable include never ran: {reported}"
+    );
+    assert!(
+        reported.contains("ALL-1"),
+        "the read did not start over on the repaired file: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A Makefile the command line named that would not open is complained of at
+/// the read and refused over after the remaking, which is the same two-part
+/// shape as the absent case and reaches it by the same deferral.
+///
+/// `afile` is an ordinary file, so opening `afile/one.mk` fails with ENOTDIR
+/// rather than ENOENT — the errno GNU Make does not distinguish and Ronin used
+/// to raise on. GNU Make 4.4.1 on `make -f side.mk -f afile/one.mk all` prints
+/// `make: afile/one.mk: Not a directory`, then `REMAKE-SIDE`, then
+/// `make: *** No rule to make target 'afile/one.mk'.  Stop.`
+///
+/// Asserted here rather than in the corpus because it is an ordering: the
+/// complaint has to come out before the work and the refusal after it.
+#[test]
+fn unopenable_makefile_refused_after_remaking() {
+    let directory = test_directory("unopenable-named-makefile-refused");
+    fs::write(directory.join("afile"), "notadir\n").unwrap();
+    fs::write(directory.join("side.src"), "").unwrap();
+    write_at(
+        &directory,
+        "side.mk",
+        "all: ; @echo all\nside.mk: side.src ; @echo REMAKE-SIDE; touch side.mk\n",
+        1_000,
+    );
+
+    let (succeeded, reported) =
+        merged_make(&directory, &["-f", "side.mk", "-f", "afile/one.mk", "all"]);
+    assert!(!succeeded, "{reported}");
+
+    let complaint = reported
+        .find("afile/one.mk: Not a directory")
+        .expect(&reported);
+    let remade = reported.find("REMAKE-SIDE").expect(&reported);
+    let refusal = reported
+        .find("No rule to make target 'afile/one.mk'")
+        .expect(&reported);
+    assert!(
+        complaint < remade,
+        "the read's own complaint came out after the remaking: {reported}"
+    );
+    assert!(
+        remade < refusal,
+        "the refusal came out before the Makefiles ahead of it were remade: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// GNU Make prints an `$(info ...)` while it expands the recipe, so the text
 /// is never a command. What the corpus cannot see is that the text still
 /// reaches stdout, and that nothing was announced as having run.

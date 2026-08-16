@@ -270,6 +270,10 @@ impl RefusedMakefile {
 struct UnitRemakes {
     all: Vec<Node>,
     forgiven: Vec<Node>,
+    /// The ones whose contents the read wanted and did not get. GNU Make gives
+    /// those the timestamp of a file that is not there (read.c:409), so the rule
+    /// that would make one runs however the name looks on disk.
+    unread: Vec<Node>,
     /// GNU Make brings the Makefiles ahead of this one up to date and then ends
     /// the run over it, so it is carried alongside them rather than raised in
     /// their place.
@@ -292,6 +296,7 @@ fn unit_remakes(
     Ok(UnitRemakes {
         all: looked_up(&regenerations.all)?,
         forgiven: looked_up(&regenerations.forgiven)?,
+        unread: looked_up(&regenerations.unread)?,
         refusal,
     })
 }
@@ -309,6 +314,8 @@ struct CompilationState<'a> {
     regenerations: Vec<Node>,
     remakes: Vec<Node>,
     forgiven_remakes: Vec<Node>,
+    /// The Makefiles whose contents the read wanted and did not get.
+    unread_remakes: Vec<Node>,
     /// The first required Makefile any unit of this compilation could not make.
     refusal: Option<RefusedMakefile>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
@@ -354,6 +361,11 @@ impl CompilationState<'_> {
         for target in remakes.forgiven {
             if !self.forgiven_remakes.contains(&target) {
                 self.forgiven_remakes.push(target);
+            }
+        }
+        for target in remakes.unread {
+            if !self.unread_remakes.contains(&target) {
+                self.unread_remakes.push(target);
             }
         }
         if self.refusal.is_none() {
@@ -410,6 +422,7 @@ where
         regenerations: Vec::new(),
         remakes: Vec::new(),
         forgiven_remakes: Vec::new(),
+        unread_remakes: Vec::new(),
         settled_boundaries,
         refusal: None,
         evaluation_boundaries: HashSet::new(),
@@ -423,6 +436,7 @@ where
         regenerations: state.regenerations,
         remakes: state.remakes,
         forgiven_remakes: state.forgiven_remakes,
+        unread_remakes: state.unread_remakes,
         refusal: state.refusal,
         evaluation_boundaries: state.evaluation_boundaries,
         makeflags: root.makeflags,
@@ -841,6 +855,9 @@ fn admit_regeneration_roots(
         if !root.required {
             names.forgiven.push(root.node.0);
         }
+        if root.unread {
+            names.unread.push(root.node.0);
+        }
         nodes.push(root.node);
     }
     names
@@ -852,6 +869,8 @@ struct RegenerationNames {
     all: Vec<kati::symtab::Symbol>,
     /// The ones every `include` of which said the file need not be there.
     forgiven: Vec<kati::symtab::Symbol>,
+    /// The ones the read wanted and did not get, whatever is at their name.
+    unread: Vec<kati::symtab::Symbol>,
 }
 
 /// A Makefile compiled into the complete graph the engine executes.
@@ -872,6 +891,17 @@ pub struct Loaded {
     /// indifference into the rule that would have made it: the recipe runs, it
     /// fails, nothing is reported and the read goes on without the include.
     forgiven_remakes: Vec<Node>,
+    /// The Makefiles among those whose contents the read wanted and did not
+    /// get, whatever stands at their name.
+    ///
+    /// GNU Make says this with a timestamp rather than with a flag:
+    /// `eval_makefile` writes `last_mtime = NONEXISTENT_MTIME` on the file it
+    /// could not open (read.c:409), so every later question about it is answered
+    /// as though nothing were there. That is what makes the rule for an
+    /// unopenable makefile run at all — a recipe with no prerequisites is
+    /// otherwise up to date the moment its target exists, and an unreadable file
+    /// exists.
+    unread_remakes: Vec<Node>,
     /// A required Makefile the read could not open and no rule can make.
     ///
     /// GNU Make refuses over one of these from inside the update that brings
@@ -925,6 +955,16 @@ impl Loaded {
     #[must_use]
     pub(crate) fn forgiven_remake_targets(&self) -> &[Node] {
         &self.forgiven_remakes
+    }
+
+    /// The Makefiles whose contents this read wanted and did not get.
+    ///
+    /// A subset of [`Self::remake_targets`]. The build must treat each as a file
+    /// that is not there, however its name looks on disk, which is GNU Make's
+    /// `last_mtime = NONEXISTENT_MTIME` for a makefile that would not open.
+    #[must_use]
+    pub(crate) fn unread_remake_targets(&self) -> &[Node] {
+        &self.unread_remakes
     }
 
     /// The required Makefile nothing can make, which ends the run.

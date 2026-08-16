@@ -594,6 +594,7 @@ assertions (
     {id make-recipe-line-is-its-own-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:54:01.819532669Z}
     {id make-simple-command-without-a-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:54:06.818469836Z}
     {id make-shuffled-drop-unlinks-the-position-not-the-edge, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:04:25.662292439Z}
+    {id make-an-unreadable-include-is-refused-rather-than-raised, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:14:41.956565437Z}
 )
 
 impl_evidence (

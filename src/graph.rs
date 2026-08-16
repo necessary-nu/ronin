@@ -187,6 +187,9 @@ pub(crate) struct Graph {
     /// neither run again nor believe in. Beside the arena for the reason
     /// `withdrawal` is: no node of a Ninja manifest is ever in it.
     unmade_makefiles: crate::htab::RapidHashSet<NodeId>,
+    /// Makefiles the read wanted and did not get, whatever stands at their name.
+    /// Beside the arena for the same reason `unmade_makefiles` is.
+    unread_makefiles: crate::htab::RapidHashSet<NodeId>,
     /// Waits whose consumer outlives a failure of what it waited for. See
     /// [`mod@forgiven`]; beside the arena for the reason `withdrawal` is.
     forgiven_order: crate::htab::RapidHashSet<(EdgeId, NodeId)>,
@@ -325,6 +328,19 @@ pub(crate) fn nodestat_with<F>(
 where
     F: FnMut(&Path) -> io::Result<i64>,
 {
+    // A Makefile the read wanted and did not get is not there as far as
+    // anything after the read is concerned, whatever the filesystem says.
+    // GNU Make writes exactly that, and writes it as a timestamp rather than
+    // as a flag: `eval_makefile` sets `last_mtime = NONEXISTENT_MTIME` on the
+    // file it could not open (reference/gnumake/src/read.c:409). It is what
+    // makes the rule for an unopenable makefile run — a recipe with no
+    // prerequisites is up to date the moment its target exists, and a file
+    // with no read permission exists — and so what lets such a rule repair
+    // the file and send the read around again.
+    if graph.is_unread_makefile(node) {
+        runtime.node_mut(node).observe(FileTime::MISSING);
+        return Ok(());
+    }
     // Borrow the interned path for the syscall; only the error path needs an
     // owned copy, and scans stat every node.
     let path = graph.node_path(node);

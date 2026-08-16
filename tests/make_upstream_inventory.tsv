@@ -228,8 +228,8 @@ case	features/include.diff.20	unclassified	product-name+evaluation
 case	features/include.diff.21	unclassified	product-name+evaluation
 case	features/include.diff.22	narration	product-name+fatal-decoration+shared-refusal
 case	features/include.diff.23	narration	product-name+fatal-decoration+shared-refusal
-case	features/include.diff.24	unclassified	product-name+evaluation
-case	features/include.diff.25	unclassified	product-name+evaluation
+case	features/include.diff.24	narration	ninja-progress
+case	features/include.diff.25	narration	ninja-progress
 case	features/include.diff.26	narration	ninja-progress+no-work-line+up-to-date-line
 case	features/include.diff.27	unclassified	product-name+evaluation
 case	features/include.diff.28	narration	ninja-progress

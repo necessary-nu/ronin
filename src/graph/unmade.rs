@@ -1,4 +1,5 @@
-//! Makefiles the read reached, tried to remake, and did not.
+//! Makefiles the read did not get: the ones it could not read, and the ones it
+//! tried to remake and did not.
 //!
 //! A third state, between the two the graph can already express. A Makefile
 //! that was remade is prebuilt: the goals must not run its recipe again, which
@@ -43,5 +44,25 @@ impl Graph {
     /// that follows it will try again.
     pub(crate) fn mark_makefile_unmade(&mut self, node: NodeId) {
         self.unmade_makefiles.insert(node);
+    }
+
+    /// Whether the read wanted `node`'s contents and did not get them, so every
+    /// later question about the file must be answered as though nothing were
+    /// there.
+    pub(crate) fn is_unread_makefile(&self, node: NodeId) -> bool {
+        self.unread_makefiles.contains(&node)
+    }
+
+    /// Record that the read could not read `node`.
+    ///
+    /// Said by the read rather than by the update, and it is the read's whole
+    /// answer: `eval_makefile` writes the errno and `last_mtime =
+    /// NONEXISTENT_MTIME` together (read.c:409) and returns. The two halves are
+    /// separate here because a name nothing is at needs only the first — the
+    /// filesystem already agrees — while a name something unreadable is at needs
+    /// this one to stop the file it cannot use from passing for the file it
+    /// wanted.
+    pub(crate) fn mark_makefile_unread(&mut self, node: NodeId) {
+        self.unread_makefiles.insert(node);
     }
 }

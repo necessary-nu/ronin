@@ -774,6 +774,18 @@ impl BuildGraph {
     /// Said only once the update has settled. A pass that ends in a restart
     /// says nothing at all, because the read that follows plans a new graph and
     /// attempts the rule again, which is GNU Make's behaviour too.
+    /// Record the Makefiles this read wanted and did not get.
+    ///
+    /// Said before anything is built rather than after, because it is the read's
+    /// own answer and the update is its first consumer: the rule that would make
+    /// one of these has to run, and it only runs because the file counts as
+    /// absent.
+    pub(crate) fn mark_makefiles_unread(&mut self, unread: &[Node]) {
+        for node in unread {
+            self.arenas.mark_makefile_unread(node.0);
+        }
+    }
+
     pub(crate) fn mark_makefiles_settled(&mut self, remade: &[Node], unmade: &[Node]) {
         for node in unmade {
             self.arenas.mark_makefile_unmade(node.0);

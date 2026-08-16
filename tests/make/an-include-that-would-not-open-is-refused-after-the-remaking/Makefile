@@ -1,0 +1,12 @@
+# GNU Make defers every failure to open an included makefile, not absence alone.
+# `eval_makefile` stores the open's errno on the goaldep and returns without a
+# word (read.c:347) — the three it dies on mean make is out of descriptors or
+# memory rather than that this file is a problem — so the run carries on to the
+# update, brings the makefiles ahead of the unopenable one up to date, and only
+# then refuses over it as a target nothing knows how to make. `afile` is an
+# ordinary file, so opening `afile/one.mk` fails with ENOTDIR rather than
+# ENOENT, and the deferral is what lets gen.mk be written at all.
+gen.mk: ; @printf 'Y=1\n' > gen.mk
+include gen.mk
+include afile/one.mk
+all: ; @printf 'all\n' > ran

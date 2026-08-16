@@ -432,9 +432,14 @@ pub(super) fn build_compiler_inputs(
     let mut recipes = loaded.take_pending_recipes().map(Box::new);
     let remakes = loaded.remake_targets().to_vec();
     let forgiven = loaded.forgiven_remake_targets().to_vec();
+    let unread = loaded.unread_remake_targets().to_vec();
     let staged = loaded.staged_targets();
     let boundaries = loaded.evaluation_boundaries().clone();
     let mut graph = loaded.graph;
+    // Before anything is planned: a Makefile the read could not read is a file
+    // that is not there for every question that follows, which is what makes its
+    // own rule out of date and therefore what makes it run.
+    graph.mark_makefiles_unread(&unread);
     let (mut persistence, warning) = Persistence::open(&mut graph, directory)?;
     reported.push_str(warning.as_deref().unwrap_or_default());
 
