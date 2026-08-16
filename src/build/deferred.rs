@@ -178,14 +178,29 @@ impl Builder<'_> {
             })
     }
 
+    /// The prerequisite names this edge's command is to be handed, spelt from
+    /// where that command runs.
+    ///
+    /// GNU Make's recursive child answers `$?` with the names its own Makefile
+    /// wrote — `a b`, never `sub/a sub/b` — and the recipe that reads them runs
+    /// in `sub`, so a qualified name would point at a file that is not there
+    /// from where it stands. A name that reaches outside the unit's directory
+    /// keeps the only spelling it has, which is GNU Make's answer for an
+    /// absolute prerequisite too.
     fn deferred_new_inputs_value(&self, edge: EdgeId) -> Vec<u8> {
+        let directory = self
+            .graph
+            .deferred_freshness(edge)
+            .map(|freshness| freshness.new_inputs_directory.as_bytes())
+            .unwrap_or_default();
         let mut value = Vec::new();
         if let Some(state) = self.runtime.deferred(edge) {
             for input in state.new_inputs() {
                 if !value.is_empty() {
                     value.push(b' ');
                 }
-                value.extend_from_slice(self.graph.node_path(*input).as_bytes());
+                let path = self.graph.node_path(*input);
+                value.extend_from_slice(&relative_to(path.as_bytes(), directory));
             }
         }
         value
@@ -358,5 +373,93 @@ impl Builder<'_> {
             }
             DeferredWork::Ordinary | DeferredWork::Run => true,
         }
+    }
+}
+
+/// `path` spelt from `directory`, undoing the qualification a compilation unit
+/// read elsewhere put on it.
+///
+/// The unit's Makefile wrote `a`, `d/a` or `../up`, and the graph holds
+/// `sub/a`, `sub/d/a` and — once the `..` has met the prefix — `up`. Taking the
+/// prefix off is enough for the first two and not for the third, so the answer
+/// is the ordinary relative path between the two, which gives the `..` back.
+///
+/// Component work rather than a resolution against the filesystem: both names
+/// come out of one graph and are already normalised against each other, and
+/// nothing here should touch the disk. A name that cannot be spelt from the
+/// directory at all — an absolute prerequisite against a relative unit — keeps
+/// the only spelling it has, which is GNU Make's answer for one too.
+fn relative_to(path: &[u8], directory: &[u8]) -> Vec<u8> {
+    if directory.is_empty() {
+        return path.to_vec();
+    }
+    let separator = std::path::MAIN_SEPARATOR as u8;
+    let components = |name: &[u8]| {
+        name.split(move |byte| *byte == separator)
+            .filter(|component| !component.is_empty() && *component != b".")
+            .map(<[u8]>::to_vec)
+            .collect::<Vec<_>>()
+    };
+    let absolute = |name: &[u8]| name.first() == Some(&separator);
+    if absolute(path) != absolute(directory) {
+        return path.to_vec();
+    }
+    let from = components(directory);
+    let to = components(path);
+    let shared = from
+        .iter()
+        .zip(&to)
+        .take_while(|(left, right)| left == right)
+        .count();
+    // A `..` past the shared part would have to be resolved against the disk to
+    // be spelt at all, which is exactly what this must not do.
+    if from[shared..].iter().any(|component| component == b"..") {
+        return path.to_vec();
+    }
+    let mut relative = Vec::with_capacity(path.len());
+    for component in from[shared..]
+        .iter()
+        .map(|_| b"..".as_slice())
+        .chain(to[shared..].iter().map(Vec::as_slice))
+    {
+        if !relative.is_empty() {
+            relative.push(separator);
+        }
+        relative.extend_from_slice(component);
+    }
+    if relative.is_empty() {
+        return path.to_vec();
+    }
+    relative
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relative_to;
+
+    fn spelt(path: &str, directory: &str) -> String {
+        String::from_utf8(relative_to(path.as_bytes(), directory.as_bytes())).unwrap()
+    }
+
+    #[test]
+    fn a_child_units_names_are_spelt_from_the_child() {
+        assert_eq!(spelt("sub/a", "sub"), "a");
+        assert_eq!(spelt("sub/d/a", "sub"), "d/a");
+        // The `..` the child wrote met the prefix in the graph and has to be
+        // given back, which is the whole reason this is a relative path rather
+        // than a prefix taken off the front.
+        assert_eq!(spelt("sub/up", "sub/deep"), "../up");
+        assert_eq!(spelt("up", "sub/deep"), "../../up");
+    }
+
+    #[test]
+    fn a_name_that_cannot_be_spelt_from_the_child_keeps_its_own() {
+        // The root unit, which is every build that never recursed.
+        assert_eq!(spelt("a", ""), "a");
+        // GNU Make's answer for an absolute prerequisite is the absolute name.
+        assert_eq!(spelt("/etc/hostname", "sub"), "/etc/hostname");
+        assert_eq!(spelt("sub/a", "/elsewhere"), "sub/a");
+        // The directory itself, which has no relative spelling at all.
+        assert_eq!(spelt("sub", "sub"), "sub");
     }
 }

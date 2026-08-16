@@ -2,6 +2,27 @@ use super::{BuildGraph, Edge, Node};
 use crate::graph::DeferredFreshness;
 use crate::util::{BString, IdVec};
 
+/// What a front end says about an edge whose real-output freshness it wants
+/// decided late.
+pub struct DeferredSpec<'a> {
+    /// Observed before prerequisite traversal, and not graph outputs of the
+    /// edge: its declared output is a private virtual completion identity.
+    pub outputs: &'a [Node],
+    /// Whether those outputs count as dirty however their timestamps compare.
+    pub always_dirty_output: bool,
+    /// Normal inputs that always enter the late new-input set.
+    pub always_new_inputs: &'a [Node],
+    /// Inputs that still affect freshness but stay out of the published value.
+    pub excluded_new_inputs: &'a [Node],
+    /// The name the scheduler substitutes the published value for, to which it
+    /// assigns no meaning of its own.
+    pub new_inputs_variable: &'a [u8],
+    /// Where the command that reads the value runs, and so what the names in
+    /// it are spelt relative to. A front end that reads every unit where the
+    /// build runs passes nothing and gets the graph's own names.
+    pub new_inputs_directory: &'a [u8],
+}
+
 impl BuildGraph {
     #[cfg(test)]
     pub(crate) fn completion_join_observed_output(&self, node: Node) -> Option<Node> {
@@ -20,24 +41,26 @@ impl BuildGraph {
     /// identity. `always_new_inputs` are normal inputs that always enter the
     /// late new-input set. `excluded_new_inputs` still affect freshness but do
     /// not enter the published value. The scheduler substitutes that value for
-    /// `new_inputs_variable` without assigning any meaning to the name.
-    pub fn set_deferred_freshness(
-        &mut self,
-        edge: Edge,
-        outputs: &[Node],
-        always_dirty_output: bool,
-        always_new_inputs: &[Node],
-        excluded_new_inputs: &[Node],
-        new_inputs_variable: &[u8],
-    ) {
+    /// `new_inputs_variable` without assigning any meaning to the name, and
+    /// spells the names in it relative to `new_inputs_directory`.
+    pub fn set_deferred_freshness(&mut self, edge: Edge, deferred: &DeferredSpec<'_>) {
         self.arenas.set_deferred_freshness(
             edge.0,
             DeferredFreshness {
-                outputs: outputs.iter().map(|node| node.0).collect(),
-                always_dirty_output,
-                always_new_inputs: always_new_inputs.iter().map(|node| node.0).collect(),
-                excluded_new_inputs: excluded_new_inputs.iter().map(|node| node.0).collect(),
-                new_inputs_variable: BString::from(new_inputs_variable),
+                outputs: deferred.outputs.iter().map(|node| node.0).collect(),
+                always_dirty_output: deferred.always_dirty_output,
+                always_new_inputs: deferred
+                    .always_new_inputs
+                    .iter()
+                    .map(|node| node.0)
+                    .collect(),
+                excluded_new_inputs: deferred
+                    .excluded_new_inputs
+                    .iter()
+                    .map(|node| node.0)
+                    .collect(),
+                new_inputs_variable: BString::from(deferred.new_inputs_variable),
+                new_inputs_directory: BString::from(deferred.new_inputs_directory),
                 activations: IdVec::new(),
             },
         );

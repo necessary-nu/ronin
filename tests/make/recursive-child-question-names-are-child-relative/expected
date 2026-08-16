@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| all:
+| 	@$(MAKE) --no-print-directory -C sub
+file sub/Makefile kept 2
+| out: a b
+| 	@printf "at=%s lt=%s hat=%s q=%s star=%s\n" "$@" "$<" "$^" "$?" "$*" > report
+file sub/a kept 1
+| A
+file sub/b kept 1
+| B
+file sub/report touched 1
+| at=out lt=a hat=a b q=a b star=

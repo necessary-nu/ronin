@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| all:
+| 	@$(MAKE) --no-print-directory -C sub
+file sub/Makefile kept 2
+| out: $(CURDIR)/held a
+| 	@printf "q=[%s]\n" "$?" | sed "s|$(CURDIR)|ABS|g" > report
+file sub/a kept 1
+| A
+file sub/held kept 1
+| H
+file sub/report touched 1
+| q=[ABS/held a]

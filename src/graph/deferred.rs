@@ -21,6 +21,17 @@ pub(crate) struct DeferredFreshness {
     /// the value substituted for Make's `$?` automatic variable.
     pub(crate) excluded_new_inputs: IdVec<NodeId>,
     pub(crate) new_inputs_variable: BString,
+    /// The directory the command reads that value from, and so the directory
+    /// the names in it are spelt relative to.
+    ///
+    /// A graph holds one namespace of paths, so a compilation unit that was
+    /// read somewhere else contributes its nodes under that path. The command
+    /// it produced runs there rather than here, which is what makes the
+    /// qualified name the wrong one to hand it: GNU Make's recursive child
+    /// answers `$?` with the names its own Makefile wrote. Empty for a unit
+    /// that was read where the build runs, which is the common case and costs
+    /// nothing.
+    pub(crate) new_inputs_directory: BString,
     /// Roots that become dependencies only when the late predicate succeeds.
     /// Recursive front ends use this to compose conditional child graphs
     /// without starting a nested executor.

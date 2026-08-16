@@ -37,6 +37,7 @@ mod execute;
 mod ordering;
 
 pub use crate::parse::{Manifest, ManifestOptions, load_manifest};
+pub use deferred::DeferredSpec;
 pub use execute::{Build, Jobs, Outcome, Persistence, Planned};
 
 /// A path interned in a graph.

@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| all:
+| 	@$(MAKE) --no-print-directory -C sub
+file sub/Makefile kept 2
+| all:
+| 	@$(MAKE) --no-print-directory -C deep
+file sub/deep/Makefile kept 2
+| out: d/a ../up b
+| 	@printf "q=[%s]\n" "$?" > report
+file sub/deep/b kept 1
+| B
+file sub/deep/d/a kept 1
+| A
+file sub/deep/report touched 1
+| q=[d/a ../up b]
+file sub/up kept 1
+| U

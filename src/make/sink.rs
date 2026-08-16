@@ -602,14 +602,7 @@ impl GraphSink {
         };
         self.graph.set_edge_rule(edge, rule);
         if let Some(deferred) = pending.deferred {
-            self.graph.set_deferred_freshness(
-                edge,
-                &deferred.outputs,
-                deferred.always_dirty_output,
-                &deferred.always_new_inputs,
-                &deferred.excluded_new_inputs,
-                b"KATI_NEW_INPUTS",
-            );
+            self.defer_freshness(edge, &deferred);
             self.graph.add_deferred_activations(edge, &child_targets);
         }
         if let Some(output) = pending.completion_output {
@@ -685,6 +678,26 @@ impl GraphSink {
     /// The typed construction failure behind kati's sink error, if any.
     pub(crate) fn construction_failure(&self) -> Option<FrontendError> {
         self.failure.clone()
+    }
+
+    /// Hand one edge's late freshness to the graph.
+    ///
+    /// `KATI_NEW_INPUTS` is the name kati writes into a recipe for `$?`; the
+    /// unit's path prefix is what the value's names are spelt against, because
+    /// the command runs where the unit's Makefile was read and GNU Make's
+    /// recursive child names its prerequisites the way that Makefile did.
+    fn defer_freshness(&mut self, edge: Edge, deferred: &PendingDeferred) {
+        self.graph.set_deferred_freshness(
+            edge,
+            &crate::frontend::DeferredSpec {
+                outputs: &deferred.outputs,
+                always_dirty_output: deferred.always_dirty_output,
+                always_new_inputs: &deferred.always_new_inputs,
+                excluded_new_inputs: &deferred.excluded_new_inputs,
+                new_inputs_variable: b"KATI_NEW_INPUTS",
+                new_inputs_directory: self.unit.path_prefix.as_os_str().as_bytes(),
+            },
+        );
     }
 
     /// Record a construction failure and give kati something to unwind with.
@@ -1218,14 +1231,7 @@ impl BuildSink for GraphSink {
                     .set_withdrawal(built, withdrawal.outputs, withdrawal.on_error);
                 self.graph.set_peer_outputs(built, peer_outputs);
                 if let Some(deferred) = deferred {
-                    self.graph.set_deferred_freshness(
-                        built,
-                        &deferred.outputs,
-                        deferred.always_dirty_output,
-                        &deferred.always_new_inputs,
-                        &deferred.excluded_new_inputs,
-                        b"KATI_NEW_INPUTS",
-                    );
+                    self.defer_freshness(built, &deferred);
                 }
                 if edge.completion_join {
                     self.graph.set_completion_join(built, completion_output);
