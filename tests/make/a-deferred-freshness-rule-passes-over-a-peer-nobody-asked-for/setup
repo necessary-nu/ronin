@@ -1,0 +1,10 @@
+echo body > a.in
+echo current > a.c
+echo body > b.in
+echo current > b.c
+echo current > b.h
+touch -d '2020-01-01 00:00' a.in
+touch -d '2020-01-03 00:00' a.c
+touch -d '2020-01-01 00:00' b.in
+touch -d '2020-01-03 00:00' b.c
+touch -d '2020-01-03 00:00' b.h

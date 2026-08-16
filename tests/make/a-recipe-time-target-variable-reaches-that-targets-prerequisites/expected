@@ -1,0 +1,43 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 33
+| # A prerequisite does not hold a copy of what its parent bound: GNU Make's
+| # `initialize_file_variables' chains the file's own sets in front of the
+| # parent's, so a write into the parent's set at any point in the run is read
+| # through that link by anything not yet expanded. A recipe-time
+| # `$(eval parent: V = x)' therefore reaches the prerequisites of `parent' as
+| # well as `parent' itself, and reaches them however far down they are.
+| #
+| # `kid' inherits it; `gkid' inherits it through `kid'; `own' does not, because
+| # it bound the name itself; `late' cannot, because it is a prerequisite of the
+| # setter and its recipe was already text by the time the setter ran. Every
+| # order here is forced with a prerequisite chain rather than left to the
+| # scheduler.
+| V = outer
+| own: V = mine
+| all: parent
+| parent: setter kid own
+| setter: late
+| kid: setter gkid
+| gkid: setter
+| own: setter
+| late:
+| 	@echo "late:[$(V)]" >> log
+| setter:
+| 	$(eval parent: V = to-parent)
+| 	@echo "setter done" >> log
+| gkid:
+| 	@echo "gkid:[$(V)]" >> log
+| kid:
+| 	@echo "kid:[$(V)]" >> log
+| own:
+| 	@echo "own:[$(V)]" >> log
+| parent:
+| 	@echo "parent:[$(V)]" >> log
+file log touched 6
+| late:[outer]
+| setter done
+| gkid:[to-parent]
+| kid:[to-parent]
+| own:[mine]
+| parent:[to-parent]

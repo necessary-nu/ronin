@@ -1,0 +1,28 @@
+# A target-specific `+=' is resolved where it is read, not where it is
+# installed. `variable_append' (src/expand.c:511) walks the set chain a second
+# time when the variable is expanded, under the reader's own `local', so it
+# steps over a `private' binding for a prerequisite and not for the target's
+# own recipe -- and the base the append lands on differs between the two.
+#
+# V: the base is hidden behind a private pattern binding.
+# W: the same, where the hidden binding is itself an append.
+# X: the same again with nothing outside the rule, so the walk finds no base.
+# Y: the control -- nothing private, and both readers agree.
+V = g
+%.o: private V = p
+a.o: V += t
+
+W = g
+%.o: private W += p
+a.o: W += t
+
+%.o: private X += p
+a.o: X += t
+
+Y = g
+%.o: Y += p
+a.o: Y += t
+
+all: a.o
+a.o: dep ; @echo "own V=[$(V)] W=[$(W)] X=[$(X)] Y=[$(Y)]" >> log
+dep: ; @echo "dep V=[$(V)] W=[$(W)] X=[$(X)] Y=[$(Y)]" >> log

@@ -1,0 +1,16 @@
+# The list `$*' reads is `.SUFFIXES' as the read left it rather than a fixed
+# table, so a bare `.SUFFIXES:' takes every answer away and what a Makefile
+# writes after it puts answers back -- `.c' has no stem here and `.q' does,
+# which is the reverse of what the built-in list gives.
+#
+# Which of two suffixes a name ends in is the list's ORDER and not the longer
+# match, because the walk stops at the first entry that fits: `.z' written
+# before `.a.z' leaves the `.a' on the stem, and `.b.y' written before `.y'
+# takes it off.
+.SUFFIXES:
+.SUFFIXES: .q .z .a.z .b.y .y
+all: a.c b.q foo.a.z bar.b.y
+a.c: ; @echo "withdrawn=[$*]" >> log
+b.q: ; @echo "added=[$*]" >> log
+foo.a.z: ; @echo "shorter-first=[$*]" >> log
+bar.b.y: ; @echo "longer-first=[$*]" >> log

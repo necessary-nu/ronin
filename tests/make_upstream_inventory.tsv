@@ -1238,8 +1238,8 @@ case	variables/automatic.diff	unclassified	ninja-progress+recipe-echo+evaluation
 case	variables/automatic.diff.1	narration	ninja-progress
 case	variables/automatic.diff.2	narration	ninja-progress
 case	variables/automatic.diff.3	narration	ninja-progress
-case	variables/automatic.diff.4	unclassified	ninja-progress+evaluation
-case	variables/automatic.diff.5	unclassified	ninja-progress+evaluation
+case	variables/automatic.diff.4	narration	ninja-progress
+case	variables/automatic.diff.5	narration	ninja-progress
 case	variables/automatic.diff.6	narration	ninja-progress
 case	variables/automatic.diff.7	unclassified	no-work-line+evaluation
 case	variables/automatic.diff.8	narration	ninja-progress

@@ -486,6 +486,10 @@ assertions (
     {id make-progress-total-shrinks-to-the-work, kind @complete, author "brendan@necessary.nu", at 2026-08-16T11:54:48.76750394Z}
     {id make-recipe-output-function-is-not-a-command, kind @complete, author "brendan@necessary.nu", at 2026-08-16T12:17:19.925146478Z}
     {id make-shuffle-mode-is-validated-where-gnu-does-not, kind @complete, author "brendan@necessary.nu", at 2026-08-16T12:33:50.643831058Z}
+    {id make-target-specific-append-reads-the-readers-scope, kind @doing, author "brendan@necessary.nu", at 2026-08-16T13:39:58.039557601Z}
+    {id make-recipe-time-target-variable-reaches-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-16T13:40:05.626256682Z}
+    {id make-explicit-rule-stem-from-a-known-suffix, kind @doing, author "brendan@necessary.nu", at 2026-08-16T13:40:10.63792633Z}
+    {id make-deferred-freshness-hides-a-multi-target-peer, kind @doing, author "brendan@necessary.nu", at 2026-08-16T13:40:15.744530841Z}
 )
 
 impl_evidence (

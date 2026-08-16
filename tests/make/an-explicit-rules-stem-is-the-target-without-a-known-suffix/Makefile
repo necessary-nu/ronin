@@ -1,0 +1,13 @@
+# `$*' on an EXPLICIT rule is not the empty string it is for a rule no pattern
+# chose: Unix Make sets it to the target name with a known suffix taken off,
+# and `set_file_variables' (src/commands.c:97) reads `.SUFFIXES' to decide
+# which suffixes those are. `.c' is one of the thirty-five the built-in
+# catalogue installs and `.q' is not, which is the whole of the difference
+# between the first two lines. The name has to be longer than the suffix, so a
+# target named for the suffix alone has no stem; and the stem keeps whatever
+# directory the target carried, which is what the `D' and `F' forms divide.
+all: a.c b.q .c sub/d.c
+a.c: ; @echo "known=[$*]" >> log
+b.q: ; @echo "unknown=[$*]" >> log
+.c: ; @echo "bare=[$*]" >> log
+sub/d.c: ; @echo "nested=[$*] D=[$(*D)] F=[$(*F)]" >> log
