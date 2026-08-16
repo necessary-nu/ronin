@@ -711,6 +711,33 @@ fn reobserved(graph: &BuildGraph) -> Vec<String> {
     outputs_where(graph, |edge| edge.outputs_reobserved)
 }
 
+/// Every wait either graph forgives a failure of, as a sorted list of
+/// `consumer <- input` pairs.
+fn forgiven_order(graph: &BuildGraph) -> Vec<String> {
+    let arenas = graph.arenas();
+    let mut pairs = arenas
+        .edge_ids()
+        .flat_map(|edge| {
+            arenas
+                .edge(edge)
+                .input
+                .iter()
+                .filter(move |input| arenas.order_is_forgiven(edge, **input))
+                .flat_map(move |input| {
+                    arenas.edge(edge).out.iter().map(move |output| {
+                        format!(
+                            "{} <- {}",
+                            arenas.node_path(*output),
+                            arenas.node_path(*input)
+                        )
+                    })
+                })
+        })
+        .collect::<Vec<_>>();
+    pairs.sort();
+    pairs
+}
+
 /// Every output either graph is allowed to find missing, as a sorted list of
 /// paths.
 fn intermediate(graph: &BuildGraph) -> Vec<String> {
@@ -994,6 +1021,45 @@ asked: .KATI_RESTAT := 1
     );
     assert!(
         reobserved(&both.parsed).is_empty(),
+        "a manifest has no way to say this, so reading one back must not invent it"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
+    );
+}
+
+/// The chain between two entries of a double-colon target is an ordering with
+/// the status taken out of it, and only the direct graph can say so.
+///
+/// Ninja's manifest has one word for a wait and it means "after it succeeded",
+/// so a graph read back from `build.ninja` has an ordinary order-only edge
+/// there. The comparison is deliberately silent about the difference, as it is
+/// about re-observation and peers: what a manifest cannot state, a graph parsed
+/// from one must not appear to have lost.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
+#[test]
+fn forgiven_chain_edge_reaches_direct_graph() {
+    let case = Case::new(
+        "\
+out:: n1
+\t@echo first
+out:: n2
+\t@echo second
+n1: ; @touch n1
+n2: ; @touch n2
+",
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(
+        forgiven_order(&both.direct),
+        vec![".ronin_grouped_double/1 <- .ronin_grouped_double/0".to_owned()],
+        "the second entry waits for the first and outlives its failure"
+    );
+    assert!(
+        forgiven_order(&both.parsed).is_empty(),
         "a manifest has no way to say this, so reading one back must not invent it"
     );
     assert_eq!(

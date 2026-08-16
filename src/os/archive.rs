@@ -183,7 +183,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_archive_member_name_comes_apart_where_gnu_make_parts_it() {
+    fn member_name_comes_apart_like_gnu() {
         assert_eq!(
             split_member(b"lib.a(foo.o)"),
             Some((&b"lib.a"[..], &b"foo.o"[..]))
@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn a_deterministic_archive_records_no_date_at_all() {
+    fn deterministic_archive_records_no_date() {
         let directory = tempfile::tempdir().unwrap();
         let path = archive(directory.path(), "-rc");
         // `ar` defaults to deterministic mode here, which writes zero, and
@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[test]
-    fn a_dated_archive_answers_for_both_name_lengths() {
+    fn dated_archive_answers_both_name_lengths() {
         let directory = tempfile::tempdir().unwrap();
         let path = archive(directory.path(), "-rcU");
         assert!(member_date(&path, b"member.o").is_some_and(|date| date > 0));
@@ -238,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn a_file_that_is_not_an_archive_holds_no_members() {
+    fn a_non_archive_holds_no_members() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("not-an-archive");
         std::fs::write(&path, b"just bytes\n").unwrap();

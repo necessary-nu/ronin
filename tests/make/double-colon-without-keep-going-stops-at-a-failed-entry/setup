@@ -1,0 +1,2 @@
+printf 'a\n' > n1
+printf 'b\n' > n2

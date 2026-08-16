@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 9
+| # The same chain without `-k`. GNU Make abandons the rest of the chain at the
+| # first entry that fails, so only the first recipe's mark is in the log. This
+| # is the half of the behaviour that says the chain edge is still an ordering:
+| # the later entries are reachable, and what stops them is the run ending.
+| out:: n1
+| 	@printf '%s\n' first >> log
+| 	@false
+| out:: n2
+| 	@printf '%s\n' second >> log
+file log touched 1
+| first
+file n1 kept 1
+| a
+file n2 kept 1
+| b

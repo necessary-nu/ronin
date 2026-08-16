@@ -240,6 +240,8 @@ pub(crate) struct PendingSubninja {
     implicit_outputs: Vec<Node>,
     inputs: Vec<Node>,
     order_only_inputs: Vec<Node>,
+    /// The subset of `order_only_inputs` this wrapper outlives a failure of.
+    forgiven_order_inputs: Vec<Node>,
     validations: Vec<Node>,
     always_dirty: bool,
     deferred: Option<PendingDeferred>,
@@ -640,6 +642,8 @@ impl GraphSink {
         // what the parent's other targets read, not the fact that a sub-build
         // ran.
         self.graph.set_make_target_freshness(edge);
+        self.graph
+            .forgive_order_inputs(edge, &pending.forgiven_order_inputs);
         // The wrapper edge is the one that will hold the parent's residual
         // recipe once the children are composed, so a failure there is the
         // failure that leaves the parent's own outputs half-made.
@@ -1127,6 +1131,7 @@ impl BuildSink for GraphSink {
         let implicit_outputs = self.node_list(names, edge.implicit_outputs)?;
         let inputs = self.node_list(names, edge.inputs)?;
         let order_only_inputs = self.node_list(names, edge.order_only_inputs)?;
+        let forgiven_order_inputs = self.node_list(names, edge.forgiven_order_only_inputs)?;
         let validations = self.node_list(names, edge.validations)?;
         let withdrawal = PendingWithdrawal {
             outputs: self.node_list(names, edge.withdrawable_outputs)?,
@@ -1157,6 +1162,7 @@ impl BuildSink for GraphSink {
                 implicit_outputs,
                 inputs,
                 order_only_inputs,
+                forgiven_order_inputs,
                 validations,
                 always_dirty: edge.always_dirty,
                 deferred,
@@ -1206,6 +1212,8 @@ impl BuildSink for GraphSink {
                 // Makefile asks for. `.KATI_RESTAT` is a separate and narrower
                 // request that still emits its own `restat` binding.
                 self.graph.set_make_target_freshness(built);
+                self.graph
+                    .forgive_order_inputs(built, &forgiven_order_inputs);
                 self.graph
                     .set_withdrawal(built, withdrawal.outputs, withdrawal.on_error);
                 self.graph.set_peer_outputs(built, peer_outputs);

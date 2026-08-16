@@ -2,6 +2,7 @@
 
 mod deferred;
 mod edge;
+mod forgiven;
 mod ids;
 mod index;
 mod intermediate;
@@ -186,6 +187,9 @@ pub(crate) struct Graph {
     /// neither run again nor believe in. Beside the arena for the reason
     /// `withdrawal` is: no node of a Ninja manifest is ever in it.
     unmade_makefiles: crate::htab::RapidHashSet<NodeId>,
+    /// Waits whose consumer outlives a failure of what it waited for. See
+    /// [`mod@forgiven`]; beside the arena for the reason `withdrawal` is.
+    forgiven_order: crate::htab::RapidHashSet<(EdgeId, NodeId)>,
     /// Outputs a recipe makes only on the way to making something else, for the
     /// edges that have any. Beside the arena for the reason `withdrawal`
     /// is: almost no edge in almost any graph has one.

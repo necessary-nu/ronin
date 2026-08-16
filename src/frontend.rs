@@ -34,6 +34,7 @@ use std::num::NonZeroUsize;
 
 mod deferred;
 mod execute;
+mod ordering;
 
 pub use crate::parse::{Manifest, ManifestOptions, load_manifest};
 pub use execute::{Build, Jobs, Outcome, Persistence, Planned};
@@ -632,22 +633,6 @@ impl BuildGraph {
     pub(crate) fn attach_validation(&mut self, edge: Edge, validation: Node) {
         self.arenas.add_validation_use(validation.0, edge.0);
         self.arenas.edge_mut(edge.0).validation.push(validation.0);
-    }
-
-    /// Make `edge` wait for additional order-only inputs.
-    ///
-    /// Subninja composition uses this to preserve the parent recipe boundary:
-    /// every prerequisite of the wrapper target finishes before any edge in
-    /// the requested child subtree starts, without making that prerequisite
-    /// part of the child's own timestamp dirtiness calculation.
-    pub(crate) fn add_order_only_inputs(&mut self, edge: Edge, inputs: &[Node]) {
-        for input in inputs {
-            if self.arenas.edge(edge.0).input.contains(&input.0) {
-                continue;
-            }
-            nodeuse(&mut self.arenas, input.0, edge.0);
-            self.arenas.edge_mut(edge.0).input.push(input.0);
-        }
     }
 
     /// Promote additional inputs into the ordinary explicit partition.

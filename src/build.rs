@@ -224,6 +224,10 @@ pub(crate) struct Plan {
     /// A niche-packed identifier makes the empty case free, so this is half
     /// the width of the index-plus-sentinel it replaced.
     dependency_marks: Vec<Option<EdgeId>>,
+    /// Edges a failure reached through a wait that was not forgiven, so they
+    /// can never run. Empty — and never grown — for a graph with no forgiven
+    /// wait in it, which is every Ninja manifest.
+    abandoned: Vec<bool>,
     completed_count: usize,
     failures: usize,
 }
@@ -371,6 +375,7 @@ impl Plan {
         // Marks persist across rebuilds, so a stale mark from the previous
         // frontier would wrongly suppress a dependency; reset before reuse.
         self.dependency_marks.fill(None);
+        self.abandoned.clear();
         for edge in graph.edge_ids() {
             let index = edge.index();
             if !self.tracked[index] || self.completed[index] {
@@ -537,56 +542,9 @@ impl Plan {
         }
         if result == EdgeResult::Failed {
             self.failures += 1;
-            return Ok(Vec::new());
+            return Ok(self.abandon_dependents(graph, runtime, edge));
         }
         Ok(self.release_dependents(graph, runtime, edge))
-    }
-
-    /// Unblock what the finished edge was holding, and prune what it turned out
-    /// not to have dirtied.
-    ///
-    /// A dependent reached with every input settled and no dirty output is the
-    /// case Ninja's `Plan::CleanNode` handles: a `restat` found the input
-    /// unchanged, so the consumer is no longer work. Ninja both drops its want
-    /// and tells the status printer the plan lost an edge, which is why its
-    /// total shrinks mid-build; the pruned command edges are returned so the
-    /// caller can do the same. Such an edge had a pending input a moment ago
-    /// and so had never started — nothing already counted as finished is ever
-    /// taken away.
-    fn release_dependents(
-        &mut self,
-        graph: &Graph,
-        runtime: &RuntimeState,
-        finished: EdgeId,
-    ) -> Vec<EdgeId> {
-        let mut pruned = Vec::new();
-        let mut work = vec![finished];
-        while let Some(edge) = work.pop() {
-            for index in 0..self.dependents[edge.index()].len() {
-                let dependent = self.dependents[edge.index()][index];
-                self.pending[dependent.index()] -= 1;
-                if self.pending[dependent.index()] != 0 {
-                    continue;
-                }
-                let dirty = graph
-                    .edge(dependent)
-                    .out
-                    .iter()
-                    .any(|output| runtime.node(*output).dirty());
-                if dirty {
-                    self.ready
-                        .push(ReadyEdge::new(self.weight[dependent.index()], dependent));
-                } else if !std::mem::replace(&mut self.completed[dependent.index()], true) {
-                    self.completed_count += 1;
-                    let rule = graph.edge(dependent).rule;
-                    if self.unwant(dependent) && rule.is_some() && !graph.is_phony_rule(rule) {
-                        pruned.push(dependent);
-                    }
-                    work.push(dependent);
-                }
-            }
-        }
-        pruned
     }
 
     pub(crate) const fn more_to_do(&self) -> bool {
@@ -2175,6 +2133,7 @@ impl<'a> Builder<'a> {
 }
 
 mod command;
+mod release;
 use command::Runs;
 pub(crate) use command::{LateBinding, LateCommand, LateCommands};
 mod deferred;
