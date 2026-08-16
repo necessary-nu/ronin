@@ -731,3 +731,55 @@ fn a_dry_run_raises_the_error() {
     assert!(!directory.join("out").exists(), "{reported}");
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// A `$(shell)` command with no shell syntax in it is exec'd directly, so the
+/// program that is not there is reported against its own name.
+///
+/// GNU Make's `construct_command_argv_internal` (reference/gnumake/src/job.c)
+/// hands a line to `$(SHELL)` only when something in it needs a shell. For one
+/// that does not, Make goes looking for the program itself and says so:
+/// `make: ./nosuchprog: No such file or directory`. A single `>` in the line
+/// makes it the shell's errand instead, and then the shell is the one that
+/// reports — `/bin/sh: 1: ./nosuchprog: not found` — which is what Ronin used
+/// to say for both.
+#[test]
+fn shell_function_names_the_missing_program() {
+    let directory = test_directory("shell-direct");
+    write_at(
+        &directory,
+        "Makefile",
+        "DIRECT := $(shell ./nosuchprog arg)\n\
+         all: ; @printf '%s\\n' 'direct [$(DIRECT)]'\n",
+        1,
+    );
+    let direct = make_command(&directory).output().unwrap();
+    let said = String::from_utf8_lossy(&direct.stderr).into_owned();
+    assert!(
+        said.contains("./nosuchprog: No such file or directory"),
+        "the program's own name and the errno, not a shell's wording: {said}"
+    );
+    assert!(
+        !said.contains("/bin/sh"),
+        "no shell was involved, so none may be quoted: {said}"
+    );
+    assert!(
+        String::from_utf8_lossy(&direct.stdout).contains("direct []"),
+        "the command produced nothing, as it does for GNU Make"
+    );
+
+    // The same command with one redirection in it: now a shell is required,
+    // and the shell is what reports.
+    write_at(
+        &directory,
+        "Makefile",
+        "SHELLED := $(shell ./nosuchprog > out)\n\
+         all: ; @printf '%s\\n' 'shelled [$(SHELLED)]'\n",
+        1,
+    );
+    let shelled = make_command(&directory).output().unwrap();
+    let said = String::from_utf8_lossy(&shelled.stderr).into_owned();
+    assert!(
+        said.contains("/bin/sh"),
+        "a redirection is the shell's errand and its diagnostic: {said}"
+    );
+}

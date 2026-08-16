@@ -729,8 +729,8 @@ case	functions/shell.diff.10	narration	ninja-progress
 case	functions/shell.diff.11	narration	ninja-progress+recipe-echo
 case	functions/shell.diff.12	narration	ninja-progress
 case	functions/shell.diff.13	narration	ninja-progress+recipe-echo
-case	functions/shell.diff.14	narration	ninja-progress+product-name+command-not-found-text
-case	functions/shell.diff.15	narration	ninja-progress+product-name+command-not-found-text
+case	functions/shell.diff.14	narration	product-name+ninja-progress
+case	functions/shell.diff.15	narration	product-name+ninja-progress
 case	functions/shell.diff.16	narration	ninja-progress
 case	functions/shell.diff.17	narration	ninja-progress
 case	functions/shell.diff.18	unclassified	ninja-progress+product-name+recipe-echo+evaluation
