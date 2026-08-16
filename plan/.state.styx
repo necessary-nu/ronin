@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-13T15:22:26.730359032Z
+last_sync_at 2026-08-16T19:30:41.207932258Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -22,6 +22,7 @@ rule_versions (
     {id make.narration, version 1}
     {id make.no-ambient-state, version 0}
     {id make.oracle-provenance, version 0}
+    {id make.remade-target-re-observed, version 0}
     {id make.scope-separation, version 0}
     {id performance.allocation-accounting, version 0}
     {id performance.no-unexplained-regression, version 0}
@@ -61,23 +62,51 @@ derived_priorities (
     {id kati-symbol-display, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-symtab-split, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-wellknown-symbols, priority 3, derived_at 2026-08-04T18:10:27.805223477Z}
+    {id make-a-failed-makefile-rule-still-reports-the-unread-include, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-a-forgiven-makefile-is-not-remade-for-the-goals, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-an-unopenable-include-is-reported-where-gnu-reports-it, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-an-unreadable-include-is-refused-rather-than-raised, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-archive-member-globbing, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-archive-member-list-in-one-name, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-archive-member-targets, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-archive-member-touch, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-archive-suffix-rule-conversion, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-assignment-operator-scan-skips-a-reference, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-automatic-variable-value-function, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-bad-option-argument-in-a-makefiles-makeflags, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-bare-secondary-still-builds, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-builtin-rule-catalogue, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-builtin-variable-defaults, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-child-automatic-variables-are-child-relative, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-circular-dependency-is-dropped, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-clean-dependency-bridges, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-conformance-corpus, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-conformance-oracle-identity, priority 3, derived_at 2026-08-13T14:32:14.94979399Z}
     {id make-continuation-expansion, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-corpus-host-make-shellout, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-current-recursive-wrapper-freshness, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
+    {id make-default-goal-suffix-rejection, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-default-goal-variable-semantics, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-deferred-freshness-binds-at-before-the-timestamps-are-known, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-deferred-freshness-hides-a-multi-target-peer, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-deferred-output-portability, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
     {id make-delete-on-error-cleanup, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-delete-on-error-races-a-secondary, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-diagnostic-identity, priority 0, derived_at 2026-08-08T21:00:59.885791732Z}
     {id make-diagnostic-prefix, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-diagnostic-quote-style, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-double-colon-keep-going-continues-the-chain, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-double-colon-rule-freshness, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-empty-expansion-runs-nothing, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-empty-variable-append, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-environment-origin-precedes-the-switches, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-escaped-prerequisite-colon, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-every-makefile-argument-is-read, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-explicit-rule-stem-from-a-known-suffix, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-export-scope-semantics, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-extra-prereqs-are-real-prerequisites, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-features-variable, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-file-function-in-recipes, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-filter-percent-escaping, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-graph-equivalence, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-grouped-double-colon-actions, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
@@ -85,52 +114,119 @@ derived_priorities (
     {id make-included-makefile-restarts, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-inherited-export-reassignment, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-io-error-wording, priority 0, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-jobserver-style-is-checked, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-keep-going-refuses-every-makefile-it-cannot-make, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-lazy-recipe-expansion, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-licence-position, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
+    {id make-link-library-prerequisites, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-local-binding-assignment-scope, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-makefile-list-initialization, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-makefile-set-jobserver-style, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-makefile-set-makeflags, priority 0, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-makefile-set-no-builtin-rules, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-makefile-standard-input, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-makefiles-variable, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-makeflags-in-recipe-environment, priority 0, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-makeflags-residue-classification, priority 3, derived_at 2026-08-09T19:04:32.868792493Z}
+    {id make-match-anything-rule-chaining, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-mixed-implicit-and-normal-rule-severity, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-mode-cli, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-modern-function-evaluation, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-multi-target-pattern-trigger-identity, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-newer-prerequisite-automatic-variable, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-notdir-strips-a-root-directory, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-option-coverage, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-optional-include-failure-is-per-file, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-optional-include-rule-failure, priority 3, derived_at 2026-08-13T15:22:26.730359032Z}
     {id make-oracle-distro-divergence, priority 2, derived_at 2026-08-13T14:32:14.94979399Z}
     {id make-oracle-identity-record, priority 0, derived_at 2026-08-13T14:32:14.94979399Z}
     {id make-oracle-pristine-baseline, priority 1, derived_at 2026-08-13T14:32:14.94979399Z}
+    {id make-oracle-recording-trailing-newline, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-output-sync-feature-advertisement, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-path-automatic-variables-defined-at-read-time, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-path-function-semantics, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-pattern-peer-is-not-intermediate, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-pattern-peer-restart-convergence, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-pattern-peer-warning, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-pattern-prerequisite-directory-stem, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-pattern-prerequisite-wildcard-sees-the-build-as-it-runs, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-pattern-prerequisite-wildcards, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-pattern-rule-cancellation, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-pattern-rule-candidate-identity, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-pattern-rule-deferred-prerequisite-identity, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-pattern-rule-output-overlap, priority 3, derived_at 2026-08-09T19:04:32.868792493Z}
     {id make-pattern-rule-prerequisite-names, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-pattern-search-specific-rule-match, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-pattern-specific-variable-application, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-pattern-variable-assignment-scope, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-phony-always-dirty, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-port-harness-scratch-is-shared-between-runs, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-posix-continuation-blanks, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-posix-recipe-semantics, priority 1, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-precious-intermediate-retention, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-private-binding-keeps-the-public-value, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-process-cwd-tests-race-each-other, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-process-directory-isolation, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
+    {id make-progress-total-shrinks-to-the-work, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-question-mode-refuses-a-makefile-it-cannot-make, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-command-narration, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
+    {id make-recipe-continuation-bytes, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-eval-mutation-refusal, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-recipe-expanded-newline, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recipe-file-operation-at-launch-only, priority 2, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recipe-line-is-its-own-shell, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recipe-output-function-is-not-a-command, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recipe-time-export-reaches-the-environment, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recipe-time-target-variable-reaches-prerequisites, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recipe-time-target-variable-reaches-the-scope, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recursive-child-recipes-expand-at-launch, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recursive-evaluation-boundary, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-recursive-prerequisite-boundary, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-recursive-target-namespace, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-release-clippy-runnable, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-release-gate-stops-at-the-port-ladder, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-release-pedantic-in-the-test-scope, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-release-port-gate-has-no-source, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-remade-target-is-re-observed, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-remake-before-refusing-a-makefile, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-remake-work-not-repeated, priority 3, derived_at 2026-08-13T15:22:26.730359032Z}
     {id make-remaking-ignores-goal-switches, priority 3, derived_at 2026-08-13T15:22:26.730359032Z}
+    {id make-repaint-budget-test-reads-the-wall-clock, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-restart-count-is-not-a-compilation-input, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-rule-file-sequence-escaped-whitespace, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-scheduler-completion-test-is-timing-fragile, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-second-expansion-pattern-first-percent, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-semicolon-does-not-stop-an-assignment-scan, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-shadowed-name-is-not-self-reference, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-shell-function-evaluation, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-shuffle-mode-is-validated-where-gnu-does-not, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-shuffle-reaches-the-circular-drop, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-shuffled-drop-unlinks-the-position-not-the-edge, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-signal-killed-recipe-deletion, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-simple-command-without-a-shell, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-static-pattern-escaped-percent, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-static-pattern-nonmatch-semantics, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-stdin-refusal-test-races-its-write, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-suffix-rule-stem-variable, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
+    {id make-suffix-shaped-target-with-prerequisites, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-target-specific-append-expands-its-tail-where-it-is-read, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-target-specific-append-reads-the-readers-scope, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-target-specific-separator-is-literal, priority 3, derived_at 2026-08-09T19:04:32.868792493Z}
     {id make-target-specific-separator-provenance, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-terminal-pattern-rule-needs-an-existing-prerequisite, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-timestamp-only-recipe-freshness, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
+    {id make-trailing-dollar-in-a-value, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-unknown-switch-in-a-makefiles-makeflags, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-upstream-failure-block-narration-unrecognised, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-upstream-parallelism-interleave-flaps, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-upstream-residue-triage, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-variable-is-one-word, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-vpath-found-name-merges-two-declared-targets, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-vpath-gpath-output-location, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-vpath-name-survives-only-a-current-target, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-vpath-prerequisite-resolves-to-a-target, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-wildcard-cache-coherence, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-word-index-out-of-range, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id ronin-alloc-metrics, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-allocator-revisit, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-arena-slot-access, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
@@ -574,6 +670,13 @@ impl_evidence (
     ), rule_versions_seen (
         {id make.narration, version 1}
     )}
+    {id make-remade-target-is-re-observed, covered_rules (
+        make.remade-target-re-observed
+    ), covered_claims (
+        {impl_name target-impl, rule make.remade-target-re-observed}
+    ), rule_versions_seen (
+        {id make.remade-target-re-observed, version 0}
+    )}
     {id make-single-ninja-scheduler, covered_rules (
         make.jobserver
     ), covered_claims (
@@ -795,10 +898,5 @@ impl_evidence (
         {impl_name target-impl, rule runtime.typed-runtime-state}
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
-    )}
-    {id make-remade-target-is-re-observed, covered_rules (
-        make.remade-target-re-observed
-    ), covered_claims (
-        {impl_name target-impl, rule make.remade-target-re-observed}
     )}
 )
