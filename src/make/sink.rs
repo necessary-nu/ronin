@@ -11,8 +11,8 @@ use crate::frontend::{
 };
 use kati::anyhow;
 use kati::build_sink::{
-    BuildSink, DeferredRecipeId, FileEvaluation, NewInputsTiming, RecipeExpansion, RuleId,
-    ShellEvaluation, SinkCommand, SinkEdge, SinkPool, SinkRule,
+    BuildSink, DeferredRecipeId, FileEvaluation, NewInputsTiming, OutputEvaluation,
+    RecipeExpansion, RuleId, ShellEvaluation, SinkCommand, SinkEdge, SinkPool, SinkRule,
 };
 use kati::bytes::Bytes;
 use kati::strutil::escape_shell;
@@ -1011,6 +1011,20 @@ impl BuildSink for GraphSink {
     /// reads a file, and refusing to read it stops `headers_install`.
     fn file_evaluation(&self) -> FileEvaluation {
         FileEvaluation::Expansion
+    }
+
+    /// GNU Make prints an `$(info ...)` while it expands the recipe, before
+    /// any command line exists, so the text is never a command and a recipe
+    /// that is nothing but the call has nothing to run. This process expands
+    /// the recipe immediately before running it, which is that same moment.
+    ///
+    /// It matters beyond where the text lands. A recipe of `$(info X)` alone
+    /// folds into the empty expansion that starts no shell, so the target
+    /// reports up to date and `-q` answers zero rather than one; `$(error)`
+    /// becomes a refusal raised out of the expansion rather than a command
+    /// contrived to fail, which is why it still fires under `-n`.
+    fn output_evaluation(&self) -> OutputEvaluation {
+        OutputEvaluation::Expansion
     }
 
     /// GNU Make expands a recipe when it is about to run it, and this graph is

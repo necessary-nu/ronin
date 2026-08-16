@@ -1,0 +1,4 @@
+#!/bin/sh
+# Records that a shell was started at all, then behaves as one.
+echo started >> shell-ran
+exec /bin/sh "$@"

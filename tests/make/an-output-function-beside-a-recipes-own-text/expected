@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 2
+| SHELL := ./recording-shell
+| all: ; $(info EXPANDED)@echo built > out
+file out touched 1
+| built
+file recording-shell kept 4
+| #!/bin/sh
+| # Records that a shell was started at all, then behaves as one.
+| echo started >> shell-ran
+| exec /bin/sh "$@"
+file shell-ran touched 1
+| started

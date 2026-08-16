@@ -689,3 +689,45 @@ fn named_makefile_complains_at_the_read() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// GNU Make prints an `$(info ...)` while it expands the recipe, so the text
+/// is never a command. What the corpus cannot see is that the text still
+/// reaches stdout, and that nothing was announced as having run.
+#[test]
+fn printing_alone_starts_no_command() {
+    let directory = test_directory("recipe-output-function");
+    fs::write(
+        directory.join("Makefile"),
+        "all: ; $(info EXPANDED)$(warning WARNED)\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &["all"]);
+    assert!(succeeded, "{reported}");
+    assert!(reported.contains("EXPANDED"), "{reported}");
+    assert!(reported.contains("Makefile:1: WARNED"), "{reported}");
+    assert!(
+        !reported.contains("printf") && !reported.contains("[1/"),
+        "the text was printed rather than run: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `$(error)` in recipe position is raised out of the expansion, which is what
+/// makes it fire under `-n`: the recipe is expanded either way, and there is no
+/// command whose absence could swallow it.
+#[test]
+fn a_dry_run_raises_the_error() {
+    let directory = test_directory("recipe-error-function");
+    fs::write(
+        directory.join("Makefile"),
+        "all: ; $(error BOOM)@echo built > out\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &["-n", "all"]);
+    assert!(!succeeded, "{reported}");
+    assert!(reported.contains("Makefile:1: BOOM"), "{reported}");
+    assert!(!directory.join("out").exists(), "{reported}");
+    fs::remove_dir_all(directory).unwrap();
+}
