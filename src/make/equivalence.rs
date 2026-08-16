@@ -592,7 +592,7 @@ fn build_both(directory: &Path, argv: Vec<OsString>) -> Result<Both, Outcome> {
         mut ev,
         mut nodes,
         regeneration_nodes,
-        refusal,
+        mut refusals,
     } = match evaluate(session) {
         Ok(evaluated) => evaluated,
         Err(error) => return Err(Outcome::NotAccepted(format!("{error:#}"))),
@@ -600,7 +600,7 @@ fn build_both(directory: &Path, argv: Vec<OsString>) -> Result<Both, Outcome> {
     // A read that ends in a refusal has no graph to compare: the frontend
     // builds what it collected and then dies, and this comparison is about
     // what the two emitters make of a graph.
-    if let Some(refusal) = refusal {
+    if let Some(refusal) = refusals.pop() {
         return Err(Outcome::NotAccepted(format!("{:#}", refusal.error)));
     }
     // The two paths have to be handed the same roots, generated Makefiles

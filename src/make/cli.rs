@@ -1251,6 +1251,12 @@ fn session_for(
         no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
         environment_overrides: invocation.given(Switch::EnvironmentOverrides),
         ignore_errors: invocation.given(Switch::IgnoreErrors),
+        // A fourth, and its effect on evaluation is one thing only: whether the
+        // first required makefile nothing can make is the last one the update
+        // considers. `complain()` chooses `error` over `fatal` on it
+        // (remake.c:422), so the update walks on and refuses over every one of
+        // them rather than dying inside the first.
+        keep_going: invocation.given(Switch::KeepGoing),
         // A parent's assignments and this invocation's own, in that order,
         // which is the order Make applies them.
         cl_vars: invocation.variables.clone(),
@@ -1514,12 +1520,14 @@ fn prepare_graph(
             // GNU Make refuses over a required makefile nothing can make from
             // inside the update that brings the makefiles up to date, and a
             // read with nothing to remake reaches it with no work to do first.
-            if let Some(refusal) = loaded.take_refusal() {
-                let (complaint, error) = refusal.into_parts();
+            let refusals = loaded.take_refusals();
+            if !refusals.is_empty() {
+                let (refusals, summaries) =
+                    crate::make::refusal_report(refusals, root.invocation.given(Switch::KeepGoing));
                 return Ok(PreparedGraph::Finished(refused_makefile(
                     std::mem::take(reported),
-                    complaint,
-                    error,
+                    refusals,
+                    &summaries,
                 )));
             }
             let recipes = loaded.take_pending_recipes().map(Box::new);

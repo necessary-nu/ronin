@@ -21,7 +21,8 @@ use crate::cli::RunResult;
 use crate::frontend::{Build, BuildGraph, Node, Outcome, Persistence};
 use crate::make::EvaluationBoundary;
 use crate::make::report::{
-    abandoned, answered, complained_of, discard_intermediates, finished, refused_makefile,
+    abandoned, answered, complained_of, discard_intermediates, finished, ordinary_diagnostic,
+    refused_makefile,
 };
 use bstr::BString;
 use std::collections::HashSet;
@@ -461,6 +462,143 @@ impl Makefiles<'_> {
     }
 }
 
+/// What one read handed the update, taken out of the compilation it came with.
+struct Read {
+    /// The required Makefiles nothing can make.
+    ///
+    /// GNU Make refuses over one of these from inside the update this module is:
+    /// the Makefiles the read reached before it are brought up to date, and then
+    /// the run ends. It ends on a restart as well as on a settlement, because
+    /// `complain()` gets there before `main.c` reaches the test that would have
+    /// sent the read around again.
+    ///
+    /// Under `-k` neither half of that holds. `complain()` reports instead of
+    /// dying (remake.c:422), so the update walks on and refuses over every
+    /// makefile it cannot make rather than the first; and having returned, it
+    /// lets `main.c` ask its question — so a makefile that WAS remade starts the
+    /// read over, and these refusals are made again on the pass that follows.
+    refusals: Vec<crate::make::RefusedMakefile>,
+    remakes: Vec<Node>,
+    forgiven: Vec<Node>,
+    complaints: Vec<(Node, String)>,
+    staged: Vec<Node>,
+    boundaries: HashSet<EvaluationBoundary>,
+    recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
+}
+
+impl Read {
+    fn taken_from(loaded: crate::make::Loaded) -> (BuildGraph, Self) {
+        let mut loaded = loaded;
+        let read = Self {
+            refusals: loaded.take_refusals(),
+            remakes: loaded.remake_targets().to_vec(),
+            forgiven: loaded.forgiven_remake_targets().to_vec(),
+            complaints: loaded.take_remake_complaints(),
+            staged: loaded.staged_targets(),
+            boundaries: loaded.evaluation_boundaries().clone(),
+            recipes: loaded.take_pending_recipes().map(Box::new),
+        };
+        let unread = loaded.unread_remake_targets().to_vec();
+        let mut graph = loaded.graph;
+        // Before anything is planned: a Makefile the read could not read is a
+        // file that is not there for every question that follows, which is what
+        // makes its own rule out of date and therefore what makes it run.
+        graph.mark_makefiles_unread(&unread);
+        (graph, read)
+    }
+}
+
+/// What the makefile update leaves the rest of this function to do.
+enum Settled {
+    /// Nothing: a build ended the run with this result.
+    Over(RunResult),
+    /// Nothing: the read's own refusals end it with this result. Apart from
+    /// [`Settled::Over`] only in what is owed the persistent state — a build
+    /// that failed has already said why and a flush that then fails must not
+    /// speak over it, where here the flush is the last thing that can go wrong.
+    Refused(RunResult),
+    /// Read again — a Makefile moved, and no refusal outranks that.
+    Again,
+    /// This read stands, with these Makefiles behind it.
+    Stands(SettledMakefiles),
+}
+
+/// Reconcile what the update did with what the read already knew it could not
+/// make.
+///
+/// Two answers cross here. Without `-k` a refusal outranks a restart, because
+/// `complain()` ends the run from inside the update and `main.c` never reaches
+/// the test that would have read again. With `-k` it does not outrank anything:
+/// the update returns, the test is reached, and a Makefile that moved sends the
+/// read around — so the refusals are said now, because this pass made them and
+/// the pass that follows will make them again.
+fn settled_makefiles(
+    remaking: Remaking,
+    refusals: Vec<crate::make::RefusedMakefile>,
+    keep_going: bool,
+    reported: &mut String,
+    diagnostics: &mut Option<&mut dyn Write>,
+) -> Settled {
+    match remaking {
+        Remaking::Finished(result) => Settled::Over(result),
+        Remaking::Restart if refusals.is_empty() => Settled::Again,
+        Remaking::Restart if keep_going => {
+            report_refusals_now(refusals, diagnostics);
+            Settled::Again
+        }
+        // Bringing a Makefile up to date is work the rest of the run has
+        // already had done for it, and GNU Make does the whole of it inside one
+        // process. Ronin reads again in place, so the goals reach the same graph
+        // and have to be told the same thing.
+        Remaking::Settled(settled) if refusals.is_empty() => Settled::Stands(settled),
+        Remaking::Restart | Remaking::Settled(_) => {
+            Settled::Refused(refusal_result(reported, refusals, keep_going))
+        }
+    }
+}
+
+/// What ends a run over the makefiles it could not make.
+fn refusal_result(
+    reported: &mut String,
+    refusals: Vec<crate::make::RefusedMakefile>,
+    keep_going: bool,
+) -> RunResult {
+    let (refusals, summaries) = crate::make::refusal_report(refusals, keep_going);
+    refused_makefile(std::mem::take(reported), refusals, &summaries)
+}
+
+/// Say the refusals of a read that is about to happen again.
+///
+/// GNU Make reports them on every pass: `complain()` fires from inside each
+/// update, and under `-k` it does not end the run, so the re-exec that follows a
+/// remade makefile starts the whole thing over and says all of it again. A run
+/// that remakes one makefile while refusing over two therefore says both
+/// refusals and both summaries twice.
+///
+/// Straight to the diagnostic stream rather than into a result, because a result
+/// is what ENDS a run and this one is not ending. A diagnostic that cannot be
+/// written is not worth ending an otherwise-healthy read over either: the pass
+/// that follows makes the same complaints, and whatever does end the run carries
+/// them.
+fn report_refusals_now(
+    refusals: Vec<crate::make::RefusedMakefile>,
+    diagnostics: &mut Option<&mut dyn Write>,
+) {
+    let (reported, summaries) = crate::make::refusal_report(refusals, true);
+    let Some(sink) = diagnostics.as_deref_mut() else {
+        return;
+    };
+    for (complaint, error) in reported {
+        if let Some(complaint) = complaint {
+            let _ = writeln!(sink, "{complaint}");
+        }
+        let _ = sink.write_all(&ordinary_diagnostic(error));
+    }
+    for summary in summaries {
+        let _ = writeln!(sink, "{summary}");
+    }
+}
+
 pub(super) fn build_compiler_inputs(
     request: CompilerInputBuild<'_>,
     reported: &mut String,
@@ -475,28 +613,21 @@ pub(super) fn build_compiler_inputs(
         directory,
         goals,
     } = request;
-    let mut loaded = loaded;
-    // GNU Make refuses over a required Makefile nothing can make from inside
-    // the update this function is: the Makefiles the read reached before that
-    // one are brought up to date, and then the run ends. It ends on a restart
-    // as well as on a settlement, because `complain()` gets there before
-    // `main.c` reaches the test that would have sent the read around again.
-    let refusal = loaded.take_refusal();
-    let mut recipes = loaded.take_pending_recipes().map(Box::new);
-    let remakes = loaded.remake_targets().to_vec();
-    let forgiven = loaded.forgiven_remake_targets().to_vec();
-    let unread = loaded.unread_remake_targets().to_vec();
-    let complaints = loaded.take_remake_complaints();
-    let staged = loaded.staged_targets();
-    let boundaries = loaded.evaluation_boundaries().clone();
-    let mut graph = loaded.graph;
-    // Before anything is planned: a Makefile the read could not read is a file
-    // that is not there for every question that follows, which is what makes its
-    // own rule out of date and therefore what makes it run.
-    graph.mark_makefiles_unread(&unread);
+    let keep_going = invocation.given(Switch::KeepGoing);
+    let (mut graph, mut read) = Read::taken_from(loaded);
+    let mut recipes = read.recipes.take();
     let (mut persistence, warning) = Persistence::open(&mut graph, directory)?;
     reported.push_str(warning.as_deref().unwrap_or_default());
 
+    let Read {
+        refusals,
+        remakes,
+        forgiven,
+        complaints,
+        staged,
+        boundaries,
+        ..
+    } = read;
     let makefiles = Makefiles {
         remakes: &remakes,
         forgiven: &forgiven,
@@ -505,7 +636,7 @@ pub(super) fn build_compiler_inputs(
         goals,
         directory,
     };
-    let mut passes = Passes {
+    let remaking = Passes {
         graph: &mut graph,
         persistence: &mut persistence,
         recipes: recipes.as_deref_mut(),
@@ -514,38 +645,27 @@ pub(super) fn build_compiler_inputs(
         reported,
         complaints: &complaints,
         silent: invocation.given(Switch::Silent),
-    };
-    match passes.remake_makefiles(&makefiles) {
-        Remaking::Finished(result) => {
+    }
+    .remake_makefiles(&makefiles);
+    match settled_makefiles(remaking, refusals, keep_going, reported, diagnostics) {
+        Settled::Over(result) => {
             let _ = persistence.finish();
             return Ok(Settlement::Finished(result));
         }
-        Remaking::Restart => {
+        Settled::Refused(result) => {
             persistence.finish()?;
-            return Ok(refusal.map_or(Settlement::Restart, |refusal| {
-                let (complaint, error) = refusal.into_parts();
-                Settlement::Finished(refused_makefile(std::mem::take(reported), complaint, error))
-            }));
+            return Ok(Settlement::Finished(result));
         }
-        // Bringing a Makefile up to date is work the rest of the run has
-        // already had done for it, and GNU Make does the whole of it inside
-        // one process. Ronin reads again in place, so the goals reach the same
-        // graph and have to be told the same thing.
-        Remaking::Settled(settled) => {
-            if let Some(refusal) = refusal {
-                persistence.finish()?;
-                let (complaint, error) = refusal.into_parts();
-                return Ok(Settlement::Finished(refused_makefile(
-                    std::mem::take(reported),
-                    complaint,
-                    error,
-                )));
-            }
+        Settled::Again => {
+            persistence.finish()?;
+            return Ok(Settlement::Restart);
+        }
+        Settled::Stands(settled) => {
             graph.mark_makefiles_settled(&settled.remade, &settled.unmade);
         }
     }
 
-    let mut passes = Passes {
+    let pass = Passes {
         graph: &mut graph,
         persistence: &mut persistence,
         recipes: recipes.as_deref_mut(),
@@ -554,8 +674,9 @@ pub(super) fn build_compiler_inputs(
         reported,
         complaints: &complaints,
         silent: invocation.given(Switch::Silent),
-    };
-    match passes.stage(&staged, invocation, options) {
+    }
+    .stage(&staged, invocation, options);
+    match pass {
         Pass::Finished(result) => {
             let _ = persistence.finish();
             Ok(Settlement::Finished(result))

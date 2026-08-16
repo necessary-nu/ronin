@@ -690,6 +690,77 @@ fn named_makefile_complains_at_the_read() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `-k` makes `complain()` report rather than die (remake.c:422), so the
+/// makefile update walks on: every required makefile nothing can make gets its
+/// complaint and its refusal, and then `main.c`'s `us_failed` arm makes a second
+/// pass over the same files and adds `Failed to remake makefile 'X'.` for each.
+/// Two lists, and the second comes wholly after the first.
+///
+/// GNU Make 4.4.1 on `make -k` here prints, in order: nope1's complaint, its
+/// refusal, nope2's complaint, its refusal, then both summaries, and exits 2
+/// with `all` never run.
+#[test]
+fn keep_going_refuses_every_makefile() {
+    let directory = test_directory("keep-going-refusals");
+    fs::write(
+        directory.join("Makefile"),
+        "include nope1.mk\ninclude nope2.mk\nall: ; @echo all\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &["-k"]);
+    assert!(!succeeded, "{reported}");
+    assert!(!reported.contains("all\n"), "the goal ran: {reported}");
+
+    let positions = [
+        "Makefile:1: nope1.mk: No such file or directory",
+        "No rule to make target 'nope1.mk'",
+        "Makefile:2: nope2.mk: No such file or directory",
+        "No rule to make target 'nope2.mk'",
+        "Makefile:1: Failed to remake makefile 'nope1.mk'.",
+        "Makefile:2: Failed to remake makefile 'nope2.mk'.",
+    ]
+    .map(|line| {
+        reported
+            .find(line)
+            .unwrap_or_else(|| panic!("{line}: {reported}"))
+    });
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "the refusals and the summaries did not come in GNU Make's order: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// Without `-k` the same case stops at the first: `complain()` is `fatal`, so
+/// the update never reaches the second makefile, and `main.c` never reaches the
+/// summary pass at all.
+#[test]
+fn one_refusal_without_keep_going() {
+    let directory = test_directory("single-refusal");
+    fs::write(
+        directory.join("Makefile"),
+        "include nope1.mk\ninclude nope2.mk\nall: ; @echo all\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &[]);
+    assert!(!succeeded, "{reported}");
+    assert!(
+        reported.contains("No rule to make target 'nope1.mk'"),
+        "{reported}"
+    );
+    assert!(
+        !reported.contains("nope2.mk"),
+        "a makefile behind the refusal was considered: {reported}"
+    );
+    assert!(
+        !reported.contains("Failed to remake makefile"),
+        "the keep-going summary was reached without -k: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// `show_goal_error` has two callers, and this is the second: `child_error`
 /// (job.c:581) prints the complaint a required `include` has been holding since
 /// the open failed, one line ahead of the line that names the failure. A rule

@@ -255,14 +255,33 @@ pub(crate) struct RefusedMakefile {
     complaint: Option<String>,
     /// What ends the run.
     error: MakeError,
+    /// `Failed to remake makefile 'X'.`, which comes after every refusal rather
+    /// than beside its own, and only under `-k`. Without it the run ends inside
+    /// the update and this second pass over the makefiles is never reached.
+    summary: String,
 }
 
-impl RefusedMakefile {
-    /// The refusal as the report writes it: the held complaint, then what ends
-    /// the run.
-    fn into_parts(self) -> (Option<String>, MakeError) {
-        (self.complaint, self.error)
+/// Split a run's refusals into what the report writes, in the two passes GNU
+/// Make writes them in.
+///
+/// First each refusal's held complaint beside what it refuses over, and then —
+/// only under `-k`, which is the only way there is more than one and the only
+/// way the update returns at all — the `Failed to remake makefile` line for
+/// every one of them. `main.c` makes that second pass over `read_files` after
+/// the update has finished, so the two lists interleave nowhere.
+pub(crate) fn refusal_report(
+    refusals: Vec<RefusedMakefile>,
+    keep_going: bool,
+) -> (Vec<(Option<String>, MakeError)>, Vec<String>) {
+    let mut summaries = Vec::new();
+    let mut reported = Vec::new();
+    for refusal in refusals {
+        if keep_going {
+            summaries.push(refusal.summary);
+        }
+        reported.push((refusal.complaint, refusal.error));
     }
+    (reported, summaries)
 }
 
 /// One unit's Makefiles: the ones among them whose failure is forgiven, and the
@@ -276,10 +295,10 @@ struct UnitRemakes {
     unread: Vec<Node>,
     /// The complaint each of those holds until its own rule loses.
     complaints: Vec<(Node, String)>,
-    /// GNU Make brings the Makefiles ahead of this one up to date and then ends
-    /// the run over it, so it is carried alongside them rather than raised in
-    /// their place.
-    refusal: Option<RefusedMakefile>,
+    /// GNU Make brings the Makefiles around these up to date and then ends the
+    /// run over them, so they are carried alongside rather than raised in their
+    /// place. At most one without `-k`.
+    refusals: Vec<RefusedMakefile>,
 }
 
 /// Where this unit's Makefiles ended up in the shared graph.
@@ -287,7 +306,7 @@ fn unit_remakes(
     sink: &mut GraphSink,
     names: &Session,
     regenerations: &RegenerationNames,
-    refusal: Option<RefusedMakefile>,
+    refusals: Vec<RefusedMakefile>,
 ) -> Result<UnitRemakes, MakeError> {
     let mut looked_up = |symbols: &[kati::symtab::Symbol]| {
         sink.unit_nodes(names, symbols).map_err(|error| {
@@ -314,7 +333,7 @@ fn unit_remakes(
                 .map(|(_, text)| text.clone()),
         )
         .collect(),
-        refusal,
+        refusals,
     })
 }
 
@@ -335,8 +354,9 @@ struct CompilationState<'a> {
     unread_remakes: Vec<Node>,
     /// What each of those says if its own rule loses.
     remake_complaints: Vec<(Node, String)>,
-    /// The first required Makefile any unit of this compilation could not make.
-    refusal: Option<RefusedMakefile>,
+    /// The required Makefiles the first unit of this compilation that had any
+    /// could not make.
+    refusals: Vec<RefusedMakefile>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
 }
@@ -396,8 +416,8 @@ impl CompilationState<'_> {
                 self.remake_complaints.push((target, complaint));
             }
         }
-        if self.refusal.is_none() {
-            self.refusal = remakes.refusal;
+        if self.refusals.is_empty() {
+            self.refusals = remakes.refusals;
         }
     }
 }
@@ -453,7 +473,7 @@ where
         unread_remakes: Vec::new(),
         remake_complaints: Vec::new(),
         settled_boundaries,
-        refusal: None,
+        refusals: Vec::new(),
         evaluation_boundaries: HashSet::new(),
     };
     let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
@@ -467,7 +487,7 @@ where
         forgiven_remakes: state.forgiven_remakes,
         unread_remakes: state.unread_remakes,
         remake_complaints: state.remake_complaints,
-        refusal: state.refusal,
+        refusals: state.refusals,
         evaluation_boundaries: state.evaluation_boundaries,
         makeflags: root.makeflags,
     })
@@ -500,12 +520,9 @@ where
             mut ev,
             mut nodes,
             regeneration_nodes,
-            refusal,
+            refusals,
         } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
-        let refusal = refusal.map(|refusal| RefusedMakefile {
-            complaint: refusal.complaint,
-            error: MakeError::evaluate(&refusal.error),
-        });
+        let refusals = refused_makefiles(refusals);
         let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
         let exported =
             exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
@@ -543,7 +560,7 @@ where
         // what wraps every command this unit produces, and a recipe expanded
         // later has to be wrapped in exactly the same thing.
         let layout = sink.layout();
-        let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names, refusal)?;
+        let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names, refusals)?;
         let unit = sink.take_unit();
         ev.finish().map_err(|error| MakeError::evaluate(&error))?;
         let deferred_edges = sink.take_deferred_edges();
@@ -868,6 +885,21 @@ fn in_directory<T>(
     }
 }
 
+/// The evaluator's refusals in the frontend's own error type.
+///
+/// More than one only under `-k`, where `complain()` reports instead of dying
+/// and the update walks on to the makefile after the one it could not make.
+fn refused_makefiles(refusals: Vec<kati::dep::Refusal>) -> Vec<RefusedMakefile> {
+    refusals
+        .into_iter()
+        .map(|refusal| RefusedMakefile {
+            complaint: refusal.complaint,
+            error: MakeError::evaluate(&refusal.error),
+            summary: refusal.summary,
+        })
+        .collect()
+}
+
 /// Add the generated Makefiles to the roots the graph walk has to reach, and
 /// answer with the names by which the frontend asks for them back.
 ///
@@ -943,13 +975,15 @@ pub struct Loaded {
     /// the held complaint one line ahead of naming the failure. A rule that wins
     /// starts the read over instead, and the complaint is never made.
     remake_complaints: Vec<(Node, String)>,
-    /// A required Makefile the read could not open and no rule can make.
+    /// The required Makefiles the read could not open and no rule can make.
     ///
     /// GNU Make refuses over one of these from inside the update that brings
     /// the Makefiles up to date: the ones it reached first are remade, and
     /// then the run ends — without restarting the read, however much that
-    /// remaking changed.
-    refusal: Option<RefusedMakefile>,
+    /// remaking changed. Under `-k` there may be several and the read does start
+    /// over, because `complain()` reports rather than dies and `main.c` gets to
+    /// ask the question it never reached.
+    refusals: Vec<RefusedMakefile>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
@@ -1023,8 +1057,8 @@ impl Loaded {
     /// in [`Self::remake_targets`] and are brought up to date first: GNU Make
     /// refuses from inside that update, so the work ahead of the refusal is
     /// done and the read never starts over however much of it moved.
-    pub(crate) const fn take_refusal(&mut self) -> Option<RefusedMakefile> {
-        self.refusal.take()
+    pub(crate) fn take_refusals(&mut self) -> Vec<RefusedMakefile> {
+        std::mem::take(&mut self.refusals)
     }
 
     /// The compiler inputs that are not Makefiles: work staged so a recursive

@@ -95,17 +95,30 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
 /// and refuses from inside that update, so whatever the remaking narrated is
 /// already in `reported` and goes out in front of the refusal.
 ///
-/// `complaint` is the located `No such file or directory` for the file that
+/// Each complaint is the located `No such file or directory` for the file that
 /// would not open, which GNU Make holds back from the read and prints here, one
 /// line ahead of what it dies on.
+///
+/// More than one refusal only under `-k`, where `complain()` reports instead of
+/// dying and the update walks on to the next makefile. `summaries` is then the
+/// separate pass `main.c` makes over the same files once the update has returned
+/// — every `Failed to remake makefile 'X'.` comes after every refusal rather
+/// than beside its own, which is why they are two lists and not one.
 pub(super) fn refused_makefile(
     reported: String,
-    complaint: Option<String>,
-    failure: impl Display,
+    refusals: Vec<(Option<String>, impl Display)>,
+    summaries: &[String],
 ) -> RunResult {
-    let mut stderr =
-        complaint.map_or_else(Vec::new, |complaint| format!("{complaint}\n").into_bytes());
-    stderr.extend(ordinary_diagnostic(failure));
+    let mut stderr = Vec::new();
+    for (complaint, failure) in refusals {
+        if let Some(complaint) = complaint {
+            stderr.extend_from_slice(format!("{complaint}\n").as_bytes());
+        }
+        stderr.extend(ordinary_diagnostic(failure));
+    }
+    for summary in summaries {
+        stderr.extend_from_slice(format!("{summary}\n").as_bytes());
+    }
     RunResult {
         stdout: terminated(reported),
         stderr,
