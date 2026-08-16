@@ -690,6 +690,93 @@ fn named_makefile_complains_at_the_read() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `show_goal_error` has two callers, and this is the second: `child_error`
+/// (job.c:581) prints the complaint a required `include` has been holding since
+/// the open failed, one line ahead of the line that names the failure. A rule
+/// that wins starts the read over instead, and the complaint is never made.
+///
+/// GNU Make 4.4.1 on this case prints `GENFAIL`, then
+/// `Makefile:1: gen.mk: No such file or directory`, then
+/// `make: *** [Makefile:2: gen.mk] Error 1`, and exits 2.
+#[test]
+fn lost_remake_reports_its_unread_include() {
+    let directory = test_directory("lost-remake-complaint");
+    fs::write(
+        directory.join("Makefile"),
+        "include gen.mk\ngen.mk: ; @echo GENFAIL; exit 1\nall: ; @echo all\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &[]);
+    assert!(!succeeded, "{reported}");
+
+    let ran = reported.find("GENFAIL").expect(&reported);
+    let complaint = reported
+        .find("gen.mk: No such file or directory")
+        .expect(&reported);
+    let stopped = reported.find("build stopped").expect(&reported);
+    assert!(
+        ran < complaint && complaint < stopped,
+        "the complaint did not come between the failure and the ending: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The complaint belongs to the goal, not to the recipe that lost. GNU Make's
+/// `show_goal_error` reads `goal_dep` — the goaldep `update_goal_chain` is
+/// working on — so a required `include` whose rule never ran because one of its
+/// own prerequisites failed is still what gets named.
+///
+/// GNU Make 4.4.1 prints `DEPFAIL`, then `Makefile:1: gen.mk: No such file or
+/// directory`, then `make: *** [Makefile:4: dep] Error 1` — the complaint names
+/// `gen.mk` and the failure names `dep`.
+#[test]
+fn a_lost_prerequisite_reports_the_goal() {
+    let directory = test_directory("lost-remake-prerequisite");
+    fs::write(
+        directory.join("Makefile"),
+        "include gen.mk\ngen.mk: dep\n\t@echo MAKEGEN; echo X=1 > gen.mk\ndep: ; @echo DEPFAIL; exit 1\nall: ; @echo all\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &[]);
+    assert!(!succeeded, "{reported}");
+    assert!(reported.contains("DEPFAIL"), "{reported}");
+    assert!(
+        reported.contains("gen.mk: No such file or directory"),
+        "the complaint named the failing recipe rather than the goal: {reported}"
+    );
+    assert!(
+        !reported.contains("MAKEGEN"),
+        "the makefile's own recipe ran after its prerequisite lost: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `-include` never complains however it fails. GNU Make's guard is
+/// `(goal_dep->flags & (RM_INCLUDED|RM_DONTCARE)) != RM_INCLUDED`, so the
+/// forgiveness the read granted covers the diagnostic as well as the failure —
+/// what ends this run is the refusal over a file nothing can make, with no
+/// located line before it.
+#[test]
+fn a_forgiven_remake_makes_no_complaint() {
+    let directory = test_directory("forgiven-remake-complaint");
+    fs::write(
+        directory.join("Makefile"),
+        "-include gen.mk\ngen.mk: ; @echo GENFAIL; exit 1\nall: gen.mk\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &[]);
+    assert!(!succeeded, "{reported}");
+    assert!(reported.contains("GENFAIL"), "{reported}");
+    assert!(
+        !reported.contains("No such file or directory"),
+        "an optional include complained about a read it forgave: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// Whether this host lets an unreadable file be unreadable.
 ///
 /// Running as root defeats mode 000, and a test that turns into its own

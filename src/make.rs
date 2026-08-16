@@ -274,6 +274,8 @@ struct UnitRemakes {
     /// those the timestamp of a file that is not there (read.c:409), so the rule
     /// that would make one runs however the name looks on disk.
     unread: Vec<Node>,
+    /// The complaint each of those holds until its own rule loses.
+    complaints: Vec<(Node, String)>,
     /// GNU Make brings the Makefiles ahead of this one up to date and then ends
     /// the run over it, so it is carried alongside them rather than raised in
     /// their place.
@@ -297,6 +299,21 @@ fn unit_remakes(
         all: looked_up(&regenerations.all)?,
         forgiven: looked_up(&regenerations.forgiven)?,
         unread: looked_up(&regenerations.unread)?,
+        complaints: looked_up(
+            &regenerations
+                .complaints
+                .iter()
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>(),
+        )?
+        .into_iter()
+        .zip(
+            regenerations
+                .complaints
+                .iter()
+                .map(|(_, text)| text.clone()),
+        )
+        .collect(),
         refusal,
     })
 }
@@ -316,6 +333,8 @@ struct CompilationState<'a> {
     forgiven_remakes: Vec<Node>,
     /// The Makefiles whose contents the read wanted and did not get.
     unread_remakes: Vec<Node>,
+    /// What each of those says if its own rule loses.
+    remake_complaints: Vec<(Node, String)>,
     /// The first required Makefile any unit of this compilation could not make.
     refusal: Option<RefusedMakefile>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
@@ -366,6 +385,15 @@ impl CompilationState<'_> {
         for target in remakes.unread {
             if !self.unread_remakes.contains(&target) {
                 self.unread_remakes.push(target);
+            }
+        }
+        for (target, complaint) in remakes.complaints {
+            if !self
+                .remake_complaints
+                .iter()
+                .any(|(named, _)| *named == target)
+            {
+                self.remake_complaints.push((target, complaint));
             }
         }
         if self.refusal.is_none() {
@@ -423,6 +451,7 @@ where
         remakes: Vec::new(),
         forgiven_remakes: Vec::new(),
         unread_remakes: Vec::new(),
+        remake_complaints: Vec::new(),
         settled_boundaries,
         refusal: None,
         evaluation_boundaries: HashSet::new(),
@@ -437,6 +466,7 @@ where
         remakes: state.remakes,
         forgiven_remakes: state.forgiven_remakes,
         unread_remakes: state.unread_remakes,
+        remake_complaints: state.remake_complaints,
         refusal: state.refusal,
         evaluation_boundaries: state.evaluation_boundaries,
         makeflags: root.makeflags,
@@ -858,6 +888,9 @@ fn admit_regeneration_roots(
         if root.unread {
             names.unread.push(root.node.0);
         }
+        if let Some(complaint) = root.complaint {
+            names.complaints.push((root.node.0, complaint));
+        }
         nodes.push(root.node);
     }
     names
@@ -871,6 +904,9 @@ struct RegenerationNames {
     forgiven: Vec<kati::symtab::Symbol>,
     /// The ones the read wanted and did not get, whatever is at their name.
     unread: Vec<kati::symtab::Symbol>,
+    /// The located complaint each unread required one holds until its own rule
+    /// loses, which is when GNU Make says it.
+    complaints: Vec<(kati::symtab::Symbol, String)>,
 }
 
 /// A Makefile compiled into the complete graph the engine executes.
@@ -902,6 +938,11 @@ pub struct Loaded {
     /// otherwise up to date the moment its target exists, and an unreadable file
     /// exists.
     unread_remakes: Vec<Node>,
+    /// What one of those says if its own rule loses, which is where GNU Make's
+    /// second `show_goal_error` caller speaks: `child_error` (job.c:581) prints
+    /// the held complaint one line ahead of naming the failure. A rule that wins
+    /// starts the read over instead, and the complaint is never made.
+    remake_complaints: Vec<(Node, String)>,
     /// A required Makefile the read could not open and no rule can make.
     ///
     /// GNU Make refuses over one of these from inside the update that brings
@@ -965,6 +1006,14 @@ impl Loaded {
     #[must_use]
     pub(crate) fn unread_remake_targets(&self) -> &[Node] {
         &self.unread_remakes
+    }
+
+    /// What each unread Makefile says if its own rule loses.
+    ///
+    /// Taken rather than read: it is said once, where the update settles that
+    /// the file is not coming, and the run ends there.
+    pub(crate) fn take_remake_complaints(&mut self) -> Vec<(Node, String)> {
+        std::mem::take(&mut self.remake_complaints)
     }
 
     /// The required Makefile nothing can make, which ends the run.

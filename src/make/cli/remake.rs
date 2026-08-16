@@ -20,7 +20,9 @@ use crate::build::BuildOptions;
 use crate::cli::RunResult;
 use crate::frontend::{Build, BuildGraph, Node, Outcome, Persistence};
 use crate::make::EvaluationBoundary;
-use crate::make::report::{abandoned, answered, discard_intermediates, finished, refused_makefile};
+use crate::make::report::{
+    abandoned, answered, complained_of, discard_intermediates, finished, refused_makefile,
+};
 use bstr::BString;
 use std::collections::HashSet;
 use std::io::Write;
@@ -132,6 +134,9 @@ struct Passes<'a, 'out, 'diagnostics> {
     diagnostics: &'a mut Option<&'diagnostics mut dyn Write>,
     /// What the passes have narrated so far, which the result carries out.
     reported: &'a mut String,
+    /// What each unread Makefile says if its own rule loses, which is the only
+    /// occasion GNU Make ever says it.
+    complaints: &'a [(Node, String)],
     silent: bool,
 }
 
@@ -172,7 +177,20 @@ impl Passes<'_, '_, '_> {
         if outcome.exit_code() != 0 {
             if !forgive {
                 let reported = std::mem::take(self.reported);
-                return Pass::Finished(finished(reported, false, &outcome, self.silent));
+                // A required `include` whose own rule lost is a read that did
+                // not happen, and this is where GNU Make finally says so:
+                // `child_error` prints the complaint it has been holding since
+                // the open failed, one line ahead of naming the failure. A rule
+                // that wins starts the read over instead, and the complaint is
+                // never made at all.
+                let complaints = self.complaints_for(targets, &outcome);
+                return Pass::Finished(complained_of(
+                    reported,
+                    false,
+                    &outcome,
+                    self.silent,
+                    &complaints,
+                ));
             }
             // The recipe really ran and really lost, and Ninja's account of
             // that is honest narration to keep. What is dropped is the failure
@@ -197,6 +215,41 @@ impl Passes<'_, '_, '_> {
             return Pass::Current;
         }
         Pass::Answered(question)
+    }
+
+    /// The complaint the Makefile this pass stopped at has been holding.
+    ///
+    /// One, and it belongs to the goal rather than to the recipe. GNU Make's
+    /// `show_goal_error` reads `goal_dep`, the goaldep `update_goal_chain` is
+    /// working on, so what it names is the makefile that was being brought up to
+    /// date and not whichever file in its subtree the failed child was making —
+    /// `include gen.mk` whose `gen.mk: dep` loses over `dep` still complains
+    /// about `gen.mk`. And `goal->error = 0` after printing makes it once.
+    ///
+    /// The one it stopped at is the first of the pass whose own recipe lost, and
+    /// failing that the first the pass did not regenerate: the makefile update
+    /// walks them in the order the read reached them and ends on the first it
+    /// could not bring up to date, so everything before that one succeeded and
+    /// everything after it was never attempted. The second reading is what
+    /// catches a makefile whose own recipe never ran because something it needed
+    /// lost first — the goal is still the goal.
+    fn complaints_for(&self, targets: &[Node], outcome: &Outcome) -> Vec<String> {
+        targets
+            .iter()
+            .find(|target| outcome.unmade().contains(target))
+            .or_else(|| {
+                targets
+                    .iter()
+                    .find(|target| !outcome.regenerated().contains(target))
+            })
+            .and_then(|stopped| {
+                self.complaints
+                    .iter()
+                    .find(|(target, _)| target == stopped)
+                    .map(|(_, complaint)| complaint.clone())
+            })
+            .into_iter()
+            .collect()
     }
 
     fn abandon(&mut self, failure: Error, forgive: bool) -> Pass {
@@ -433,6 +486,7 @@ pub(super) fn build_compiler_inputs(
     let remakes = loaded.remake_targets().to_vec();
     let forgiven = loaded.forgiven_remake_targets().to_vec();
     let unread = loaded.unread_remake_targets().to_vec();
+    let complaints = loaded.take_remake_complaints();
     let staged = loaded.staged_targets();
     let boundaries = loaded.evaluation_boundaries().clone();
     let mut graph = loaded.graph;
@@ -458,6 +512,7 @@ pub(super) fn build_compiler_inputs(
         output,
         diagnostics,
         reported,
+        complaints: &complaints,
         silent: invocation.given(Switch::Silent),
     };
     match passes.remake_makefiles(&makefiles) {
@@ -497,6 +552,7 @@ pub(super) fn build_compiler_inputs(
         output,
         diagnostics,
         reported,
+        complaints: &complaints,
         silent: invocation.given(Switch::Silent),
     };
     match passes.stage(&staged, invocation, options) {

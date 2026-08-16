@@ -595,6 +595,7 @@ assertions (
     {id make-simple-command-without-a-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:54:06.818469836Z}
     {id make-shuffled-drop-unlinks-the-position-not-the-edge, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:04:25.662292439Z}
     {id make-an-unreadable-include-is-refused-rather-than-raised, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:14:41.956565437Z}
+    {id make-a-failed-makefile-rule-still-reports-the-unread-include, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:49:29.475919129Z}
 )
 
 impl_evidence (

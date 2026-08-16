@@ -221,7 +221,7 @@ case	features/include.diff.14	narration	product-name+fatal-decoration+shared-ref
 case	features/include.diff.15	narration	ninja-progress+recipe-echo
 case	features/include.diff.16	narration	product-name+fatal-decoration+shared-refusal
 case	features/include.diff.17	narration	ninja-progress+product-name+recipe-echo+fatal-decoration+shared-refusal
-case	features/include.diff.18	unclassified	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+evaluation
+case	features/include.diff.18	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line
 case	features/include.diff.19	narration	product-name+fatal-decoration+shared-refusal
 case	features/include.diff.2	narration	product-name+fatal-decoration+shared-refusal
 case	features/include.diff.20	unclassified	product-name+evaluation
@@ -239,7 +239,7 @@ case	features/include.diff.30	narration	ninja-progress
 case	features/include.diff.31	narration	ninja-progress
 case	features/include.diff.32	unclassified	ninja-progress+ninja-failure-block+recipe-echo+evaluation
 case	features/include.diff.33	unclassified	ninja-progress+ninja-failure-block+recipe-echo+evaluation
-case	features/include.diff.34	unclassified	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+evaluation
+case	features/include.diff.34	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line
 case	features/include.diff.35	unclassified	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+evaluation
 case	features/include.diff.36	unclassified	product-name+up-to-date-line+evaluation
 case	features/include.diff.37	narration	ninja-progress+no-work-line+up-to-date-line

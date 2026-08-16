@@ -149,6 +149,29 @@ pub(super) fn finished(
     outcome: &Outcome,
     silent: bool,
 ) -> RunResult {
+    complained_of(reported, up_to_date, outcome, silent, &[])
+}
+
+/// The same, with the complaints a lost remake released.
+///
+/// GNU Make's second `show_goal_error` caller is `child_error` (job.c:581),
+/// which prints the held complaint one line before the line that names the
+/// failure — so a required `include` whose own rule ran and lost says both why
+/// the file mattered and why it is not there.
+///
+/// The complaint goes on the stream carrying the line it precedes, which is the
+/// rule [`refused_makefile`] follows for the other `show_goal_error` caller.
+/// There the pair is a diagnostic and a refusal and both are stderr; here the
+/// line that ends the run is Ninja's `build stopped`, which is narration on
+/// stdout, and a complaint printed to the other stream would be read after
+/// everything rather than beside what it explains.
+pub(super) fn complained_of(
+    reported: String,
+    up_to_date: bool,
+    outcome: &Outcome,
+    silent: bool,
+    complaints: &[String],
+) -> RunResult {
     let mut stdout = terminated(reported);
     stdout.extend_from_slice(outcome.output());
     // A recipe rejected as its edge was launched is rejected for the reasons a
@@ -160,6 +183,10 @@ pub(super) fn finished(
             stderr: ordinary_diagnostic(diagnostic),
             exit_code: ABANDONED,
         };
+    }
+    for complaint in complaints {
+        stdout.extend_from_slice(complaint.as_bytes());
+        stdout.push(b'\n');
     }
     if let Some((reason, _)) = outcome.stopped.as_ref() {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: build stopped: {reason}.\n").as_bytes());
