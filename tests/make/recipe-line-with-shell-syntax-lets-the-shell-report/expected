@@ -1,0 +1,6 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 2
+| all:
+| 	./nosuchprog > out
+file out touched 0

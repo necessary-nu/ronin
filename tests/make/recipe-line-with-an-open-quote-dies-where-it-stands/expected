@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 4
+| all:
+| 	@printf %s 'a
+| 	b' | od -An -c > out
+| 	@echo reached > reached

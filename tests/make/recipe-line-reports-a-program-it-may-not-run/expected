@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 2
+| all:
+| 	./notexec arg
+file notexec kept 1
+| not a program

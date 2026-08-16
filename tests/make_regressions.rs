@@ -783,3 +783,89 @@ fn shell_function_names_the_missing_program() {
         "a redirection is the shell's errand and its diagnostic: {said}"
     );
 }
+
+/// A recipe of several lines is several processes, and what all of them wrote
+/// reaches the caller in the order they wrote it — one report for one edge,
+/// which is what the corpus cannot see because it compares files.
+#[test]
+fn recipe_lines_report_output_in_order() {
+    let directory = test_directory("per-line-output");
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\
+         \t@echo first\n\
+         \t@echo second >&2\n\
+         \t@echo third\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let said = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    let order = ["first", "second", "third"].map(|line| said.find(line));
+    assert!(
+        order.iter().all(Option::is_some) && order.windows(2).all(|pair| pair[0] < pair[1]),
+        "{said}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A line the makefile said to ignore fails without the build noticing, and
+/// the lines after it still run. The status is the only evidence a corpus case
+/// could not carry, since the files are written either way.
+#[test]
+fn an_ignored_line_does_not_fail() {
+    let directory = test_directory("ignored-line");
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\
+         \t-false\n\
+         \t-./nosuchprogram\n\
+         \t@echo reached > reached\n\
+         \t-false\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    assert!(
+        output.status.success(),
+        "status {:?}\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("reached")).unwrap(),
+        "reached\n"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// GNU Make execs a command line with no shell syntax in it itself, so it is
+/// Make that reports a program it could not start — against the command's own
+/// name, and with the status POSIX gives a command that never ran.
+#[test]
+fn make_reports_a_missing_program() {
+    let directory = test_directory("missing-program");
+    fs::write(directory.join("Makefile"), "all:\n\t./nosuchprogram arg\n").unwrap();
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    assert!(!output.status.success());
+    let said = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(
+        said.contains("ronin: ./nosuchprogram: No such file or directory"),
+        "{said}"
+    );
+    // What a shell would have said instead, had one been in the way. The
+    // failure block still names the edge's command, wrapper included, because
+    // that is the one name the edge has; what must not appear is a shell's
+    // account of a program it went looking for.
+    assert!(!said.contains("not found"), "{said}");
+    assert!(said.contains("code=127"), "{said}");
+    fs::remove_dir_all(directory).unwrap();
+}

@@ -11,14 +11,14 @@ family	product-name	narration	the diagnostic is Ronin's by name, where the suite
 family	directory-announce	narration	the two tools bracket a -C build with Entering and Leaving at different moments.
 family	no-work-line	narration	Ronin says it had nothing to do; Make says nothing at all.
 family	up-to-date-line	narration	Make announced a goal was already up to date; Ronin either said nothing or counted the goal as a build step and printed its progress line.
-family	recipe-interleave	narration	the same lines in a different order: Make interleaves each recipe line with the output of running it, and Ronin runs the recipe as one script.
+family	recipe-interleave	narration	the same lines in a different order: Make interleaves each recipe line with the output of running it, and Ronin reports an edge's output once the whole recipe has finished.
 family	option-refused	interface	interface observation: Ronin refused an option spelling the test passed and GNU Make accepted.
 family	unsupported-feature	compiler	compiler candidate: the evaluator says outright that it does not support a Makefile construct.
 family	no-rule-to-make	compiler	compiler candidate: Ronin found no rule for a target GNU Make built; reproduce the rule-search graph before treating it as a defect.
 family	shared-refusal	narration	both tools refused to build the same target for the same reason and worded it differently.
 family	refusal-attribution	narration	both tools refused, naming a different link of the same broken chain: Make walks further in before giving up.
 family	no-makefile-found	compiler	compiler candidate: Ronin found no Makefile to read where GNU Make found one.
-family	command-not-found-text	narration	both tools failed to run the same missing command and said so differently: Make execs it itself and reports the errno, Ronin goes through a shell and reports what the shell said.
+family	command-not-found-text	narration	both tools failed to run the same missing command and said so differently: Make execs it itself and reports the errno, Ronin goes through a shell and reports what the shell said. Only where the line holds shell syntax — a line that needs no shell is now exec'd directly by both.
 family	io-error-text	narration	both tools refused for the same reason and worded it differently; ours carries Rust's "(os error N)" suffix.
 family	makeflags-content	interface	interface observation: a Makefile read MAKEFLAGS and saw different switches; runner-only flags may deliberately be absent.
 family	parse-failure	compiler	compiler candidate: Ronin could not parse a Makefile GNU Make read.
@@ -56,13 +56,13 @@ case	features/echoing.diff.2	narration	ninja-progress+recipe-echo
 case	features/errors.diff	narration	ninja-progress+recipe-echo+recipe-error-line
 case	features/errors.diff.1	narration	ninja-progress+recipe-echo+recipe-error-line
 case	features/errors.diff.2	narration	ninja-progress+ninja-failure-block+recipe-error-line
-case	features/errors.diff.3	narration	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+command-not-found-text
-case	features/errors.diff.4	narration	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+command-not-found-text
-case	features/errors.diff.5	narration	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+command-not-found-text
-case	features/errors.diff.6	narration	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+command-not-found-text
-case	features/errors.diff.7	unclassified	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+evaluation
-case	features/errors.diff.8	unclassified	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+evaluation
-case	features/errors.diff.9	unclassified	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+evaluation
+case	features/errors.diff.3	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
+case	features/errors.diff.4	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
+case	features/errors.diff.5	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
+case	features/errors.diff.6	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
+case	features/errors.diff.7	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
+case	features/errors.diff.8	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
+case	features/errors.diff.9	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
 case	features/escape.diff	narration	ninja-progress
 case	features/escape.diff.1	narration	product-name+fatal-decoration+shared-refusal
 case	features/escape.diff.2	narration	ninja-progress
@@ -287,7 +287,7 @@ case	features/output-sync.diff.10	narration	directory-announce
 case	features/output-sync.diff.11	narration	ninja-progress+directory-announce
 case	features/output-sync.diff.12	narration	product-name+directory-announce+fatal-decoration+recipe-error-line+shared-refusal
 case	features/output-sync.diff.13	narration	product-name+fatal-decoration+shared-refusal
-case	features/output-sync.diff.14	narration	ninja-progress+ninja-failure-block+product-name+recipe-error-line+command-not-found-text
+case	features/output-sync.diff.14	narration	ninja-progress+ninja-failure-block+product-name+recipe-error-line
 case	features/output-sync.diff.15	unclassified	no-work-line+evaluation
 case	features/output-sync.diff.16	unclassified	no-work-line+evaluation
 case	features/output-sync.diff.2	unclassified	ninja-progress+recipe-echo+evaluation
@@ -595,7 +595,7 @@ case	features/targetvars.diff.22	narration	ninja-progress
 case	features/targetvars.diff.23	narration	ninja-progress
 case	features/targetvars.diff.24	narration	ninja-progress
 case	features/targetvars.diff.25	narration	ninja-progress+recipe-echo
-case	features/targetvars.diff.26	narration	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+command-not-found-text
+case	features/targetvars.diff.26	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
 case	features/targetvars.diff.27	narration	ninja-progress
 case	features/targetvars.diff.28	narration	ninja-progress
 case	features/targetvars.diff.29	narration	ninja-progress
@@ -845,8 +845,8 @@ case	misc/general4.diff.3	narration	ninja-progress
 case	misc/general4.diff.4	unclassified	ninja-progress+evaluation
 case	misc/general4.diff.5	narration	ninja-progress
 case	misc/general4.diff.6	narration	ninja-progress+recipe-echo
-case	misc/general4.diff.7	narration	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+command-not-found-text
-case	misc/general4.diff.8	narration	ninja-progress+ninja-failure-block+recipe-echo+product-name+recipe-error-line+command-not-found-text
+case	misc/general4.diff.7	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
+case	misc/general4.diff.8	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line
 case	misc/general4.diff.9	narration	ninja-progress
 case	misc/utf8.diff	narration	no-work-line
 case	options/dash-B.diff	narration	ninja-progress

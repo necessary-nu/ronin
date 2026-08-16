@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 3
+| all:
+| 	@cd sub && cp marker ../from-sub
+| 	@cp marker from-here 2>/dev/null || echo "no marker here" > from-here
+file from-here touched 1
+| no marker here
+file from-sub touched 1
+| keep
+file sub/marker kept 1
+| keep

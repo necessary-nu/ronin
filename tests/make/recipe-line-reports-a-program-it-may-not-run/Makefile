@@ -1,0 +1,2 @@
+all:
+	./notexec arg

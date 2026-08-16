@@ -25,6 +25,79 @@ fn signal_process(pid: u32, process_group: bool, signal: Signal) -> ProcessResul
         })
 }
 
+/// What one process the build starts is.
+///
+/// Ninja has only one answer: a command line, and a shell to read it. GNU Make
+/// has two, decided per recipe line by `construct_command_argv_internal` — a
+/// line holding shell syntax is the shell's errand, and one that holds none is
+/// exec'd directly, which is why a program that is not there is reported by
+/// Make itself rather than in a shell's words.
+pub(crate) enum Launch {
+    /// A command line for a shell, exactly as Ninja hands one over.
+    Shell(BString),
+    /// An argument list to run with no shell in between.
+    Direct(Box<DirectLaunch>),
+}
+
+/// A command to exec with nothing between the build and it.
+///
+/// The directory and the environment travel with it because they have nowhere
+/// else to go: a shell command carries its own `cd` and `env`, and there is no
+/// shell here to read them.
+pub(crate) struct DirectLaunch {
+    /// The program and its arguments, already unquoted.
+    pub(crate) argv: Vec<BString>,
+    /// Where to run it, or empty to stay where the build is.
+    pub(crate) directory: PathBuf,
+    /// What this command changes about the environment the build would pass
+    /// on: `Some` sets, `None` removes.
+    pub(crate) environment: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+    /// What a failure to start it is reported as, colon and space included.
+    ///
+    /// GNU Make prints `make: ./prog: No such file or directory` and the
+    /// recipe fails with 127 — for a program that is not there and for one
+    /// that may not be run alike, since what it reports is that it could not
+    /// start the command rather than what the command said.
+    pub(crate) diagnostic_prefix: String,
+}
+
+impl Launch {
+    /// How this launch is named in a diagnostic and in the failure block.
+    pub(crate) fn rendered(&self) -> BString {
+        match self {
+            Self::Shell(command) => command.clone(),
+            Self::Direct(direct) => {
+                let mut rendered = Vec::new();
+                for word in &direct.argv {
+                    if !rendered.is_empty() {
+                        rendered.push(b' ');
+                    }
+                    rendered.extend_from_slice(word.as_bytes());
+                }
+                BString::from(rendered)
+            }
+        }
+    }
+}
+
+/// How a spawn attempt came out.
+#[cfg(unix)]
+enum Started {
+    Running(std::process::Child, Option<std::io::PipeReader>),
+    /// Nothing was started and nothing will be: what the launch would have
+    /// reported is here instead, to be delivered as the command's own answer.
+    NeverStarted(ProcessOutput),
+}
+
+/// POSIX's status for a command that could not be run at all, which is what
+/// GNU Make's child reports when the exec itself failed.
+const COMMAND_NOT_FOUND: i32 = 127;
+
+/// `ENOEXEC`, which POSIX fixes at 8 and which every Unix this builds for
+/// agrees on. `io::ErrorKind` has no name for it.
+#[cfg(unix)]
+const EXEC_FORMAT_ERROR: i32 = 8;
+
 pub(crate) struct ProcessOutput {
     pub(crate) status: std::process::ExitStatus,
     pub(crate) stdout: Vec<u8>,
@@ -261,16 +334,19 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
     pub(crate) fn spawn(
         &mut self,
         edge: EdgeId,
-        command: BString,
+        launch: Launch,
         use_console: bool,
         dryrun: bool,
     ) -> ProcessResult<()> {
         #[cfg(unix)]
         {
-            self.spawn_evented(edge, command, use_console, dryrun)
+            self.spawn_evented(edge, launch, use_console, dryrun)
         }
         #[cfg(not(unix))]
         {
+            let Launch::Shell(command) = launch else {
+                unreachable!("a direct launch is decided per recipe line, and only on Unix")
+            };
             let sender = self.sender.clone();
             let working_directory = self.working_directory.clone();
             let shell = self.shell.clone();
@@ -305,6 +381,112 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             });
             Ok(())
         }
+    }
+
+    /// Start one process, however many attempts that takes.
+    ///
+    /// Two of the retries are GNU Make's and one is Ninja's: a shell-free
+    /// command that turns out to be a script with no `#!` line is exec'd again
+    /// under an interpreter, a shell-free command that cannot be started at
+    /// all is answered for here rather than handed to anyone else, and a
+    /// direct launch Ronin chose for itself falls back to the shell.
+    #[cfg(unix)]
+    fn start(
+        &self,
+        edge: EdgeId,
+        command: &BString,
+        direct: Option<&DirectLaunch>,
+        use_console: bool,
+    ) -> ProcessResult<Started> {
+        use std::os::unix::process::CommandExt;
+
+        let mut mode = self.shell.clone();
+        // Set once a direct launch turns out to be a script with no `#!` line,
+        // which is the one thing GNU Make's own exec does not simply report.
+        let mut interpreter: Option<std::ffi::OsString> = None;
+        loop {
+            let mut shell = direct.map_or_else(
+                || shell_command(command, &self.working_directory, &mode, &self.environment),
+                |direct| {
+                    direct_command(
+                        direct,
+                        interpreter.as_deref(),
+                        &self.working_directory,
+                        &self.environment,
+                    )
+                },
+            );
+            if !use_console {
+                shell.process_group(0);
+            }
+            let output = configure_output(&mut shell, edge, command, use_console)?;
+            match shell.spawn() {
+                Ok(child) => return Ok(Started::Running(child, output)),
+                // A file that is executable and is not a program: GNU Make
+                // reads `ENOEXEC` as "try it as a shell script" and execs it
+                // again under `$SHELL`, or `/bin/sh` where the environment
+                // names none. That is how a recipe naming a script with no
+                // `#!` line runs at all, and it is the only errno the exec
+                // does anything about rather than report.
+                Err(ref source)
+                    if direct.is_some()
+                        && interpreter.is_none()
+                        && source.raw_os_error() == Some(EXEC_FORMAT_ERROR) =>
+                {
+                    interpreter =
+                        Some(self.script_interpreter(
+                            direct.expect("the direct launch was matched above"),
+                        ));
+                }
+                // The one launch that answers for this itself. GNU Make execs
+                // a shell-free command line in the forked child and reports
+                // what the exec said against the command's own name, so the
+                // recipe fails with 127 and the sentence is Make's rather than
+                // a shell's — and there is no shell here to produce one.
+                Err(source) if direct.is_some() => {
+                    return Ok(Started::NeverStarted(failed_to_start(
+                        direct.expect("the direct launch was matched above"),
+                        &source,
+                    )));
+                }
+                // A direct spawn that cannot find the program has not run
+                // anything, so hand the command to the shell and let it
+                // produce the diagnostic and exit status it always would.
+                // Emulating that text here would pin us to one shell's wording.
+                Err(source) if retry_with_shell(&mode, &source) => {
+                    mode = ShellMode::Compat;
+                }
+                Err(source) => {
+                    return Err(ProcessError::Shell {
+                        edge,
+                        command: command.clone(),
+                        operation: ShellOperation::Spawn,
+                        source,
+                    });
+                }
+            }
+        }
+    }
+
+    /// What runs a file that is executable and is not a program.
+    ///
+    /// GNU Make's `exec_command` reads `getenv ("SHELL")` for this and falls
+    /// back to its own default — the environment's shell rather than the one
+    /// the makefile set, because what is being answered is "how does this host
+    /// run a script", not "what does this recipe want".
+    #[cfg(unix)]
+    fn script_interpreter(&self, direct: &DirectLaunch) -> std::ffi::OsString {
+        let named = |environment: &[(std::ffi::OsString, Option<std::ffi::OsString>)]| {
+            environment
+                .iter()
+                .rev()
+                .find(|(name, _)| name == "SHELL")
+                .map(|(_, value)| value.clone())
+        };
+        named(&direct.environment)
+            .or_else(|| named(&self.environment))
+            .unwrap_or_else(|| std::env::var_os("SHELL"))
+            .unwrap_or_else(|| std::ffi::OsString::from(SYSTEM_SHELL))
     }
 
     pub(crate) fn wait(
@@ -398,12 +580,11 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
     fn spawn_evented(
         &mut self,
         edge: EdgeId,
-        command: BString,
+        launch: Launch,
         use_console: bool,
         dryrun: bool,
     ) -> ProcessResult<()> {
         use polling::Event;
-        use std::os::unix::process::CommandExt;
 
         if dryrun {
             self.running += 1;
@@ -416,31 +597,20 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
 
         #[cfg(feature = "make")]
         let _directory = crate::make::stable_process_directory_guard();
-        let mut mode = self.shell.clone();
-        let (child, output) = loop {
-            let mut shell =
-                shell_command(&command, &self.working_directory, &mode, &self.environment);
-            if !use_console {
-                shell.process_group(0);
-            }
-            let output = configure_output(&mut shell, edge, &command, use_console)?;
-            match shell.spawn() {
-                Ok(child) => break (child, output),
-                // A direct spawn that cannot find the program has not run
-                // anything, so hand the command to the shell and let it
-                // produce the diagnostic and exit status it always would.
-                // Emulating that text here would pin us to one shell's wording.
-                Err(source) if retry_with_shell(&mode, &source) => {
-                    mode = ShellMode::Compat;
-                }
-                Err(source) => {
-                    return Err(ProcessError::Shell {
-                        edge,
-                        command: command.clone(),
-                        operation: ShellOperation::Spawn,
-                        source,
-                    });
-                }
+        let command = launch.rendered();
+        let direct = match launch {
+            Launch::Shell(_) => None,
+            Launch::Direct(direct) => Some(direct),
+        };
+        let (child, output) = match self.start(edge, &command, direct.as_deref(), use_console)? {
+            Started::Running(child, output) => (child, output),
+            Started::NeverStarted(reported) => {
+                self.running += 1;
+                self.ready.push_back(ProcessCompletion {
+                    edge,
+                    result: Ok(Some(reported)),
+                });
+                return Ok(());
             }
         };
         let process_group = !use_console;
@@ -983,6 +1153,80 @@ fn direct_argv(command: &[u8]) -> Vec<&[u8]> {
         .collect()
 }
 
+/// Build the process that runs `direct` with nothing between it and the build.
+///
+/// The supervisor's own directory and environment are the ground the command
+/// stands on, exactly as they are for a shell command; what the launch carries
+/// is the difference a `cd` and an `env` would otherwise have expressed.
+#[cfg(unix)]
+fn direct_command(
+    direct: &DirectLaunch,
+    interpreter: Option<&std::ffi::OsStr>,
+    working_directory: &Path,
+    environment: &[(std::ffi::OsString, Option<std::ffi::OsString>)],
+) -> Command {
+    let word = |bytes: &BString| {
+        bytes
+            .to_os_str()
+            .expect("byte strings are valid on Unix")
+            .to_owned()
+    };
+    let mut command = interpreter.map_or_else(
+        || Command::new(word(&direct.argv[0])),
+        |interpreter| {
+            let mut command = Command::new(interpreter);
+            command.arg(word(&direct.argv[0]));
+            command
+        },
+    );
+    for argument in &direct.argv[1..] {
+        command.arg(word(argument));
+    }
+    command.stdin(null_stdin());
+    if !working_directory.as_os_str().is_empty() {
+        command.current_dir(working_directory);
+    }
+    if !direct.directory.as_os_str().is_empty() {
+        command.current_dir(&direct.directory);
+    }
+    for (name, value) in environment.iter().chain(&direct.environment) {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+    command
+}
+
+/// What a command the build could not even start reports.
+///
+/// GNU Make's forked child says `strerror (errno)` against the name it was
+/// asked to run and exits 127, for a program that is not there and for one it
+/// may not run alike. The text goes back as the command's own stderr because
+/// that is where GNU Make's copy of it comes from — the child had already
+/// replaced its descriptors before it tried.
+#[cfg(unix)]
+fn failed_to_start(direct: &DirectLaunch, source: &io::Error) -> ProcessOutput {
+    use std::os::unix::process::ExitStatusExt;
+
+    // What the C library would have said, which is what GNU Make prints.
+    let reason = source.raw_os_error().map_or_else(
+        || source.to_string(),
+        |code| io::Error::from_raw_os_error(code).to_string(),
+    );
+    let reason = reason
+        .split(" (os error")
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    let program = direct.argv[0].as_bytes().as_bstr().to_string();
+    ProcessOutput {
+        status: std::process::ExitStatus::from_raw(COMMAND_NOT_FOUND << 8),
+        stdout: Vec::new(),
+        stderr: format!("{}{program}: {reason}\n", direct.diagnostic_prefix).into_bytes(),
+    }
+}
+
 /// Build the process that runs `command` under `mode`.
 ///
 /// `Auto` skips the shell only where the shell provably has nothing to do;
@@ -1308,7 +1552,7 @@ mod tests {
             supervisor
                 .spawn(
                     EdgeId::from_event_key(index + 1).expect("test edge key is nonzero"),
-                    BString::from("sleep 0.05; printf x"),
+                    Launch::Shell(BString::from("sleep 0.05; printf x")),
                     false,
                     false,
                 )
@@ -1339,7 +1583,12 @@ mod tests {
         let edge = EdgeId::from_event_key(11 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::<()>::new().unwrap();
         supervisor
-            .spawn(edge, BString::from("sleep 30 & wait"), false, false)
+            .spawn(
+                edge,
+                Launch::Shell(BString::from("sleep 30 & wait")),
+                false,
+                false,
+            )
             .unwrap();
         let pid = supervisor.children[&edge].child.id();
         let children_path = format!("/proc/{pid}/task/{pid}/children");
@@ -1423,7 +1672,12 @@ mod tests {
             sender.send(23);
         });
         supervisor
-            .spawn(edge, BString::from("sleep 0.1; printf done"), false, false)
+            .spawn(
+                edge,
+                Launch::Shell(BString::from("sleep 0.1; printf done")),
+                false,
+                false,
+            )
             .unwrap();
 
         let mut external = None;
@@ -1456,7 +1710,12 @@ mod tests {
         let edge = EdgeId::from_event_key(7 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::new().unwrap();
         supervisor
-            .spawn(edge, BString::from("kill -INT $$"), false, false)
+            .spawn(
+                edge,
+                Launch::Shell(BString::from("kill -INT $$")),
+                false,
+                false,
+            )
             .unwrap();
         let completion = supervisor
             .wait(None)
@@ -1482,7 +1741,7 @@ mod tests {
         supervisor
             .spawn(
                 edge,
-                BString::from("printf out; printf err >&2; printf end"),
+                Launch::Shell(BString::from("printf out; printf err >&2; printf end")),
                 false,
                 false,
             )

@@ -442,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn a_child_units_names_are_spelt_from_the_child() {
+    fn a_child_units_names_are_child_relative() {
         assert_eq!(spelt("sub/a", "sub"), "a");
         assert_eq!(spelt("sub/d/a", "sub"), "d/a");
         // The `..` the child wrote met the prefix in the graph and has to be
@@ -453,7 +453,7 @@ mod tests {
     }
 
     #[test]
-    fn a_name_that_cannot_be_spelt_from_the_child_keeps_its_own() {
+    fn a_name_outside_the_child_keeps_its_own() {
         // The root unit, which is every build that never recursed.
         assert_eq!(spelt("a", ""), "a");
         // GNU Make's answer for an absolute prerequisite is the absolute name.

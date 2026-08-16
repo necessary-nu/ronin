@@ -591,6 +591,8 @@ assertions (
     {id make-archive-member-targets, kind @complete, author "brendan@necessary.nu", at 2026-08-16T19:10:23.980933389Z}
     {id make-static-pattern-escaped-percent, kind @doing, author "brendan@necessary.nu", at 2026-08-16T19:49:54.352501486Z}
     {id make-child-automatic-variables-are-child-relative, kind @doing, author "brendan@necessary.nu", at 2026-08-16T20:18:00.393590024Z}
+    {id make-recipe-line-is-its-own-shell, kind @doing, author "brendan@necessary.nu", at 2026-08-16T21:32:53.685679055Z}
+    {id make-simple-command-without-a-shell, kind @doing, author "brendan@necessary.nu", at 2026-08-16T21:33:00.513444584Z}
 )
 
 impl_evidence (

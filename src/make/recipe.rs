@@ -14,7 +14,7 @@
 //! shapes the graph — and the engine asks for one as it launches its edge.
 
 use super::sink::CommandLayout;
-use crate::build::{LateBinding, LateCommand, LateCommands};
+use crate::build::{LateBinding, LateCommand, LateCommands, LateStep};
 use crate::graph::EdgeId;
 use crate::htab::RapidHashMap;
 use crate::util::BString;
@@ -178,6 +178,24 @@ impl LateCommands for PendingRecipes {
             output,
             &expanded.recipe_environment,
         );
+        // GNU Make runs each command line of a recipe as its own process, so
+        // that is what the edge is handed. The assembled script stays as the
+        // one name the recipe has — a progress line, a log entry and a `-n`
+        // all want the whole of it — and as the fallback for a recipe holding
+        // a line too long to be an argument, which cannot be launched on its
+        // own because the response file it would need is named per edge.
+        let steps = if CommandLayout::launches_line_by_line(&expanded.steps) {
+            expanded
+                .steps
+                .iter()
+                .map(|step| LateStep {
+                    launch: layout.launch_step(step, &expanded.recipe_environment),
+                    ignore_errors: step.ignore_error,
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         // [spec:ronin:req:make.narration+1]
         // The same choice the sink makes for a recipe it expanded itself:
         // what the Makefile said, or the recipe's own text — never the shell
@@ -194,6 +212,7 @@ impl LateCommands for PendingRecipes {
         };
         Ok(LateBinding::Run(LateCommand {
             command: BString::from(launched.command),
+            steps,
             description,
             rspfile,
             rspfile_content,

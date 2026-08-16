@@ -1,0 +1,2 @@
+all:
+	./script arg > out

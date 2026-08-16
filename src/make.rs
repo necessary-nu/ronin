@@ -23,6 +23,7 @@
 pub use kati;
 
 pub(crate) mod cli;
+mod layout;
 mod recipe;
 mod report;
 mod sink;

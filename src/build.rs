@@ -17,7 +17,7 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use self::command::{CommandSpec, DepsType, PreparedEdge, ResponseFile};
+use self::command::{Advance, CommandSpec, DepsType, PreparedEdge, ResponseFile, RunningStep};
 use self::reporter::Reporter;
 pub(crate) use self::reporter::{ColorChoice, OutputStyle, TerminalContext};
 pub(crate) use self::status::BuildState;
@@ -1126,10 +1126,12 @@ impl<'a> Builder<'a> {
     /// is not recorded as executed — a build that ran no command made nothing.
     fn prepare_edge(&mut self, edge: EdgeId) -> BuildResult<Option<PreparedEdge>> {
         let mut command = self.take_command(edge)?;
-        if self.bind_late_command(edge, &mut command)? == Runs::Nothing {
+        let mut bound_steps = Vec::new();
+        if self.bind_late_command(edge, &mut command, &mut bound_steps)? == Runs::Nothing {
             return Ok(None);
         }
-        let launch_command = self.deferred_launch_command(edge, &command.command);
+        let bound = !bound_steps.is_empty();
+        let steps = self.prepared_steps(edge, &command, bound_steps);
         let launch_rspfile_content =
             self.deferred_response_file_content(edge, &command.rspfile_content);
         let completion_outputs = self.graph.deferred_freshness(edge).map_or_else(
@@ -1232,11 +1234,31 @@ impl<'a> Builder<'a> {
             edge,
             old_mtimes,
             command,
-            launch_command,
+            steps,
+            bound,
+            running_step: RunningStep::default(),
+            earlier_stdout: Vec::new(),
+            earlier_stderr: Vec::new(),
             command_start_mtime,
             start_millis: self.progress.offset_millis(),
             _response_file: response_file,
         }))
+    }
+
+    /// How many commands may be running at once, right now.
+    ///
+    /// A load average over `-l` narrows it to one rather than to none: Ninja
+    /// keeps a build moving under load instead of stalling it, so the limit is
+    /// a brake and not a gate.
+    fn job_limit(&self, load: &mut status::LoadSampler) -> usize {
+        if self.options.maxload > 0.0 && load.current() > self.options.maxload {
+            return 1;
+        }
+        match self.options.jobs {
+            JobLimit::Auto => 1,
+            JobLimit::Unlimited => usize::MAX,
+            JobLimit::Fixed(jobs) => jobs.get(),
+        }
     }
 
     /// Whether a finished command says the build was cut short rather than that
@@ -1332,7 +1354,11 @@ impl<'a> Builder<'a> {
             edge,
             old_mtimes,
             command,
-            launch_command: _,
+            steps: _,
+            bound: _,
+            running_step: _,
+            earlier_stdout,
+            earlier_stderr,
             command_start_mtime,
             start_millis,
             _response_file,
@@ -1346,15 +1372,24 @@ impl<'a> Builder<'a> {
             status::previous_duration(self.graph, self.build_log.as_deref(), edge);
         self.progress
             .retire_edge(i64::from(end_millis - start_millis), previous_duration);
+        let mut msvc_deps = Vec::new();
+        let mut visible_output = Vec::new();
+        // What the steps before the last one wrote is this edge's output too,
+        // and is reported at the same moment: an edge speaks once, whether the
+        // recipe it ran was one process or six.
+        if !earlier_stdout.is_empty() || !earlier_stderr.is_empty() {
+            self.record_child_output(&earlier_stdout);
+            visible_output.extend_from_slice(&earlier_stdout);
+            self.record_child_output(&earlier_stderr);
+            visible_output.extend_from_slice(&earlier_stderr);
+        }
         let result = match result {
             Ok(result) => result,
             Err(error) => {
-                self.command_finished(edge, &command, Some(1), &[])?;
+                self.command_finished(edge, &command, Some(1), &visible_output)?;
                 return Err(error.into());
             }
         };
-        let mut msvc_deps = Vec::new();
-        let mut visible_output = Vec::new();
         if let Some(ProcessOutput {
             status,
             stdout,
@@ -1908,15 +1943,7 @@ impl<'a> Builder<'a> {
                 failures = failure_limit;
                 last_error = Some(BuildError::Interrupted { status: None });
             }
-            let maxjobs = if self.options.maxload > 0.0 && load.current() > self.options.maxload {
-                1
-            } else {
-                match self.options.jobs {
-                    JobLimit::Auto => 1,
-                    JobLimit::Unlimited => usize::MAX,
-                    JobLimit::Fixed(jobs) => jobs.get(),
-                }
-            };
+            let maxjobs = self.job_limit(&mut load);
             while !console_running && processes.running_len() < maxjobs && failures < failure_limit
             {
                 let Some(edge) = self.plan.find_work(self.graph) else {
@@ -1983,9 +2010,9 @@ impl<'a> Builder<'a> {
                             break;
                         }
                     }
-                    Ok(Some(prepared)) => {
-                        let command = prepared.launch_command.clone();
-                        match processes.spawn(edge, command, use_console, self.options.dryrun) {
+                    Ok(Some(mut prepared)) => {
+                        let launch = Self::take_step(&mut prepared);
+                        match processes.spawn(edge, launch, use_console, self.options.dryrun) {
                             Ok(()) => {
                                 running[edge.index()] = Some(prepared);
                                 running_slots[edge.index()] = slot;
@@ -2054,16 +2081,28 @@ impl<'a> Builder<'a> {
                 }
             };
             let edge = completion.edge;
-            let prepared = running[edge.index()]
+            let mut prepared = running[edge.index()]
                 .take()
                 .expect("completed edges have running preparation state");
+            // A recipe is several processes in GNU Make, run one after
+            // another, so a completion is the end of the edge only once the
+            // last of them has come back or one of them has said stop. The
+            // slot and the console stay with the edge while it has more to do.
+            let result =
+                match self.continue_recipe(&mut processes, &mut prepared, completion.result) {
+                    Advance::Relaunched => {
+                        running[edge.index()] = Some(prepared);
+                        continue;
+                    }
+                    Advance::Finished(result) => result,
+                };
             if let Some(slot) = running_slots[edge.index()].take() {
                 slot.release();
             }
             if prepared.command.use_console {
                 console_running = false;
             }
-            let result = self.finish_edge(prepared, completion.result);
+            let result = self.finish_edge(prepared, result);
             if let Err(error) = self.settle_edge(edge, result) {
                 // Ninja leaves the build loop the moment a command reports an
                 // interrupt, whatever allowance `-k` still had: the interrupt
@@ -2135,7 +2174,7 @@ impl<'a> Builder<'a> {
 mod command;
 mod release;
 use command::Runs;
-pub(crate) use command::{LateBinding, LateCommand, LateCommands};
+pub(crate) use command::{LateBinding, LateCommand, LateCommands, LateStep};
 mod deferred;
 mod freshness;
 mod reporter;

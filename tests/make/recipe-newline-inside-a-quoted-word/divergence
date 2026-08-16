@@ -1,5 +1,0 @@
-make-recipe-line-is-its-own-shell. The same divergence as
-expanded-newline-inside-a-quoted-word, reached with a newline written in the
-makefile rather than one arriving from an expansion — which is what establishes
-that the joining of command lines into one shell, and not the timing of the
-split, is where it lives.

@@ -127,7 +127,7 @@ const FAMILIES: [Family; 24] = [
     Family {
         name: "recipe-interleave",
         class: Class::Narration,
-        reason: "the same lines in a different order: Make interleaves each recipe line with the output of running it, and Ronin runs the recipe as one script.",
+        reason: "the same lines in a different order: Make interleaves each recipe line with the output of running it, and Ronin reports an edge's output once the whole recipe has finished.",
     },
     Family {
         name: "option-refused",
@@ -162,7 +162,7 @@ const FAMILIES: [Family; 24] = [
     Family {
         name: "command-not-found-text",
         class: Class::Narration,
-        reason: "both tools failed to run the same missing command and said so differently: Make execs it itself and reports the errno, Ronin goes through a shell and reports what the shell said.",
+        reason: "both tools failed to run the same missing command and said so differently: Make execs it itself and reports the errno, Ronin goes through a shell and reports what the shell said. Only where the line holds shell syntax — a line that needs no shell is now exec'd directly by both.",
     },
     Family {
         name: "io-error-text",

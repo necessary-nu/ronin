@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| all:
+| 	-false
+| 	@echo second > second
+| 	-./nosuchprog
+| 	@echo fourth > fourth
+file fourth touched 1
+| fourth
+file second touched 1
+| second

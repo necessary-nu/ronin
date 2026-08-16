@@ -1,8 +1,9 @@
 use super::reporter::Rendering;
 use super::{Builder, status};
-use crate::error::{BuildError, BuildOperation};
+use crate::error::{BuildError, BuildOperation, ProcessError};
 use crate::graph::{EdgeId, Graph, PathStyle, edgehash};
 use crate::names::Names;
+use crate::subprocess::{Launch, ProcessOutput};
 use crate::util::{BString, ByteSlice};
 use std::fs;
 
@@ -125,12 +126,34 @@ impl CommandSpec {
 /// placeholder: an edge whose command is bound this late has no earlier text
 /// to merge with.
 pub(crate) struct LateCommand {
+    /// The whole of what this edge runs, as one command line, for everything
+    /// that has to name it: the progress line, the log, and `-n`.
     pub(crate) command: BString,
     /// What to print while it runs. Empty leaves the choice to the reporter,
     /// exactly as an unbound `description` on a rule does.
     pub(crate) description: BString,
     pub(crate) rspfile: Option<BString>,
     pub(crate) rspfile_content: BString,
+    pub(crate) ignore_errors: bool,
+    /// The processes this edge really is, in order.
+    ///
+    /// One entry is the ordinary case and is what an edge whose command was
+    /// settled in the graph has by construction. Several is GNU Make's recipe:
+    /// `start_job_command` runs one command line, and `reap_children` comes
+    /// back for the next when that one is done, so a `cd` in one line is not
+    /// seen by the next and a line whose shell syntax is left open dies where
+    /// it stands instead of being completed by the line after it.
+    ///
+    /// The build stops at the first step that fails and is not
+    /// [`LateStep::ignore_errors`]; the last one's status is the edge's.
+    pub(crate) steps: Vec<LateStep>,
+}
+
+/// One process an edge is made of.
+pub(crate) struct LateStep {
+    pub(crate) launch: Launch,
+    /// A nonzero status from this step is not the edge's answer and does not
+    /// stop the steps after it — GNU Make's `-` prefix, read per line.
     pub(crate) ignore_errors: bool,
 }
 
@@ -185,13 +208,35 @@ pub(crate) trait LateCommands {
     ) -> Result<LateBinding, String>;
 }
 
+/// What the build does next with an edge whose process just finished.
+pub(super) enum Advance {
+    /// The recipe had another command line and it is running.
+    Relaunched,
+    /// The edge is over, on this result.
+    Finished(Result<Option<ProcessOutput>, ProcessError>),
+}
+
 pub(super) struct PreparedEdge {
     pub(super) edge: EdgeId,
     pub(super) old_mtimes: Vec<i64>,
     pub(super) command: CommandSpec,
-    /// The stable command with scheduling-time values substituted. Hashing and
-    /// narration continue to use `command` itself.
-    pub(super) launch_command: BString,
+    /// What is left to run, in order, with scheduling-time values already
+    /// substituted. Hashing and narration continue to use `command` itself.
+    ///
+    /// An edge whose command the graph settled has exactly one, which is what
+    /// every Ninja edge is. A recipe a front end bound at launch has one per
+    /// command line, because that is how many processes GNU Make gives it.
+    pub(super) steps: std::collections::VecDeque<PreparedStep>,
+    /// Whether a front end named the steps, as against their having been made
+    /// out of the one command the graph held.
+    pub(super) bound: bool,
+    /// The step now running: what it is called, and whether its failure counts.
+    pub(super) running_step: RunningStep,
+    /// What the steps before the running one wrote, waiting for the edge to
+    /// finish so all of it is reported at once — which is where a single
+    /// command's output is reported too.
+    pub(super) earlier_stdout: Vec<u8>,
+    pub(super) earlier_stderr: Vec<u8>,
     pub(super) command_start_mtime: i64,
     /// Milliseconds from the start of the build to this command's launch.
     ///
@@ -202,6 +247,18 @@ pub(super) struct PreparedEdge {
     /// Ninja reading a log we wrote silently falls back to counting edges.
     pub(super) start_millis: i32,
     pub(super) _response_file: Option<ResponseFile>,
+}
+
+/// One of an edge's launches, ready to start.
+pub(super) struct PreparedStep {
+    pub(super) launch: Launch,
+    pub(super) ignore_errors: bool,
+}
+
+/// What the build knows about the step an edge currently has running.
+#[derive(Default)]
+pub(super) struct RunningStep {
+    pub(super) ignore_errors: bool,
 }
 
 pub(super) struct ResponseFile {
@@ -261,6 +318,7 @@ impl Builder<'_> {
         &mut self,
         edge: EdgeId,
         command: &mut CommandSpec,
+        steps: &mut Vec<LateStep>,
     ) -> BuildResult<Runs> {
         match self.late_binding(edge)? {
             LateBinding::Settled => Ok(Runs::Command),
@@ -271,6 +329,7 @@ impl Builder<'_> {
                 command.rspfile = bound.rspfile;
                 command.rspfile_content = bound.rspfile_content;
                 command.ignore_errors = bound.ignore_errors;
+                *steps = bound.steps;
                 Ok(Runs::Command)
             }
         }
@@ -565,5 +624,124 @@ impl Builder<'_> {
         };
         self.status_scratch = line;
         result.and_then(|()| self.emit(bytes))
+    }
+}
+
+impl Builder<'_> {
+    /// The processes this edge is, with the scheduling-time values the front
+    /// end left for the build to fill in already substituted.
+    ///
+    /// An edge whose command the graph settled is one process, which is every
+    /// Ninja edge and every recipe a front end read before the build began; a
+    /// recipe bound at launch is as many as it has command lines.
+    pub(super) fn prepared_steps(
+        &self,
+        edge: EdgeId,
+        command: &CommandSpec,
+        bound: Vec<crate::build::LateStep>,
+    ) -> std::collections::VecDeque<PreparedStep> {
+        use crate::subprocess::Launch;
+        if bound.is_empty() {
+            return std::collections::VecDeque::from(vec![PreparedStep {
+                launch: Launch::Shell(self.deferred_launch_command(edge, &command.command)),
+                ignore_errors: command.ignore_errors,
+            }]);
+        }
+        bound
+            .into_iter()
+            .map(|step| PreparedStep {
+                launch: match step.launch {
+                    Launch::Shell(command) => {
+                        Launch::Shell(self.deferred_launch_command(edge, &command))
+                    }
+                    // Nothing to substitute into: the front end that reads a
+                    // recipe at launch never leaves one of these unfinished.
+                    direct @ Launch::Direct(_) => direct,
+                },
+                ignore_errors: step.ignore_errors,
+            })
+            .collect()
+    }
+
+    /// Start the next process this edge is made of, or say that it is over.
+    ///
+    /// GNU Make's `reap_children` asks the same question of a finished recipe
+    /// line: the recipe carries on into its next line when this one succeeded,
+    /// or failed and was written with a `-`, and stops where it stands
+    /// otherwise. The status the edge is finally judged on is the last line's,
+    /// and a failure the makefile said to ignore leaves the target made.
+    ///
+    /// An edge whose command the graph settled has one step, so it always ends
+    /// here on the first completion and nothing about it changes.
+    pub(super) fn continue_recipe<External: Send + 'static>(
+        &self,
+        processes: &mut crate::subprocess::ProcessSupervisor<External>,
+        prepared: &mut PreparedEdge,
+        result: Result<Option<ProcessOutput>, ProcessError>,
+    ) -> Advance {
+        match self.next_step(prepared, result) {
+            Advance::Finished(result) => return Advance::Finished(result),
+            Advance::Relaunched => {}
+        }
+        let launch = Self::take_step(prepared);
+        let use_console = prepared.command.use_console;
+        match processes.spawn(prepared.edge, launch, use_console, self.options.dryrun) {
+            Ok(()) => Advance::Relaunched,
+            Err(error) => Advance::Finished(Err(error)),
+        }
+    }
+
+    /// Whether the recipe has another command line to run, given how the last
+    /// one came out and what it wrote.
+    fn next_step(
+        &self,
+        prepared: &mut PreparedEdge,
+        result: Result<Option<ProcessOutput>, ProcessError>,
+    ) -> Advance {
+        let Ok(finished) = result else {
+            return Advance::Finished(result);
+        };
+        let Some(output) = finished else {
+            // A dry run: nothing ran, so every step of it "succeeded" and the
+            // recipe is walked to its end exactly as a real one would be.
+            if prepared.steps.is_empty() {
+                return Advance::Finished(Ok(None));
+            }
+            return Advance::Relaunched;
+        };
+        let carry_on = output.status.success() && !prepared.steps.is_empty();
+        let ignored_and_more = !output.status.success()
+            && prepared.running_step.ignore_errors
+            && !prepared.steps.is_empty()
+            && !self.command_interrupted(output.status);
+        if carry_on || ignored_and_more {
+            // The failure of an ignored step is not the edge's answer and is
+            // not reported as one: the `-` prefix is what the makefile said
+            // about it, and what it wrote still belongs to the edge.
+            prepared.earlier_stdout.extend_from_slice(&output.stdout);
+            prepared.earlier_stderr.extend_from_slice(&output.stderr);
+            return Advance::Relaunched;
+        }
+        if !output.status.success() && prepared.bound {
+            // Read per line rather than per recipe: only the step the edge
+            // stopped at decides whether its status is one to ignore, where
+            // the assembled script could only be believed when every line of
+            // it said so.
+            prepared.command.ignore_errors = prepared.running_step.ignore_errors;
+        }
+        Advance::Finished(Ok(Some(output)))
+    }
+
+    /// Take the next process this edge is made of, and remember what its
+    /// status will mean.
+    pub(super) fn take_step(prepared: &mut PreparedEdge) -> crate::subprocess::Launch {
+        let step = prepared
+            .steps
+            .pop_front()
+            .expect("an edge is prepared with at least one step");
+        prepared.running_step = RunningStep {
+            ignore_errors: step.ignore_errors,
+        };
+        step.launch
     }
 }

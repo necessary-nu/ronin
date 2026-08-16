@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 4
+| all:
+| 	@echo one > one
+| 	exit 3
+| 	@echo three > three
+file one touched 1
+| one
