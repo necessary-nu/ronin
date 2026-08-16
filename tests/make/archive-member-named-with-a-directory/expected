@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The archive pass holds no directory aside: GNU Make sets `lastslash = 0` for
+| # it outright (reference/gnumake/src/implicit.c), so `(%)` matching
+| # `(d/foo.o)` takes the whole of `d/foo.o` for its stem and hands it back to
+| # the prerequisite unchanged. An archive in a subdirectory is the ordinary
+| # case and stays whole too.
+| AR = ./fake-ar
+| all: libx.a(d/foo.o) sub/liby.a(bar.o)
+file bar.o kept 1
+| object
+file d/foo.o kept 1
+| object
+file fake-ar kept 2
+| #!/bin/sh
+| printf "%s\n" "ar $*" >> log
+file log touched 2
+| ar -rv libx.a d/foo.o
+| ar -rv sub/liby.a bar.o

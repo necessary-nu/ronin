@@ -1,0 +1,13 @@
+# For an archive-member target `$@` is the archive and `$%` is the member, and
+# a prerequisite written in the same shape contributes only its member name to
+# `$^`, `$?`, `$+` and `$<` (reference/gnumake/src/commands.c). With no stem
+# from a pattern match, `$*` is the member name with a known suffix stripped —
+# `foo`, not `libx.a(foo`.
+libx.a(foo.o): foo.o
+	@printf '%s\n' 'at [$@]' 'percent [$%]' 'star [$*]' \
+		'lt [$<]' 'hat [$^]' 'plus [$+]' 'question [$?]' >> log
+
+plain: foo.o
+	@printf '%s\n' 'plain percent [$%] words [$(words $%)]' >> log
+
+all: libx.a(foo.o) plain

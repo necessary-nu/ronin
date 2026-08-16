@@ -415,7 +415,7 @@ case	features/reinvoke.diff.9	narration	no-work-line+up-to-date-line
 case	features/rule_glob.diff	narration	ninja-progress
 case	features/rule_glob.diff.1	narration	ninja-progress
 case	features/rule_glob.diff.2	narration	ninja-progress
-case	features/se_explicit.diff	narration	ninja-progress
+case	features/se_explicit.diff	unclassified	ninja-progress+evaluation
 case	features/se_explicit.diff.1	narration	ninja-progress
 case	features/se_explicit.diff.10	unclassified	ninja-progress+evaluation
 case	features/se_explicit.diff.11	narration	no-work-line

@@ -1,5 +1,8 @@
 //! Rust implementation of the POSIX-facing operating-system adapter.
 
+#[cfg(unix)]
+mod archive;
+
 use std::io;
 use std::path::{Path, PathBuf};
 #[cfg(not(unix))]
@@ -110,6 +113,15 @@ pub(crate) struct RealDiskInterface {
     // [spec:ronin:req:runtime.allocation-free-stat]
     #[cfg(unix)]
     directory: std::sync::Arc<std::sync::OnceLock<Result<rustix::fd::OwnedFd, rustix::io::Errno>>>,
+    /// Whether a path written `lib.a(member.o)` is an archive-member
+    /// reference rather than a file of that name.
+    ///
+    /// Off for a Ninja manifest, where parentheses in a path are just bytes
+    /// and a file may legitimately be called that. Make mode turns it on
+    /// because GNU Make reads the shape wherever a target is written, and its
+    /// `f_mtime` answers for such a name out of the archive's index rather
+    /// than with a `stat` — see [`mod@archive`].
+    archive_members: bool,
     /// Directories [`Self::make_dirs`] has already ensured exist.
     ///
     /// `create_dir_all` on a directory that is already there still costs a
@@ -124,10 +136,18 @@ impl RealDiskInterface {
     pub(crate) fn new(working_directory: WorkingDirectory) -> Self {
         Self {
             working_directory,
+            archive_members: false,
             #[cfg(unix)]
             directory: std::sync::Arc::default(),
             created: std::sync::Arc::default(),
         }
+    }
+
+    /// Read `lib.a(member.o)` as an archive-member reference, which is what
+    /// GNU Make does and what a Ninja manifest must not.
+    pub(crate) const fn reading_archive_members(mut self) -> Self {
+        self.archive_members = true;
+        self
     }
 
     pub(crate) fn resolve(&self, path: &Path) -> PathBuf {
@@ -254,6 +274,22 @@ impl RealDiskInterface {
     /// Return a nanosecond timestamp, zero for a missing path, and an error for
     /// failures other than a missing component.
     pub(crate) fn stat(&self, path: &Path) -> io::Result<i64> {
+        // Unix only, and not by omission: `archive_members` is Make mode's
+        // switch and Make mode is a Unix front end, so there is no host where
+        // the flag is set and this branch is missing.
+        #[cfg(unix)]
+        if self.archive_members
+            && let Some((library, member)) =
+                archive::split_member(path.as_os_str().as_encoded_bytes())
+        {
+            return Ok(self.archive_member_stat(library, member));
+        }
+        self.plain_stat(path)
+    }
+
+    /// The timestamp of a path that is a path, which is every path a manifest
+    /// build has and every Make target that is not an archive member.
+    fn plain_stat(&self, path: &Path) -> io::Result<i64> {
         #[cfg(unix)]
         let modified = self.stat_at(path).and_then(modification_nanoseconds);
         #[cfg(not(unix))]
@@ -277,6 +313,44 @@ impl RealDiskInterface {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// When `lib.a(member.o)` was last written, in the same nanoseconds every
+    /// other path answers in, and zero for a member that is not there.
+    ///
+    /// GNU Make's `f_mtime` (reference/gnumake/src/remake.c), which asks three
+    /// questions in order: the archive must exist, the index must record a
+    /// date for the member, and a member file left newer on disk than the
+    /// indexed copy makes the member count as absent — it was rebuilt and not
+    /// yet filed.
+    #[cfg(unix)]
+    fn archive_member_stat(&self, library: &[u8], member: &[u8]) -> i64 {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let library = Path::new(std::ffi::OsStr::from_bytes(library));
+        if self.plain_stat(library).unwrap_or(0) == 0 {
+            return 0;
+        }
+        let Some(date) = archive::member_date(&self.resolve(library), member) else {
+            return 0;
+        };
+        let filed = self
+            .plain_stat(Path::new(std::ffi::OsStr::from_bytes(member)))
+            .unwrap_or(0);
+        // The comparison is in whole seconds because that is all the archive
+        // header keeps; GNU Make sets `low_resolution_time` for the same
+        // reason.
+        if filed != 0 && filed / 1_000_000_000 > date {
+            return 0;
+        }
+        // The archive header keeps whole seconds, so the member is dated to
+        // the *last* nanosecond of its second rather than the first. GNU Make
+        // does the same arithmetic under `low_resolution_time`
+        // (reference/gnumake/src/remake.c: `this_mtime += FILE_TIMESTAMPS_PER_S
+        // - 1 - ns`), and it is what keeps a member filed in the same second
+        // as its source from looking older than it.
+        date.saturating_mul(1_000_000_000)
+            .saturating_add(999_999_999)
     }
 
     /// Create every parent directory needed for a file path.

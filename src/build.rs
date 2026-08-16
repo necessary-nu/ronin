@@ -94,6 +94,9 @@ pub(crate) struct BuildOptions {
     /// and the question becomes whether this process was signalled too.
     pub(crate) recipe_signal_fails: bool,
     pub(crate) working_directory: crate::os::WorkingDirectory,
+    /// Whether a target written `lib.a(member.o)` names a member of an
+    /// archive rather than a file. Make mode only — see [`crate::os`].
+    pub(crate) archive_members: bool,
 }
 
 impl Default for BuildOptions {
@@ -120,6 +123,7 @@ impl Default for BuildOptions {
             command_status_interrupts: true,
             recipe_signal_fails: false,
             working_directory: crate::os::WorkingDirectory::default(),
+            archive_members: false,
         }
     }
 }
@@ -672,7 +676,10 @@ impl<'a> Builder<'a> {
         let progress = BuildState::new(options.clone());
         let options_style = options.style;
         let options_color = options.color.resolve(options.terminal);
-        let disk = RealDiskInterface::new(options.working_directory.clone());
+        let mut disk = RealDiskInterface::new(options.working_directory.clone());
+        if options.archive_members {
+            disk = disk.reading_archive_members();
+        }
         let mut runtime = RuntimeState::new(graph);
         if let Some(log) = build_log.as_deref() {
             log.hydrate_runtime(graph, &mut runtime, graph.node_ids());

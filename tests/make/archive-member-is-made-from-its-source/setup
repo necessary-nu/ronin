@@ -1,0 +1,3 @@
+printf 'source\n' > foo.src
+printf '#!/bin/sh\nprintf "%%s\\n" "ar $*" >> log\n' > fake-ar
+chmod 755 fake-ar

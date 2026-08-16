@@ -1368,6 +1368,11 @@ fn build_options(
     // other failure — `*** [Makefile:2: out] Terminated`, and on under -k. Only
     // a signal delivered to Make itself ends the build.
     options.recipe_signal_fails = true;
+    // `lib.a(member.o)` is a target GNU Make reads as a member of an archive,
+    // and its timestamp comes out of the archive's index rather than off a
+    // file of that name. A manifest build has no such shape and must keep
+    // reading parentheses as ordinary bytes in a path.
+    options.archive_members = true;
     Ok(options)
 }
 

@@ -1,0 +1,5 @@
+mkdir -p d sub
+printf 'object\n' > d/foo.o
+printf 'object\n' > bar.o
+printf '#!/bin/sh\nprintf "%%s\\n" "ar $*" >> log\n' > fake-ar
+chmod 755 fake-ar

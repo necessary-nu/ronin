@@ -1,0 +1,10 @@
+printf 'object\n' > foo.o
+touch -d '2020-01-01 00:00:00Z' foo.o
+{
+	printf '!<arch>\n'
+	printf 'foo.o/          1609459200  0     0     100644  7         `\n'
+	printf 'object\n'
+	printf '\n'
+} > libx.a
+printf '#!/bin/sh\nprintf "%%s\\n" "ar $*" >> log\n' > fake-ar
+chmod 755 fake-ar

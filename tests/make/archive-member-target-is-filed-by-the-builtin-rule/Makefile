@@ -1,0 +1,11 @@
+# `lib.a(member.o)` is the one target name that is not a filename: GNU Make
+# reads it as a member of an archive. The built-in `(%): %` rule matches it on
+# the implicit search's archive pass — where the name being searched for is
+# `(member.o)`, with the archive held aside — and files the object with
+# `$(AR) $(ARFLAGS) $@ $<`.
+#
+# `AR` is replaced here so the case records what was asked for rather than an
+# archive's bytes. The rule, the stem and the two automatic variables are the
+# whole of what is being asserted.
+AR = ./fake-ar
+all: libx.a(foo.o)
