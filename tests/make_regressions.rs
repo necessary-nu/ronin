@@ -590,3 +590,102 @@ fn dry_run_stops_at_empty_expansion() {
     }
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// One stream, in the order the run wrote it.
+///
+/// Make mode gathers its narration and writes it at the end, while a diagnostic
+/// goes to standard error as it happens — so concatenating the two captures
+/// says nothing about which came first. A question about order has to be asked
+/// of one descriptor, which means merging them before the run rather than after
+/// it.
+fn merged_make(directory: &Path, arguments: &[&str]) -> (bool, String) {
+    let mut command = format!("exec {}", invoked_as(directory).display());
+    for argument in arguments {
+        command.push(' ');
+        command.push_str(argument);
+    }
+    command.push_str(" 2>&1");
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(&command)
+        .current_dir(directory)
+        .env_remove("MAKEFLAGS")
+        .env_remove("MFLAGS")
+        .env_remove("CARGO_MAKEFLAGS")
+        .env_remove("MAKELEVEL")
+        .output()
+        .unwrap();
+    (
+        output.status.success(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+    )
+}
+
+/// GNU Make does not report an `include` it could not open where it fails to
+/// open it. `eval_makefile` records the errno on the goaldep and says nothing;
+/// `show_goal_error` prints the complaint from inside the update that brings
+/// the makefiles up to date, one line ahead of the refusal it belongs to. So a
+/// Makefile that remakes itself narrates that work first, and the located line
+/// comes after it rather than before.
+///
+/// GNU Make 4.4.1 on this case prints `REMAKE`, then
+/// `Makefile:1: nope.mk: No such file or directory`, then
+/// `make: *** No rule to make target 'nope.mk'.  Stop.`, and exits 2.
+///
+/// The build-intent gate compares files and status rather than output, which is
+/// why this ordering is asserted here instead.
+#[test]
+fn include_complaint_waits_for_the_refusal() {
+    let directory = test_directory("unopenable-include-order");
+    let source = "include nope.mk\nMakefile: Makefile.src ; @echo REMAKE; cp Makefile.src Makefile\nall: ; @echo all\n";
+    fs::write(directory.join("Makefile.src"), source).unwrap();
+    write_at(&directory, "Makefile", source, 1_000);
+
+    let (succeeded, reported) = merged_make(&directory, &[]);
+    assert!(!succeeded, "{reported}");
+
+    let remade = reported.find("REMAKE").expect(&reported);
+    let complaint = reported
+        .find("nope.mk: No such file or directory")
+        .expect(&reported);
+    let refusal = reported
+        .find("No rule to make target 'nope.mk'")
+        .expect(&reported);
+    assert!(
+        remade < complaint,
+        "the complaint came out at the read rather than at the refusal: {reported}"
+    );
+    assert!(
+        complaint < refusal,
+        "the complaint came out after what it explains: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The complaint belongs to the `include` line that asked for the file, so a
+/// Makefile the command line named has none — and GNU Make reports that one
+/// from the read instead, before any remaking rather than after it.
+///
+/// GNU Make 4.4.1 on `make -fbye.mk -fR - all`, with `bye.mk` backdated and
+/// remaking itself, prints `make: R: No such file or directory`, then the
+/// remaking, then `make: *** No rule to make target 'R'.  Stop.`.
+#[test]
+fn named_makefile_complains_at_the_read() {
+    let directory = test_directory("unopenable-named-makefile");
+    let source = "all: ; @echo all\nbye.mk: bye.mk.src ; @echo REMAKE; touch bye.mk\n";
+    fs::write(directory.join("bye.mk.src"), "").unwrap();
+    write_at(&directory, "bye.mk", source, 1_000);
+
+    let (succeeded, reported) = merged_make(&directory, &["-fbye.mk", "-fR", "-", "all"]);
+    assert!(!succeeded, "{reported}");
+
+    let complaint = reported
+        .find("R: No such file or directory")
+        .expect(&reported);
+    let remade = reported.find("REMAKE").expect(&reported);
+    assert!(
+        complaint < remade,
+        "a Makefile the command line named was complained of at the refusal: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

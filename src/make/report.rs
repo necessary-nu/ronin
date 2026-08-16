@@ -94,10 +94,21 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
 /// of it: GNU Make brings the Makefiles it reached before that one up to date
 /// and refuses from inside that update, so whatever the remaking narrated is
 /// already in `reported` and goes out in front of the refusal.
-pub(super) fn refused_makefile(reported: String, failure: impl Display) -> RunResult {
+///
+/// `complaint` is the located `No such file or directory` for the file that
+/// would not open, which GNU Make holds back from the read and prints here, one
+/// line ahead of what it dies on.
+pub(super) fn refused_makefile(
+    reported: String,
+    complaint: Option<String>,
+    failure: impl Display,
+) -> RunResult {
+    let mut stderr =
+        complaint.map_or_else(Vec::new, |complaint| format!("{complaint}\n").into_bytes());
+    stderr.extend(ordinary_diagnostic(failure));
     RunResult {
         stdout: terminated(reported),
-        stderr: ordinary_diagnostic(failure),
+        stderr,
         exit_code: ABANDONED,
     }
 }

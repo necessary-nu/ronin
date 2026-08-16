@@ -239,6 +239,31 @@ struct ComposedUnit {
     complete: bool,
 }
 
+/// A required Makefile the read could not open and no rule can make, and what
+/// the run says about it once the Makefiles ahead of it have been brought up to
+/// date.
+///
+/// The complaint travels with the refusal because GNU Make prints the two
+/// together, from inside the update rather than from the read: `eval_makefile`
+/// records the errno and says nothing, and `show_goal_error` speaks beside the
+/// refusal it belongs to.
+pub(crate) struct RefusedMakefile {
+    /// The located `No such file or directory`, already rendered. `None` for a
+    /// Makefile the command line named, which has no `include` line to point
+    /// at and which GNU Make reports from the read.
+    complaint: Option<String>,
+    /// What ends the run.
+    error: MakeError,
+}
+
+impl RefusedMakefile {
+    /// The refusal as the report writes it: the held complaint, then what ends
+    /// the run.
+    fn into_parts(self) -> (Option<String>, MakeError) {
+        (self.complaint, self.error)
+    }
+}
+
 /// One unit's Makefiles: the ones among them whose failure is forgiven, and the
 /// required one nothing can make.
 struct UnitRemakes {
@@ -247,7 +272,7 @@ struct UnitRemakes {
     /// GNU Make brings the Makefiles ahead of this one up to date and then ends
     /// the run over it, so it is carried alongside them rather than raised in
     /// their place.
-    refusal: Option<MakeError>,
+    refusal: Option<RefusedMakefile>,
 }
 
 /// Where this unit's Makefiles ended up in the shared graph.
@@ -255,7 +280,7 @@ fn unit_remakes(
     sink: &mut GraphSink,
     names: &Session,
     regenerations: &RegenerationNames,
-    refusal: Option<MakeError>,
+    refusal: Option<RefusedMakefile>,
 ) -> Result<UnitRemakes, MakeError> {
     let mut looked_up = |symbols: &[kati::symtab::Symbol]| {
         sink.unit_nodes(names, symbols).map_err(|error| {
@@ -284,7 +309,7 @@ struct CompilationState<'a> {
     remakes: Vec<Node>,
     forgiven_remakes: Vec<Node>,
     /// The first required Makefile any unit of this compilation could not make.
-    refusal: Option<MakeError>,
+    refusal: Option<RefusedMakefile>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
 }
@@ -432,7 +457,10 @@ where
             regeneration_nodes,
             refusal,
         } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
-        let refusal = refusal.as_ref().map(MakeError::evaluate);
+        let refusal = refusal.map(|refusal| RefusedMakefile {
+            complaint: refusal.complaint,
+            error: MakeError::evaluate(&refusal.error),
+        });
         let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
         let exported =
             exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
@@ -849,7 +877,7 @@ pub struct Loaded {
     /// the Makefiles up to date: the ones it reached first are remade, and
     /// then the run ends — without restarting the read, however much that
     /// remaking changed.
-    refusal: Option<MakeError>,
+    refusal: Option<RefusedMakefile>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
@@ -905,7 +933,7 @@ impl Loaded {
     /// in [`Self::remake_targets`] and are brought up to date first: GNU Make
     /// refuses from inside that update, so the work ahead of the refusal is
     /// done and the read never starts over however much of it moved.
-    pub(crate) const fn take_refusal(&mut self) -> Option<MakeError> {
+    pub(crate) const fn take_refusal(&mut self) -> Option<RefusedMakefile> {
         self.refusal.take()
     }
 

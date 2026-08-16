@@ -434,7 +434,8 @@ pub(super) fn build_compiler_inputs(
         Remaking::Restart => {
             persistence.finish()?;
             return Ok(refusal.map_or(Settlement::Restart, |refusal| {
-                Settlement::Finished(refused_makefile(std::mem::take(reported), refusal))
+                let (complaint, error) = refusal.into_parts();
+                Settlement::Finished(refused_makefile(std::mem::take(reported), complaint, error))
             }));
         }
         // Bringing a Makefile up to date is work the rest of the run has
@@ -444,9 +445,11 @@ pub(super) fn build_compiler_inputs(
         Remaking::Settled(remade) => {
             if let Some(refusal) = refusal {
                 persistence.finish()?;
+                let (complaint, error) = refusal.into_parts();
                 return Ok(Settlement::Finished(refused_makefile(
                     std::mem::take(reported),
-                    refusal,
+                    complaint,
+                    error,
                 )));
             }
             graph.mark_makefiles_remade(&remade);

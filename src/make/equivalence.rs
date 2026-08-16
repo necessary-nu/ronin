@@ -601,7 +601,7 @@ fn build_both(directory: &Path, argv: Vec<OsString>) -> Result<Both, Outcome> {
     // builds what it collected and then dies, and this comparison is about
     // what the two emitters make of a graph.
     if let Some(refusal) = refusal {
-        return Err(Outcome::NotAccepted(format!("{refusal:#}")));
+        return Err(Outcome::NotAccepted(format!("{:#}", refusal.error)));
     }
     // The two paths have to be handed the same roots, generated Makefiles
     // included, or the comparison stops covering the edges that make them.

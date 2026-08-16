@@ -1499,9 +1499,11 @@ fn prepare_graph(
             // inside the update that brings the makefiles up to date, and a
             // read with nothing to remake reaches it with no work to do first.
             if let Some(refusal) = loaded.take_refusal() {
+                let (complaint, error) = refusal.into_parts();
                 return Ok(PreparedGraph::Finished(refused_makefile(
                     std::mem::take(reported),
-                    refusal,
+                    complaint,
+                    error,
                 )));
             }
             let recipes = loaded.take_pending_recipes().map(Box::new);
