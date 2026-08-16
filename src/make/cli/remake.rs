@@ -96,6 +96,12 @@ struct Subset {
     options: BuildOptions,
     /// Whether a recipe that lost here ends the run.
     forgive: bool,
+    /// Whether these are asked about rather than made.
+    ///
+    /// Only under `-q`, and only for a Makefile the command line named — the one
+    /// case where `update_goal_chain` restores the invocation's switches while
+    /// the makefiles are being rebuilt (`file->cmd_target`, remake.c:169).
+    question: bool,
 }
 
 /// What bringing the Makefiles up to date came to.
@@ -285,13 +291,28 @@ impl Passes<'_, '_, '_> {
         for mut subset in makefiles.subsets(self.graph) {
             let paths = paths_of(self.graph, &subset.targets);
             let before = makefile_stamps(&paths, makefiles.directory);
-            let unmade = match self.run(&subset.targets, subset.options, subset.forgive) {
+            let attempt = if subset.question {
+                self.ask(&subset.targets, subset.options.clone())
+            } else {
+                self.run(&subset.targets, subset.options.clone(), subset.forgive)
+            };
+            let unmade = match attempt {
                 Pass::Ran(outcome) => {
                     self.narrate(&outcome);
                     Vec::new()
                 }
                 Pass::Lost(unmade) => unmade,
                 Pass::Finished(result) => return Remaking::Finished(result),
+                // A question the makefile update asked and had answered `no`.
+                // GNU Make does not stop for it and does not build anything
+                // either: `update_goal_chain` leaves the file `updated` with
+                // `us_question`, and `stop` is withheld while
+                // `rebuilding_makefiles` (remake.c:206). What the answer leaves
+                // behind is a verdict — the file was wanted, it is not there,
+                // and no recipe is going to run — which is the same third state
+                // a forgiven rule that lost leaves, so the goals refuse over it
+                // rather than being served a name that means nothing.
+                Pass::Answered(Ok(false)) if subset.question => subset.targets.clone(),
                 Pass::Answered(question) => {
                     let reported = std::mem::take(self.reported);
                     return Remaking::Finished(answered(reported, question));
@@ -427,36 +448,52 @@ impl Makefiles<'_> {
             maxfail: usize::MAX,
             ..options
         };
-        // Under `-q` a Makefile the command line named is asked about and left
-        // alone: GNU Make records the question and carries on with the read
-        // rather than stopping the way it would for a goal.
+        // Under `-q` a Makefile the command line named is asked about rather
+        // than made, and the run does not stop for the answer the way it would
+        // for a goal: `stop` is withheld while `rebuilding_makefiles`
+        // (remake.c:206), so the read carries on.
+        //
+        // What the answer leaves behind depends on the OTHER question. A
+        // required one leaves `us_question` and nothing else — `main.c` reads
+        // that as "did nothing" (main.c:2473) and the goals ask again and
+        // answer 1. A forgiven one additionally has `no_diag` set, because
+        // `update_file_1` copies it from `dontcare` on the way in
+        // (remake.c:496), and the goals' own pass reads the pair back and
+        // complains: `if (file->no_diag && !file->dontcare) complain (file)`
+        // (remake.c:469), `dontcare` having been cleared when the makefile pass
+        // let go of it. That complaint is fatal, so 2 outranks the question's 1.
+        //
+        // So the required one is left out of the update entirely, which is what
+        // "did nothing" amounts to, and the forgiven one is asked — because its
+        // answer is a verdict the goals have to read.
+        let questioning = self.invocation.questioning();
         let asked_about = |targets: Vec<Node>| {
-            if self.invocation.questioning() {
-                Vec::new()
-            } else {
-                targets
-            }
+            if questioning { Vec::new() } else { targets }
         };
         vec![
             Subset {
                 targets: group(false, false),
                 options: remaking_options(self.options),
                 forgive: false,
+                question: false,
             },
             Subset {
                 targets: group(false, true),
                 options: forgivingly(remaking_options(self.options)),
                 forgive: true,
+                question: false,
             },
             Subset {
                 targets: asked_about(group(true, false)),
                 options: self.options.clone(),
                 forgive: false,
+                question: false,
             },
             Subset {
-                targets: asked_about(group(true, true)),
+                targets: group(true, true),
                 options: forgivingly(self.options.clone()),
                 forgive: true,
+                question: questioning,
             },
         ]
     }
@@ -757,8 +794,10 @@ mod tests {
         assert!(subsets[1].targets.is_empty());
     }
 
-    /// `-q` asks about a Makefile the command line named rather than making it,
-    /// and leaves every other one to be made.
+    /// `-q` leaves a REQUIRED Makefile the command line named out of the update
+    /// altogether, and leaves every other one to be made. GNU Make asks about it
+    /// and `main.c` reads the answer as "did nothing", which is what having no
+    /// subset amounts to.
     #[test]
     fn question_leaves_its_named_makefile_alone() {
         let mut graph = BuildGraph::new();
@@ -777,6 +816,38 @@ mod tests {
         let subsets = makefiles.subsets(&graph);
         assert_eq!(named(&graph, &subsets[0].targets), vec!["gen.mk"]);
         assert!(subsets[2].targets.is_empty());
+        assert!(!subsets[2].question);
+    }
+
+    /// A FORGIVEN one the command line named is asked instead, because its
+    /// answer is a verdict the goals have to read: `update_file_1` copies
+    /// `dontcare` into `no_diag` on the way in, and the goals' own pass reads
+    /// that pair back and refuses over the file rather than serving it.
+    #[test]
+    fn question_asks_a_forgiven_named_makefile() {
+        let mut graph = BuildGraph::new();
+        let remakes = nodes(&mut graph, &["gen.mk", "asked.mk"]);
+        let invocation = parsed(&["make", "-q", "asked.mk"]);
+        let options = BuildOptions::default();
+        let makefiles = Makefiles {
+            remakes: &remakes,
+            forgiven: &remakes[1..],
+            invocation: &invocation,
+            options: &options,
+            goals: &[BString::from("asked.mk")],
+            directory: Path::new("."),
+        };
+
+        let subsets = makefiles.subsets(&graph);
+        assert_eq!(named(&graph, &subsets[3].targets), vec!["asked.mk"]);
+        assert!(subsets[3].question);
+        // And nothing is asked when nothing asked a question.
+        let building = parsed(&["make", "asked.mk"]);
+        let makefiles = Makefiles {
+            invocation: &building,
+            ..makefiles
+        };
+        assert!(!makefiles.subsets(&graph)[3].question);
     }
 
     /// An optional include is its own subset, attempted to the end and forgiven.

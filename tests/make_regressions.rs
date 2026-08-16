@@ -690,6 +690,62 @@ fn named_makefile_complains_at_the_read() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// `-q` is a status, and the three it can give are three different answers:
+/// zero says the goals are already up to date, one says something would have to
+/// run, two says the question could not be answered at all.
+///
+/// A forgiven Makefile the command line named turns one into two. GNU Make
+/// restores `-q` for it while the makefiles are being rebuilt
+/// (`file->cmd_target`, remake.c:169), so it is asked about rather than made;
+/// the answer is "not up to date", which for a makefile is a failed update;
+/// `dontcare` forgives it there and `no_diag` remembers that nothing was said;
+/// and the goals then reach the same file, find it `updated` with a failing
+/// status, and complain — which is fatal, so two outranks the question's one.
+///
+/// GNU Make 4.4.1 answers 2 to `make -q one.mk` here and leaves `one.mk`
+/// uncreated. It answers 1 to the same case with `include` in place of
+/// `-include`, because a required makefile sets no `no_diag` and so is never
+/// complained about.
+#[test]
+fn question_refuses_a_forgiven_makefile_goal() {
+    let directory = test_directory("question-forgiven-goal");
+    let source = |include: &str| {
+        format!(
+            "{include} one.mk\nall: ; @echo all ran\none.mk: ; @echo GEN-one; echo X=1 > one.mk\n"
+        )
+    };
+
+    fs::write(directory.join("Makefile"), source("-include")).unwrap();
+    let forgiven = make_command(&directory)
+        .args(["-q", "one.mk"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        forgiven.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&forgiven.stderr)
+    );
+    assert!(
+        !directory.join("one.mk").exists(),
+        "the question built the file it was asked about"
+    );
+
+    fs::write(directory.join("Makefile"), source("include")).unwrap();
+    let required = make_command(&directory)
+        .args(["-q", "one.mk"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        required.status.code(),
+        Some(1),
+        "a required makefile was refused over rather than asked about: {}",
+        String::from_utf8_lossy(&required.stderr)
+    );
+    assert!(!directory.join("one.mk").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// `-k` makes `complain()` report rather than die (remake.c:422), so the
 /// makefile update walks on: every required makefile nothing can make gets its
 /// complaint and its refusal, and then `main.c`'s `us_failed` arm makes a second
