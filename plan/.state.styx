@@ -482,6 +482,7 @@ assertions (
     {id make-shuffle-reaches-the-circular-drop, kind @doing, author "brendan@necessary.nu", at 2026-08-15T23:22:57.902272747Z}
     {id make-an-unopenable-include-is-reported-where-gnu-reports-it, kind @doing, author "brendan@necessary.nu", at 2026-08-15T23:47:45.942512652Z}
     {id make-a-forgiven-makefile-is-not-remade-for-the-goals, kind @doing, author "brendan@necessary.nu", at 2026-08-16T00:02:39.519817479Z}
+    {id make-semicolon-does-not-stop-an-assignment-scan, kind @doing, author "brendan@necessary.nu", at 2026-08-16T00:27:14.742586994Z}
 )
 
 impl_evidence (

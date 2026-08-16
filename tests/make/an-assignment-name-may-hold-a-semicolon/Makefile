@@ -1,0 +1,19 @@
+# GNU Make's parse_variable_definition has no case for a semicolon: it is not a
+# comment or NUL, not blank, not `=` or `:`, and the character after it is not
+# `=`, so it falls through `other:` and the scan carries on to whatever operator
+# is written after it. The semicolon is therefore part of the variable's name,
+# under every operator and every modifier.
+a;b = one
+a;b += two
+c;d := three
+e;f = kept
+e;f ?= ignored
+g;h != printf five
+override i;j = over
+export k;l = exported
+define m;n
+defined
+endef
+all: ; @printf '[%s][%s][%s][%s][%s][%s][%s]\n' \
+	'$(a;b)' '$(c;d)' '$(e;f)' '$(g;h)' '$(i;j)' '$(k;l)' '$(m;n)' > out
+	@printf 'origin=[%s] flavor=[%s] a=[%s]\n' '$(origin a;b)' '$(flavor c;d)' '$(a)' >> out
