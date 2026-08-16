@@ -11683,6 +11683,20 @@ children (
                     }
                 )
             }
+
+            {
+                id make-release-gate-stops-at-the-port-ladder
+                title "Reach the conformance and performance gates past a port ladder that is 0/170"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-16T12:43:57.096571215Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while running the release gate for make-progress-total-shrinks-to-the-work, and filed rather than folded in because it is about the gate rather than about Make.\n\n    scripts/sandboxed scripts/check-release.sh\n\ndies at `nplan port check --wave 4` with\n\n    Wave 1 · 170 symbols · markup 0/170 · translate 0/170 · tests 0/170\n    [✗] wave-1-markup: 0/170 symbols marked up\n    [✗] wave-2-translate: 0/170 symbols ported\n    [✗] wave-3-tests: 0/170 symbols verified\n    [✗] wave-4-idiomatize: idiomatization is the last wave; complete waves 1–3 first\n    error: port: port check: one or more gates failed\n\nReproduced on a pristine worktree at 0065e35, so it is not any recent change's doing — the ladder reads 0/170 across every wave, which is what an unpopulated port register looks like rather than what a port that has not started looks like. The tree carries 396 formalization items and a full `docs/spec/port/**`, so the symbols exist; something in the register or its configuration is not seeing them.\n\nWhat it costs, and why it is worth a node rather than a shrug: `check-release.sh` is `set -eu`, and the port check sits AHEAD of\n\n    scripts/check-ninja-conformance.sh\n    scripts/check-performance.sh\n    nplan spec uncovered / nplan spec stale\n    nplan lint / nplan audit\n\nso the one command that is supposed to say whether a release is sound has not reached the Ninja conformance suite or the performance baseline for as long as this has been red. Every dispatch that runs \"the gates\" has been running the tail by hand, which works only for as long as someone remembers the list.\n\nTwo ways out, and the choice is the work: either the port register is repopulated so the ladder measures something (and the gate keeps its position), or the ladder moves behind the suites that produce a verdict about the code, so a bookkeeping gap cannot hide a conformance regression. The second is cheap and the first is the one that makes the number mean anything."
+                    }
+                )
+            }
         )
         log (
             {
