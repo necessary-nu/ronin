@@ -593,11 +593,11 @@ assertions (
     {id make-child-automatic-variables-are-child-relative, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:53:57.388534369Z}
     {id make-recipe-line-is-its-own-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:54:01.819532669Z}
     {id make-simple-command-without-a-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-16T21:54:06.818469836Z}
-    {id make-shuffled-drop-unlinks-the-position-not-the-edge, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:04:25.662292439Z}
-    {id make-an-unreadable-include-is-refused-rather-than-raised, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:14:41.956565437Z}
-    {id make-a-failed-makefile-rule-still-reports-the-unread-include, kind @doing, author "brendan@necessary.nu", at 2026-08-16T22:49:29.475919129Z}
-    {id make-keep-going-refuses-every-makefile-it-cannot-make, kind @doing, author "brendan@necessary.nu", at 2026-08-16T23:08:23.345789867Z}
-    {id make-question-mode-refuses-a-makefile-it-cannot-make, kind @doing, author "brendan@necessary.nu", at 2026-08-16T23:31:13.067739585Z}
+    {id make-shuffled-drop-unlinks-the-position-not-the-edge, kind @complete, author "brendan@necessary.nu", at 2026-08-16T23:44:24.745709152Z}
+    {id make-an-unreadable-include-is-refused-rather-than-raised, kind @complete, author "brendan@necessary.nu", at 2026-08-16T23:44:29.697351348Z}
+    {id make-a-failed-makefile-rule-still-reports-the-unread-include, kind @complete, author "brendan@necessary.nu", at 2026-08-16T23:44:34.615312085Z}
+    {id make-keep-going-refuses-every-makefile-it-cannot-make, kind @complete, author "brendan@necessary.nu", at 2026-08-16T23:44:39.993442486Z}
+    {id make-question-mode-refuses-a-makefile-it-cannot-make, kind @complete, author "brendan@necessary.nu", at 2026-08-16T23:44:45.270928746Z}
 )
 
 impl_evidence (
