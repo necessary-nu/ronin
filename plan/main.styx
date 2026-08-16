@@ -9095,12 +9095,27 @@ children (
                 title "Continue a double-colon chain past a failed entry under keep-going"
                 kind @fix
                 deps (make-double-colon-rule-freshness)
+                sealed true
                 log (
                     {
                         at 2026-08-13T17:58:29.782423312Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Reproducer, with n1 and n2 newer than out:\n\n  out:: n1\n  \t@echo R1 >> log\n  \t@false\n  out:: n2\n  \t@echo R2 >> log\n\n`make -k out` under GNU Make 4.4.1 writes log=R1,R2; Ronin writes log=R1 only.\n\nGNU Make's `update_file` walks the double-colon chain and returns early when an entry is still running, but on a failed entry it only abandons the rest of the chain when `keep_going_flag` is clear (reference/gnumake/src/remake.c, the `if (new && !keep_going_flag) return new;` in the chain loop). So under -k the chain continues past a failure.\n\nPre-existing rather than introduced by make-double-colon-rule-freshness: before that node the whole chain compiled into a single action whose recipes were joined with `&&`, so a failing first recipe stopped the rest inside one shell. After it, each record is its own action and the chain order is expressed as an order-only graph edge, so a failed entry leaves its successors unreachable. The observable outcome is the same in both designs; only the mechanism moved.\n\nFixing this needs a scheduler-level edge meaning \"wait for the predecessor to finish, run regardless of its status\", which Ninja's model has no spelling for. That makes it graph/scheduler representation work of the same kind as make-grouped-double-colon-actions, not a rule-compilation change."
+                    }
+
+                    {
+                        at 2026-08-16T19:08:30.057551726Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered, by building the third edge kind the earlier note said was missing.\n\n`src/graph/forgiven.rs` records a set of `(consumer, order-only input)` pairs whose wait holds but whose status is discarded. Forgiveness is on the relation, not on either end, which is what makes the rest fall out: the same action is still an ordinary dependency of the target's completion join, so the chain runs on but the target is still not remade. kati carries it as `DepNode::forgiven_order_onlys` and hands it to a sink over `BuildSink::forgiven_order_only_inputs`; a sink that writes `build.ninja` drops it, because a Ninja manifest has no spelling for the idea.\n\nOnly the `-k` behaviour changes. Without it the failure exhausts the allowed-failure budget, dispatch stops, and the released successor never starts — the same outcome as before, and the same as GNU Make's.\n\nFour corpus cases, all matching GNU Make 4.4.1 byte for byte: a chain continuing past a failed entry under `-k`; an entry running after a failed *prerequisite* under `-k`; the same chain stopping without `-k`; and a grouped double-colon chain continuing past a failed record, which is the case that proves the edge is per-record rather than per-target."
+                    }
+
+                    {
+                        at 2026-08-16T19:10:16.294316845Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -9426,6 +9441,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Upstream-residue triage (2026-08-14) gives this node ten rows of family evidence, now classified `command-not-found-text` and narration rather than unclassified residue.\n\nWhere a recipe names a command that is not there, GNU execs it itself and reports the errno against the command's own name — `./foobarbazbozblat: No such file or directory` — while Ronin hands the line to a shell and reports what the shell said: `/bin/sh: 1: ./foobarbazbozblat: not found`. Both fail the recipe with status 127, so the build outcome agrees and only the sentence differs; the classifier now recognises the pair by matching the command named on each side rather than by either wording, so a case where only one tool failed still shows up.\n\nThat is why they are narration and not this node's debt. What they do record is the observable consequence of always going through a shell, which is what this node proposes to stop doing for a command with no shell syntax in it. Running such a command directly would move these ten rows from an agreed-outcome-differently-worded family to exact agreement, so they are a reasonable acceptance check for the change and a reason to expect the diagnostic to change shape when it lands."
+                    }
+
+                    {
+                        at 2026-08-16T19:10:12.04709646Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Half delivered — the argv construction and one of its two callers. Node stays open for the other.\n\nkati `src-rs/simple_command.rs` is GNU Make's `construct_command_argv_internal` (src/job.c) decision and tokenizer: all four gates before any tokenizing, in GNU Make's order — the shell must be the built-in default, `.SHELLFLAGS` exactly `-c` or `-ec`, `IFS` nothing but whitespace, and `.ONESHELL` not turning newlines into separators — then the scan for shell syntax and for a builtin as the first word, then the unquoting. A `SHELL` the makefile set takes the slow path even when it names another POSIX shell, because GNU Make compares against its own default rather than asking what the shell can do.\n\nWired into `$(shell)` through `src-rs/fileutil.rs`, so `$(shell ./nosuchprog there)` now reports `make: ./nosuchprog: No such file or directory` in Make's own voice rather than `/bin/sh: 1: ./nosuchprog: not found`, and the diagnostic prefix threads through `func.rs`, `exec.rs` and `regen.rs` to say it in the right words. That closed functions/shell.diff.14 and .15 in the upstream inventory, which is what filed the node: both are now narration-class on product name and ninja progress only, with the command-not-found text gone from the difference.\n\nRemaining: the recipe-launch caller. A recipe line still goes to `$(SHELL) -c` unconditionally, so `all: ; ./nosuchprog arg` keeps reporting in the shell's voice and keeps the extra fork. The module is caller-agnostic by construction and the recipe path is a second call to it, but it lands in the execution path rather than in expansion, so it wants its own change and its own corpus cases."
                     }
                 )
             }
@@ -10031,12 +10053,27 @@ children (
                 id make-path-automatic-variables-defined-at-read-time
                 title "Define the D and F automatic variables before any rule runs"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-14T05:22:11.626559477Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while characterising the value function over automatic variables (make-automatic-variable-value-function).\n\nGNU Make defines the `D` and `F` automatic variables once, at startup, in\n`define_automatic_variables` (reference/gnumake/src/variable.c). They are\nordinary recursive variables holding a `dir`/`notdir` expression, so they are\ndefined everywhere a makefile can look — including at read time, before any rule\nhas been chosen. Only the base forms are per-file, set in `set_file_variables`.\n\nkati registers every automatic variable from `CommandEvaluator::new`, so none of\nthem exists until a recipe is being expanded. In recipe context the two tools\nnow agree on all of value, flavor and origin. Outside one they do not:\n\n  $(info atD=[$(value @D)] flavor=[$(flavor @D)] origin=[$(origin @D)])\n  $(info at=[$(value @)] flavor=[$(flavor @)] origin=[$(origin @)])\n  all: ; @:\n\n  GNU 4.4.1  atD=[$(patsubst %/,%,$(dir $@))] flavor=[recursive] origin=[automatic]\n             at=[] flavor=[undefined] origin=[undefined]\n  Ronin      atD=[] flavor=[undefined] origin=[undefined]\n             at=[] flavor=[undefined] origin=[undefined]\n\nThe base forms already agree at read time — both read as undefined — so the gap\nis the `D` and `F` forms only. Defining them at session start needs no rule in\nhand, because their value is literal text that only refers to the base form;\n`$(@D)` at read time then expands through an undefined `$@` to the empty string,\nwhich is what GNU Make produces.\n\nDeferred from the value-function node because it is a variable-lifecycle change\nrather than a change to what `value` reports, and the owned corpus case is\nrecipe-context only."
+                    }
+
+                    {
+                        at 2026-08-16T19:08:40.213210761Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered. `install_path_automatic_variables` (kati `src-rs/builtins.rs`) defines the `D` and `F` form of each per-file automatic once per evaluation, as a recursive variable whose text is the `dir`/`notdir` expression over the base form — GNU Make's `define_automatic_variables` (src/variable.c), in the same place in the order and, like GNU Make, run whatever `-R` says.\n\nBases: `@ % < ? ^ + *`. `|` is deliberately absent — GNU Make defines no `$(|D)`, so it stays an ordinary variable nobody defined.\n\nThe origin ladder came with it. An automatic is the top of it, so a plain assignment, an `override`, a command-line variable and an `undefine` all bounce off `@D` and leave it reading `automatic`, silently, with the run carrying on — the previous code path treated a write to an automatic as the unimplemented case. A target-specific `all: @D = x` still takes, because it lands in the rule's own scope, which is searched first.\n\nThree corpus cases, all byte-identical to GNU Make 4.4.1: the read-time definition itself (`value`/`flavor`/`origin` outside any recipe), the assignment that does not take, and survival under `-R`."
+                    }
+
+                    {
+                        at 2026-08-16T19:10:20.172129529Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
                     }
                 )
             }
@@ -10753,12 +10790,35 @@ children (
                 id make-archive-member-targets
                 title "Read a target named as an archive member as one"
                 kind @feat
+                sealed true
                 log (
                     {
                         at 2026-08-14T09:42:46.676442218Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while delivering make-builtin-rule-catalogue. The catalogue's first pattern rule is `(%): %` and it is now installed, so the rule that files an object into an archive is present and can never fire: nothing in Ronin reads `lib.a(foo.o)` as anything but a filename with parentheses in it.\n\nReproducer, against reference/make-oracle/make-4.4.1/make, with foo.o on disk:\n\n  all: libx.a(foo.o)\n\nGNU runs `ar -rv libx.a foo.o` — `(%)` matched, the stem is `foo.o`, and the prerequisite `%` is the member. Ronin refuses: `'libx.a(foo.o)', needed by 'all', missing and no known rule to make it`.\n\nThe archive form is a name shape rather than a rule: GNU's ar_name() splits `lib(member)` wherever a target or prerequisite is written, and the whole of dir.c/arscan.c answers whether a member is present and how old it is. `(%)` matching is one line of that; the freshness question is the rest, and it is what decides whether the rule runs at all.\n\nThe suffix half is missing with it. convert_to_pattern turns a `.X.a:` rule into `(%.o): %.X` as well as `%.a: %.X` — rule.c:363 — and Ronin's suffix conversion makes only the second. There are no built-in `.X.a` entries, so this is only reachable from a makefile that writes one.\n\nNot urgent and not free: `.SUFFIXES` carries `.a`, so `%.a` disqualifies match-anything rules for a name ending in it, and that half already agrees. What is absent is building the archive, which is a shape of Makefile Ronin cannot compile at all rather than one it compiles differently."
+                    }
+
+                    {
+                        at 2026-08-16T19:09:59.495737936Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Core delivered: `lib.a(member.o)` is now a member of an archive everywhere a target or prerequisite is written.\n\nThree pieces. kati `src-rs/archive.rs` splits the name shape — including the doubled `lib.a(lib.a(m.o))` form and the `-lfoo` search name — so `$@` is the archive, `$%` the member, and `$*` the stem GNU Make gives. `src/os/archive.rs` dates a member by scanning the archive index, following `f_mtime`'s three-part rule rather than a lookup: no archive means no member; a zero date or an absent entry means no member; and a member file on disk newer than the indexed date also means no member, because it was rebuilt and not yet filed. `src/os.rs` routes `stat` through it, gated to Unix — Make mode is a Unix front end, so there is no host where the flag is set and the branch is missing.\n\nWith that, the built-in `(%): %` rule installed by make-builtin-rule-catalogue can finally fire, which was the observation that filed this node.\n\nThe middle rule earns its own line. `ar` on this host defaults to deterministic mode and writes every member's date as zero, so `ar_member_date` answers \"absent\" for every member of an archive built by plain `ar -rv`, and both tools re-run `$(AR) $(ARFLAGS)` every invocation. That is agreement about a rule, not a shortcut that happens to match.\n\nFive corpus cases, all byte-identical to GNU Make 4.4.1: the built-in rule filing a member, a member made from its source, the automatic variables over a member, a member of an archive written with real dates being up to date, and a member named through a directory.\n\nNot claimed, and split out rather than swept under the node: make-archive-member-globbing, make-archive-suffix-rule-conversion, make-archive-member-list-in-one-name, make-archive-member-touch. GNU Make's own `features/archives` script is the measure and still shows eight compiler-class differences, which are what those four are worth; `archives` stays off the supported-feature list in kati `src-rs/evaluate.rs` until they are gone."
+                    }
+
+                    {
+                        at 2026-08-16T19:10:23.980933389Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-16T19:21:21.979014348Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "One upstream inventory case moved the wrong way and it is worth knowing why, because it is not a behaviour regression.\n\n`features/se_explicit.diff` went from `narration / ninja-progress` to `unclassified / ninja-progress+evaluation`. The suite's first test branches on the tool's own declaration:\n\n    my $prereq = exists $FEATURES{'archives'} ? '$' : '$(PRE)';\n\nand then writes `bar$$baz: $$(PRE)`, whose prerequisite reads after `$$`-collapsing as the six characters `$(PRE)`. A make with archives splits that into archive `$` and member `PRE`, so `.DEFAULT`'s `@echo '$@'` prints `$`; a make without them prints the whole name.\n\nRonin now prints `$` — verified against GNU Make 4.4.1 directly, which prints `$` and `$%` of `PRE` for the same makefile — while `.FEATURES` still omits `archives`, deliberately, because ar_glob, the `.X.a` conversion, the multi-member name and `-t` are outstanding. The suite therefore picks the no-archives expectation and measures it against archives behaviour.\n\nSo the case is the declaration disagreeing with the conduct, not the conduct being wrong, and it resolves itself: when make-archive-member-globbing, make-archive-suffix-rule-conversion, make-archive-member-list-in-one-name and make-archive-member-touch land and `archives` joins `.FEATURES`, this case flips to the `$` branch and the difference goes. That makes it a usable completion signal for those four rather than debt.\n\nTotals are unchanged either way — 1283 recorded, 1283 now, with the compiler-class count still zero."
+                        after_done true
                     }
                 )
             }
@@ -11810,6 +11870,66 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "The last cell of make-multi-target-pattern-trigger-identity, reachable only now that make-deferred-freshness-hides-a-multi-target-peer has made the edge run at all. Filed from that node rather than folded into it: making the edge run is a question about which outputs decide its freshness, and this is a question about when `$@` can be chosen.\n\nReproducer, with `a.in` old, `a.c` current and `a.h` absent:\n\n    all: a.c a.h\n    %.c %.h: %.in ; echo \"at=$@ q=$?\" >> log ; cat $< > $*.c ; cat $< > $*.h\n\nGNU: `at=a.h q=a.in`. Ronin now runs the recipe and writes both files, with `q=a.in` right, and `at=a.c`. Take `$?` out of the recipe and Ronin says `at=a.h` too — that case is tests/make/multi-target-pattern-trigger-is-the-name-that-was-out-of-date and it gates.\n\nWhy the two part company. `$@` for a pattern group is the member whose own state sent the recipe to the shell, which no compile-time reading can know: `trigger_output` (src/graph/peer.rs) is a stat-time answer, and `bind_late_command` asks for it as the edge launches. A recipe naming `$?` cannot be held for launch — `references_new_inputs` refuses it in `defers_recipe` — so its text is expanded while the graph is compiled and `AutoCommand::At` writes `node.recipe_output`, the first name, before any timestamp exists.\n\nThe route is the one `$?` itself already takes. `DEFERRED_NEW_INPUTS_REFERENCE` puts `${KATI_NEW_INPUTS}` in the command text and `resolve_deferred_new_inputs` (src/build/deferred.rs) substitutes the value as the edge launches, in the inline and response-file forms alike. `$@` would need the same: a second reference kati emits when it is expanding for a destination that cannot hold the recipe AND the node is a `pattern_group`, and a second substitution the executor makes from `trigger_output`. Both halves are small; what makes it a node is what moves with them — the command text carries a reference rather than a name, so the edge hash, `-n` output, the narration and the equivalence check all read the new text, and `escape_double_quoted_shell` has to be right for a path.\n\nScope note: only a pattern group is affected. An explicit `&:` group binds `$@` to the member that was reached, which is one decision over all its targets and is settled at plan time — make-grouped-pattern-targets recorded that and it is unaffected here."
+                    }
+                )
+            }
+
+            {
+                id make-archive-member-globbing
+                title "Expand a member pattern inside an archive name"
+                kind @feat
+                deps (make-archive-member-targets)
+                log (
+                    {
+                        at 2026-08-16T19:09:03.302420553Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Split out of make-archive-member-targets, which shipped the archive name shape, the built-in `(%): %` rule, `$%`, and member freshness read off the archive index — but not this.\n\n`lib.a(*.o)` written as a target or prerequisite is expanded by GNU Make's `ar_glob` (reference/gnumake/src/ar.c) against the archive's own member list rather than against the filesystem: the pattern matches names the index holds, and the result is sorted and re-emitted as one `lib.a(...)` name per member. `ar_glob` is reached from `parse_file_seq` only when the member part holds a glob metacharacter, so an archive name without one costs nothing.\n\nRonin reads the name shape now, so `lib.a(*.o)` parses as archive `lib.a` and member `*.o` and then looks for a member literally called `*.o`. The reading is right and the expansion is absent.\n\nNeeds the index scan that make-archive-member-targets already built (`src/os/archive.rs` walks the members to date one), turned around to enumerate rather than to look up, and called from wherever a target or prerequisite name is expanded — which is before the graph exists, so it is front-end work rather than scheduler work."
+                    }
+                )
+            }
+
+            {
+                id make-archive-suffix-rule-conversion
+                title "Convert a .X.a suffix rule into its archive-member pattern too"
+                kind @fix
+                deps (make-archive-member-targets)
+                log (
+                    {
+                        at 2026-08-16T19:09:17.541899528Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Split out of make-archive-member-targets, where it was noted at filing and left there deliberately: until the archive name shape existed, the pattern this makes could not have fired.\n\n`convert_to_pattern` (reference/gnumake/src/rule.c:363) turns a suffix rule whose target suffix is `.a` into **two** pattern rules, not one: `%.a: %.X` and `(%.o): %.X`. Ronin's suffix conversion makes only the first. The second is what lets a makefile that writes its own `.c.a:` rule file an object straight into an archive.\n\nThere are no built-in `.X.a` entries, so this is reachable only from a makefile that writes one — which is why it is separate from the built-in catalogue and why it was not urgent. Now that `(%): %` fires and `$%` is bound, the conversion has somewhere to land.\n\nMeasured by GNU Make's own `features/archives` script, which the parent node leaves at eight compiler-class differences; this is one of the four pieces those eight are made of."
+                    }
+                )
+            }
+
+            {
+                id make-archive-member-list-in-one-name
+                title "Read several members named inside one pair of parentheses"
+                kind @feat
+                deps (make-archive-member-targets)
+                log (
+                    {
+                        at 2026-08-16T19:09:32.012119616Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Split out of make-archive-member-targets, which reads exactly one member per archive name.\n\n`lib.a(a.o b.o)` is one word to the tokenizer and several targets to GNU Make: `parse_file_seq` (reference/gnumake/src/read.c) reopens the parenthesis, splits the members on whitespace, and emits `lib.a(a.o)` and `lib.a(b.o)` as separate names. The same reopening handles `lib.a(a.o) lib.a(b.o)` written out longhand, which is why the two spellings behave identically in GNU Make and why a makefile is entitled to use either.\n\nRonin's splitter (kati `src-rs/archive.rs`) takes the whole of the parenthesised text as the member name, so `lib.a(a.o b.o)` looks for a member with a space in it. Nothing else is wrong: once the name is split into two, both halves already work, because everything downstream of the split — the `(%): %` rule, `$%`, the index lookup for freshness — is per-member and shipped.\n\nFront-end work at the same site as make-archive-member-globbing, and the two want doing together: both are `parse_file_seq` reopening a parenthesis, one splitting on whitespace and one expanding a pattern."
+                    }
+                )
+            }
+
+            {
+                id make-archive-member-touch
+                title "Touch an archive member's index date under -t"
+                kind @feat
+                deps (make-archive-member-targets)
+                log (
+                    {
+                        at 2026-08-16T19:09:46.040308826Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Split out of make-archive-member-targets, which made the member's date readable but not writable.\n\n`-t` on an ordinary target is a `utime`. On `lib.a(member.o)` it cannot be: the date lives in the archive's own index, not in the filesystem, so GNU Make calls `ar_touch` (reference/gnumake/src/ar.c), which opens the archive, finds the member's header, and writes a fresh date into it in place — and warns and does nothing when the archive is one whose format has no date to write.\n\nRonin under `-t` treats the member name as a filename and touches a file called `lib.a(member.o)`, which is both wrong and litter.\n\nThe read half is already here — `src/os/archive.rs` locates a member's header to date it — so this is the same walk with a write at the end, plus the format check that decides whether writing is possible at all. Worth noting that on a modern Linux host `ar` defaults to deterministic mode and records every date as zero, so the touched date is the only real date such an archive will ever have."
                     }
                 )
             }
