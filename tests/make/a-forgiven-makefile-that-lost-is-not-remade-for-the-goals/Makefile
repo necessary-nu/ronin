@@ -1,0 +1,8 @@
+# A Makefile the read forgave for not being there was still tried, and the
+# rule that tried is spent. GNU Make leaves it `updated` with a failing
+# `update_status`, which `update_file_1` reads back before it looks at the
+# commands at all, so a goal that names the same file is refused rather than
+# served and the recipe does not run a second time.
+-include one.mk
+all: one.mk ; @printf 'all ran\n' >> log
+one.mk: ; @printf 'tried\n' >> log; exit 1

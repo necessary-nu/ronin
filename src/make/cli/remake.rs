@@ -101,10 +101,25 @@ enum Remaking {
     Finished(RunResult),
     /// A Makefile moved, so the read has to happen again on the new text.
     Restart,
-    /// Every Makefile is already what it will be, so this read stands. These
-    /// are the ones the update reached and won, which the goals are not to
-    /// consider again.
-    Settled(Vec<Node>),
+    /// Every Makefile is already what it will be, so this read stands.
+    Settled(SettledMakefiles),
+}
+
+/// What one settled makefile update leaves the goals to work with.
+///
+/// Two lists rather than one, because the update has three answers and not two.
+/// A Makefile it reached and won is prebuilt: its recipe must not run again and
+/// the file it left is what everything reads. A Makefile it reached and lost —
+/// which only a forgiven one can be, since a required one ends the run — is
+/// neither: GNU Make leaves it `updated` with a failing status, so a goal that
+/// asks for it is refused rather than served, and its recipe is spent. A
+/// Makefile in neither list is one the update never had to touch.
+#[derive(Default)]
+struct SettledMakefiles {
+    /// The ones the update reached and won.
+    remade: Vec<Node>,
+    /// The ones whose own recipe ran and lost, and was forgiven.
+    unmade: Vec<Node>,
 }
 
 /// The graph and the scheduler attachments every pass over it shares.
@@ -212,7 +227,7 @@ impl Passes<'_, '_, '_> {
     /// that writes its target and then exits non-zero starts nothing over.
     fn remake_makefiles(&mut self, makefiles: &Makefiles<'_>) -> Remaking {
         let mut restart = false;
-        let mut remade = Vec::new();
+        let mut settled = SettledMakefiles::default();
         for mut subset in makefiles.subsets(self.graph) {
             let paths = paths_of(self.graph, &subset.targets);
             let before = makefile_stamps(&paths, makefiles.directory);
@@ -236,12 +251,13 @@ impl Passes<'_, '_, '_> {
                 .zip(before.iter().zip(&after))
                 .any(|(target, (before, after))| before != after && !unmade.contains(target));
             subset.targets.retain(|target| !unmade.contains(target));
-            remade.append(&mut subset.targets);
+            settled.remade.append(&mut subset.targets);
+            settled.unmade.extend(unmade);
         }
         if restart {
             Remaking::Restart
         } else {
-            Remaking::Settled(remade)
+            Remaking::Settled(settled)
         }
     }
 
@@ -316,64 +332,77 @@ impl Makefiles<'_> {
     /// The Makefiles in the groups GNU Make treats differently, in the order it
     /// reaches them.
     ///
-    /// Three, and the differences are all GNU Make's own. A Makefile the
-    /// command line also named is a goal as well, and keeps the switches the
-    /// invocation gave it (`file->cmd_target` in remake.c). A Makefile reached
-    /// only through `-include` is one whose absence the read said it could
-    /// live with, and GNU Make carries that all the way into the rule: the
-    /// recipe runs, it loses, and nothing is reported (`RM_DONTCARE`). Every
-    /// other one is made for real and its failure ends the run.
+    /// Two independent questions, both GNU Make's own, and therefore four
+    /// groups rather than three.
+    ///
+    /// Whether a Makefile's failure is forgiven is the read's answer: one
+    /// reached only through `-include` is one whose absence the read said it
+    /// could live with, and GNU Make carries that all the way into the rule —
+    /// the recipe runs, it loses, and nothing is reported. That is
+    /// `file->dontcare = ANY_SET (g->flags, RM_DONTCARE)` in `update_goal_chain`
+    /// (remake.c), taken from the goaldep the `include` line made.
+    ///
+    /// Which switches it is made under is the command line's answer: a Makefile
+    /// the invocation also named keeps `-t`, `-q` and `-n`, where every other
+    /// one is made for real whatever was asked of the goals. That is the
+    /// `file->cmd_target` arm two lines further down, and it restores those
+    /// three flags and nothing else.
+    ///
+    /// So a Makefile that is both keeps the invocation's switches AND is
+    /// forgiven. Reading `cmd_target` as an answer to the first question is
+    /// what made an `-include`d file the command line named end the run over
+    /// its own recipe, where GNU Make forgives it and then refuses the goal.
     fn subsets(&self, graph: &BuildGraph) -> Vec<Subset> {
-        let asked_about = self
-            .remakes
-            .iter()
-            .copied()
-            .filter(|target| {
-                let path = graph.path(*target);
-                self.goals.iter().any(|goal| goal.as_slice() == path)
-            })
-            .collect::<Vec<_>>();
-        let forgiven = self
-            .forgiven
-            .iter()
-            .copied()
-            .filter(|target| !asked_about.contains(target))
-            .collect::<Vec<_>>();
-        let made = self
-            .remakes
-            .iter()
-            .copied()
-            .filter(|target| !asked_about.contains(target) && !forgiven.contains(target))
-            .collect::<Vec<_>>();
+        let named = |target: &Node| {
+            let path = graph.path(*target);
+            self.goals.iter().any(|goal| goal.as_slice() == path)
+        };
+        let group = |on_command_line: bool, forgive: bool| {
+            self.remakes
+                .iter()
+                .copied()
+                .filter(|target| {
+                    named(target) == on_command_line && self.forgiven.contains(target) == forgive
+                })
+                .collect::<Vec<_>>()
+        };
+        // Every forgiven one is attempted, because GNU Make considers every
+        // Makefile it read before it decides anything, and one it does not need
+        // cannot stand in another's way.
+        let forgivingly = |options: BuildOptions| BuildOptions {
+            maxfail: usize::MAX,
+            ..options
+        };
+        // Under `-q` a Makefile the command line named is asked about and left
+        // alone: GNU Make records the question and carries on with the read
+        // rather than stopping the way it would for a goal.
+        let asked_about = |targets: Vec<Node>| {
+            if self.invocation.questioning() {
+                Vec::new()
+            } else {
+                targets
+            }
+        };
         vec![
             Subset {
-                targets: made,
+                targets: group(false, false),
                 options: remaking_options(self.options),
                 forgive: false,
             },
             Subset {
-                targets: forgiven,
-                // Every one of them is attempted, because GNU Make considers
-                // every Makefile it read before it decides anything, and one
-                // it does not need cannot stand in another's way.
-                options: BuildOptions {
-                    maxfail: usize::MAX,
-                    ..remaking_options(self.options)
-                },
+                targets: group(false, true),
+                options: forgivingly(remaking_options(self.options)),
                 forgive: true,
             },
             Subset {
-                // Under `-q` a Makefile the command line named is asked about
-                // and left alone: GNU Make records the question and carries on
-                // with the read rather than stopping the way it would for a
-                // goal.
-                targets: if self.invocation.questioning() {
-                    Vec::new()
-                } else {
-                    asked_about
-                },
+                targets: asked_about(group(true, false)),
                 options: self.options.clone(),
                 forgive: false,
+            },
+            Subset {
+                targets: asked_about(group(true, true)),
+                options: forgivingly(self.options.clone()),
+                forgive: true,
             },
         ]
     }
@@ -442,7 +471,7 @@ pub(super) fn build_compiler_inputs(
         // already had done for it, and GNU Make does the whole of it inside
         // one process. Ronin reads again in place, so the goals reach the same
         // graph and have to be told the same thing.
-        Remaking::Settled(remade) => {
+        Remaking::Settled(settled) => {
             if let Some(refusal) = refusal {
                 persistence.finish()?;
                 let (complaint, error) = refusal.into_parts();
@@ -452,7 +481,7 @@ pub(super) fn build_compiler_inputs(
                     error,
                 )));
             }
-            graph.mark_makefiles_remade(&remade);
+            graph.mark_makefiles_settled(&settled.remade, &settled.unmade);
         }
     }
 

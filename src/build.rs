@@ -272,8 +272,15 @@ impl Plan {
     ) -> BuildResult<()> {
         let mut work = vec![(node, weight, None)];
         while let Some((node, weight, needed_by)) = work.pop() {
-            let Some(edge) = graph.node(node).generator else {
-                if runtime.node(node).dirty() {
+            // A Makefile this read already tried to remake and lost is a target
+            // with a rule that has been spent. GNU Make reads `updated` with a
+            // failing `update_status` back before it looks at the file or the
+            // commands (remake.c: "Recently tried and failed to update file"),
+            // so the recipe does not run a second time and the file the losing
+            // recipe may have left behind does not count either.
+            let unmade = graph.is_unmade_makefile(node);
+            let Some(edge) = graph.node(node).generator.filter(|_| !unmade) else {
+                if unmade || runtime.node(node).dirty() {
                     let path = graph.node_path(node).to_owned();
                     let needed_by = needed_by
                         .map(|needed_by| (needed_by, graph.node_path(needed_by).to_owned()));

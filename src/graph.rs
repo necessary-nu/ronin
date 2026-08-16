@@ -8,6 +8,7 @@ mod intermediate;
 mod marks;
 mod path;
 mod peer;
+mod unmade;
 mod validation;
 mod withdrawal;
 
@@ -181,6 +182,10 @@ pub(crate) struct Graph {
     /// and has no `.PRECIOUS` to except from it. An edge present with an empty
     /// list is one a Makefile narrowed to nothing.
     withdrawal: crate::htab::RapidHashMap<EdgeId, Withdrawal>,
+    /// Makefiles this read tried to remake and did not, which the goals must
+    /// neither run again nor believe in. Beside the arena for the reason
+    /// `withdrawal` is: no node of a Ninja manifest is ever in it.
+    unmade_makefiles: crate::htab::RapidHashSet<NodeId>,
     /// Outputs a recipe makes only on the way to making something else, for the
     /// edges that have any. Beside the arena for the reason `withdrawal`
     /// is: almost no edge in almost any graph has one.

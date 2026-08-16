@@ -757,25 +757,41 @@ impl BuildGraph {
         }
     }
 
-    /// Keep the Makefiles this invocation already brought up to date out of the
-    /// goals' way.
+    /// Keep the Makefiles this invocation already dealt with out of the goals'
+    /// way, in the two ways it dealt with them.
     ///
     /// GNU Make updates every Makefile it read before it chooses a goal, and a
-    /// file it has updated is not considered again: `update_file` returns early
-    /// on one whose `updated` flag is set. What the goals then compare against
-    /// is the Makefile's timestamp rather than the rule behind it, so a
+    /// file it has updated is not considered again: `update_file_1` reads
+    /// `updated` back before it looks at anything else. What happens then
+    /// depends on the verdict that update left, which is why this takes two
+    /// lists and not one.
+    ///
+    /// `remade` is the ones it reached and won. What the goals then compare
+    /// against is the Makefile's timestamp rather than the rule behind it, so a
     /// `gen.mk: force` whose recipe left the file alone leaves whatever reads
     /// gen.mk up to date — though `force` is out of date whenever it is looked
-    /// at.
+    /// at. Two halves to that, because those are two different things to stop.
+    /// Nothing the update reached runs a command again, which is
+    /// [`Self::mark_subgraphs_prebuilt`] and the built-in phony rule. The
+    /// Makefiles themselves additionally stop carrying their prerequisites'
+    /// dirtiness onward: the edge keeps its outputs and loses its inputs, which
+    /// is what makes the file on disk the answer. A phony prerequisite reached
+    /// any other way is left alone and still drives whatever else asked for it,
+    /// which is GNU Make's answer too.
     ///
-    /// Two halves, because those are two different things to stop. Nothing the
-    /// update reached runs a command again, which is [`Self::mark_subgraphs_prebuilt`]
-    /// and the built-in phony rule. The Makefiles themselves additionally stop
-    /// carrying their prerequisites' dirtiness onward: the edge keeps its
-    /// outputs and loses its inputs, which is what makes the file on disk the
-    /// answer. A phony prerequisite reached any other way is left alone and
-    /// still drives whatever else asked for it, which is GNU Make's answer too.
-    pub(crate) fn mark_makefiles_remade(&mut self, remade: &[Node]) {
+    /// `unmade` is the ones whose rule really ran, really lost, and was
+    /// forgiven because `-include` said the file need not be there. GNU Make
+    /// leaves those `updated` with a failing `update_status`, which the same
+    /// early read finds, so a goal that reaches the name is refused rather than
+    /// served and the recipe is not run again.
+    ///
+    /// Said only once the update has settled. A pass that ends in a restart
+    /// says nothing at all, because the read that follows plans a new graph and
+    /// attempts the rule again, which is GNU Make's behaviour too.
+    pub(crate) fn mark_makefiles_settled(&mut self, remade: &[Node], unmade: &[Node]) {
+        for node in unmade {
+            self.arenas.mark_makefile_unmade(node.0);
+        }
         let Some(phony) = self.rule(self.root(), b"phony") else {
             return;
         };
