@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| .PRECIOUS: \%.b
+| %.b: %.a
+| 	@cp $< $@
+| %.c: %.b
+| 	@cp $< $@
+| all: x.c
+file x.a kept 1
+| A
+file x.c touched 1
+| A

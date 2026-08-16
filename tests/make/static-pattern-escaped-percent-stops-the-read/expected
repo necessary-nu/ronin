@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 5
+| all: made
+| made:
+| 	@echo yes > made
+| a b: \%.o: %.c
+| 	@echo "ran[$@]" >> log

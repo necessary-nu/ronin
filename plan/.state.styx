@@ -589,6 +589,7 @@ assertions (
     {id make-double-colon-keep-going-continues-the-chain, kind @complete, author "brendan@necessary.nu", at 2026-08-16T19:10:16.294316845Z}
     {id make-path-automatic-variables-defined-at-read-time, kind @complete, author "brendan@necessary.nu", at 2026-08-16T19:10:20.172129529Z}
     {id make-archive-member-targets, kind @complete, author "brendan@necessary.nu", at 2026-08-16T19:10:23.980933389Z}
+    {id make-static-pattern-escaped-percent, kind @doing, author "brendan@necessary.nu", at 2026-08-16T19:49:54.352501486Z}
 )
 
 impl_evidence (
