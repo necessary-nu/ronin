@@ -1,10 +1,11 @@
 //! Inputs shared by Make's command-line parser and kati compilation.
 
 use super::jobserver_style::{carried_switches, unknown_jobserver_style};
-use super::{Action, Invocation, JobLimit, Switch, parse, parse_arguments};
+use super::{Action, Invocation, JobLimit, Switch, parse_arguments, refuse};
 use crate::Error;
 use crate::build::BuildOptions;
 use crate::error::CliError;
+use crate::make::Shuffle;
 use crate::util::{BString, ByteSlice};
 use kati::bytes::Bytes;
 use kati::session::Session;
@@ -23,13 +24,81 @@ pub(super) enum ArgumentSource {
     Inherited,
     CommandLine,
     Makefile,
+    /// The command line and inherited environment read a second time, over a
+    /// Makefile's write to `MAKEFLAGS`, so that a switch typed on the command
+    /// line outranks one the Makefile took away.
+    Protection,
+}
+
+/// What a `--shuffle` reaching Make through one stream does.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum ShuffleEffect {
+    /// Names the order this run builds in, so the word has to name a mode and
+    /// what travels onward is the permutation it settled on.
+    Settles,
+    /// Lands in the switch table and nothing looks at it: republished exactly
+    /// as written, reordering nothing.
+    Republishes,
+    /// Passes over it. The stream is a re-assertion of switches that act, and
+    /// by this point the shuffle is not one of them.
+    Ignored,
 }
 
 impl ArgumentSource {
     /// Whether a switch this stream names and Make does not know ends the run.
     pub(super) const fn refuses_an_unknown_switch(self) -> bool {
-        !matches!(self, Self::Makefile)
+        matches!(self, Self::Inherited | Self::CommandLine)
     }
+
+    /// What a `--shuffle` from this stream does.
+    ///
+    /// GNU Make settles the mode once, in `main`, after the command line and
+    /// the inherited environment and before the first makefile is read. A
+    /// makefile's own write to `MAKEFLAGS` is decoded long after that block and
+    /// never reaches it again, so the word is stored, republished and otherwise
+    /// unexamined — which is why a value naming no mode is not an error there.
+    /// Nothing re-applies the command line afterwards, so the makefile's word
+    /// is the one the table ends up holding.
+    pub(super) const fn shuffle_effect(self) -> ShuffleEffect {
+        match self {
+            Self::Inherited | Self::CommandLine => ShuffleEffect::Settles,
+            Self::Makefile => ShuffleEffect::Republishes,
+            Self::Protection => ShuffleEffect::Ignored,
+        }
+    }
+}
+
+/// Read `--shuffle`'s argument, which the streams answer differently.
+///
+/// Answers with the refusal, when there is one. See
+/// [`ArgumentSource::shuffle_effect`] for why only one stream can produce one.
+pub(super) fn read_shuffle(
+    invocation: &mut Invocation,
+    source: ArgumentSource,
+    spec: &[u8],
+) -> Option<Action> {
+    match source.shuffle_effect() {
+        ShuffleEffect::Settles => {
+            let Some(mode) = Shuffle::requested(spec) else {
+                return Some(refuse(format_args!(
+                    "invalid shuffle mode: Invalid value: '{}'",
+                    spec.to_str_lossy()
+                )));
+            };
+            invocation.shuffle = mode;
+            // The permutation rather than the word that asked for one, so a
+            // child reproduces the order this run used.
+            invocation.shuffle_spelling = mode.spelling();
+        }
+        // An empty argument leaves the table entry empty, and a switch with an
+        // empty string is one `define_makeflags` writes nothing for.
+        ShuffleEffect::Republishes => {
+            invocation.shuffle_spelling =
+                (!spec.is_empty()).then(|| spec.to_str_lossy().into_owned());
+        }
+        ShuffleEffect::Ignored => {}
+    }
+    None
 }
 
 /// The Make interface variables one compiler invocation presents to source.
@@ -154,9 +223,10 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
     for withdrawn in invocation.withdrawn() {
         append(&mut base, withdrawn);
     }
-    // Last, where GNU Make's switch table puts it, and carrying the seed this
-    // run settled on so that a child reproduces the same order.
-    if let Some(mode) = invocation.shuffle.spelling() {
+    // Last, where GNU Make's switch table puts it, and carrying what the table
+    // holds rather than what this run is shuffling by — the two agree only
+    // when the command line is what wrote it.
+    if let Some(mode) = &invocation.shuffle_spelling {
         append(&mut base, &format!("--shuffle={mode}"));
     }
     let overrides = command_overrides(invocation);
@@ -232,11 +302,15 @@ pub(super) fn decode_makefile_makeflags(
     protected: &[u8],
 ) -> Result<kati::flags::DecodedMakeflags, String> {
     let mut invocation = Invocation::new();
-    for value in [previous, assigned, protected] {
+    for (value, source) in [
+        (previous, ArgumentSource::Makefile),
+        (assigned, ArgumentSource::Makefile),
+        (protected, ArgumentSource::Protection),
+    ] {
         let value = std::str::from_utf8(value)
             .map_err(|_| "MAKEFLAGS contains non-UTF-8 option bytes".to_owned())?;
         let arguments = assigned_makeflags_arguments(value);
-        if let Some(action) = parse_arguments(&mut invocation, &arguments, ArgumentSource::Makefile)
+        if let Some(action) = parse_arguments(&mut invocation, &arguments, source)
             .map_err(|error| error.to_string())?
         {
             let diagnostic = match action {
@@ -281,10 +355,17 @@ pub(super) fn decode_makefile_makeflags(
 
 /// Parse the canonical value left by Makefile assignments back into the state
 /// that controls this unit's one Ninja scheduler.
+///
+/// Read at [`ArgumentSource::Makefile`], because that is what this text is: the
+/// switch table as the makefiles left it. GNU Make keeps the table itself and
+/// never re-reads it, so a word it accepted there without examining — a
+/// `--shuffle` naming no mode — has to survive being read back here too.
 pub(super) fn evaluated_invocation(makeflags: &str) -> Result<Invocation, Error> {
-    match parse(&[BString::from("make")], Some(makeflags))? {
-        Action::Execute(invocation) => Ok(*invocation),
-        Action::Immediate(_) => Err(CliError::InvalidParameter {
+    let mut invocation = Invocation::new();
+    let arguments = makeflags_arguments(makeflags);
+    match parse_arguments(&mut invocation, &arguments, ArgumentSource::Makefile)? {
+        None => Ok(invocation),
+        Some(_) => Err(CliError::InvalidParameter {
             option: "MAKEFLAGS",
         }
         .into()),

@@ -65,6 +65,38 @@ fn makefile_makeflags_mutate_switch_table() {
     assert_eq!(decoded.mflags.as_ref(), b"-w");
 }
 
+/// GNU Make settles `--shuffle` before it reads a makefile, so a makefile's
+/// write reaches only the switch table: republished exactly as written, never
+/// examined, and unable to take back the order the command line asked for.
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn a_makefiles_shuffle_word_is_republished() {
+    // Nothing looks at it, so a word naming no mode is not an error.
+    let decoded = decode_makefile_makeflags(b"", b"--shuffle=bogus", b"").unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b" --shuffle=bogus");
+
+    // The command line's `random` settles on a seed and travels as one; a
+    // makefile's is stored as the word, because the block that would have
+    // rewritten it has already run.
+    let decoded = decode_makefile_makeflags(b"", b"--shuffle=random", b"").unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b" --shuffle=random");
+
+    // An empty argument leaves the table entry empty, which publishes nothing.
+    let decoded = decode_makefile_makeflags(b"", b"--shuffle=", b"").unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b"");
+
+    // Unlike every switch that acts, this one is not protected: the command
+    // line settled the order already, and the word the table ends up holding
+    // is the makefile's.
+    let decoded = decode_makefile_makeflags(
+        b" --shuffle=reverse",
+        b" --shuffle=reverse --shuffle=none",
+        b" --shuffle=reverse",
+    )
+    .unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b" --shuffle=none");
+}
+
 // [spec:ronin:req:make.interface-compatibility/test]
 #[test]
 fn accepts_every_make_option_shape() {

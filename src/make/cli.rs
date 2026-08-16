@@ -44,7 +44,7 @@ mod selection;
 mod subninja;
 use interface::{
     ArgumentSource, compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
-    evaluated_invocation, makeflags_arguments, prepend_command_line_evals,
+    evaluated_invocation, makeflags_arguments, prepend_command_line_evals, read_shuffle,
 };
 use jobserver_style::{carried_switches, read_jobserver_style, unknown_jobserver_style};
 use remake::{CompilerInputBuild, Settlement, build_compiler_inputs};
@@ -332,7 +332,21 @@ struct Invocation {
     debug: Vec<BString>,
     /// What `--shuffle` settled on, already resolved to a permutation rather
     /// than left as the word that asked for one.
+    ///
+    /// Settled once, from the streams GNU Make has read by the time it reaches
+    /// `main`'s shuffle block, and never again: a makefile's own write to
+    /// `MAKEFLAGS` is decoded long after that point and so reorders nothing.
     shuffle: Shuffle,
+    /// The word `MAKEFLAGS` republishes for `--shuffle`, which is GNU Make's
+    /// switch table entry rather than the mode this run is using.
+    ///
+    /// The two part company at every origin that is not the command line. The
+    /// table holds whatever was last decoded into it, unexamined, so a
+    /// makefile's `MAKEFLAGS += --shuffle=random` publishes `random` where the
+    /// command line's would have published the seed it settled on — and a
+    /// value naming no mode at all is published exactly as written, because
+    /// nothing ever looked at it.
+    shuffle_spelling: Option<String>,
     /// A `-j` written on this invocation's own command line. Kept apart from
     /// the count inherited through `MAKEFLAGS`: only this value is an explicit
     /// override of an outer jobserver, while the inherited count is a fallback
@@ -375,6 +389,7 @@ impl Invocation {
             evals: Vec::new(),
             debug: Vec::new(),
             shuffle: Shuffle::None,
+            shuffle_spelling: None,
             jobs: None,
             inherited_jobs: None,
             load: None,
@@ -432,7 +447,7 @@ impl Invocation {
 
     const fn set_jobs(&mut self, source: ArgumentSource, jobs: JobLimit) {
         match source {
-            ArgumentSource::Inherited | ArgumentSource::Makefile => {
+            ArgumentSource::Inherited | ArgumentSource::Makefile | ArgumentSource::Protection => {
                 self.inherited_jobs = Some(jobs);
             }
             ArgumentSource::CommandLine => self.jobs = Some(jobs),
@@ -1023,13 +1038,9 @@ fn parse_arguments(
             // GNU Make's argument is optional and its default is `random`.
             option if option == b"--shuffle" || option.starts_with(b"--shuffle=") => {
                 let spec = option.strip_prefix(b"--shuffle=").unwrap_or(b"random");
-                let Some(mode) = Shuffle::requested(spec) else {
-                    return Ok(Some(refuse(format_args!(
-                        "invalid shuffle mode: Invalid value: '{}'",
-                        spec.to_str_lossy()
-                    ))));
-                };
-                invocation.shuffle = mode;
+                if let Some(action) = read_shuffle(invocation, source, spec) {
+                    return Ok(Some(action));
+                }
             }
             b"--jobs" => {
                 invocation.set_jobs(source, jobs_value(arguments, &mut index, b"")?);

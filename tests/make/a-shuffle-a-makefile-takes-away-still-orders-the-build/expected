@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| MAKEFLAGS += --shuffle=none
+| all: p1 p2 p3
+| 	@printf '%s\n' '$(MAKEFLAGS)' > flags
+| p1 p2 p3: ; @printf '%s\n' '$@' >> order
+file flags touched 1
+|  -j1 --shuffle=none
+file order touched 3
+| p3
+| p2
+| p1

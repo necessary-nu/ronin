@@ -1,0 +1,4 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 1
+| all: ; @printf '%s\n' '$(MAKEFLAGS)' > flags
