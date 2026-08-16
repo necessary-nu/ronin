@@ -479,10 +479,10 @@ assertions (
     {id make-repaint-budget-test-reads-the-wall-clock, kind @complete, author "brendan@necessary.nu", at 2026-08-15T22:31:31.998553908Z}
     {id make-delete-on-error-races-a-secondary, kind @complete, author "brendan@necessary.nu", at 2026-08-15T22:46:09.189992583Z}
     {id make-process-cwd-tests-race-each-other, kind @complete, author "brendan@necessary.nu", at 2026-08-15T23:08:36.525743409Z}
-    {id make-shuffle-reaches-the-circular-drop, kind @doing, author "brendan@necessary.nu", at 2026-08-15T23:22:57.902272747Z}
-    {id make-an-unopenable-include-is-reported-where-gnu-reports-it, kind @doing, author "brendan@necessary.nu", at 2026-08-15T23:47:45.942512652Z}
-    {id make-a-forgiven-makefile-is-not-remade-for-the-goals, kind @doing, author "brendan@necessary.nu", at 2026-08-16T00:02:39.519817479Z}
-    {id make-semicolon-does-not-stop-an-assignment-scan, kind @doing, author "brendan@necessary.nu", at 2026-08-16T00:27:14.742586994Z}
+    {id make-shuffle-reaches-the-circular-drop, kind @complete, author "brendan@necessary.nu", at 2026-08-16T00:40:45.062254159Z}
+    {id make-an-unopenable-include-is-reported-where-gnu-reports-it, kind @complete, author "brendan@necessary.nu", at 2026-08-16T00:40:49.726868799Z}
+    {id make-a-forgiven-makefile-is-not-remade-for-the-goals, kind @complete, author "brendan@necessary.nu", at 2026-08-16T00:40:54.415794835Z}
+    {id make-semicolon-does-not-stop-an-assignment-scan, kind @complete, author "brendan@necessary.nu", at 2026-08-16T00:40:59.105793643Z}
 )
 
 impl_evidence (
