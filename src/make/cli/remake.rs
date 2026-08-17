@@ -386,11 +386,15 @@ fn makefile_stamps(paths: &[Vec<u8>], directory: &Path) -> Vec<Option<std::time:
 /// The switches a Makefile is brought up to date under.
 ///
 /// Not the ones the goals were asked about: `-n` would leave the Makefile
-/// described and unmade, and the read would then have to guess what it said.
+/// described and unmade, and `-t` would leave it dated and unwritten, and the
+/// read would then have to guess what either of them said. GNU Make turns both
+/// off across `update_goal_chain` for the makefile pass for the same reason and
+/// restores them for the goals.
 fn remaking_options(options: &BuildOptions) -> BuildOptions {
     BuildOptions {
         dryrun: false,
         verbose: false,
+        touch: false,
         ..options.clone()
     }
 }
@@ -589,19 +593,17 @@ fn settled_makefiles(
         // and have to be told the same thing.
         Remaking::Settled(settled) if refusals.is_empty() => Settled::Stands(settled),
         Remaking::Restart | Remaking::Settled(_) => {
-            Settled::Refused(refusal_result(reported, refusals, keep_going))
+            Settled::Refused(refusal_result(reported, refusals))
         }
     }
 }
 
 /// What ends a run over the makefiles it could not make.
-fn refusal_result(
-    reported: &mut String,
-    refusals: Vec<crate::make::RefusedMakefile>,
-    keep_going: bool,
-) -> RunResult {
-    let (refusals, summaries) = crate::make::refusal_report(refusals, keep_going);
-    refused_makefile(std::mem::take(reported), refusals, &summaries)
+fn refusal_result(reported: &mut String, refusals: Vec<crate::make::RefusedMakefile>) -> RunResult {
+    refused_makefile(
+        std::mem::take(reported),
+        crate::make::refusal_report(refusals),
+    )
 }
 
 /// Say the refusals of a read that is about to happen again.
@@ -610,7 +612,7 @@ fn refusal_result(
 /// update, and under `-k` it does not end the run, so the re-exec that follows a
 /// remade makefile starts the whole thing over and says all of it again. A run
 /// that remakes one makefile while refusing over two therefore says both
-/// refusals and both summaries twice.
+/// refusals twice.
 ///
 /// Straight to the diagnostic stream rather than into a result, because a result
 /// is what ENDS a run and this one is not ending. A diagnostic that cannot be
@@ -621,7 +623,7 @@ fn report_refusals_now(
     refusals: Vec<crate::make::RefusedMakefile>,
     diagnostics: &mut Option<&mut dyn Write>,
 ) {
-    let (reported, summaries) = crate::make::refusal_report(refusals, true);
+    let reported = crate::make::refusal_report(refusals);
     let Some(sink) = diagnostics.as_deref_mut() else {
         return;
     };
@@ -630,9 +632,6 @@ fn report_refusals_now(
             let _ = writeln!(sink, "{complaint}");
         }
         let _ = sink.write_all(&ordinary_diagnostic(error));
-    }
-    for summary in summaries {
-        let _ = writeln!(sink, "{summary}");
     }
 }
 

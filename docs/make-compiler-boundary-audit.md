@@ -96,8 +96,8 @@ compatibility. None of them authorizes a second executor.
 - `src/jobserver.rs`: the served FIFO/pipe transport, token publication, and
   recursive-tree environment. A generic inherited-client adapter may remain if
   it constrains every frontend identically.
-- `src/build/command.rs`: Make touch behavior and Make-only closing/failure
-  handling.
+- `src/build/command.rs`: Make-only closing/failure handling. Touch behaviour is
+  no longer removed — see the `-t` note under "Accept without emulation".
 - `src/build/reporter.rs`: Make recipe-failure rendering. A Makefile-derived
   graph uses the ordinary Ninja reporter.
 - `src/frontend/execute.rs`: the Make-specific external persistence namespace
@@ -164,9 +164,31 @@ GNU Make's scheduler, timing, wording, or private statuses.
 ### Accept without emulation (`N`)
 
 - `make-option-output-sync`, `make-option-debug-and-trace`,
-  `make-option-shuffle`, and `make-option-touch-and-what-if` collapse into the
-  complete interface table owned by `make-interface-surface`. Their spellings
-  are accepted; their Make runtime behavior is not implemented.
+  `make-option-shuffle`, and the `-W` half of `make-option-touch-and-what-if`
+  collapse into the complete interface table owned by
+  `make-interface-surface`. Their spellings are accepted; their Make runtime
+  behavior is not implemented.
+
+- **`-t` is the exception, and it is one by operator decision** (Brendan,
+  2026-08-17): touch mode is implemented rather than accepted. The reason the
+  original disposition does not hold is that `-t` is not a reporting or
+  scheduling behaviour — it decides what the run writes to disk, and
+  `[spec:ronin:req:make.semantics+1]` makes filesystem effects a conformance
+  criterion. A `-t` that runs the recipes is not an unimplemented no-op; it is
+  the opposite of what was asked for, and it overwrites the files the caller
+  told it not to make.
+
+  What is implemented is the behaviour and not the voice. Each edge that would
+  have run has its outputs dated instead, `.PHONY` targets are declined, `-n`
+  keeps its precedence, `-q` still answers without running, `MAKEFLAGS` carries
+  `t` to a recursive child, and a target written `lib.a(member.o)` is dated by
+  writing the archive's own mtime into that member's index entry — GNU Make's
+  `ar_member_touch`, which is the only path by which a date ever reaches a
+  member of an archive `ar` wrote in its default deterministic mode. GNU Make's
+  `touch <file>` line is NOT reproduced: the touched edge is reported by the
+  ordinary Ninja progress line under `[spec:ronin:req:make.narration+1]`, and a
+  second line naming the same work in GNU Make's words would be narration
+  rather than information.
 
 ### Retire or reverse (`R`)
 

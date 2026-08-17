@@ -685,7 +685,7 @@ impl Builder<'_> {
         }
         let launch = Self::take_step(prepared);
         let use_console = prepared.command.use_console;
-        match processes.spawn(prepared.edge, launch, use_console, self.options.dryrun) {
+        match processes.spawn(prepared.edge, launch, use_console, self.pretending()) {
             Ok(()) => Advance::Relaunched,
             Err(error) => Advance::Finished(Err(error)),
         }

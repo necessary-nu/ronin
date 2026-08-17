@@ -255,33 +255,22 @@ pub(crate) struct RefusedMakefile {
     complaint: Option<String>,
     /// What ends the run.
     error: MakeError,
-    /// `Failed to remake makefile 'X'.`, which comes after every refusal rather
-    /// than beside its own, and only under `-k`. Without it the run ends inside
-    /// the update and this second pass over the makefiles is never reached.
-    summary: String,
 }
 
-/// Split a run's refusals into what the report writes, in the two passes GNU
-/// Make writes them in.
+/// What the report writes for a run's refusals: each one's held complaint
+/// beside the failure it refuses over.
 ///
-/// First each refusal's held complaint beside what it refuses over, and then —
-/// only under `-k`, which is the only way there is more than one and the only
-/// way the update returns at all — the `Failed to remake makefile` line for
-/// every one of them. `main.c` makes that second pass over `read_files` after
-/// the update has finished, so the two lists interleave nowhere.
-pub(crate) fn refusal_report(
-    refusals: Vec<RefusedMakefile>,
-    keep_going: bool,
-) -> (Vec<(Option<String>, MakeError)>, Vec<String>) {
-    let mut summaries = Vec::new();
-    let mut reported = Vec::new();
-    for refusal in refusals {
-        if keep_going {
-            summaries.push(refusal.summary);
-        }
-        reported.push((refusal.complaint, refusal.error));
-    }
-    (reported, summaries)
+/// GNU Make writes a second list after this one — a `Failed to remake makefile
+/// 'X'.` line per refusal, from `main.c`'s `us_failed` pass over `read_files`
+/// once the update has returned. Ronin does not: every name in it has already
+/// been reported one line above, so the pass is GNU's ceremony rather than a
+/// failure that would otherwise go unreported.
+// [spec:ronin:req:make.narration+1]
+pub(crate) fn refusal_report(refusals: Vec<RefusedMakefile>) -> Vec<(Option<String>, MakeError)> {
+    refusals
+        .into_iter()
+        .map(|refusal| (refusal.complaint, refusal.error))
+        .collect()
 }
 
 /// One unit's Makefiles: the ones among them whose failure is forgiven, and the
@@ -895,7 +884,6 @@ fn refused_makefiles(refusals: Vec<kati::dep::Refusal>) -> Vec<RefusedMakefile> 
         .map(|refusal| RefusedMakefile {
             complaint: refusal.complaint,
             error: MakeError::evaluate(&refusal.error),
-            summary: refusal.summary,
         })
         .collect()
 }

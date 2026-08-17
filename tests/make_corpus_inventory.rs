@@ -58,6 +58,20 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 69 when kati adopted GNU Make 4.4.1's `'x'` quoting in place of the
+    // 3.8x `` `x' `` it was written against. Sixteen cases became byte-identical
+    // — `call_with_whitespace.mk#test`, `define_with_comments.mk#test`, the
+    // eight `err_*` conditional and `word`/`wordlist` cases,
+    // `func_backslash.mk#test`, `nothing_to_do.mk#default`,
+    // `warn_output_pattern_mismatch.mk#test` and the rest — and took the
+    // `quote-style` family with them, being the only cases that named it. The
+    // four rows that had carried it beside another family kept the other one:
+    // `err_override.mk#test` and `override.mk#test` still say `commands` where
+    // 4.4.1 says `recipe`, `file_func.sh#script` still turns on the corpus's
+    // `MAKE_VERSION` gate, and `werror_overriding_commands.sh#script` is still
+    // a kati extension whose GNU side the case writes by hand.
+    //
+    // Before that it moved
     // from 70 when a circular dependency stopped being refused and started
     // being dropped, the way GNU Make drops the one edge it was standing on
     // when it noticed and carries on building: `circular_dep.mk#test` became
@@ -140,8 +154,8 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 69);
-    assert_eq!(by_class["defect"], 33);
+    assert_eq!(cases.len(), 53);
+    assert_eq!(by_class["defect"], 17);
     assert_eq!(by_class["recorded"], 4);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);

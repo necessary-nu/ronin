@@ -1,0 +1,6 @@
+{
+	printf '!<arch>\n'
+	printf 'foo.o/          1609459200  0     0     100644  7         `\n'
+	printf 'object\n'
+	printf '\n'
+} > libx.a

@@ -380,6 +380,56 @@ impl RealDiskInterface {
         Ok(())
     }
 
+    /// Bring `path` up to date without making it, which is what GNU Make's `-t`
+    /// does instead of running a recipe.
+    ///
+    /// A target that is a target is a `utime` on a file the touch creates if it
+    /// is not there. A target that is an archive member is not a filename at
+    /// all, so there is nothing to `utime`: its date lives in the archive's
+    /// index and the touch is a write into that index. The two are reached by
+    /// the same name in a Makefile and only this dispatch tells them apart —
+    /// touching `lib.a(x.o)` as a filename would leave a file with a bracket in
+    /// its name and the member as stale as it was.
+    // [spec:ronin:req:make.semantics+1]
+    pub(crate) fn touch(&self, path: &Path) -> io::Result<()> {
+        #[cfg(unix)]
+        if self.archive_members
+            && let Some((library, member)) =
+                archive::split_member(path.as_os_str().as_encoded_bytes())
+        {
+            use std::os::unix::ffi::OsStrExt as _;
+
+            let library = Path::new(std::ffi::OsStr::from_bytes(library));
+            return archive::touch_member(&self.resolve(library), member).map_err(|failure| {
+                let library = library.display();
+                match failure {
+                    archive::TouchFailure::NoArchive => io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!("Archive '{library}' does not exist"),
+                    ),
+                    archive::TouchFailure::NotAnArchive => io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("'{library}' is not a valid archive"),
+                    ),
+                    archive::TouchFailure::NoMember => io::Error::new(
+                        io::ErrorKind::NotFound,
+                        format!(
+                            "Member '{}' does not exist in '{library}'",
+                            String::from_utf8_lossy(member)
+                        ),
+                    ),
+                }
+            });
+        }
+        let times = std::fs::FileTimes::new().set_modified(std::time::SystemTime::now());
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(self.resolve(path))?
+            .set_times(times)
+    }
+
     pub(crate) fn exists(&self, path: &Path) -> bool {
         #[cfg(unix)]
         {

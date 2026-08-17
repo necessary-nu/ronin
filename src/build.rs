@@ -97,6 +97,15 @@ pub(crate) struct BuildOptions {
     /// Whether a target written `lib.a(member.o)` names a member of an
     /// archive rather than a file. Make mode only — see [`crate::os`].
     pub(crate) archive_members: bool,
+    /// Whether an edge is brought up to date by giving its outputs a fresh date
+    /// rather than by running what makes them, which is GNU Make's `-t`.
+    ///
+    /// Nothing about how the work is narrated changes with it: the edges that
+    /// would have run still run through the plan in the same order and are
+    /// still reported by the ordinary progress line. What changes is the work —
+    /// no process starts, and each output is touched instead.
+    // [spec:ronin:req:make.narration+1]
+    pub(crate) touch: bool,
 }
 
 impl Default for BuildOptions {
@@ -124,6 +133,7 @@ impl Default for BuildOptions {
             recipe_signal_fails: false,
             working_directory: crate::os::WorkingDirectory::default(),
             archive_members: false,
+            touch: false,
         }
     }
 }
@@ -1519,6 +1529,10 @@ impl<'a> Builder<'a> {
             self.command_finished(edge, &command, None, &[])?;
         }
 
+        // Ahead of the stat below, so the date `-t` has just given each output
+        // is the date this run records for it.
+        self.touch_outputs(edge)?;
+
         let disk = self.disk.clone();
         let mut new_mtimes = Vec::new();
         let deferred_outputs = self
@@ -2012,7 +2026,7 @@ impl<'a> Builder<'a> {
                     }
                     Ok(Some(mut prepared)) => {
                         let launch = Self::take_step(&mut prepared);
-                        match processes.spawn(edge, launch, use_console, self.options.dryrun) {
+                        match processes.spawn(edge, launch, use_console, self.pretending()) {
                             Ok(()) => {
                                 running[edge.index()] = Some(prepared);
                                 running_slots[edge.index()] = slot;
@@ -2179,6 +2193,7 @@ mod deferred;
 mod freshness;
 mod reporter;
 mod status;
+mod touch;
 #[cfg(test)]
 pub(crate) use status::format_progress_status;
 

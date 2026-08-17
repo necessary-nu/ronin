@@ -812,6 +812,10 @@ pub(crate) enum BuildOperation {
     WriteOutput,
     WriteDiagnostic,
     StatOutput,
+    /// Giving an output a fresh date instead of making it, under `-t`. Its
+    /// failures are the archive ones — a member, unlike a file, cannot be
+    /// brought into existence by touching it.
+    TouchOutput,
 }
 
 #[allow(

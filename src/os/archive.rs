@@ -38,6 +38,11 @@ const HEADER: usize = 60;
 /// How much of a member's name the fixed header field keeps, which is all a
 /// short name is ever compared over.
 const NAME_KEPT: usize = 15;
+/// Where a member's date sits within its header.
+const DATE_OFFSET: u64 = 16;
+/// How wide the date field is. A date written into it is padded out to the
+/// whole width, so nothing of a longer previous date survives behind it.
+const DATE_FIELD: usize = 12;
 
 /// Split a path written as `lib.a(member.o)` into its two halves.
 ///
@@ -132,6 +137,169 @@ pub(crate) fn member_date(archive: &Path, member: &[u8]) -> Option<i64> {
         let consumed = i64::try_from(extended.len()).ok()?;
         file.seek(SeekFrom::Current(size - consumed)).ok()?;
         skip_padding(&mut file, size)?;
+    }
+}
+
+/// Write the archive's own modification time into `member`'s index entry, which
+/// is the only way a member's date can be set: it is not a file, so there is
+/// nothing to `utime`.
+///
+/// GNU Make's `ar_member_touch` (reference/gnumake/src/arscan.c:923), which
+/// finds the header, opens the archive read-write, and formats a date into the
+/// 12-byte `ar_date` field in place. Three details of it are load-bearing and
+/// none of them is obvious:
+///
+/// * the date written is the ARCHIVE's, not the wall clock, and it is read
+///   before the write — so the member ends a touch fractionally older than the
+///   archive holding it, which is what GNU Make settles for and what a
+///   subsequent read then finds current;
+/// * the field is decimal seconds padded to its full width with spaces, because
+///   a shorter number left over from a longer one would leave the tail of the
+///   old date behind it;
+/// * on an archive `ar` wrote in its default deterministic mode every date is
+///   zero, so every member reads as absent — and a touch is then the only way a
+///   real date ever gets into that index at all.
+pub(crate) fn touch_member(archive: &Path, member: &[u8]) -> Result<(), TouchFailure> {
+    use std::io::Write as _;
+
+    let mut file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(archive)
+        .map_err(|_| TouchFailure::NoArchive)?;
+    let modified = file
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_secs());
+    let position = member_header_position(&mut file, member)?.ok_or(TouchFailure::NoMember)?;
+    let mut field = [b' '; DATE_FIELD];
+    let text = modified.to_string();
+    let written = text.as_bytes();
+    if written.len() <= DATE_FIELD {
+        field[..written.len()].copy_from_slice(written);
+    }
+    file.seek(SeekFrom::Start(position + DATE_OFFSET))
+        .map_err(|_| TouchFailure::NotAnArchive)?;
+    file.write_all(&field)
+        .map_err(|_| TouchFailure::NoArchive)?;
+    Ok(())
+}
+
+/// Why a member's date could not be written.
+///
+/// The three are separate because GNU Make says three different things and
+/// distinguishing them is the whole information the diagnostic carries: a
+/// missing archive is a build that has not reached this yet, a missing member
+/// is a name that is wrong, and an unreadable one is a file that is not an
+/// archive at all.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum TouchFailure {
+    NoArchive,
+    NotAnArchive,
+    NoMember,
+}
+
+/// Where in the file `member`'s 60-byte header begins.
+///
+/// The same walk [`member_date`] makes, stopped one step earlier: that one wants
+/// the date it parsed out of the header and this one wants the header's address,
+/// so the scan is shared and only the answer differs. Unlike the date walk, a
+/// member whose recorded date is zero still counts as found — a touch is
+/// precisely the thing that gives such a member a date.
+fn member_header_position(
+    file: &mut std::fs::File,
+    member: &[u8],
+) -> Result<Option<u64>, TouchFailure> {
+    let mut magic = [0u8; MAGIC.len()];
+    file.read_exact(&mut magic)
+        .map_err(|_| TouchFailure::NotAnArchive)?;
+    if &magic != MAGIC {
+        return Err(TouchFailure::NotAnArchive);
+    }
+    let wanted = member
+        .iter()
+        .rposition(|byte| *byte == b'/')
+        .map_or(member, |slash| &member[slash + 1..]);
+
+    let mut names = Vec::new();
+    let mut header = [0u8; HEADER];
+    let mut position = MAGIC.len() as u64;
+    loop {
+        if file.read_exact(&mut header).is_err() {
+            return Ok(None);
+        }
+        if &header[58..60] != b"`\n" {
+            return Err(TouchFailure::NotAnArchive);
+        }
+        let Some(size) = parse_field::<i64>(&header[48..58], 10).filter(|size| *size >= 0) else {
+            return Err(TouchFailure::NotAnArchive);
+        };
+        // Every member's data is padded to an even offset, so what the next
+        // header costs is its own width plus the data plus that pad byte.
+        let Some(entry) = u64::try_from(size)
+            .ok()
+            .and_then(|size| size.checked_add(HEADER as u64 + size % 2))
+        else {
+            return Err(TouchFailure::NotAnArchive);
+        };
+        let raw = trim_trailing(&header[..16]);
+
+        if raw == b"//" || raw == b"ARFILENAMES/" {
+            let Ok(length) = usize::try_from(size) else {
+                return Err(TouchFailure::NotAnArchive);
+            };
+            names.resize(length, 0);
+            if file.read_exact(&mut names).is_err() || skip_padding(file, size).is_none() {
+                return Err(TouchFailure::NotAnArchive);
+            }
+            position += entry;
+            continue;
+        }
+
+        let mut extended = Vec::new();
+        let name: &[u8] = if raw.first() == Some(&b'/') || raw.first() == Some(&b' ') {
+            let Some(table) = parse_field::<usize>(&raw[1..], 10).and_then(|at| names.get(at..))
+            else {
+                return Err(TouchFailure::NotAnArchive);
+            };
+            let end = table
+                .iter()
+                .position(|byte| *byte == b'\n' || *byte == b'\0')
+                .unwrap_or(table.len());
+            trim_trailing_slash(&table[..end])
+        } else if raw.starts_with(b"#1/") {
+            let Some(length) = parse_field::<usize>(&raw[3..], 10) else {
+                return Err(TouchFailure::NotAnArchive);
+            };
+            extended.resize(length, 0);
+            if file.read_exact(&mut extended).is_err() {
+                return Err(TouchFailure::NotAnArchive);
+            }
+            let end = extended
+                .iter()
+                .position(|byte| *byte == b'\0')
+                .unwrap_or(extended.len());
+            extended.truncate(end);
+            &extended
+        } else {
+            trim_trailing_slash(raw)
+        };
+
+        if name_matches(wanted, name, extended.is_empty() && !raw.starts_with(b"/")) {
+            return Ok(Some(position));
+        }
+
+        let Ok(consumed) = i64::try_from(extended.len()) else {
+            return Err(TouchFailure::NotAnArchive);
+        };
+        if file.seek(SeekFrom::Current(size - consumed)).is_err()
+            || skip_padding(file, size).is_none()
+        {
+            return Err(TouchFailure::NotAnArchive);
+        }
+        position += entry;
     }
 }
 
@@ -246,6 +414,76 @@ mod tests {
         assert_eq!(
             member_date(&directory.path().join("absent.a"), b"m.o"),
             None
+        );
+    }
+
+    /// The cell the deterministic default makes interesting: `ar` wrote every
+    /// date as zero, so every member reads as absent, and a touch is the only
+    /// thing that will ever put a real date in this index.
+    // [spec:ronin:req:make.semantics+1/test]
+    #[test]
+    fn touch_files_the_archives_own_date() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = archive(directory.path(), "-rc");
+        assert_eq!(member_date(&path, b"member.o"), None);
+
+        touch_member(&path, b"member.o").unwrap();
+
+        let archive_date = std::fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let dated = member_date(&path, b"member.o").expect("the touch filed a date");
+        // GNU Make reads the archive's mtime before it writes, and writing then
+        // moves that mtime on, so the member ends fractionally behind the file
+        // holding it rather than level with it.
+        assert!(
+            dated > 0 && u64::try_from(dated).unwrap() <= archive_date,
+            "the member was dated {dated} against an archive of {archive_date}"
+        );
+        assert_eq!(
+            member_date(&path, b"a-very-long-member-name.o"),
+            None,
+            "a touch dated a member nobody asked about"
+        );
+    }
+
+    /// A name too long for the fixed header is found through the long-name
+    /// table, and the header the touch writes into is still that member's own.
+    // [spec:ronin:req:make.semantics+1/test]
+    #[test]
+    fn touch_reaches_a_long_named_member() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = archive(directory.path(), "-rc");
+
+        touch_member(&path, b"a-very-long-member-name.o").unwrap();
+
+        assert!(member_date(&path, b"a-very-long-member-name.o").is_some_and(|date| date > 0));
+        assert_eq!(member_date(&path, b"member.o"), None);
+    }
+
+    /// The three ways a touch has nothing to write into, which are three
+    /// different things to say and not one.
+    // [spec:ronin:req:make.semantics+1/test]
+    #[test]
+    fn a_touch_says_why_it_failed() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = archive(directory.path(), "-rc");
+        assert_eq!(
+            touch_member(&path, b"absent.o"),
+            Err(TouchFailure::NoMember)
+        );
+        assert_eq!(
+            touch_member(&directory.path().join("nope.a"), b"member.o"),
+            Err(TouchFailure::NoArchive)
+        );
+        let bad = directory.path().join("bad.a");
+        std::fs::write(&bad, b"just bytes\n").unwrap();
+        assert_eq!(
+            touch_member(&bad, b"member.o"),
+            Err(TouchFailure::NotAnArchive)
         );
     }
 }

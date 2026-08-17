@@ -748,13 +748,17 @@ fn question_refuses_a_forgiven_makefile_goal() {
 
 /// `-k` makes `complain()` report rather than die (remake.c:422), so the
 /// makefile update walks on: every required makefile nothing can make gets its
-/// complaint and its refusal, and then `main.c`'s `us_failed` arm makes a second
-/// pass over the same files and adds `Failed to remake makefile 'X'.` for each.
-/// Two lists, and the second comes wholly after the first.
+/// complaint and its refusal, rather than the run ending at the first.
+///
+/// GNU Make follows those with a second pass — `main.c`'s `us_failed` arm adds
+/// `Failed to remake makefile 'X'.` for each — and Ronin does not: every name in
+/// that list has already been reported one line above it, so the pass reports no
+/// failure of its own. `[spec:ronin:req:make.narration+1]`.
 ///
 /// GNU Make 4.4.1 on `make -k` here prints, in order: nope1's complaint, its
 /// refusal, nope2's complaint, its refusal, then both summaries, and exits 2
 /// with `all` never run.
+// [spec:ronin:req:make.narration+1/test]
 #[test]
 fn keep_going_refuses_every_makefile() {
     let directory = test_directory("keep-going-refusals");
@@ -773,8 +777,6 @@ fn keep_going_refuses_every_makefile() {
         "No rule to make target 'nope1.mk'",
         "Makefile:2: nope2.mk: No such file or directory",
         "No rule to make target 'nope2.mk'",
-        "Makefile:1: Failed to remake makefile 'nope1.mk'.",
-        "Makefile:2: Failed to remake makefile 'nope2.mk'.",
     ]
     .map(|line| {
         reported
@@ -783,14 +785,17 @@ fn keep_going_refuses_every_makefile() {
     });
     assert!(
         positions.windows(2).all(|pair| pair[0] < pair[1]),
-        "the refusals and the summaries did not come in GNU Make's order: {reported}"
+        "each refusal did not come beside the complaint that explains it: {reported}"
+    );
+    assert!(
+        !reported.contains("Failed to remake makefile"),
+        "the run repeated names it had already reported: {reported}"
     );
     fs::remove_dir_all(directory).unwrap();
 }
 
 /// Without `-k` the same case stops at the first: `complain()` is `fatal`, so
-/// the update never reaches the second makefile, and `main.c` never reaches the
-/// summary pass at all.
+/// the update never reaches the second makefile.
 #[test]
 fn one_refusal_without_keep_going() {
     let directory = test_directory("single-refusal");
@@ -810,10 +815,6 @@ fn one_refusal_without_keep_going() {
         !reported.contains("nope2.mk"),
         "a makefile behind the refusal was considered: {reported}"
     );
-    assert!(
-        !reported.contains("Failed to remake makefile"),
-        "the keep-going summary was reached without -k: {reported}"
-    );
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -822,9 +823,14 @@ fn one_refusal_without_keep_going() {
 /// the open failed, one line ahead of the line that names the failure. A rule
 /// that wins starts the read over instead, and the complaint is never made.
 ///
-/// GNU Make 4.4.1 on this case prints `GENFAIL`, then
-/// `Makefile:1: gen.mk: No such file or directory`, then
+/// GNU Make 4.4.1 on this case prints `GENFAIL` on stdout and, on stderr,
+/// `Makefile:1: gen.mk: No such file or directory` then
 /// `make: *** [Makefile:2: gen.mk] Error 1`, and exits 2.
+///
+/// The complaint is a diagnostic, so it goes to stderr — where GNU Make puts it
+/// and where every other Ronin diagnostic goes — rather than onto stdout beside
+/// the `build stopped` line it explains. `[spec:ronin:req:make.narration+1]`.
+// [spec:ronin:req:make.narration+1/test]
 #[test]
 fn lost_remake_reports_its_unread_include() {
     let directory = test_directory("lost-remake-complaint");
@@ -834,17 +840,20 @@ fn lost_remake_reports_its_unread_include() {
     )
     .unwrap();
 
-    let (succeeded, reported) = merged_make(&directory, &[]);
-    assert!(!succeeded, "{reported}");
+    let output = make_command(&directory).output().unwrap();
+    let said = String::from_utf8_lossy(&output.stdout).into_owned();
+    let complained = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert!(!output.status.success(), "{said}{complained}");
 
-    let ran = reported.find("GENFAIL").expect(&reported);
-    let complaint = reported
-        .find("gen.mk: No such file or directory")
-        .expect(&reported);
-    let stopped = reported.find("build stopped").expect(&reported);
+    assert!(said.contains("GENFAIL"), "{said}");
+    assert!(said.contains("build stopped"), "{said}");
     assert!(
-        ran < complaint && complaint < stopped,
-        "the complaint did not come between the failure and the ending: {reported}"
+        complained.contains("gen.mk: No such file or directory"),
+        "the complaint was not made on the diagnostic stream: {said}{complained}"
+    );
+    assert!(
+        !said.contains("No such file or directory"),
+        "the complaint was narrated on stdout: {said}"
     );
     fs::remove_dir_all(directory).unwrap();
 }

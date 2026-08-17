@@ -62,7 +62,11 @@ const COMPARISON_REPORT: &str = "target/make-port-comparison.txt";
 /// classification they demonstrate is the one Ronin's compiler reads —
 /// `recursive-dry-run-writes-nothing` is the same question where the two tools
 /// agree, and it gates.
-const DISCOVERY_ONLY_CASES: [&str; 10] = [
+///
+/// `-t` used to be here beside `-W` and is not any more: it brings the goals up
+/// to date without making them, which is a filesystem effect this harness can
+/// see, so it gates on what the touch did rather than being read for discovery.
+const DISCOVERY_ONLY_CASES: [&str; 9] = [
     "always-make-option",
     "dry-run-skips-a-make-reference-line",
     "dry-run-skips-a-plus-line",
@@ -71,7 +75,6 @@ const DISCOVERY_ONLY_CASES: [&str; 10] = [
     "makeflags-value-switch-precedence",
     "makeflags-withdrawal-outranked-by-command-line",
     "phony-runs-though-the-file-is-current",
-    "touch-option",
     "what-if-option",
 ];
 

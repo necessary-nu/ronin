@@ -601,6 +601,9 @@ assertions (
     {id make-archive-member-globbing, kind @complete, author "brendan@necessary.nu", at 2026-08-17T00:29:38.872498647Z}
     {id make-archive-member-list-in-one-name, kind @complete, author "brendan@necessary.nu", at 2026-08-17T00:29:43.362036006Z}
     {id make-archive-suffix-rule-conversion, kind @complete, author "brendan@necessary.nu", at 2026-08-17T00:29:49.355896965Z}
+    {id make-archive-member-touch, kind @complete, author "brendan@necessary.nu", at 2026-08-17T12:05:21.638451061Z}
+    {id make-diagnostic-quote-style, kind @complete, author "brendan@necessary.nu", at 2026-08-17T12:05:26.545122802Z}
+    {id make-narration-contract-audit, kind @complete, author "brendan@necessary.nu", at 2026-08-17T12:05:28.346235596Z}
 )
 
 impl_evidence (

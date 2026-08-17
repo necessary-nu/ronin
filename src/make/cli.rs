@@ -250,7 +250,7 @@ const MAKE_OPTION_SURFACE: &[InterfaceOption] = &[
     InterfaceOption {
         spellings: &["-t", "--touch"],
         argument: ArgumentShape::None,
-        class: OptionClass::NoOp,
+        class: OptionClass::NinjaControl,
     },
     InterfaceOption {
         spellings: &["--trace"],
@@ -1380,6 +1380,13 @@ fn build_options(
     // file of that name. A manifest build has no such shape and must keep
     // reading parentheses as ordinary bytes in a path.
     options.archive_members = true;
+    // `-t` brings the goals up to date without making them. It is not a
+    // narration switch: the same edges are planned, reported and counted, and
+    // only what an edge does changes — a fresh date on each output in place of
+    // the recipe. `-n` keeps its precedence over it, as it does over everything
+    // that would write, and `-q` never reaches here because a question runs
+    // nothing at all.
+    options.touch = invocation.given(Switch::Touch);
     Ok(options)
 }
 
@@ -1523,12 +1530,9 @@ fn prepare_graph(
             // read with nothing to remake reaches it with no work to do first.
             let refusals = loaded.take_refusals();
             if !refusals.is_empty() {
-                let (refusals, summaries) =
-                    crate::make::refusal_report(refusals, root.invocation.given(Switch::KeepGoing));
                 return Ok(PreparedGraph::Finished(refused_makefile(
                     std::mem::take(reported),
-                    refusals,
-                    &summaries,
+                    crate::make::refusal_report(refusals),
                 )));
             }
             let recipes = loaded.take_pending_recipes().map(Box::new);

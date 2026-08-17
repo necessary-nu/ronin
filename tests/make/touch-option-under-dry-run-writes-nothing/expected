@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # `-n` outranks `-t`: a run told to change nothing changes nothing, so the
+| # target is neither made nor dated and the file that is not there stays absent.
+| all: out.txt
+| out.txt: in.txt ; @echo REAL > out.txt
+file in.txt kept 1
+| source

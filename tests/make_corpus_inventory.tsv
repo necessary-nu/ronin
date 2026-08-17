@@ -30,51 +30,35 @@ family	exit-status	GNU Make exits 2 when it abandons a build; kati exits 1. The 
 family	find-emulator	the case drives --use_find_emulator, kati's in-process replacement for find(1), which is a deliberate departure from what a recipe would do.
 family	identity-prefix	GNU Make prefixes a diagnostic that carries no makefile location with its own name and a colon; kati prints it bare.
 family	kati-extension	the case exercises a feature GNU Make does not have. Where the case reads the name of the tool it was handed it writes Make's side of the comparison by hand, and only kati's side is evidence; where it does not, GNU Make runs and answers as if the extension's syntax were ordinary text.
-family	quote-style	kati quotes names as `x' , the GNU Make 3.8x style. 4.4.1 quotes 'x'.
 family	recipe-stream	kati captures a recipe's combined output and writes it to its own stdout; GNU Make lets the recipe inherit both descriptors, so a recipe's stderr stays on stderr.
 family	recipe-wording	GNU Make 4.x says "recipe" where 3.8x said "commands"; kati kept the older wording.
 family	stop-suffix	GNU Make appends "  Stop." to the fatal diagnostic it dies on; kati prints the diagnostic alone.
 
 case	allow_rules.sh#script	extension	kati-extension	62b40b7a4d65360d
 case	blank_line_before_command.mk#test	recorded	recipe-stream+corpus-todo+exit-status	1c0003fa1be5e1da
-case	call_with_whitespace.mk#test	defect	quote-style	a70ab0c62ed68238
-case	define_with_comments.mk#test	defect	quote-style	def36077f32e4d2b
 case	delete_on_error.mk#test	recorded	evaluation+corpus-todo+exit-status	92054fe56b1cc1e0
 case	deprecated_export.mk#test	extension	kati-extension	6f76de783020faaf
 case	deprecated_var.mk#test	extension	kati-extension	4de2b58e33257f25
 case	empty_ninja_file.sh#script	extension	kati-extension	84fb5a3b281e691c
-case	err_both_colon.mk#test	defect	exit-status+stop-suffix+quote-style	352bac18e2ed1b88
-case	err_extra_else.mk#default	defect	exit-status+stop-suffix+quote-style	f269f6da4204ac18
-case	err_extra_endif.mk#default	defect	exit-status+stop-suffix+quote-style	cb14ea2f07b55a92
-case	err_invalid_else.mk#default	defect	exit-status+stop-suffix+identity-prefix+quote-style	aaa360133a44104e
-case	err_invalid_ifeq3.mk#test	defect	quote-style	98b66eb08abef93f
 case	err_invalid_ifeq5.mk#test	recorded	evaluation+corpus-todo	746ab995b9a060df
-case	err_missing_endef.mk#default	defect	exit-status+stop-suffix+quote-style	d33e8ee406865825
-case	err_missing_endif.mk#default	defect	exit-status+stop-suffix+quote-style	16fafe98e1dab57e
 case	err_no_target_commands.mk#default	defect	exit-status+stop-suffix+recipe-wording	006f534f449f9a6e
 case	err_no_target_commands2.mk#default	defect	exit-status+stop-suffix+recipe-wording	17f41a14adad7ffe
-case	err_override.mk#test	defect	quote-style+recipe-wording	f9ab39e78c6d9605
+case	err_override.mk#test	defect	recipe-wording	02985d510315a679
 case	err_semicolon.mk#default	defect	exit-status+stop-suffix+recipe-wording	f0596bd3c3e97f01
 case	err_semicolon3.mk#default	defect	exit-status+stop-suffix+recipe-wording	f0596bd3c3e97f01
 case	err_semicolon4.mk#default	defect	exit-status+stop-suffix+recipe-wording	55be7a894c85f101
-case	err_two_else.mk#default	defect	exit-status+stop-suffix+quote-style	70089480aa923c7e
-case	err_unmatched_endef.mk#default	defect	exit-status+stop-suffix+quote-style	6315ae60a8dca1b9
-case	err_word_non_numeric.mk#test	defect	exit-status+stop-suffix+quote-style	2598ebb59369d1f0
-case	err_word_zero.mk#test	defect	exit-status+stop-suffix+quote-style	2598ebb59369d1f0
 case	fail_ignore_error.mk#test	defect	exit-status+identity-prefix+error-location	b7dbcb23b62bb0d8
 case	fail_subshell_in_recipe.mk#test	defect	exit-status+identity-prefix+error-location	b7dbcb23b62bb0d8
-case	file_func.sh#script	artefact	corpus-version-gate+quote-style	78977ad7edcc91dd
+case	file_func.sh#script	artefact	corpus-version-gate	bf768fc09971a5f6
 case	final_global.sh#script	extension	kati-extension	838b4bfa4152b014
 case	final_rule.sh#script	extension	kati-extension	d627b75348539653
 case	final_rule2.sh#script	extension	kati-extension	d627b75348539653
-case	func_backslash.mk#test	defect	quote-style	89a7baefb28487f2
 case	ignore_error.mk#test	defect	identity-prefix+error-location	a7a1c3b1ed8e8e57
 case	implicit_pattern_rule_warn.sh#script	extension	kati-extension	254724fe0651e623
 case	multi_rule_order_only.mk#test2	defect	build-order	1bb6f2cdc5e12f75
 case	ninja_normalized_path.mk#test2	defect	recipe-stream+exit-status	3e7af572b01ded7b
-case	nothing_to_do.mk#default	defect	quote-style	4e30afa7c8c67be8
 case	order_only.mk#test2	defect	dependent-attribution+exit-status	acea0f9d65049abb
-case	override.mk#test	defect	quote-style+recipe-wording	0b34aabd728de507
+case	override.mk#test	defect	recipe-wording	071b5292b4562aad
 case	override_export.mk#test	defect	exit-status+identity-prefix+error-location	d9383b7d59c1efc9
 case	phony_looks_real.sh#script	extension	kati-extension	ece3130b7320fa89
 case	readonly_global.sh#script	extension	kati-extension	49dfb0683135e179
@@ -84,8 +68,8 @@ case	readonly_rule_missing.sh#script	extension	kati-extension	838fb68624b465f9
 case	real_no_cmds.sh#script	extension	kati-extension	dccb923695a7ac7f
 case	real_no_cmds_or_deps.sh#script	extension	kati-extension	52adfb2961ded527
 case	real_to_phony.sh#script	extension	kati-extension	a95e71a768400f2d
-case	recursive_self_reference.mk#default	defect	exit-status+stop-suffix+quote-style	6999fe4ee4b0a2c7
-case	segfault_stack_overflow.sh#script	defect	exit-status+stop-suffix+quote-style	5a04c69ebe6a42ab
+case	recursive_self_reference.mk#default	defect	exit-status+stop-suffix	6999fe4ee4b0a2c7
+case	segfault_stack_overflow.sh#script	defect	exit-status+stop-suffix	5a04c69ebe6a42ab
 case	shellstatus_in_rule.mk#test	extension	kati-extension	3c32c2b9f1f3cf9d
 case	shellstatus_readonly.mk#test	extension	kati-extension	64b641ea62022407
 case	silent_ignore_error.mk#test	defect	identity-prefix+error-location	ca3a2f47b2c7169c
@@ -99,8 +83,7 @@ case	var_visibility_prefix_invalid_prefix_four.mk#test	extension	kati-extension	
 case	var_visibility_prefix_invalid_prefix_one.mk#test	extension	kati-extension	3fac32a95ecde20b
 case	var_visibility_prefix_invalid_prefix_three.mk#test	extension	kati-extension	be1a67d2d373cbbb
 case	var_visibility_prefix_invalid_prefix_two.mk#test	extension	kati-extension	23190c850bfe18d7
-case	warn_extra_trailings.mk#default	recorded	evaluation+corpus-todo+exit-status	9c033abcda2b5af9
-case	warn_output_pattern_mismatch.mk#test	defect	quote-style	432e6f655b1c5010
-case	werror_find_emulator.sh#script	extension	find-emulator	76e2b0ef3186089c
-case	werror_overriding_commands.sh#script	extension	kati-extension+quote-style	22634edd5aae0c1a
+case	warn_extra_trailings.mk#default	recorded	evaluation+corpus-todo+exit-status	b24a2c5dd8c3f262
+case	werror_find_emulator.sh#script	extension	find-emulator	50eacb35e0e5d07b
+case	werror_overriding_commands.sh#script	extension	kati-extension	b49d0d538ec9c115
 case	writable.sh#script	extension	kati-extension	6063eaf7c8245121

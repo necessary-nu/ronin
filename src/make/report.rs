@@ -97,17 +97,16 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
 ///
 /// Each complaint is the located `No such file or directory` for the file that
 /// would not open, which GNU Make holds back from the read and prints here, one
-/// line ahead of what it dies on.
+/// line ahead of what it dies on. It says why the file could not be read, which
+/// the refusal beside it does not, so it is reporting a failure rather than
+/// narrating one.
 ///
 /// More than one refusal only under `-k`, where `complain()` reports instead of
-/// dying and the update walks on to the next makefile. `summaries` is then the
-/// separate pass `main.c` makes over the same files once the update has returned
-/// — every `Failed to remake makefile 'X'.` comes after every refusal rather
-/// than beside its own, which is why they are two lists and not one.
+/// dying and the update walks on to the next makefile.
+// [spec:ronin:req:make.narration+1]
 pub(super) fn refused_makefile(
     reported: String,
     refusals: Vec<(Option<String>, impl Display)>,
-    summaries: &[String],
 ) -> RunResult {
     let mut stderr = Vec::new();
     for (complaint, failure) in refusals {
@@ -115,9 +114,6 @@ pub(super) fn refused_makefile(
             stderr.extend_from_slice(format!("{complaint}\n").as_bytes());
         }
         stderr.extend(ordinary_diagnostic(failure));
-    }
-    for summary in summaries {
-        stderr.extend_from_slice(format!("{summary}\n").as_bytes());
     }
     RunResult {
         stdout: terminated(reported),
@@ -172,12 +168,12 @@ pub(super) fn finished(
 /// failure — so a required `include` whose own rule ran and lost says both why
 /// the file mattered and why it is not there.
 ///
-/// The complaint goes on the stream carrying the line it precedes, which is the
-/// rule [`refused_makefile`] follows for the other `show_goal_error` caller.
-/// There the pair is a diagnostic and a refusal and both are stderr; here the
-/// line that ends the run is Ninja's `build stopped`, which is narration on
-/// stdout, and a complaint printed to the other stream would be read after
-/// everything rather than beside what it explains.
+/// The complaint is a diagnostic and goes where Ronin's diagnostics go, which
+/// is stderr, as it does for the other `show_goal_error` caller in
+/// [`refused_makefile`]. GNU Make puts it on the stream carrying the line it
+/// precedes; matching that interleaving would be choosing a stream to reproduce
+/// GNU Make's output order rather than to say where a diagnostic belongs.
+// [spec:ronin:req:make.narration+1]
 pub(super) fn complained_of(
     reported: String,
     up_to_date: bool,
@@ -197,9 +193,10 @@ pub(super) fn complained_of(
             exit_code: ABANDONED,
         };
     }
+    let mut stderr = Vec::new();
     for complaint in complaints {
-        stdout.extend_from_slice(complaint.as_bytes());
-        stdout.push(b'\n');
+        stderr.extend_from_slice(complaint.as_bytes());
+        stderr.push(b'\n');
     }
     if let Some((reason, _)) = outcome.stopped.as_ref() {
         stdout.extend_from_slice(format!("{PRODUCT_NAME}: build stopped: {reason}.\n").as_bytes());
@@ -208,7 +205,7 @@ pub(super) fn complained_of(
     }
     RunResult {
         stdout,
-        stderr: Vec::new(),
+        stderr,
         // Ninja reports the failing command's own status here, which is the
         // right answer for Ninja and the wrong one for Make: GNU Make has two
         // statuses, and every way of not finishing is the second. A recipe that
