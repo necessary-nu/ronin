@@ -12098,6 +12098,7 @@ children (
                 title "Expand a member pattern inside an archive name"
                 kind @feat
                 deps (make-archive-member-targets)
+                sealed true
                 log (
                     {
                         at 2026-08-16T19:09:03.302420553Z
@@ -12119,6 +12120,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-17T00:29:38.872498647Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -12127,6 +12135,7 @@ children (
                 title "Convert a .X.a suffix rule into its archive-member pattern too"
                 kind @fix
                 deps (make-archive-member-targets)
+                sealed true
                 log (
                     {
                         at 2026-08-16T19:09:17.541899528Z
@@ -12148,6 +12157,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-17T00:29:49.355896965Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -12156,6 +12172,7 @@ children (
                 title "Read several members named inside one pair of parentheses"
                 kind @feat
                 deps (make-archive-member-targets)
+                sealed true
                 log (
                     {
                         at 2026-08-16T19:09:32.012119616Z
@@ -12176,6 +12193,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-17T00:29:43.362036006Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
