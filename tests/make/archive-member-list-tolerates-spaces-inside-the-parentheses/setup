@@ -1,0 +1,14 @@
+printf 'object\n' > a.o
+printf 'object\n' > b.o
+printf 'object\n' > c.o
+printf 'object\n' > q.o
+touch -d '2020-01-01 00:00:00Z' a.o b.o c.o q.o
+{
+	printf '!<arch>\n'
+	printf 'c.o/            1609459200  0     0     100644  7         `\n'
+	printf 'object\n\n'
+	printf 'a.o/            1609459200  0     0     100644  7         `\n'
+	printf 'object\n\n'
+	printf 'b.o/            1609459200  0     0     100644  7         `\n'
+	printf 'object\n\n'
+} > libx.a

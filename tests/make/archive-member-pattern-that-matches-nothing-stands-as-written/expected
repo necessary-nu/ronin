@@ -1,0 +1,27 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 5
+| # `ar_glob` returning no matches is not an empty prerequisite list: GNU Make
+| # keeps the member name exactly as the makefile wrote it and lets the build
+| # refuse over it, so the wildcard reaches the diagnostic unexpanded.
+| all: libx.a(*.zzz)
+| 	@echo "[$^]" > log
+file a.o kept 1
+| object
+file b.o kept 1
+| object
+file c.o kept 1
+| object
+file libx.a kept 10
+| !<arch>
+| c.o/            1609459200  0     0     100644  7         `
+| object
+| 
+| a.o/            1609459200  0     0     100644  7         `
+| object
+| 
+| b.o/            1609459200  0     0     100644  7         `
+| object
+| 
+file q.o kept 1
+| object

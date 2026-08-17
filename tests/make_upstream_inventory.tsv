@@ -23,6 +23,22 @@ family	io-error-text	narration	both tools refused for the same reason and worded
 family	makeflags-content	interface	interface observation: a Makefile read MAKEFLAGS and saw different switches; runner-only flags may deliberately be absent.
 family	parse-failure	compiler	compiler candidate: Ronin could not parse a Makefile GNU Make read.
 family	evaluation	unclassified	unclassified residue: exact output cannot distinguish graph intent from runner behavior; reproduce it through the build-intent gate.
+case	features/archives.diff	narration	ninja-progress+recipe-echo
+case	features/archives.diff.1	narration	ninja-progress+recipe-echo
+case	features/archives.diff.10	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/archives.diff.11	narration	no-work-line
+case	features/archives.diff.12	unclassified	ninja-progress+ninja-failure-block+evaluation
+case	features/archives.diff.13	unclassified	ninja-progress+ninja-failure-block+up-to-date-line+evaluation
+case	features/archives.diff.14	unclassified	ninja-progress+ninja-failure-block+evaluation
+case	features/archives.diff.15	unclassified	ninja-progress+ninja-failure-block+up-to-date-line+evaluation
+case	features/archives.diff.2	narration	ninja-progress+recipe-echo
+case	features/archives.diff.3	narration	no-work-line
+case	features/archives.diff.4	narration	ninja-progress+recipe-echo
+case	features/archives.diff.5	narration	ninja-progress+recipe-echo
+case	features/archives.diff.6	narration	ninja-progress+recipe-echo
+case	features/archives.diff.7	narration	ninja-progress
+case	features/archives.diff.8	narration	ninja-progress
+case	features/archives.diff.9	narration	ninja-progress+no-work-line
 case	features/comments.diff	narration	ninja-progress
 case	features/conditionals.diff	narration	ninja-progress
 case	features/conditionals.diff.1	narration	ninja-progress
@@ -415,7 +431,7 @@ case	features/reinvoke.diff.9	narration	no-work-line+up-to-date-line
 case	features/rule_glob.diff	narration	ninja-progress
 case	features/rule_glob.diff.1	narration	ninja-progress
 case	features/rule_glob.diff.2	narration	ninja-progress
-case	features/se_explicit.diff	unclassified	ninja-progress+evaluation
+case	features/se_explicit.diff	narration	ninja-progress
 case	features/se_explicit.diff.1	narration	ninja-progress
 case	features/se_explicit.diff.10	unclassified	ninja-progress+evaluation
 case	features/se_explicit.diff.11	narration	no-work-line

@@ -1,0 +1,28 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 6
+| # A group only opens when some later word ends in `)`. GNU Make looks ahead for
+| # one before it reopens the parenthesis, and with none there the text is not a
+| # group at all — so this names a file literally called `libx.a(a.o`, and `b.o`
+| # beside it, rather than two members.
+| all: libx.a(a.o b.o
+| 	@echo "[$^]" > log
+file a.o kept 1
+| object
+file b.o kept 1
+| object
+file c.o kept 1
+| object
+file libx.a kept 10
+| !<arch>
+| c.o/            1609459200  0     0     100644  7         `
+| object
+| 
+| a.o/            1609459200  0     0     100644  7         `
+| object
+| 
+| b.o/            1609459200  0     0     100644  7         `
+| object
+| 
+file q.o kept 1
+| object

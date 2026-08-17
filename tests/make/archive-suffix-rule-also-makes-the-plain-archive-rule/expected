@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # The other half of the same conversion. One `.c.a:` rule makes `(%.o): %.c`
+| # and `%.a: %.c`, and this is the second — an archive named as an ordinary
+| # target, made from the source of that name. `$%` is empty because the target
+| # is not a member of anything.
+| .SUFFIXES:
+| .SUFFIXES: .a .o .c
+| .c.a:
+| 	@echo "at=$@ pct=$% star=$* lt=$<" >> log
+| all: libz.a
+file libz.c kept 1
+| source
+file log touched 1
+| at=libz.a pct= star=libz lt=libz.c

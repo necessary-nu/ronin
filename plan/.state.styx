@@ -598,6 +598,9 @@ assertions (
     {id make-a-failed-makefile-rule-still-reports-the-unread-include, kind @complete, author "brendan@necessary.nu", at 2026-08-16T23:44:34.615312085Z}
     {id make-keep-going-refuses-every-makefile-it-cannot-make, kind @complete, author "brendan@necessary.nu", at 2026-08-16T23:44:39.993442486Z}
     {id make-question-mode-refuses-a-makefile-it-cannot-make, kind @complete, author "brendan@necessary.nu", at 2026-08-16T23:44:45.270928746Z}
+    {id make-archive-member-globbing, kind @doing, author "brendan@necessary.nu", at 2026-08-17T00:27:26.019376578Z}
+    {id make-archive-member-list-in-one-name, kind @doing, author "brendan@necessary.nu", at 2026-08-17T00:27:31.019997649Z}
+    {id make-archive-suffix-rule-conversion, kind @doing, author "brendan@necessary.nu", at 2026-08-17T00:27:36.295754639Z}
 )
 
 impl_evidence (

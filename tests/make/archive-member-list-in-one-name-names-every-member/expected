@@ -1,0 +1,30 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # `libx.a(a.o b.o)` is one word to the tokenizer and two names to GNU Make.
+| # `parse_file_seq` (reference/gnumake/src/read.c) keeps the text up to the `(`
+| # as a prefix and closes a pair around each following word, which is why this
+| # spelling and `libx.a(a.o) libx.a(b.o)` mean the same thing.
+| all: libx.a(a.o b.o)
+| 	@echo "[$^]" > log
+file a.o kept 1
+| object
+file b.o kept 1
+| object
+file c.o kept 1
+| object
+file libx.a kept 10
+| !<arch>
+| c.o/            1609459200  0     0     100644  7         `
+| object
+| 
+| a.o/            1609459200  0     0     100644  7         `
+| object
+| 
+| b.o/            1609459200  0     0     100644  7         `
+| object
+| 
+file log touched 1
+| [a.o b.o]
+file q.o kept 1
+| object

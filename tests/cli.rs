@@ -909,9 +909,12 @@ fn makefile_tree(label: &str) -> PathBuf {
 /// gets a construct that only works if the feature does, and a Makefile that
 /// branches on `.FEATURES` is entitled to exactly this much.
 ///
-/// `jobserver`, `jobserver-fifo`, and `output-sync` are build-side claims. Make
-/// mode can map an inherited budget onto its Ninja scheduler, and Ninja's
-/// reporter publishes each command edge's captured output as one unit.
+/// `archives`, `jobserver`, `jobserver-fifo`, and `output-sync` are build-side
+/// claims. Make mode can map an inherited budget onto its Ninja scheduler, and
+/// Ninja's reporter publishes each command edge's captured output as one unit.
+/// `archives` is here rather than in `EVALUATOR_FEATURES` because a member's
+/// timestamp comes out of the archive's index, which is the disk interface's
+/// answer and not the evaluator's.
 // [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -2090,7 +2093,12 @@ fn make_mode_claims_only_the_features_it_has() {
         // else-if: the second branch is the one taken.
         // shortest-stem: `%.o: %.c` beats `%: %.c` for `x.o`.
         // order-only: `dep` is built, and is not a reason to rebuild.
-        "all: x.o | order\n\
+        // archives: one parenthesised word names two members, and each binds
+        // `$@` to the archive and `$%` to the member — which is only true of a
+        // name read as an archive member rather than as a file with brackets
+        // in it. `lib.a` is never created, so both members are out of date and
+        // both recipes run.
+        "all: x.o lib.a(m1.o m2.o) | order\n\
          \t@echo who=$(WHO) branch=$(BRANCH)\n\
          \t@echo features=$(.FEATURES)\n\
          all: WHO = specific\n\
@@ -2105,6 +2113,8 @@ fn make_mode_claims_only_the_features_it_has() {
          x.c:;@touch x.c\n\
          %.o: %.c;@echo stem=long\n\
          %: %.c;@echo stem=short\n\
+         lib.a(m1.o):;@echo member1=at:$@,pct:$%\n\
+         lib.a(m2.o):;@echo member2=at:$@,pct:$%\n\
          order:;@echo order=built\n\
          .PHONY: all order\n",
     )
@@ -2126,6 +2136,11 @@ fn make_mode_claims_only_the_features_it_has() {
         reported.contains("who=specific branch=second"),
         "target-specific and else-if: {reported}"
     );
+    assert!(
+        reported.contains("member1=at:lib.a,pct:m1.o")
+            && reported.contains("member2=at:lib.a,pct:m2.o"),
+        "archives: {reported}"
+    );
 
     // Nothing is claimed that the cases above do not cover.
     let claimed = reported
@@ -2137,6 +2152,7 @@ fn make_mode_claims_only_the_features_it_has() {
     assert_eq!(
         claimed,
         [
+            "archives",
             "else-if",
             "jobserver",
             "jobserver-fifo",

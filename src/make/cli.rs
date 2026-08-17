@@ -1284,6 +1284,7 @@ fn session_for(
         // unit, which is target-style output synchronization even though
         // Make's `-O` selector does not install a second reporting path.
         extra_features: vec![
+            "archives".to_owned(),
             "jobserver".to_owned(),
             "jobserver-fifo".to_owned(),
             "output-sync".to_owned(),

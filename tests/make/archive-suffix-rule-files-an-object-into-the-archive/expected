@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 16
+| # `convert_to_pattern` (reference/gnumake/src/rule.c:361) turns a suffix rule
+| # whose target suffix is `.a` into TWO pattern rules, not one: the ordinary
+| # `%.a: %.c`, and `(%.o): %.c` — the one that files an object straight into an
+| # archive. This case is the second.
+| #
+| # The target pattern is literally `(%.o)` whatever the source suffix is, which
+| # is why the stem is the member's basename and not its whole name: matching
+| # `(foo.o)` binds `$*` to `foo` and `$<` to `foo.c`, where the built-in
+| # `(%): %` rule would have bound them to `foo.o` and `foo.o`. That difference
+| # is the whole point of the conversion, so the recipe records all four.
+| .SUFFIXES:
+| .SUFFIXES: .a .o .c
+| .c.a:
+| 	@echo "at=$@ pct=$% star=$* lt=$<" >> log
+| all: libx.a(foo.o)
+| 	@echo "done [$^]" >> log
+file foo.c kept 1
+| source
+file log touched 2
+| at=libx.a pct=foo.o star=foo lt=foo.c
+| done [foo.o]
