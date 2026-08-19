@@ -604,10 +604,10 @@ assertions (
     {id make-archive-member-touch, kind @complete, author "brendan@necessary.nu", at 2026-08-17T12:05:21.638451061Z}
     {id make-diagnostic-quote-style, kind @complete, author "brendan@necessary.nu", at 2026-08-17T12:05:26.545122802Z}
     {id make-narration-contract-audit, kind @complete, author "brendan@necessary.nu", at 2026-08-17T12:05:28.346235596Z}
-    {id make-a-questioned-makefile-keeps-the-questions-status-under-keep-going, kind @doing, author "brendan@necessary.nu", at 2026-08-17T12:25:12.859658038Z}
-    {id make-makefiles-variable-entries-are-never-remade, kind @doing, author "brendan@necessary.nu", at 2026-08-19T14:39:56.580795773Z}
-    {id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going, kind @doing, author "brendan@necessary.nu", at 2026-08-19T14:40:01.463288498Z}
-    {id make-an-output-directory-is-created-where-gnu-make-would-refuse, kind @doing, author "brendan@necessary.nu", at 2026-08-19T15:17:52.866958472Z}
+    {id make-a-questioned-makefile-keeps-the-questions-status-under-keep-going, kind @complete, author "brendan@necessary.nu", at 2026-08-19T15:34:57.566337912Z}
+    {id make-makefiles-variable-entries-are-never-remade, kind @complete, author "brendan@necessary.nu", at 2026-08-19T15:34:49.090084391Z}
+    {id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going, kind @complete, author "brendan@necessary.nu", at 2026-08-19T15:34:51.099887742Z}
+    {id make-an-output-directory-is-created-where-gnu-make-would-refuse, kind @complete, author "brendan@necessary.nu", at 2026-08-19T15:34:59.871857388Z}
 )
 
 impl_evidence (

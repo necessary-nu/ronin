@@ -12302,6 +12302,7 @@ children (
                 id make-makefiles-variable-entries-are-never-remade
                 title "Remake the Makefiles the MAKEFILES variable named"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-16T22:45:51.277130728Z
@@ -12316,6 +12317,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-19T15:34:49.090084391Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -12323,6 +12331,7 @@ children (
                 id make-an-output-directory-is-created-where-gnu-make-would-refuse
                 title "Leave an output's directory to the recipe the way GNU Make does"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-16T22:46:09.580067796Z
@@ -12344,6 +12353,13 @@ children (
                         kind @status
                         text "Todo → Doing (nplan start)"
                     }
+
+                    {
+                        at 2026-08-19T15:34:59.871857388Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -12351,6 +12367,7 @@ children (
                 id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going
                 title "List a makefile whose own recipe lost among the ones not remade"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-16T23:29:14.208543227Z
@@ -12372,6 +12389,13 @@ children (
                         kind @decision
                         text "Delivered as the refusal accounting under `-k`, and NOT as the `Failed to remake makefile 'X'.` summary. Both halves of that were probed rather than assumed.\n\nThe summary is not coming. It is `main.c`'s `us_failed` arm walking `read_files` after the update returned and naming, a second time, every makefile the run has already reported on — GNU runtime narration in the exact sense the operator ruling recorded in make-narration-contract-audit rules out, and the sense docs/make-compiler-boundary-audit.md already classified `R` under src/make/report.rs (\"keep-going summaries\"). The sibling node make-keep-going-refuses-every-makefile-it-cannot-make left it out for the same reason and its test asserts the absence; this node's test now asserts it too. Note also that the summary is gated on `! (d->flags & RM_DONTCARE)` (main.c:2540), so it never speaks for a forgiven makefile at all.\n\nWhat was left was accounting, and it was really wrong. Probed against reference/make-oracle/make-4.4.1/make:\n\n    include one.mk\n    include two.mk\n    all: ; @echo all ran\n    one.mk: ; @echo GEN1; exit 1\n    two.mk: ; @echo GEN2; exit 1\n\n  make -k  GNU  GEN1, `Makefile:1: one.mk: No such file or directory`,\n                `*** [Makefile:4: one.mk] Error 1`, GEN2,\n                `Makefile:2: two.mk: No such file or directory`,\n                `*** [Makefile:5: two.mk] Error 1`, then both summaries, rc 2\n           Ronin (before)  both recipes ran and lost, then ONE complaint —\n                one.mk's — and rc 2\n  make     GNU and Ronin both stop after one.mk's complaint, rc 2\n\nSo Ronin ran the second makefile's recipe under `-k` and then said nothing about the makefile it failed to produce. `complaints_for` returned at most one complaint by construction, which is right without the switch and wrong with it: `complain()` chooses `error` over `fatal` on `keep_going_flag` (remake.c:422), so without `-k` the first complaint ends the run inside the update and the goaldeps after it are never reached, and with `-k` `update_goal_chain` walks on and each required makefile it could not make complains for itself.\n\nThe fix is that shape exactly: `Passes` now carries `keep_going`, and under it `complaints_for` returns the held complaint of every target the pass left unmade or did not regenerate, in the order the read reached them — which is the order GNU Make walks `read_files` in. Without it the single-complaint reading is unchanged, and the fallback (\"the first the pass did not regenerate\") still catches a makefile whose own recipe never ran because something it needed lost first. Forgiven makefiles hold no complaint and are untouched, which is `file->dontcare` suppressing the diagnostic as well as the failure.\n\nExit codes were already right in every cell, and stay right: 2 with and without `-k`, and no fragment is written either way. What moved is which failures get reported, which is information rather than narration — every line Ronin now adds names a makefile the run genuinely could not make and had not otherwise mentioned.\n\nAlso probed and deliberately left alone: the forgiven-then-required grouped shape (`-include inc_a.mk` / `include inc_b.mk` / `%_a.mk %_b.mk:; exit 1`), where GNU prints only its summary and Ronin prints its own compiler diagnostic for the unread include. Ronin's line is a front-end evaluation diagnostic, which docs/make-compiler-boundary-audit.md explicitly permits to keep Makefile locations and language, and GNU's silence there is `no_diag` bookkeeping in service of the summary Ronin does not print. Both exit 2 and neither writes a file, so there is nothing left to reconcile that is not the narration itself."
                     }
+
+                    {
+                        at 2026-08-19T15:34:51.099887742Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -12379,6 +12403,7 @@ children (
                 id make-a-questioned-makefile-keeps-the-questions-status-under-keep-going
                 title "Keep the question's status when keep-going reports over a questioned makefile"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-16T23:40:36.828419309Z
@@ -12392,6 +12417,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-19T15:34:57.566337912Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
