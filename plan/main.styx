@@ -12432,6 +12432,7 @@ children (
                 id make-question-variable-reads-an-archive-member
                 title "Give $? an archive member's name and the index's date"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-17T00:16:53.82634704Z
@@ -12453,6 +12454,13 @@ children (
                         kind @note
                         text "Delivered on all three faces, with the two defects that were sitting behind the third filed rather than folded in.\n\nFace (a), the name. `crate::archive::member_or_whole` now reduces the prerequisite in every arm of the `Question` autocommand that writes names — the launch-time arm, the grouped-double-action arm and the plain one — beside the `Less`/`Hat`/`Plus` arms that always did. `mylib.a: mylib.a(a.o) mylib.a(b.o)` answers `Q=a.o b.o`, which is GNU's answer measured against the oracle.\n\nFace (b), the date, as one change with the name. The arms that compare timestamps no longer hand a parenthesised name to the filesystem. kati gains `archive::member_timestamp`, which is `f_mtime`'s three questions in order — the archive must exist, the index must record a non-zero date (`member_date`, which node 3 put beside the one scan), and a member file left on disk newer than the indexed copy counts as absent because it was rebuilt and not filed. It answers with the START of the second, which is what `file_timestamp_cons (hname, member_date, 0)` builds, and `member_timestamp_as_target` is the rounded-up reading: GNU sets `low_resolution_time` on a member and rounds the mtime of the file it is UPDATING up to the end of its second, so the two readings are two different questions and `command.rs` picks by which one it is asking.\n\nFace (c), the deferred path, which turned out to be the same defect wearing a different hat. The filing says \"with an archive member in the list that substitution never happens at all and the placeholder reaches the shell\". It does happen — the substituted value was `mylib.a(a.o) mylib.a(b.o)`, and bare parentheses are what `/bin/sh: Syntax error: \"(\" unexpected` is complaining about. (The `FAILED:` block quotes the command before substitution, which is what made it look otherwise.) So fixing the spelling fixes it, and SV 61436's makefile now files both objects and writes the archive.\n\nWhere the spelling travels. `$?` is the one automatic variable whose value is not known while the Makefile is read, so the reduction cannot be applied where the other three are applied. It is declared instead: kati's `SinkEdge` gains `deferred_new_input_names`, pairs of (input, the name the published value calls it), which reach `DeferredFreshness` and are used verbatim by `Builder::deferred_new_inputs_value`. Nothing on the executor's side reads either spelling — the pair is carried, not interpreted — so the runner still assigns no meaning to a parenthesis, and the list is empty for every edge that mentions no archive. The equivalence harness records and compares the new field beside the two lists that were already there.\n\nProbes, and two defects they exposed. Once `$?` named members correctly it still named the wrong SET, for two reasons that are neither the name nor kati's date, both filed as their own nodes with reproducers:\n\n* make-empty-recipe-target-is-not-a-ninja-alias — `(%): % ;` compiles to a commandless edge, the scan reads it as Ninja's phony, and a missing member is handed its input's date. So `mylib.a(b.o)`, which is not in the archive at all, drops out of `$?`. Not archive-specific: the same divergence reproduces with `mid: src ;` and no archive anywhere.\n* make-archive-member-date-is-low-resolution-on-the-target-side — `archive_member_stat` rounds every member's date to the end of its second, where GNU rounds only the file being updated. So a member is 0.7s newer than the archive holding it, `$?` lists a member that is up to date, and `mylib.a: mylib.a(a.o)` never settles.\n\nInventory audit, the rows this node was filed against. One row moved and I checked every one of the sixteen: `features/archives.diff.12` — SV 61436's first step — loses its `ninja-failure-block` and Ronin now completes it, leaving `ninja-progress+evaluation` residue that is the progress line and the un-narrated `rm`. `.13`, `.14` and `.15` are the same sequence's later steps and still carry a failure block; they are the low-resolution node's, and the note there says exactly why (Ronin refiles an archive whose member objects the previous step swept away, so `ar` is handed names that are not there). `.10` is unchanged and was already narration-only. Class totals are unmoved at 1299 rows 161/0/37/1101, with the compiler bucket at zero.\n\nLeft as it was, deliberately: the `RecipeShell` fallback arm, which spells `$?` as a shell `find` over the prerequisite names. A member is not a file, so `find` cannot answer for one whatever it is handed — the arm is unreachable from Ronin (kati's `defers_recipe` never defers a recipe that references `$?`, and Ronin's sink asks for `SchedulerBoundary`), and it belongs to the manifest destination rather than to the product.\n\nFixtures, oracle-recorded: `question-variable-names-an-archive-member-by-its-member` and `an-archive-rule-refiles-the-members-that-are-new` (SV 61436's makefile, gating that the archive is written with both members in it). One kati unit test, `a_members_date_answers_f_mtimes_three_questions`, which covers the rebuilt-but-unfiled rule nothing else asks about.\n\nGates: workspace 874/0, kati clippy `-D warnings` clean, Ronin clippy pedantic/nursery clean, make_port green with no recording rewritten, conformance 334/53, equivalence 278 compared / 0 disagreements, upstream inventory 1299 rows 161/0/37/1101 with one row audited above, vim + zsh green, ninja conformance 425/425.\n\nkati commit 0410275f6e47c2074ad5280ec79dfd23cd40f66b on nplan/make-question-variable-reads-an-archive-member, pushed before this pin."
                     }
+
+                    {
+                        at 2026-08-19T18:28:16.124700877Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -12460,6 +12468,7 @@ children (
                 id make-empty-recipe-pattern-rule-drops-its-prerequisites
                 title "Build what a pattern rule with an empty recipe asks for"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-17T00:17:12.74986753Z
@@ -12481,6 +12490,13 @@ children (
                         kind @note
                         text "Delivered, and the shape turned out to be narrower than the filing — which was itself half right by the time it was picked up.\n\nWhat still reproduced. Measured against reference/make-oracle/make-4.4.1/make before touching anything: the filing's first reproducer (`all: x.q` / `%.q: %.o ;` / `x.o: ; @echo Make x.o`) now AGREES — Ronin builds x.o and prints TOP. What does not is the same shape with the prerequisite left to the implicit search:\n\n    all: x.q ; @echo TOP\n    %.q: %.o ;\n    %.o : %.c ; @echo Compile $<; touch $@\n\n  GNU:   Compile x.c / TOP / rm x.o\n  Ronin: TOP\n\nThe difference between the two is not the empty recipe at all: in the first, `x.o` is written down, so it is not intermediate; in the second the search invents it, and an invented intermediate is excused from existing. The archive face `(%): % ;` is the second shape — the member's `a.o` is invented too — which is why it kept failing while the explicit counterpart passed.\n\nThe mechanism. `src/graph/intermediate.rs` `push_intermediates` is the walk that asks for intermediates the dirty scan excused. Its own doc says the walk starts wherever GNU Make's `must_make` would be set, \"which is one term wider than being out of date: a target that is simply not there has to be made\" — and it did start there, on the root. It did not CARRY that term down: descending into an input it asked only `dirty()`. A Makefile target whose recipe is empty compiles to an edge with no command, which is a phony edge to the scan, and Ninja's phony is dirty only when an input is — so `x.q` is absent, not dirty, and the walk stopped one step above the intermediate that was waiting for it.\n\nWhere it went. One clause, in Ronin, not in kati: the descent skips an input only when it is neither dirty nor `absent_on_disk()`. `absent_on_disk` is written by `observe` and by nothing else, so it is the filesystem's own answer rather than the mtime a node is carrying — which matters here precisely because an absent intermediate and a phony output are both standing in something else's. The widened set is exactly the phony edges: any other edge whose output is missing is already dirty by `oldest_output.is_missing()`, and a deferred edge's virtual output is never observed, so it is not swept in.\n\nProbes that shaped it, not assumed: `%.q: %.o ; @echo Q` (non-empty recipe, same intermediate) already agreed, which is what put the fault in the phony branch rather than in the implicit search; `x.q: x.o ;` and `x.q: x.o` (explicit, empty and absent recipes) both already agreed; and GNU's `implicit.c` distinguishes `rule->deps != 0 && rule->cmds == 0` (the cancellation, passed over) from a rule with an empty recipe (`cmds != 0`, kept) — kati already reads that distinction correctly, so nothing there needed changing.\n\nProbed and found NOT divergent, so not widened into: an empty-recipe pattern rule whose target exists and is older than its prerequisite. GNU runs the empty recipe and the file's date does not move; Ronin's phony substitution puts the prerequisite's date on it. Both tools then leave a dependent that is newer alone. No visible difference, so no node filed.\n\nFixtures, oracle-recorded, both new: `an-empty-recipe-pattern-rule-still-makes-its-prerequisites` (the non-archive shape, which is what localises the defect) and `an-empty-recipe-archive-rule-still-makes-its-member` (the `(%): % ;` shape, which is how it was found). Both record the intermediate sweep as well as the recipe — GNU leaves `x.o`/`a.o` deleted and no archive written, and Ronin's filesystem effects match name for name. One unit test beside the two that were already there: `ronin_graph_an_absent_name_with_no_recipe_asks_for_the_intermediate_below_it`.\n\nGates: workspace 874/0 (873 + the new unit test), make_port green with no recording rewritten, conformance 334/53 (baseline held), equivalence 278 compared / 0 disagreements, upstream inventory byte-identical at 1299 rows 161/0/37/1101 with the compiler bucket still zero, vim + zsh green, ninja conformance 425/425."
                     }
+
+                    {
+                        at 2026-08-19T18:28:06.43633809Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
                 )
             }
 
@@ -12488,6 +12504,7 @@ children (
                 id make-archive-index-reader-is-written-twice
                 title "Read the ar header format in one place rather than two"
                 kind @refactor
+                sealed true
                 log (
                     {
                         at 2026-08-17T00:26:50.365529222Z
@@ -12515,6 +12532,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Correction to the note above, which described Ronin's side as \"three delegating functions and one test\" in `src/os/archive.rs`. It is not: the file is gone. A wrapper whose whole body is one call to the thing it wraps is a second name for the same function, and the code-quality gate said so — so `src/os.rs` calls `kati::archive::{split_archive_name, member_date, touch_member}` at the two places that ask, and the module's prose moved to the field those two branches are switched on. The name test went with it: kati's `the_two_halves_come_apart_at_the_first_parenthesis` already pins `ar_name` where the function lives.\n\nTest counts change accordingly: workspace 873/0 rather than 874 — seven archive tests left Ronin and six arrived in kati, the seventh being the duplicate name test. `--no-default-features` is unchanged at 479/13 either way, because that last test was already behind the feature gate."
+                    }
+
+                    {
+                        at 2026-08-19T18:28:11.684684076Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

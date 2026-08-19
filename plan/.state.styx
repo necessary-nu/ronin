@@ -633,9 +633,9 @@ assertions (
     {id make-suffix-rule-name-splits-against-the-list, kind @complete, author "brendan@necessary.nu", at 2026-08-19T16:05:56.003633432Z}
     {id make-recursive-ordering-sees-a-middleman, kind @complete, author "brendan@necessary.nu", at 2026-08-19T16:18:07.823257018Z}
     {id make-recursion-lifts-through-a-wrapper, kind @complete, author "brendan@necessary.nu", at 2026-08-19T16:44:31.193308335Z}
-    {id make-empty-recipe-pattern-rule-drops-its-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-19T17:07:06.407514737Z}
-    {id make-archive-index-reader-is-written-twice, kind @doing, author "brendan@necessary.nu", at 2026-08-19T17:28:12.719203067Z}
-    {id make-question-variable-reads-an-archive-member, kind @doing, author "brendan@necessary.nu", at 2026-08-19T17:52:57.150492466Z}
+    {id make-empty-recipe-pattern-rule-drops-its-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-19T18:28:06.43633809Z}
+    {id make-archive-index-reader-is-written-twice, kind @complete, author "brendan@necessary.nu", at 2026-08-19T18:28:11.684684076Z}
+    {id make-question-variable-reads-an-archive-member, kind @complete, author "brendan@necessary.nu", at 2026-08-19T18:28:16.124700877Z}
 )
 
 impl_evidence (
