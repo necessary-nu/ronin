@@ -1,0 +1,11 @@
+# GNU Make reads each expanded line's own `-`. The first failure is forgiven
+# because the line it is on says so; the second is not, because the line it is
+# on says nothing, and the build stops there without reaching the recipe's
+# second written line.
+define multi
+-printf 'first\n' >> log; false
+printf 'second\n' >> log; false
+endef
+
+all: ; $(multi)
+	@printf 'third\n' >> log

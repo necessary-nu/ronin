@@ -201,3 +201,40 @@ fn a_quiet_command_is_said_once() {
     assert!(directory.join("split.o").exists(), "split.o was never made");
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// A recipe that left one of its expanded lines loud is not a quiet command,
+/// and the hoist has to decline it — GNU Make echoes that line, and the command
+/// Ronin shows for an edge naming no description is the counterpart of exactly
+/// that echo. Hoisting here would take the quiet line into the progress counter
+/// and delete the echoed one, narrating half the recipe each way.
+///
+/// The reading this rests on is per expanded line: the `@` is on the first line
+/// the macro expands to and reaches no further, which is what GNU Make's
+/// `start_job_command` does with it. Read once for the whole expansion, this
+/// recipe answers "wholly silenced" and hoists.
+#[test]
+fn loud_expanded_line_keeps_the_command() {
+    let directory = reduction("a-loud-line-in-an-expansion");
+
+    let output = make_command(&directory)
+        .args(["-j1", "all"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let progress = stdout
+        .lines()
+        .find(|line| line.starts_with("[1/1]"))
+        .expect("a progress line for the one edge");
+    assert!(
+        progress.contains("cp loud.c loud.o"),
+        "the edge should show its command, not a description hoisted \
+         out of a recipe that left a line loud: {progress}"
+    );
+    assert!(directory.join("loud.o").exists(), "loud.o was never made");
+    fs::remove_dir_all(directory).unwrap();
+}

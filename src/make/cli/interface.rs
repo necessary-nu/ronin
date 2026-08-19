@@ -319,10 +319,24 @@ pub(super) fn makeflags_arguments(inherited: &str) -> Vec<BString> {
 /// by newly appended switches. GNU Make does not turn those switches into
 /// goals: it removes assignments, decodes every remaining word as an option,
 /// then renders one fresh `--` before the override table.
-fn assigned_makeflags_arguments(value: &str) -> Vec<BString> {
+///
+/// An assignment binding no name is the one such word that ends the build
+/// instead of being set aside. GNU Make reads every non-switch word through
+/// `handle_non_switch_argument` whatever origin it arrived from, and that
+/// reaches `parse_variable_definition`, which is fatal on an empty name — so
+/// `MAKEFLAGS += -k := 2` abandons exactly as `make '=1'` does. Naming the
+/// word here does not apply it; a named assignment arriving this way is still
+/// dropped, which is make-makeflags-write-drops-an-assignment-word.
+fn assigned_makeflags_arguments(value: &str) -> Result<Vec<BString>, String> {
     let mut arguments = vec![BString::from("make")];
     for word in makeflags_words(value) {
-        if word == "--" || (!word.starts_with('-') && word.contains('=')) {
+        if word == "--" {
+            continue;
+        }
+        if !word.starts_with('-') && word.contains('=') {
+            if command_variable_name(&word).is_some_and(str::is_empty) {
+                return Err("empty variable name".to_owned());
+            }
             continue;
         }
         if arguments.len() == 1 && !word.starts_with('-') {
@@ -331,7 +345,7 @@ fn assigned_makeflags_arguments(value: &str) -> Vec<BString> {
             arguments.push(BString::from(word));
         }
     }
-    arguments
+    Ok(arguments)
 }
 
 /// Decode a Makefile assignment with the same option grammar as argv.
@@ -353,7 +367,7 @@ pub(super) fn decode_makefile_makeflags(
     ] {
         let value = std::str::from_utf8(value)
             .map_err(|_| "MAKEFLAGS contains non-UTF-8 option bytes".to_owned())?;
-        let arguments = assigned_makeflags_arguments(value);
+        let arguments = assigned_makeflags_arguments(value)?;
         if let Some(action) = parse_arguments(&mut invocation, &arguments, source)
             .map_err(|error| error.to_string())?
         {

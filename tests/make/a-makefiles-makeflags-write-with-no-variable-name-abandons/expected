@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 7
+| # GNU Make reads every non-switch word in MAKEFLAGS through the same
+| # `handle_non_switch_argument` whatever origin it came from, and a word
+| # carrying an `=` reaches `parse_variable_definition`, which is fatal on an
+| # empty name. `:=` is a word of its own here because the write is unquoted, so
+| # this abandons the build before `all` is ever considered.
+| MAKEFLAGS += -k := 2
+| all: ; @printf 'built\n' > out

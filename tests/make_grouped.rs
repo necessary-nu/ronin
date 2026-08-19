@@ -1,4 +1,11 @@
-#![cfg(unix)]
+//! Grouped-target and double-colon rules, run as builds.
+//!
+//! Every test here runs the real executable under the name `make`, which is the
+//! only way to reach the Make front end — so the whole file needs the `make`
+//! feature, not just Unix. Without it the binary answers every case with its
+//! own refusal and each test fails on that.
+
+#![cfg(all(unix, feature = "make"))]
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -651,6 +651,9 @@ assertions (
     {id make-staging-pass-counts-as-a-make-restart, kind @complete, author "brendan@necessary.nu", at 2026-08-19T21:43:52.352014793Z}
     {id make-eval-fragments-do-not-descend, kind @complete, author "brendan@necessary.nu", at 2026-08-19T22:09:52.730019196Z}
     {id make-quiet-command-echo-becomes-the-description, kind @complete, author "brendan@necessary.nu", at 2026-08-19T23:06:43.61412223Z}
+    {id make-grouped-tests-need-the-make-feature, kind @complete, author "brendan@necessary.nu", at 2026-08-19T23:48:21.565591519Z}
+    {id make-empty-variable-name-does-not-abandon, kind @complete, author "brendan@necessary.nu", at 2026-08-19T23:51:00.127756267Z}
+    {id make-recipe-prefix-is-read-per-expanded-line, kind @complete, author "brendan@necessary.nu", at 2026-08-19T23:51:04.019987733Z}
 )
 
 impl_evidence (

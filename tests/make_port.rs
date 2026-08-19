@@ -26,6 +26,14 @@
 //! becoming it:
 //!
 //!   `MAKE_PORT_COMPARE=1 MAKE_PORT_ORACLE=<make>`
+//!
+//! The gate runs the executable under the name `make`, which is the only way to
+//! reach the Make front end, so the file needs the `make` feature. The
+//! recording-format tests beside it would build without the feature, but they
+//! are self-tests of this gate's own format and there is no Make port to gate
+//! in a build that has no Make front end.
+
+#![cfg(all(unix, feature = "make"))]
 
 #[path = "support/oracle.rs"]
 mod oracle;
@@ -221,7 +229,6 @@ fn make_named_ronin(root: &Path) -> PathBuf {
     fs::create_dir_all(&directory).expect("a directory for the link");
     let link = directory.join("make");
     let _ = fs::remove_file(&link);
-    #[cfg(unix)]
     std::os::unix::fs::symlink(&binary, &link).expect("a make-named link");
     link
 }
