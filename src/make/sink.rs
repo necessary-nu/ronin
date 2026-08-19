@@ -72,6 +72,10 @@ pub(crate) struct SubninjaInvocation {
     pub(crate) make: Vec<u8>,
     pub(crate) shell: Vec<u8>,
     pub(crate) shell_flags: Vec<u8>,
+    /// The recipe's own lines written ahead of this invocation, as a rule that
+    /// runs them. `None` when the invocation is the first thing the recipe
+    /// does after the one before it.
+    pub(crate) preceding_rule: Option<Rule>,
 }
 
 /// What one edge's stopped recipe may give back, and when it must.
@@ -223,6 +227,7 @@ pub struct GraphSink {
     observed_members: HashMap<Symbol, Node>,
     declared_pools: HashSet<Vec<u8>>,
     completion_proxies: usize,
+    recipe_stages: usize,
     serial_units: usize,
     /// The first construction failure, kept because kati's walk unwinds through
     /// [`anyhow::Error`] and the typed error is what a caller can act on.
@@ -299,6 +304,7 @@ impl GraphSink {
             observed_members: HashMap::new(),
             declared_pools: HashSet::new(),
             completion_proxies: 0,
+            recipe_stages: 0,
             serial_units: 0,
             failure: None,
             expansion,
@@ -528,6 +534,56 @@ impl GraphSink {
         Ok(edge)
     }
 
+    /// Put the recipe's own lines written ahead of one invocation into the
+    /// graph as work of their own, and name what asking for them asks for.
+    ///
+    /// `None` when the recipe wrote nothing there. Otherwise the caller stages
+    /// the returned node the way it stages the recipe's prerequisites: the
+    /// lines run, and only then is the child Makefile read. What one shell line
+    /// can leave for the next is on the filesystem and nowhere else, so running
+    /// them first is the whole of what makes their effects the child's to see —
+    /// GNU Make gets it by starting the child after the line instead of
+    /// compiling it before.
+    ///
+    /// Always dirty, because reaching here means the wrapper is out of date and
+    /// GNU Make would be running this recipe. That is also what keeps `-t` off
+    /// it: a name that is not a file is not touched.
+    pub(crate) fn stage_preceding_lines(
+        &mut self,
+        pending: &PendingSubninja,
+        index: usize,
+    ) -> Result<Option<Node>, FrontendError> {
+        let Some(rule) = pending.invocations[index].preceding_rule else {
+            return Ok(None);
+        };
+        let proxy = self.recipe_stage_proxy()?;
+        let settled = pending
+            .inputs
+            .iter()
+            .chain(&pending.order_only_inputs)
+            .copied()
+            .collect::<Vec<_>>();
+        self.graph.add_edge(EdgeSpec {
+            scope: pending.scope,
+            rule,
+            explicit_outputs: &[proxy],
+            implicit_outputs: &[],
+            explicit_inputs: &[],
+            implicit_inputs: &[],
+            // GNU Make settles a recipe's prerequisites before its first line,
+            // and the compilation has already brought these to the ground.
+            order_only_inputs: &settled,
+            validations: &[],
+            always_dirty: true,
+            intermediate: false,
+            disposable: false,
+            outputs_unaliased: false,
+            outputs_low_resolution: false,
+            bindings: Vec::new(),
+        })?;
+        Ok(Some(proxy))
+    }
+
     /// Ask the ordinary graph evaluator whether a staged wrapper must run.
     pub(crate) fn subninja_is_dirty<F>(
         &self,
@@ -693,6 +749,23 @@ impl GraphSink {
                 .graph
                 .node(path.as_bytes())
                 .map_err(|failure| self.refuse(failure));
+        }
+    }
+
+    /// A run of a recipe's own lines makes no file the Makefile named, so it
+    /// needs a name of its own for the compilation to ask for it by.
+    ///
+    /// Never written and never read: the edge under it is always dirty, and
+    /// what makes the run count is the compiler seeing it finish rather than
+    /// anything appearing on the disk.
+    fn recipe_stage_proxy(&mut self) -> Result<Node, FrontendError> {
+        loop {
+            let path = format!(".ronin_recipe_stage/{}", self.recipe_stages);
+            self.recipe_stages += 1;
+            if self.graph.lookup(path.as_bytes()).is_some() {
+                continue;
+            }
+            return self.graph.node(path.as_bytes());
         }
     }
 
@@ -893,6 +966,43 @@ impl GraphSink {
         std::mem::take(&mut self.deferred_edges)
     }
 
+    /// Bindings for a run of a recipe's own lines that is not the edge making
+    /// the target.
+    ///
+    /// Everything about how the script reaches a shell is the recipe's, and
+    /// nothing about how the target is observed is: a depfile and a `restat`
+    /// answer for the file the rule makes, and the edge that makes it is the
+    /// recursive wrapper rather than this. Giving both the same depfile would
+    /// have two edges claiming one discovered dependency file.
+    fn recipe_lines_bindings(
+        &self,
+        rule: &SinkRule<'_>,
+        command: SinkCommand<'_>,
+        ignore_errors: bool,
+    ) -> Vec<(Binding, Template)> {
+        let mut bindings = self.command_bindings(
+            rule.shell,
+            rule.shell_flags,
+            command,
+            rule.recipe_environment,
+        );
+        // [spec:ronin:req:make.narration+1]
+        // The recipe's own words where it chose them, and otherwise the text of
+        // the lines being run, which is what the line itself says.
+        let description = rule.description.or(match command {
+            SinkCommand::Inline(script) => Some(script),
+            SinkCommand::ResponseFile(_) => None,
+        });
+        if let Some(description) = description {
+            bindings.push((self.bindings.description, Template::literal(description)));
+        }
+        bindings.push((self.bindings.generator, Template::literal(b"1")));
+        if ignore_errors {
+            bindings.push((self.bindings.ignore_errors, Template::literal(b"1")));
+        }
+        bindings
+    }
+
     fn define_executor_rule(
         &mut self,
         name: &[u8],
@@ -1002,16 +1112,28 @@ impl BuildSink for GraphSink {
                     self.define_executor_rule(name.as_bytes(), bindings)
                 })
                 .transpose()?;
-            let invocations = rule
-                .subninjas
-                .iter()
-                .map(|subninja| SubninjaInvocation {
+            let mut invocations = Vec::with_capacity(rule.subninjas.len());
+            for (index, subninja) in rule.subninjas.iter().enumerate() {
+                let preceding_rule = match subninja.preceding {
+                    Some(command) => {
+                        let bindings = self.recipe_lines_bindings(
+                            rule,
+                            command,
+                            subninja.preceding_ignore_errors,
+                        );
+                        let name = format!("rule{}_preceding{index}", rule.id);
+                        Some(self.define_executor_rule(name.as_bytes(), bindings)?)
+                    }
+                    None => None,
+                };
+                invocations.push(SubninjaInvocation {
                     command: subninja.command.to_vec(),
                     make: subninja.make.to_vec(),
                     shell: rule.shell.to_vec(),
                     shell_flags: rule.shell_flags.to_vec(),
-                })
-                .collect();
+                    preceding_rule,
+                });
+            }
             self.subninja_rules.insert(
                 rule.id,
                 SubninjaRule {

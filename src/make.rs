@@ -409,6 +409,35 @@ impl CompilationState<'_> {
             self.refusals = remakes.refusals;
         }
     }
+
+    /// Whether the compilation may go past one boundary, and what it takes if
+    /// it may not.
+    ///
+    /// A boundary an earlier pass already settled is behind this one, and the
+    /// work at it has run. Otherwise `staged` joins what this compilation asks
+    /// a provisional build for, the boundary is recorded so the pass after the
+    /// build knows it is settled, and the caller leaves its unit incomplete.
+    fn stage(
+        &mut self,
+        compilation_key: &[u8],
+        pending_index: usize,
+        predecessor: EvaluationPredecessor,
+        staged: &[Node],
+    ) -> bool {
+        let boundary = EvaluationBoundary {
+            compilation_key: compilation_key.to_vec(),
+            pending_index,
+            predecessor,
+        };
+        if self.settled_boundaries.contains(&boundary) {
+            return true;
+        }
+        self.regenerations.extend_from_slice(staged);
+        self.regenerations.sort_unstable();
+        self.regenerations.dedup();
+        self.evaluation_boundaries.insert(boundary);
+        false
+    }
 }
 
 /// The work that must finish before one recursive child can be evaluated.
@@ -422,6 +451,8 @@ pub(crate) struct EvaluationBoundary {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 enum EvaluationPredecessor {
     ParentPrerequisites,
+    /// The recipe's own lines written ahead of the invocation at this index.
+    PrecedingLines(usize),
     ChildGroup(usize),
 }
 
@@ -624,16 +655,12 @@ where
     {
         let parent_inputs = pending.evaluation_inputs();
         if !parent_inputs.is_empty() {
-            let boundary = evaluation_boundary(
+            if !state.stage(
                 compilation_key,
                 pending_index,
                 EvaluationPredecessor::ParentPrerequisites,
-            );
-            if !state.settled_boundaries.contains(&boundary) {
-                state.regenerations.extend_from_slice(&parent_inputs);
-                state.regenerations.sort_unstable();
-                state.regenerations.dedup();
-                state.evaluation_boundaries.insert(boundary);
+                &parent_inputs,
+            ) {
                 return Ok(incomplete_unit(targets, subtree_edges));
             }
             sink.mark_subgraphs_prebuilt(&parent_inputs);
@@ -649,6 +676,23 @@ where
 
         let mut child_groups = Vec::with_capacity(pending.invocations.len());
         for (group_index, invocation) in pending.invocations.iter().enumerate() {
+            // The recipe's own lines ahead of this invocation are compiler
+            // input for it, for the same reason its prerequisites are: the
+            // child Makefile is read off the disk those lines write to.
+            if let Some(staged) = sink
+                .stage_preceding_lines(&pending, group_index)
+                .map_err(MakeError::Construct)?
+            {
+                if !state.stage(
+                    compilation_key,
+                    pending_index,
+                    EvaluationPredecessor::PrecedingLines(group_index),
+                    &[staged],
+                ) {
+                    return Ok(incomplete_unit(targets, subtree_edges));
+                }
+                sink.mark_subgraphs_prebuilt(&[staged]);
+            }
             let child = resolve(
                 &invocation.command,
                 &invocation.make,
@@ -671,17 +715,13 @@ where
             child_groups.push(child_subgraph);
 
             if group_index + 1 < pending.invocations.len() {
-                let boundary = evaluation_boundary(
+                let completed_targets = &child_groups[group_index].targets;
+                if !state.stage(
                     compilation_key,
                     pending_index,
                     EvaluationPredecessor::ChildGroup(group_index),
-                );
-                let completed_targets = &child_groups[group_index].targets;
-                if !state.settled_boundaries.contains(&boundary) {
-                    state.regenerations.extend_from_slice(completed_targets);
-                    state.regenerations.sort_unstable();
-                    state.regenerations.dedup();
-                    state.evaluation_boundaries.insert(boundary);
+                    completed_targets,
+                ) {
                     return Ok(incomplete_unit(targets, subtree_edges));
                 }
                 sink.mark_subgraphs_prebuilt(completed_targets);
@@ -819,18 +859,6 @@ fn dependency_ordered(
     }
     ordered.extend(pending.into_iter().flatten());
     ordered
-}
-
-fn evaluation_boundary(
-    compilation_key: &[u8],
-    pending_index: usize,
-    predecessor: EvaluationPredecessor,
-) -> EvaluationBoundary {
-    EvaluationBoundary {
-        compilation_key: compilation_key.to_vec(),
-        pending_index,
-        predecessor,
-    }
 }
 
 /// Apply Make's `export`/`unexport` result to the environment imported by a

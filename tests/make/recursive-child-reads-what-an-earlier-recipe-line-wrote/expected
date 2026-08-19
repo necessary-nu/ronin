@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 11
+| # A recipe's lines run where the recipe wrote them, and the Make a $(MAKE) line
+| # starts reads the disk the lines ahead of it left. GNU Make gets that by
+| # starting the child after the line; anything that reads the child's Makefile
+| # instead of starting a process has to have run the line before it reads.
+| #
+| # vim's top-level Makefile in miniature. The first line puts the configuration
+| # the child includes in place, and without it the child's Makefile cannot be
+| # read at all — so this is the shape where the ordering is not cosmetic.
+| all:
+| 	@if test ! -f sub/config.mk; then cp config.mk.dist sub/config.mk; fi
+| 	@$(MAKE) --no-print-directory -C sub
+file config.mk.dist kept 1
+| WHAT := from-dist
+file log touched 1
+| child saw from-dist
+file sub/Makefile kept 2
+| include config.mk
+| all: ; @printf 'child saw %s\n' '$(WHAT)' >> ../log
+file sub/config.mk touched 1
+| WHAT := from-dist
