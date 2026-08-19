@@ -1473,7 +1473,7 @@ fn dry_run_spellings_run_nothing() {
 /// A dry run over a recursive Makefile prints the child's work too, because
 /// the child is part of the graph rather than a process this would have to
 /// start to find out.
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn dry_run_shows_the_composed_child() {
@@ -2133,7 +2133,7 @@ fn make_passes_linux_output_sync_guard() {
 /// A Makefile write is visible immediately, controls this unit's scheduler,
 /// and reaches a semantic child as canonical switches rather than extra goals.
 // [spec:ronin:req:make.semantics+1/test]
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn assigned_makeflags_control_build_and_children() {
@@ -2655,7 +2655,7 @@ fn a_load_ceiling_is_read_in_every_spelling_and_a_bad_one_is_refused() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn recursive_make_compiles_as_subninja() {
@@ -2719,7 +2719,7 @@ fn recursive_make_compiles_as_subninja() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn recursive_subtree_waits_for_parent_inputs() {
@@ -2773,7 +2773,7 @@ fn recursive_subtree_waits_for_parent_inputs() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn recursive_evaluation_waits_for_parent_inputs() {
@@ -2829,7 +2829,7 @@ fn recursive_evaluation_waits_for_parent_inputs() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn nested_recursive_evaluation_boundary() {
@@ -2883,7 +2883,7 @@ fn nested_recursive_evaluation_boundary() {
 }
 
 // [spec:ronin:req:make.semantics+1/test]
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn reassigned_export_reaches_grandchild() {
@@ -2928,7 +2928,7 @@ fn reassigned_export_reaches_grandchild() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn mixed_recipe_composes_subninjas() {
@@ -2998,7 +2998,7 @@ fn mixed_recipe_composes_subninjas() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn recursive_targets_are_invocation_local() {
@@ -3041,7 +3041,7 @@ fn recursive_targets_are_invocation_local() {
 /// so the test says what did NOT happen as well as what did: three children
 /// built in written order, the recipe's own line after them, and no nested
 /// Make anywhere.
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn conjoined_submakes_compose_in_order() {
@@ -3089,7 +3089,7 @@ fn conjoined_submakes_compose_in_order() {
     fs::remove_dir_all(directory).unwrap();
 }
 
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_reference_as_data_stays_recipe() {
@@ -3122,7 +3122,7 @@ fn make_reference_as_data_stays_recipe() {
 /// A composed child uses the same Ninja narrator as every other edge; there is
 /// no recursive Make reporter left to install directory banners around it.
 // [spec:ronin:req:make.narration+1/test]
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn recursive_make_uses_ninja_narration() {
@@ -3164,7 +3164,7 @@ fn recursive_make_uses_ninja_narration() {
 
 #[cfg(all(unix, feature = "make"))]
 // [spec:ronin:req:make.jobserver+1/test]
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[test]
 fn recursive_make_tree_uses_one_budget() {
     const LEVELS: [&str; 3] = ["a", "b", "c"];

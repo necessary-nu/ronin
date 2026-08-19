@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 /// Resolve one expanded recursive recipe into another kati compilation unit.
-// [spec:ronin:req:make.recursive-invocation+1]
+// [spec:ronin:req:make.recursive-invocation+2]
 pub(in crate::make) fn compile(
     command: &[u8],
     expanded_make: &[u8],

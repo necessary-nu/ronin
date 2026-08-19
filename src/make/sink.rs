@@ -452,7 +452,7 @@ impl GraphSink {
     /// could have started, while the child's own timestamps still decide what
     /// work it needs. The wrapper becomes a phony alias for child targets whose
     /// identities remain local to their own recursive compilation units.
-    // [spec:ronin:req:make.recursive-invocation+1]
+    // [spec:ronin:req:make.recursive-invocation+2]
     pub(crate) fn complete_subninja(
         &mut self,
         edge: Edge,

@@ -133,13 +133,31 @@ manifest-derived graph is.
 > synthesizing a generic `build` description, so the shared reporter names the
 > action that actually runs. See `make-upstream-suite`.
 
-> [spec:ronin:req:make.recursive-invocation+1]
-> A recursive invocation through `$(MAKE)` compiles as `subninja`. Kati
-> evaluates the child Makefile using its requested directory, Makefile, goals,
-> assignments, and graph-affecting flags, then composes the resulting graph
-> into the parent graph before execution. `subninja` names this semantic graph
-> inclusion even when the direct in-memory path emits no manifest text. It is
-> not a nested Make process or executor.
+> [spec:ronin:req:make.recursive-invocation+2]
+> A recursive invocation through `$(MAKE)` that the compiler can statically
+> identify compiles as `subninja`, and it MUST: composition is not optional
+> wherever the identification is possible. Kati evaluates the child Makefile
+> using its requested directory, Makefile, goals, assignments, and
+> graph-affecting flags, then composes the resulting graph into the parent
+> graph before execution. `subninja` names this semantic graph inclusion even
+> when the direct in-memory path emits no manifest text.
+>
+> An invocation the compiler cannot statically identify is left as the shell
+> command it is, and runs. That remainder is a boundary and not a licence: it
+> admits only invocations the recipe genuinely cannot settle — a multi-line
+> `.ONESHELL` recipe, whose lines share one shell, so no reading of the recipe
+> establishes what an earlier line left for the invocation to read; and an
+> invocation reached only through a runtime test, where whether it happens at
+> all is not answerable until the shell answers it. Every widening of what the
+> compiler can prove shrinks the remainder, and no shape belongs in it merely
+> for being hard to lift.
+>
+> What starts there is Ronin re-entering Make mode by its invoked name — the
+> absolutized `make`-named path that `$(MAKE)` expands to — and compiling its
+> own graph, with flags and any inherited job budget carried in `MAKEFLAGS` and
+> the environment. The nested process is therefore another compiler and never a
+> Make executor: no graph acquires GNU Make's scheduler, dirtiness model, or
+> reporter by being reached this way.
 
 > [spec:ronin:req:make.jobserver+1]
 > Ronin does not create a GNU Make jobserver for recursive Make execution. A

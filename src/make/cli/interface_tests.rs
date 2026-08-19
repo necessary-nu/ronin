@@ -41,7 +41,7 @@ pub(super) fn refused(arguments: &[&str]) -> Option<String> {
 }
 
 // [spec:ronin:req:make.semantics+1/test]
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[test]
 fn makefile_makeflags_mutate_switch_table() {
     let decoded = decode_makefile_makeflags(b"", b" -- FOO=bar -rR", b"").unwrap();

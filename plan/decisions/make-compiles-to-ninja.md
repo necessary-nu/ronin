@@ -15,7 +15,7 @@ scope {
         [spec:ronin:req:make.compiler-boundary]
         [spec:ronin:req:make.interface-compatibility]
         [spec:ronin:req:make.state-outside-the-tree+1]
-        [spec:ronin:req:make.recursive-invocation+1]
+        [spec:ronin:req:make.recursive-invocation+2]
         [spec:ronin:req:make.jobserver+1]
         [spec:ronin:req:make.semantics+1]
         [spec:ronin:req:make.narration]
@@ -42,8 +42,8 @@ consequences {
         "Faithfulness means the compiled graph selects the same things to build and preserves targets, dependencies, ordering constraints, default goals, and recipe effects. It does not mean reproducing GNU Make's transcript or execution policy."
         "Make mode accepts the complete GNU Make 4.4.1 option vocabulary and argument shapes. Each option is either a compiler input, a mapping onto an existing Ninja execution control, or an accepted no-op. An option never justifies a Make-only branch in the build engine."
         "After compilation, the scheduler, dirtiness model, persistence, pools, depfiles, restat, console handling, failures, and narration are Ninja's. The core executor does not know that a graph came from a Makefile."
-        "A recursive $(MAKE) is `subninja`: kati evaluates the child invocation and composes its graph into the parent graph before execution. `subninja` names this semantic inclusion even on the direct in-memory path, where no manifest text need exist."
-        "There is one Ninja scheduler for the composed graph and no nested Make executor or recursive GNU Make jobserver tree. Jobserver syntax may be accepted or mapped at the outer interface without becoming an execution architecture."
+        "A recursive $(MAKE) the compiler can statically identify is `subninja`, and composing it is mandatory: kati evaluates the child invocation and composes its graph into the parent graph before execution. `subninja` names this semantic inclusion even on the direct in-memory path, where no manifest text need exist. One the compiler cannot identify is left as the shell command it is and runs, which re-enters Make mode by the invoked name and compiles another graph there; that remainder admits only what a recipe genuinely cannot settle, and every widening of what the compiler can prove shrinks it."
+        "There is one Ninja scheduler for the composed graph and no nested Make executor or recursive GNU Make jobserver tree. What an uncomposable invocation starts is another compiler reading MAKEFLAGS and the environment, so no graph anywhere acquires GNU Make's scheduler, dirtiness model, or reporter. Jobserver syntax may be accepted or mapped at the outer interface without becoming an execution architecture."
         "GNU Make is consulted to determine Makefile and command-line build intent. Verification compares graphs, selected work, build outcomes, and filesystem effects; GNU Make's stdout, stderr, timing, and runner-specific ceremony are not compatibility gates."
     )
     deferred (
@@ -63,7 +63,7 @@ codifies (
     [spec:ronin:req:make.compiler-boundary]
     [spec:ronin:req:make.interface-compatibility]
     [spec:ronin:req:make.state-outside-the-tree+1]
-    [spec:ronin:req:make.recursive-invocation+1]
+    [spec:ronin:req:make.recursive-invocation+2]
     [spec:ronin:req:make.jobserver+1]
     [spec:ronin:req:make.semantics+1]
     [spec:ronin:req:make.narration]
@@ -100,9 +100,21 @@ execution code: observable files and build outcomes matter, while GNU Make's
 line ordering, idle messages, recursive banners, and jobserver choreography do
 not.
 
-Recursion follows the same boundary. A recipe spelling `$(MAKE)` does not ask
-Ronin to start a smaller Make inside the current build. It asks the compiler to
-evaluate another Make invocation and include the resulting graph as
-`subninja`. The child working directory, Makefile selection, goals, variable
-assignments, and graph-affecting flags are compilation inputs. The composed
-graph then runs once, under the one Ninja scheduler.
+Recursion follows the same boundary. A recipe spelling `$(MAKE)` where the
+compiler can say which invocation is meant does not ask Ronin to start a
+smaller Make inside the current build. It asks the compiler to evaluate another
+Make invocation and include the resulting graph as `subninja`. The child
+working directory, Makefile selection, goals, variable assignments, and
+graph-affecting flags are compilation inputs. The composed graph then runs
+once, under the one Ninja scheduler.
+
+Where the compiler cannot say which invocation is meant, the line runs. That is
+a boundary the rule states rather than a gap it tolerates: an invocation behind
+a runtime test, or inside a `.ONESHELL` recipe whose lines share a shell, is
+not identifiable from the recipe at all, and refusing it turns a build GNU Make
+completes into a build that never starts. What starts instead is Ronin under
+its make name, compiling its own graph from MAKEFLAGS and the environment — so
+the thing inside the build is another compiler, and the argument above about
+Make-specific execution code is untouched by it. The remainder shrinks whenever
+the compiler learns to identify more, and nothing belongs in it for being
+merely awkward to lift.

@@ -7,7 +7,7 @@ scope {
     elements ([arch:ronin:cli] [arch:ronin:execution])
     rules (
         [spec:ronin:req:product.make-identity]
-        [spec:ronin:req:make.recursive-invocation+1]
+        [spec:ronin:req:make.recursive-invocation+2]
     )
 }
 author "brendan@necessary.nu"
@@ -41,7 +41,7 @@ edges {
 }
 codifies (
     [spec:ronin:req:product.make-identity]
-    [spec:ronin:req:make.recursive-invocation+1]
+    [spec:ronin:req:make.recursive-invocation+2]
 )
 affects ([arch:ronin:cli])
 ---

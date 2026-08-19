@@ -6383,7 +6383,7 @@ children (
                         priority 0
                         kind @feat
                         implements {
-                            target-impl ([spec:ronin:req:make.recursive-invocation+1])
+                            target-impl ([spec:ronin:req:make.recursive-invocation+2])
                         }
                         deps (make-interface-surface)
                         log (
@@ -6414,6 +6414,14 @@ children (
                                 author "brendan@necessary.nu"
                                 kind @errata
                                 text "The implementation composes recursive child goals, but its ordering preservation is incomplete: GraphSink::attach_child_ordering gates each child goal edge while Ninja may start the goal's transitive prerequisites before the recursive parent target's prerequisites finish. The GNU Make process-start boundary therefore is not preserved for indirect child work. Track the correction under make-recursive-prerequisite-boundary."
+                                after_done true
+                            }
+
+                            {
+                                at 2026-08-19T21:18:04.981170986Z
+                                author "brendan@necessary.nu"
+                                kind @note
+                                text "Re-read against `[spec:ronin:req:make.recursive-invocation+2]` and re-pinned from `+1`, under make-recursive-invocation-rule-admits-no-remainder.\n\nWhat this node delivered is the clause the bump made MANDATORY rather than absolute: kati recognises a `$(MAKE)` invocation, evaluates the child unit with its directory, makefile, goals, assignments and graph-affecting flags, and composes the graph into the parent before execution. `+2` says that composition is not optional wherever the identification is possible, which is exactly this node's contract and is strictly stronger than what `+1` obliged, since `+1` stated the outcome as a fact about all recursion and never said composing was required.\n\nWhat `+2` adds — that an invocation the compiler cannot statically identify is left as the shell command it is and runs, re-entering Make mode by the invoked name — was already the behaviour when this node landed and is not a retraction of anything it built. It is owned downstream: make-recursion-lifts-through-a-wrapper and make-oneshell-recursive-recipe-is-refused are the nodes that moved shapes out of that remainder and into this node's composition path."
                                 after_done true
                             }
                         )
@@ -12757,6 +12765,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "`[spec:ronin:req:make.recursive-invocation+1]` says a recursive invocation through `$(MAKE)` compiles as `subninja` and \"is not a nested Make process or executor\". That is not what the compiler does, and it was not before make-recursion-lifts-through-a-wrapper either: a `$(MAKE)` the recogniser cannot lift out — behind a runtime test, inside a guard, after a `;` — is residual work and reaches the executor as written, and the Make it starts is a process. The pure-unliftable path has always done this; wrapper-lifting only made the same outcome reachable in a recipe that also has a composed child.\n\nSo the rule states an absolute the implementation has never held, and the annotation sites under it are claiming something they do not deliver. Either the rule gains the boundary — every invocation the compiler can identify statically composes; one it cannot is left as the shell command it is — or the compiler is changed until the absolute is true, which means deciding what to do with a `$(MAKE)` whose reachability is a runtime question.\n\nFiled rather than folded in because a rule-body edit bumps `+1` to `+2` and cascades staleness onto make-subninja-recursion and everything else annotated against it, which is a decision about the spec rather than a consequence of this dispatch."
+                    }
+
+                    {
+                        at 2026-08-19T21:14:31.70977468Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-19T21:14:53.558445243Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "THE OPERATOR HAS RULED. Brendan, 2026-08-19, verbatim: \"so it should just run that invocation when it can't be statically proven\".\n\nThe question this answers is the one the filing posed: `[spec:ronin:req:make.recursive-invocation+1]` said a `$(MAKE)` recursion \"is not a nested Make process or executor\" — an absolute — and the compiler has never held it, because an invocation whose reachability is a runtime question cannot be lifted out of the shell line that guards it. The two ways out were to give the rule a boundary or to change the compiler until the absolute became true. The ruling takes the first: the remainder is legitimate, and what happens in it is that the invocation RUNS.\n\nWHAT THAT MAKES NORMATIVE, and it is narrower than \"we gave up on an absolute\":\n\n  Composition stays mandatory wherever static identification is possible. The boundary legitimizes only the genuinely unprovable remainder, and every widening of what the compiler can prove shrinks it. The just-landed make-oneshell-recursive-recipe-is-refused (kati 4cbdb77 / ronin a9962a6) is the shape of that: it moved conjunctions, brace groups and work-beside-the-invocation OUT of the remainder and into composition, and refused nothing. The remainder is not a place to put things that are merely hard.\n\n  The remainder is DEFINED rather than recogniser-accident. What is in it today: a multi-line `.ONESHELL` recipe, whose lines share one shell so no reading of the recipe can say an earlier line did not change the directory or the variables the invocation reads; and an invocation guarded by a runtime test, where whether it happens at all is not answerable before the shell answers it.\n\n  What happens in the remainder is not \"a gap\" and not \"an emulation\". Ronin re-enters Make mode by its invoked name — `$(MAKE)` is the one-word absolutized make-named path minted by `make_named_invocation` (src/make/cli.rs) — and builds its own graph, with flags and jobserver travelling in `MAKEFLAGS` and the environment. So the nested thing is a compiler, not an executor: the architecture line holds either way, which is why running the remainder costs the rule its absolute and nothing else.\n\n  What did NOT change: `[spec:ronin:req:make.jobserver+1]` still says Ronin creates no GNU Make jobserver, and one composed graph still has one scheduler. A nested Ronin is a second scheduler for a graph the parent could not compose, which is the price of the remainder existing at all, not a second mechanism inside one graph.\n\nThe edit bumps `+1` to `+2` and every annotation and verification written against `+1` goes stale by construction. Each is re-read against the new wording and re-stamped or corrected — that sweep is this node's deliverable as much as the rule text is."
                     }
                 )
             }

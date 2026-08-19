@@ -169,15 +169,17 @@ fn command_overrides(invocation: &Invocation) -> String {
         .join(" ")
 }
 
-/// How a Make invocation describes itself to this compilation unit and every
-/// semantic child.
+/// How a Make invocation describes itself to this compilation unit, to every
+/// semantic child, and to whatever an invocation nothing could compose starts
+/// for itself — the last of those reads these switches out of the environment,
+/// which is the only way they reach it.
 ///
 /// Job and load limits remain compiler-visible because Makefiles branch on
 /// them, while execution still has one Ninja scheduler. The jobserver
-/// authorization itself is deliberately absent: no recursive Make runtime is
-/// created, and an inherited outer jobserver is consumed only by that one
-/// scheduler.
-// [spec:ronin:req:make.recursive-invocation+1]
+/// authorization itself is deliberately absent: Ronin stands up no GNU Make
+/// jobserver at any level, and an inherited outer jobserver is consumed by the
+/// one scheduler that inherited it.
+// [spec:ronin:req:make.recursive-invocation+2]
 pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVariables {
     let letters: String = invocation
         .propagated()

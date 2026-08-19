@@ -79,7 +79,7 @@ pub(super) fn diagnostic_body(failure: impl Display) -> String {
 /// answers an error with Ninja's status, which is one for every failure alike;
 /// Make abandons with two whatever the reason was, and in Make mode the status
 /// is Make's.
-// [spec:ronin:req:make.recursive-invocation+1]
+// [spec:ronin:req:make.recursive-invocation+2]
 pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
     RunResult {
         stdout: terminated(reported),

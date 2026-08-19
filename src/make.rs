@@ -458,7 +458,7 @@ enum EvaluationPredecessor {
 
 /// Evaluate a root Makefile and every recursive `$(MAKE)` recipe into one
 /// shared graph before returning it to the executor.
-// [spec:ronin:req:make.recursive-invocation+1]
+// [spec:ronin:req:make.recursive-invocation+2]
 // [spec:ronin:req:make.compiler-boundary]
 pub(crate) fn load_with_subninjas<F>(
     root: Compilation,

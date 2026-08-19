@@ -160,7 +160,7 @@ fn make_populates_suffix_rule_stem() {
 /// loop. Such a command cannot be composed as a semantic subninja, so the real
 /// child process learns the override from the canonical MAKEFLAGS exported to
 /// every recipe.
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[test]
 fn shell_loop_submake_inherits_overrides() {
     let directory = test_directory("shell-loop-overrides");
@@ -198,7 +198,7 @@ fn shell_loop_submake_inherits_overrides() {
 /// Zstd selects a recursive build directory with a deferred `$(shell ...)`.
 /// Kati deliberately leaves that computation as shell command substitution in
 /// a recipe, so Ronin must settle it before parsing the child invocation.
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[test]
 fn submake_expands_shell_computed_assignment() {
     let directory = test_directory("submake-shell-assignment");
@@ -225,7 +225,7 @@ fn submake_expands_shell_computed_assignment() {
 
 /// Deferred command substitution must observe files made by the recursive
 /// wrapper's prerequisites, not run during the provisional graph compilation.
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[test]
 fn submake_shell_waits_for_prerequisite() {
     let directory = test_directory("submake-shell-boundary");
@@ -1389,7 +1389,7 @@ fn make_reports_a_missing_program() {
 /// vim's top-level Makefile is the tree that showed it — one liftable
 /// `cd src && $(MAKE) $@` beside two guards holding `$(MAKE)` calls that are
 /// false for every goal but `test` and `clean` — and it built nothing at all.
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[test]
 fn an_unliftable_line_keeps_its_siblings() {
     let directory = test_directory("make-recursion-guard");
@@ -1471,7 +1471,7 @@ fn an_unliftable_line_keeps_its_siblings() {
 /// Proved by a dry run rather than by the build: a composed child's work is
 /// printed and not done, where a nested Make would have been started to find
 /// out what it was.
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[test]
 fn a_subshell_holds_one_invocation() {
     let directory = test_directory("make-recursion-subshell");
@@ -1512,7 +1512,7 @@ fn a_subshell_holds_one_invocation() {
 ///
 /// Proved the same way as the subshell: a dry run prints the composed child's
 /// work, where a nested Make would have been started to find out what it was.
-// [spec:ronin:req:make.recursive-invocation+1/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
 #[test]
 fn a_brace_group_holds_one_invocation() {
     let directory = test_directory("make-recursion-brace");
