@@ -21,16 +21,24 @@ impl DirtyEvaluator {
     /// stops at every edge that is not, so an intermediate nothing needs stays
     /// uncreated — which is the whole point of it being intermediate.
     ///
-    /// The walk starts wherever GNU Make's `must_make` would be set, which is
-    /// one term wider than being out of date: a target that is simply not there
-    /// has to be made, whatever its prerequisites say. `remake.c` reads the two
-    /// the same way — `this_mtime == NONEXISTENT_MTIME` sets `must_make`, and
-    /// `must_make` is what sends `update_file` over the intermediate
-    /// prerequisites — and the difference is only visible from here, because
-    /// the excusing that made the target look settled is what the scan does.
-    /// A bare `.SECONDARY:` makes every file intermediate, so with it the whole
-    /// chain under an absent goal is excused and this is the only thing left
-    /// that can ask for any of it.
+    /// The walk starts, and descends, wherever GNU Make's `must_make` would be
+    /// set, which is one term wider than being out of date: a target that is
+    /// simply not there has to be made, whatever its prerequisites say.
+    /// `remake.c` reads the two the same way — `this_mtime ==
+    /// NONEXISTENT_MTIME` sets `must_make`, and `must_make` is what sends
+    /// `update_file` over the intermediate prerequisites — and the difference
+    /// is only visible from here, because the excusing that made the target
+    /// look settled is what the scan does. A bare `.SECONDARY:` makes every
+    /// file intermediate, so with it the whole chain under an absent goal is
+    /// excused and this is the only thing left that can ask for any of it.
+    ///
+    /// The same term has to be carried down and not merely started with. A
+    /// Makefile target whose recipe is empty compiles to an edge with no
+    /// command, so nothing ever writes the file and no timestamp can call it
+    /// out of date — and yet GNU Make makes what it asks for, because the file
+    /// is not there. Only the filesystem's own answer counts for that, never
+    /// the mtime a node is carrying: an absent intermediate and a phony output
+    /// are both standing in something else's.
     pub(super) fn push_intermediates(
         &mut self,
         graph: &Graph,
@@ -65,7 +73,9 @@ impl DirtyEvaluator {
                         };
                         if runtime.edge(generator).absent_intermediate() {
                             ask_for(graph, runtime, generator);
-                        } else if !runtime.node(input).dirty() {
+                        } else if !runtime.node(input).dirty()
+                            && !runtime.node(input).absent_on_disk()
+                        {
                             continue;
                         }
                         work.push(Step::Enter(generator));
@@ -203,6 +213,61 @@ mod tests {
         let (dirty, runtime) = settled(&["goal"]);
         assert!(!dirty);
         assert!(!runtime.node(source).dirty());
+        assert!(!runtime.node(middle).dirty());
+    }
+
+    /// The same widening one step in, which is where a Makefile actually
+    /// reaches it: a pattern rule with an empty recipe compiles to an edge with
+    /// no command, so the file it names is never written and never called out
+    /// of date either. GNU Make makes what it asks for all the same, because a
+    /// file that is not there must be made whatever its prerequisites say — and
+    /// the walk has to carry that term down with it rather than only start with
+    /// it, or the intermediate under such a name is silently skipped.
+    // [spec:ronin:req:make.semantics+1/test]
+    #[test]
+    fn ronin_graph_absent_name_asks_intermediates() {
+        let mut graph = Graph::default();
+        let root = mkenv(&mut graph, None);
+        let phony = crate::env::mkrule(&mut graph, "phony".into());
+        graph.set_phony_rule(phony);
+
+        // `src` is on disk and `mid` is the invented intermediate over it, so
+        // nothing below the empty-recipe name is out of date on its own.
+        let middle = generated(&mut graph, "mid", "src");
+        let quiet = mknode(&mut graph, "quiet");
+        let empty = mkedge(&mut graph, root);
+        graph.edge_mut(empty).rule = Some(phony);
+        graph.edge_mut(empty).out.push(quiet);
+        graph.edge_mut(empty).input.push(middle);
+        graph.edge_mut(empty).set_input_partitions(1, 1);
+        nodeuse(&mut graph, middle, empty);
+        graph.node_mut(quiet).generator = Some(empty);
+        let goal = generated(&mut graph, "goal", "quiet");
+        graph
+            .edge_mut(graph.node(goal).generator.unwrap())
+            .intermediate = false;
+
+        let settled = |present: &[&str]| {
+            let present = present
+                .iter()
+                .map(|path| ((*path).to_owned(), 1))
+                .collect::<BTreeMap<_, _>>();
+            let mut stat = |path: &Path| Ok(*present.get(&*path.to_string_lossy()).unwrap_or(&0));
+            let mut runtime = RuntimeState::new(&graph);
+            let dirty = recompute_dirty_with(&graph, &mut runtime, goal, &mut stat).unwrap();
+            (dirty, runtime)
+        };
+
+        let (dirty, runtime) = settled(&["src"]);
+        assert!(dirty);
+        assert!(
+            runtime.node(middle).dirty(),
+            "the intermediate under an absent name with no recipe was skipped"
+        );
+
+        // The control: with the empty-recipe name on disk there is nothing it
+        // must be made from, and the intermediate stays uncreated.
+        let (_, runtime) = settled(&["src", "quiet", "goal"]);
         assert!(!runtime.node(middle).dirty());
     }
 }
