@@ -40,6 +40,15 @@ cargo clippy -p kati --all-targets -- -D warnings
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
 cargo test --all-targets --no-fail-fast
 scripts/check-make-equivalence.sh
+# Two hand-written build systems, built from their own Makefiles. The corpus is
+# a Makefile per feature and the generated-Makefile gate is one program's
+# output; these are thirty years of maintenance using recursion the way a
+# generator never would, and both of them found a defect nothing else had.
+#
+# Ahead of the port ladder deliberately: that check is red for a bookkeeping
+# reason (make-release-gate-stops-at-the-port-ladder) and `set -eu` means
+# nothing below it runs, so a gate placed after it would not be a gate.
+scripts/check-make-projects.sh
 
 nplan port check --wave 4
 

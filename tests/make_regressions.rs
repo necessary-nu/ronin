@@ -1379,3 +1379,128 @@ fn make_reports_a_missing_program() {
     assert!(said.contains("code=127"), "{said}");
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// A recipe line GNU Make classifies recursive whose invocation cannot be
+/// lifted out is residual work, and reaches the executor as written. That is
+/// what the same line does when it is a recipe's only recursion, so having a
+/// liftable sibling cannot be what makes it intolerable: refusing the whole
+/// recipe made a mixed one stricter than either of the recipes it is made of.
+///
+/// vim's top-level Makefile is the tree that showed it — one liftable
+/// `cd src && $(MAKE) $@` beside two guards holding `$(MAKE)` calls that are
+/// false for every goal but `test` and `clean` — and it built nothing at all.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[test]
+fn an_unliftable_line_keeps_its_siblings() {
+    let directory = test_directory("make-recursion-guard");
+    for child in ["a", "b"] {
+        fs::create_dir_all(directory.join(child)).unwrap();
+        fs::write(
+            directory.join(child).join("Makefile"),
+            format!("child: ; echo {child} > built\n"),
+        )
+        .unwrap();
+    }
+
+    // The second invocation is real but sits behind a runtime test, so it is
+    // not one static child compilation. The first is, and is composed; the
+    // second runs as the shell command it is, and its test is true.
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t$(MAKE) -C a\n\ttest -d b && $(MAKE) -C b\n",
+    )
+    .unwrap();
+    let mixed = make_command(&directory).output().unwrap();
+    assert!(
+        mixed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&mixed.stderr)
+    );
+    for child in ["a", "b"] {
+        assert!(
+            directory.join(child).join("built").exists(),
+            "{child} was not built"
+        );
+    }
+
+    // vim's own shape: the guard is false, so what the line holds is never
+    // reached and nothing beside the composed child happens.
+    for child in ["a", "b"] {
+        fs::remove_file(directory.join(child).join("built")).unwrap();
+    }
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t$(MAKE) -C a\n\t@if false; then (cd b && $(MAKE)); fi\n",
+    )
+    .unwrap();
+    let guarded = make_command(&directory).output().unwrap();
+    assert!(
+        guarded.status.success(),
+        "{}",
+        String::from_utf8_lossy(&guarded.stderr)
+    );
+    assert!(directory.join("a").join("built").exists());
+    assert!(
+        !directory.join("b").join("built").exists(),
+        "a guard that is false built something"
+    );
+
+    // MAKE named as an argument is not a Make being started, and 4.4.1 runs
+    // the line under `-n` without recursing into anything either.
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t$(MAKE) -C a\n\ttest -d b && echo mentioned $(MAKE) > mentioned\n",
+    )
+    .unwrap();
+    let mentioned = make_command(&directory).output().unwrap();
+    assert!(
+        mentioned.status.success(),
+        "naming MAKE in an argument was read as recursion: {}",
+        String::from_utf8_lossy(&mentioned.stderr)
+    );
+    assert!(directory.join("mentioned").exists());
+    assert!(directory.join("a").join("built").exists());
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A recipe line that is one invocation inside a subshell is one invocation.
+/// The parentheses keep a directory change from reaching the rest of the
+/// script, and a line holding only the sequence has no rest of the script for
+/// it to reach, so the child is the same child either way.
+///
+/// Proved by a dry run rather than by the build: a composed child's work is
+/// printed and not done, where a nested Make would have been started to find
+/// out what it was.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[test]
+fn a_subshell_holds_one_invocation() {
+    let directory = test_directory("make-recursion-subshell");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t(cd sub && $(MAKE) child)\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("sub").join("Makefile"),
+        "child: ; echo child > child\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("-n").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        printed.contains("echo child > child"),
+        "the subshell's child graph was not in the dry run: {printed}"
+    );
+    assert!(
+        !directory.join("sub").join("child").exists(),
+        "the dry run wrote the child's target"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

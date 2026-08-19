@@ -12634,6 +12634,88 @@ children (
                 title "Lift a $(MAKE) the shell would reach through one wrapper"
                 kind @fix
                 deps (make-subninja-recursion)
+                sealed true
+                log (
+                    {
+                        at 2026-08-19T16:25:27.711424968Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found by building vim 9.2.0957 from its top-level Makefile with Ronin's Make mode beside GNU Make 4.4.1.\n\nvim's top-level Makefile exists to hand every goal to `src/`. The recipe for `all` echoes two lines, runs `cd src && $(MAKE) $@`, and then asks in two guards whether more recursion is wanted:\n\n    @if test \"$@\" = \"test\" -o \"$@\" = \"testtiny\"; then \\\n            $(MAKE) indenttest; \\\n            $(MAKE) syntaxtest; \\\n    fi\n\nGNU runs the guards, they are false for every goal but `test` and `clean`, and the only recursion that happens is the one into `src/`.\n\nRonin lifts `cd src && $(MAKE) $@` into a child compilation unit, but a guarded line carries a `$(MAKE)` that cannot be lifted — it is not in command position — and `kati/src-rs/ninja.rs composable_subninjas` is all-or-nothing, so the recipe compiles to no children at all while still counting as recursive and `src/make/sink.rs` refuses the build before anything runs. Nothing is built.\n\nThe refusal is stricter than the path already taken for the same construct on its own: a recipe whose ONLY recursion is unliftable is not refused — it runs as a script and lets the nested Make start. vim is the tree that shows the difference, and the inconsistency is the defect.\n\nOperator ruling of 2026-08-19: lift through wrappers. Teach the recognizer to see a `$(MAKE)` the shell would reach through a single-command wrapper, so more composes into the graph and nothing new runs nested; a genuine unliftable remainder falls into the already-existing pure-unliftable path rather than poisoning its liftable siblings.\n\nAcceptance: vim builds from its top-level Makefile, reaching `src/vim` by composition, and `tests/make-project-reductions/recipe-mixes-liftable-and-unliftable-recursion` builds with the guard left in."
+                    }
+
+                    {
+                        at 2026-08-19T16:25:34.232472274Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-19T16:42:32.596826238Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered in kati 6e0cf78. Two changes, which are the two halves of one question: which of a recipe's `$(MAKE)` lines names a child compilation, and what happens to the ones that do not.\n\nLIFTING THROUGH THE WRAPPER. A recipe line that is nothing but a parenthesized sequence IS that sequence. The parentheses keep a directory change and an environment from reaching the rest of the script, and a line holding only the sequence has no rest of the script for them to reach — GNU hands the line to a shell of its own either way. `command::unwrapped_command` takes the subshell off, `invokes_make` reads what is inside, and the command handed to the resolver is the invocation rather than the line it was written on, so the resolver receives exactly what the recogniser read.\n\nProbed against the oracle rather than argued. A child that prints its cwd, `MAKECMDGOALS`, `MAKELEVEL`, `MAKEFLAGS` and a command-line assignment, reached first by `cd src && $(MAKE) all V=1` and then by `(cd src && $(MAKE) all V=1)`: GNU gives `cwd=src goals=all level=1 flags=[ -- V=1] V=1` for both, and Ronin gives the same for both. That the wrapped form is now composed rather than nested is visible in Ronin's own output — one progress stream carrying the child's recipe, where the negative control `if true; then $(MAKE) -C src all; fi` shows the parent's line as an edge and then the nested Make's own counter.\n\nOnly `(`, and only when it closes at the last byte: `(a) && (b)` also opens on the first one, so the match is found rather than assumed, respecting quotes and backslashes. A brace group means the same thing to a shell and is deliberately left alone, because `{` is a command word only in command position and reading one wrongly changes what a line means, where `(` is always the operator.\n\nTHE REMAINDER. Splitting a recipe was all-or-nothing for three reasons, and one of them was a line GNU classified recursive whose invocation cannot be lifted. That line carries no `recursive_make`: it is residual work and reaches the executor as written, which is exactly what the same line does when it is a recipe's ONLY recursion. Having a liftable sibling is not what makes it intolerable, and refusing the whole recipe for it made a mixed recipe stricter than either of the recipes it is made of. The clause is gone; the other two stand, because a multi-line `.ONESHELL` recipe runs its lines in one shell and more than one MAKE reference on a line does not identify one static child compilation.\n\nAcceptance: vim 9.2.0957 builds from its TOP-LEVEL Makefile — `VIM - Vi IMproved 9.2`, `src/vim` at 17,872,752 bytes, 17s at -j8 — and it reaches it by composition: an incremental run shows one progress stream in which `src/`'s own compile and link edges are numbered, not a parent edge followed by a nested counter. The two nested Makes still visible inside `src/Makefile` (`cd auto/wayland; $(MAKE)` and the `po/` guard) were already pure-unliftable recipes and are unchanged, so nothing new runs nested.\n\nWhere it went: kati `src-rs/command.rs` (`unwrapped_command`, `subshell_body`, `invokes_make`) and `src-rs/ninja.rs` (`composable_subninjas`, the lifted command, and the deferred-recipe assertion's comment, which had claimed an absolute the compiler never held).\n\nTest contract changed rather than deleted. `tests/cli.rs recursive_recipes_are_never_half_composed` asserted the refusal this node removes; it is now `an_unliftable_line_keeps_its_siblings`, which asserts that the liftable sibling composes, that the unliftable line runs as the shell command it is, and — vim's own shape — that a guard which is false builds nothing. `a_subshell_holds_one_invocation` asserts the lift through a dry run, so it is the composition being measured and not the build. `unsplittable_submake_never_executes` still passes: two MAKE references on one line is one of the two reasons that stand.\n\nGates: workspace 883, conformance 334/53 unchanged, equivalence 297/278/0 disagreements, upstream inventory 1299 rows at 161/0/37/1101 with `tests/make_upstream_inventory.tsv` byte-identical — not one row moved, compiler at zero — all three Clippy passes clean, make_port green with no recording rewritten.\n\nThe gate itself lands here: `scripts/check-make-projects.sh` builds both packages from pinned sha256-verified tarballs into gitignored `reference/make-projects/`, asserts the binary exists and that zsh built twenty or more modules, and is called from `scripts/check-release.sh` ahead of `nplan port check --wave 4` — deliberately ahead, because that check is red for a bookkeeping reason and `set -eu` means a gate placed after it would not be a gate. Verified: a full `scripts/check-release.sh` run reaches it, prints both builds, and then stops at the port ladder exactly as make-release-gate-stops-at-the-port-ladder describes."
+                    }
+
+                    {
+                        at 2026-08-19T16:43:37.101677038Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Correction to the delivery note above: the workspace count is 873, not 883. 868 at the dispatch's baseline, plus the three project reductions, plus `a_subshell_holds_one_invocation`, plus the kati unit test `a_subshell_around_the_whole_line_is_not_a_command`. `an_unliftable_line_keeps_its_siblings` replaced a test rather than adding one. Every other number in that note is as measured."
+                    }
+
+                    {
+                        at 2026-08-19T16:44:31.193308335Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-recursive-invocation-rule-admits-no-remainder
+                title "Say in the spec what happens to a recursion that cannot be lifted"
+                kind @docs
+                deps (make-recursion-lifts-through-a-wrapper)
+                log (
+                    {
+                        at 2026-08-19T16:44:05.174810831Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "`[spec:ronin:req:make.recursive-invocation+1]` says a recursive invocation through `$(MAKE)` compiles as `subninja` and \"is not a nested Make process or executor\". That is not what the compiler does, and it was not before make-recursion-lifts-through-a-wrapper either: a `$(MAKE)` the recogniser cannot lift out — behind a runtime test, inside a guard, after a `;` — is residual work and reaches the executor as written, and the Make it starts is a process. The pure-unliftable path has always done this; wrapper-lifting only made the same outcome reachable in a recipe that also has a composed child.\n\nSo the rule states an absolute the implementation has never held, and the annotation sites under it are claiming something they do not deliver. Either the rule gains the boundary — every invocation the compiler can identify statically composes; one it cannot is left as the shell command it is — or the compiler is changed until the absolute is true, which means deciding what to do with a `$(MAKE)` whose reachability is a runtime question.\n\nFiled rather than folded in because a rule-body edit bumps `+1` to `+2` and cascades staleness onto make-subninja-recursion and everything else annotated against it, which is a decision about the spec rather than a consequence of this dispatch."
+                    }
+                )
+            }
+
+            {
+                id make-oneshell-recursive-recipe-is-refused
+                title "Compile the two recursive recipe shapes that are still refused"
+                kind @fix
+                deps (make-recursion-lifts-through-a-wrapper)
+                log (
+                    {
+                        at 2026-08-19T16:44:12.664685086Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Two reasons a recipe holding `$(MAKE)` is still refused whole, both surviving make-recursion-lifts-through-a-wrapper, both reproducing against `reference/make-oracle/make-4.4.1/make` as builds GNU completes and Ronin does not start:\n\n  .ONESHELL with more than one recipe line. The lines share one shell, so a split loses state the later lines may depend on. GNU runs the recipe and recurses; Ronin says the recipe cannot compile as subninja.\n\n  More than one MAKE reference on a line, as in `$(MAKE) -C a && $(MAKE) -C b`. Two invocations on one line do not identify one static child compilation, but they do identify two, in a fixed order, and `tests/cli.rs unsplittable_submake_never_executes` is the recording of the refusal rather than an argument that the refusal is right.\n\nBeside them, one shape that composes nothing but is not a refusal: a brace group. `{ cd sub && $(MAKE) child; }` means to a shell exactly what `(cd sub && $(MAKE) child)` means, and the latter now lifts while the former runs nested. It was left out on purpose — `{` is a command word only in command position, so reading one wrongly changes what a line means where `(` is always the operator — and recognising it correctly is a small piece of shell grammar rather than a byte test."
+                    }
+                )
+            }
+
+            {
+                id make-mixed-recipe-runs-its-residual-last
+                title "Run a mixed recipe's own lines where the recipe wrote them"
+                kind @fix
+                deps (make-recursion-lifts-through-a-wrapper)
+                log (
+                    {
+                        at 2026-08-19T16:44:25.90090385Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "A recipe that composes a child and keeps some of its own lines runs those lines AFTER the child, because `complete_subninja` makes the residual edge wait on the child targets. GNU runs a recipe's lines in the order they are written.\n\nvim's top-level Makefile is where this is visible, and it is only harmless there by accident:\n\n    all …:\n            @if test ! -f src/auto/config.mk; then \\\n                    cp src/config.mk.dist src/auto/config.mk; \\\n            fi\n            @echo \"Starting make in the src directory.\"\n            …\n            cd src && $(MAKE) $@\n\nThe first line exists to put `src/auto/config.mk` in place BEFORE the child reads it, and Ronin compiles the child first. The gate passes because `scripts/check-make-projects.sh` runs configure, which writes that file, so the guard is false either way — but a tree configured differently would have Ronin compile `src/Makefile` against a missing include that GNU would have created a moment earlier.\n\nThis predates make-recursion-lifts-through-a-wrapper: any recipe mixing ordinary lines with a liftable `$(MAKE)` has had it since composition landed. What makes it worth a node now is that the mixed recipe used to be refused in the shape most likely to hit it, so the ordering had less ground to be wrong on.\n\nNot obviously fixable by reordering alone: the child is COMPILED at graph construction, and a residual line that has to run first is a compiler input, which is what the evaluation-boundary machinery in `src/make.rs` already exists to express for prerequisites. The question is whether a recipe's own earlier lines belong in that same staging."
+                    }
+                )
             }
         )
         log (

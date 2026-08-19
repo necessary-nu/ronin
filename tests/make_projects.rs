@@ -63,6 +63,37 @@ fn make_command(directory: &Path) -> Command {
     command
 }
 
+/// vim's top-level Makefile hands every goal to `src/` and then asks, in two
+/// guards that are false for every goal but `test` and `clean`, whether more
+/// recursion is wanted. GNU runs the guards and nothing happens.
+///
+/// Ronin lifts `cd src && $(MAKE) all` into a child compilation unit, but the
+/// guarded line carries a `$(MAKE)` that cannot be lifted — it is not in
+/// command position — and splitting was all-or-nothing, so the recipe
+/// compiled to no children at all while still counting as recursive, and the
+/// build was refused before anything ran.
+///
+/// Note what Ronin does when *no* line is liftable: it runs the script and
+/// lets the nested Make start. The refusal was therefore stricter than the
+/// path already taken for the same construct on its own, and vim is the tree
+/// that shows the difference.
+#[test]
+fn a_guard_holds_an_unliftable_make() {
+    let directory = reduction("recipe-mixes-liftable-and-unliftable-recursion");
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        directory.join("src/built.stamp").exists(),
+        "the child unit's recipe did not run"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// zsh's generated `Src/Makemod` builds each module header through a chain of
 /// three targets, two of which re-invoke the same makefile: `X.mdh` needs
 /// `X.mdhi`, `X.mdhi` needs `X.mdhs`, and both `X.mdh` and `X.mdhs` run

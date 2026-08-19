@@ -610,6 +610,7 @@ assertions (
     {id make-an-output-directory-is-created-where-gnu-make-would-refuse, kind @complete, author "brendan@necessary.nu", at 2026-08-19T15:34:59.871857388Z}
     {id make-suffix-rule-name-splits-against-the-list, kind @complete, author "brendan@necessary.nu", at 2026-08-19T16:05:56.003633432Z}
     {id make-recursive-ordering-sees-a-middleman, kind @complete, author "brendan@necessary.nu", at 2026-08-19T16:18:07.823257018Z}
+    {id make-recursion-lifts-through-a-wrapper, kind @complete, author "brendan@necessary.nu", at 2026-08-19T16:44:31.193308335Z}
 )
 
 impl_evidence (
