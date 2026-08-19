@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-16T19:30:41.207932258Z
+last_sync_at 2026-08-19T17:26:52.18798094Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -64,8 +64,12 @@ derived_priorities (
     {id kati-wellknown-symbols, priority 3, derived_at 2026-08-04T18:10:27.805223477Z}
     {id make-a-failed-makefile-rule-still-reports-the-unread-include, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-a-forgiven-makefile-is-not-remade-for-the-goals, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
+    {id make-a-questioned-makefile-keeps-the-questions-status-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
+    {id make-an-output-directory-is-created-where-gnu-make-would-refuse, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-an-unopenable-include-is-reported-where-gnu-reports-it, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-an-unreadable-include-is-refused-rather-than-raised, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-archive-index-reader-is-written-twice, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-archive-member-globbing, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-archive-member-list-in-one-name, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-archive-member-targets, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
@@ -80,8 +84,10 @@ derived_priorities (
     {id make-child-automatic-variables-are-child-relative, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-circular-dependency-is-dropped, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-clean-dependency-bridges, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
+    {id make-compiler-warnings-reach-the-sink, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-conformance-corpus, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-conformance-oracle-identity, priority 3, derived_at 2026-08-13T14:32:14.94979399Z}
+    {id make-construction-expanded-recipe-is-one-shell, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-continuation-expansion, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-corpus-host-make-shellout, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-current-recursive-wrapper-freshness, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
@@ -98,8 +104,11 @@ derived_priorities (
     {id make-double-colon-keep-going-continues-the-chain, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-double-colon-rule-freshness, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-empty-expansion-runs-nothing, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-empty-recipe-pattern-rule-drops-its-prerequisites, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-empty-variable-append, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-endif-trailing-text-is-a-warning, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-environment-origin-precedes-the-switches, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-escaped-percent-prerequisite-pattern-keeps-its-backslash, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-escaped-prerequisite-colon, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-every-makefile-argument-is-read, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-explicit-rule-stem-from-a-known-suffix, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
@@ -126,15 +135,19 @@ derived_priorities (
     {id make-makefile-set-no-builtin-rules, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-makefile-standard-input, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-makefiles-variable, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-makefiles-variable-entries-are-never-remade, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-makeflags-in-recipe-environment, priority 0, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-makeflags-residue-classification, priority 3, derived_at 2026-08-09T19:04:32.868792493Z}
     {id make-match-anything-rule-chaining, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-mixed-implicit-and-normal-rule-severity, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-mixed-recipe-runs-its-residual-last, priority 3, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-mode-cli, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-modern-function-evaluation, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-multi-target-pattern-trigger-identity, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-narration-contract-audit, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-newer-prerequisite-automatic-variable, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-notdir-strips-a-root-directory, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-oneshell-recursive-recipe-is-refused, priority 3, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-option-coverage, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
     {id make-optional-include-failure-is-per-file, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-optional-include-rule-failure, priority 3, derived_at 2026-08-13T15:22:26.730359032Z}
@@ -147,7 +160,6 @@ derived_priorities (
     {id make-path-function-semantics, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-pattern-peer-is-not-intermediate, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-pattern-peer-restart-convergence, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
-    {id make-pattern-peer-warning, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-pattern-prerequisite-directory-stem, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-pattern-prerequisite-wildcard-sees-the-build-as-it-runs, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-pattern-prerequisite-wildcards, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
@@ -160,6 +172,7 @@ derived_priorities (
     {id make-pattern-specific-variable-application, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-pattern-variable-assignment-scope, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-phony-always-dirty, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
+    {id make-plus-line-runs-under-pretending, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-port-harness-scratch-is-shared-between-runs, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-posix-continuation-blanks, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-posix-recipe-semantics, priority 1, derived_at 2026-08-11T14:15:42.552641851Z}
@@ -169,6 +182,7 @@ derived_priorities (
     {id make-process-directory-isolation, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-progress-total-shrinks-to-the-work, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-question-mode-refuses-a-makefile-it-cannot-make, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-question-variable-reads-an-archive-member, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-recipe-command-narration, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-recipe-continuation-bytes, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-eval-mutation-refusal, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
@@ -179,8 +193,11 @@ derived_priorities (
     {id make-recipe-time-export-reaches-the-environment, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-time-target-variable-reaches-prerequisites, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-time-target-variable-reaches-the-scope, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recursion-lifts-through-a-wrapper, priority 3, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-recursive-child-recipes-expand-at-launch, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recursive-evaluation-boundary, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
+    {id make-recursive-invocation-rule-admits-no-remainder, priority 3, derived_at 2026-08-19T17:26:52.18798094Z}
+    {id make-recursive-ordering-sees-a-middleman, priority 3, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-recursive-prerequisite-boundary, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-recursive-target-namespace, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-release-clippy-runnable, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
@@ -201,12 +218,14 @@ derived_priorities (
     {id make-shell-function-evaluation, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-shuffle-mode-is-validated-where-gnu-does-not, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-shuffle-reaches-the-circular-drop, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-shuffled-drop-unlinks-the-position-not-the-edge, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-signal-killed-recipe-deletion, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-simple-command-without-a-shell, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-static-pattern-escaped-percent, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-static-pattern-nonmatch-semantics, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-stdin-refusal-test-races-its-write, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-suffix-rule-name-splits-against-the-list, priority 2, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-suffix-rule-stem-variable, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-suffix-shaped-target-with-prerequisites, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-target-specific-append-expands-its-tail-where-it-is-read, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
@@ -225,6 +244,7 @@ derived_priorities (
     {id make-vpath-gpath-output-location, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-vpath-name-survives-only-a-current-target, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-vpath-prerequisite-resolves-to-a-target, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-what-if-assumed-new, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-wildcard-cache-coherence, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-word-index-out-of-range, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id ronin-alloc-metrics, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
