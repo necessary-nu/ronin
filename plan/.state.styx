@@ -639,6 +639,7 @@ assertions (
     {id make-empty-recipe-target-is-not-a-ninja-alias, kind @complete, author "brendan@necessary.nu", at 2026-08-19T19:02:02.421210827Z}
     {id make-archive-member-date-is-low-resolution-on-the-target-side, kind @complete, author "brendan@necessary.nu", at 2026-08-19T19:42:40.348967632Z}
     {id make-mixed-recipe-runs-its-residual-last, kind @complete, author "brendan@necessary.nu", at 2026-08-19T20:33:31.055945929Z}
+    {id make-oneshell-recursive-recipe-is-refused, kind @complete, author "brendan@necessary.nu", at 2026-08-19T21:08:44.153412781Z}
 )
 
 impl_evidence (

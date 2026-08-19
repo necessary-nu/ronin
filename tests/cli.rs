@@ -3032,11 +3032,20 @@ fn recursive_targets_are_invocation_local() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// A recipe line that is nothing but invocations joined by `&&` names each of
+/// them. `&&` runs the next only when the last one won and in that order,
+/// which is what one child graph ordered after another does, so the two
+/// describe the same build and the line composes into both children.
+///
+/// `MAKE` is a script that would leave a file behind if anything started it,
+/// so the test says what did NOT happen as well as what did: three children
+/// built in written order, the recipe's own line after them, and no nested
+/// Make anywhere.
 // [spec:ronin:req:make.recursive-invocation+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn unsplittable_submake_never_executes() {
-    let directory = test_directory("make-unsplittable-subninja");
+fn conjoined_submakes_compose_in_order() {
+    let directory = test_directory("make-conjoined-subninja");
     fs::create_dir_all(directory.join("first")).unwrap();
     fs::create_dir_all(directory.join("second")).unwrap();
     fs::create_dir_all(directory.join("third")).unwrap();
@@ -3046,14 +3055,14 @@ fn unsplittable_submake_never_executes() {
          all:\n\
          \t$(MAKE) -C first all\n\
          \t$(MAKE) -C second all && $(MAKE) -C third all\n\
-         \t@touch residual-ran\n\
+         \t@printf 'residual\\n' >> order\n\
          .PHONY: all\n",
     )
     .unwrap();
     for child in ["first", "second", "third"] {
         fs::write(
             directory.join(child).join("Makefile"),
-            "all:\n\t@touch result\n.PHONY: all\n",
+            format!("all:\n\t@printf '{child}\\n' >> ../order\n.PHONY: all\n"),
         )
         .unwrap();
     }
@@ -3073,16 +3082,10 @@ fn unsplittable_submake_never_executes() {
         .unwrap();
     let reported = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "{reported}");
-    assert!(
-        reported.contains("recursive Make recipe cannot compile as subninja"),
-        "{reported}"
-    );
+    assert!(output.status.success(), "{reported}");
     assert!(!directory.join("nested-make-ran").exists(), "{reported}");
-    assert!(!directory.join("residual-ran").exists(), "{reported}");
-    for child in ["first", "second", "third"] {
-        assert!(!directory.join(child).join("result").exists(), "{reported}");
-    }
+    let order = fs::read_to_string(directory.join("order")).unwrap();
+    assert_eq!(order, "first\nsecond\nthird\nresidual\n", "{reported}");
     fs::remove_dir_all(directory).unwrap();
 }
 

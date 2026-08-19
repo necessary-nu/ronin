@@ -223,8 +223,9 @@ pub enum FrontendError {
         /// The dyndep path the edge asked for.
         path: Vec<u8>,
     },
-    /// A recipe mixes a recursive `$(MAKE)` line with shell work that cannot
-    /// be represented as one static subninja inclusion.
+    /// A recursive recipe's child makes one of the very targets the recipe
+    /// making it produces, so the wrapper the child would replace is its own
+    /// prerequisite and no ordering of the two can exist.
     UncomposableSubninja {
         /// The expanded recipe, retained for an actionable compiler error.
         command: Vec<u8>,

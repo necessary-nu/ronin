@@ -130,7 +130,7 @@ impl BuildSink for Tee<'_> {
             rule.id,
             RuleSemantics {
                 ignored_command,
-                recursive: rule.contains_recursive,
+                recursive: !rule.subninjas.is_empty(),
             },
         );
         let _ = self.graph.declare_rule(names, rule);

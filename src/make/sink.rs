@@ -1097,12 +1097,11 @@ impl BuildSink for GraphSink {
         let script = match rule.command {
             SinkCommand::Inline(script) | SinkCommand::ResponseFile(script) => script,
         };
-        if rule.contains_recursive {
-            if rule.subninjas.is_empty() {
-                return Err(self.refuse(FrontendError::UncomposableSubninja {
-                    command: script.to_vec(),
-                }));
-            }
+        // A recipe naming recursion nothing could be lifted out of arrives with
+        // no invocations and is an ordinary recipe here: it runs as the script
+        // it is and the Make it names starts, which is what GNU Make does with
+        // it. Nothing about a recipe is refused at this point.
+        if !rule.subninjas.is_empty() {
             let residual_rule = rule
                 .residual_command
                 .map(|command| {

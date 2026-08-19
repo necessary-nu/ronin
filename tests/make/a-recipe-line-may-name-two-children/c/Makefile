@@ -1,0 +1,1 @@
+all: ; @echo c >> ../log

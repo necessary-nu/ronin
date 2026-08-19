@@ -1504,3 +1504,60 @@ fn a_subshell_holds_one_invocation() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// A brace group is the subshell written the other way and holds the same one
+/// invocation. What it costs to see is the reading: `(` is always the operator
+/// and `{` is a reserved word, so a group is one only as a word of its own
+/// where a command may begin — `echo a{b}` is one word and must stay one.
+///
+/// Proved the same way as the subshell: a dry run prints the composed child's
+/// work, where a nested Make would have been started to find out what it was.
+// [spec:ronin:req:make.recursive-invocation+1/test]
+#[test]
+fn a_brace_group_holds_one_invocation() {
+    let directory = test_directory("make-recursion-brace");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t{ cd sub && $(MAKE) child; }\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("sub").join("Makefile"),
+        "child: ; echo child > child\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("-n").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let printed = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        printed.contains("echo child > child"),
+        "the brace group's child graph was not in the dry run: {printed}"
+    );
+    assert!(
+        !directory.join("sub").join("child").exists(),
+        "the dry run wrote the child's target"
+    );
+
+    // A brace that is part of a word is not a group, so the line stays a line
+    // and the reference on it is data.
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\techo a{b} $(MAKE) > mentioned\n",
+    )
+    .unwrap();
+    let mentioned = make_command(&directory).output().unwrap();
+    assert!(
+        mentioned.status.success(),
+        "a brace inside a word was read as a group: {}",
+        String::from_utf8_lossy(&mentioned.stderr)
+    );
+    let written = fs::read_to_string(directory.join("mentioned")).unwrap();
+    assert!(written.starts_with("a{b} "), "{written}");
+    fs::remove_dir_all(directory).unwrap();
+}

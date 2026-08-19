@@ -1,0 +1,8 @@
+# A line holding an invocation and work beside it is not one invocation. The
+# `echo` runs in the directory the `cd` moved to and only when the Make before
+# it won, so nothing can be lifted out without changing what the rest of the
+# line does. GNU Make hands the whole line to a shell; a compiler that will
+# not claim more than it can carry does the same, rather than refusing a build
+# it cannot compose.
+all:
+	@cd sub && $(MAKE) --no-print-directory && echo tail >> ../log
