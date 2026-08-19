@@ -642,6 +642,7 @@ assertions (
     {id make-oneshell-recursive-recipe-is-refused, kind @complete, author "brendan@necessary.nu", at 2026-08-19T21:08:44.153412781Z}
     {id make-recursive-invocation-rule-admits-no-remainder, kind @complete, author "brendan@necessary.nu", at 2026-08-19T21:23:49.749750561Z}
     {id make-staging-pass-counts-as-a-make-restart, kind @complete, author "brendan@necessary.nu", at 2026-08-19T21:43:52.352014793Z}
+    {id make-eval-fragments-do-not-descend, kind @doing, author "brendan@necessary.nu", at 2026-08-19T21:44:12.298151711Z}
 )
 
 impl_evidence (

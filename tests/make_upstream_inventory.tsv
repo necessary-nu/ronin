@@ -952,8 +952,8 @@ case	options/dash-s.diff.7	narration	ninja-progress+recipe-echo
 case	options/dash-t.diff	unclassified	ninja-progress+evaluation
 case	options/dash-t.diff.1	unclassified	ninja-progress+evaluation
 case	options/eval.diff	narration	ninja-progress
-case	options/eval.diff.1	narration	ninja-progress+recipe-echo
-case	options/eval.diff.2	unclassified	ninja-progress+evaluation
+case	options/eval.diff.1	narration	ninja-progress
+case	options/eval.diff.2	narration	ninja-progress
 case	options/eval.diff.3	narration	ninja-progress
 case	options/eval.diff.4	narration	ninja-progress
 case	options/general.diff	narration	ninja-progress

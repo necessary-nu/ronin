@@ -890,7 +890,11 @@ fn apply_recipe_environment(
 
 /// Evaluate one unit from its Make working directory and restore the caller's
 /// directory before any child unit is entered.
-fn in_directory<T>(
+///
+/// The frontend needs it too: a child invocation's makefile is named relatively
+/// — `Makefile`, not `sub/Makefile` — so anything that reads it before the unit
+/// is entered resolves the name against the wrong directory.
+pub(in crate::make) fn in_directory<T>(
     directory: &std::path::Path,
     evaluate: impl FnOnce() -> Result<T, MakeError>,
 ) -> Result<T, MakeError> {

@@ -103,8 +103,13 @@ pub(super) fn read_shuffle(
 
 /// The Make interface variables one compiler invocation presents to source.
 pub(super) struct CompilerFlagVariables {
-    /// `MAKEFLAGS` before its `MAKEOVERRIDES` reference is expanded.
+    /// The switch table alone: what a Makefile write is settled against, and
+    /// what MFLAGS is spelled from. It holds no `--eval` fragment, for the
+    /// reason [`compiler_flag_variables`] gives.
     pub(super) base: String,
+    /// `MAKEFLAGS` before its `MAKEOVERRIDES` reference is expanded — the
+    /// switch table with this invocation's `--eval` fragments behind it.
+    pub(super) published: String,
     /// The expanded value inherited by a semantic subninja.
     pub(super) makeflags: String,
     /// The same options in command-line spelling, without assignments.
@@ -124,10 +129,23 @@ fn command_variable_name(assignment: &str) -> Option<&str> {
     Some(before_equals)
 }
 
-/// Quote one command-line assignment for Make's environment-variable syntax.
-fn quote_makeflags_assignment(assignment: &str) -> String {
-    let mut quoted = String::with_capacity(assignment.len());
-    for character in assignment.chars() {
+/// Quote one word so `MAKEFLAGS` carries it back as the single word it was.
+///
+/// GNU Make's `quote_for_env`: a `$` is doubled so reading the variable does
+/// not expand it, and a backslash or a blank is backslash-escaped so word
+/// splitting does not end the word there. It serves command-line assignments
+/// and `--eval` fragments alike, because both are arbitrary text that has to
+/// survive being read back as a command line.
+///
+/// One byte is treated differently from GNU Make's, and deliberately: GNU
+/// escapes only space and tab, leaving a newline raw, because its own reader
+/// splits on blanks alone and a raw newline therefore stays inside the word.
+/// [`makeflags_words`] splits on any ASCII whitespace, so escaping the newline
+/// here is what keeps the same word whole on the way back. The two choices are
+/// one choice — change either and the round trip breaks.
+fn quote_for_makeflags(word: &str) -> String {
+    let mut quoted = String::with_capacity(word.len());
+    for character in word.chars() {
         match character {
             '\\' => quoted.push_str("\\\\"),
             '$' => quoted.push_str("$$"),
@@ -164,7 +182,7 @@ fn command_overrides(invocation: &Invocation) -> String {
     assignments
         .into_iter()
         .rev()
-        .map(|(_, assignment)| quote_makeflags_assignment(assignment))
+        .map(|(_, assignment)| quote_for_makeflags(assignment))
         .collect::<Vec<_>>()
         .join(" ")
 }
@@ -231,21 +249,45 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
     if let Some(mode) = &invocation.shuffle_spelling {
         append(&mut base, &format!("--shuffle={mode}"));
     }
+    let mflags = if letters.is_empty() {
+        base.trim_start().to_owned()
+    } else {
+        format!("-{base}")
+    };
+    // The fragments go after every switch and before the assignments, read off
+    // GNU Make's own `MAKEFLAGS` rather than reasoned about. Carrying them is
+    // the only way one reaches a child at all: `$(MAKE)` is one word and holds
+    // nothing, so a child — composed here, or started by a recipe line nothing
+    // could compose — learns what it was invoked under from this variable and
+    // from nowhere else.
+    //
+    // They sit beside the switch table rather than in it, which is where GNU
+    // Make keeps them too: its `MAKEFLAGS` holds a reference to a separate
+    // `-*-eval-flags-*-` variable, and the switch table proper never contains a
+    // fragment. The distinction is load-bearing here for one reason. A switch
+    // is a bit and an assignment is keyed by name, so reading either back twice
+    // settles to the same table; a fragment is neither, and reading one back
+    // appends it again. `decode_makefile_makeflags` reads its three inputs into
+    // one invocation, so a fragment left in the protected table would multiply
+    // every time a Makefile wrote to MAKEFLAGS.
+    let mut published = base.clone();
+    for eval in &invocation.evals {
+        append(
+            &mut published,
+            &format!("--eval={}", quote_for_makeflags(&eval.to_str_lossy())),
+        );
+    }
     let overrides = command_overrides(invocation);
-    let mut makeflags = base.clone();
+    let mut makeflags = published.clone();
     if !overrides.is_empty() {
         // GNU Make ends the switches at a `--` before the assignments, so that
         // one beginning with a dash cannot be read as another switch.
         makeflags.push_str(" -- ");
         makeflags.push_str(&overrides);
     }
-    let mflags = if letters.is_empty() {
-        base.trim_start().to_owned()
-    } else {
-        format!("-{base}")
-    };
     CompilerFlagVariables {
         base,
+        published,
         makeflags,
         mflags,
         overrides,
@@ -344,7 +386,7 @@ pub(super) fn decode_makefile_makeflags(
     let flags = compiler_flag_variables(&invocation);
     Ok(kati::flags::DecodedMakeflags {
         carried: Bytes::from(carried_switches(&flags.base, &invocation).into_bytes()),
-        makeflags: Bytes::from(flags.base.into_bytes()),
+        makeflags: Bytes::from(flags.published.into_bytes()),
         mflags: Bytes::from(flags.mflags.into_bytes()),
         is_dry_run: invocation.given(Switch::DryRun),
         is_silent_mode: invocation.given(Switch::Silent),

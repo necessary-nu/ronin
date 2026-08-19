@@ -1234,7 +1234,7 @@ fn session_for(
     let mut session = Session::new();
     let compiler_flags = compiler_flag_variables(invocation);
     let carried = Bytes::from(carried_switches(&compiler_flags.base, invocation).into_bytes());
-    let makeflags = Bytes::from(compiler_flags.base.into_bytes());
+    let makeflags = Bytes::from(compiler_flags.published.into_bytes());
     let make_overrides = Bytes::from(compiler_flags.overrides.into_bytes());
     session.flags = Flags {
         makefiles: makefiles
@@ -2041,6 +2041,50 @@ mod tests {
         assert_eq!(variables.overrides, r"SECOND=a\\b FIRST=last");
         assert_eq!(variables.makeflags, r"ks -- SECOND=a\\b FIRST=last");
         assert_eq!(variables.mflags, "-ks");
+    }
+
+    /// An `--eval` fragment travels in MAKEFLAGS and nowhere else, because
+    /// `$(MAKE)` is a path and carries nothing. Every value below is read off
+    /// GNU Make 4.4.1 rather than reasoned about: a `$` doubled, a blank
+    /// backslashed, the fragments after every switch and before the `--`, and
+    /// MFLAGS carrying none of them because GNU Make spells MFLAGS from the
+    /// switch string before it appends them.
+    // [spec:ronin:req:make.recursive-invocation+2/test]
+    #[test]
+    fn propagates_eval_fragments() {
+        let variables = |arguments: &[&str]| super::compiler_flag_variables(&parsed(arguments));
+
+        // The leading space is GNU Make's: with no switch letters the group is
+        // empty and the first thing after it still gets its separator.
+        let one = variables(&["make", "--eval=$(info eval)"]);
+        assert_eq!(one.makeflags, r" --eval=$$(info\ eval)");
+        assert_eq!(one.base, "");
+        assert_eq!(one.mflags, "");
+
+        // The short spelling is the same switch, and two fragments keep the
+        // order they were written in.
+        let two = variables(&["make", "-E", "A=1", "--eval=B=2"]);
+        assert_eq!(two.makeflags, " --eval=A=1 --eval=B=2");
+
+        // Beside a switch group, a long option and an assignment, which is
+        // where the position is decided.
+        let placed = variables(&[
+            "make",
+            "-k",
+            "--no-print-directory",
+            "--eval=X := 1",
+            "FOO=bar",
+        ]);
+        assert_eq!(
+            placed.makeflags,
+            r"k --no-print-directory --eval=X\ :=\ 1 -- FOO=bar"
+        );
+        assert_eq!(placed.base, "k --no-print-directory");
+        assert_eq!(placed.mflags, "-k --no-print-directory");
+
+        // A backslash is escaped too, so the fragment comes back as one word.
+        let escaped = variables(&["make", r"--eval=P := a\b"]);
+        assert_eq!(escaped.makeflags, r" --eval=P\ :=\ a\\b");
     }
 
     // [spec:ronin:req:product.make-identity/test]
