@@ -1,0 +1,27 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 13
+| # The two kinds of pass interleave, and the count has to tell them apart in
+| # both directions. One generated Makefile is remade, which is one restart and
+| # stays one; the pair of recursive children in the recipe each need the read to
+| # end and begin again, and neither adds to the count nor puts it back to where
+| # the first read found it.
+| all:
+| 	@$(MAKE) --no-print-directory -f first.mk sub
+| 	@$(MAKE) --no-print-directory -f second.mk sub
+| 	@printf 'restarts=[%s] value=[%s]\n' '$(MAKE_RESTARTS)' '$(V)' > out
+| 
+| include gen.mk
+| 
+| gen.mk: ; @printf 'V := built\n' > $@
+file first.mk kept 1
+| sub: ; @printf 'first\n' >> log
+file gen.mk touched 1
+| V := built
+file log touched 2
+| first
+| second
+file out touched 1
+| restarts=[1] value=[built]
+file second.mk kept 1
+| sub: ; @printf 'second\n' >> log

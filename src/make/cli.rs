@@ -1480,10 +1480,19 @@ enum PreparedGraph {
 ///
 /// GNU Make reads the Makefiles, brings every one of them up to date the way it
 /// would any other target, and starts over from the beginning if that changed
-/// one of them — counting each start in `MAKE_RESTARTS`. This is that loop:
-/// each pass evaluates from a fresh session, builds what the provisional graph
-/// knows how to build, and goes around only when the build left the read's own
-/// inputs different from how it found them.
+/// one of them — counting each such start in `MAKE_RESTARTS`. This is that
+/// loop: each pass evaluates from a fresh session, builds what the provisional
+/// graph knows how to build, and goes around only when the build left the
+/// read's own inputs different from how it found them.
+///
+/// It also goes around for a reason GNU Make does not have, which is why only
+/// one of the two kinds is counted. A `$(MAKE)` recipe's child cannot be
+/// compiled until the files the parent would have made before running it are
+/// on the ground, so the read ends and starts again with that boundary
+/// settled. The text it reads is the same text; nothing it consulted moved.
+/// Counting that in `MAKE_RESTARTS` would show a Makefile a restart that, in
+/// the terms the variable is defined in, did not happen.
+// [spec:ronin:req:make.semantics+1]
 fn prepare_graph(
     root: &RootCompilation<'_>,
     reported: &mut String,
@@ -1560,6 +1569,7 @@ fn prepare_graph(
         )? {
             Settlement::Finished(result) => return Ok(PreparedGraph::Finished(result)),
             Settlement::Restart => restarts = restarts.saturating_add(1),
+            Settlement::Staged => {}
             Settlement::Settled {
                 graph,
                 persistence,

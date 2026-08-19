@@ -34,9 +34,18 @@ pub(super) enum Settlement {
     /// The run is over — a failure, a `-n` that has said what it would do, or
     /// an answered question.
     Finished(RunResult),
-    /// Something the read depends on changed, so the Makefile has to be read
-    /// again on the new text.
+    /// A Makefile the read depends on was brought up to date and changed, so
+    /// the read starts over on the new text. This is GNU Make's restart, the
+    /// one `MAKE_RESTARTS` counts.
     Restart,
+    /// A compiler input the read needed is now on the ground, so the read
+    /// happens again — over the same text, which is what makes this not a
+    /// restart. Nothing the read consulted moved: the compilation stopped
+    /// because a `$(MAKE)` recipe's prerequisites, or an earlier child, or the
+    /// recipe's own earlier lines, had to exist before the child Makefile
+    /// could be read at all. GNU Make has no such phase and therefore no count
+    /// for it, so this one stays out of `MAKE_RESTARTS`.
+    Staged,
     /// Nothing changed. This graph is the compilation the goals build from.
     Settled {
         graph: Box<BuildGraph>,
@@ -767,7 +776,7 @@ pub(super) fn build_compiler_inputs(
         Pass::Current | Pass::Ran(_) | Pass::Lost(_) => {
             settled_boundaries.extend(boundaries);
             persistence.finish()?;
-            Ok(Settlement::Restart)
+            Ok(Settlement::Staged)
         }
     }
 }

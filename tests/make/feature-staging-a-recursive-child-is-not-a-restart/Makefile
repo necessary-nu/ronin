@@ -1,0 +1,10 @@
+# MAKE_RESTARTS counts the times the read started over because a Makefile it
+# depends on was remade, and nothing else. This build remakes no Makefile at
+# all — it has two recursive children, which Ronin composes by ending the read
+# and beginning it again once the first child's work is on the ground. That is
+# a compiler's pass over the same text, so the variable a Makefile reads must
+# not have moved.
+all:
+	@$(MAKE) --no-print-directory -f first.mk sub
+	@$(MAKE) --no-print-directory -f second.mk sub
+	@printf 'restarts=[%s]\n' '$(MAKE_RESTARTS)' > out
