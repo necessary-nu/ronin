@@ -1,0 +1,18 @@
+# GNU Make finds a suffix rule by writing every declared suffix in front of
+# every other and looking the name up (`convert_to_pattern`,
+# reference/gnumake/src/rule.c), so where the two suffixes meet is decided by
+# the list and never by reading the name.
+#
+# zsh sets `OBJ=.o` and declares `..o` beside `.o`, so `.c.$(OBJ):` is the rule
+# `.c..o:` and splits as `.c` and `..o` — three dots, and the third one is not
+# a separator. Both spellings are here because zsh writes both, and `foo..o`
+# ends in a declared `.o` as well as in a declared `..o`: the rule that must
+# win is the one leaving the shorter stem, which is the longer suffix.
+OBJ = .o
+.SUFFIXES:
+.SUFFIXES: .c ..o .o
+.c$(OBJ):
+	@echo "static $< -> $@ [$*]" >> log
+.c.$(OBJ):
+	@echo "dynamic $< -> $@ [$*]" >> log
+all: foo..o bar.o

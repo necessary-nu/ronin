@@ -12554,6 +12554,57 @@ children (
                     }
                 )
             }
+
+            {
+                id make-suffix-rule-name-splits-against-the-list
+                title "Split a suffix rule's name against the declared suffixes"
+                kind @fix
+                deps (make-archive-suffix-rule-conversion)
+                sealed true
+                log (
+                    {
+                        at 2026-08-19T15:48:23.443272786Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found by building zsh 5.9.2 from its own Makefiles with Ronin's Make mode beside GNU Make 4.4.1, and reducing the first divergence.\n\nzsh's `Src/Makemod` sets `OBJ=.o`, declares `.SUFFIXES: .c .so ..o .o .syms .pro .epro`, and writes `.c.$(OBJ):` — which is `.c..o:`, a name holding three dots. kati decides what a suffix rule is by counting them (`kati/src-rs/dep.rs:1024 is_suffix_rule`: a third dot means no), so the rule is not converted, every `X..o` has nothing to make it, and none of zsh's dynamically loaded modules is built. The binary still links, so the run reports success and produces a zsh that is not zsh.\n\nGNU Make does not read the name at all. `convert_to_pattern` (reference/gnumake/src/rule.c) writes every declared suffix in front of every other, looks the resulting name up as a file, and converts the pair when that file has a recipe — so `.c` ++ `..o` is `.c..o` for the same reason `.c` ++ `.o` is `.c.o`, and a dot inside a suffix is not special because nothing ever counted dots.\n\nAcceptance: `tests/make-project-reductions/suffix-rule-target-suffix-holds-a-dot` builds `foo..o` from `foo.c`, and zsh builds twenty or more modules through `scripts/check-make-projects.sh zsh`."
+                    }
+
+                    {
+                        at 2026-08-19T15:48:28.226246234Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-19T16:05:51.322307873Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered in kati b3b8749. The conversion is now GNU's: `convert_written_suffix_rules` writes every declared suffix in front of every other, interns the name, looks it up among the rules the makefiles wrote, and converts the pair when the rule it finds has a recipe — which is `convert_to_pattern` (reference/gnumake/src/rule.c) with eleven hundred names that were never there left unasked, the same shape `install_builtin_suffix_pairs` already had for the catalogue.\n\nProbed against the oracle before anything moved, and the probe decided the second half. `.SUFFIXES: .c ..o .o` with both `.c.$(OBJ):` and `.c$(OBJ):` written, `OBJ = .o`: GNU makes `foo..o` from `foo.c` with `$*` bound to `foo`, and `bar.o` from `bar.c` with `$*` bound to `bar`. So `foo..o` matches both `%..o` and `%.o`, and the one that wins is the one leaving the shorter stem — `implicit.c` sorts the patterns a name matched by stem length before trying any of them. The search therefore reads the declared list longest suffix first rather than taking the last dot, and the prerequisite is measured off the rule's own target pattern rather than off `strip_ext`: `%..o` matching `foo..o` leaves `foo` where the last dot leaves `foo.`.\n\nWhere it went, all in kati/src-rs/dep.rs: `convert_written_suffix_rules` and `convert_suffix_rule` replace `populate_suffix_rule`, called from `install_builtin_rules` where the list has settled instead of from `populate_explicit_rule` where it has not; `suffix_rule_candidates` and `suffix_rule_input` replace the `get_ext` lookup and `replace_suffix` at both search sites; `apply_output_pattern` substitutes into the target pattern. `keep_only_declared_suffix_rules` is gone — a conversion the list drives cannot make a rule the list does not declare — and so is the `.SUFFIXES`-empty clear beside it.\n\nTwo things the conformance gate caught and one it settled. The deprecation warning is about the syntax, not the rule: `--no_builtin_rules --warn_suffix_rules` empties the list, so nothing converts, and `suffix_rule_warn.sh` says the warning still fires. It is now `deprecate_suffix_rule_syntax`, called where the rule is read. And the `.X.a` capture now asks GNU's question — is the target suffix exactly `.a` — rather than whether it ends in one.\n\nGates: workspace 869 (868 + the reduction), conformance 334/53 unchanged, equivalence 297/278/0 disagreements, upstream inventory 1299 rows at 161/0/37/1101 with compiler at zero and not one row moved, all three Clippy passes clean, make_port green with no recording rewritten.\n\nFixtures: tests/make/suffix-rule-name-splits-against-the-declared-list, recorded from the oracle, carries both spellings and both stems. tests/make-project-reductions/suffix-rule-target-suffix-holds-a-dot is the reduction, run by tests/make_projects.rs — the tree is checked in and copied into a scratch directory rather than written by the test, so the reproduction a reader does by hand is the one the test does."
+                    }
+
+                    {
+                        at 2026-08-19T16:05:56.003633432Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-recursive-ordering-sees-a-middleman
+                title "Order recursive children by what they produce through an ordinary target"
+                kind @fix
+                deps (make-recursive-evaluation-boundary)
+            }
+
+            {
+                id make-recursion-lifts-through-a-wrapper
+                title "Lift a $(MAKE) the shell would reach through one wrapper"
+                kind @fix
+                deps (make-subninja-recursion)
+            }
         )
         log (
             {
