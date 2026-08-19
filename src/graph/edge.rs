@@ -1,4 +1,5 @@
 use super::{Edge, NodeId};
+use crate::runtime::FileTime;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct EdgePartitions {
@@ -8,6 +9,22 @@ pub(super) struct EdgePartitions {
 }
 
 impl Edge {
+    /// One of this edge's output timestamps, read as the target the edge is
+    /// deciding about rather than as something else's prerequisite.
+    ///
+    /// The one place GNU Make rounds a whole-second record up: `update_file_1`
+    /// applies `low_resolution_time` to `this_mtime`, the mtime of the file
+    /// being updated, and the same file keeps its plain date wherever it is
+    /// read as a prerequisite. Every comparison that puts an output on the
+    /// target side asks this, and nothing else does.
+    pub(crate) const fn target_mtime(&self, mtime: FileTime) -> FileTime {
+        if self.outputs_low_resolution {
+            mtime.to_end_of_second()
+        } else {
+            mtime
+        }
+    }
+
     pub(crate) fn explicit_inputs(&self) -> &[NodeId] {
         &self.input[..self.partitions.explicit_inputs]
     }

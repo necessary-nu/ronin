@@ -329,6 +329,10 @@ impl RealDiskInterface {
     /// date for the member, and a member file left newer on disk than the
     /// indexed copy makes the member count as absent — it was rebuilt and not
     /// yet filed.
+    ///
+    /// The answer is the plain date the index holds. `f_mtime` also sets
+    /// `low_resolution_time` on the member, which is a second question asked
+    /// where a comparison is made rather than here.
     #[cfg(all(unix, feature = "make"))]
     fn archive_member_stat(&self, library: &[u8], member: &[u8]) -> i64 {
         use std::os::unix::ffi::OsStrExt as _;
@@ -349,14 +353,14 @@ impl RealDiskInterface {
         if filed != 0 && filed / 1_000_000_000 > date {
             return 0;
         }
-        // The archive header keeps whole seconds, so the member is dated to
-        // the *last* nanosecond of its second rather than the first. GNU Make
-        // does the same arithmetic under `low_resolution_time`
-        // (reference/gnumake/src/remake.c: `this_mtime += FILE_TIMESTAMPS_PER_S
-        // - 1 - ns`), and it is what keeps a member filed in the same second
-        // as its source from looking older than it.
+        // The START of the second the index recorded, which is what
+        // `file_timestamp_cons (hname, member_date, 0)` builds. The rounding
+        // GNU Make does under `low_resolution_time` is not here: it applies to
+        // the file being updated and to nothing else, so it belongs to the
+        // comparison that has the member on its target side —
+        // `Edge::outputs_low_resolution` — and never to the answer this gives
+        // about a member something else reads.
         date.saturating_mul(1_000_000_000)
-            .saturating_add(999_999_999)
     }
 
     /// Create every parent directory needed for a file path.

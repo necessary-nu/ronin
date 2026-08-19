@@ -85,6 +85,10 @@ struct PendingWithdrawal {
 }
 
 /// A recursive recipe held until all its child Makefiles have been compiled.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the lint guards a positional argument list, and this is only ever filled in by name"
+)]
 pub(crate) struct PendingSubninja {
     pub(crate) invocations: Vec<SubninjaInvocation>,
     pub(crate) scope: Scope,
@@ -102,6 +106,7 @@ pub(crate) struct PendingSubninja {
     completion_output: Option<Node>,
     intermediate: bool,
     disposable: bool,
+    low_resolution: bool,
     withdrawal: PendingWithdrawal,
     peer_outputs: Vec<Node>,
     bindings: Vec<(Binding, Vec<u8>)>,
@@ -501,6 +506,7 @@ impl GraphSink {
             // A recursive wrapper really is an alias: its outputs stand for
             // the child goals that replace it.
             outputs_unaliased: false,
+            outputs_low_resolution: pending.low_resolution,
             bindings: std::mem::take(&mut pending.bindings),
         })?;
         // A recursive target is a target: what the child Make left on disk is
@@ -1057,6 +1063,13 @@ impl BuildSink for GraphSink {
         };
 
         let bindings = self.edge_bindings(edge);
+        // An archive index dates its members in whole seconds, which the
+        // comparisons that put one on their target side have to read as the end
+        // of that second. Whether an output is one is decided from the name the
+        // Makefile wrote, here, and never from a path the build engine looks at.
+        let low_resolution = std::iter::once(&edge.output)
+            .chain(edge.implicit_outputs)
+            .any(|output| kati::archive::split_archive_name(&output.as_bytes(&names)).is_some());
         if let Some(id) = edge.rule
             && let Some(rule) = self.subninja_rules.remove(&id)
         {
@@ -1076,6 +1089,7 @@ impl BuildSink for GraphSink {
                 completion_output: edge.completion_join.then_some(completion_output),
                 intermediate: edge.intermediate,
                 disposable: edge.disposable,
+                low_resolution,
                 withdrawal,
                 peer_outputs,
                 bindings,
@@ -1113,6 +1127,7 @@ impl BuildSink for GraphSink {
             // reaches here came from a Makefile, so having no rule is the whole
             // of the question.
             outputs_unaliased: edge.rule.is_none(),
+            outputs_low_resolution: low_resolution,
             bindings,
         };
         match self.graph.add_edge(spec) {

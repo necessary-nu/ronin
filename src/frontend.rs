@@ -169,6 +169,18 @@ pub struct EdgeSpec<'a> {
     /// is newer than what reads it. A manifest can only say the first, so a
     /// graph parsed from one never carries this.
     pub outputs_unaliased: bool,
+    /// Whether these outputs' dates come from a record that keeps only whole
+    /// seconds, so a comparison with one of them on the target side reads it as
+    /// the end of its second.
+    ///
+    /// GNU Make's `low_resolution_time`, which an archive index is the one
+    /// source of: a member filed from an object written part way through a
+    /// second is dated fractionally before the object it copies, and without the
+    /// rounding the archive is rewritten forever. The rounding applies to the
+    /// file being updated and to nothing else, so this says which files those
+    /// are and the comparison decides when to use it. A manifest has no way to
+    /// say it.
+    pub outputs_low_resolution: bool,
     /// Bindings local to this edge, already expanded.
     pub bindings: Vec<(Binding, Vec<u8>)>,
 }
@@ -466,6 +478,7 @@ impl BuildGraph {
             stored.intermediate = spec.intermediate;
             stored.disposable = spec.disposable;
             stored.outputs_unaliased = spec.outputs_unaliased;
+            stored.outputs_low_resolution = spec.outputs_low_resolution;
         }
         self.resolve_pool(edge)?;
         for output in spec.explicit_outputs.iter().chain(spec.implicit_outputs) {
@@ -1005,6 +1018,7 @@ mod tests {
             intermediate: false,
             disposable: false,
             outputs_unaliased: false,
+            outputs_low_resolution: false,
             bindings: Vec::new(),
         }
     }
@@ -1032,6 +1046,7 @@ mod tests {
                 intermediate: false,
                 disposable: false,
                 outputs_unaliased: false,
+                outputs_low_resolution: false,
                 bindings: vec![(description, b"copying".to_vec())],
             })
             .unwrap();

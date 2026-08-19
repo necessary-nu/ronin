@@ -637,6 +637,7 @@ assertions (
     {id make-archive-index-reader-is-written-twice, kind @complete, author "brendan@necessary.nu", at 2026-08-19T18:28:11.684684076Z}
     {id make-question-variable-reads-an-archive-member, kind @complete, author "brendan@necessary.nu", at 2026-08-19T18:28:16.124700877Z}
     {id make-empty-recipe-target-is-not-a-ninja-alias, kind @complete, author "brendan@necessary.nu", at 2026-08-19T19:02:02.421210827Z}
+    {id make-archive-member-date-is-low-resolution-on-the-target-side, kind @complete, author "brendan@necessary.nu", at 2026-08-19T19:42:40.348967632Z}
 )
 
 impl_evidence (

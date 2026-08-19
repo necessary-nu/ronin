@@ -139,6 +139,20 @@ pub(crate) struct Edge {
     /// edge is cannot be read off its having no command, so the front end that
     /// compiled it says.
     pub(crate) outputs_unaliased: bool,
+    /// Whether the record these outputs' dates are read from keeps only whole
+    /// seconds, so a comparison that has one on the target side must read it as
+    /// the end of its second.
+    ///
+    /// An archive index is the one such record GNU Make has: a member filed
+    /// from an object written part way through a second is dated a fraction
+    /// earlier than the object it copies, and without the rounding the archive
+    /// is rewritten on every invocation. GNU Make marks the file
+    /// `low_resolution_time` and rounds in `update_file_1`, which is the file
+    /// being updated and nowhere else — a member read as a prerequisite keeps
+    /// the plain date. So the rounding belongs to the comparison rather than to
+    /// the stat, and the edge that makes the file is what knows its date is
+    /// coarse.
+    pub(crate) outputs_low_resolution: bool,
     /// Whether what the outputs did is read off the disk once the command has
     /// run, rather than taken from the command having run.
     ///
@@ -484,29 +498,21 @@ where
             runtime.node_mut(*output).set_mtime(newest_input);
         }
         input_dirty
-    } else if graph.is_phony_rule(edge_data.rule) {
-        // An alias substitutes for an output it does not have; a target whose
-        // recipe wrote nothing keeps the answer the disk gave. The two share
-        // the commandless shape and nothing else, so the edge is asked which
-        // it is rather than the rule.
-        let aliases_inputs = !edge_data.outputs_unaliased;
+    } else if graph.is_phony_rule(edge_data.rule) && !edge_data.outputs_unaliased {
+        // An alias stands in for an output it does not have, and is out of date
+        // only when what it stands for is. A target whose recipe wrote nothing
+        // shares the commandless shape and nothing else: it is read below, with
+        // every other target, because that is what GNU Make does with it.
         let mut any_output_missing = false;
         for output in &edge_data.out {
             if runtime.node(*output).mtime().is_missing() {
                 any_output_missing = true;
-                if aliases_inputs {
-                    runtime.node_mut(*output).set_mtime(newest_input);
-                }
+                runtime.node_mut(*output).set_mtime(newest_input);
             }
         }
-        // An alias for nothing at all is Ninja's always-out-of-date target, and
-        // an alias for something is out of date only when that something is.
-        // A target made by an empty recipe answers for its own absence however
-        // many prerequisites it has: GNU Make made it, nothing was written, and
-        // the name is still not there.
-        let missing_counts = edge_data.outputs_unaliased
-            || (edge_data.input.is_empty() && edge_data.validation.is_empty());
-        input_dirty || (any_output_missing && missing_counts)
+        let missing_without_inputs =
+            edge_data.input.is_empty() && edge_data.validation.is_empty() && any_output_missing;
+        input_dirty || missing_without_inputs
     } else {
         let mut oldest_output: Option<FileTime> = None;
         let mut oldest_recorded_output: Option<FileTime> = None;
@@ -516,9 +522,8 @@ where
             .filter(|output| !peers.contains(output))
         {
             let output = runtime.node(*output);
-            oldest_output = Some(
-                oldest_output.map_or_else(|| output.mtime(), |oldest| oldest.min(output.mtime())),
-            );
+            let mtime = edge_data.target_mtime(output.mtime());
+            oldest_output = Some(oldest_output.map_or(mtime, |oldest: FileTime| oldest.min(mtime)));
             if edge_data.freshness_history == FreshnessHistory::BuildLogAware
                 && output.log_mtime().is_observed()
             {
@@ -809,6 +814,7 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         intermediate: false,
         disposable: false,
         outputs_unaliased: false,
+        outputs_low_resolution: false,
         outputs_reobserved: false,
         freshness_history: FreshnessHistory::default(),
         partitions: EdgePartitions::default(),
@@ -1621,6 +1627,48 @@ mod tests {
         assert_eq!(runtime.node(middle).mtime(), FileTime::MISSING);
         assert!(!runtime.node(aliased).dirty());
         assert_eq!(runtime.node(aliased).mtime(), FileTime::observed(1));
+    }
+
+    /// A whole-second record dates a file a fraction before the thing it was
+    /// copied from, and GNU Make rounds that up where the file is the one being
+    /// updated and nowhere else. Both readings are in this graph at once: `mid`
+    /// is `src`'s copy and is up to date, and `out`, which reads `mid` as a
+    /// prerequisite, is not.
+    #[test]
+    fn ronin_graph_low_resolution_rounds_once() {
+        let mut graph = Graph::default();
+        let root = mkenv(&mut graph, None);
+        let middle = generated_node(&mut graph, root, "mid", &["src"]);
+        let consumer = generated_node(&mut graph, root, "out", &["mid"]);
+        let producer = graph.node(middle).generator.unwrap();
+
+        // `mid` is dated to the start of the second `src` was written part way
+        // through, and `out` was written a whole second before either.
+        let second = 1_700_000_000_000_000_000;
+        let mtimes = BTreeMap::from([
+            ("src".to_owned(), second + 700_000_000),
+            ("mid".to_owned(), second),
+            ("out".to_owned(), second - 1_000_000_000),
+        ]);
+        let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
+
+        // Read plainly, `mid` is older than the thing it is a copy of.
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
+        assert!(runtime.node(middle).dirty());
+
+        graph.edge_mut(producer).outputs_low_resolution = true;
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
+        assert!(
+            !runtime.node(middle).dirty(),
+            "the round-up applies where the file is the one being made"
+        );
+        assert_eq!(
+            runtime.node(middle).mtime(),
+            FileTime::observed(second),
+            "and nowhere else: what reads it as a prerequisite sees the plain date"
+        );
     }
 
     /// GNU Make's intermediate file: one the implicit rule search invented, so

@@ -111,7 +111,7 @@ impl Builder<'_> {
         if state.activation_attached() {
             return DeferredWork::Run;
         }
-        let baseline = state.baseline();
+        let baseline = self.graph.edge(edge).target_mtime(state.baseline());
         let all_inputs_new = state.all_inputs_new();
         let mut should_run = state.initial_run();
         let mut seen = BTreeSet::new();

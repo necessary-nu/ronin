@@ -782,6 +782,12 @@ fn unaliased(graph: &BuildGraph) -> Vec<String> {
     outputs_where(graph, |edge| edge.outputs_unaliased)
 }
 
+/// Every output either graph reads as the end of its second when the edge that
+/// makes it is deciding whether to, as a sorted list of paths.
+fn low_resolution(graph: &BuildGraph) -> Vec<String> {
+    outputs_where(graph, |edge| edge.outputs_low_resolution)
+}
+
 fn outputs_where(graph: &BuildGraph, wanted: impl Fn(&crate::graph::Edge) -> bool) -> Vec<String> {
     let arenas = graph.arenas();
     let mut paths = arenas
@@ -973,6 +979,48 @@ alias: src
     );
     assert!(
         unaliased(&both.parsed).is_empty(),
+        "a manifest has no way to say this, so reading one back must not invent it"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
+    );
+}
+
+/// An archive index dates its members in whole seconds, and only the direct
+/// graph knows which outputs come from one.
+///
+/// `mylib.a(a.o)` is filed by the rule that reads `a.o`, so that edge is the
+/// one that has to read the member's date as the end of its second — GNU Make's
+/// `low_resolution_time`, which applies to the file being updated. `mylib.a`
+/// itself is the control: the same members are its prerequisites, and a
+/// prerequisite keeps the plain date, so its edge does not carry the property.
+///
+/// A manifest cannot say it — a member is a path there like any other — which
+/// is the same bounded divergence `intermediate` and `disposable` have.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn archive_members_reach_the_direct_graph() {
+    let case = Case::new(
+        "\
+mylib.a: mylib.a(a.o)
+(%): %
+\t@ar -rcU $@ $<
+a.o:
+\t@echo body > $@
+",
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(
+        low_resolution(&both.direct),
+        vec!["mylib.a(a.o)".to_owned()],
+        "the archive that reads the member keeps the plain date"
+    );
+    assert!(
+        low_resolution(&both.parsed).is_empty(),
         "a manifest has no way to say this, so reading one back must not invent it"
     );
     assert_eq!(

@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 14
+| # The same rounding as an-archive-member-is-current-in-the-second-it-was-filed,
+| # reached through GNU Make's own built-in `(%): %` rule rather than through one
+| # the makefile writes. Nothing here says how a member is made, so the built-in
+| # rule is what decides that `mylib.a(a.o)` is current — and being current, its
+| # `$(AR)` line never runs, which is what makes this gate the timestamps rather
+| # than ar.
+| #
+| # `a.o` was written .7 of the second the index dates the member to, and
+| # `mylib.a` .9 of it. Read as the target of the rule that would file it the
+| # member is the end of that second and so newer than `a.o`; read as `mylib.a`'s
+| # prerequisite it is the start of it and so older than the archive. Both
+| # readings have to be the right way round for this build to have nothing to do.
+| mylib.a: mylib.a(a.o)
+| 	@echo "refiled" >> log
+file a.o kept 1
+| aaa
+file mylib.a kept 3
+| !<arch>
+| a.o/            1609459200  0     0     100644  4         `
+| aaa

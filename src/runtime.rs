@@ -38,6 +38,28 @@ impl FileTime {
     pub(crate) const fn is_observed(self) -> bool {
         !self.is_unobserved()
     }
+
+    /// This timestamp read as the newest moment the record it came from is
+    /// consistent with.
+    ///
+    /// An archive index dates its members in whole seconds, so a member filed
+    /// from an object written part way through a second reads as older than the
+    /// object it is a copy of, and the archive is rewritten forever. GNU Make
+    /// marks such a file `low_resolution_time` and rounds it up to the end of
+    /// its second — but only where the file is the one being updated
+    /// (reference/gnumake/src/remake.c, `update_file_1`: `this_mtime +=
+    /// FILE_TIMESTAMPS_PER_S - 1 - ns`), never where it is a prerequisite of
+    /// something else. That is what makes this a reading rather than a
+    /// timestamp: the same file answers both ways depending on which side of
+    /// the comparison it is on.
+    ///
+    /// Missing and unobserved answer for themselves. Neither is a moment.
+    pub(crate) const fn to_end_of_second(self) -> Self {
+        if !self.is_observed() || self.is_missing() {
+            return self;
+        }
+        Self(self.0 - self.0.rem_euclid(1_000_000_000) + 999_999_999)
+    }
 }
 
 /// A Ninja command hash with the format's zero/missing value encapsulated.

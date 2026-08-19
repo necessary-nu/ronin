@@ -1,0 +1,11 @@
+# Written by hand rather than by ar, because ar built with
+# --enable-deterministic-archives writes every date as zero and the date is the
+# whole point here. 1609459200 is 2021-01-01 00:00:00Z.
+printf 'aaa\n' > a.o
+touch -d '2021-01-01 00:00:00.700000000Z' a.o
+{
+	printf '!<arch>\n'
+	printf 'a.o/            1609459200  0     0     100644  4         `\n'
+	printf 'aaa\n'
+} > mylib.a
+touch -d '2021-01-01 00:00:00.900000000Z' mylib.a

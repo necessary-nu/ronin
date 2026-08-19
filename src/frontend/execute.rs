@@ -522,6 +522,7 @@ mod tests {
                     intermediate: false,
                     disposable: false,
                     outputs_unaliased: false,
+                    outputs_low_resolution: false,
                     bindings: Vec::new(),
                 })
                 .unwrap();

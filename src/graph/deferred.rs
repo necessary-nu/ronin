@@ -197,11 +197,16 @@ where
     // timestamp comparison below rather than run on every invocation.
     let mut timestamp_dirty =
         all_inputs_new || (edge_data.always_dirty && edge_data.non_order_only_inputs().is_empty());
+    // The comparison has the outputs on the target side, where GNU Make reads a
+    // whole-second record as the end of its second. What is published below is
+    // the plain baseline, because what reads these outputs as prerequisites
+    // must see the date they actually have.
+    let target_baseline = edge_data.target_mtime(baseline);
     for input in edge_data.non_order_only_inputs() {
         let input_state = runtime.node(*input);
         timestamp_dirty |= freshness.always_new_inputs.contains(input)
             || input_state.mtime().is_missing()
-            || input_state.mtime() > baseline;
+            || input_state.mtime() > target_baseline;
     }
     let semantic_dirty =
         timestamp_dirty || runtime.edge(edge).deps_missing() || runtime.edge(edge).command_dirty();

@@ -1715,12 +1715,41 @@ impl<'a> Builder<'a> {
         Ok((pruned, loaded_dyndeps))
     }
 
+    /// Complete an edge with no command, which is the whole of running it.
+    ///
+    /// An alias is settled by definition: its outputs were never files, so
+    /// there is nothing to look at and nothing for a dependent to reconsider.
+    ///
+    /// A Makefile target whose recipe wrote nothing is settled the same way
+    /// every other Make target is — from the disk, afterwards. GNU Make runs
+    /// the empty recipe, reads the target again, and lets what it then finds
+    /// decide what reads it: a target still on disk where it was leaves its
+    /// dependents alone, and one that is not there leaves them out of date. The
+    /// second look costs a stat and is the difference between a build that
+    /// settles and one that runs the same recipe forever.
     fn finish_phony_edge(&mut self, edge: EdgeId) -> (bool, Vec<NodeId>) {
-        let outputs: &[NodeId] = &self.graph.edge(edge).out;
-        for &output in outputs {
+        let reobserve = self.graph.edge(edge).outputs_unaliased && !self.options.dryrun;
+        let outputs: Vec<NodeId> = self.graph.edge(edge).out.to_vec();
+        let mut every_output_made = true;
+        if reobserve {
+            let disk = self.disk.clone();
+            for &output in &outputs {
+                let path = self.graph.node_path(output);
+                let mtime = disk
+                    .stat(path.to_path().expect("byte paths are valid on Unix"))
+                    .map_or(FileTime::MISSING, FileTime::observed);
+                every_output_made &= !mtime.is_missing();
+                self.runtime.node_mut(output).observe(mtime);
+            }
+        }
+        for &output in &outputs {
             self.runtime.node_mut(output).set_dirty(false);
         }
-        (false, Vec::new())
+        // A target the recipe left absent is what GNU Make reads as infinitely
+        // new, so nothing that waited for it is settled by this.
+        let pruned = reobserve && every_output_made;
+        self.runtime.edge_mut(edge).set_restat_clean(pruned);
+        (pruned, Vec::new())
     }
 
     fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> BuildResult<()> {

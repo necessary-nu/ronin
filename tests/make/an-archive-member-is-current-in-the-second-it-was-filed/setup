@@ -1,0 +1,20 @@
+# The archives are written by hand rather than by ar, because ar built with
+# --enable-deterministic-archives writes every date as zero and the dates are
+# the whole point here. 1609459200 is 2021-01-01 00:00:00Z.
+printf 'cur\n' > cur.o
+touch -d '2021-01-01 00:00:00.700000000Z' cur.o
+{
+	printf '!<arch>\n'
+	printf 'cur.o/          1609459200  0     0     100644  4         `\n'
+	printf 'cur\n'
+} > libcur.a
+touch -d '2021-01-01 00:00:00.900000000Z' libcur.a
+
+printf 'old\n' > old.o
+touch -d '2021-01-01 00:00:05Z' old.o
+{
+	printf '!<arch>\n'
+	printf 'old.o/          1609459200  0     0     100644  4         `\n'
+	printf 'old\n'
+} > libold.a
+touch -d '2021-01-01 00:00:00.900000000Z' libold.a
