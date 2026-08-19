@@ -187,6 +187,10 @@ pub(crate) struct Graph {
     /// neither run again nor believe in. Beside the arena for the reason
     /// `withdrawal` is: no node of a Ninja manifest is ever in it.
     unmade_makefiles: crate::htab::RapidHashSet<NodeId>,
+    /// Makefiles this read asked about under `-q` and was told were not up to
+    /// date, which the goals must refuse over without calling it a failure.
+    /// Beside the arena for the reason `unmade_makefiles` is.
+    questioned_makefiles: crate::htab::RapidHashSet<NodeId>,
     /// Makefiles the read wanted and did not get, whatever stands at their name.
     /// Beside the arena for the same reason `unmade_makefiles` is.
     unread_makefiles: crate::htab::RapidHashSet<NodeId>,

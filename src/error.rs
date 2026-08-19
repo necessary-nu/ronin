@@ -47,6 +47,8 @@ enum ErrorRepr {
     Tool(ToolError),
 }
 
+mod build;
+
 impl Error {
     /// Returns the subsystem that originated this failure.
     #[must_use]
@@ -828,6 +830,14 @@ pub(crate) enum BuildError {
         node: NodeId,
         path: BString,
         needed_by: Option<(NodeId, BString)>,
+        /// Whether the name was one the `-q` pass merely ASKED about.
+        ///
+        /// GNU Make leaves such a makefile `updated` with `us_question` where
+        /// one whose recipe ran and lost is left `us_failed`, and refuses a goal
+        /// over either. The difference is a whole exit code — `MAKE_TROUBLE`
+        /// against `MAKE_FAILURE` — so the refusal carries which of the two
+        /// verdicts it is, stamped where the graph still knew.
+        questioned: bool,
     },
     EdgeNotRunning {
         edge: EdgeId,
@@ -978,67 +988,6 @@ impl BuildStop {
                 ..
             } => Self::Reported,
             other => Self::Failed(Box::new(other)),
-        }
-    }
-}
-
-impl BuildError {
-    /// This failure's front-end diagnostic, through the summary the build loop
-    /// wrapped it in.
-    pub(crate) fn front_end_diagnostic(&self) -> Option<&str> {
-        match self {
-            Self::LateCommand { diagnostic } => Some(diagnostic),
-            Self::Stopped {
-                reason: BuildStop::Failed(inner),
-                ..
-            } => inner.front_end_diagnostic(),
-            _ => None,
-        }
-    }
-
-    /// The process exit status this failure carries out of the build.
-    ///
-    /// Ninja propagates a failing command's own status so a caller can tell a
-    /// compile error from an out-of-memory kill. Anything that is not a command
-    /// reporting for itself is a plain failure.
-    pub(crate) fn exit_code(&self) -> i32 {
-        match self {
-            Self::SubcommandFailed { status, .. } => crate::subprocess::exit_status_code(*status),
-            Self::Interrupted { .. } => crate::subprocess::INTERRUPTED_EXIT_CODE,
-            Self::Stopped { status, .. } => *status,
-            _ => 1,
-        }
-    }
-
-    pub(crate) const fn io(
-        operation: BuildOperation,
-        path: Option<BString>,
-        edge: Option<EdgeId>,
-        source: io::Error,
-    ) -> Self {
-        Self::Io {
-            operation,
-            path,
-            edge,
-            source,
-        }
-    }
-
-    pub(crate) fn target_context(source: Self) -> Self {
-        Self::TargetContext {
-            source: Box::new(source),
-        }
-    }
-
-    const fn kind(&self) -> ErrorKind {
-        match self {
-            Self::Manifest(error) => error.kind(),
-            Self::Graph(_) => ErrorKind::Graph,
-            Self::Persistence(_) => ErrorKind::Persistence,
-            Self::Process(_) => ErrorKind::Process,
-            Self::Tool(error) => error.kind(),
-            Self::TargetContext { source } => source.kind(),
-            _ => ErrorKind::Build,
         }
     }
 }
@@ -1615,61 +1564,6 @@ mod tests {
         assert_eq!(
             system_message(&"nothing (os error) to cut"),
             "nothing (os error) to cut"
-        );
-    }
-
-    fn command_failure(raw: i32) -> BuildError {
-        #[cfg(unix)]
-        use std::os::unix::process::ExitStatusExt as _;
-        BuildError::SubcommandFailed {
-            edge: crate::graph::EdgeId::from_event_key(1).expect("one names a slot"),
-            command: BString::from("exit"),
-            status: std::process::ExitStatus::from_raw(raw),
-        }
-    }
-
-    // [spec:ronin:req:compat.command-runtime/test]
-    // [spec:ronin:req:product.build-outcome/test]
-    #[test]
-    fn a_stopped_build_reports_ninjas_reason_and_the_failing_status() {
-        // Exhausting the allowance says the build was cut off; having allowance
-        // left says it went as far as everything not behind a failure allowed.
-        let cut_off = BuildStop::from_failure(command_failure(7 << 8), 1, 1, 1);
-        assert_eq!(cut_off.to_string(), "subcommand failed");
-        let plural = BuildStop::from_failure(command_failure(7 << 8), 2, 2, 2);
-        assert_eq!(plural.to_string(), "subcommands failed");
-        let exhausted = BuildStop::from_failure(command_failure(7 << 8), 1, usize::MAX, usize::MAX);
-        assert_eq!(
-            exhausted.to_string(),
-            "cannot make progress due to previous errors"
-        );
-        let interrupted =
-            BuildStop::from_failure(BuildError::Interrupted { status: None }, 1, 1, 1);
-        assert_eq!(interrupted.to_string(), "interrupted by user");
-
-        // An error that is not a command's own status keeps its description,
-        // because a summary would be the only account of what went wrong.
-        let internal = BuildError::UnsupportedDepsType {
-            edge: crate::graph::EdgeId::from_event_key(1).expect("one names a slot"),
-            deps_type: "clang".to_owned(),
-        };
-        let other = BuildStop::from_failure(internal, 1, 1, 1);
-        assert_eq!(other.to_string(), "unsupported deps type 'clang'");
-
-        let stopped = BuildError::Stopped {
-            reason: cut_off,
-            status: 7,
-        };
-        assert_eq!(stopped.to_string(), "build stopped: subcommand failed.");
-        assert_eq!(stopped.exit_code(), 7);
-        assert_eq!(command_failure(7 << 8).exit_code(), 7);
-        assert_eq!(BuildError::Interrupted { status: None }.exit_code(), 130);
-        assert_eq!(
-            BuildError::InvalidDepsEncoding {
-                edge: crate::graph::EdgeId::from_event_key(1).expect("one names a slot"),
-            }
-            .exit_code(),
-            1
         );
     }
 

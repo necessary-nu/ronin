@@ -746,6 +746,66 @@ fn question_refuses_a_forgiven_makefile_goal() {
     fs::remove_dir_all(directory).unwrap();
 }
 
+/// The same question under `-k`, which is the only thing that lets GNU Make's
+/// two failing statuses for a makefile be told apart.
+///
+/// `complain()` chooses `error` over `fatal` on `keep_going_flag`
+/// (remake.c:422), so the run does not die inside the complaint — it returns
+/// whatever `update_file_1` was going to return, which for a makefile the `-q`
+/// pass merely ASKED about is `us_question`, and `main.c` turns that into
+/// `MAKE_TROUBLE` rather than `MAKE_FAILURE`. Without `-k` the complaint is fatal
+/// and 2 wins whatever the status was, which is the cell above.
+///
+/// The negative alongside it is what keeps the distinction off the ordinary
+/// path: a goal with no rule was never asked about in a makefile pass, so it
+/// takes `update_file_1`'s ordinary route, returns `us_failed`, and answers 2
+/// under every combination of the two switches.
+///
+/// GNU Make 4.4.1 answers 1 to `make -q -k one.mk` here, reports the refusal,
+/// and still leaves `one.mk` uncreated.
+#[test]
+fn keep_going_keeps_the_questions_status() {
+    let directory = test_directory("question-keep-going");
+    fs::write(
+        directory.join("Makefile"),
+        "-include one.mk\nall: ; @echo all ran\none.mk: ; @echo GEN-one; echo X=1 > one.mk\n",
+    )
+    .unwrap();
+    let questioned = make_command(&directory)
+        .args(["-q", "-k", "one.mk"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        questioned.status.code(),
+        Some(1),
+        "a question was answered as a failure: {}",
+        String::from_utf8_lossy(&questioned.stderr)
+    );
+    assert!(
+        !String::from_utf8_lossy(&questioned.stderr).is_empty(),
+        "the refusal that made the question unanswerable was not reported"
+    );
+    assert!(
+        !directory.join("one.mk").exists(),
+        "the question built the file it was asked about"
+    );
+
+    fs::write(directory.join("Makefile"), "all: missing ; @echo all\n").unwrap();
+    for arguments in [
+        ["-q", "-k", "all"],
+        ["-q", "-q", "all"],
+        ["-k", "-k", "all"],
+    ] {
+        let ordinary = make_command(&directory).args(arguments).output().unwrap();
+        assert_eq!(
+            ordinary.status.code(),
+            Some(2),
+            "an ordinary goal with no rule stopped answering 2 under {arguments:?}"
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// `-k` makes `complain()` report rather than die (remake.c:422), so the
 /// makefile update walks on: every required makefile nothing can make gets its
 /// complaint and its refusal, rather than the run ending at the first.
@@ -854,6 +914,122 @@ fn lost_remake_reports_its_unread_include() {
     assert!(
         !said.contains("No such file or directory"),
         "the complaint was narrated on stdout: {said}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The same complaint, once per makefile, when `-k` lets the update reach more
+/// than one of them.
+///
+/// `complain()` chooses `error` over `fatal` on `keep_going_flag`
+/// (remake.c:422). Without `-k` the first complaint ends the run inside the
+/// update and the makefiles after it are never considered; with `-k` the walk
+/// carries on and every required makefile whose own recipe ran and lost gets its
+/// own complaint. This is the recipe-lost half of the accounting
+/// `keep_going_refuses_every_makefile` covers for makefiles nothing can make.
+///
+/// GNU Make 4.4.1 on `make -k` here prints `GEN1`, one.mk's complaint, its
+/// failure, `GEN2`, two.mk's complaint, its failure, then a summary line for
+/// each; on `make` it stops after one.mk's. Both exit 2 and neither writes
+/// either fragment. The summaries are GNU runtime narration Ronin does not
+/// repeat — every name in them has already been reported.
+/// `[spec:ronin:req:make.narration+1]`.
+// [spec:ronin:req:make.narration+1/test]
+#[test]
+fn keep_going_complains_per_lost_makefile() {
+    let directory = test_directory("keep-going-lost-makefiles");
+    fs::write(
+        directory.join("Makefile"),
+        "include one.mk\ninclude two.mk\nall: ; @echo all ran\n\
+         one.mk: ; @echo GEN1; exit 1\ntwo.mk: ; @echo GEN2; exit 1\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &["-k"]);
+    assert!(!succeeded, "{reported}");
+    let positions = [
+        "Makefile:1: one.mk: No such file or directory",
+        "Makefile:2: two.mk: No such file or directory",
+    ]
+    .map(|line| {
+        reported
+            .find(line)
+            .unwrap_or_else(|| panic!("{line}: {reported}"))
+    });
+    assert!(
+        positions[0] < positions[1],
+        "the complaints were not made in the order the read reached them: {reported}"
+    );
+    assert!(
+        reported.contains("GEN2"),
+        "the update stopped early: {reported}"
+    );
+    assert!(
+        !reported.contains("Failed to remake makefile"),
+        "the run repeated names it had already reported: {reported}"
+    );
+    assert!(!reported.contains("all ran"), "the goal ran: {reported}");
+    assert!(
+        !directory.join("one.mk").exists() && !directory.join("two.mk").exists(),
+        "a losing recipe left its makefile behind"
+    );
+
+    // Without the switch the complaint is fatal, so only the first is made.
+    let (succeeded, reported) = merged_make(&directory, &[]);
+    assert!(!succeeded, "{reported}");
+    assert!(
+        reported.contains("Makefile:1: one.mk: No such file or directory"),
+        "{reported}"
+    );
+    assert!(
+        !reported.contains("two.mk"),
+        "a makefile behind the fatal complaint was considered: {reported}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// A name `MAKEFILES` gave is remade like any other makefile the read reached.
+///
+/// GNU Make reads them with `eval_makefile (name, RM_NO_DEFAULT_GOAL|RM_INCLUDED
+/// |RM_DONTCARE)` (read.c:204) and the goaldep that comes back joins `read_files`
+/// like any other, so the update remakes it if a rule says how and restarts the
+/// read on what the recipe wrote. `RM_DONTCARE` forgives the failure; it does
+/// not excuse the attempt.
+///
+/// GNU Make 4.4.1 on `make MAKEFILES=gen.mk` here prints `GEN` then `all X=1`,
+/// leaves `gen.mk` on disk and exits 0. A name with no rule behind it, and one
+/// that will not open, are passed over without a word and exit 0 too — the
+/// forgiveness covers the diagnostic as well as the failure.
+#[test]
+fn makefiles_variable_entries_are_remade() {
+    let directory = test_directory("makefiles-variable-remade");
+    fs::write(
+        directory.join("Makefile"),
+        "all: ; @echo all X=$(X)\ngen.mk: ; @echo GEN; echo X=1 > gen.mk\n",
+    )
+    .unwrap();
+
+    let (succeeded, reported) = merged_make(&directory, &["MAKEFILES=gen.mk"]);
+    assert!(succeeded, "{reported}");
+    assert!(
+        reported.contains("GEN"),
+        "the fragment was not made: {reported}"
+    );
+    assert!(
+        reported.contains("all X=1"),
+        "the read did not start over on what the recipe wrote: {reported}"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("gen.mk")).unwrap(),
+        "X=1\n"
+    );
+
+    // A name nothing knows how to make is forgiven in silence, as `-include` is.
+    let (succeeded, reported) = merged_make(&directory, &["MAKEFILES=nope.mk"]);
+    assert!(succeeded, "{reported}");
+    assert!(
+        !reported.contains("nope.mk"),
+        "a forgiven name was reported: {reported}"
     );
     fs::remove_dir_all(directory).unwrap();
 }

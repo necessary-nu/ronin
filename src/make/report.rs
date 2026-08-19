@@ -129,19 +129,45 @@ pub(super) fn refused_makefile(
 /// run, and two says the question could not be answered at all. That convention
 /// is Make's rather than Ninja's, and it governs here because no build ran to
 /// have a status of its own.
+///
+/// A refusal is ordinarily the third of those, and there is one refusal that is
+/// the second instead. GNU Make has two failing statuses for a makefile: one the
+/// `-q` pass merely ASKED about is left `us_question`, which `main.c` turns into
+/// `MAKE_TROUBLE` — 1, the same answer as "something would have to run" — where
+/// one whose recipe ran and lost is left `us_failed` and `MAKE_FAILURE`. A
+/// makefile in that second state is refused over too and still answers 2, and
+/// still outranks a question the same run holds, which is GNU Make taking the
+/// worse of the two statuses.
+///
+/// `keep_going` is what makes the distinction visible and so what gates it:
+/// `complain()` chooses `error` over `fatal` on `keep_going_flag`
+/// (remake.c:422), and without the switch the complaint is fatal and 2 wins
+/// whatever status the file was left in.
+///
+/// The refusal is reported either way, on stderr with every other diagnostic.
+/// It is the reason the question could not be answered any other way, so it is
+/// a failure being reported rather than a run being narrated.
 // [spec:ronin:req:make.question-status]
-pub(super) fn answered(reported: String, question: Result<bool, Error>) -> RunResult {
+// [spec:ronin:req:make.narration+1]
+pub(super) fn answered(
+    reported: String,
+    question: Result<bool, Error>,
+    keep_going: bool,
+) -> RunResult {
     match question {
         Ok(up_to_date) => RunResult {
             stdout: terminated(reported),
             stderr: Vec::new(),
             exit_code: i32::from(!up_to_date),
         },
-        Err(failure) => RunResult {
-            stdout: terminated(reported),
-            stderr: terminated(crate::util::diagnostic(PRODUCT_NAME, failure)),
-            exit_code: 2,
-        },
+        Err(failure) => {
+            let questioned = keep_going && failure.refused_a_questioned_makefile();
+            RunResult {
+                stdout: terminated(reported),
+                stderr: terminated(crate::util::diagnostic(PRODUCT_NAME, failure)),
+                exit_code: if questioned { 1 } else { 2 },
+            }
+        }
     }
 }
 

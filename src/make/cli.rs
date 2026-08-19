@@ -1687,7 +1687,11 @@ pub(crate) fn run(
         let question = planned.and_then(|mut planned| planned.interrogate());
         let flushed = persistence.finish();
         let question = question.and_then(|up_to_date| flushed.map(|()| up_to_date));
-        return Ok(answered(reported, question));
+        return Ok(answered(
+            reported,
+            question,
+            invocation.given(Switch::KeepGoing),
+        ));
     }
     let outcome = planned.and_then(|planned| {
         let ending = (planned.already_up_to_date(), planned.disposable());

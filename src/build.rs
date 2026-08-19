@@ -296,7 +296,15 @@ impl Plan {
             // commands (remake.c: "Recently tried and failed to update file"),
             // so the recipe does not run a second time and the file the losing
             // recipe may have left behind does not count either.
-            let unmade = graph.is_unmade_makefile(node);
+            // A makefile the `-q` pass asked about and was told is not up to
+            // date is refused the same way, its recipe being just as spent:
+            // `update_goal_chain` leaves it `updated` with `us_question` and
+            // the early read makes no distinction between the two statuses.
+            // What tells them apart is the exit code the answer carries, and
+            // the refusal is stamped with which of the two it is here — where
+            // the graph still knows — rather than reconstructed afterwards
+            // from a node identity carried out of the failure.
+            let unmade = graph.is_unmade_makefile(node) || graph.is_questioned_makefile(node);
             let Some(edge) = graph.node(node).generator.filter(|_| !unmade) else {
                 if unmade || runtime.node(node).dirty() {
                     let path = graph.node_path(node).to_owned();
@@ -306,6 +314,7 @@ impl Plan {
                         node,
                         path,
                         needed_by,
+                        questioned: graph.is_questioned_makefile(node),
                     });
                 }
                 continue;

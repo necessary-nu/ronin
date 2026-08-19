@@ -771,6 +771,12 @@ impl BuildGraph {
     /// early read finds, so a goal that reaches the name is refused rather than
     /// served and the recipe is not run again.
     ///
+    /// `questioned` is the ones the update asked about under `-q` rather than
+    /// making, and was told were not up to date. They are refused over exactly
+    /// as `unmade` are — GNU Make leaves both `updated` with a non-zero status
+    /// and reads neither back any differently — and are kept apart only so the
+    /// answer can carry `us_question`'s exit code instead of `us_failed`'s.
+    ///
     /// Said only once the update has settled. A pass that ends in a restart
     /// says nothing at all, because the read that follows plans a new graph and
     /// attempts the rule again, which is GNU Make's behaviour too.
@@ -786,9 +792,17 @@ impl BuildGraph {
         }
     }
 
-    pub(crate) fn mark_makefiles_settled(&mut self, remade: &[Node], unmade: &[Node]) {
+    pub(crate) fn mark_makefiles_settled(
+        &mut self,
+        remade: &[Node],
+        unmade: &[Node],
+        questioned: &[Node],
+    ) {
         for node in unmade {
             self.arenas.mark_makefile_unmade(node.0);
+        }
+        for node in questioned {
+            self.arenas.mark_makefile_questioned(node.0);
         }
         let Some(phony) = self.rule(self.root(), b"phony") else {
             return;

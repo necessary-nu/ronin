@@ -129,6 +129,12 @@ struct SettledMakefiles {
     remade: Vec<Node>,
     /// The ones whose own recipe ran and lost, and was forgiven.
     unmade: Vec<Node>,
+    /// The ones `-q` asked about and was told were not up to date.
+    ///
+    /// Refused over like [`Self::unmade`] and worth a different exit code, GNU
+    /// Make's `us_question` being `MAKE_TROUBLE` where `us_failed` is
+    /// `MAKE_FAILURE`.
+    questioned: Vec<Node>,
 }
 
 /// The graph and the scheduler attachments every pass over it shares.
@@ -144,6 +150,14 @@ struct Passes<'a, 'out, 'diagnostics> {
     /// What each unread Makefile says if its own rule loses, which is the only
     /// occasion GNU Make ever says it.
     complaints: &'a [(Node, String)],
+    /// Whether a complaint ends the update or is merely made.
+    ///
+    /// `complain()` chooses `error` over `fatal` on `keep_going_flag`
+    /// (remake.c:422), so the switch decides how many complaints one pass can
+    /// hold: without it the first is fatal and the makefiles after it are never
+    /// reached, and with it the walk carries on and every makefile it could not
+    /// make gets its own.
+    keep_going: bool,
     silent: bool,
 }
 
@@ -224,37 +238,46 @@ impl Passes<'_, '_, '_> {
         Pass::Answered(question)
     }
 
-    /// The complaint the Makefile this pass stopped at has been holding.
+    /// The complaints the Makefiles this pass could not make have been holding.
     ///
-    /// One, and it belongs to the goal rather than to the recipe. GNU Make's
+    /// Each belongs to the goal rather than to the recipe. GNU Make's
     /// `show_goal_error` reads `goal_dep`, the goaldep `update_goal_chain` is
     /// working on, so what it names is the makefile that was being brought up to
     /// date and not whichever file in its subtree the failed child was making —
     /// `include gen.mk` whose `gen.mk: dep` loses over `dep` still complains
-    /// about `gen.mk`. And `goal->error = 0` after printing makes it once.
+    /// about `gen.mk`. And `goal->error = 0` after printing makes each of them
+    /// once.
     ///
-    /// The one it stopped at is the first of the pass whose own recipe lost, and
-    /// failing that the first the pass did not regenerate: the makefile update
-    /// walks them in the order the read reached them and ends on the first it
-    /// could not bring up to date, so everything before that one succeeded and
-    /// everything after it was never attempted. The second reading is what
+    /// How many there are is `-k`'s answer. Without it the complaint is fatal
+    /// (remake.c:422), so the update ends inside the first one and the makefiles
+    /// after it are never reached — one complaint, from the makefile the pass
+    /// stopped at. With it `complain()` reports and returns, `update_goal_chain`
+    /// walks on to the next goaldep, and every required makefile the pass left
+    /// unmade complains for itself.
+    ///
+    /// Either way a Makefile is one the pass could not make if its own recipe
+    /// lost, or if the pass did not regenerate it. The second reading is what
     /// catches a makefile whose own recipe never ran because something it needed
-    /// lost first — the goal is still the goal.
+    /// lost first — the goal is still the goal. The order is the order the read
+    /// reached them, which is the order GNU Make walks `read_files` in.
     fn complaints_for(&self, targets: &[Node], outcome: &Outcome) -> Vec<String> {
+        let stopped_at = |target: &&Node| {
+            outcome.unmade().contains(target) || !outcome.regenerated().contains(target)
+        };
+        let held = |stopped: &Node| {
+            self.complaints
+                .iter()
+                .find(|(target, _)| target == stopped)
+                .map(|(_, complaint)| complaint.clone())
+        };
+        if self.keep_going {
+            return targets.iter().filter(stopped_at).filter_map(held).collect();
+        }
         targets
             .iter()
             .find(|target| outcome.unmade().contains(target))
-            .or_else(|| {
-                targets
-                    .iter()
-                    .find(|target| !outcome.regenerated().contains(target))
-            })
-            .and_then(|stopped| {
-                self.complaints
-                    .iter()
-                    .find(|(target, _)| target == stopped)
-                    .map(|(_, complaint)| complaint.clone())
-            })
+            .or_else(|| targets.iter().find(stopped_at))
+            .and_then(held)
             .into_iter()
             .collect()
     }
@@ -309,13 +332,14 @@ impl Passes<'_, '_, '_> {
                 // `us_question`, and `stop` is withheld while
                 // `rebuilding_makefiles` (remake.c:206). What the answer leaves
                 // behind is a verdict — the file was wanted, it is not there,
-                // and no recipe is going to run — which is the same third state
-                // a forgiven rule that lost leaves, so the goals refuse over it
-                // rather than being served a name that means nothing.
+                // and no recipe is going to run — so the goals refuse over it
+                // rather than being served a name that means nothing. Which of
+                // the two verdicts it is matters to the answer's exit code and
+                // to nothing else, so the subset it came from is what sorts it.
                 Pass::Answered(Ok(false)) if subset.question => subset.targets.clone(),
                 Pass::Answered(question) => {
                     let reported = std::mem::take(self.reported);
-                    return Remaking::Finished(answered(reported, question));
+                    return Remaking::Finished(answered(reported, question, self.keep_going));
                 }
                 Pass::Current => Vec::new(),
             };
@@ -327,7 +351,11 @@ impl Passes<'_, '_, '_> {
                 .any(|(target, (before, after))| before != after && !unmade.contains(target));
             subset.targets.retain(|target| !unmade.contains(target));
             settled.remade.append(&mut subset.targets);
-            settled.unmade.extend(unmade);
+            if subset.question {
+                settled.questioned.extend(unmade);
+            } else {
+                settled.unmade.extend(unmade);
+            }
         }
         if restart {
             Remaking::Restart
@@ -680,6 +708,7 @@ pub(super) fn build_compiler_inputs(
         diagnostics,
         reported,
         complaints: &complaints,
+        keep_going,
         silent: invocation.given(Switch::Silent),
     }
     .remake_makefiles(&makefiles);
@@ -697,7 +726,7 @@ pub(super) fn build_compiler_inputs(
             return Ok(Settlement::Restart);
         }
         Settled::Stands(settled) => {
-            graph.mark_makefiles_settled(&settled.remade, &settled.unmade);
+            graph.mark_makefiles_settled(&settled.remade, &settled.unmade, &settled.questioned);
         }
     }
 
@@ -709,6 +738,7 @@ pub(super) fn build_compiler_inputs(
         diagnostics,
         reported,
         complaints: &complaints,
+        keep_going,
         silent: invocation.given(Switch::Silent),
     }
     .stage(&staged, invocation, options);
@@ -723,6 +753,7 @@ pub(super) fn build_compiler_inputs(
             Ok(Settlement::Finished(answered(
                 std::mem::take(reported),
                 question,
+                keep_going,
             )))
         }
         Pass::Current if boundaries.is_empty() => Ok(Settlement::Settled {
