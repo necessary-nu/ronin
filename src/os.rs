@@ -1,8 +1,5 @@
 //! Rust implementation of the POSIX-facing operating-system adapter.
 
-#[cfg(unix)]
-mod archive;
-
 use std::io;
 use std::path::{Path, PathBuf};
 #[cfg(not(unix))]
@@ -120,7 +117,16 @@ pub(crate) struct RealDiskInterface {
     /// and a file may legitimately be called that. Make mode turns it on
     /// because GNU Make reads the shape wherever a target is written, and its
     /// `f_mtime` answers for such a name out of the archive's index rather
-    /// than with a `stat` — see [`mod@archive`].
+    /// than with a `stat`.
+    ///
+    /// The index itself is read by the Make front end — kati's `archive`
+    /// module, which already had to walk those headers to glob `lib.a(*.o)`
+    /// while the Makefile was being read. GNU Make has one `ar_scan` and thin
+    /// callbacks over it, and two readers of a format that delicate is one
+    /// place a fix would be remembered and one place it would not. It is also
+    /// why the branches that consult it are compiled with the `make` feature:
+    /// nothing else sets this flag, so a Ninja-only build has no name of this
+    /// shape to ask about.
     archive_members: bool,
     /// Directories [`Self::make_dirs`] has already ensured exist.
     ///
@@ -274,13 +280,13 @@ impl RealDiskInterface {
     /// Return a nanosecond timestamp, zero for a missing path, and an error for
     /// failures other than a missing component.
     pub(crate) fn stat(&self, path: &Path) -> io::Result<i64> {
-        // Unix only, and not by omission: `archive_members` is Make mode's
-        // switch and Make mode is a Unix front end, so there is no host where
-        // the flag is set and this branch is missing.
-        #[cfg(unix)]
+        // Unix and the Make front end, and not by omission: `archive_members`
+        // is Make mode's switch, so there is no build where the flag can be
+        // set and this branch is missing.
+        #[cfg(all(unix, feature = "make"))]
         if self.archive_members
             && let Some((library, member)) =
-                archive::split_member(path.as_os_str().as_encoded_bytes())
+                kati::archive::split_archive_name(path.as_os_str().as_encoded_bytes())
         {
             return Ok(self.archive_member_stat(library, member));
         }
@@ -323,7 +329,7 @@ impl RealDiskInterface {
     /// date for the member, and a member file left newer on disk than the
     /// indexed copy makes the member count as absent — it was rebuilt and not
     /// yet filed.
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "make"))]
     fn archive_member_stat(&self, library: &[u8], member: &[u8]) -> i64 {
         use std::os::unix::ffi::OsStrExt as _;
 
@@ -331,7 +337,7 @@ impl RealDiskInterface {
         if self.plain_stat(library).unwrap_or(0) == 0 {
             return 0;
         }
-        let Some(date) = archive::member_date(&self.resolve(library), member) else {
+        let Some(date) = kati::archive::member_date(&self.resolve(library), member) else {
             return 0;
         };
         let filed = self
@@ -392,34 +398,37 @@ impl RealDiskInterface {
     /// its name and the member as stale as it was.
     // [spec:ronin:req:make.semantics+1]
     pub(crate) fn touch(&self, path: &Path) -> io::Result<()> {
-        #[cfg(unix)]
+        #[cfg(all(unix, feature = "make"))]
         if self.archive_members
             && let Some((library, member)) =
-                archive::split_member(path.as_os_str().as_encoded_bytes())
+                kati::archive::split_archive_name(path.as_os_str().as_encoded_bytes())
         {
+            use kati::archive::TouchFailure;
             use std::os::unix::ffi::OsStrExt as _;
 
             let library = Path::new(std::ffi::OsStr::from_bytes(library));
-            return archive::touch_member(&self.resolve(library), member).map_err(|failure| {
-                let library = library.display();
-                match failure {
-                    archive::TouchFailure::NoArchive => io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!("Archive '{library}' does not exist"),
-                    ),
-                    archive::TouchFailure::NotAnArchive => io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("'{library}' is not a valid archive"),
-                    ),
-                    archive::TouchFailure::NoMember => io::Error::new(
-                        io::ErrorKind::NotFound,
-                        format!(
-                            "Member '{}' does not exist in '{library}'",
-                            String::from_utf8_lossy(member)
+            return kati::archive::touch_member(&self.resolve(library), member).map_err(
+                |failure| {
+                    let library = library.display();
+                    match failure {
+                        TouchFailure::NoArchive => io::Error::new(
+                            io::ErrorKind::NotFound,
+                            format!("Archive '{library}' does not exist"),
                         ),
-                    ),
-                }
-            });
+                        TouchFailure::NotAnArchive => io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("'{library}' is not a valid archive"),
+                        ),
+                        TouchFailure::NoMember => io::Error::new(
+                            io::ErrorKind::NotFound,
+                            format!(
+                                "Member '{}' does not exist in '{library}'",
+                                String::from_utf8_lossy(member)
+                            ),
+                        ),
+                    }
+                },
+            );
         }
         let times = std::fs::FileTimes::new().set_modified(std::time::SystemTime::now());
         std::fs::OpenOptions::new()
