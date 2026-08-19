@@ -643,6 +643,7 @@ assertions (
     {id make-recursive-invocation-rule-admits-no-remainder, kind @complete, author "brendan@necessary.nu", at 2026-08-19T21:23:49.749750561Z}
     {id make-staging-pass-counts-as-a-make-restart, kind @complete, author "brendan@necessary.nu", at 2026-08-19T21:43:52.352014793Z}
     {id make-eval-fragments-do-not-descend, kind @complete, author "brendan@necessary.nu", at 2026-08-19T22:09:52.730019196Z}
+    {id make-quiet-command-echo-becomes-the-description, kind @complete, author "brendan@necessary.nu", at 2026-08-19T23:06:43.61412223Z}
 )
 
 impl_evidence (

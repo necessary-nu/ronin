@@ -1243,7 +1243,12 @@ fn session_for(
             .collect(),
         num_jobs: jobs,
         num_cpus: jobs,
+        // The two the compiler reads for narration: under `-s` nothing is
+        // narrated and under `-n` nothing is run, so in both the command line
+        // is the whole of what the build shows and a recipe's own echo stays
+        // inside it rather than becoming an edge's description.
         is_silent_mode: invocation.given(Switch::Silent),
+        is_dry_run: invocation.given(Switch::DryRun),
         // The three options whose whole effect is on evaluation rather than on
         // the build: what the makefile starts with, what outranks it, and
         // whether a recipe line's status is worth stopping for.

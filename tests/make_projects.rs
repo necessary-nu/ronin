@@ -14,6 +14,11 @@
 //! What is asserted is build intent: the exit code, and the file the recipe
 //! was for. Not the narration — the runtime speaks Ninja, and a progress line
 //! where GNU echoes a recipe is not a divergence.
+//!
+//! One case here is the exception, and it is deliberate. A quiet command is a
+//! Makefile writing its own description, so what Ronin prints for it IS the
+//! deliverable and nothing else can stand in for it. That case asserts on
+//! Ronin's own `[N/M]` line and never on GNU's text.
 #![cfg(all(unix, feature = "make"))]
 
 use std::fs;
@@ -147,5 +152,52 @@ fn a_declared_suffix_holds_a_dot() {
         fs::read_to_string(directory.join("foo..o")).unwrap(),
         "dyn from foo.c\n"
     );
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// The Linux kernel's build, reduced to one object per shape.
+///
+/// kbuild silences every recipe and echoes a short line in its place, which is
+/// a Makefile writing a description in Make's vocabulary. Ronin had no way to
+/// read it: the description fell back to the whole expanded script, the echo
+/// still ran inside that script, and an operator building the kernel saw every
+/// compile twice —
+///
+/// ```text
+/// [1/2] set -e; echo '  CC      misc.o'; cc -c -o misc.o misc.c
+///   CC      misc.o
+/// ```
+///
+/// — which was reported as "a horrid mix of make and ninja". Both shapes the
+/// pattern is written in are here: fused onto one line behind `set -e`, as
+/// kbuild's `cmd` macro writes it, and split across two silenced lines.
+///
+/// This is the one case in this file that asserts narration, because for a
+/// quiet command the narration is the whole of what was wrong. It asserts
+/// Ronin's own progress line — the `[N/M]` counter carrying the text the
+/// Makefile chose — and not GNU's, which says the same thing in its own voice.
+#[test]
+fn a_quiet_command_is_said_once() {
+    let directory = reduction("kbuild-quiet-command");
+
+    // One job, so the counter counts in the order the makefile named.
+    let output = make_command(&directory)
+        .args(["-j1", "all"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .collect::<Vec<_>>(),
+        ["[1/2]   CC      fused.o", "[2/2]   CC      split.o"],
+        "a quiet command is one line per object, in Ronin's voice"
+    );
+    assert!(directory.join("fused.o").exists(), "fused.o was never made");
+    assert!(directory.join("split.o").exists(), "split.o was never made");
     fs::remove_dir_all(directory).unwrap();
 }
