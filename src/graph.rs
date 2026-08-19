@@ -125,6 +125,20 @@ pub(crate) struct Edge {
     /// Whether the build throws this edge's outputs away once it has finished
     /// with them, which every intermediate but a `.SECONDARY` one is.
     pub(crate) disposable: bool,
+    /// Whether an output this edge does not write is absent rather than an
+    /// alias for what the edge reads.
+    ///
+    /// An edge with no command is Ninja's `phony`, where the output stands for
+    /// its inputs: one that is not on disk takes their newest date, and its
+    /// absence is no reason for anything to run. A Makefile target whose
+    /// recipe writes nothing compiles to the same commandless shape and means
+    /// the opposite — GNU Make ran the recipe, and a prerequisite that does not
+    /// exist once it has been made is newer than whatever reads it
+    /// (`remake.c`: `notice_finished_file` leaves `last_mtime` unknown, the
+    /// re-read finds nothing, and `must_make` follows). Which of the two an
+    /// edge is cannot be read off its having no command, so the front end that
+    /// compiled it says.
+    pub(crate) outputs_unaliased: bool,
     /// Whether what the outputs did is read off the disk once the command has
     /// run, rather than taken from the command having run.
     ///
@@ -471,16 +485,28 @@ where
         }
         input_dirty
     } else if graph.is_phony_rule(edge_data.rule) {
+        // An alias substitutes for an output it does not have; a target whose
+        // recipe wrote nothing keeps the answer the disk gave. The two share
+        // the commandless shape and nothing else, so the edge is asked which
+        // it is rather than the rule.
+        let aliases_inputs = !edge_data.outputs_unaliased;
         let mut any_output_missing = false;
         for output in &edge_data.out {
             if runtime.node(*output).mtime().is_missing() {
                 any_output_missing = true;
-                runtime.node_mut(*output).set_mtime(newest_input);
+                if aliases_inputs {
+                    runtime.node_mut(*output).set_mtime(newest_input);
+                }
             }
         }
-        let missing_without_inputs =
-            edge_data.input.is_empty() && edge_data.validation.is_empty() && any_output_missing;
-        input_dirty || missing_without_inputs
+        // An alias for nothing at all is Ninja's always-out-of-date target, and
+        // an alias for something is out of date only when that something is.
+        // A target made by an empty recipe answers for its own absence however
+        // many prerequisites it has: GNU Make made it, nothing was written, and
+        // the name is still not there.
+        let missing_counts = edge_data.outputs_unaliased
+            || (edge_data.input.is_empty() && edge_data.validation.is_empty());
+        input_dirty || (any_output_missing && missing_counts)
     } else {
         let mut oldest_output: Option<FileTime> = None;
         let mut oldest_recorded_output: Option<FileTime> = None;
@@ -782,6 +808,7 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         always_dirty: false,
         intermediate: false,
         disposable: false,
+        outputs_unaliased: false,
         outputs_reobserved: false,
         freshness_history: FreshnessHistory::default(),
         partitions: EdgePartitions::default(),
@@ -1564,6 +1591,36 @@ mod tests {
         assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
         assert!(runtime.node(alias_output).dirty());
         assert_eq!(runtime.node(alias_output).mtime(), FileTime::observed(1));
+    }
+
+    /// A Makefile target whose recipe writes nothing has the shape of an alias
+    /// and the opposite meaning: GNU Make ran the recipe, found the name still
+    /// absent, and remakes what reads it for exactly that reason. The alias in
+    /// the same graph is the control — nothing about it changes.
+    #[test]
+    fn ronin_graph_empty_recipe_stays_absent() {
+        let mut graph =
+            parse_graph("build mid: phony src\nbuild alias: phony src\nbuild out: cat mid alias\n");
+        let middle = nodeget(&graph, b"mid").unwrap();
+        let aliased = nodeget(&graph, b"alias").unwrap();
+        let consumer = nodeget(&graph, b"out").unwrap();
+        let empty_recipe = graph.node(middle).generator.unwrap();
+
+        // As an alias both stand in for `src`, so `out` is newer than either
+        // and there is nothing to do.
+        let mtimes = BTreeMap::from([("src".to_owned(), 1), ("out".to_owned(), 2)]);
+        let mut stat = |path: &Path| Ok(*mtimes.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(!recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
+        assert_eq!(runtime.node(middle).mtime(), FileTime::observed(1));
+
+        graph.edge_mut(empty_recipe).outputs_unaliased = true;
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(recompute_dirty_with(&graph, &mut runtime, consumer, &mut stat).unwrap());
+        assert!(runtime.node(middle).dirty());
+        assert_eq!(runtime.node(middle).mtime(), FileTime::MISSING);
+        assert!(!runtime.node(aliased).dirty());
+        assert_eq!(runtime.node(aliased).mtime(), FileTime::observed(1));
     }
 
     /// GNU Make's intermediate file: one the implicit rule search invented, so

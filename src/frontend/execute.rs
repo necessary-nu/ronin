@@ -521,6 +521,7 @@ mod tests {
                     always_dirty: false,
                     intermediate: false,
                     disposable: false,
+                    outputs_unaliased: false,
                     bindings: Vec::new(),
                 })
                 .unwrap();

@@ -776,6 +776,12 @@ fn intermediate(graph: &BuildGraph) -> Vec<String> {
     outputs_where(graph, |edge| edge.intermediate)
 }
 
+/// Every output either graph counts as absent when it is not on disk, rather
+/// than as an alias for what its edge reads, as a sorted list of paths.
+fn unaliased(graph: &BuildGraph) -> Vec<String> {
+    outputs_where(graph, |edge| edge.outputs_unaliased)
+}
+
 fn outputs_where(graph: &BuildGraph, wanted: impl Fn(&crate::graph::Edge) -> bool) -> Vec<String> {
     let arenas = graph.arenas();
     let mut paths = arenas
@@ -921,6 +927,53 @@ hello.x other.x:
     assert!(
         disposable(&both.parsed).is_empty() && intermediate(&both.parsed).is_empty(),
         "a manifest has no way to say either, so reading one back must not invent them"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
+    );
+}
+
+/// A target whose recipe writes nothing compiles to the same commandless edge
+/// a manifest's `phony` parses to, and only the direct graph knows the two mean
+/// opposite things.
+///
+/// `empty` has an empty recipe and `bare` has none at all; GNU Make treats both
+/// the same, so both carry the property. `alias` is the control that shows the
+/// property is not simply "every edge": it has a command, so nothing about it
+/// is commandless.
+///
+/// The manifest side cannot carry it — `build empty: phony src` is the only
+/// thing the writer can emit, and Ninja reads that as the alias it spells —
+/// which is the same bounded divergence `intermediate` and `disposable` already
+/// have. The comparison below still agrees, because the shape both sides
+/// describe is unchanged.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn empty_recipes_reach_the_direct_graph() {
+    let case = Case::new(
+        "\
+all: empty bare alias
+src:
+\t@echo body > $@
+empty: src ;
+bare: src
+alias: src
+\t@cat $< > $@
+",
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(
+        unaliased(&both.direct),
+        vec!["all".to_owned(), "bare".to_owned(), "empty".to_owned()],
+        "a goal with no recipe of its own is one too"
+    );
+    assert!(
+        unaliased(&both.parsed).is_empty(),
+        "a manifest has no way to say this, so reading one back must not invent it"
     );
     assert_eq!(
         differences(&both.direct, &both.parsed, &both.semantics),

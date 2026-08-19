@@ -498,6 +498,9 @@ impl GraphSink {
             always_dirty: pending.always_dirty,
             intermediate: pending.intermediate,
             disposable: pending.disposable,
+            // A recursive wrapper really is an alias: its outputs stand for
+            // the child goals that replace it.
+            outputs_unaliased: false,
             bindings: std::mem::take(&mut pending.bindings),
         })?;
         // A recursive target is a target: what the child Make left on disk is
@@ -1103,6 +1106,13 @@ impl BuildSink for GraphSink {
             always_dirty: edge.always_dirty,
             intermediate: edge.intermediate,
             disposable: edge.disposable,
+            // A Make target with no commands compiles to the `phony` rule for
+            // want of anything else to build it with, and means the opposite of
+            // what a manifest's `phony` means: GNU Make made the target, wrote
+            // nothing, and left it as absent as it found it. Every edge that
+            // reaches here came from a Makefile, so having no rule is the whole
+            // of the question.
+            outputs_unaliased: edge.rule.is_none(),
             bindings,
         };
         match self.graph.add_edge(spec) {

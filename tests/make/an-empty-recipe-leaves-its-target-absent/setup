@@ -1,0 +1,5 @@
+printf 'source\n' > src
+touch -d '2020-01-01 00:00:00Z' src
+printf 'kept\n' > kept
+touch -d '2020-01-02 00:00:00Z' kept
+touch final

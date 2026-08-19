@@ -114,6 +114,10 @@ impl Template {
 /// store, and a front end that computes them itself is a front end that can
 /// compute them wrongly.
 #[derive(Clone, Debug)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "the lint guards a positional argument list, and this is only ever filled in by name"
+)]
 pub struct EdgeSpec<'a> {
     /// The scope this edge's bindings and its rule's bindings resolve against.
     pub scope: Scope,
@@ -154,6 +158,17 @@ pub struct EdgeSpec<'a> {
     /// Whether the front end should throw the outputs away once the build has
     /// finished with them.
     pub disposable: bool,
+    /// Whether an output no command here writes is absent rather than an alias
+    /// for the inputs.
+    ///
+    /// Building with the `phony` rule makes an output stand for its inputs: an
+    /// absent one takes their newest date and nothing is out of date on its
+    /// account. A GNU Make target whose recipe writes nothing has the same
+    /// commandless shape and the opposite meaning — the recipe ran, the file is
+    /// still not there, and a prerequisite that does not exist after being made
+    /// is newer than what reads it. A manifest can only say the first, so a
+    /// graph parsed from one never carries this.
+    pub outputs_unaliased: bool,
     /// Bindings local to this edge, already expanded.
     pub bindings: Vec<(Binding, Vec<u8>)>,
 }
@@ -450,6 +465,7 @@ impl BuildGraph {
             stored.always_dirty = spec.always_dirty;
             stored.intermediate = spec.intermediate;
             stored.disposable = spec.disposable;
+            stored.outputs_unaliased = spec.outputs_unaliased;
         }
         self.resolve_pool(edge)?;
         for output in spec.explicit_outputs.iter().chain(spec.implicit_outputs) {
@@ -988,6 +1004,7 @@ mod tests {
             always_dirty: false,
             intermediate: false,
             disposable: false,
+            outputs_unaliased: false,
             bindings: Vec::new(),
         }
     }
@@ -1014,6 +1031,7 @@ mod tests {
                 always_dirty: true,
                 intermediate: false,
                 disposable: false,
+                outputs_unaliased: false,
                 bindings: vec![(description, b"copying".to_vec())],
             })
             .unwrap();

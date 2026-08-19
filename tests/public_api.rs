@@ -76,6 +76,7 @@ fn build_by_hand() -> BuildGraph {
             always_dirty: false,
             intermediate: false,
             disposable: false,
+            outputs_unaliased: false,
             bindings: Vec::new(),
         })
         .unwrap();
@@ -92,6 +93,7 @@ fn build_by_hand() -> BuildGraph {
             always_dirty: false,
             intermediate: false,
             disposable: false,
+            outputs_unaliased: false,
             bindings: Vec::new(),
         })
         .unwrap();
@@ -189,6 +191,7 @@ fn copy_graph(directory: &std::path::Path) -> BuildGraph {
                 always_dirty: false,
                 intermediate: false,
                 disposable: false,
+                outputs_unaliased: false,
                 bindings: Vec::new(),
             })
             .unwrap();
@@ -260,6 +263,7 @@ fn public_api_refuses_a_second_generator_for_one_output() {
             always_dirty: false,
             intermediate: false,
             disposable: false,
+            outputs_unaliased: false,
             bindings: Vec::new(),
         })
         .unwrap_err();
