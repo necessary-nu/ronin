@@ -188,9 +188,8 @@ impl Builder<'_> {
     /// keeps the only spelling it has, which is GNU Make's answer for an
     /// absolute prerequisite too.
     fn deferred_new_inputs_value(&self, edge: EdgeId) -> Vec<u8> {
-        let directory = self
-            .graph
-            .deferred_freshness(edge)
+        let freshness = self.graph.deferred_freshness(edge);
+        let directory = freshness
             .map(|freshness| freshness.new_inputs_directory.as_bytes())
             .unwrap_or_default();
         let mut value = Vec::new();
@@ -198,6 +197,19 @@ impl Builder<'_> {
             for input in state.new_inputs() {
                 if !value.is_empty() {
                     value.push(b' ');
+                }
+                // A front end may know an input by one name and have the
+                // command read another. Where it said so, its spelling is the
+                // one published, and it is published as it was given: a name
+                // the graph does not use is not a path this side may relocate.
+                if let Some((_, published)) = freshness.and_then(|freshness| {
+                    freshness
+                        .new_input_names
+                        .iter()
+                        .find(|(node, _)| node == input)
+                }) {
+                    value.extend_from_slice(published.as_bytes());
+                    continue;
                 }
                 let path = self.graph.node_path(*input);
                 value.extend_from_slice(&relative_to(path.as_bytes(), directory));

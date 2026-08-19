@@ -20,6 +20,16 @@ pub(crate) struct DeferredFreshness {
     /// Inputs that affect the late freshness predicate but are omitted from
     /// the value substituted for Make's `$?` automatic variable.
     pub(crate) excluded_new_inputs: IdVec<NodeId>,
+    /// Inputs the published value spells differently from the name the graph
+    /// knows them by, paired with the spelling to publish.
+    ///
+    /// A front end may know a prerequisite by one name and have the command
+    /// read another: GNU Make's `$?` names an archive member `m.o` where the
+    /// graph node is `lib.a(m.o)`. Nothing here reads either spelling — the
+    /// pair is carried, not interpreted — which is what keeps the executor free
+    /// of the front end's naming rules. Empty for every edge with nothing to
+    /// respell, which is nearly all of them.
+    pub(crate) new_input_names: Vec<(NodeId, BString)>,
     pub(crate) new_inputs_variable: BString,
     /// The directory the command reads that value from, and so the directory
     /// the names in it are spelt relative to.

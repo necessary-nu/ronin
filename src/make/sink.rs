@@ -131,6 +131,9 @@ struct PendingDeferred {
     always_dirty_output: bool,
     always_new_inputs: Vec<Node>,
     excluded_new_inputs: Vec<Node>,
+    /// What kati says the published value calls an input it knows by another
+    /// name — an archive member, and nothing else there is.
+    new_input_names: Vec<(Node, Vec<u8>)>,
 }
 
 /// The non-executor description retained between kati's rule and edge calls.
@@ -553,6 +556,11 @@ impl GraphSink {
     /// the command runs where the unit's Makefile was read and GNU Make's
     /// recursive child names its prerequisites the way that Makefile did.
     fn defer_freshness(&mut self, edge: Edge, deferred: &PendingDeferred) {
+        let published = deferred
+            .new_input_names
+            .iter()
+            .map(|(node, name)| (*node, name.as_slice()))
+            .collect::<Vec<_>>();
         self.graph.set_deferred_freshness(
             edge,
             &crate::frontend::DeferredSpec {
@@ -560,6 +568,7 @@ impl GraphSink {
                 always_dirty_output: deferred.always_dirty_output,
                 always_new_inputs: &deferred.always_new_inputs,
                 excluded_new_inputs: &deferred.excluded_new_inputs,
+                new_input_names: &published,
                 new_inputs_variable: b"KATI_NEW_INPUTS",
                 new_inputs_directory: self.unit.path_prefix.as_os_str().as_bytes(),
             },
@@ -628,6 +637,21 @@ impl GraphSink {
         Ok(nodes)
     }
 
+    /// The spellings kati asked for, with each name resolved to the node it
+    /// respells and the text kept as kati wrote it.
+    fn published_names(
+        &mut self,
+        names: &dyn Interner,
+        published: &[(Symbol, Symbol)],
+    ) -> Result<Vec<(Node, Vec<u8>)>, anyhow::Error> {
+        let mut resolved = Vec::with_capacity(published.len());
+        for (input, published) in published {
+            let node = self.node(names, *input)?;
+            resolved.push((node, names.symtab().name(*published).to_vec()));
+        }
+        Ok(resolved)
+    }
+
     fn deferred_edge(
         &mut self,
         names: &dyn Interner,
@@ -642,6 +666,7 @@ impl GraphSink {
             always_dirty_output: edge.deferred_freshness_always_dirty,
             always_new_inputs: self.node_list(names, edge.deferred_always_new_inputs)?,
             excluded_new_inputs: self.node_list(names, edge.deferred_excluded_new_inputs)?,
+            new_input_names: self.published_names(names, edge.deferred_new_input_names)?,
         }))
     }
 

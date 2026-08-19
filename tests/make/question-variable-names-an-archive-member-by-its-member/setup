@@ -1,0 +1,2 @@
+printf 'aaa\n' > a.c
+printf 'bbb\n' > b.c

@@ -111,6 +111,7 @@ struct DeferredSemantics {
     always_dirty_output: bool,
     always_new_inputs: Vec<Vec<u8>>,
     excluded_new_inputs: Vec<Vec<u8>>,
+    new_input_names: Vec<Vec<u8>>,
     completion_join: bool,
 }
 
@@ -165,6 +166,16 @@ impl BuildSink for Tee<'_> {
                         .deferred_excluded_new_inputs
                         .iter()
                         .map(|input| names.symtab().name(*input).to_vec())
+                        .collect(),
+                    new_input_names: edge
+                        .deferred_new_input_names
+                        .iter()
+                        .map(|(input, published)| {
+                            let mut pair = names.symtab().name(*input).to_vec();
+                            pair.push(b'=');
+                            pair.extend_from_slice(&names.symtab().name(*published));
+                            pair
+                        })
                         .collect(),
                     completion_join: edge.completion_join,
                 },
@@ -275,6 +286,7 @@ fn describe_deferred_semantics(
         always_dirty_output,
         always_new_inputs,
         excluded_new_inputs,
+        new_input_names,
         completion_join,
         variable,
     ) = match side {
@@ -310,6 +322,20 @@ fn describe_deferred_semantics(
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default(),
+                freshness
+                    .map(|freshness| {
+                        freshness
+                            .new_input_names
+                            .iter()
+                            .map(|(node, published)| {
+                                let mut pair = arenas.node_path(*node).as_bytes().to_vec();
+                                pair.push(b'=');
+                                pair.extend_from_slice(published.as_bytes());
+                                pair
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
                 arenas.is_completion_join(edge),
                 freshness
                     .map(|freshness| freshness.new_inputs_variable.as_slice())
@@ -321,6 +347,7 @@ fn describe_deferred_semantics(
             recorded.is_some_and(|semantic| semantic.always_dirty_output),
             recorded.map_or_else(Vec::new, |semantic| semantic.always_new_inputs.clone()),
             recorded.map_or_else(Vec::new, |semantic| semantic.excluded_new_inputs.clone()),
+            recorded.map_or_else(Vec::new, |semantic| semantic.new_input_names.clone()),
             recorded.is_some_and(|semantic| semantic.completion_join),
             recorded
                 .filter(|semantic| !semantic.outputs.is_empty())
@@ -348,6 +375,11 @@ fn describe_deferred_semantics(
         described,
         "  deferred excluded new inputs: {}",
         list(&excluded_new_inputs)
+    );
+    let _ = writeln!(
+        described,
+        "  deferred new-input names: {}",
+        list(&new_input_names)
     );
     let _ = writeln!(described, "  deferred variable: {:?}", variable.as_bstr());
     let _ = writeln!(described, "  completion join: {completion_join}");

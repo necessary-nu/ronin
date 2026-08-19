@@ -14,6 +14,10 @@ pub struct DeferredSpec<'a> {
     pub always_new_inputs: &'a [Node],
     /// Inputs that still affect freshness but stay out of the published value.
     pub excluded_new_inputs: &'a [Node],
+    /// Inputs the published value spells differently from the graph's own name
+    /// for them, paired with the spelling to publish. The scheduler carries the
+    /// pair and reads neither spelling.
+    pub new_input_names: &'a [(Node, &'a [u8])],
     /// The name the scheduler substitutes the published value for, to which it
     /// assigns no meaning of its own.
     pub new_inputs_variable: &'a [u8],
@@ -58,6 +62,11 @@ impl BuildGraph {
                     .excluded_new_inputs
                     .iter()
                     .map(|node| node.0)
+                    .collect(),
+                new_input_names: deferred
+                    .new_input_names
+                    .iter()
+                    .map(|(node, name)| (node.0, BString::from(*name)))
                     .collect(),
                 new_inputs_variable: BString::from(deferred.new_inputs_variable),
                 new_inputs_directory: BString::from(deferred.new_inputs_directory),

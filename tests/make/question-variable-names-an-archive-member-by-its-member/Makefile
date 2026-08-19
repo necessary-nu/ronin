@@ -1,0 +1,13 @@
+# A prerequisite written `lib.a(m.o)` contributes only its member name to `$?`,
+# exactly as it does to `$^`, `$+` and `$<` (reference/gnumake/src/commands.c).
+# `$?` is the one of the four whose value is not settled while the Makefile is
+# read — which prerequisites are new is only known once they have been made —
+# so the spelling has to travel with the deferral rather than be applied to it.
+mylib.a: mylib.a(a.o) mylib.a(b.o)
+	@printf '%s\n' 'at [$@] question [$?]' >> log
+
+(%): % ;
+
+%.o : %.c
+	@printf '%s\n' 'compile $<' >> log
+	@cp $< $@
