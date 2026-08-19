@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-19T18:28:44.333873475Z
+last_sync_at 2026-08-19T23:08:50.398495416Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -108,10 +108,12 @@ derived_priorities (
     {id make-empty-recipe-pattern-rule-drops-its-prerequisites, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-empty-recipe-target-is-not-a-ninja-alias, priority 1, derived_at 2026-08-19T18:26:59.99824661Z}
     {id make-empty-variable-append, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-empty-variable-name-does-not-abandon, priority 0, derived_at 2026-08-19T23:08:50.398495416Z}
     {id make-endif-trailing-text-is-a-warning, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-environment-origin-precedes-the-switches, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-escaped-percent-prerequisite-pattern-keeps-its-backslash, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-escaped-prerequisite-colon, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-eval-fragments-do-not-descend, priority 3, derived_at 2026-08-19T23:08:50.398495416Z}
     {id make-every-makefile-argument-is-read, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-explicit-rule-stem-from-a-known-suffix, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-export-scope-semantics, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
@@ -122,6 +124,7 @@ derived_priorities (
     {id make-graph-equivalence, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-grouped-double-colon-actions, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-grouped-pattern-targets, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-grouped-tests-need-the-make-feature, priority 0, derived_at 2026-08-19T23:08:50.398495416Z}
     {id make-included-makefile-restarts, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-inherited-export-reassignment, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-io-error-wording, priority 0, derived_at 2026-08-08T21:00:59.885791732Z}
@@ -185,6 +188,7 @@ derived_priorities (
     {id make-progress-total-shrinks-to-the-work, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-question-mode-refuses-a-makefile-it-cannot-make, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-question-variable-reads-an-archive-member, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
+    {id make-quiet-command-echo-becomes-the-description, priority 0, derived_at 2026-08-19T23:08:50.398495416Z}
     {id make-recipe-command-narration, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-recipe-continuation-bytes, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-eval-mutation-refusal, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
@@ -192,6 +196,7 @@ derived_priorities (
     {id make-recipe-file-operation-at-launch-only, priority 2, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-line-is-its-own-shell, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-output-function-is-not-a-command, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-recipe-prefix-is-read-per-expanded-line, priority 1, derived_at 2026-08-19T23:08:50.398495416Z}
     {id make-recipe-time-export-reaches-the-environment, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-time-target-variable-reaches-prerequisites, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-recipe-time-target-variable-reaches-the-scope, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
@@ -224,6 +229,8 @@ derived_priorities (
     {id make-shuffled-drop-unlinks-the-position-not-the-edge, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-signal-killed-recipe-deletion, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-simple-command-without-a-shell, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-staging-pass-counts-as-a-make-restart, priority 3, derived_at 2026-08-19T23:08:50.398495416Z}
+    {id make-staging-pass-repeats-an-immediate-side-effect, priority 3, derived_at 2026-08-19T23:08:50.398495416Z}
     {id make-static-pattern-escaped-percent, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-static-pattern-nonmatch-semantics, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-stdin-refusal-test-races-its-write, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
