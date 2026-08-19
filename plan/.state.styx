@@ -636,7 +636,7 @@ assertions (
     {id make-empty-recipe-pattern-rule-drops-its-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-19T18:28:06.43633809Z}
     {id make-archive-index-reader-is-written-twice, kind @complete, author "brendan@necessary.nu", at 2026-08-19T18:28:11.684684076Z}
     {id make-question-variable-reads-an-archive-member, kind @complete, author "brendan@necessary.nu", at 2026-08-19T18:28:16.124700877Z}
-    {id make-empty-recipe-target-is-not-a-ninja-alias, kind @doing, author "brendan@necessary.nu", at 2026-08-19T18:58:04.062267834Z}
+    {id make-empty-recipe-target-is-not-a-ninja-alias, kind @complete, author "brendan@necessary.nu", at 2026-08-19T19:02:02.421210827Z}
 )
 
 impl_evidence (
