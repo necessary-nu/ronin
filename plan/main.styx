@@ -12597,6 +12597,36 @@ children (
                 title "Order recursive children by what they produce through an ordinary target"
                 kind @fix
                 deps (make-recursive-evaluation-boundary)
+                sealed true
+                log (
+                    {
+                        at 2026-08-19T16:08:16.086026447Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found by building zsh 5.9.2 from its own Makefiles with Ronin's Make mode beside GNU Make 4.4.1, and reducing the second divergence.\n\nzsh's generated `Src/Makemod` builds each module's header through a chain of three targets, two of which re-invoke the same makefile: `X.mdh` needs `X.mdhi`, `X.mdhi` needs `X.mdhs`, and both `X.mdh` and `X.mdhs` run `$(MAKE) -f Makemod X.mdh.tmp`. So the two recursive wrappers are related only through `X.mdhi`, which has an ordinary recipe.\n\n`src/make.rs dependency_ordered` puts a held recursive edge before any held edge that needs its outputs, and it decides that by matching one edge's `evaluation_inputs()` against another's outputs directly. `X.mdh`'s evaluation input is `X.mdhi`, which no recursive edge produces, so no predecessor is found and `X.mdh` is composed first — handed a provisional build that has not yet been given the edge which makes `X.mdhs`, and therefore cannot make `X.mdhi` either. Naming `X.mdhs` as a direct prerequisite of `X.mdh` makes the build pass, which is the ordering pass saying exactly what it can and cannot see.\n\nThe ordering must see production through the ordinary targets that stand between two pending subninjas.\n\nAcceptance: `tests/make-project-reductions/recursive-wrapper-reached-through-an-ordinary-target` builds `mdh` with no makefile edit, and zsh builds through `scripts/check-make-projects.sh zsh`."
+                    }
+
+                    {
+                        at 2026-08-19T16:08:22.176915158Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-19T16:18:02.492450038Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered. The producer relation `dependency_ordered` builds is now transitive: an evaluation input no held recursive edge makes is followed back through the edge that does make it, and through that edge's own prerequisites, until a wrapper's output is reached or the chain runs out.\n\nThe walk is safe because of when it happens. Held recursive edges are not in the graph while their order is being decided — they are staged one at a time, in the order this decision produces — so every edge the walk can reach is an ordinary one, which is exactly the ground the search has to cross. `GraphSink::prerequisites_of` is that one step, over the new `BuildGraph::edge_inputs`, and a visited set keeps a cycle from becoming a loop while leaving Make's own cycle diagnostics responsible for reporting it.\n\nReaching a producer stops the walk rather than continuing through it. What that wrapper needs is that wrapper's own evaluation inputs, and they are already this pass's input.\n\nWhere it went: `src/make.rs dependency_ordered` (the frontier walk and the `sink` argument), `src/make/sink.rs GraphSink::prerequisites_of`, `src/frontend.rs BuildGraph::edge_inputs`.\n\nGates: workspace 870, all three Clippy passes clean, equivalence 297/278 with 0 disagreements, upstream inventory 1299 rows at 161/0/37/1101 with compiler at zero and no row moved, make_port green with no recording rewritten.\n\nEvidence beyond the reduction: with this and make-suffix-rule-name-splits-against-the-list in, zsh 5.9.2 builds from its own Makefiles under `scripts/check-make-projects.sh zsh` — `zsh 5.9.2 (x86_64-pc-linux-gnu)` and 36 modules in 29s at -j8, with no makefile edited.\n\nFixtures: tests/make/a-recursive-wrapper-is-reached-through-a-middleman, recorded from the oracle, asserts all four files the chain leaves behind. tests/make-project-reductions/recursive-wrapper-reached-through-an-ordinary-target is the reduction the test in tests/make_projects.rs runs."
+                    }
+
+                    {
+                        at 2026-08-19T16:18:07.823257018Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
             }
 
             {

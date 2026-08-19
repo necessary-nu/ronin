@@ -367,6 +367,18 @@ impl GraphSink {
         self.graph.mark_subgraphs_prebuilt(roots, self.phony);
     }
 
+    /// What the edge that makes `node` reads, empty for a node nothing here
+    /// makes.
+    ///
+    /// Held recursive edges are not in the graph while their order is being
+    /// decided — they are staged one at a time, in the order that decision
+    /// produces — so everything this can walk through is an ordinary target,
+    /// which is exactly the ground one wrapper has to be found across from
+    /// another.
+    pub(crate) fn prerequisites_of(&self, node: Node) -> Vec<Node> {
+        self.graph.prerequisites_of(node)
+    }
+
     /// Resolve compiler-input roots while this unit's symbol map is current.
     ///
     /// Generated included Makefiles are emitted like any other target, but the

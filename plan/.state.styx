@@ -609,6 +609,7 @@ assertions (
     {id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going, kind @complete, author "brendan@necessary.nu", at 2026-08-19T15:34:51.099887742Z}
     {id make-an-output-directory-is-created-where-gnu-make-would-refuse, kind @complete, author "brendan@necessary.nu", at 2026-08-19T15:34:59.871857388Z}
     {id make-suffix-rule-name-splits-against-the-list, kind @complete, author "brendan@necessary.nu", at 2026-08-19T16:05:56.003633432Z}
+    {id make-recursive-ordering-sees-a-middleman, kind @complete, author "brendan@necessary.nu", at 2026-08-19T16:18:07.823257018Z}
 )
 
 impl_evidence (

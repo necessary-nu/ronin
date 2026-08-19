@@ -1,0 +1,35 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 24
+| # zsh's generated `Src/Makemod` builds each module's header through a chain of
+| # three targets, two of which re-invoke the same makefile: `X.mdh` needs
+| # `X.mdhi`, `X.mdhi` needs `X.mdhs`, and both `X.mdh` and `X.mdhs` run
+| # `$(MAKE) -f Makemod X.mdh.tmp`.
+| #
+| # So the two recursive recipes are related only through `X.mdhi`, which has an
+| # ordinary recipe and is the only thing standing between them. What has to
+| # happen before `mdh` runs is everything `mdhs` does, and no prerequisite says
+| # so directly.
+| makefile = Makefile
+| 
+| mdh: mdhi
+| 	@$(MAKE) -f $(makefile) tmp
+| 	@mv -f tmp mdh
+| 
+| mdhi: mdhs
+| 	@test -f $@ || echo 'do not delete this file' > $@
+| 
+| mdhs: mdd
+| 	@$(MAKE) -f $(makefile) tmp
+| 	@echo timestamp > $@
+| 
+| tmp:
+| 	@echo content > tmp
+file mdd kept 1
+| dd
+file mdh touched 1
+| content
+file mdhi touched 1
+| do not delete this file
+file mdhs touched 1
+| timestamp

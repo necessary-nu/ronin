@@ -620,7 +620,8 @@ where
     } = unit;
     let mut subtree_edges = edges;
     let disk = freshness_disk(descendant_context)?;
-    for (pending_index, mut pending) in dependency_ordered(subninjas).into_iter().enumerate() {
+    for (pending_index, mut pending) in dependency_ordered(subninjas, sink).into_iter().enumerate()
+    {
         let parent_inputs = pending.evaluation_inputs();
         if !parent_inputs.is_empty() {
             let boundary = evaluation_boundary(
@@ -756,7 +757,19 @@ fn stage_recursive_wrapper(
 /// to build a recursive target used as another recursive target's evaluation
 /// input. Stable topological order makes that producer available first; Make's
 /// ordinary cycle diagnostics remain responsible for a cyclic remainder.
-fn dependency_ordered(subninjas: Vec<sink::PendingSubninja>) -> Vec<sink::PendingSubninja> {
+///
+/// A wrapper's prerequisite is not necessarily another wrapper's output, so
+/// the producer is searched for through whatever ordinary targets stand
+/// between the two. zsh's generated `Src/Makemod` is the shape that shows it:
+/// `X.mdh` re-invokes the makefile and needs `X.mdhi`, which has an ordinary
+/// recipe and needs `X.mdhs`, which re-invokes the makefile too. Comparing
+/// only what each wrapper directly reads finds `X.mdh` no producer at all and
+/// composes it first, against a provisional graph that has not been given the
+/// edge which makes what it asks for.
+fn dependency_ordered(
+    subninjas: Vec<sink::PendingSubninja>,
+    sink: &GraphSink,
+) -> Vec<sink::PendingSubninja> {
     let mut producers = HashMap::new();
     for (index, pending) in subninjas.iter().enumerate() {
         for output in pending.outputs() {
@@ -768,8 +781,17 @@ fn dependency_ordered(subninjas: Vec<sink::PendingSubninja>) -> Vec<sink::Pendin
     let mut successors = vec![Vec::new(); subninjas.len()];
     for (consumer, pending) in subninjas.iter().enumerate() {
         let mut predecessors = HashSet::new();
-        for input in pending.evaluation_inputs() {
+        let mut walked = HashSet::new();
+        let mut frontier = pending.evaluation_inputs();
+        while let Some(input) = frontier.pop() {
+            if !walked.insert(input) {
+                continue;
+            }
             let Some(&producer) = producers.get(&input) else {
+                // Nothing held makes this one, so what makes it is an
+                // ordinary edge and the wrapper being looked for is behind
+                // that edge rather than at it.
+                frontier.extend(sink.prerequisites_of(input));
                 continue;
             };
             if producer != consumer && predecessors.insert(producer) {

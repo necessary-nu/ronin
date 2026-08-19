@@ -13,6 +13,26 @@
 use super::{BuildGraph, Edge, Node, nodeuse};
 
 impl BuildGraph {
+    /// Everything the edge that makes `node` waits for, of either kind, and
+    /// nothing at all for a node this graph does not make.
+    ///
+    /// One step of the walk that finds which of two recursive recipes has to
+    /// be composed first when only ordinary targets stand between them: what
+    /// the later one names is not what the earlier one produces, and the
+    /// distance between the two is measured here.
+    pub(crate) fn prerequisites_of(&self, node: Node) -> Vec<Node> {
+        let Some(edge) = self.arenas.node(node.0).generator else {
+            return Vec::new();
+        };
+        self.arenas
+            .edge(edge)
+            .input
+            .iter()
+            .copied()
+            .map(Node)
+            .collect()
+    }
+
     /// Make `edge` wait for additional order-only inputs.
     ///
     /// Subninja composition uses this to preserve the parent recipe boundary:

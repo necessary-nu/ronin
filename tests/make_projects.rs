@@ -63,6 +63,35 @@ fn make_command(directory: &Path) -> Command {
     command
 }
 
+/// zsh's generated `Src/Makemod` builds each module header through a chain of
+/// three targets, two of which re-invoke the same makefile: `X.mdh` needs
+/// `X.mdhi`, `X.mdhi` needs `X.mdhs`, and both `X.mdh` and `X.mdhs` run
+/// `$(MAKE) -f Makemod X.mdh.tmp`.
+///
+/// The two recursive wrappers are related only through `X.mdhi`, which has an
+/// ordinary recipe. Ronin ordered held recursive edges by matching each one's
+/// evaluation inputs against the other's outputs, and that comparison was
+/// direct rather than transitive, so `X.mdh` was composed first: its input
+/// `X.mdhi` was handed to a provisional build that had not yet been given the
+/// edge which makes `X.mdhs`.
+///
+/// Naming `X.mdhs` as a direct prerequisite of `X.mdh` made the build pass,
+/// which is the ordering pass saying what it could and could not see.
+#[test]
+fn a_wrapper_behind_a_middleman() {
+    let directory = reduction("recursive-wrapper-reached-through-an-ordinary-target");
+
+    let output = make_command(&directory).arg("mdh").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(directory.join("mdhs").exists(), "mdhs was never made");
+    assert!(directory.join("mdh").exists(), "mdh was never made");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 /// zsh compiles a module's object with `.c.$(OBJ):` where `OBJ` is `.o`, so
 /// the rule it writes is `.c..o:` and the `.SUFFIXES` line beside it names
 /// `..o`. GNU Make writes every declared suffix in front of every other and
