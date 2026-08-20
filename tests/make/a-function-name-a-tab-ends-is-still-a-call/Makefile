@@ -1,0 +1,11 @@
+# GNU Make ends a function name at anything `isspace` accepts rather than at a
+# space alone: `lookup_function` (function.c) walks the name and insists the
+# byte after it is in MAP_NUL|MAP_SPACE. So a tab between the name and the
+# arguments calls the function, and reading it as part of a variable name
+# instead loses both the substitution and everything the arguments do.
+SUBST := $(subst	a,b,aaa)
+
+all: $(shell	echo made-by-a-tab)
+all: ; @echo [$(SUBST)] > out
+
+made-by-a-tab: ; @echo made > made-by-a-tab
