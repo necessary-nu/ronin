@@ -1,0 +1,2 @@
+.SHELLFLAGS=-c
+CC=from-the-environment

@@ -1,0 +1,6 @@
+CC=from-the-environment
+MAKE_VERSION=9.9
+MAKE=from-the-environment
+PLAIN=nothing-defines-over-me
+.FEATURES=before-the-switches
+.LOADED=before-the-switches

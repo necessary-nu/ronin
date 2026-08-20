@@ -1,0 +1,22 @@
+# `-e` does not promote the environment. It promotes exactly the names Make
+# itself defines over, at the moment it is about to define over them:
+# `define_variable_in_set` (variable.c) lifts the binding in the slot from
+# `o_env` to `o_env_override` and only then compares the ranks and declines the
+# write. So the promoted rank is what `$(origin)` answers for the rest of the
+# run, and a name nothing ever defines over is still plain `environment`.
+#
+# Three kinds of name in one invocation, and each is a different answer:
+#   CC, MAKE_VERSION, MAKE, MFLAGS  Make defines over them after reading its
+#                                   switches, so they are lifted
+#   PLAIN                           nothing ever defines over it
+#   .FEATURES, .LOADED              Make defines over them at main.c:1436 and
+#                                   main.c:1475, ahead of `decode_switches` at
+#                                   main.c:1624, so `-e` is not yet in force
+ifeq ($(origin CC),environment override)
+all: the-names-are-lifted
+else
+all: the-names-stand-where-they-were
+endif
+
+the-names-are-lifted: ; @printf 'cc=[%s,%s] ver=[%s,%s] make=[%s] mflags=[%s] plain=[%s] feat=[%s,%s] loaded=[%s,%s]\n' '$(origin CC)' '$(CC)' '$(origin MAKE_VERSION)' '$(MAKE_VERSION)' '$(origin MAKE)' '$(origin MFLAGS)' '$(origin PLAIN)' '$(origin .FEATURES)' '$(.FEATURES)' '$(origin .LOADED)' '$(.LOADED)' > out
+the-names-stand-where-they-were: ; @printf 'branch=[%s]\n' '$(origin CC)' > out

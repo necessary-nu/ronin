@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 16
+| # `.SHELLFLAGS` is one of the names GNU Make defines before it has read its
+| # switches, so an inherited one is NOT lifted by `-e` on that write. It is not
+| # exempt for good, though: `.POSIX:` writes the name again while the makefile is
+| # being read — `define_variable_cname (".SHELLFLAGS", "-ec", o_default, 0)` in
+| # read.c's special-target handling — and that write is after the switches, so it
+| # lifts the binding it is about to decline. The name it is about is the same;
+| # what changed is which write is doing the asking.
+| .POSIX:
+| ifeq ($(origin .SHELLFLAGS),environment override)
+| all: the-second-write-lifted-it
+| else
+| all: the-first-write-stands
+| endif
+| 
+| the-second-write-lifted-it: ; @printf 'sf=[%s,%s] cc=[%s,%s] arf=[%s,%s]\n' '$(origin .SHELLFLAGS)' '$(.SHELLFLAGS)' '$(origin CC)' '$(CC)' '$(origin ARFLAGS)' '$(ARFLAGS)' > out
+| the-first-write-stands: ; @printf 'branch=[%s]\n' '$(origin .SHELLFLAGS)' > out
+file out touched 1
+| sf=[environment override,-c] cc=[environment override,from-the-environment] arf=[default,-rv]
