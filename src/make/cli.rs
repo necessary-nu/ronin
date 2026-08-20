@@ -42,6 +42,7 @@ mod jobserver_style;
 mod remake;
 mod selection;
 mod subninja;
+mod switch_table;
 use interface::{
     ArgumentSource, compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
     evaluated_invocation, makeflags_arguments, prepend_command_line_evals, read_shuffle,
@@ -50,6 +51,7 @@ use jobserver_style::{carried_switches, read_jobserver_style, unknown_jobserver_
 use remake::{CompilerInputBuild, Settlement, build_compiler_inputs};
 use selection::{DEFAULT_MAKEFILES, STANDARD_INPUT, is_standard_input, named_makefiles};
 pub(super) use subninja::compile as compile_subninja;
+use switch_table::path_of;
 
 /// How deep in a recursive Make tree this invocation is.
 ///
@@ -317,13 +319,6 @@ struct Invocation {
     directories: Vec<PathBuf>,
     /// Where `-I` says to look for an `include`, in the order given.
     include_dirs: Vec<PathBuf>,
-    /// Whether an `-I -` has turned the built-in default search path off.
-    ///
-    /// The switch does two things and only one of them is a list operation: it
-    /// forgets the directories before it, and it disables the defaults for the
-    /// rest of the run. A later `-I` restores neither, so this is a latch
-    /// rather than a state.
-    no_default_include_dirs: bool,
     /// The Makefiles `-f` named, in the order it named them. GNU Make reads
     /// every one of them as though they had been concatenated, so this is a
     /// list and the order is the semantics: the default goal comes from the
@@ -383,6 +378,16 @@ struct Invocation {
     /// for one it would have accepted: a makefile guarding on the refusal would
     /// otherwise take the wrong branch.
     jobserver_style: Option<BString>,
+    /// The first switch this stream could not read, kept until the whole word
+    /// has been consumed.
+    ///
+    /// GNU Make's `decode_switches` (main.c) sets a `bad` flag rather than
+    /// dying where it stands, so that the argument is still consumed and the
+    /// parse stays in step. Only the command line and the environment's
+    /// `MAKEFLAGS` — which GNU Make decodes at `o_command` as well — answer with
+    /// the usage message afterwards; a makefile's own write loses the switch and
+    /// the read goes on.
+    bad: Option<String>,
 }
 
 impl Invocation {
@@ -390,7 +395,6 @@ impl Invocation {
         Self {
             directories: Vec::new(),
             include_dirs: Vec::new(),
-            no_default_include_dirs: false,
             makefiles: Vec::new(),
             goals: Vec::new(),
             variables: Vec::new(),
@@ -405,6 +409,7 @@ impl Invocation {
             negated: 0,
             output_sync: None,
             jobserver_style: None,
+            bad: None,
         }
     }
 
@@ -417,20 +422,6 @@ impl Invocation {
             self.switches |= Switch::NoBuiltinRules.bit();
             self.negated &= !Switch::NoBuiltinRules.bit();
         }
-    }
-
-    /// Add a directory `-I` named, or forget the ones before it.
-    ///
-    /// GNU Make reads `-I -` as a restart rather than as a directory called
-    /// `-`, which is how a makefile that wants only its own search path says so.
-    fn include_dir(&mut self, named: &[u8]) -> Result<(), Error> {
-        if named == b"-" {
-            self.include_dirs.clear();
-            self.no_default_include_dirs = true;
-        } else {
-            self.include_dirs.push(path_of(named)?);
-        }
-        Ok(())
     }
 
     const fn withdraw(&mut self, switch: Switch) {
@@ -863,6 +854,8 @@ fn load_value(
 /// fallback is the executable meaning of [`OptionClass::NoOp`]: accepting a
 /// spelling never silently turns it into Make runtime behavior.
 fn accept_noop_long(
+    invocation: &mut Invocation,
+    source: ArgumentSource,
     option: &[u8],
     arguments: &[BString],
     index: &mut usize,
@@ -877,10 +870,21 @@ fn accept_noop_long(
             .filter(|spelling| spelling.starts_with("--"))
         {
             let spelling = spelling.as_bytes();
+            // GNU Make names the switch rather than the spelling that reached
+            // it, and the switch's name is its short letter wherever it has
+            // one: `--old-file=` complains about `-o`.
+            let name = declared
+                .spellings
+                .first()
+                .filter(|first| !first.starts_with("--"))
+                .map_or_else(
+                    || String::from_utf8_lossy(spelling),
+                    |first| (*first).into(),
+                );
             if option == spelling {
                 if declared.argument == ArgumentShape::Required {
-                    let name = String::from_utf8_lossy(spelling);
-                    let _ = value(arguments, index, b"", &name)?;
+                    let named = value(arguments, index, b"", &name)?;
+                    invocation.discarded_argument(source, &name, named.as_bytes());
                 }
                 return Ok(true);
             }
@@ -891,6 +895,9 @@ fn accept_noop_long(
                     ArgumentShape::Required | ArgumentShape::OptionalAttached
                 )
             {
+                if declared.argument == ArgumentShape::Required {
+                    invocation.discarded_argument(source, &name, &option[spelling.len() + 1..]);
+                }
                 return Ok(true);
             }
         }
@@ -900,6 +907,8 @@ fn accept_noop_long(
 
 /// Consume a deliberately ignored short option from a cluster.
 fn accept_noop_short(
+    invocation: &mut Invocation,
+    source: ArgumentSource,
     option: u8,
     argument: &[u8],
     short: &mut usize,
@@ -918,7 +927,8 @@ fn accept_noop_short(
     };
     if declared.argument == ArgumentShape::Required {
         let name = String::from_utf8_lossy(&spelling);
-        let _ = value(arguments, index, &argument[*short..], &name)?;
+        let named = value(arguments, index, &argument[*short..], &name)?;
+        invocation.discarded_argument(source, &name, named.as_bytes());
         *short = argument.len();
     }
     Ok(true)
@@ -937,19 +947,19 @@ fn attached_long(
         .strip_prefix(b"--file=")
         .or_else(|| option.strip_prefix(b"--makefile="))
     {
-        invocation.makefiles.push(path_of(named)?);
+        invocation.makefile(source, named)?;
     } else if let Some(named) = option.strip_prefix(b"--directory=") {
-        invocation.directories.push(path_of(named)?);
+        invocation.directory(source, named)?;
     } else if let Some(named) = option.strip_prefix(b"--include-dir=") {
-        invocation.include_dir(named)?;
-    } else if option
+        invocation.include_dir(source, named)?;
+    } else if let Some(named) = option
         .strip_prefix(b"--what-if=")
         .or_else(|| option.strip_prefix(b"--new-file="))
         .or_else(|| option.strip_prefix(b"--assume-new="))
-        .is_some()
     {
+        invocation.discarded_argument(source, "-W", named);
     } else if let Some(eval) = option.strip_prefix(b"--eval=") {
-        invocation.evals.push(Bytes::from(eval.to_vec()));
+        invocation.eval_statement(source, eval);
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
         invocation.set_jobs(source, jobs_value(arguments, index, count)?);
     } else if let Some(load) = option
@@ -958,7 +968,9 @@ fn attached_long(
     {
         invocation.load = Some(load_value(arguments, index, load)?);
     } else if let Some(kind) = option.strip_prefix(b"--output-sync=") {
-        invocation.output_sync = Some(OutputSync::parse(kind)?);
+        if invocation.non_empty(source, "-O", kind) {
+            invocation.output_sync = Some(OutputSync::parse(kind)?);
+        }
     } else {
         return Ok(false);
     }
@@ -1033,16 +1045,16 @@ fn parse_arguments(
             b"--output-sync" => invocation.output_sync = Some(OutputSync::Target),
             // GNU Make's argument is optional and its default is the basic
             // level, which is also what the group of letters is read against.
-            b"--debug" => invocation.debug.push(BString::from(&b"basic"[..])),
+            b"--debug" => invocation.debug_spec(source, b"basic"),
             option if option.starts_with(b"--debug=") => {
                 let spec = &option["--debug=".len()..];
-                if debug_facets(0, spec).is_none() {
+                if !spec.is_empty() && debug_facets(0, spec).is_none() {
                     return Ok(Some(refuse(format_args!(
                         "unknown debug level specification '{}'",
                         spec.to_str_lossy()
                     ))));
                 }
-                invocation.debug.push(BString::from(spec));
+                invocation.debug_spec(source, spec);
             }
             // GNU Make's argument is optional and its default is `random`.
             option if option == b"--shuffle" || option.starts_with(b"--shuffle=") => {
@@ -1068,22 +1080,23 @@ fn parse_arguments(
             }
             b"--file" | b"--makefile" => {
                 let named = value(arguments, &mut index, b"", "--file")?;
-                invocation.makefiles.push(path_of(named.as_bytes())?);
+                invocation.makefile(source, named.as_bytes())?;
             }
             b"--directory" => {
                 let named = value(arguments, &mut index, b"", "--directory")?;
-                invocation.directories.push(path_of(named.as_bytes())?);
+                invocation.directory(source, named.as_bytes())?;
             }
             b"--include-dir" => {
                 let named = value(arguments, &mut index, b"", "--include-dir")?;
-                invocation.include_dir(named.as_bytes())?;
+                invocation.include_dir(source, named.as_bytes())?;
             }
             b"--eval" => {
                 let eval = value(arguments, &mut index, b"", "--eval")?;
-                invocation.evals.push(Bytes::from(eval.to_vec()));
+                invocation.eval_statement(source, eval.as_bytes());
             }
             b"--what-if" | b"--new-file" | b"--assume-new" => {
-                let _ = value(arguments, &mut index, b"", "--what-if")?;
+                let named = value(arguments, &mut index, b"", "--what-if")?;
+                invocation.discarded_argument(source, "-W", named.as_bytes());
             }
             option if option.starts_with(b"--") => {
                 if let Some(action) =
@@ -1099,6 +1112,13 @@ fn parse_arguments(
                     return Ok(Some(immediate));
                 }
             }
+        }
+        // Read here rather than where it is set, because GNU Make consumes the
+        // whole switch before it gives up on it: the argument of an `-I ''` is
+        // still the argument, and a parse that abandoned the word where the
+        // emptiness was noticed would read the next one as a goal.
+        if let Some(message) = invocation.bad.take() {
+            return Ok(Some(refuse(message)));
         }
         index += 1;
     }
@@ -1116,8 +1136,8 @@ fn read_other_long(
     index: &mut usize,
 ) -> Result<Option<Action>, Error> {
     if attached_long(invocation, source, option, arguments, index)?
-        || accept_noop_long(option, arguments, index)?
-        || !source.refuses_an_unknown_switch()
+        || accept_noop_long(invocation, source, option, arguments, index)?
+        || !source.refuses_a_bad_switch()
     {
         return Ok(None);
     }
@@ -1153,7 +1173,7 @@ fn read_cluster(
             b'E' => {
                 let eval = value(arguments, index, &argument[short..], "-E")?;
                 short = argument.len();
-                invocation.evals.push(Bytes::from(eval.to_vec()));
+                invocation.eval_statement(source, eval.as_bytes());
             }
             b'j' => {
                 invocation.set_jobs(source, jobs_value(arguments, index, &argument[short..])?);
@@ -1164,8 +1184,9 @@ fn read_cluster(
                 short = argument.len();
             }
             b'W' => {
-                let _ = value(arguments, index, &argument[short..], "-W")?;
+                let named = value(arguments, index, &argument[short..], "-W")?;
                 short = argument.len();
+                invocation.discarded_argument(source, "-W", named.as_bytes());
             }
             b'O' => {
                 invocation.output_sync = Some(OutputSync::parse(&argument[short..])?);
@@ -1184,16 +1205,17 @@ fn read_cluster(
                 )?;
                 short = argument.len();
                 if option == b'I' {
-                    invocation.include_dir(named.as_bytes())?;
+                    invocation.include_dir(source, named.as_bytes())?;
                 } else if option == b'f' {
-                    invocation.makefiles.push(path_of(named.as_bytes())?);
+                    invocation.makefile(source, named.as_bytes())?;
                 } else {
-                    invocation.directories.push(path_of(named.as_bytes())?);
+                    invocation.directory(source, named.as_bytes())?;
                 }
             }
             _ => {
-                if !accept_noop_short(option, argument, &mut short, arguments, index)?
-                    && source.refuses_an_unknown_switch()
+                if !accept_noop_short(
+                    invocation, source, option, argument, &mut short, arguments, index,
+                )? && source.refuses_a_bad_switch()
                 {
                     return Ok(Some(refuse(format_args!(
                         "invalid option -- '{}'",
@@ -1204,18 +1226,6 @@ fn read_cluster(
         }
     }
     Ok(None)
-}
-
-fn path_of(value: &[u8]) -> Result<PathBuf, Error> {
-    value
-        .to_os_str()
-        .map(|value| PathBuf::from(value.to_owned()))
-        .map_err(|_| {
-            CliError::InvalidEncoding {
-                context: crate::error::EncodingContext::Argument,
-            }
-            .into()
-        })
 }
 
 /// A word that is not an option: a variable assignment, or a goal.
@@ -1321,7 +1331,6 @@ fn session_for(
             "output-sync".to_owned(),
         ],
         include_dirs: invocation.include_dirs.clone(),
-        no_default_include_dirs: invocation.no_default_include_dirs,
         ..Flags::default()
     };
     session.flags.targets = invocation
@@ -1984,14 +1993,27 @@ mod tests {
         let after_terminator = parsed(&["make", "--", "-"]);
         assert!(after_terminator.goals.is_empty());
 
-        // The dash `-I` takes still forgets the directories before it.
+        // The dash `-I` takes is a list entry rather than a goal, and it stays
+        // in the list at the position it was written: what it forgets and what
+        // it turns off are read off there.
         let forgets = parsed(&["make", "-I", "one", "-I", "-", "-I", "two"]);
         assert!(forgets.goals.is_empty());
-        assert_eq!(forgets.include_dirs, vec![PathBuf::from("two")]);
-        // And it keeps the built-in default search path off, which the
-        // directory a later `-I` names does not turn back on.
-        assert!(forgets.no_default_include_dirs);
-        assert!(!parsed(&["make", "-I", "one"]).no_default_include_dirs);
+        assert_eq!(
+            forgets.include_dirs,
+            vec![
+                PathBuf::from("one"),
+                PathBuf::from("-"),
+                PathBuf::from("two")
+            ]
+        );
+        // A second one is a duplicate and is dropped, so it resets nothing —
+        // and a directory named on both sides of the first is dropped too, by
+        // the copy the reset was supposed to have thrown away.
+        let once = parsed(&["make", "-I", "one", "-I", "-", "-I", "one", "-I", "-"]);
+        assert_eq!(
+            once.include_dirs,
+            vec![PathBuf::from("one"), PathBuf::from("-")]
+        );
     }
 
     // [spec:ronin:req:product.make-identity/test]

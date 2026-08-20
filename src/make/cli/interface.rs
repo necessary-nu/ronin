@@ -45,8 +45,12 @@ pub(super) enum ShuffleEffect {
 }
 
 impl ArgumentSource {
-    /// Whether a switch this stream names and Make does not know ends the run.
-    pub(super) const fn refuses_an_unknown_switch(self) -> bool {
+    /// Whether a switch this stream got wrong ends the run.
+    ///
+    /// GNU Make's `decode_switches` has one `bad` flag for every way a word can
+    /// be wrong — a switch it does not know, and an empty argument to one it
+    /// does — and one place it answers for them, so both questions are this one.
+    pub(super) const fn refuses_a_bad_switch(self) -> bool {
         matches!(self, Self::Inherited | Self::CommandLine)
     }
 
@@ -498,11 +502,27 @@ pub(super) fn evaluated_build_options(
 /// dollar represents one literal dollar. Plain whitespace still separates
 /// options. Resolving that quoting here gives the ordinary argv parser the
 /// exact assignment a parent invocation received.
+///
+/// A VALUE THAT ENDS IN WHITESPACE ENDS IN AN EMPTY WORD, which is not a
+/// rounding error in `decode_env_switches` (main.c) but the thing it does:
+/// leading blanks are skipped once and a blank run between words is consumed
+/// whole, but the last word is terminated wherever the value ran out. So
+/// `MAKEFLAGS=-I ` hands `-I` an empty argument and is refused, while
+/// `MAKEFLAGS=-I  -R` hands it `-R`. Dropping the empty word instead would turn
+/// the first into a switch missing its argument, which is a different
+/// complaint and, from a makefile's own write, a different outcome.
 fn makeflags_words(inherited: &str) -> Vec<String> {
     let bytes = inherited.as_bytes();
+    let mut index = 0;
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+    if index == bytes.len() {
+        return Vec::new();
+    }
+    let settled = |word: Vec<u8>| String::from_utf8(word).expect("MAKEFLAGS started as UTF-8");
     let mut words = Vec::new();
     let mut word = Vec::new();
-    let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
             b'\\' if index + 1 < bytes.len() => {
@@ -514,18 +534,16 @@ fn makeflags_words(inherited: &str) -> Vec<String> {
                 word.push(b'$');
             }
             byte if byte.is_ascii_whitespace() => {
-                if !word.is_empty() {
-                    words.push(String::from_utf8(word).expect("MAKEFLAGS started as UTF-8"));
-                    word = Vec::new();
+                words.push(settled(std::mem::take(&mut word)));
+                while bytes.get(index + 1).is_some_and(u8::is_ascii_whitespace) {
+                    index += 1;
                 }
             }
             byte => word.push(byte),
         }
         index += 1;
     }
-    if !word.is_empty() {
-        words.push(String::from_utf8(word).expect("MAKEFLAGS started as UTF-8"));
-    }
+    words.push(settled(word));
     words
 }
 

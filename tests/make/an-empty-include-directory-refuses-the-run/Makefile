@@ -1,0 +1,5 @@
+# `decode_switches` (main.c) tests the argument of every switch that takes a
+# string before it stores anything, and an empty one sets the same flag a switch
+# it cannot read sets. So the run ends before this recipe, and the absence of the
+# file it would have written is the assertion.
+all: ; @printf 'built\n' > out

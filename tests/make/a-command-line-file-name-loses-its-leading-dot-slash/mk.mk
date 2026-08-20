@@ -1,0 +1,12 @@
+# `expand_command_line_file` (main.c) strips leading `./` sequences from every
+# file name a switch gave, following slashes and all, before the name is stored.
+# The file opens either way, so what the stripping decides is the name a makefile
+# reads back — and this one branches on it.
+ifeq ($(MAKEFILE_LIST),mk.mk)
+all: the-name-was-stripped
+else
+all: the-name-stood-as-written
+endif
+
+the-name-was-stripped: ; @printf 'list=[%s]\n' '$(MAKEFILE_LIST)' > out
+the-name-stood-as-written: ; @printf 'unstripped=[%s]\n' '$(MAKEFILE_LIST)' > out
