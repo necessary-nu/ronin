@@ -217,6 +217,12 @@ pub struct GraphSink {
     /// Edges whose command this graph's own executor will ask for when it is
     /// about to run them.
     deferred_edges: Vec<(Edge, DeferredRecipeId)>,
+    /// The launches a recipe read while compiling became, waiting for the edge
+    /// that names their rule.
+    settled_rules: HashMap<RuleId, Vec<crate::build::LateStep>>,
+    /// Edges whose recipe was read while compiling and which still run a
+    /// process per command line.
+    settled_edges: Vec<(Edge, Vec<crate::build::LateStep>)>,
     /// Recursive rules are not executor rules. They wait for their immediately
     /// following edge so the compiler can replace that edge with graph
     /// composition.
@@ -245,6 +251,13 @@ impl Default for GraphSink {
         Self::new()
     }
 }
+
+/// The two ways an edge can still have something to say for itself once the
+/// graph is built, taken together because they are taken at the same moment.
+pub(crate) type LateEdges = (
+    Vec<(Edge, DeferredRecipeId)>,
+    Vec<(Edge, Vec<crate::build::LateStep>)>,
+);
 
 impl GraphSink {
     /// A sink over an empty graph.
@@ -299,6 +312,8 @@ impl GraphSink {
             rules: HashMap::new(),
             deferred_rules: HashMap::new(),
             deferred_edges: Vec::new(),
+            settled_rules: HashMap::new(),
+            settled_edges: Vec::new(),
             subninja_rules: HashMap::new(),
             interned: HashMap::new(),
             observed_members: HashMap::new(),
@@ -954,16 +969,33 @@ impl GraphSink {
         bindings
     }
 
-    /// The recipe a declared rule left unexpanded, claimed by the edge that
-    /// names that rule.
-    fn deferred_recipe_for(&mut self, rule: Option<RuleId>) -> Option<DeferredRecipeId> {
-        rule.and_then(|id| self.deferred_rules.remove(&id))
+    /// Claim what a declared rule left for the executor to ask about, for the
+    /// edge that names it: the recipe the compiler did not expand, and the
+    /// launches of one it did.
+    ///
+    /// Never both — a deferred recipe carries its steps on the expansion
+    /// instead — and neither for an edge with no rule at all.
+    fn record_late_bindings(&mut self, built: Edge, rule: Option<RuleId>) {
+        let Some(id) = rule else {
+            return;
+        };
+        if let Some(recipe) = self.deferred_rules.remove(&id) {
+            self.deferred_edges.push((built, recipe));
+        }
+        if let Some(steps) = self.settled_rules.remove(&id) {
+            self.settled_edges.push((built, steps));
+        }
     }
 
-    /// The edges whose recipes are still to be expanded, and the recipe each
-    /// one names.
-    pub(crate) fn take_deferred_edges(&mut self) -> Vec<(Edge, DeferredRecipeId)> {
-        std::mem::take(&mut self.deferred_edges)
+    /// What this unit's edges will be asked about when they run: the ones
+    /// whose recipe is still to be expanded, with the recipe each names, and
+    /// the ones whose recipe was read while compiling and which run a process
+    /// per command line all the same.
+    pub(crate) fn take_late_edges(&mut self) -> LateEdges {
+        (
+            std::mem::take(&mut self.deferred_edges),
+            std::mem::take(&mut self.settled_edges),
+        )
     }
 
     /// Bindings for a run of a recipe's own lines that is not the edge making
@@ -1155,6 +1187,26 @@ impl BuildSink for GraphSink {
         if let Some(recipe) = rule.deferred_recipe {
             self.deferred_rules.insert(rule.id, recipe);
         }
+        // GNU Make runs a process per command line whether or not the text was
+        // settled early, so a recipe the compiler had to read for itself is
+        // still handed over as its launches. The assembled script stays the
+        // rule's command — the progress line, the log and `-n` all want the
+        // whole of it — and the same rule the launch-time path uses decides
+        // whether the split is possible at all: a line too long to be an
+        // argument needs a response file, and the file is named per edge.
+        if CommandLayout::launches_line_by_line(rule.steps) {
+            let layout = self.layout();
+            self.settled_rules.insert(
+                rule.id,
+                rule.steps
+                    .iter()
+                    .map(|step| crate::build::LateStep {
+                        launch: layout.launch_step(step, rule.recipe_environment),
+                        ignore_errors: step.ignore_error,
+                    })
+                    .collect(),
+            );
+        }
         Ok(())
     }
 
@@ -1225,7 +1277,6 @@ impl BuildSink for GraphSink {
                 .ok_or_else(|| anyhow::Error::msg(format!("edge names undeclared rule{id}")))?,
             None => self.phony,
         };
-        let deferred_recipe = self.deferred_recipe_for(edge.rule);
 
         let spec = EdgeSpec {
             scope: self.unit.scope,
@@ -1253,9 +1304,7 @@ impl BuildSink for GraphSink {
         };
         match self.graph.add_edge(spec) {
             Ok(built) => {
-                if let Some(recipe) = deferred_recipe {
-                    self.deferred_edges.push((built, recipe));
-                }
+                self.record_late_bindings(built, edge.rule);
                 // Every Make target is one GNU Make decides from the disk, and
                 // looks at again once its recipe has run whatever the recipe
                 // did, so this is what Make is here rather than something a

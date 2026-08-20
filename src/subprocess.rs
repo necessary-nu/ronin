@@ -32,6 +32,7 @@ fn signal_process(pid: u32, process_group: bool, signal: Signal) -> ProcessResul
 /// line holding shell syntax is the shell's errand, and one that holds none is
 /// exec'd directly, which is why a program that is not there is reported by
 /// Make itself rather than in a shell's words.
+#[derive(Clone)]
 pub(crate) enum Launch {
     /// A command line for a shell, exactly as Ninja hands one over.
     Shell(BString),
@@ -44,6 +45,7 @@ pub(crate) enum Launch {
 /// The directory and the environment travel with it because they have nowhere
 /// else to go: a shell command carries its own `cd` and `env`, and there is no
 /// shell here to read them.
+#[derive(Clone)]
 pub(crate) struct DirectLaunch {
     /// The program and its arguments, already unquoted.
     pub(crate) argv: Vec<BString>,

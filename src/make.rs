@@ -603,7 +603,7 @@ fn read_unit(
     // keep it alive for the build and may not, and either way this read is
     // over and what it was told belongs to the pass.
     let journal = ev.session.ground_journal.close_read();
-    let deferred_edges = sink.take_deferred_edges();
+    let (deferred_edges, settled_edges) = sink.take_late_edges();
     let pending_recipes = (!deferred.is_empty()).then_some((ev, deferred, layout, deferred_edges));
     Ok(UnitRead {
         unit,
@@ -613,6 +613,7 @@ fn read_unit(
         makeflags,
         flag_environment,
         pending_recipes,
+        settled_edges,
         journal,
     })
 }
@@ -626,6 +627,9 @@ struct UnitRead {
     makeflags: String,
     flag_environment: [(OsString, Option<OsString>); 2],
     pending_recipes: Option<UnitRecipes>,
+    /// Edges whose recipe this read expanded for itself and which still run a
+    /// process per command line.
+    settled_edges: Vec<(Edge, Vec<crate::build::LateStep>)>,
     /// What the ground told this read, for the read that repeats it.
     journal: Vec<kati::session::GroundAnswer>,
 }
@@ -676,6 +680,7 @@ where
         makeflags,
         flag_environment,
         pending_recipes,
+        settled_edges,
         journal,
     } = match read {
         Ok(read) => read,
@@ -686,6 +691,7 @@ where
     };
     state.units_read.insert(compilation_key.clone(), journal);
     state.retain(pending_recipes, &context.directory);
+    state.pending_recipes.admit_settled(settled_edges);
     state.admit(unit_remakes);
 
     let mut descendant_context = context;

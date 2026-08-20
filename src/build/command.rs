@@ -150,6 +150,7 @@ pub(crate) struct LateCommand {
 }
 
 /// One process an edge is made of.
+#[derive(Clone)]
 pub(crate) struct LateStep {
     pub(crate) launch: Launch,
     /// A nonzero status from this step is not the edge's answer and does not
@@ -168,6 +169,15 @@ pub(super) enum Runs {
 pub(crate) enum LateBinding {
     /// This edge's command was settled when the graph was built.
     Settled,
+    /// This edge's command was settled when the graph was built, and these are
+    /// the processes it is made of.
+    ///
+    /// A recipe the front end had to read while compiling still runs the way
+    /// GNU Make runs one — a process per command line — even though its text
+    /// was fixed long before. The command the graph holds is the whole recipe
+    /// assembled into one script and stays the edge's name; these are what
+    /// actually start.
+    Steps(Vec<LateStep>),
     /// Run this instead of whatever the graph is holding.
     Run(LateCommand),
     /// There is no command: the front end read the recipe and it came to
@@ -322,6 +332,10 @@ impl Builder<'_> {
     ) -> BuildResult<Runs> {
         match self.late_binding(edge)? {
             LateBinding::Settled => Ok(Runs::Command),
+            LateBinding::Steps(bound) => {
+                *steps = bound;
+                Ok(Runs::Command)
+            }
             LateBinding::Nothing => Ok(Runs::Nothing),
             LateBinding::Run(bound) => {
                 command.description = bound.description;

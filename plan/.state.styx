@@ -665,6 +665,7 @@ assertions (
     {id make-staging-pass-asks-the-ground-again, kind @complete, author "brendan@necessary.nu", at 2026-08-20T01:26:42.878332155Z}
     {id make-a-write-to-a-special-variable-is-refused, kind @complete, author "brendan@necessary.nu", at 2026-08-20T02:18:57.155511753Z}
     {id make-escaped-percent-prerequisite-pattern-keeps-its-backslash, kind @complete, author "brendan@necessary.nu", at 2026-08-20T02:40:49.681188141Z}
+    {id make-construction-expanded-recipe-is-one-shell, kind @doing, author "brendan@necessary.nu", at 2026-08-20T02:41:16.912249235Z}
 )
 
 impl_evidence (

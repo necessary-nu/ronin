@@ -56,6 +56,18 @@ struct RecipeUnit {
 pub(crate) struct PendingRecipes {
     units: Vec<RecipeUnit>,
     edges: RapidHashMap<EdgeId, (usize, DeferredRecipeId)>,
+    /// Edges whose recipe the compiler had to read for itself, with the
+    /// launches that recipe's lines became.
+    ///
+    /// Four shapes force a recipe to be read while the graph is built — a
+    /// recursive `$(MAKE)`, a depfile, a grouped double-colon action, and a
+    /// `$?` the scheduler binds — and none of them is a reason for the recipe
+    /// to reach ONE shell. The text was settled early; the launches were
+    /// settled with it, and they are carried here so the edge still runs a
+    /// process per command line. There is no expansion to do and no session to
+    /// do it in, which is why this is a map of its own rather than a second
+    /// kind of unit.
+    settled: RapidHashMap<EdgeId, Vec<LateStep>>,
 }
 
 impl PendingRecipes {
@@ -63,7 +75,15 @@ impl PendingRecipes {
         Self {
             units: Vec::new(),
             edges: RapidHashMap::default(),
+            settled: RapidHashMap::default(),
         }
+    }
+
+    /// Retain the launches of one unit's recipes that were read while the
+    /// graph was built.
+    pub(crate) fn admit_settled(&mut self, edges: Vec<(crate::frontend::Edge, Vec<LateStep>)>) {
+        self.settled
+            .extend(edges.into_iter().map(|(edge, steps)| (edge.id(), steps)));
     }
 
     /// Retain one unit's session and the recipes it left unexpanded, keyed by
@@ -90,9 +110,9 @@ impl PendingRecipes {
         );
     }
 
-    /// Whether any recipe was left for this to expand.
+    /// Whether this has anything to say about any edge at all.
     pub(crate) fn is_empty(&self) -> bool {
-        self.edges.is_empty()
+        self.edges.is_empty() && self.settled.is_empty()
     }
 }
 
@@ -148,7 +168,16 @@ impl LateCommands for PendingRecipes {
         trigger: &[u8],
     ) -> Result<LateBinding, String> {
         let Some((unit, recipe)) = self.edges.get(&edge).copied() else {
-            return Ok(LateBinding::Settled);
+            // Nothing to expand, but the edge may still be a recipe whose
+            // lines are several processes: the compiler read it early and
+            // handed over the launches with the text.
+            // Cloned rather than taken: a graph is built over more than
+            // once — the makefile remake pass, then the goals — and `-q` asks
+            // this same question without running anything.
+            return Ok(match self.settled.get(&edge) {
+                Some(steps) if !steps.is_empty() => LateBinding::Steps(steps.clone()),
+                _ => LateBinding::Settled,
+            });
         };
         let RecipeUnit {
             session,
