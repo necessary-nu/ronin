@@ -1,0 +1,34 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 29
+| # GNU Make judges a function call while it EXPANDS the text holding it, never
+| # while it reads it: `handle_function' (function.c) counts the call's parens as
+| # the expander walks past it, and `expand_builtin_function' counts its arguments
+| # on the way in to running it. Text that no expansion ever reaches is therefore
+| # never judged, and every call below is one no expansion reaches.
+| 
+| # A recursive binding is text until something asks for its value.
+| TOO_FEW = $(subst a)
+| UNTERMINATED = $(subst a,b,c
+| UNTERMINATED_BRACE = ${subst a,b,aaa
+| NO_CLOSE_AT_ALL = $(NAME
+| 
+| # The read is ignoring this branch, so it does not expand what is in it either.
+| ifeq (x,y)
+| IGNORED := $(subst a)
+| IGNORED_UNTERMINATED := $(subst a,b,c
+| endif
+| 
+| # The arm of an $(if) that is not taken is not expanded, and this assignment
+| # expands the rest of the line the moment the read reaches it -- so the call is
+| # passed over by the expansion rather than by the read.
+| CHOSEN := $(if ,$(subst a),the-other-arm)
+| 
+| all: ; @printf 'chosen=[$(CHOSEN)] ignored=[$(IGNORED)]\n' > out
+| 
+| # A recipe is expanded when its target is built, and nothing here builds this
+| # one -- it is neither the default goal, which is the rule above it, nor a
+| # prerequisite of one.
+| never-built: ; @echo $(subst a) > never-built-ran
+file out touched 1
+| chosen=[the-other-arm] ignored=[]

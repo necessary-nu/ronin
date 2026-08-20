@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 8
+| # The other half of where the count is judged. GNU Make hands $(if) and its kind
+| # their arguments unexpanded -- `expand_args' is 0 for them in the function table
+| # -- so the same complaint about the same call arrives with nothing run at all.
+| # This is the control for the fixture beside it: it is what says the expansion
+| # there belongs to the arguments rather than to the complaint.
+| NONE := $(if $(shell touch the-argument-ran))
+| 
+| all: ; @echo built > out
