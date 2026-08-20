@@ -317,6 +317,13 @@ struct Invocation {
     directories: Vec<PathBuf>,
     /// Where `-I` says to look for an `include`, in the order given.
     include_dirs: Vec<PathBuf>,
+    /// Whether an `-I -` has turned the built-in default search path off.
+    ///
+    /// The switch does two things and only one of them is a list operation: it
+    /// forgets the directories before it, and it disables the defaults for the
+    /// rest of the run. A later `-I` restores neither, so this is a latch
+    /// rather than a state.
+    no_default_include_dirs: bool,
     /// The Makefiles `-f` named, in the order it named them. GNU Make reads
     /// every one of them as though they had been concatenated, so this is a
     /// list and the order is the semantics: the default goal comes from the
@@ -383,6 +390,7 @@ impl Invocation {
         Self {
             directories: Vec::new(),
             include_dirs: Vec::new(),
+            no_default_include_dirs: false,
             makefiles: Vec::new(),
             goals: Vec::new(),
             variables: Vec::new(),
@@ -418,6 +426,7 @@ impl Invocation {
     fn include_dir(&mut self, named: &[u8]) -> Result<(), Error> {
         if named == b"-" {
             self.include_dirs.clear();
+            self.no_default_include_dirs = true;
         } else {
             self.include_dirs.push(path_of(named)?);
         }
@@ -1312,6 +1321,7 @@ fn session_for(
             "output-sync".to_owned(),
         ],
         include_dirs: invocation.include_dirs.clone(),
+        no_default_include_dirs: invocation.no_default_include_dirs,
         ..Flags::default()
     };
     session.flags.targets = invocation
@@ -1978,6 +1988,10 @@ mod tests {
         let forgets = parsed(&["make", "-I", "one", "-I", "-", "-I", "two"]);
         assert!(forgets.goals.is_empty());
         assert_eq!(forgets.include_dirs, vec![PathBuf::from("two")]);
+        // And it keeps the built-in default search path off, which the
+        // directory a later `-I` names does not turn back on.
+        assert!(forgets.no_default_include_dirs);
+        assert!(!parsed(&["make", "-I", "one"]).no_default_include_dirs);
     }
 
     // [spec:ronin:req:product.make-identity/test]

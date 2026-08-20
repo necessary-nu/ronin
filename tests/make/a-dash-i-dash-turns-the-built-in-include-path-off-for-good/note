@@ -1,0 +1,3 @@
+Pairs with an-include-no-directory-named-is-found-on-the-built-in-path: the same
+include, and the opposite outcome, decided by the switch. See that case's note
+for what it assumes about /usr/include.

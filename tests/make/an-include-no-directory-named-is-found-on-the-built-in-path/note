@@ -1,0 +1,5 @@
+This case asserts that a system header on the built-in include path is found,
+by the build stopping on its first line. It needs /usr/include/stdio.h to exist
+and not to be a makefile. Both hold wherever a C library's headers are
+installed; a host with no /usr/include at all will fail here loudly rather than
+quietly, which is the right way round.

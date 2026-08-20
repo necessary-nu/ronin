@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # `-I -` does not merely forget the directories before it. It DISABLES the
+| # built-in default path for the rest of the run — `disable = 1` in
+| # `construct_include_path` (read.c), never cleared — so the `-I inc` after it
+| # adds one directory rather than restoring the defaults alongside it. The
+| # fragment this includes exists only on the built-in path, so a run that
+| # searched it would stop on that file's first line, and this one carries on.
+| -include stdio.h
+| 
+| all: ; @printf 'dirs=[%s]\n' '$(.INCLUDE_DIRS)' > out
+file out touched 1
+| dirs=[inc]

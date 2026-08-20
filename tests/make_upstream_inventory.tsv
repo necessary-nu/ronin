@@ -885,6 +885,7 @@ case	options/dash-I.diff.4	narration	product-name+fatal-decoration+shared-refusa
 case	options/dash-I.diff.5	narration	product-name+fatal-decoration+shared-refusal
 case	options/dash-I.diff.6	narration	ninja-progress
 case	options/dash-I.diff.7	unclassified	product-name+directory-announce+evaluation
+case	options/dash-I.diff.8	narration	product-name+fatal-decoration+shared-refusal
 case	options/dash-W.diff	narration	ninja-progress+recipe-echo
 case	options/dash-W.diff.1	narration	no-work-line+up-to-date-line
 case	options/dash-W.diff.2	unclassified	no-work-line+evaluation
@@ -1084,7 +1085,7 @@ case	variables/GNUMAKEFLAGS.diff.1	unclassified	ninja-progress+evaluation
 case	variables/GNUMAKEFLAGS.diff.2	unclassified	ninja-progress+recipe-echo+directory-announce+evaluation
 case	variables/GNUMAKEFLAGS.diff.3	narration	ninja-progress
 case	variables/GNUMAKEFLAGS.diff.4	interface	ninja-progress+makeflags-content
-case	variables/INCLUDE_DIRS.diff	unclassified	ninja-progress+evaluation
+case	variables/INCLUDE_DIRS.diff	narration	ninja-progress
 case	variables/INCLUDE_DIRS.diff.1	narration	ninja-progress
 case	variables/INCLUDE_DIRS.diff.2	narration	ninja-progress
 case	variables/INCLUDE_DIRS.diff.3	narration	ninja-progress

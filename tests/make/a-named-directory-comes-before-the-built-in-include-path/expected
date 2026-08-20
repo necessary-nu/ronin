@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 14
+| # The built-in directories go on the END of the search path, after everything
+| # `-I` named, so a fragment in a named directory is the one that is read. Both
+| # halves are gated: `stdio.h` is read out of `inc` rather than out of the
+| # built-in path, and the built-in path is still there behind it.
+| -include stdio.h
+| 
+| ifeq ($(FOUND),inc)
+| all: the-named-directory-won
+| else
+| all: something-else-won
+| endif
+| 
+| the-named-directory-won: ; @printf 'found=[%s] first=[%s] tail=[%s]\n' '$(FOUND)' '$(firstword $(.INCLUDE_DIRS))' '$(if $(word 2,$(.INCLUDE_DIRS)),there,absent)' > out
+| something-else-won: ; @printf 'branch=[%s]\n' '$(FOUND)' > out
+file inc/stdio.h kept 1
+| FOUND := inc
+file out touched 1
+| found=[inc] first=[inc] tail=[there]

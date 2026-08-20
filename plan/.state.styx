@@ -689,6 +689,7 @@ assertions (
     {id make-a-plain-dash-word-becomes-a-goal, kind @complete, author "brendan@necessary.nu", at 2026-08-20T06:59:40.397987871Z}
     {id make-the-shell-name-stands-at-the-wrong-rank-and-flavour, kind @complete, author "brendan@necessary.nu", at 2026-08-20T07:29:00.877787502Z}
     {id make-the-e-rank-does-not-show-on-a-name-make-defines-over, kind @complete, author "brendan@necessary.nu", at 2026-08-20T07:51:31.632282692Z}
+    {id make-the-built-in-include-search-path-is-missing, kind @doing, author "brendan@necessary.nu", at 2026-08-20T08:00:51.713004257Z}
 )
 
 impl_evidence (
