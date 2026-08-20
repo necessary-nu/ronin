@@ -146,7 +146,11 @@ where
         .deferred_freshness(edge)
         .expect("deferred capture is called for a deferred edge");
     let mut baseline = None;
-    let mut missing = freshness.always_dirty_output;
+    // A scan answering `-B` treats the outputs as though they were not there:
+    // the edge runs, and GNU Make's `$?` holds every prerequisite because
+    // `d->changed || always_make_flag` is what fills it (commands.c). Both
+    // fall out of the one flag the absent-output case already sets.
+    let mut missing = freshness.always_dirty_output || runtime.always_make;
     for output in &freshness.outputs {
         if runtime.node(*output).mtime().is_unobserved() {
             nodestat_with(graph, runtime, *output, stat)?;

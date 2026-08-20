@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # `$?` is filled by `d->changed || always_make_flag` (commands.c), so under `-B`
+| # it names every ordinary prerequisite however old it is — and still names no
+| # order-only one, because those are not in the list at all.
+| out: old new | ordered
+| 	@printf 'q=[%s] all=[%s]\n' '$?' '$^' > out
+| ordered: ; @printf 'o\n' > ordered
+file new kept 1
+| new
+file old kept 1
+| old
+file ordered touched 1
+| o
+file out touched 1
+| q=[old new] all=[old new]

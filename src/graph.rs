@@ -548,7 +548,15 @@ where
     // of it beside the point rather than merely wrong. The comparison still
     // runs: a phony edge settles its outputs' mtimes there, and a consumer of
     // one reads them.
-    let dirty = edge_data.always_dirty || out_of_date;
+    //
+    // A scan answering `-B` says the same thing about every edge that has
+    // something to run. GNU Make's own test is `!must_make && file->cmds != 0
+    // && always_make_flag` (remake.c), so a name with no recipe behind it is
+    // not forced — there is nothing the forcing could ask for — and a source
+    // file has no generator edge here to be asked about at all.
+    let dirty = edge_data.always_dirty
+        || (runtime.always_make && !graph.is_phony_rule(edge_data.rule))
+        || out_of_date;
 
     for output in &graph.edge(edge).out {
         runtime.node_mut(*output).set_dirty(dirty);

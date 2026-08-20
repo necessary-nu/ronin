@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # `-B` travels in MAKEFLAGS the way every switch does, so a recursive child
+| # rebuilds everything too. Here the child's `out` is newer than its `src` and
+| # is rewritten all the same.
+| all: ; @printf 'top flags=[%s]\n' '$(MAKEFLAGS)' > log; $(MAKE) -C sub
+file log touched 1
+| top flags=[B]
+file sub/Makefile kept 2
+| out: src
+| 	@printf 'child flags=[%s] q=[%s]\n' '$(MAKEFLAGS)' '$?' > out
+file sub/out touched 1
+| child flags=[B] q=[src]
+file sub/src kept 1
+| source

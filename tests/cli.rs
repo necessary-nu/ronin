@@ -2372,10 +2372,12 @@ fn make_case(label: &str, makefile: &str) -> PathBuf {
     directory
 }
 
-// [spec:ronin:req:make.interface-compatibility/test]
+/// The recipe appends, so how many times it ran is readable off the file it
+/// wrote — which is what `-B` decides and the reason it is not a no-op.
+// [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn always_make_is_interface_noop() {
+fn always_make_rebuilds_every_target() {
     let directory = make_case(
         "make-always-make",
         "out.txt: in.txt\n\tcat in.txt >> out.txt\n",
@@ -2391,29 +2393,30 @@ fn always_make_is_interface_noop() {
             String::from_utf8_lossy(&output.stderr)
         );
     };
+    let written = || fs::read_to_string(directory.join("out.txt")).unwrap();
 
     run(&[]);
-    assert_eq!(
-        fs::read_to_string(directory.join("out.txt")).unwrap(),
-        "line\n"
-    );
+    assert_eq!(written(), "line\n");
 
-    // Runner-only flags are accepted but leave Ninja dirtiness unchanged.
+    // A second ordinary run has nothing to do: the output is newer than the
+    // prerequisite and stays as it is.
     run(&[]);
-    assert_eq!(
-        fs::read_to_string(directory.join("out.txt")).unwrap(),
-        "line\n"
-    );
+    assert_eq!(written(), "line\n");
+
+    // `-B` runs the recipe again however current the output is, in both
+    // spellings.
     run(&["-B"]);
-    assert_eq!(
-        fs::read_to_string(directory.join("out.txt")).unwrap(),
-        "line\n"
-    );
+    assert_eq!(written(), "line\nline\n");
     run(&["--always-make"]);
-    assert_eq!(
-        fs::read_to_string(directory.join("out.txt")).unwrap(),
-        "line\n"
-    );
+    assert_eq!(written(), "line\nline\nline\n");
+
+    // And it travels in MAKEFLAGS, which is how a recursive child hears it.
+    let output = make_command(&make, &directory)
+        .env("MAKEFLAGS", "B")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(written(), "line\nline\nline\nline\n");
     fs::remove_dir_all(directory).unwrap();
 }
 
@@ -2443,8 +2446,13 @@ fn question_mode_answers_in_the_status_and_builds_nothing() {
     // Now it is up to date, in both spellings.
     assert_eq!(ask(&["-q"]).0, Some(0));
     assert_eq!(ask(&["--question"]).0, Some(0));
-    // An accepted runner no-op does not change Ninja's answer.
-    assert_eq!(ask(&["-q", "-B"]).0, Some(0));
+    // `-B` makes every target out of date, so the question is answered `no`
+    // about a goal that was up to date a line ago — and still builds nothing.
+    assert_eq!(ask(&["-q", "-B"]).0, Some(1));
+    assert_eq!(
+        fs::read_to_string(directory.join("out.txt")).unwrap(),
+        "source\n"
+    );
 
     // A question that cannot be answered is neither of the two answers.
     let (code, said) = ask(&["-q", "nothing-declares-this"]);

@@ -1,0 +1,2 @@
+printf 'V := from-gen\n' > gen.src
+printf 'V := from-gen\n' > gen.mk

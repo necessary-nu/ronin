@@ -65,6 +65,15 @@ pub(super) struct CompilerInputBuild<'a> {
     /// Makefile assigned cannot tell us: `invocation` is reparsed from the
     /// evaluated `MAKEFLAGS` and carries switches alone.
     pub(super) goals: &'a [BString],
+    /// How many times a remade Makefile has already sent the read around.
+    ///
+    /// The one thing the makefile update needs it for is `-B`: GNU Make sets
+    /// `always_make_flag = always_make_set && (restarts == 0)` before this
+    /// phase and back to `always_make_set` afterwards (main.c), so a makefile
+    /// with a recipe is remade once however current it is and is then left
+    /// alone. Without that the remake moves its date, the read starts again,
+    /// and `-B` forces it again forever.
+    pub(super) restarts: usize,
 }
 
 /// What one pass over a subset of the compiler inputs came to.
@@ -97,6 +106,9 @@ struct Makefiles<'a> {
     /// carries switches alone.
     goals: &'a [BString],
     directory: &'a Path,
+    /// Whether `-B` reaches this phase, which it does on the first read and
+    /// never again. See [`CompilerInputBuild::restarts`].
+    force: bool,
 }
 
 /// One subset of the Makefiles, and how it is brought up to date.
@@ -469,6 +481,13 @@ impl Makefiles<'_> {
     /// what made an `-include`d file the command line named end the run over
     /// its own recipe, where GNU Make forgives it and then refuses the goal.
     fn subsets(&self, graph: &BuildGraph) -> Vec<Subset> {
+        // `-B` reaches every one of the four groups or none of them: GNU Make
+        // decides it once, for the phase, rather than per makefile.
+        let phase = BuildOptions {
+            always_make: self.force,
+            ..self.options.clone()
+        };
+        let phase = &phase;
         let named = |target: &Node| {
             let path = graph.path(*target);
             self.goals.iter().any(|goal| goal.as_slice() == path)
@@ -514,25 +533,25 @@ impl Makefiles<'_> {
         vec![
             Subset {
                 targets: group(false, false),
-                options: remaking_options(self.options),
+                options: remaking_options(phase),
                 forgive: false,
                 question: false,
             },
             Subset {
                 targets: group(false, true),
-                options: forgivingly(remaking_options(self.options)),
+                options: forgivingly(remaking_options(phase)),
                 forgive: true,
                 question: false,
             },
             Subset {
                 targets: asked_about(group(true, false)),
-                options: self.options.clone(),
+                options: phase.clone(),
                 forgive: false,
                 question: false,
             },
             Subset {
                 targets: group(true, true),
-                options: forgivingly(self.options.clone()),
+                options: forgivingly(phase.clone()),
                 forgive: true,
                 question: questioning,
             },
@@ -672,6 +691,81 @@ fn report_refusals_now(
     }
 }
 
+/// What closing the makefile update out left the read to do.
+enum AfterRemaking {
+    /// The run is over, or the read starts again over new text.
+    Finished(Settlement),
+    /// Every makefile stands, and these are the three verdicts about them.
+    /// The persistence comes back with them, still open for the pass that
+    /// follows.
+    Stands(Persistence, SettledMakefiles),
+}
+
+/// Close the persistence the makefile update wrote through, and turn what it
+/// decided into what this read does next.
+fn after_remaking(
+    remaking: Remaking,
+    refusals: Vec<crate::make::RefusedMakefile>,
+    keep_going: bool,
+    reported: &mut String,
+    diagnostics: &mut Option<&mut dyn Write>,
+    persistence: Persistence,
+    read_units: &mut crate::make::ReadJournals,
+) -> Result<AfterRemaking, Error> {
+    match settled_makefiles(remaking, refusals, keep_going, reported, diagnostics) {
+        Settled::Over(result) => {
+            let _ = persistence.finish();
+            Ok(AfterRemaking::Finished(Settlement::Finished(result)))
+        }
+        Settled::Refused(result) => {
+            persistence.finish()?;
+            Ok(AfterRemaking::Finished(Settlement::Finished(result)))
+        }
+        Settled::Again => {
+            persistence.finish()?;
+            // The two halves of what a pass leaves behind part company here.
+            // Staged work is on the ground and stays there, so the boundaries
+            // it settled survive — `feature-restart-keeps-recursive-staging-done`
+            // is that property. What a read said and wrote belongs to the text
+            // it read, and this restart happens because that text is new: GNU
+            // Make reads it again and says everything again, which is what
+            // `MAKE_RESTARTS` is there to let a Makefile notice.
+            read_units.clear();
+            Ok(AfterRemaking::Finished(Settlement::Restart))
+        }
+        Settled::Stands(stands) => Ok(AfterRemaking::Stands(persistence, stands)),
+    }
+}
+
+/// A read no rule can send around again: the compilation it produced is the one
+/// the goals build from.
+///
+/// GNU Make refuses over a required makefile nothing can make from inside the
+/// update that brings the makefiles up to date, and a read with nothing to
+/// remake reaches that point with no work to do first.
+pub(super) fn read_with_nothing_to_remake(
+    mut loaded: crate::make::Loaded,
+    reported: &mut String,
+    invocation: Invocation,
+    options: BuildOptions,
+) -> super::PreparedGraph {
+    let refusals = loaded.take_refusals();
+    if !refusals.is_empty() {
+        return super::PreparedGraph::Finished(refused_makefile(
+            std::mem::take(reported),
+            crate::make::refusal_report(refusals),
+        ));
+    }
+    let recipes = loaded.take_pending_recipes().map(Box::new);
+    super::PreparedGraph::Ready {
+        graph: Box::new(loaded.graph),
+        recipes,
+        persistence: None,
+        invocation: Box::new(invocation),
+        options: Box::new(options),
+    }
+}
+
 pub(super) fn build_compiler_inputs(
     request: CompilerInputBuild<'_>,
     reported: &mut String,
@@ -686,6 +780,7 @@ pub(super) fn build_compiler_inputs(
         options,
         directory,
         goals,
+        restarts,
     } = request;
     let keep_going = invocation.given(Switch::KeepGoing);
     // What this pass read, which a later pass over the same text repeats rather
@@ -718,6 +813,7 @@ pub(super) fn build_compiler_inputs(
         options: &options,
         goals,
         directory,
+        force: options.always_make && restarts == 0,
     };
     let remaking = Passes {
         graph: &mut graph,
@@ -731,31 +827,19 @@ pub(super) fn build_compiler_inputs(
         silent: invocation.given(Switch::Silent),
     }
     .remake_makefiles(&makefiles);
-    match settled_makefiles(remaking, refusals, keep_going, reported, diagnostics) {
-        Settled::Over(result) => {
-            let _ = persistence.finish();
-            return Ok(Settlement::Finished(result));
-        }
-        Settled::Refused(result) => {
-            persistence.finish()?;
-            return Ok(Settlement::Finished(result));
-        }
-        Settled::Again => {
-            persistence.finish()?;
-            // The two halves of what a pass leaves behind part company here.
-            // Staged work is on the ground and stays there, so the boundaries
-            // it settled survive — `feature-restart-keeps-recursive-staging-done`
-            // is that property. What a read said and wrote belongs to the text
-            // it read, and this restart happens because that text is new: GNU
-            // Make reads it again and says everything again, which is what
-            // `MAKE_RESTARTS` is there to let a Makefile notice.
-            read_units.clear();
-            return Ok(Settlement::Restart);
-        }
-        Settled::Stands(settled) => {
-            graph.mark_makefiles_settled(&settled.remade, &settled.unmade, &settled.questioned);
-        }
-    }
+    let (mut persistence, stands) = match after_remaking(
+        remaking,
+        refusals,
+        keep_going,
+        reported,
+        diagnostics,
+        persistence,
+        read_units,
+    )? {
+        AfterRemaking::Finished(settlement) => return Ok(settlement),
+        AfterRemaking::Stands(persistence, stands) => (persistence, stands),
+    };
+    graph.mark_makefiles_settled(&stands.remade, &stands.unmade, &stands.questioned);
 
     let pass = Passes {
         graph: &mut graph,
@@ -841,6 +925,7 @@ mod tests {
             options: &options,
             goals: &[BString::from("asked.mk")],
             directory: Path::new("."),
+            force: false,
         };
 
         let subsets = makefiles.subsets(&graph);
@@ -868,6 +953,7 @@ mod tests {
             options: &options,
             goals: &[BString::from("asked.mk")],
             directory: Path::new("."),
+            force: false,
         };
 
         let subsets = makefiles.subsets(&graph);
@@ -893,6 +979,7 @@ mod tests {
             options: &options,
             goals: &[BString::from("asked.mk")],
             directory: Path::new("."),
+            force: false,
         };
 
         let subsets = makefiles.subsets(&graph);
@@ -905,6 +992,46 @@ mod tests {
             ..makefiles
         };
         assert!(!makefiles.subsets(&graph)[3].question);
+    }
+
+    /// `-B` reaches every group of makefiles or none of them, which is the
+    /// shape of GNU Make's own flag: it is decided once for the phase, and
+    /// turned off for it entirely once a restart has happened.
+    #[test]
+    fn always_make_reaches_the_makefiles_once() {
+        let mut graph = BuildGraph::new();
+        let remakes = nodes(&mut graph, &["gen.mk", "asked.mk"]);
+        let invocation = parsed(&["make", "-B", "asked.mk"]);
+        let options = BuildOptions {
+            always_make: true,
+            ..BuildOptions::default()
+        };
+        let makefiles = Makefiles {
+            remakes: &remakes,
+            forgiven: &remakes[1..],
+            invocation: &invocation,
+            options: &options,
+            goals: &[BString::from("asked.mk")],
+            directory: Path::new("."),
+            force: true,
+        };
+        assert!(
+            makefiles
+                .subsets(&graph)
+                .iter()
+                .all(|subset| subset.options.always_make)
+        );
+
+        let restarted = Makefiles {
+            force: false,
+            ..makefiles
+        };
+        assert!(
+            restarted
+                .subsets(&graph)
+                .iter()
+                .all(|subset| !subset.options.always_make)
+        );
     }
 
     /// An optional include is its own subset, attempted to the end and forgiven.
@@ -921,6 +1048,7 @@ mod tests {
             options: &options,
             goals: &[],
             directory: Path::new("."),
+            force: false,
         };
 
         let subsets = makefiles.subsets(&graph);

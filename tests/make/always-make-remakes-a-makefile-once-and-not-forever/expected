@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 11
+| # GNU Make sets `always_make_flag = always_make_set && (restarts == 0)` before
+| # it brings the makefiles up to date and back to `always_make_set` afterwards
+| # (main.c). Without the guard `-B` remakes `gen.mk` however current it is, the
+| # remake moves its date, the read starts again, and it is remade again forever.
+| # With it the makefile is remade once, the read goes around once, and the goals
+| # are then built with `-B` still in force.
+| all: ; @printf 'all restarts=[%s]\n' '$(MAKE_RESTARTS)' >> log
+| include gen.mk
+| gen.mk: gen.src
+| 	@printf 'remade V=[%s]\n' '$(V)' >> log
+| 	@cp gen.src gen.mk
+file gen.mk touched 1
+| V := from-gen
+file gen.src kept 1
+| V := from-gen
+file log touched 2
+| remade V=[from-gen]
+| all restarts=[1]

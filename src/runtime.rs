@@ -296,6 +296,17 @@ pub(crate) struct RuntimeState {
     nodes: Vec<NodeRuntime>,
     edges: Vec<EdgeRuntime>,
     deferred: crate::htab::RapidHashMap<EdgeId, DeferredRuntime>,
+    /// Whether this scan is answering GNU Make's `-B`: every edge that has a
+    /// command is out of date and every prerequisite counts as changed,
+    /// whatever the dates on disk say.
+    ///
+    /// It lives here rather than beside the options because the dirty walk is
+    /// the only reader and reaches this state already, and because it belongs
+    /// to a scan rather than to the graph the scan reads — the same graph is
+    /// scanned once for the makefiles and once for the goals, and a Make run
+    /// answers the two differently. Left alone by [`Self::reset`], which
+    /// clears what a scan learned rather than what it was asked.
+    pub(crate) always_make: bool,
 }
 
 impl RuntimeState {

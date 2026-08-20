@@ -74,8 +74,9 @@ const COMPARISON_REPORT: &str = "target/make-port-comparison.txt";
 /// `-t` used to be here beside `-W` and is not any more: it brings the goals up
 /// to date without making them, which is a filesystem effect this harness can
 /// see, so it gates on what the touch did rather than being read for discovery.
-const DISCOVERY_ONLY_CASES: [&str; 9] = [
-    "always-make-option",
+/// `-B` left for the same reason and it is the plainer of the two: what it
+/// decides is which recipes run, and therefore which files the build writes.
+const DISCOVERY_ONLY_CASES: [&str; 8] = [
     "dry-run-skips-a-make-reference-line",
     "dry-run-skips-a-plus-line",
     "makeflags-keep-going-precedence",

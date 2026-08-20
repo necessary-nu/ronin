@@ -1,0 +1,7 @@
+printf 'old\n' > old
+touch -d '2020-01-01 00:00' old
+printf 'new\n' > new
+touch -d '2020-01-01 00:00' new
+printf 'o\n' > ordered
+touch -d '2020-01-01 00:00' ordered
+printf 'stale\n' > out

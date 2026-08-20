@@ -678,6 +678,7 @@ assertions (
     {id make-an-empty-argument-word-stops-the-build, kind @complete, author "brendan@necessary.nu", at 2026-08-20T03:58:02.952232849Z}
     {id make-new-inputs-path-forms-read-the-placeholder, kind @complete, author "brendan@necessary.nu", at 2026-08-20T04:28:24.109659346Z}
     {id make-a-worked-out-name-answers-the-wrong-origin, kind @complete, author "brendan@necessary.nu", at 2026-08-20T04:48:54.247644319Z}
+    {id make-always-make-rebuilds-nothing, kind @doing, author "brendan@necessary.nu", at 2026-08-20T04:49:22.812954256Z}
 )
 
 impl_evidence (

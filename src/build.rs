@@ -106,6 +106,19 @@ pub(crate) struct BuildOptions {
     /// no process starts, and each output is touched instead.
     // [spec:ronin:req:make.narration+1]
     pub(crate) touch: bool,
+    /// Whether every edge that has a command is out of date whatever its
+    /// timestamps say, which is GNU Make's `-B` / `--always-make`.
+    ///
+    /// A scan-level setting rather than a graph one, because it is not a
+    /// property of the makefile: one Make run scans the same graph twice —
+    /// once to bring the makefiles up to date and once for the goals — and
+    /// GNU Make answers the two differently, turning the flag off for the
+    /// makefiles after a restart so that an always-remade makefile cannot
+    /// send the read around forever (`always_make_flag = always_make_set &&
+    /// (restarts == 0)`, main.c). Carrying it per build is what lets the two
+    /// scans disagree; a flag written into the edges could not.
+    // [spec:ronin:req:make.semantics+1]
+    pub(crate) always_make: bool,
 }
 
 impl Default for BuildOptions {
@@ -134,6 +147,7 @@ impl Default for BuildOptions {
             working_directory: crate::os::WorkingDirectory::default(),
             archive_members: false,
             touch: false,
+            always_make: false,
         }
     }
 }
@@ -658,6 +672,7 @@ impl<'a> Builder<'a> {
             disk = disk.reading_archive_members();
         }
         let mut runtime = RuntimeState::new(graph);
+        runtime.always_make = options.always_make;
         if let Some(log) = build_log.as_deref() {
             log.hydrate_runtime(graph, &mut runtime, graph.node_ids());
         }

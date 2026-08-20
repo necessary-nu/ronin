@@ -25,7 +25,7 @@ use crate::error::CliError;
 use crate::frontend::{Build, BuildGraph, Persistence};
 use crate::make::report::{
     ABANDONED, abandoned, answered, discard_intermediates, duplicate_standard_input, finished,
-    no_makefile, ordinary_diagnostic, refused_makefile,
+    no_makefile, ordinary_diagnostic,
 };
 use crate::make::{EvaluationBoundary, Shuffle};
 use crate::util::{BString, ByteSlice, terminated};
@@ -120,7 +120,7 @@ const MAKE_OPTION_SURFACE: &[InterfaceOption] = &[
     InterfaceOption {
         spellings: &["-B", "--always-make"],
         argument: ArgumentShape::None,
-        class: OptionClass::NoOp,
+        class: OptionClass::NinjaControl,
     },
     InterfaceOption {
         spellings: &["-C", "--directory"],
@@ -1401,6 +1401,13 @@ fn build_options(
     // that would write, and `-q` never reaches here because a question runs
     // nothing at all.
     options.touch = invocation.given(Switch::Touch);
+    // `-B` decides what the run writes to disk rather than how it is narrated,
+    // so it belongs here beside `-t` and not among the interface no-ops. Every
+    // edge with a recipe is out of date and every prerequisite is one of the
+    // new inputs, which is the whole of what GNU Make's `always_make_flag`
+    // does. The makefile-remaking pass turns it off again after a restart —
+    // see `remake_makefiles` — and that is the one place the two disagree.
+    options.always_make = invocation.given(Switch::AlwaysMake);
     Ok(options)
 }
 
@@ -1559,25 +1566,12 @@ fn prepare_graph(
         let effective_invocation = evaluated_invocation(loaded.makeflags())?;
         let effective_options = evaluated_build_options(root.options, &effective_invocation);
         if loaded.regeneration_targets().is_empty() {
-            let mut loaded = loaded;
-            // GNU Make refuses over a required makefile nothing can make from
-            // inside the update that brings the makefiles up to date, and a
-            // read with nothing to remake reaches it with no work to do first.
-            let refusals = loaded.take_refusals();
-            if !refusals.is_empty() {
-                return Ok(PreparedGraph::Finished(refused_makefile(
-                    std::mem::take(reported),
-                    crate::make::refusal_report(refusals),
-                )));
-            }
-            let recipes = loaded.take_pending_recipes().map(Box::new);
-            return Ok(PreparedGraph::Ready {
-                graph: Box::new(loaded.graph),
-                recipes,
-                persistence: None,
-                invocation: Box::new(effective_invocation),
-                options: Box::new(effective_options),
-            });
+            return Ok(crate::make::cli::remake::read_with_nothing_to_remake(
+                loaded,
+                reported,
+                effective_invocation,
+                effective_options,
+            ));
         }
         let compiler_inputs = CompilerInputBuild {
             loaded,
@@ -1585,6 +1579,7 @@ fn prepare_graph(
             options: effective_options.clone(),
             directory: root.directory,
             goals: &root.invocation.goals,
+            restarts,
         };
         match build_compiler_inputs(
             compiler_inputs,
