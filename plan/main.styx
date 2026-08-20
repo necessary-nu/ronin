@@ -12664,6 +12664,7 @@ children (
                 id make-endif-trailing-text-is-a-warning
                 title "Warn rather than die over text after an endif directive"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-17T12:04:04.653031144Z
@@ -12684,6 +12685,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-20T10:28:24.350075896Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
