@@ -1,0 +1,7 @@
+# The answer comes from the first line that is not marked, and the marked line
+# ahead of it has already run by then -- so the run leaves `plus.txt` behind
+# and still says there is something to do.
+all:
+	+@echo plus > plus.txt
+	@echo ordinary > ordinary.txt
+	+@echo unreached > unreached.txt

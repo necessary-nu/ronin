@@ -105,23 +105,33 @@ impl Plan {
         graph: &Graph,
         runtime: &RuntimeState,
     ) -> Vec<EdgeId> {
-        self.wanted
-            .iter()
-            .zip(graph.edge_ids())
-            .filter(|(wanted, edge)| {
-                if !**wanted {
-                    return false;
-                }
-                if graph.deferred_freshness(*edge).is_some() {
-                    return runtime
-                        .deferred(*edge)
-                        .is_some_and(crate::runtime::DeferredRuntime::initial_run);
-                }
-                let rule = graph.edge(*edge).rule;
-                rule.is_some() && !graph.is_phony_rule(rule)
-            })
-            .map(|(_, edge)| edge)
+        graph
+            .edge_ids()
+            .filter(|edge| self.reportable_work(graph, runtime, *edge))
             .collect()
+    }
+
+    /// Whether this one edge is work the plan would report.
+    ///
+    /// Asked per edge as well as over the whole plan, because a walk that takes
+    /// the edges in the order they become ready reaches them one at a time and
+    /// still has to tell work from the barriers between it.
+    pub(super) fn reportable_work(
+        &self,
+        graph: &Graph,
+        runtime: &RuntimeState,
+        edge: EdgeId,
+    ) -> bool {
+        if !self.wanted[edge.index()] {
+            return false;
+        }
+        if graph.deferred_freshness(edge).is_some() {
+            return runtime
+                .deferred(edge)
+                .is_some_and(crate::runtime::DeferredRuntime::initial_run);
+        }
+        let rule = graph.edge(edge).rule;
+        rule.is_some() && !graph.is_phony_rule(rule)
     }
 
     pub(super) fn reportable_work_count(&self, graph: &Graph, runtime: &RuntimeState) -> usize {

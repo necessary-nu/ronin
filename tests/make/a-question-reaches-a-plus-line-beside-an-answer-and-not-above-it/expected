@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 16
+| # The question is asked in dependency order, and where it is asked decides
+| # which marked lines run. `base` is the answer, so `blocked` is not remade at
+| # all and the marked line IT holds never starts -- `update_file_1` will not
+| # begin a recipe whose dependencies did not come back updated. `-k` does not
+| # change that; what it changes is that the branch BESIDE the answered one is
+| # still reached, and the marked line there does run.
+| all: blocked beside
+| 
+| blocked: base
+| 	+@echo above > above.txt
+| 
+| base:
+| 	@echo ordinary > ordinary.txt
+| 
+| beside:
+| 	+@echo beside > beside.txt
+file beside.txt touched 1
+| beside

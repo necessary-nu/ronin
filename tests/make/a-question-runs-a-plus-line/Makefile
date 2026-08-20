@@ -1,0 +1,7 @@
+# A `+` line is not an answer to `-q`: `start_job_command` (job.c) gives the
+# question's answer only for a line the makefile did NOT mark, so a marked one
+# runs and the walk goes on. Every line of this recipe is marked, so all of it
+# runs and there is nothing left for the question to say yes to.
+all:
+	+@echo plus > plus.txt
+	+@echo again > again.txt

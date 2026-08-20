@@ -1664,3 +1664,87 @@ fn a_bad_switch_ends_only_argv() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// What `-q` exits with once a `+` line has run inside it.
+///
+/// The corpus records whether a case succeeded, not with which number, so the
+/// three statuses `-q` can leave and the difference between them live here.
+/// GNU Make's `reap_children` (job.c:954) reads a line it ran while
+/// questioning by its status: zero carries the recipe on, exactly one is
+/// `MAKE_TROUBLE` — the question's own "something to do", reported silently —
+/// and anything else is `MAKE_FAILURE`, a build that ran and lost.
+///
+/// GNU Make 4.4.1 answers 0, 1, 1 and 2 to these four in order, and writes the
+/// `+` line's file in every one of them.
+#[test]
+fn question_status_reads_the_plus_line() {
+    let directory = test_directory("question-plus-status");
+    let cases = [
+        ("+@echo plus > plus.txt\n", 0),
+        (
+            "+@echo plus > plus.txt\n\t@echo ordinary > ordinary.txt\n",
+            1,
+        ),
+        ("+@echo plus > plus.txt; exit 1\n", 1),
+        ("+@echo plus > plus.txt; exit 2\n", 2),
+    ];
+    for (recipe, status) in cases {
+        let _ = fs::remove_file(directory.join("plus.txt"));
+        let _ = fs::remove_file(directory.join("ordinary.txt"));
+        fs::write(directory.join("Makefile"), format!("all:\n\t{recipe}")).unwrap();
+        let answered = make_command(&directory).arg("-q").output().unwrap();
+        assert_eq!(
+            answered.status.code(),
+            Some(status),
+            "`{recipe}` answered {:?}: {}",
+            answered.status.code(),
+            String::from_utf8_lossy(&answered.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(directory.join("plus.txt")).unwrap(),
+            "plus\n",
+            "the question did not run `{recipe}`"
+        );
+        assert!(
+            !directory.join("ordinary.txt").exists(),
+            "the question ran the line it was supposed to answer on"
+        );
+    }
+    fs::remove_dir_all(directory).unwrap();
+}
+
+/// `-k` is the only thing that lets a `+` line past an answer already given.
+///
+/// `update_goal_chain` sets `stop` on `question_flag && !keep_going_flag`
+/// (remake.c:206), so without the switch the walk ends at the first goal that
+/// answers and the marked line behind it never runs. GNU Make 4.4.1 answers 1
+/// to both and writes `plus.txt` only under `-k`.
+#[test]
+fn keep_going_passes_an_answered_goal() {
+    let directory = test_directory("question-plus-keep-going");
+    fs::write(
+        directory.join("Makefile"),
+        "all: ordinary marked\nordinary: ; @echo ordinary > ordinary.txt\nmarked: ; +@echo plus > plus.txt\n",
+    )
+    .unwrap();
+
+    let stopped = make_command(&directory).arg("-q").output().unwrap();
+    assert_eq!(stopped.status.code(), Some(1));
+    assert!(
+        !directory.join("plus.txt").exists(),
+        "the walk carried on past the goal that had already answered"
+    );
+
+    let carried = make_command(&directory)
+        .args(["-q", "-k"])
+        .output()
+        .unwrap();
+    assert_eq!(carried.status.code(), Some(1));
+    assert_eq!(
+        fs::read_to_string(directory.join("plus.txt")).unwrap(),
+        "plus\n",
+        "-k did not carry the question past the goal that answered"
+    );
+    assert!(!directory.join("ordinary.txt").exists());
+    fs::remove_dir_all(directory).unwrap();
+}

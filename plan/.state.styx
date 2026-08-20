@@ -703,6 +703,7 @@ assertions (
     {id make-plus-line-runs-under-pretending, kind @complete, author "brendan@necessary.nu", at 2026-08-20T11:29:54.357695748Z}
     {id make-what-if-assumed-new, kind @complete, author "brendan@necessary.nu", at 2026-08-20T12:06:37.821603546Z}
     {id make-ifeq-closing-paren-need-not-end-the-line, kind @complete, author "brendan@necessary.nu", at 2026-08-20T12:57:47.39369638Z}
+    {id make-question-mode-runs-a-plus-line, kind @complete, author "brendan@necessary.nu", at 2026-08-20T13:39:15.118914789Z}
 )
 
 impl_evidence (

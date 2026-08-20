@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # Under `.ONESHELL:` the recipe is one script and the prefixes are read off its
+| # first line, so a `+` there marks the whole of it. The question has no line
+| # left to answer on, and every line runs.
+| .ONESHELL:
+| all:
+| 	+@echo plus > plus.txt
+| 	@echo ordinary > ordinary.txt
+file ordinary.txt touched 1
+| ordinary
+file plus.txt touched 1
+| plus

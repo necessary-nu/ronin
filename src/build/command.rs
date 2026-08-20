@@ -418,22 +418,175 @@ impl Builder<'_> {
     /// answers "something to do" only once a recipe line has been expanded and
     /// come out as text, so a recipe that expands to nothing answers zero, and
     /// the expansion happens — a `$(shell)` in such a recipe runs under `-q`
-    /// exactly as it does under a build. The walk stops at the first edge that
-    /// would run, which is where GNU Make stops asking too.
+    /// exactly as it does under a build.
+    ///
+    /// It is not a walk that only looks, either. `start_job_command` (job.c)
+    /// answers on a recipe line only where the line is not one the makefile
+    /// marked as running anyway:
+    ///
+    /// ```c
+    /// if (argv != 0 && question_flag && NONE_SET (flags, COMMANDS_RECURSE))
+    ///   { child->file->update_status = us_question;
+    ///     notice_finished_file (child->file); return; }
+    /// ```
+    ///
+    /// so a marked line RUNS while the question is being asked, and the answer
+    /// comes from the first line that is not marked. A recipe every line of
+    /// which is marked leaves nothing to do, and the question's answer is yes.
+    ///
+    /// The walk is the plan's own, in the order its edges become ready, so a
+    /// prerequisite is asked before what needs it. That order is load-bearing
+    /// twice over: an answer given by a prerequisite means the target above it
+    /// is not remade at all, so the marked lines IT holds never run either,
+    /// which is `update_file_1` refusing to start a recipe whose dependencies
+    /// did not come back updated. The plan says the same thing by abandoning an
+    /// answered edge's dependents.
+    ///
+    /// The walk stops at the first edge that answers, which is where GNU Make
+    /// stops asking too — `update_goal_chain` sets `stop` on
+    /// `question_flag && !keep_going_flag` (remake.c:206). Under `-k` it carries
+    /// on, and what carrying on can reach is the branches BESIDE the one that
+    /// answered, never the ones above it.
     ///
     /// # Errors
     ///
-    /// Whatever the front end says about a recipe it could not expand.
+    /// Whatever the front end says about a recipe it could not expand, and
+    /// whatever a line it ran while asking said about itself.
     pub(crate) fn interrogate(&mut self) -> BuildResult<bool> {
         if self.plan.is_empty() {
             return Ok(true);
         }
-        for edge in self.plan.reportable_work_edges(self.graph, &self.runtime) {
-            if !matches!(self.late_binding(edge)?, LateBinding::Nothing) {
-                return Ok(false);
+        self.plan.prepare_queue(self.graph);
+        let keep_going = self.options.maxfail > 1;
+        let mut up_to_date = true;
+        let mut processes = None;
+        while let Some(edge) = self.plan.find_work(self.graph) {
+            let answered = self.question_edge(&mut processes, edge)?;
+            let result = if answered {
+                crate::build::EdgeResult::Failed
+            } else {
+                crate::build::EdgeResult::Succeeded
+            };
+            self.plan
+                .edge_finished(self.graph, &self.runtime, edge, result)?;
+            if answered {
+                up_to_date = false;
+                if !keep_going {
+                    return Ok(false);
+                }
             }
         }
-        Ok(true)
+        Ok(up_to_date)
+    }
+
+    /// Ask one edge, running the steps it says run anyway until one does not.
+    ///
+    /// Answers whether the edge leaves something to do: false when it is not
+    /// work at all, or when every step of it was marked and ran; true the
+    /// moment a step is reached that the question is the answer for.
+    fn question_edge(
+        &mut self,
+        processes: &mut Option<crate::subprocess::ProcessSupervisor>,
+        edge: EdgeId,
+    ) -> BuildResult<bool> {
+        if !self.plan.reportable_work(self.graph, &self.runtime, edge) {
+            return Ok(false);
+        }
+        let steps = match self.late_binding(edge)? {
+            LateBinding::Nothing => return Ok(false),
+            // An edge whose command the graph settled is one process, and
+            // nothing said it runs anyway, so it is the answer.
+            LateBinding::Settled => Vec::new(),
+            LateBinding::Steps(steps) => steps,
+            LateBinding::Run(command) => command.steps,
+        };
+        if steps.is_empty() {
+            return Ok(true);
+        }
+        for step in steps {
+            if !step.runs_while_pretending {
+                return Ok(true);
+            }
+            // `-n` is asked the same question the build asks it, so the
+            // dry-run ruling composes rather than being restated: a run told
+            // to change nothing changes nothing, whatever the line was marked.
+            // The answer is unaffected — the line was going to run and leave
+            // nothing to do either way.
+            if self.pretending().stands_in_for(step.runs_while_pretending) {
+                continue;
+            }
+            if !self.question_step(processes, edge, &step)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Run one step while the question is being asked, and say whether the
+    /// recipe carries on past it.
+    ///
+    /// Three endings, and GNU Make's `reap_children` spells them out at
+    /// job.c:954 — `child_failed = MAKE_TROUBLE` for a status of exactly one
+    /// from a line it ran while questioning, `MAKE_SUCCESS` for zero, and
+    /// `MAKE_FAILURE` for anything else. The middle one is what makes `-q`'s
+    /// own exit status reachable from a line that ran: one is the answer
+    /// "something to do" rather than a failure, so it ends the recipe without
+    /// a word, where two or more is a build that lost and says so.
+    fn question_step(
+        &mut self,
+        processes: &mut Option<crate::subprocess::ProcessSupervisor>,
+        edge: EdgeId,
+        step: &crate::build::LateStep,
+    ) -> BuildResult<bool> {
+        let launch = match &step.launch {
+            Launch::Shell(command) => Launch::Shell(self.deferred_launch_command(edge, command)),
+            direct @ Launch::Direct(_) => direct.clone(),
+        };
+        let rendered = launch.rendered();
+        let supervisor = match processes {
+            Some(supervisor) => supervisor,
+            empty => empty.insert(crate::subprocess::ProcessSupervisor::in_directory(
+                self.options.working_directory.as_path(),
+                self.options.shell.clone(),
+                &[],
+            )?),
+        };
+        supervisor.spawn(edge, launch, false, false)?;
+        let finished = loop {
+            match supervisor.wait(None)? {
+                Some(crate::subprocess::SupervisorWake::Process(completion)) => {
+                    break completion.result?;
+                }
+                Some(crate::subprocess::SupervisorWake::External(())) | None => {}
+            }
+        };
+        // Nothing started, which the question walk never asks for: the
+        // supervisor only reports it for a launch the build stood in for.
+        let Some(output) = finished else {
+            return Ok(true);
+        };
+        // What the line wrote goes where the build sends a command's output.
+        // Suppressing it would be the one thing `-q` must not do to a line the
+        // makefile said runs anyway.
+        self.emit(&output.stdout)?;
+        self.emit_diagnostic(&output.stderr)?;
+        self.flush_sinks()?;
+        if output.status.success() || step.ignore_errors {
+            return Ok(true);
+        }
+        if self.command_interrupted(output.status) {
+            return Err(BuildError::Interrupted {
+                status: Some(output.status),
+            });
+        }
+        if crate::subprocess::exit_status_code(output.status) == 1 {
+            return Ok(false);
+        }
+        Err(BuildError::SubcommandFailed {
+            edge,
+            command: rendered,
+            status: output.status,
+        })
     }
 
     /// Ask the front end for this edge's command, if there is a front end to
