@@ -1,0 +1,17 @@
+# CURDIR stands at FILE rank — `define_variable_cname ("CURDIR",
+# current_directory, o_file, 0)` in main — and not at default. A makefile that
+# asks `$(origin CURDIR)` before deciding whether to trust the answer is told
+# `file`, and its own write is a peer replacing that binding rather than an
+# override standing over it: the name reads back `file` afterwards too.
+ifeq ($(origin CURDIR),file)
+all: stands-at-file-rank
+else
+all: stands-somewhere-else
+endif
+
+before := $(origin CURDIR)
+CURDIR = written
+after := $(origin CURDIR) $(flavor CURDIR) $(CURDIR)
+
+stands-at-file-rank: ; @printf 'before=[%s] after=[%s]\n' '$(before)' '$(after)' > out
+stands-somewhere-else: ; @printf 'branch=[elsewhere] before=[%s]\n' '$(before)' > out
