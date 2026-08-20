@@ -699,6 +699,7 @@ assertions (
     {id make-compiler-warnings-reach-the-sink, kind @complete, author "brendan@necessary.nu", at 2026-08-20T10:15:21.669372593Z}
     {id make-endif-trailing-text-is-a-warning, kind @complete, author "brendan@necessary.nu", at 2026-08-20T10:28:24.350075896Z}
     {id make-bad-option-argument-in-a-makefiles-makeflags, kind @complete, author "brendan@necessary.nu", at 2026-08-20T11:09:24.19471213Z}
+    {id make-plus-line-runs-under-pretending, kind @doing, author "brendan@necessary.nu", at 2026-08-20T11:27:44.176502373Z}
 )
 
 impl_evidence (

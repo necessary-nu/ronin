@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| all: mixed onlyplus
+| mixed:
+| 	@echo A > a.txt
+| 	+@echo PLUS > plus.txt
+| 	@echo B > b.txt
+| onlyplus:
+| 	+@echo ONLY > only.txt
+file mixed touched 0
+file only.txt touched 1
+| ONLY
+file plus.txt touched 1
+| PLUS

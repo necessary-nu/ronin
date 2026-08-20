@@ -156,6 +156,16 @@ pub(crate) struct LateStep {
     /// A nonzero status from this step is not the edge's answer and does not
     /// stop the steps after it — GNU Make's `-` prefix, read per line.
     pub(crate) ignore_errors: bool,
+    /// This step runs even where the build is standing in for its edge rather
+    /// than running it.
+    ///
+    /// A `-t` run gives an edge's outputs a fresh date in place of making
+    /// them, and a step that answers `true` here is one the front end says must
+    /// happen anyway. GNU Make's `COMMANDS_RECURSE`, in words the engine can
+    /// act on without knowing what a recursive Make is: `start_job_command`
+    /// steps aside for such a line rather than touching in its place. A Ninja
+    /// edge never sets it.
+    pub(crate) runs_while_pretending: bool,
 }
 
 /// Whether an edge the build reached has a command to run at all.
@@ -268,13 +278,46 @@ pub(super) struct PreparedEdge {
     /// costs both tools that prediction: ours has nothing to weight with, and
     /// Ninja reading a log we wrote silently falls back to counting edges.
     pub(super) start_millis: i32,
+    /// Whether the build stood in for any of this edge's steps rather than
+    /// running it, which is the question `-t` asks before it touches: GNU Make
+    /// touches in place of a line it skipped, so a recipe it skipped nothing of
+    /// leaves the target alone.
+    pub(super) pretended_a_step: bool,
     pub(super) _response_file: Option<ResponseFile>,
+}
+
+/// What a run is standing in for rather than doing.
+///
+/// Two switches put the build through the motions and they differ in one
+/// thing: `-t` steps aside for a step the front end says runs anyway, and `-n`
+/// does not, because a dry run over a graph that already holds every edge has
+/// nothing to learn by starting one.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(super) enum Pretending {
+    /// Nothing is being stood in for: every step really runs.
+    Nothing,
+    /// Every step, whatever the front end said about it.
+    EveryStep,
+    /// Every step but the ones the front end marked as running anyway.
+    AllButRunning,
+}
+
+impl Pretending {
+    pub(super) const fn stands_in_for(self, runs_while_pretending: bool) -> bool {
+        match self {
+            Self::Nothing => false,
+            Self::EveryStep => true,
+            Self::AllButRunning => !runs_while_pretending,
+        }
+    }
 }
 
 /// One of an edge's launches, ready to start.
 pub(super) struct PreparedStep {
     pub(super) launch: Launch,
     pub(super) ignore_errors: bool,
+    /// See [`LateStep::runs_while_pretending`].
+    pub(super) runs_while_pretending: bool,
 }
 
 /// What the build knows about the step an edge currently has running.
@@ -676,6 +719,9 @@ impl Builder<'_> {
             return std::collections::VecDeque::from(vec![PreparedStep {
                 launch: Launch::Shell(self.deferred_launch_command(edge, &command.command)),
                 ignore_errors: command.ignore_errors,
+                // A command the graph settled is one process and nothing said
+                // it runs anyway, which is every Ninja edge.
+                runs_while_pretending: false,
             }]);
         }
         bound
@@ -690,6 +736,7 @@ impl Builder<'_> {
                     direct @ Launch::Direct(_) => direct,
                 },
                 ignore_errors: step.ignore_errors,
+                runs_while_pretending: step.runs_while_pretending,
             })
             .collect()
     }
@@ -714,9 +761,9 @@ impl Builder<'_> {
             Advance::Finished(result) => return Advance::Finished(result),
             Advance::Relaunched => {}
         }
-        let launch = Self::take_step(prepared);
+        let (launch, pretended) = Self::take_step(prepared, self.pretending());
         let use_console = prepared.command.use_console;
-        match processes.spawn(prepared.edge, launch, use_console, self.pretending()) {
+        match processes.spawn(prepared.edge, launch, use_console, pretended) {
             Ok(()) => Advance::Relaunched,
             Err(error) => Advance::Finished(Err(error)),
         }
@@ -765,7 +812,16 @@ impl Builder<'_> {
 
     /// Take the next process this edge is made of, and remember what its
     /// status will mean.
-    pub(super) fn take_step(prepared: &mut PreparedEdge) -> crate::subprocess::Launch {
+    /// The next step's launch, and whether the build stands in for it.
+    ///
+    /// An edge the run is pretending about still pretends, step by step,
+    /// except where the front end marked the step as one that runs anyway —
+    /// and a step the build stood in for is what makes the edge's outputs worth
+    /// touching, so the edge remembers that it did.
+    pub(super) fn take_step(
+        prepared: &mut PreparedEdge,
+        pretending: Pretending,
+    ) -> (crate::subprocess::Launch, bool) {
         let step = prepared
             .steps
             .pop_front()
@@ -773,6 +829,8 @@ impl Builder<'_> {
         prepared.running_step = RunningStep {
             ignore_errors: step.ignore_errors,
         };
-        step.launch
+        let pretended = pretending.stands_in_for(step.runs_while_pretending);
+        prepared.pretended_a_step |= pretended;
+        (step.launch, pretended)
     }
 }

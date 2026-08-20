@@ -13,6 +13,7 @@
 //! the ordinary progress line, so a second line naming the same work in another
 //! tool's words would be narration and not information.
 
+use super::command::Pretending;
 use super::{BuildError, BuildOperation, BuildResult, Builder};
 use crate::graph::{EdgeId, NodeId};
 use bstr::ByteSlice as _;
@@ -25,8 +26,20 @@ impl Builder<'_> {
     /// because a touched edge has no process either — what makes its outputs
     /// current is [`Builder::touch_outputs`], and the recipe that would have
     /// made them is exactly what is not being run.
-    pub(super) const fn pretending(&self) -> bool {
-        self.options.dryrun || self.options.touch
+    pub(super) const fn pretending(&self) -> Pretending {
+        // `-n` outranks `-t`, and it stands in for every step alike: a dry run
+        // over a graph that already holds the recursive child's edges has
+        // nothing to learn by starting one, which is what
+        // `[dec:ronin:make-compiles-to-ninja]` settles and what
+        // `make-recipe-dry-run` recorded. `-t` is the switch that steps aside,
+        // because it decides what the run writes to disk.
+        if self.options.dryrun {
+            return Pretending::EveryStep;
+        }
+        if self.options.touch {
+            return Pretending::AllButRunning;
+        }
+        Pretending::Nothing
     }
 
     /// Give this edge's outputs a fresh date instead of having made them, which
@@ -44,8 +57,17 @@ impl Builder<'_> {
     /// the ordinary progress line, so a second line naming the same work in
     /// another tool's words would be narration and not information.
     // [spec:ronin:req:make.narration+1]
-    pub(super) fn touch_outputs(&self, edge: EdgeId) -> BuildResult<()> {
+    pub(super) fn touch_outputs(&self, edge: EdgeId, stood_in_for_a_step: bool) -> BuildResult<()> {
         if !self.options.touch || self.options.dryrun {
+            return Ok(());
+        }
+        // Touched in place of a line that was skipped, which is where GNU Make
+        // touches: `start_job_command` (job.c) goes on to the next command for
+        // a line it steps aside for, and only the ones it stood in for reach
+        // the touch. A recipe every line of which runs anyway is therefore made
+        // by running it, and the target is left with the date its own recipe
+        // gave it.
+        if !stood_in_for_a_step {
             return Ok(());
         }
         // A `.PHONY` target's name is not a file and giving it one would be

@@ -1209,6 +1209,7 @@ impl BuildSink for GraphSink {
                     .map(|step| crate::build::LateStep {
                         launch: layout.launch_step(step, rule.recipe_environment),
                         ignore_errors: step.ignore_error,
+                        runs_while_pretending: step.recursive_line,
                     })
                     .collect(),
             );

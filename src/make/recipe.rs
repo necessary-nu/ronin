@@ -231,6 +231,7 @@ impl LateCommands for PendingRecipes {
                 .map(|step| LateStep {
                     launch: layout.launch_step(step, &expanded.recipe_environment),
                     ignore_errors: step.ignore_error,
+                    runs_while_pretending: step.recursive_line,
                 })
                 .collect()
         } else {

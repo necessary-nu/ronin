@@ -1275,6 +1275,7 @@ impl<'a> Builder<'a> {
             earlier_stderr: Vec::new(),
             command_start_mtime,
             start_millis: self.progress.offset_millis(),
+            pretended_a_step: false,
             _response_file: response_file,
         }))
     }
@@ -1395,6 +1396,7 @@ impl<'a> Builder<'a> {
             earlier_stderr,
             command_start_mtime,
             start_millis,
+            pretended_a_step,
             _response_file,
         } = prepared;
         // Account for the edge before anything reports progress: the status
@@ -1555,7 +1557,7 @@ impl<'a> Builder<'a> {
 
         // Ahead of the stat below, so the date `-t` has just given each output
         // is the date this run records for it.
-        self.touch_outputs(edge)?;
+        self.touch_outputs(edge, pretended_a_step)?;
 
         let disk = self.disk.clone();
         let mut new_mtimes = Vec::new();
@@ -2078,8 +2080,8 @@ impl<'a> Builder<'a> {
                         }
                     }
                     Ok(Some(mut prepared)) => {
-                        let launch = Self::take_step(&mut prepared);
-                        match processes.spawn(edge, launch, use_console, self.pretending()) {
+                        let (launch, pretended) = Self::take_step(&mut prepared, self.pretending());
+                        match processes.spawn(edge, launch, use_console, pretended) {
                             Ok(()) => {
                                 running[edge.index()] = Some(prepared);
                                 running_slots[edge.index()] = slot;
