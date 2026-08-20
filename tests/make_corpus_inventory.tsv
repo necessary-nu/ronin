@@ -40,7 +40,6 @@ case	delete_on_error.mk#test	recorded	evaluation+corpus-todo+exit-status	92054fe
 case	deprecated_export.mk#test	extension	kati-extension	6f76de783020faaf
 case	deprecated_var.mk#test	extension	kati-extension	4de2b58e33257f25
 case	empty_ninja_file.sh#script	extension	kati-extension	84fb5a3b281e691c
-case	err_invalid_ifeq5.mk#test	recorded	evaluation+corpus-todo	746ab995b9a060df
 case	err_no_target_commands.mk#default	defect	exit-status+stop-suffix+recipe-wording	006f534f449f9a6e
 case	err_no_target_commands2.mk#default	defect	exit-status+stop-suffix+recipe-wording	17f41a14adad7ffe
 case	err_override.mk#test	defect	recipe-wording	02985d510315a679
