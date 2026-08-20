@@ -88,6 +88,19 @@ pub enum MakeError {
     Evaluate(String),
     /// The Makefile evaluated, and described a graph that cannot exist.
     Construct(FrontendError),
+    /// A recursive invocation the compiler composed points at a directory that
+    /// holds no makefile to compile.
+    ///
+    /// Its own variant rather than an [`Self::Evaluate`] string because the two
+    /// callers want different things from it. A build cannot go on — the child
+    /// graph does not exist and the line that would have started a Make was
+    /// lifted out of the recipe — while a report can, and says so at the
+    /// invocation instead. The rendering is the same either way.
+    MissingChildMakefile {
+        /// The directory the invocation selected, which exists and holds none
+        /// of the names a Make reads.
+        directory: PathBuf,
+    },
 }
 
 impl fmt::Display for MakeError {
@@ -95,6 +108,11 @@ impl fmt::Display for MakeError {
         match self {
             Self::Evaluate(diagnostic) => formatter.write_str(diagnostic),
             Self::Construct(error) => error.fmt(formatter),
+            Self::MissingChildMakefile { directory } => write!(
+                formatter,
+                "no makefile found for recursive compilation in '{}'",
+                directory.display()
+            ),
         }
     }
 }
@@ -102,7 +120,7 @@ impl fmt::Display for MakeError {
 impl error::Error for MakeError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
-            Self::Evaluate(_) => None,
+            Self::Evaluate(_) | Self::MissingChildMakefile { .. } => None,
             Self::Construct(error) => Some(error),
         }
     }
@@ -180,6 +198,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
         context: CompilationContext {
             diagnostics: std::sync::Arc::clone(&session.diagnostics),
             census: std::sync::Arc::clone(&session.census),
+            reporting: false,
             root_directory: directory.clone(),
             directory,
             path_prefix: PathBuf::new(),
@@ -221,6 +240,18 @@ pub(crate) struct CompilationContext {
     /// Where every one of them records what it classified about a recursive
     /// invocation, for a caller that asked for a report rather than a build.
     pub(crate) census: std::sync::Arc<kati::census::Census>,
+    /// Whether this compilation is being run to report on the build rather
+    /// than to make it.
+    ///
+    /// It decides one thing and is written down rather than inferred because
+    /// the thing it decides is a refusal: a composition whose child directory
+    /// holds no makefile stops a build, because there is no child graph and the
+    /// recipe line that would have started a Make was lifted out of the recipe,
+    /// and it does not stop a report, which names the invocation and carries
+    /// on. Inferring it from `census.is_recording()` would work today and would
+    /// be an accident — a build that ever wanted a census would quietly acquire
+    /// a report's tolerance for a graph it cannot build.
+    pub(crate) reporting: bool,
     pub(crate) root_directory: PathBuf,
     pub(crate) directory: PathBuf,
     pub(crate) path_prefix: PathBuf,
@@ -808,24 +839,35 @@ where
             if let Some(staged) = sink
                 .stage_preceding_lines(&pending, group_index)
                 .map_err(MakeError::Construct)?
+                && !stage_preceding(
+                    sink,
+                    state,
+                    (compilation_key, pending_index, group_index),
+                    staged,
+                )
             {
-                if !state.stage(
-                    compilation_key,
-                    pending_index,
-                    EvaluationPredecessor::PrecedingLines(group_index),
-                    &[staged],
-                ) {
-                    return Ok(incomplete_unit(targets, subtree_edges));
-                }
-                sink.mark_subgraphs_prebuilt(&[staged]);
+                return Ok(incomplete_unit(targets, subtree_edges));
             }
-            let child = resolve(
+            let child = match resolve(
                 &invocation.command,
                 &invocation.make,
                 &invocation.shell,
                 &invocation.shell_flags,
                 descendant_context,
-            )?;
+            ) {
+                Ok(child) => child,
+                // A report names the invocation and reads the rest of the
+                // build. A build cannot: there is no child graph to compose and
+                // the recipe line that would have started a Make of its own was
+                // lifted out of the recipe, so the work would simply not happen.
+                Err(MakeError::MissingChildMakefile { directory })
+                    if descendant_context.reporting =>
+                {
+                    child_groups.push(unreadable_child(descendant_context, invocation, &directory));
+                    continue;
+                }
+                Err(refusal) => return Err(refusal),
+            };
             let child_key = child.cache_key.clone();
             let child_subgraph = if let Some(subgraph) = state.cache.get(&child_key) {
                 subgraph.clone()
@@ -840,27 +882,23 @@ where
             };
             child_groups.push(child_subgraph);
 
-            if group_index + 1 < pending.invocations.len() {
-                let completed_targets = &child_groups[group_index].targets;
-                if !state.stage(
-                    compilation_key,
-                    pending_index,
-                    EvaluationPredecessor::ChildGroup(group_index),
-                    completed_targets,
-                ) {
-                    return Ok(incomplete_unit(targets, subtree_edges));
-                }
-                sink.mark_subgraphs_prebuilt(completed_targets);
+            if group_index + 1 < pending.invocations.len()
+                && !stage_completed_group(
+                    sink,
+                    state,
+                    (compilation_key, pending_index, group_index),
+                    &child_groups[group_index].targets,
+                )
+            {
+                return Ok(incomplete_unit(targets, subtree_edges));
             }
         }
         let wrapper = sink
             .complete_subninja(wrapper, pending, &child_groups)
             .map_err(MakeError::Construct)?;
-        for child in child_groups {
-            for edge in child.edges {
-                if !subtree_edges.contains(&edge) {
-                    subtree_edges.push(edge);
-                }
+        for edge in child_groups.into_iter().flat_map(|child| child.edges) {
+            if !subtree_edges.contains(&edge) {
+                subtree_edges.push(edge);
             }
         }
         subtree_edges.push(wrapper);
@@ -872,6 +910,87 @@ where
         },
         complete: true,
     })
+}
+
+/// Stage the recipe's own lines written ahead of one invocation, and say
+/// whether the staging settled. See [`stage_completed_group`] for `at`.
+fn stage_preceding(
+    sink: &mut GraphSink,
+    state: &mut CompilationState<'_>,
+    at: (&[u8], usize, usize),
+    staged: Node,
+) -> bool {
+    let (compilation_key, pending_index, group_index) = at;
+    if !state.stage(
+        compilation_key,
+        pending_index,
+        EvaluationPredecessor::PrecedingLines(group_index),
+        &[staged],
+    ) {
+        return false;
+    }
+    sink.mark_subgraphs_prebuilt(&[staged]);
+    true
+}
+
+/// Stage a finished child group as what the next invocation in the same recipe
+/// waits on, and say whether the staging settled.
+///
+/// GNU Make runs a recipe's lines in the order they were written, so the Make a
+/// later invocation starts reads whatever an earlier one left behind.
+///
+/// `at` is where in the compilation this group sits: the unit's key, which
+/// pending recursive recipe it belongs to, and which invocation of that recipe
+/// it is.
+fn stage_completed_group(
+    sink: &mut GraphSink,
+    state: &mut CompilationState<'_>,
+    at: (&[u8], usize, usize),
+    completed: &[Node],
+) -> bool {
+    let (compilation_key, pending_index, group_index) = at;
+    if !state.stage(
+        compilation_key,
+        pending_index,
+        EvaluationPredecessor::ChildGroup(group_index),
+        completed,
+    ) {
+        return false;
+    }
+    sink.mark_subgraphs_prebuilt(completed);
+    true
+}
+
+/// Write a composition whose child could not be read into the census, and give
+/// back the nothing it composed.
+///
+/// The entry follows the `Composed` one the classifier already made for the
+/// same line rather than replacing it: composing is what the compiler decided
+/// about the recipe, and this is what happened when it acted on the decision.
+/// The directory is named as a reader would write it, relative to the build's
+/// root, because a report is read beside the tree it is about.
+///
+/// An empty subgraph rather than no subgraph, because the recursive wrapper is
+/// completed against one child group per invocation.
+fn unreadable_child(
+    context: &CompilationContext,
+    invocation: &crate::make::sink::SubninjaInvocation,
+    directory: &std::path::Path,
+) -> UnitSubgraph {
+    context.census.record(kati::census::Invocation {
+        location: invocation.location.clone(),
+        disposition: kati::census::Disposition::MissingMakefile {
+            directory: directory
+                .strip_prefix(&context.root_directory)
+                .unwrap_or(directory)
+                .display()
+                .to_string(),
+        },
+    });
+    UnitSubgraph {
+        targets: Vec::new(),
+        edges: Vec::new(),
+    }
 }
 
 const fn incomplete_unit(targets: Vec<Node>, edges: Vec<Edge>) -> ComposedUnit {

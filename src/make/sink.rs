@@ -76,6 +76,10 @@ pub(crate) struct SubninjaInvocation {
     /// runs them. `None` when the invocation is the first thing the recipe
     /// does after the one before it.
     pub(crate) preceding_rule: Option<Rule>,
+    /// The Makefile and line the recipe line was written on, for a report that
+    /// has to point at the invocation it is about. `None` for a build, which
+    /// has nothing to say about it.
+    pub(crate) location: Option<String>,
 }
 
 /// What one edge's stopped recipe may give back, and when it must.
@@ -1169,6 +1173,7 @@ impl BuildSink for GraphSink {
                     shell: rule.shell.to_vec(),
                     shell_flags: rule.shell_flags.to_vec(),
                     preceding_rule,
+                    location: subninja.location.map(ToOwned::to_owned),
                 });
             }
             self.subninja_rules.insert(

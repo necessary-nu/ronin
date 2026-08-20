@@ -361,12 +361,30 @@ fn makefile(
 /// knows which invocations those are and why. Every line here is read off the
 /// disposition the compile acted on, in the order it acted on them.
 #[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.nesting-census+1]
+// [spec:ronin:req:make.nesting-census+2]
 fn census(report: &mut Report, recorded: &[kati::census::Invocation]) -> String {
     use kati::census::Disposition;
 
+    // A missing child is discovered when the compiler goes to read it, which is
+    // after it has classified every line of the unit that named it — so the
+    // ledger has it last and the line it is about is somewhere above. The
+    // report is read by line and not by when the compiler learned things, so
+    // each one is emitted with the composition it belongs to. Several
+    // invocations on one line queue in written order, which is the order they
+    // were tried in.
+    let mut missing: Vec<(Option<&str>, &str)> = recorded
+        .iter()
+        .filter_map(|invocation| match &invocation.disposition {
+            Disposition::MissingMakefile { directory } => {
+                Some((invocation.location.as_deref(), directory.as_str()))
+            }
+            _ => None,
+        })
+        .collect();
+
     let mut composed = 0_usize;
     let mut nested = 0_usize;
+    let unread = missing.len();
     for invocation in recorded {
         let location = invocation.location.as_deref();
         match &invocation.disposition {
@@ -379,24 +397,53 @@ fn census(report: &mut Report, recorded: &[kati::census::Invocation]) -> String 
                     ))
                     .at(location),
                 );
+                if let Some(at) = missing.iter().position(|(where_, _)| *where_ == location) {
+                    let (_, directory) = missing.remove(at);
+                    report.raise(
+                        &Finding::warning(format!(
+                            "the invocation composes and its makefile is missing: nothing a \
+                             Make reads is in `{directory}`"
+                        ))
+                        .at(location),
+                    );
+                    report.raise(&Finding::note(MAKEFILE_WHERE_IT_POINTS).at(location));
+                }
             }
             Disposition::Nested(reason) => {
                 nested += 1;
                 report.raise(&Finding::warning(nesting_says(*reason)).at(location));
                 report.raise(&Finding::note(lifting_would(*reason)).at(location));
             }
+            // Said above, beside the composition it belongs to.
+            Disposition::MissingMakefile { .. } => {}
         }
     }
     let total = composed + nested;
-    format!(
+    let counted = format!(
         "{total} recursive {}: {composed} composed, {nested} nested",
         if total == 1 {
             "invocation"
         } else {
             "invocations"
         }
-    )
+    );
+    // Not a fourth number in the list: an invocation with no makefile was
+    // COMPOSED and is counted there, and this says how many of those the
+    // compiler then found nothing to compile. Adding it to the three would
+    // count one invocation twice.
+    if unread == 0 {
+        counted
+    } else {
+        format!("{counted}; {unread} of them found no makefile")
+    }
 }
+
+/// What would answer a composition with no makefile where it points.
+#[cfg(all(unix, feature = "make"))]
+const MAKEFILE_WHERE_IT_POINTS: &str = concat!(
+    "a composed invocation is compiled where it points, so that directory needs a makefile ",
+    "under one of the names a Make looks for, or the invocation needs a `-f` naming one"
+);
 
 /// One composed invocation, long enough to name the child and no longer.
 ///

@@ -256,6 +256,7 @@ fn eval_fragments_reach_compilation() {
         1,
         0,
         &session,
+        false,
     );
     let loaded = super::evaluated(
         session,
@@ -309,6 +310,7 @@ fn generated_include_is_provisional_graph_root() {
         1,
         0,
         &session,
+        false,
     );
     let loaded = super::evaluated(
         session,

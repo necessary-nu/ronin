@@ -1,0 +1,1 @@
+This directory deliberately holds no makefile: it is what the reduction is about.

@@ -41,10 +41,7 @@ pub(in crate::make) fn compile(
     }
     let makefiles = named_makefiles(&invocation, &directory);
     if makefiles.is_empty() {
-        return Err(MakeError::Evaluate(format!(
-            "no makefile found for recursive compilation in '{}'",
-            directory.display()
-        )));
+        return Err(MakeError::MissingChildMakefile { directory });
     }
     let invoked_as =
         path_of(words[0].as_bytes()).map_err(|error| MakeError::Evaluate(error.to_string()))?;
@@ -101,6 +98,7 @@ pub(in crate::make) fn compile(
         context: CompilationContext {
             diagnostics: std::sync::Arc::clone(&parent.diagnostics),
             census: std::sync::Arc::clone(&parent.census),
+            reporting: parent.reporting,
             root_directory: parent.root_directory.clone(),
             directory,
             path_prefix,

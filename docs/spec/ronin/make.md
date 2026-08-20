@@ -159,7 +159,7 @@ manifest-derived graph is.
 > Make executor: no graph acquires GNU Make's scheduler, dirtiness model, or
 > reporter by being reached this way.
 
-> [spec:ronin:req:make.nesting-census+1]
+> [spec:ronin:req:make.nesting-census+2]
 > Linting a Makefile reports every recursive invocation the compile
 > classified, each with the Makefile and line it was written on and whether it
 > was composed into the graph or left to nest at run time. A composed
@@ -189,12 +189,24 @@ manifest-derived graph is.
 > reach it directly, so a report shows every nested Make and not only the
 > conveniently spelled ones.
 >
+> A composition whose child directory holds no makefile is a finding rather
+> than a refusal. The census names the invocation, says where it pointed and
+> that nothing a Make reads is there, and carries on over the rest of the
+> build — the invocations written above it, the ones written below it, and the
+> children that could be read. Building the same tree is still refused: the
+> child graph does not exist and the recipe line that would have started a Make
+> of its own was lifted out of the recipe, so the work would simply not happen.
+> The two are different judgements about the same fact, and on a tree of relic
+> Makefiles the missing child is usually the most useful thing a census has to
+> say — delivering it as the reason there is no census is the failure this
+> distinction exists to prevent.
+>
 > The classification is the compiler's own. Lint reads the disposition the
 > compile recorded at the moment it decided, and does not re-derive one from
 > the recipe text: a census that could disagree with the build it describes
-> would be describing a different build. A refusal — a child that makes its
-> own parent's target — ends the lint where it would have ended the build, and
-> is reported as the refusal it is.
+> would be describing a different build. Every other refusal — a child that
+> makes its own parent's target — ends the lint where it would have ended the
+> build, and is reported as the refusal it is.
 
 > [spec:ronin:req:make.jobserver+1]
 > Ronin does not create a GNU Make jobserver for recursive Make execution. A

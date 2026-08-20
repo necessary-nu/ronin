@@ -1517,6 +1517,22 @@ fn make_named_invocation(arguments: &[BString], executable: &Path) -> PathBuf {
         .unwrap_or(program)
 }
 
+/// Whether a compilation is being run to make the build or to report on it,
+/// and where the report goes.
+///
+/// The two travel together because they are one decision. A census is gathered
+/// only for a report, and only a report survives a composition whose child
+/// directory holds no makefile — a build refuses there, because the child graph
+/// does not exist and the recipe line that would have started a Make of its own
+/// was lifted out of the recipe.
+struct Purpose<'a> {
+    /// Where every session this compilation opens records what it classified
+    /// about a recursive invocation.
+    census: &'a Arc<kati::census::Census>,
+    /// Whether a report is what was asked for.
+    reporting: bool,
+}
+
 struct RootCompilation<'a> {
     invocation: &'a Invocation,
     /// Where every session this compilation opens writes its warnings.
@@ -1532,6 +1548,9 @@ struct RootCompilation<'a> {
     /// What standard input held, when one of `makefiles` is `-`.
     makefile_contents: Option<&'a [u8]>,
     level: usize,
+    /// Whether this compilation is a report rather than a build. See
+    /// [`crate::make::CompilationContext::reporting`].
+    reporting: bool,
 }
 
 enum PreparedGraph {
@@ -1612,6 +1631,7 @@ fn prepare_graph(
             job_count(root.options),
             root.level,
             &session,
+            root.reporting,
         );
         let loaded = match evaluated(
             session,
@@ -1722,7 +1742,16 @@ pub(crate) fn read_without_building(
     let census = Arc::new(kati::census::Census::collected());
     let mut held = Vec::new();
     let compiled = compile_invocation(
-        runner, arguments, &mut None, &mut None, &raised, &census, &mut held,
+        runner,
+        arguments,
+        &mut None,
+        &mut None,
+        &raised,
+        &Purpose {
+            census: &census,
+            reporting: true,
+        },
+        &mut held,
     )?;
     held.extend(raised.take());
     let stopped = match compiled.prepared {
@@ -1803,7 +1832,7 @@ fn compile_invocation(
     output: &mut Option<&mut dyn Write>,
     diagnostics: &mut Option<&mut dyn Write>,
     raised: &Arc<kati::diagnostics::Diagnostics>,
-    census: &Arc<kati::census::Census>,
+    purpose: &Purpose<'_>,
     held: &mut Vec<u8>,
 ) -> Result<CompiledInvocation, Error> {
     let mut reported = String::new();
@@ -1864,13 +1893,14 @@ fn compile_invocation(
     let root = RootCompilation {
         invocation: &invocation,
         diagnostics: raised,
-        census,
+        census: purpose.census,
         makefiles: &makefiles,
         invoked_as: &invoked_as,
         directory: &directory,
         options: &options,
         makefile_contents: makefile_contents.as_deref(),
         level,
+        reporting: purpose.reporting,
     };
     let prepared = prepare_graph(&root, &mut reported, output, diagnostics, held)?;
     Ok(CompiledInvocation {
@@ -1895,9 +1925,14 @@ fn reported_run(
         &mut output,
         &mut diagnostics,
         raised,
-        // A build acts on each classification as it is made and has no use for
-        // it afterwards, so it keeps none of them.
-        &Arc::new(kati::census::Census::ignored()),
+        &Purpose {
+            // A build acts on each classification as it is made and has no use
+            // for it afterwards, so it keeps none of them.
+            census: &Arc::new(kati::census::Census::ignored()),
+            // And a composition it cannot read is a refusal rather than a
+            // finding, because the work would simply not happen.
+            reporting: false,
+        },
         held,
     )?;
     let mut reported = compiled.reported;
@@ -1997,6 +2032,7 @@ fn compilation_context(
     jobs: usize,
     level: usize,
     session: &Session,
+    reporting: bool,
 ) -> crate::make::CompilationContext {
     let recipe_environment = vec![(
         OsString::from(MAKELEVEL),
@@ -2008,6 +2044,7 @@ fn compilation_context(
         path_prefix: PathBuf::new(),
         diagnostics: Arc::clone(&session.diagnostics),
         census: Arc::clone(&session.census),
+        reporting,
         makeflags: propagated_makeflags(invocation),
         level,
         jobs,

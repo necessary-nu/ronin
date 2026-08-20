@@ -19,6 +19,41 @@ const THROUGH_A_CONSTRUCT: &str = concat!(
     "command, so a shell construct stands between them\n",
 );
 
+/// The two lines kati raises for a target declared twice, which lint passes on
+/// as the compiler wrote them: a finding that is not a census entry, above the
+/// census and above the missing child.
+#[cfg(all(unix, feature = "make"))]
+const OVERRIDDEN: &str = concat!(
+    "Makefile:26: warning: overriding commands for target 'noise'\n",
+    "Makefile:23: warning: ignoring old commands for target 'noise'\n",
+);
+
+/// The composition written above the missing child.
+#[cfg(all(unix, feature = "make"))]
+const COMPOSED_PRESENT: &str =
+    "Makefile:12: note: recursion composed into the graph: cd present && $(MAKE) all\n";
+
+/// The missing child's own composition: the compiler decided to lift it out,
+/// which is what makes the line below it a finding rather than a refusal.
+#[cfg(all(unix, feature = "make"))]
+const COMPOSED_MISSING: &str =
+    "Makefile:15: note: recursion composed into the graph: cd nomakefile/ && $(MAKE) all\n";
+
+/// The finding this reduction exists for.
+#[cfg(all(unix, feature = "make"))]
+const NO_MAKEFILE: &str = concat!(
+    "Makefile:15: warning: the invocation composes and its makefile is missing: ",
+    "nothing a Make reads is in `nomakefile`\n",
+);
+
+/// What it says would answer it.
+#[cfg(all(unix, feature = "make"))]
+const WRITE_A_MAKEFILE: &str = concat!(
+    "Makefile:15: note: a composed invocation is compiled where it points, so that directory ",
+    "needs a makefile under one of the names a Make looks for, or the invocation needs a ",
+    "`-f` naming one\n",
+);
+
 /// What it says would compose that one instead.
 #[cfg(all(unix, feature = "make"))]
 const WRITE_IT_AS_THE_COMMAND: &str = concat!(
@@ -205,7 +240,14 @@ fn a_raised_warning_is_passed_on() {
 /// reproduction a reader does by hand is the one the test does.
 #[cfg(all(unix, feature = "make"))]
 fn reduction(name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("ronin-lint-{name}-{}", std::process::id()));
+    reduction_at(name, name)
+}
+
+/// The same, into a scratch directory the caller names, so two tests can read
+/// one reduction without sharing a directory or racing each other in it.
+#[cfg(all(unix, feature = "make"))]
+fn reduction_at(name: &str, label: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("ronin-lint-{label}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&path);
     copy_tree(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -237,7 +279,7 @@ fn copy_tree(source: &Path, destination: &Path) {
 /// The tree is vim's top-level Makefile in miniature, checked in and shared
 /// with the build-intent gate that runs it: one liftable `cd src && $(MAKE)`
 /// beside a guard holding a `$(MAKE)` the compiler cannot lift out.
-// [spec:ronin:req:make.nesting-census+1/test]
+// [spec:ronin:req:make.nesting-census+2/test]
 // [spec:ronin:req:tools.lint/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -261,10 +303,78 @@ fn the_census_names_every_recursion() {
     );
 }
 
+/// A composition whose child directory holds no makefile is a FINDING and not
+/// the end of the report.
+///
+/// The tree is `lang-sme`'s `devtools/testing-from-old-infra/make-dictindex` in
+/// miniature: a recipe line whose own command is the invocation, pointed at a
+/// directory that exists and holds nothing a Make reads. Compiling it is a
+/// refusal — there is no child graph — and reporting on it is not, so the
+/// census here has to carry findings written above the missing child, findings
+/// written below it, and findings from the child that does exist.
+// [spec:ronin:req:make.nesting-census+2/test]
+// [spec:ronin:req:tools.lint/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_census_survives_a_missing_child() {
+    let directory = reduction("recursion-into-a-directory-with-no-makefile");
+    let output = ronin(&directory, &["-f", "Makefile", "-t", "lint", "all"]);
+    // A warning and not an error: the report is complete, and what it found is
+    // a problem with the build rather than with the reading.
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "{OVERRIDDEN}{COMPOSED_PRESENT}{COMPOSED_MISSING}{NO_MAKEFILE}{WRITE_A_MAKEFILE}\
+             Makefile:18: {THROUGH_A_CONSTRUCT}\
+             Makefile:18: {WRITE_IT_AS_THE_COMMAND}\
+             present/Makefile:5: {THROUGH_A_CONSTRUCT}\
+             present/Makefile:5: {WRITE_IT_AS_THE_COMMAND}\
+             ronin: 4 recursive invocations: 2 composed, 2 nested; 1 of them found no makefile\n"
+        )
+    );
+}
+
+/// Building the same tree is still refused, because the graph genuinely cannot
+/// be compiled: there is no child to compose and the recipe line that would
+/// have started a Make of its own was lifted out of the recipe.
+///
+/// The report's tolerance is the report's alone. GNU Make 4.4.1 also fails this
+/// tree, at the child it starts rather than at the compile.
+// [spec:ronin:req:tools.lint/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_build_refuses_the_missing_child() {
+    let directory = reduction_at(
+        "recursion-into-a-directory-with-no-makefile",
+        "no-makefile-built",
+    );
+    // Make mode is reached by the invoked name and by nothing else.
+    let make = directory.join("make");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ronin"), &make).unwrap();
+    let output = Command::new(&make)
+        .current_dir(&directory)
+        .args(["-f", "Makefile", "all"])
+        .env_remove("MAKEFLAGS")
+        .env_remove("MFLAGS")
+        .env_remove("CARGO_MAKEFLAGS")
+        .env_remove("MAKELEVEL")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let said = String::from_utf8_lossy(&output.stderr).into_owned()
+        + &String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains("no makefile found for recursive compilation in "),
+        "the build must still refuse, and say why: {said}"
+    );
+}
+
 /// A `.ONESHELL` recipe of several lines nests an invocation that would have
 /// composed on its own, and the census says which of the three shapes that is
 /// rather than reporting one nesting for all of them.
-// [spec:ronin:req:make.nesting-census+1/test]
+// [spec:ronin:req:make.nesting-census+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn a_shared_shell_names_itself() {
@@ -291,7 +401,7 @@ fn a_shared_shell_names_itself() {
 /// A line whose own command IS the invocation, written with an assignment in
 /// front of it, is the third shape: the resolver reads an argument list and
 /// this is not one.
-// [spec:ronin:req:make.nesting-census+1/test]
+// [spec:ronin:req:make.nesting-census+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn a_prefixed_invocation_names_itself() {
