@@ -52,6 +52,15 @@ impl Names {
     pub(crate) const RSPFILE: VarId = VarId::from_index(12);
     pub(crate) const RSPFILE_CONTENT: VarId = VarId::from_index(13);
 
+    /// Whether a name is one Ninja itself gives a meaning to.
+    ///
+    /// The reserved names are interned first and in order, so membership is
+    /// the index rather than a lookup. A binding under one of them is read by
+    /// the engine even when no rule template mentions it.
+    pub(crate) const fn is_reserved(name: VarId) -> bool {
+        name.index() < RESERVED.len()
+    }
+
     pub(crate) fn intern(&mut self, name: &BStr) -> VarId {
         if let Some(id) = self.ids.get(name) {
             return *id;
@@ -105,6 +114,11 @@ impl<V> Bindings<V> {
             .binary_search_by_key(&name, |(key, _)| *key)
             .ok()
             .map(|index| &self.entries[index].1)
+    }
+
+    /// Every binding in the table, in name order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (VarId, &V)> {
+        self.entries.iter().map(|(name, value)| (*name, value))
     }
 
     pub(crate) fn insert(&mut self, name: VarId, value: V) {

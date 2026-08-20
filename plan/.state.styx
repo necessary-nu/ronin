@@ -742,7 +742,11 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule make.nesting-census}
     )}
-    {id lint-manifest-checks}
+    {id lint-manifest-checks, covered_rules (
+        tools.manifest-lint
+    ), covered_claims (
+        {impl_name target-impl, rule tools.manifest-lint}
+    )}
     {id lint-tool-surface, covered_rules (
         tools.lint
     ), covered_claims (

@@ -310,3 +310,119 @@ fn a_prefixed_invocation_names_itself() {
          ronin: 1 recursive invocation: 0 composed, 1 nested\n"
     );
 }
+
+/// A build statement's binding that no rule it reaches ever expands. The
+/// parser takes it, stores it and never looks at it again, so the build runs
+/// exactly as it would with the line deleted — which is what makes a
+/// misspelling of a name that WOULD have been read so easy to leave in.
+// [spec:ronin:req:tools.manifest-lint/test]
+#[test]
+fn an_unexpanded_binding_is_reported() {
+    let directory = scratch("unread-binding");
+    write(
+        &directory,
+        "build.ninja",
+        "rule cc\n  command = gcc $cflags -c $in -o $out\n\nbuild a.o: cc a.c\n  cflag = -O2\n",
+    );
+    let output = ronin(&directory, &["-t", "lint"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stdout(&output),
+        "ronin: warning: build `a.o`: the binding `cflag` is expanded by nothing its rule \
+         writes, so the build runs as it would without the line\n\
+         ronin: read 1 manifest\n"
+    );
+}
+
+/// A phony statement runs nothing, and a binding on one is dispatched by rule
+/// identity rather than by the absence of a command — so a `command` there is
+/// accepted, stored, and never run.
+// [spec:ronin:req:tools.manifest-lint/test]
+#[test]
+fn a_phony_binding_is_reported() {
+    let directory = scratch("phony-binding");
+    write(
+        &directory,
+        "build.ninja",
+        "build all: phony a.c\n  command = rm -rf /\n",
+    );
+    let output = ronin(&directory, &["-t", "lint"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stdout(&output),
+        "ronin: warning: build `all`: the binding `command` runs nothing, because a phony \
+         statement runs nothing\n\
+         ronin: read 1 manifest\n"
+    );
+}
+
+/// Ninja dispatches its built-in phony by identity, so a rule of that name in
+/// a `subninja` scope is an ordinary rule that runs its command — the
+/// opposite of what its name tells every reader of the statements using it.
+// [spec:ronin:req:tools.manifest-lint/test]
+#[test]
+fn a_shadowed_phony_is_reported() {
+    let directory = scratch("shadowed-phony");
+    write(
+        &directory,
+        "sub.ninja",
+        "rule phony\n  command = echo not really phony\nbuild fake: phony\n",
+    );
+    write(
+        &directory,
+        "build.ninja",
+        "rule cc\n  command = gcc $in -o $out\nbuild a: cc a.c\nsubninja sub.ninja\n",
+    );
+    let output = ronin(&directory, &["-t", "lint"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stdout(&output),
+        "ronin: warning: a rule of its own named `phony` shadows the built-in one: a build \
+         statement using it runs its command, where the name says it runs nothing\n\
+         ronin: read 1 manifest\n"
+    );
+}
+
+/// A cycle the build would never walk into, because no target it was asked
+/// for reaches it. Every existing tool loads the manifest and says nothing
+/// about it; a report about the manifest itself is the one place it shows.
+// [spec:ronin:req:tools.manifest-lint/test]
+#[test]
+fn an_unreached_cycle_is_reported() {
+    let directory = scratch("unreachable-cycle");
+    write(
+        &directory,
+        "build.ninja",
+        "rule cc\n  command = gcc $in -o $out\n\nbuild a: cc b\nbuild b: cc a\nbuild z: cc y\n",
+    );
+    let output = ronin(&directory, &["-t", "lint", "--ninja"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        stdout(&output),
+        "ronin: dependency cycle: a -> b -> a\n\
+         ronin: read 1 manifest\n"
+    );
+}
+
+/// The checks find nothing in a manifest a generator wrote, which is the
+/// property that makes them worth running: a lint that fired on every real
+/// build system would be a lint nobody reads.
+// [spec:ronin:req:tools.manifest-lint/test]
+#[test]
+fn a_generated_manifest_lints_clean() {
+    let directory = scratch("generated");
+    write(
+        &directory,
+        "build.ninja",
+        "cflags = -O2\n\
+         rule cc\n  command = gcc $cflags -MD -MF $out.d -c $in -o $out\n           depfile = $out.d\n  deps = gcc\n  description = CC $out\n\
+         rule link\n  command = gcc $in -o $out $libs\n  description = LINK $out\n\
+         build a.o: cc a.c\n  cflags = -O2 -Wall\n\
+         build prog: link a.o\n  libs = -lm\n\
+         build all: phony prog\n\
+         default all\n",
+    );
+    let output = ronin(&directory, &["-t", "lint"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert_eq!(stdout(&output), "ronin: read 1 manifest\n");
+}

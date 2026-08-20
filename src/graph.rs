@@ -1,5 +1,6 @@
 //! Dense graph arenas and dependency operations.
 
+mod cycles;
 mod deferred;
 mod edge;
 mod forgiven;
@@ -18,6 +19,7 @@ use crate::error::GraphError;
 use crate::htab::rapidhashv1;
 use crate::runtime::{CommandHash, FileTime, RuntimeState};
 use crate::util::{BStr, BString, ByteSlice, IdVec, arena_id};
+pub(crate) use cycles::dependency_cycles;
 pub(crate) use deferred::{DeferredFreshness, edgeaddorderonly};
 use deferred::{
     capture_deferred_freshness, recompute_completion_join, recompute_deferred_freshness,
@@ -713,7 +715,7 @@ impl DirtyEvaluator {
 /// building `b` where `build a b: cat c` and `build c: cat a` reports
 /// `a -> c -> a`, not `b -> c -> a`.
 // [spec:ronin:req:compat.graph-semantics]
-fn cycle_through(graph: &Graph, path: &[NodeId], node: NodeId) -> GraphError {
+pub(super) fn cycle_through(graph: &Graph, path: &[NodeId], node: NodeId) -> GraphError {
     let Some(edge) = graph.node(node).generator else {
         return GraphError::DependencyCycle {
             node: Some(node),

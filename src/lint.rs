@@ -12,6 +12,8 @@
 //! describing a different build.
 // [spec:ronin:req:tools.lint]
 
+mod manifest;
+
 use crate::cli::{PRODUCT_NAME, RunResult};
 use crate::error::{CliError, EncodingContext, ToolError};
 use crate::util::{BString, ByteSlice};
@@ -505,6 +507,6 @@ fn manifest_report(
             return Ok(report.finish("nothing further to report: the manifest did not parse"));
         }
     };
-    let _ = graph;
+    manifest::check(&graph, &mut report);
     Ok(report.finish("read 1 manifest"))
 }

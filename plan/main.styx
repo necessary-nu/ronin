@@ -14811,6 +14811,14 @@ children (
                     target-impl ([spec:ronin:req:tools.manifest-lint])
                 }
                 deps (lint-tool-surface)
+                log (
+                    {
+                        at 2026-08-20T15:01:55.580538689Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {
