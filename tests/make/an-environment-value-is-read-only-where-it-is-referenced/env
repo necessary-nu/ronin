@@ -1,0 +1,4 @@
+BOOM=$(error an environment value nothing reads is never read)
+NEVER=$(shell : > eagerly-read)
+UNREAD=$(words a b
+TICK=$(shell printf 'tick\n' >> ticks)

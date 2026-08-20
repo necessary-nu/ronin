@@ -1,0 +1,1 @@
+DEPS=$(addsuffix .dep,a b)

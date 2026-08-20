@@ -1,0 +1,2 @@
+MAKELEVEL=$(words a b c)
+SHELL=$(words a b c)

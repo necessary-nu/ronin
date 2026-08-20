@@ -1,0 +1,5 @@
+COUNT=$(words a b c)
+DOLLAR=a$$b
+INDIRECT=$(INNER)
+INNER=deeper
+REACHES_MAKEFILE=$(MADE_HERE)
