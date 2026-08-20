@@ -722,6 +722,7 @@ assertions (
     {id make-a-refused-conditions-first-string-is-not-expanded, kind @complete, author "brendan@necessary.nu", at 2026-08-20T17:59:52.512839719Z}
     {id lint-reports-a-recursion-whose-makefile-is-missing, kind @complete, author "brendan@necessary.nu", at 2026-08-20T18:31:13.405969886Z}
     {id builtin-shell-design, kind @complete, author "brendan@necessary.nu", at 2026-08-20T19:03:02.522366214Z}
+    {id builtin-shell-flip-left-the-clippy-gate-red, kind @doing, author "brendan@necessary.nu", at 2026-08-20T20:41:30.691706625Z}
 )
 
 impl_evidence (

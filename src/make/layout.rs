@@ -194,7 +194,7 @@ impl CommandLayout {
             let mut argv = vec![BString::from(step.shell.to_vec())];
             argv.extend(
                 step.shell_flags
-                    .split(|byte| byte.is_ascii_whitespace())
+                    .split(u8::is_ascii_whitespace)
                     .filter(|word| !word.is_empty())
                     .map(|word| BString::from(word.to_vec())),
             );

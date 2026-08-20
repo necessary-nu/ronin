@@ -15181,6 +15181,35 @@ children (
                     }
                 )
             }
+
+            {
+                id builtin-shell-flip-left-the-clippy-gate-red
+                title "Clear the redundant closure the shell flip left in the lint gate"
+                kind @fix
+                deps (builtin-shell-flip)
+                log (
+                    {
+                        at 2026-08-20T20:41:26.336535563Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found by the next dispatch's first gate run, not by the flip's own battery: `cargo clippy --lib --bins --no-deps -- -D warnings -W clippy::pedantic -W clippy::nursery` — the exact line scripts/check-release.sh runs — fails on a tree that is otherwise clean at e8caf4b.\n\n    error: redundant closure\n       --> src/make/layout.rs:197:28\n        |\n    197 |                     .split(|byte| byte.is_ascii_whitespace())\n        |  help: replace the closure with the method itself: `u8::is_ascii_whitespace`\n\n`git blame` puts the line in e8caf4b itself — it is the `.SHELLFLAGS` split the flip added when `launch_step` moved a default-shell recipe line from a composed command string to `Launch::Direct`. `redundant_closure_for_method_calls` is pedantic, so `cargo check` never says a word about it and the workspace test run does not either; only the clippy pass does, and the flip's recorded battery does not list one.\n\nConfirmed pre-existing rather than inherited from the work in flight: measured with the kati submodule restored to its pinned 5120ed7 and the tree free of any other change. Behaviour is not in question — the closure and the method are the same call — so the whole of it is that the gate every dispatch runs before committing is red, and a red gate teaches the next reader to skip it."
+                    }
+
+                    {
+                        at 2026-08-20T20:41:30.691706625Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-20T20:55:01.479515339Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered, and the filing was one finding short of what the gate actually held: the shell wave left THREE lint findings, one in each of the three clippy passes scripts/check-release.sh runs, and each pass stops at the first crate that fails so only running all three finds all three.\n\n1. `src/make/layout.rs:197` — `redundant_closure_for_method_calls` on `.split(|byte| byte.is_ascii_whitespace())`, the `.SHELLFLAGS` split the flip added. Now `.split(u8::is_ascii_whitespace)`. Pedantic, so only the first pass (ronin lib+bins, `--no-deps`, pedantic+nursery) sees it.\n\n2. `tests/shell.rs:305` — `type_complexity` on `[(&str, (&str, i32), (&str, i32)); 4]`, the filed-divergence table `builtin-shell-personality` added. Now a `FiledDifference` alias, which also names what the three parts are. This one is in the SECOND pass (all-targets, pedantic and nursery off), so it is a correctness-register lint rather than a style one, and it was invisible until the first pass was clean enough to reach it.\n\n3. `kati/src-rs/fileutil.rs:87` — `too_many_arguments` (8/7) on `run_command`, which the flip pushed over by adding `default_shell_program`. Fixed by gathering the three arguments that always travel together — the shell's program, its flag, and the stand-in executable — into `ShellToReadWith`, since all three call sites (`exec.rs`, `regen.rs`, `func.rs`) pass all three and none passes one without the others. Six parameters again. Third pass (`-p kati --all-targets -D warnings`), and likewise unreachable until the second was clean.\n\nNo behaviour is in question in any of the three: two are spellings of the same call and the third destructures the struct into the same three bindings the parameters were.\n\nWHERE: kati c9539ac on nplan/builtin-shell-flip-left-the-clippy-gate-red, pushed before this pin.\n\nGATES, run serially. The host was quiet. cargo fmt --all --check clean; `cargo check --workspace --all-targets` clean; all three clippy passes clean — ronin lib+bins `--no-deps` pedantic+nursery, ronin `--all-targets --no-deps` with the groups off, and `-p kati --all-targets` at plain `-D warnings`; `RUSTDOCFLAGS=-D warnings cargo doc --no-deps` clean; workspace 955 passed / 0 failed; `--no-default-features` 751 / 0; make_port 4/4 over 920 with no recording rewritten; conformance 336 identical / 51 differing normalised and 286 raw, 17 defect + 2 recorded + 31 extension + 1 artefact, nothing unclassified; equivalence 297 makefiles / 280 graphs / 1 both-refused / 75 make-rejected / 0 disagreements; upstream inventory 1285 at 134 unclassified / 0 compiler / 25 interface / 1126 narration with the tsv byte-identical and no drift line; ninja conformance 425 upstream plus 10 CLI, 86 build-outcome, 3 invocation, persistence and log content; `scripts/check-make-projects.sh all` built vim 9.2 in 15s and zsh 5.9.2 with 36 modules in 27s at -j8.\n\nA NOTE FOR THE NEXT DISPATCH, because it cost a rebuild here: `cargo test --workspace` runs the dev profile and `target/<triple>/debug/incremental` reached 2.0 GB on a host with 4 GB free. `CARGO_INCREMENTAL=0` on the gate runs keeps it from coming back; the directory is safe to delete."
+                    }
+                )
+            }
         )
     }
 )

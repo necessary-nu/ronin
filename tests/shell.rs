@@ -287,6 +287,10 @@ fn the_host_shell_answers_the_same() {
     }
 }
 
+/// One filed difference: the script, what dash does with it, and what this
+/// shell does. Each side is the output and the status together.
+type FiledDifference = (&'static str, (&'static str, i32), (&'static str, i32));
+
 /// The differences between this shell and dash that are known and filed.
 ///
 /// They are asserted rather than omitted. A case merely left out of the list
@@ -302,7 +306,7 @@ fn the_differences_from_dash_are_filed() {
         return;
     };
 
-    let filed: [(&str, (&str, i32), (&str, i32)); 4] = [
+    let filed: [FiledDifference; 4] = [
         // A write that fails: dash names the line and repeats the builtin, and
         // leaves with 1. Filed against nsh: the prefix and the status.
         (
