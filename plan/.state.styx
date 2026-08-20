@@ -683,6 +683,7 @@ assertions (
     {id make-worked-out-names-answer-the-wrong-flavour, kind @complete, author "brendan@necessary.nu", at 2026-08-20T06:19:29.847920174Z}
     {id make-a-worked-out-names-value-is-its-own-name, kind @complete, author "brendan@necessary.nu", at 2026-08-20T06:31:21.569690838Z}
     {id make-four-names-gnu-works-out-are-missing, kind @complete, author "brendan@necessary.nu", at 2026-08-20T06:49:08.529047756Z}
+    {id make-a-plain-dash-word-becomes-a-goal, kind @complete, author "brendan@necessary.nu", at 2026-08-20T06:59:40.397987871Z}
 )
 
 impl_evidence (

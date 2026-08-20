@@ -1216,13 +1216,21 @@ fn path_of(value: &[u8]) -> Result<PathBuf, Error> {
 /// environment variable — it outranks the makefile's own, which is why it
 /// travels as an assignment rather than as an exported value.
 ///
-/// A zero-length word is neither. GNU Make's `handle_non_switch_argument`
-/// guards the goal branch with `arg[0] != '\0'` (main.c), so `make ""` builds
-/// the default goal and leaves `MAKECMDGOALS` empty — the shape a wrapper hands
-/// Make whenever it expands `make "$TARGET"` with `TARGET` unset. Reading the
-/// empty word as a path instead abandons a build GNU Make runs.
+/// Two words are neither, and GNU Make's `handle_non_switch_argument` (main.c)
+/// passes over both. A zero-length word fails the goal branch's own
+/// `arg[0] != '\0'` guard, so `make ""` builds the default goal and leaves
+/// `MAKECMDGOALS` empty — the shape a wrapper hands Make whenever it expands
+/// `make "$TARGET"` with `TARGET` unset. A lone `-` is returned on before
+/// anything else, under a comment reading `Ignore plain '-' for
+/// compatibility.`. Reading either as a path instead abandons a build GNU Make
+/// runs.
+///
+/// This is the right place for the dash and the only one: a bare `-` means a
+/// directory to `-I`, which forgets the ones accumulated before it, so the
+/// clause has to sit where a word has already been ruled not to be a switch
+/// and not to be a switch's argument.
 fn classify_word(invocation: &mut Invocation, word: &BString) {
-    if word.is_empty() {
+    if word.is_empty() || word == "-" {
         return;
     }
     if word.contains(&b'=') {
@@ -1943,6 +1951,33 @@ mod tests {
         // `--` stops option parsing and the same guard has to hold after it.
         let after_terminator = parsed(&["make", "--", ""]);
         assert!(after_terminator.goals.is_empty());
+    }
+
+    /// The other word `handle_non_switch_argument` will not make a goal of:
+    /// it returns on a lone `-` before it tests anything, "for compatibility".
+    /// A dash naming a directory to `-I` is a different word in a different
+    /// position and is still read as one.
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn a_plain_dash_is_passed_over() {
+        let alone = parsed(&["make", "-"]);
+        assert!(alone.goals.is_empty());
+        assert!(alone.variables.is_empty());
+
+        let surrounded = parsed(&["make", "-", "all", "-", "FOO=bar", "-"]);
+        assert_eq!(surrounded.goals, vec![BString::from("all")]);
+        assert_eq!(
+            surrounded.variables,
+            vec![kati::bytes::Bytes::from_static(b"FOO=bar")]
+        );
+
+        let after_terminator = parsed(&["make", "--", "-"]);
+        assert!(after_terminator.goals.is_empty());
+
+        // The dash `-I` takes still forgets the directories before it.
+        let forgets = parsed(&["make", "-I", "one", "-I", "-", "-I", "two"]);
+        assert!(forgets.goals.is_empty());
+        assert_eq!(forgets.include_dirs, vec![PathBuf::from("two")]);
     }
 
     // [spec:ronin:req:product.make-identity/test]
