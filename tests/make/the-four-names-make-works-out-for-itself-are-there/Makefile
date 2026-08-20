@@ -1,0 +1,20 @@
+# GNU Make defines all four before it reads anything, each simple and at default
+# rank: MAKE_HOST beside MAKE_VERSION in `define_automatic_variables`, .LOADED
+# and MAKE_COMMAND in `main` — the second immediately before MAKE is defined as
+# the REFERENCE `$(MAKE_COMMAND)` — and .INCLUDE_DIRS as the switches are
+# decoded in `construct_include_path`.
+#
+# Two values are deliberately not compared, because the two tools legitimately
+# differ there and would differ on any two hosts as well: MAKE_COMMAND names
+# whichever program is running, and .INCLUDE_DIRS names whichever directories
+# that program searches. What is compared is everything else, including that
+# `$(MAKE)` and `$(MAKE_COMMAND)` are the same word — which is what makes the
+# reference a reference rather than a copy.
+ifeq ($(origin MAKE_COMMAND),undefined)
+all: the-names-are-missing
+else
+all: the-names-are-there
+endif
+
+the-names-are-there: ; @printf 'inc=[%s,%s] loaded=[%s,%s,%s] cmd=[%s,%s] host=[%s,%s] make=[%s,%s,%s] same=[%s]\n' '$(origin .INCLUDE_DIRS)' '$(flavor .INCLUDE_DIRS)' '$(origin .LOADED)' '$(flavor .LOADED)' '$(.LOADED)' '$(origin MAKE_COMMAND)' '$(flavor MAKE_COMMAND)' '$(origin MAKE_HOST)' '$(flavor MAKE_HOST)' '$(origin MAKE)' '$(flavor MAKE)' '$(value MAKE)' '$(if $(filter $(MAKE),$(MAKE_COMMAND)),same,differ)' > out
+the-names-are-missing: ; @printf 'branch=[missing]\n' > out

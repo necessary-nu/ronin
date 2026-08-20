@@ -1085,11 +1085,11 @@ case	variables/GNUMAKEFLAGS.diff.2	unclassified	ninja-progress+recipe-echo+direc
 case	variables/GNUMAKEFLAGS.diff.3	narration	ninja-progress
 case	variables/GNUMAKEFLAGS.diff.4	interface	ninja-progress+makeflags-content
 case	variables/INCLUDE_DIRS.diff	unclassified	ninja-progress+evaluation
-case	variables/INCLUDE_DIRS.diff.1	unclassified	ninja-progress+evaluation
+case	variables/INCLUDE_DIRS.diff.1	narration	ninja-progress
 case	variables/INCLUDE_DIRS.diff.2	narration	ninja-progress
 case	variables/INCLUDE_DIRS.diff.3	narration	ninja-progress
-case	variables/INCLUDE_DIRS.diff.4	unclassified	ninja-progress+evaluation
-case	variables/INCLUDE_DIRS.diff.5	unclassified	ninja-progress+evaluation
+case	variables/INCLUDE_DIRS.diff.4	narration	ninja-progress
+case	variables/INCLUDE_DIRS.diff.5	narration	ninja-progress
 case	variables/LIBPATTERNS.diff	narration	ninja-progress
 case	variables/LIBPATTERNS.diff.1	narration	product-name+ninja-progress
 case	variables/MAKE.diff	narration	ninja-progress+recipe-echo+directory-announce
