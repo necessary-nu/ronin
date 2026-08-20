@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-20T13:57:37.951529701Z
+last_sync_at 2026-08-20T14:56:45.71809253Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -20,7 +20,7 @@ rule_versions (
     {id make.interface-compatibility, version 0}
     {id make.manifest-equivalence, version 1}
     {id make.narration, version 1}
-    {id make.nesting-census, version 0}
+    {id make.nesting-census, version 1}
     {id make.no-ambient-state, version 0}
     {id make.oracle-provenance, version 0}
     {id make.remade-target-re-observed, version 0}
@@ -737,12 +737,18 @@ impl_evidence (
     ), rule_versions_seen (
         {id make.scope-separation, version 0}
     )}
-    {id lint-makefile-nesting-census}
+    {id lint-makefile-nesting-census, covered_rules (
+        make.nesting-census
+    ), covered_claims (
+        {impl_name target-impl, rule make.nesting-census}
+    )}
     {id lint-manifest-checks}
     {id lint-tool-surface, covered_rules (
         tools.lint
     ), covered_claims (
         {impl_name target-impl, rule tools.lint}
+    ), rule_versions_seen (
+        {id tools.lint, version 0}
     )}
     {id make-build-intent-gate, covered_rules (
         make.semantics

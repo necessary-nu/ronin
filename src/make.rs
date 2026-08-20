@@ -179,6 +179,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
     let compilation = Compilation {
         context: CompilationContext {
             diagnostics: std::sync::Arc::clone(&session.diagnostics),
+            census: std::sync::Arc::clone(&session.census),
             root_directory: directory.clone(),
             directory,
             path_prefix: PathBuf::new(),
@@ -217,6 +218,9 @@ pub(crate) struct CompilationContext {
     /// belongs to the invocation that asked, not to the process it happens to
     /// run in.
     pub(crate) diagnostics: std::sync::Arc<kati::diagnostics::Diagnostics>,
+    /// Where every one of them records what it classified about a recursive
+    /// invocation, for a caller that asked for a report rather than a build.
+    pub(crate) census: std::sync::Arc<kati::census::Census>,
     pub(crate) root_directory: PathBuf,
     pub(crate) directory: PathBuf,
     pub(crate) path_prefix: PathBuf,

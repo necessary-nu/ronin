@@ -135,6 +135,13 @@ impl Finding {
         }
     }
 
+    /// The same finding, pointing at the place in the source it is about.
+    #[must_use]
+    pub(crate) fn at(mut self, location: Option<&str>) -> Self {
+        self.location = location.map(ToOwned::to_owned);
+        self
+    }
+
     /// This finding in Ronin's shape for it.
     ///
     /// The four established shapes and no fifth one: an error wears the
@@ -326,7 +333,8 @@ fn makefile(
         }
         return Ok(report.finish("nothing further to report: the read did not finish"));
     }
-    Ok(report.finish("read 1 makefile"))
+    let summary = census(&mut report, &read.census);
+    Ok(report.finish(&summary))
 }
 
 /// The same, for a build with no Make front end compiled into it.
@@ -342,6 +350,124 @@ fn makefile(
         "this build has no Make front end; it was compiled without the 'make' feature",
     ));
     Ok(report.finish("nothing to report: the input could not be read"))
+}
+
+/// Say what the compile decided about each recursive invocation it saw.
+///
+/// The headline of a Makefile report, because a build that nests is a build
+/// Ninja cannot see the whole of, and the compiler is the only thing that
+/// knows which invocations those are and why. Every line here is read off the
+/// disposition the compile acted on, in the order it acted on them.
+#[cfg(all(unix, feature = "make"))]
+// [spec:ronin:req:make.nesting-census+1]
+fn census(report: &mut Report, recorded: &[kati::census::Invocation]) -> String {
+    use kati::census::Disposition;
+
+    let mut composed = 0_usize;
+    let mut nested = 0_usize;
+    for invocation in recorded {
+        let location = invocation.location.as_deref();
+        match &invocation.disposition {
+            Disposition::Composed { command } => {
+                composed += 1;
+                report.raise(
+                    &Finding::note(format!(
+                        "recursion composed into the graph: {}",
+                        named(command)
+                    ))
+                    .at(location),
+                );
+            }
+            Disposition::Nested(reason) => {
+                nested += 1;
+                report.raise(&Finding::warning(nesting_says(*reason)).at(location));
+                report.raise(&Finding::note(lifting_would(*reason)).at(location));
+            }
+        }
+    }
+    let total = composed + nested;
+    format!(
+        "{total} recursive {}: {composed} composed, {nested} nested",
+        if total == 1 {
+            "invocation"
+        } else {
+            "invocations"
+        }
+    )
+}
+
+/// One composed invocation, long enough to name the child and no longer.
+///
+/// A recipe that hands a child every path a configure run settled writes an
+/// invocation of a thousand bytes, and all but a handful of them say the same
+/// thing about the same child. What is cut is the middle rather than the end,
+/// because the two parts that distinguish one invocation from the next sit at
+/// opposite ends of it: the makefile and directory it selects are written
+/// first, and the goals it asks for are written last.
+#[cfg(all(unix, feature = "make"))]
+fn named(command: &[u8]) -> String {
+    /// How much of the front is kept.
+    const HEAD: usize = 48;
+    /// How much of the end is kept.
+    const TAIL: usize = 24;
+
+    let text = String::from_utf8_lossy(command);
+    let characters = text.chars().count();
+    if characters <= HEAD + TAIL {
+        return text.into_owned();
+    }
+    let head = text
+        .char_indices()
+        .nth(HEAD)
+        .map_or(text.len(), |(at, _)| at);
+    let tail = text
+        .char_indices()
+        .nth(characters - TAIL)
+        .map_or(text.len(), |(at, _)| at);
+    format!("{}...{}", &text[..head], &text[tail..])
+}
+
+/// Why one nested invocation was not composed, in one line.
+#[cfg(all(unix, feature = "make"))]
+const fn nesting_says(reason: kati::census::NestingReason) -> &'static str {
+    use kati::census::NestingReason;
+    match reason {
+        NestingReason::ThroughAConstruct => {
+            "recursion nests at run time: the invocation is not the recipe line's own command, \
+             so a shell construct stands between them"
+        }
+        NestingReason::NotAnArgumentList => {
+            "recursion nests at run time: the line's command is the invocation, written as more \
+             than the argument list the resolver reads"
+        }
+        NestingReason::SharedShell => {
+            "recursion nests at run time: a .ONESHELL recipe of several lines shares one shell"
+        }
+    }
+}
+
+/// What would compose it instead, in one line.
+///
+/// The reason a census is worth reading rather than counting: a packager who
+/// learns that a build nests and not what to change about it has learned
+/// nothing they can act on.
+#[cfg(all(unix, feature = "make"))]
+const fn lifting_would(reason: kati::census::NestingReason) -> &'static str {
+    use kati::census::NestingReason;
+    match reason {
+        NestingReason::ThroughAConstruct => {
+            "a line whose own command is the invocation composes: `$(MAKE) ...`, or \
+             `cd DIR && $(MAKE) ...`, with any test settled where the Makefile can answer it"
+        }
+        NestingReason::NotAnArgumentList => {
+            "an invocation written as words alone composes: an assignment or `env` prefix, a \
+             redirection, a glob, or an unsettled expansion is what stops this one"
+        }
+        NestingReason::SharedShell => {
+            "give the invocation a recipe line the rest of the recipe does not share, and it \
+             composes"
+        }
+    }
 }
 
 /// Report on a Ninja manifest.

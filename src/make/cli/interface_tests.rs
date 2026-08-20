@@ -247,6 +247,7 @@ fn eval_fragments_reach_compilation() {
         1,
         invoked_as,
         &std::sync::Arc::new(kati::diagnostics::Diagnostics::to_stderr()),
+        &std::sync::Arc::new(kati::census::Census::ignored()),
     );
     super::record_invocation_variables(&mut session, &invocation, 0, 0);
     let context = super::compilation_context(
@@ -299,6 +300,7 @@ fn generated_include_is_provisional_graph_root() {
         1,
         Path::new("make"),
         &std::sync::Arc::new(kati::diagnostics::Diagnostics::to_stderr()),
+        &std::sync::Arc::new(kati::census::Census::ignored()),
     );
     super::record_invocation_variables(&mut session, &invocation, 0, 0);
     let context = super::compilation_context(

@@ -159,17 +159,35 @@ manifest-derived graph is.
 > Make executor: no graph acquires GNU Make's scheduler, dirtiness model, or
 > reporter by being reached this way.
 
-> [spec:ronin:req:make.nesting-census]
+> [spec:ronin:req:make.nesting-census+1]
 > Linting a Makefile reports every recursive invocation the compile
 > classified, each with the Makefile and line it was written on and whether it
 > was composed into the graph or left to nest at run time. A composed
-> invocation names the child it composed. A nested one carries the reason it
-> was left, drawn from the remainder `[spec:ronin:req:make.recursive-invocation]`
-> admits: a multi-line `.ONESHELL` recipe, whose lines share one shell, or an
-> invocation reached only through a runtime test. An invocation nested for any
-> other reason is reported as one the contract does not admit, because that
-> remainder admits no shape merely for being hard to lift, and a census that
-> quietly widened it would hide the very thing it exists to show.
+> invocation names the child it composed, with the `MAKE` reference written
+> back in place of the path it expanded to, because the path is this process
+> and says nothing a reader did not know. A long one is cut in the middle
+> rather than at the end: a recipe that hands a child every path a configure
+> run settled writes a thousand bytes that name one child, and the two parts
+> that tell one such invocation from the next — the makefile or directory it
+> selects, and the goals it asks for — sit at opposite ends of it.
+>
+> A nested one names the shape that kept it from composing, which is one of
+> three: the recipe line does not have the invocation as its own command, so a
+> shell construct stands between them; or the line's command is the invocation
+> and is written as more than the argument list the resolver reads; or the
+> recipe is a multi-line `.ONESHELL` whose lines share one shell. Each is
+> reported beside what would compose it instead, because a reader who learns
+> that a build nests and not what to change about it has learned nothing they
+> can act on. Naming the shape rather than judging it is deliberate: whether a
+> given shape belongs in the remainder
+> `[spec:ronin:req:make.recursive-invocation]` admits is a question about the
+> compiler, and a census that answered it would be arguing rather than
+> reporting.
+>
+> A recipe line the compiler classified as recursive and could not lift is in
+> the census whether or not the invocation was written where a shell would
+> reach it directly, so a report shows every nested Make and not only the
+> conveniently spelled ones.
 >
 > The classification is the compiler's own. Lint reads the disposition the
 > compile recorded at the moment it decided, and does not re-derive one from

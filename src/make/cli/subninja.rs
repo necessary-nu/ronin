@@ -54,6 +54,7 @@ pub(in crate::make) fn compile(
         parent.jobs,
         &invoked_as,
         &parent.diagnostics,
+        &parent.census,
     );
     session.invocation_environment = Some(parent.environment.clone());
     let level = parent.level.saturating_add(1);
@@ -71,6 +72,9 @@ pub(in crate::make) fn compile(
     let path_prefix = directory
         .strip_prefix(&parent.root_directory)
         .map_or_else(|_| directory.clone(), Path::to_owned);
+    // So a census can say which `Makefile` a line is in: this child reads its
+    // own from its own directory, under the same name its parent used.
+    session.unit_prefix = path_prefix.as_os_str().as_encoded_bytes().to_vec();
     let makeflags = propagated_makeflags(&invocation);
     let mut cache_key = compilation_key(&directory, &makefiles, &makeflags);
     extend_compilation_key(
@@ -96,6 +100,7 @@ pub(in crate::make) fn compile(
         shuffle: invocation.shuffle,
         context: CompilationContext {
             diagnostics: std::sync::Arc::clone(&parent.diagnostics),
+            census: std::sync::Arc::clone(&parent.census),
             root_directory: parent.root_directory.clone(),
             directory,
             path_prefix,

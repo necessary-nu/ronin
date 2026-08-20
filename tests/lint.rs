@@ -8,6 +8,24 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+/// The composed line a census writes for the checked-in reduction.
+#[cfg(all(unix, feature = "make"))]
+const COMPOSED: &str = "Makefile:5: note: recursion composed into the graph: cd src && $(MAKE) all";
+
+/// The two lines a census writes for an invocation a shell construct hides.
+#[cfg(all(unix, feature = "make"))]
+const THROUGH_A_CONSTRUCT: &str = concat!(
+    "warning: recursion nests at run time: the invocation is not the recipe line's own ",
+    "command, so a shell construct stands between them\n",
+);
+
+/// What it says would compose that one instead.
+#[cfg(all(unix, feature = "make"))]
+const WRITE_IT_AS_THE_COMMAND: &str = concat!(
+    "note: a line whose own command is the invocation composes: `$(MAKE) ...`, or ",
+    "`cd DIR && $(MAKE) ...`, with any test settled where the Makefile can answer it\n",
+);
+
 /// A scratch directory of this test's own.
 fn scratch(name: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("ronin-lint-{name}-{}", std::process::id()));
@@ -149,7 +167,10 @@ fn a_makefile_is_read_by_name() {
     write(&directory, "Makefile", "all:\n\t@echo built\n");
     let output = ronin(&directory, &["-f", "Makefile", "-t", "lint", "all"]);
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(stdout(&output), "ronin: read 1 makefile\n");
+    assert_eq!(
+        stdout(&output),
+        "ronin: 0 recursive invocations: 0 composed, 0 nested\n"
+    );
     assert!(
         !directory.join("built").exists(),
         "lint built something it was only asked to read"
@@ -176,6 +197,116 @@ fn a_raised_warning_is_passed_on() {
     assert_eq!(
         stdout(&output),
         "Makefile:1: extraneous text after 'ifeq' directive\n\
-         ronin: read 1 makefile\n"
+         ronin: 0 recursive invocations: 0 composed, 0 nested\n"
+    );
+}
+
+/// Copy a checked-in reduction into a scratch directory of its own, so the
+/// reproduction a reader does by hand is the one the test does.
+#[cfg(all(unix, feature = "make"))]
+fn reduction(name: &str) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("ronin-lint-{name}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&path);
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/make-project-reductions")
+            .join(name),
+        &path,
+    );
+    path
+}
+
+#[cfg(all(unix, feature = "make"))]
+fn copy_tree(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+/// The census is the headline, and what it PRINTS is the deliverable: every
+/// recursive invocation the compile classified, where it was written, which
+/// way it went, and — for one that nests — what would compose it instead.
+///
+/// The tree is vim's top-level Makefile in miniature, checked in and shared
+/// with the build-intent gate that runs it: one liftable `cd src && $(MAKE)`
+/// beside a guard holding a `$(MAKE)` the compiler cannot lift out.
+// [spec:ronin:req:make.nesting-census+1/test]
+// [spec:ronin:req:tools.lint/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn the_census_names_every_recursion() {
+    let directory = reduction("recipe-mixes-liftable-and-unliftable-recursion");
+    let output = ronin(&directory, &["-f", "Makefile", "-t", "lint", "all"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        stdout(&output),
+        format!(
+            "{COMPOSED}\n\
+             Makefile:6: {THROUGH_A_CONSTRUCT}\
+             Makefile:6: {WRITE_IT_AS_THE_COMMAND}\
+             ronin: 2 recursive invocations: 1 composed, 1 nested\n"
+        )
+    );
+    assert!(
+        !directory.join("src/built.stamp").exists(),
+        "a census built the recipe it was reporting on"
+    );
+}
+
+/// A `.ONESHELL` recipe of several lines nests an invocation that would have
+/// composed on its own, and the census says which of the three shapes that is
+/// rather than reporting one nesting for all of them.
+// [spec:ronin:req:make.nesting-census+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_shared_shell_names_itself() {
+    let directory = scratch("oneshell");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    write(&directory, "sub/Makefile", "all:\n\t@echo one\n");
+    write(
+        &directory,
+        "Makefile",
+        ".ONESHELL:\nall:\n\tcd sub && $(MAKE) all\n\techo after\n",
+    );
+    let output = ronin(&directory, &["-f", "Makefile", "-t", "lint", "all"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stdout(&output),
+        "Makefile:3: warning: recursion nests at run time: a .ONESHELL recipe of several lines \
+         shares one shell\n\
+         Makefile:3: note: give the invocation a recipe line the rest of the recipe does not \
+         share, and it composes\n\
+         ronin: 1 recursive invocation: 0 composed, 1 nested\n"
+    );
+}
+
+/// A line whose own command IS the invocation, written with an assignment in
+/// front of it, is the third shape: the resolver reads an argument list and
+/// this is not one.
+// [spec:ronin:req:make.nesting-census+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_prefixed_invocation_names_itself() {
+    let directory = scratch("prefixed");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    write(&directory, "sub/Makefile", "all:\n\t@echo one\n");
+    write(&directory, "Makefile", "all:\n\tV=1 $(MAKE) -C sub all\n");
+    let output = ronin(&directory, &["-f", "Makefile", "-t", "lint", "all"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stdout(&output),
+        "Makefile:2: warning: recursion nests at run time: the line's command is the invocation, \
+         written as more than the argument list the resolver reads\n\
+         Makefile:2: note: an invocation written as words alone composes: an assignment or `env` \
+         prefix, a redirection, a glob, or an unsettled expansion is what stops this one\n\
+         ronin: 1 recursive invocation: 0 composed, 1 nested\n"
     );
 }

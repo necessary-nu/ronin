@@ -14794,6 +14794,14 @@ children (
                     target-impl ([spec:ronin:req:make.nesting-census])
                 }
                 deps (lint-tool-surface)
+                log (
+                    {
+                        at 2026-08-20T14:21:32.827640855Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
             }
 
             {

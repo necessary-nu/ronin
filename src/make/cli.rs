@@ -1277,6 +1277,7 @@ fn session_for(
     jobs: usize,
     invoked_as: &Path,
     diagnostics: &Arc<kati::diagnostics::Diagnostics>,
+    census: &Arc<kati::census::Census>,
 ) -> Session {
     let mut session = Session::new();
     // Every session of one invocation writes what it has to say to the same
@@ -1285,6 +1286,10 @@ fn session_for(
     // answered, and a caller that collects a run's output has to be able to see
     // it. See [`crate::make::cli::run`], which drains it.
     session.diagnostics = Arc::clone(diagnostics);
+    // And into the same ledger, for the same reason: a recursive `$(MAKE)`
+    // composed into this graph is classified by a session of its own, and what
+    // it classified belongs to the invocation that asked.
+    session.census = Arc::clone(census);
     let compiler_flags = compiler_flag_variables(invocation);
     let carried = Bytes::from(carried_switches(&compiler_flags.base, invocation).into_bytes());
     let makeflags = Bytes::from(compiler_flags.published.into_bytes());
@@ -1516,6 +1521,9 @@ struct RootCompilation<'a> {
     invocation: &'a Invocation,
     /// Where every session this compilation opens writes its warnings.
     diagnostics: &'a Arc<kati::diagnostics::Diagnostics>,
+    /// Where every one of them records what it classified, for a caller that
+    /// asked for a census rather than a build.
+    census: &'a Arc<kati::census::Census>,
     /// Every Makefile this invocation reads, in order.
     makefiles: &'a [PathBuf],
     invoked_as: &'a Path,
@@ -1582,12 +1590,17 @@ fn prepare_graph(
     let mut read_units = crate::make::ReadJournals::new();
     let mut restarts = 0_usize;
     for _ in 0..100 {
+        // Each pass reads the whole compilation again, so what an earlier one
+        // classified is the same lines classified twice. The last pass is the
+        // one the build is made from, and it is the one a census describes.
+        let _ = root.census.take();
         let mut session = session_for(
             root.invocation,
             root.makefiles,
             job_count(root.options),
             root.invoked_as,
             root.diagnostics,
+            root.census,
         );
         if let Some(contents) = root.makefile_contents {
             session.supply_makefile(STANDARD_INPUT.into(), contents.to_vec());
@@ -1685,6 +1698,9 @@ pub(crate) struct MakefileRead {
     /// What the read narrated on its way, which is a remade Makefile's build
     /// output and nothing else.
     pub(crate) reported: String,
+    /// Every recursive invocation the compile classified, in the order it
+    /// classified them, with the disposition it acted on.
+    pub(crate) census: Vec<kati::census::Invocation>,
     /// The result the read ended with, when it ended before producing a graph.
     /// A refusal is the usual reason, and its status is the one the invocation
     /// would have left with.
@@ -1703,8 +1719,11 @@ pub(crate) fn read_without_building(
     arguments: &[BString],
 ) -> Result<MakefileRead, Error> {
     let raised = Arc::new(kati::diagnostics::Diagnostics::collected());
+    let census = Arc::new(kati::census::Census::collected());
     let mut held = Vec::new();
-    let compiled = compile_invocation(runner, arguments, &mut None, &mut None, &raised, &mut held)?;
+    let compiled = compile_invocation(
+        runner, arguments, &mut None, &mut None, &raised, &census, &mut held,
+    )?;
     held.extend(raised.take());
     let stopped = match compiled.prepared {
         // The logs a compiler-input build opened are flushed rather than
@@ -1721,6 +1740,7 @@ pub(crate) fn read_without_building(
     Ok(MakefileRead {
         raised: held,
         reported: compiled.reported,
+        census: census.take(),
         stopped,
     })
 }
@@ -1783,6 +1803,7 @@ fn compile_invocation(
     output: &mut Option<&mut dyn Write>,
     diagnostics: &mut Option<&mut dyn Write>,
     raised: &Arc<kati::diagnostics::Diagnostics>,
+    census: &Arc<kati::census::Census>,
     held: &mut Vec<u8>,
 ) -> Result<CompiledInvocation, Error> {
     let mut reported = String::new();
@@ -1843,6 +1864,7 @@ fn compile_invocation(
     let root = RootCompilation {
         invocation: &invocation,
         diagnostics: raised,
+        census,
         makefiles: &makefiles,
         invoked_as: &invoked_as,
         directory: &directory,
@@ -1873,6 +1895,9 @@ fn reported_run(
         &mut output,
         &mut diagnostics,
         raised,
+        // A build acts on each classification as it is made and has no use for
+        // it afterwards, so it keeps none of them.
+        &Arc::new(kati::census::Census::ignored()),
         held,
     )?;
     let mut reported = compiled.reported;
@@ -1982,6 +2007,7 @@ fn compilation_context(
         directory,
         path_prefix: PathBuf::new(),
         diagnostics: Arc::clone(&session.diagnostics),
+        census: Arc::clone(&session.census),
         makeflags: propagated_makeflags(invocation),
         level,
         jobs,
