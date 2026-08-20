@@ -155,6 +155,49 @@ the supported CLI surface.
 > harness inapplicability, or a tracked compatibility failure. Unclassified
 > exclusions and silent test omission are not permitted.
 
+> [spec:ronin:req:tools.lint]
+> `-t lint` reports what compiling a build already established about it, and
+> builds nothing. It is Ronin's own tool rather than a Ninja-owned name — the
+> first entry Ronin adds to the `-t` set — and it is listed by `-t list`
+> beside the tools Ninja owns; no Ninja-owned tool name changes meaning to
+> make room for it, and no operand acquires a second reading, which is why the
+> surface is a tool and not a subcommand: in Ninja mode an operand is a target.
+>
+> The input is the file the invocation names — `-f`, defaulting to Ninja's
+> `build.ninja` — and its kind is read from that name. `GNUmakefile`,
+> `makefile`, `Makefile`, or a `.mk` suffix is a Makefile; every other name is
+> a Ninja manifest; `--make` and `--ninja` name the kind outright for a file
+> spelled otherwise. Reading a Makefile here is not selecting a front end:
+> `[spec:ronin:req:product.make-identity]` governs which front end builds, and
+> lint runs no build for a front end to be selected for.
+>
+> Reading is the read phase a build would perform, and nothing less. A
+> Makefile is evaluated: `$(shell)` runs, `$(warning)` and `$(info)` print,
+> and a makefile the read must remake is remade, because GNU Make's read phase
+> does all three and a report about a quieter read would be a report about a
+> different build. Lint states that in its own help rather than implying a
+> hermetic read it does not perform.
+>
+> Findings are compiler diagnostics in Ronin's established shapes: `<loc>:
+> <message>` for a located finding, `<loc>: warning: <message>` for one that
+> names a problem, `<loc>: note: <message>` for the line that says what would
+> answer it, and `ronin: <message>` for a finding with no location and for the
+> closing summary. Nothing is rendered in GNU Make's voice. The exit status is
+> the worst finding: zero when nothing above a note was found, one when a
+> warning was, and two when an error was, or the input could not be read.
+
+> [spec:ronin:req:tools.manifest-lint]
+> Linting a Ninja manifest reports what parsing accepts and building would not
+> question: a build statement's binding that no rule it can reach ever reads,
+> a dependency cycle anywhere in the graph rather than only under the targets
+> a build happened to be asked for, and a phony statement carrying bindings
+> that can never run or a rule named `phony` that shadows the built-in one
+> without being it. What the parser already refuses — a duplicate output, an
+> unknown rule, an unexpected rule variable — is reported as the parse error
+> it is, in lint's shape, so one command answers for every static failure a
+> manifest can have. Lint changes nothing about what the parser accepts: a
+> manifest that lints with findings builds exactly as it did before.
+
 ## Performance and release gates
 
 > [spec:ronin:req:performance.reproducible-baseline]

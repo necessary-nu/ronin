@@ -160,6 +160,8 @@ elements (
             [spec:ronin:req:runtime.iterative-tool-traversals]
             [spec:ronin:req:product.make-identity]
             [spec:ronin:req:make.recursive-invocation]
+            [spec:ronin:req:tools.lint]
+            [spec:ronin:req:tools.manifest-lint]
         )
         exposes (
             "src/main.rs"
@@ -275,6 +277,7 @@ elements (
             [spec:ronin:req:make.manifest-equivalence]
             [spec:ronin:req:make.no-ambient-state]
             [spec:ronin:req:make.scope-separation]
+            [spec:ronin:req:make.nesting-census]
         )
         exposes (
             "kati/src-rs/**"

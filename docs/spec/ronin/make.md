@@ -159,6 +159,25 @@ manifest-derived graph is.
 > Make executor: no graph acquires GNU Make's scheduler, dirtiness model, or
 > reporter by being reached this way.
 
+> [spec:ronin:req:make.nesting-census]
+> Linting a Makefile reports every recursive invocation the compile
+> classified, each with the Makefile and line it was written on and whether it
+> was composed into the graph or left to nest at run time. A composed
+> invocation names the child it composed. A nested one carries the reason it
+> was left, drawn from the remainder `[spec:ronin:req:make.recursive-invocation]`
+> admits: a multi-line `.ONESHELL` recipe, whose lines share one shell, or an
+> invocation reached only through a runtime test. An invocation nested for any
+> other reason is reported as one the contract does not admit, because that
+> remainder admits no shape merely for being hard to lift, and a census that
+> quietly widened it would hide the very thing it exists to show.
+>
+> The classification is the compiler's own. Lint reads the disposition the
+> compile recorded at the moment it decided, and does not re-derive one from
+> the recipe text: a census that could disagree with the build it describes
+> would be describing a different build. A refusal — a child that makes its
+> own parent's target — ends the lint where it would have ended the build, and
+> is reported as the refusal it is.
+
 > [spec:ronin:req:make.jobserver+1]
 > Ronin does not create a GNU Make jobserver for recursive Make execution. A
 > parent graph and every compiled subninja share one Ninja scheduler and one

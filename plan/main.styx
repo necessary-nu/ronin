@@ -14765,4 +14765,73 @@ children (
             }
         )
     }
+
+    {
+        id ronin-lint-surface
+        title "Report what compiling a build already learned"
+        kind @feat
+        children (
+            {
+                id lint-tool-surface
+                title "Add lint to Ronin's tool set and give it a voice"
+                implements {
+                    target-impl ([spec:ronin:req:tools.lint])
+                }
+            }
+
+            {
+                id lint-makefile-nesting-census
+                title "Census a Makefile's recursive invocations, composed and nested"
+                implements {
+                    target-impl ([spec:ronin:req:make.nesting-census])
+                }
+                deps (lint-tool-surface)
+            }
+
+            {
+                id lint-manifest-checks
+                title "Check a manifest for what parsing it accepts"
+                implements {
+                    target-impl ([spec:ronin:req:tools.manifest-lint])
+                }
+                deps (lint-tool-surface)
+            }
+
+            {
+                id lint-hermetic-read
+                title "Decide whether a Makefile can be linted without running it"
+                deps (lint-makefile-nesting-census)
+                log (
+                    {
+                        at 2026-08-20T13:56:03.083372458Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the lint design decision on `ronin-lint-surface` rather than built into v1.\n\nThe want: lint a Makefile from an untrusted or unconfigured tree without evaluating it — no `$(shell)`, no remade include, nothing executed. What makes it a decision rather than a flag: GNU Make's read phase runs `$(shell)` at read time, and a great many Makefiles compute the very things a census is about that way — the directory a `$(MAKE)` enters, the goals it is given, whether a guard is written at all. An unrun `$(shell)` has to expand to SOMETHING, and whichever answer is chosen changes what the census reports. Reporting a census gathered under a different evaluation as though it described the build is the failure `[spec:ronin:req:make.nesting-census]` exists to prevent.\n\nSo the decision to make is what a hermetic read claims about itself: a second, weaker report that says outright which facts it could not settle, or nothing at all. Not a quieter version of the same output."
+                    }
+                )
+            }
+
+            {
+                id lint-machine-readable
+                title "Emit lint findings as records a tool can read"
+                deps (lint-makefile-nesting-census lint-manifest-checks)
+                log (
+                    {
+                        at 2026-08-20T13:56:07.908107057Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the lint design decision on `ronin-lint-surface` rather than built into v1.\n\nThe want: `-t lint --json`, or some other record form, so a packaging pipeline can consume the census instead of parsing diagnostics. Deliberately deferred until the human-readable shape has been used against real trees: a record format pins field names and a schema on the first release that emits it, and the census's own vocabulary — what a composed invocation names, how a nested reason is spelled — is exactly what a first pass over vim, zsh and a kernel tree is likely to change.\n\nDeferring costs nothing that cannot be recovered: the findings are already a structured value internally and the text is rendered from it, so a second renderer is a renderer and not a redesign."
+                    }
+                )
+            }
+        )
+        log (
+            {
+                at 2026-08-20T13:55:52.052761078Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "Originating decision. Operator ask, Brendan, 2026-08-20, verbatim: \"One thing that keeps popping up is that ninja can't statically analyse all Makefiles. But we know where the static failures occur, right? So we could have a ninja lint subcommand that works on Makefiles and ninja.builds?\"\n\nWHY THIS TREE EXISTS AT THE ROOT, NOT UNDER make-subsumption. `make-subsumption` is a compatibility container: every node in it closes a gap between what GNU Make 4.4.1 does and what Ronin does. Lint closes no such gap — GNU Make has no lint and Ninja has no lint, so there is nothing to be compatible with and no oracle to probe. It is product surface over both front ends: one tool that reads a Makefile or a manifest and reports what compiling it established. It is grounded on `[arch:ronin:cli]`, which now owns `[spec:ronin:req:tools.lint]` and `[spec:ronin:req:tools.manifest-lint]`, and on `[arch:ronin:make-frontend]`, which owns `[spec:ronin:req:make.nesting-census]`.\n\nDECISION 1 — SPELLING. `-t lint`, and only that.\n\n`ninja -t <tool>` is the native extension point: `-t` already terminates top-level options and hands the rest of argv to the tool, tools already declare whether they run before the manifest is read, and `-t list` already enumerates them. Lint becomes the first entry Ronin adds to that set. It is marked as ours the way `--compat`, `--shell`, `--output` and `--color` are marked as ours — a `[spec:ronin:req:...]` rule and a usage line — because there is no naming convention for a Ronin-owned tool and inventing one would be worse than the annotation the repository already uses. No Ninja-owned tool name changes meaning: `lint` is a name upstream does not use.\n\n`ronin lint` as a subcommand is REFUSED, and the reason is not taste. In Ninja mode an operand is a target: `ronin lint` today means \"build the target named lint\". Reading it as a subcommand would give one operand two readings depending on what the manifest happens to contain, which `[spec:ronin:req:compat.cli-and-tools]` forbids and which would break silently for any project that has a `lint` target — which is most of them. The multicall binary has no subcommands at all and this is not the feature to introduce one for.\n\nA Makefile is linted through the same tool, selected by the kind of the input file rather than by the invoked name. That is not a second door into Make mode. `[spec:ronin:req:product.make-identity]` says the front end is selected by the invoked name and by nothing else, and its stated reason is that `$(MAKE)` must be a path: a front end reached through a flag needs the flag carried in `MAKE`, and software execs that value. Lint starts no process, spawns no child, and never appears in a `MAKE` value. `-t lint` runs in Ninja mode, always; what it does there is call the Make compiler as a library and read what the compile recorded. Make mode itself is untouched — in Make mode `-t` is GNU's `--touch` and stays that, so the two spellings cannot collide.\n\nInput kind: the file the invocation names, `-f`, defaulting to Ninja's `build.ninja`. `GNUmakefile`, `makefile`, `Makefile` or a `.mk` suffix is a Makefile; every other name is a manifest; `--make` and `--ninja` name the kind outright. Deliberately NOT sniffing the directory for whichever of the two exists: `src/multicall.rs` already rejects directory-sniffing as a way of answering \"which language is this\", and the answer should not be reached one way for builds and another for lint.\n\nDECISION 2 — READ-PHASE IMPURITY, STATED RATHER THAN HIDDEN. Linting a Makefile evaluates it, exactly as a build's read phase would: `$(shell)` runs, `$(warning)` and `$(info)` print, and a makefile the read must remake is remade. That is not a concession, it is the only way to be about the build in question — GNU Make's read phase does all three, kati reproduces it, and a report gathered from a quieter read would be a report about a different Makefile. `-t lint -h` says so in as many words, so nobody runs it on an untrusted tree believing it is inert.\n\nA hermetic or sandboxed read is a real want and a separate decision, filed as `lint-hermetic-read` rather than half-built here. It cannot be a flag bolted on later without an answer to what an unrun `$(shell)` expands to, and that answer changes what the census reports.\n\nDECISION 3 — VOICE AND EXIT STATUS. Findings are compiler diagnostics in Ronin's established shapes, per the narration-contract table on make-narration-contract-audit: `<loc>: <message>` located, `<loc>: warning: <message>` for a problem, `<loc>: note: <message>` for the line that says what would answer it, `ronin: <message>` unlocated and for the closing summary. `note:` is the one addition, and it is the established located shape with a severity word in the place `warning:` already occupies — it exists because the operator's ask is that a packager see \"what edit would lift it\", and a remedy on its own line is how every compiler has ever said that. Nothing is rendered in GNU Make's voice; there is no GNU counterpart to imitate and none is invented.\n\nSeverities and status: note = 0, warning = 1, error or unreadable input = 2. Three levels rather than two because the census is mostly notes — a composed invocation is not a finding, it is the census saying the build composes — and a tool that exited nonzero for saying so would be useless in CI. The worst finding sets the status.\n\nNote that lint is a tool the user asks for by name, which is what makes it admissible at all. make-narration-contract-audit retired `make-pattern-peer-warning` on the principle that a warning on a SUCCESS path fails the contract. That principle is intact here: a successful build says nothing new, and every word below is printed only because someone typed `-t lint`.\n\nDECISION 4 — SCOPE OF v1. In: the Makefile nesting census with file, line and reason; refusal sites; the compile-time warnings kati already raises, surfaced without building anything; and the manifest checks for what parsing accepts. Out, and filed: hermetic read (`lint-hermetic-read`), machine-readable output (`lint-machine-readable`).\n\nOf the five manifest checks asked for, three are lint-only findings — a build binding no reachable rule reads, a cycle anywhere rather than only under the requested targets, phony misuse — and two, duplicate outputs and dangling rule references, are already unconditionally fatal in the parser. Lint does not re-implement those; it reports the parse error as the finding it is, in lint's shape, so one command still answers for all five. Making the parser stricter is explicitly not in scope: a manifest that lints with findings builds exactly as it did.\n\nWHAT THIS COSTS, HONESTLY. The premise that the compiler already computes every fact lint would report is nearly true and not entirely: the disposition is computed and thrown away, but no Makefile location is ever stamped on a classified recipe line, and the reason a line was left to nest is collapsed into one bit (`Command::uncomposable_recursion`) whose only consumer is a `bail!`. So the census needs three things added in kati — a `Loc` on the classified line, a discriminated reason in place of the bit, and a collector shared the way `Diagnostics` already is — and none of them may change what compiles. The upstream inventory, conformance and equivalence gates are the proof of that, and a moved row is a defect in this work rather than a number to re-record."
+            }
+        )
+    }
 )
