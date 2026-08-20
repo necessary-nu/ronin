@@ -17,6 +17,11 @@
 //! A case that means to test output writes it to a file. The corpus is ours, so
 //! that is a property of how a case is written rather than a limitation.
 //!
+//! Beside the makefile a case may write `args` (the invocation's words), `env`
+//! (the environment it must be given, and the names it must not carry) and
+//! `setup` (a shell script run in the scratch copy first). All three are inputs
+//! to the run, so the recording and the replay are asked the same question.
+//!
 //! Expectations are recorded from GNU Make and never written by hand:
 //!
 //!   `MAKE_PORT_RECORD=1 MAKE_PORT_ORACLE=<make>` on a `--test make_port` run
@@ -254,12 +259,20 @@ fn run(case: &Case, program: &Path) -> Observed {
     let before = SystemTime::now();
     std::thread::sleep(std::time::Duration::from_millis(10));
 
-    let output = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(&arguments)
         .current_dir(&scratch)
         .env("LC_ALL", "C")
         .env_remove("MAKEFLAGS")
-        .env_remove("MAKELEVEL")
+        .env_remove("MAKELEVEL");
+    for (name, value) in read_environment(&case.directory.join("env")) {
+        match value {
+            Some(value) => command.env(name, value),
+            None => command.env_remove(name),
+        };
+    }
+    let output = command
         .output()
         .unwrap_or_else(|error| panic!("{}: running {}: {error}", case.id, program.display()));
 
@@ -318,6 +331,7 @@ fn walk(root: &Path, directory: &Path, before: SystemTime, into: &mut BTreeMap<S
         if name.starts_with('.')
             || name == "setup"
             || name == "args"
+            || name == "env"
             || name == "divergence"
             || name == "note"
         {
@@ -341,6 +355,36 @@ fn walk(root: &Path, directory: &Path, before: SystemTime, into: &mut BTreeMap<S
         };
         into.insert(relative, Entry { touched, content });
     }
+}
+
+/// What a case's environment holds: `NAME=value` for a name the run carries,
+/// `-NAME` for one it must not, one per line.
+///
+/// The ambient environment belongs to whoever is running the corpus, and some
+/// of GNU Make's answers turn on it — `SHELL` stands at a different rank and a
+/// different flavour depending on whether the environment had one at all. A
+/// case that asks such a question has to say what the environment holds instead
+/// of inheriting whatever the machine happened to export. Recording and replay
+/// both come through here, so the oracle and Ronin are asked the same question.
+fn read_environment(path: &Path) -> Vec<(String, Option<String>)> {
+    let mut entries = Vec::new();
+    for line in fs::read_to_string(path).unwrap_or_default().lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if let Some(name) = line.strip_prefix('-') {
+            entries.push((name.to_owned(), None));
+        } else if let Some((name, value)) = line.split_once('=') {
+            entries.push((name.to_owned(), Some(value.to_owned())));
+        } else {
+            panic!(
+                "{}: `{line}` is neither NAME=value nor -NAME",
+                path.display()
+            );
+        }
+    }
+    entries
 }
 
 /// A case's arguments, one word per whitespace-separated token.

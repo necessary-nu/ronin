@@ -1,0 +1,6 @@
+#!/bin/sh
+# Records that it was asked to run a recipe, and then runs it, so a build whose
+# shell came from the environment still succeeds and is caught by the file it
+# left rather than by a failure that could have any cause.
+: > shell-came-from-the-environment
+exec /bin/sh "$@"

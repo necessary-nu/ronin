@@ -684,6 +684,7 @@ assertions (
     {id make-a-worked-out-names-value-is-its-own-name, kind @complete, author "brendan@necessary.nu", at 2026-08-20T06:31:21.569690838Z}
     {id make-four-names-gnu-works-out-are-missing, kind @complete, author "brendan@necessary.nu", at 2026-08-20T06:49:08.529047756Z}
     {id make-a-plain-dash-word-becomes-a-goal, kind @complete, author "brendan@necessary.nu", at 2026-08-20T06:59:40.397987871Z}
+    {id make-the-shell-name-stands-at-the-wrong-rank-and-flavour, kind @doing, author "brendan@necessary.nu", at 2026-08-20T07:10:47.281457121Z}
 )
 
 impl_evidence (

@@ -1,0 +1,15 @@
+# The emptiness test in GNU Make's refusal is not about the environment at all:
+# `if (*v->value == '\0' || ...)` reads whatever binding won the slot, so a
+# command-line `SHELL=` — which outranks everything the environment and the
+# built-in offer could put there — stands back at the built-in shell, at `file`
+# rank like any other answer that block writes. That is what keeps a recipe
+# running when an empty one arrives, and running the recipe is how this case
+# says so.
+ifeq ($(origin SHELL),file)
+all: the-built-in-one-stands
+else
+all: the-empty-one-stands
+endif
+
+the-built-in-one-stands: ; @printf 'origin=[%s] value=[%s]\n' '$(origin SHELL)' '$(value SHELL)' > out
+the-empty-one-stands: ; @printf 'branch=[%s]\n' '$(origin SHELL)' > out
