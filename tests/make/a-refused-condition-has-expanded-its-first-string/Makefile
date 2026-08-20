@@ -1,0 +1,12 @@
+# `conditional_line' (reference/gnumake/src/read.c) expands the first string the
+# moment it has found its end -- `s2 = variable_expand (s1)' -- and goes looking
+# for the second string's close afterwards. So a condition refused for a close
+# that never arrives has already run everything its first string does, and has
+# run nothing of its second.
+#
+# Both tools refuse this makefile. What differs is what the refused read left on
+# the ground, and the two files below say which half of the condition ran.
+ifeq ($(shell touch the-first-string-ran; echo x),$(shell touch the-second-string-ran; echo y) junk
+endif
+
+all: ; @echo built > out

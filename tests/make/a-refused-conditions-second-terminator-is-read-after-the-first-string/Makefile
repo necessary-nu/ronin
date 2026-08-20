@@ -1,0 +1,9 @@
+# The other road to the same refusal, and the reason the quoted form is written
+# out here rather than left to the parenthesised one: what makes it invalid is
+# the byte after the first string's close quote, which is neither `"' nor `''.
+# `conditional_line' reads that byte below the expansion too, so the first
+# string has run here as well.
+ifeq "$(shell touch the-first-string-ran; echo x)" $(shell touch the-second-string-ran; echo y)
+endif
+
+all: ; @echo built > out
