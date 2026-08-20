@@ -1,0 +1,17 @@
+# The other half of the same rule. An `else if...` a live branch never read
+# took an `endif` with it, so the file below is one `endif` past its last
+# conditional and GNU Make dies on it rather than building.
+#
+# Note what this case does NOT claim. GNU Make wants a SECOND `endif` here when
+# the `else` arm is live, because `conditional_line` leaves the level its failed
+# recursion pushed standing -- so how many `endif`s the same text needs depends
+# on a condition, which a reader that compiles the whole file before evaluating
+# any of it cannot know while it is matching them. This case pins the branch
+# where the answer does not depend on that: the `else` arm is dead, the
+# condition is never read, and one `endif` is all there is to close.
+ifeq (a,a)
+else ifeq (x,y junk
+endif
+endif
+
+all: ; @echo built > out
