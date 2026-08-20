@@ -36,13 +36,16 @@ use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+mod diagnostics;
 mod interface;
 mod jobserver_style;
 mod remake;
 mod selection;
 mod subninja;
 mod switch_table;
+use diagnostics::{emit_raised, led_by_raised};
 use interface::{
     ArgumentSource, compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
     evaluated_invocation, makeflags_arguments, prepend_command_line_evals, read_shuffle,
@@ -1266,8 +1269,15 @@ fn session_for(
     makefiles: &[PathBuf],
     jobs: usize,
     invoked_as: &Path,
+    diagnostics: &Arc<kati::diagnostics::Diagnostics>,
 ) -> Session {
     let mut session = Session::new();
+    // Every session of one invocation writes what it has to say to the same
+    // descriptor, which is the invocation's rather than the process's: a
+    // warning raised while a Makefile is read is part of what the compilation
+    // answered, and a caller that collects a run's output has to be able to see
+    // it. See [`crate::make::cli::run`], which drains it.
+    session.diagnostics = Arc::clone(diagnostics);
     let compiler_flags = compiler_flag_variables(invocation);
     let carried = Bytes::from(carried_switches(&compiler_flags.base, invocation).into_bytes());
     let makeflags = Bytes::from(compiler_flags.published.into_bytes());
@@ -1496,6 +1506,8 @@ fn make_named_invocation(arguments: &[BString], executable: &Path) -> PathBuf {
 
 struct RootCompilation<'a> {
     invocation: &'a Invocation,
+    /// Where every session this compilation opens writes its warnings.
+    diagnostics: &'a Arc<kati::diagnostics::Diagnostics>,
     /// Every Makefile this invocation reads, in order.
     makefiles: &'a [PathBuf],
     invoked_as: &'a Path,
@@ -1546,6 +1558,7 @@ fn prepare_graph(
     reported: &mut String,
     output: &mut Option<&mut dyn Write>,
     diagnostics: &mut Option<&mut dyn Write>,
+    held: &mut Vec<u8>,
 ) -> Result<PreparedGraph, Error> {
     let mut settled_boundaries = HashSet::new();
     // Which units a pass is repeating rather than performing, and what the
@@ -1566,6 +1579,7 @@ fn prepare_graph(
             root.makefiles,
             job_count(root.options),
             root.invoked_as,
+            root.diagnostics,
         );
         if let Some(contents) = root.makefile_contents {
             session.supply_makefile(STANDARD_INPUT.into(), contents.to_vec());
@@ -1588,8 +1602,9 @@ fn prepare_graph(
             &read_units,
         ) {
             Ok(loaded) => loaded,
-            Err(result) => return Ok(PreparedGraph::Finished(result)),
+            Err(refusal) => return led_by_raised(refusal, root.diagnostics, diagnostics, held),
         };
+        emit_raised(root.diagnostics, diagnostics, held)?;
         let effective_invocation = evaluated_invocation(loaded.makeflags())?;
         let effective_options = evaluated_build_options(root.options, &effective_invocation);
         if loaded.regeneration_targets().is_empty() {
@@ -1608,14 +1623,16 @@ fn prepare_graph(
             goals: &root.invocation.goals,
             restarts,
         };
-        match build_compiler_inputs(
+        let settlement = build_compiler_inputs(
             compiler_inputs,
             reported,
             output,
             diagnostics,
             &mut settled_boundaries,
             &mut read_units,
-        )? {
+        );
+        emit_raised(root.diagnostics, diagnostics, held)?;
+        match settlement? {
             Settlement::Finished(result) => return Ok(PreparedGraph::Finished(result)),
             Settlement::Restart => restarts = restarts.saturating_add(1),
             Settlement::Staged => {}
@@ -1658,8 +1675,41 @@ fn prepare_graph(
 pub(crate) fn run(
     runner: &Runner,
     arguments: &[BString],
+    output: Option<&mut dyn Write>,
+    diagnostics: Option<&mut dyn Write>,
+) -> Result<RunResult, Error> {
+    // Where the compiler writes what it has to say short of a refusal. It is
+    // this invocation's descriptor rather than the process's standard error, so
+    // that a caller holding a run as a value holds its warnings too — the same
+    // arrangement the compiler's refusals have always had, where the error is
+    // returned and the caller decides where it goes.
+    let raised = Arc::new(kati::diagnostics::Diagnostics::collected());
+    // What was raised with no sink to stream it to, which leads the result's
+    // standard error exactly as an ordinary warning leads Ninja's.
+    let mut held = Vec::new();
+    let mut result = reported_run(runner, arguments, output, diagnostics, &raised, &mut held);
+    // Anything raised after the last drain — the build owns the descriptor
+    // while it runs and empties it as it binds each recipe, so this is the
+    // residue of a run that ended somewhere else.
+    held.extend(raised.take());
+    if held.is_empty() {
+        return result;
+    }
+    if let Ok(result) = result.as_mut() {
+        held.append(&mut result.stderr);
+        result.stderr = std::mem::take(&mut held);
+    }
+    result
+}
+
+/// One Make invocation, with the descriptor its compiler diagnostics reach.
+fn reported_run(
+    runner: &Runner,
+    arguments: &[BString],
     mut output: Option<&mut dyn Write>,
     mut diagnostics: Option<&mut dyn Write>,
+    raised: &Arc<kati::diagnostics::Diagnostics>,
+    held: &mut Vec<u8>,
 ) -> Result<RunResult, Error> {
     let invocation = match parse(arguments, runner.makeflags.as_deref())? {
         Action::Immediate(result) => return Ok(result),
@@ -1705,6 +1755,7 @@ pub(crate) fn run(
     // provenance or restart behavior crosses into the executor.
     let root = RootCompilation {
         invocation: &invocation,
+        diagnostics: raised,
         makefiles: &makefiles,
         invoked_as: &invoked_as,
         directory: &directory,
@@ -1713,7 +1764,7 @@ pub(crate) fn run(
         level,
     };
     let (mut graph, mut recipes, opened, invocation, options) =
-        match prepare_graph(&root, &mut reported, &mut output, &mut diagnostics)? {
+        match prepare_graph(&root, &mut reported, &mut output, &mut diagnostics, held)? {
             PreparedGraph::Ready {
                 graph,
                 recipes,
@@ -1817,6 +1868,7 @@ fn compilation_context(
         root_directory: directory.clone(),
         directory,
         path_prefix: PathBuf::new(),
+        diagnostics: Arc::clone(&session.diagnostics),
         makeflags: propagated_makeflags(invocation),
         level,
         jobs,

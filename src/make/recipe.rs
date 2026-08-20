@@ -54,6 +54,12 @@ struct RecipeUnit {
 /// because the graph is one graph: an edge is looked up by its own identity
 /// and finds the unit whose Makefile wrote it.
 pub(crate) struct PendingRecipes {
+    /// Where the sessions below write what they raise while expanding.
+    ///
+    /// The same descriptor the compilation read through, because expanding a
+    /// recipe is the last of the read: a `$(warning)` in recipe position is
+    /// raised here, by the session that owns the variables it names.
+    diagnostics: std::sync::Arc<kati::diagnostics::Diagnostics>,
     units: Vec<RecipeUnit>,
     edges: RapidHashMap<EdgeId, (usize, DeferredRecipeId)>,
     /// Edges whose recipe the compiler had to read for itself, with the
@@ -71,8 +77,9 @@ pub(crate) struct PendingRecipes {
 }
 
 impl PendingRecipes {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(diagnostics: std::sync::Arc<kati::diagnostics::Diagnostics>) -> Self {
         Self {
+            diagnostics,
             units: Vec::new(),
             edges: RapidHashMap::default(),
             settled: RapidHashMap::default(),
@@ -161,6 +168,10 @@ fn expanded_in<T>(
 }
 
 impl LateCommands for PendingRecipes {
+    fn raised(&mut self) -> Vec<u8> {
+        self.diagnostics.take()
+    }
+
     fn command(
         &mut self,
         edge: EdgeId,

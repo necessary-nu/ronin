@@ -178,6 +178,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
     )];
     let compilation = Compilation {
         context: CompilationContext {
+            diagnostics: std::sync::Arc::clone(&session.diagnostics),
             root_directory: directory.clone(),
             directory,
             path_prefix: PathBuf::new(),
@@ -209,6 +210,13 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
 /// semantic subninjas.
 #[derive(Clone)]
 pub(crate) struct CompilationContext {
+    /// Where every session composed under this one writes its warnings.
+    ///
+    /// Carried with the context rather than reached for, because a recursive
+    /// child compiled into this graph is a session of its own and what it says
+    /// belongs to the invocation that asked, not to the process it happens to
+    /// run in.
+    pub(crate) diagnostics: std::sync::Arc<kati::diagnostics::Diagnostics>,
     pub(crate) root_directory: PathBuf,
     pub(crate) directory: PathBuf,
     pub(crate) path_prefix: PathBuf,
@@ -512,7 +520,9 @@ where
     let mut state = CompilationState {
         cache: HashMap::new(),
         compiling: HashSet::new(),
-        pending_recipes: recipe::PendingRecipes::new(),
+        pending_recipes: recipe::PendingRecipes::new(std::sync::Arc::clone(
+            &root.context.diagnostics,
+        )),
         regenerations: Vec::new(),
         remakes: Vec::new(),
         forgiven_remakes: Vec::new(),

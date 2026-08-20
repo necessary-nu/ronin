@@ -48,7 +48,13 @@ pub(in crate::make) fn compile(
     }
     let invoked_as =
         path_of(words[0].as_bytes()).map_err(|error| MakeError::Evaluate(error.to_string()))?;
-    let mut session = session_for(&invocation, &makefiles, parent.jobs, &invoked_as);
+    let mut session = session_for(
+        &invocation,
+        &makefiles,
+        parent.jobs,
+        &invoked_as,
+        &parent.diagnostics,
+    );
     session.invocation_environment = Some(parent.environment.clone());
     let level = parent.level.saturating_add(1);
     record_invocation_variables(&mut session, &invocation, level, 0);
@@ -89,6 +95,7 @@ pub(in crate::make) fn compile(
         session,
         shuffle: invocation.shuffle,
         context: CompilationContext {
+            diagnostics: std::sync::Arc::clone(&parent.diagnostics),
             root_directory: parent.root_directory.clone(),
             directory,
             path_prefix,

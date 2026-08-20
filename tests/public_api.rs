@@ -368,3 +368,64 @@ fn public_api_builds_a_makefile_through_ronins_scheduler() {
     persistence.finish().unwrap();
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+/// A library caller that hands the compiler a descriptor to collect what it
+/// said gets the warnings as well as the errors.
+///
+/// The compiler's refusals have always been values — `load_makefile` returns
+/// the error and the caller decides where it goes — and its warnings were not:
+/// they were written to the process's standard error where they were raised,
+/// so a caller reading a compilation as a value could not see them at all.
+/// Both of the two kinds are here: one the read raises while it expands, and
+/// one the graph build raises about a cycle it broke.
+// [spec:ronin:req:make.graph-direct/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn public_api_collects_compiler_warnings() {
+    use ronin::make::kati::diagnostics::Diagnostics;
+    use ronin::make::kati::session::Session;
+    use ronin::make::{Shuffle, load_makefile};
+    use std::ffi::OsString;
+    use std::sync::Arc;
+
+    let directory = std::env::temp_dir().join(format!(
+        "ronin-make-collected-warnings-{}-{}",
+        std::process::id(),
+        std::thread::current().name().unwrap_or("test")
+    ));
+    let _ = std::fs::remove_dir_all(&directory);
+    std::fs::create_dir_all(&directory).unwrap();
+    let makefile = directory.join("Makefile");
+    std::fs::write(
+        &makefile,
+        "$(warning read this)\n\
+         all: cycle\n\
+         cycle: all\n\
+         \t@:\n",
+    )
+    .unwrap();
+
+    let mut session = Session::from_args(vec![
+        OsString::from("ronin"),
+        OsString::from("-f"),
+        makefile.clone().into_os_string(),
+    ]);
+    let collected = Arc::new(Diagnostics::collected());
+    session.diagnostics = Arc::clone(&collected);
+    load_makefile(session, Shuffle::None).unwrap();
+
+    let said = String::from_utf8(collected.take()).unwrap();
+    assert!(
+        said.contains(&format!("{}:1: read this", makefile.display())),
+        "the read's own warning reached the caller's descriptor: {said:?}"
+    );
+    assert!(
+        said.contains("Circular cycle <- all dependency dropped."),
+        "the graph build's warning reached the caller's descriptor: {said:?}"
+    );
+    assert!(
+        collected.take().is_empty(),
+        "a drained descriptor holds nothing"
+    );
+    std::fs::remove_dir_all(directory).unwrap();
+}

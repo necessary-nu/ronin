@@ -216,6 +216,18 @@ pub(crate) trait LateCommands {
         output: &[u8],
         trigger: &[u8],
     ) -> Result<LateBinding, String>;
+
+    /// Whatever binding a command had to say short of failing, rendered and
+    /// ready to write, and nothing once it has been taken.
+    ///
+    /// A front end that reads a recipe as its edge launches can raise a
+    /// warning there — the expansion is where GNU Make raises one too — and
+    /// the engine owns the descriptor those go to while a build is running.
+    /// Asked after every binding, so what a recipe said comes out beside the
+    /// edge that said it rather than at the end of the build.
+    fn raised(&mut self) -> Vec<u8> {
+        Vec::new()
+    }
 }
 
 /// What the build does next with an edge whose process just finished.
@@ -398,9 +410,14 @@ impl Builder<'_> {
             || output.clone(),
             |output| self.graph.node_path(output).to_vec(),
         );
-        recipes
-            .command(edge, &output, &trigger)
-            .map_err(|diagnostic| BuildError::LateCommand { diagnostic })
+        let bound = recipes.command(edge, &output, &trigger);
+        // Taken whether the binding worked or not: an expansion that ended in a
+        // refusal may have warned on its way there.
+        let raised = recipes.raised();
+        if !raised.is_empty() {
+            self.emit_diagnostic(&raised)?;
+        }
+        bound.map_err(|diagnostic| BuildError::LateCommand { diagnostic })
     }
 
     pub(super) fn refresh_command_hash(&mut self, edge: EdgeId) -> BuildResult<()> {
