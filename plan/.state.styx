@@ -663,7 +663,7 @@ assertions (
     {id make-staging-pass-repeats-an-immediate-side-effect, kind @complete, author "brendan@necessary.nu", at 2026-08-20T00:10:25.424864122Z}
     {id make-makeflags-write-drops-an-assignment-word, kind @complete, author "brendan@necessary.nu", at 2026-08-20T00:50:05.416230708Z}
     {id make-staging-pass-asks-the-ground-again, kind @complete, author "brendan@necessary.nu", at 2026-08-20T01:26:42.878332155Z}
-    {id make-a-write-to-a-special-variable-is-refused, kind @doing, author "brendan@necessary.nu", at 2026-08-20T01:40:15.949111015Z}
+    {id make-a-write-to-a-special-variable-is-refused, kind @complete, author "brendan@necessary.nu", at 2026-08-20T02:18:57.155511753Z}
 )
 
 impl_evidence (
