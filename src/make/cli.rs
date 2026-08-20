@@ -41,6 +41,7 @@ use std::sync::Arc;
 mod diagnostics;
 mod interface;
 mod jobserver_style;
+mod option_values;
 mod remake;
 mod selection;
 mod subninja;
@@ -51,6 +52,7 @@ use interface::{
     evaluated_invocation, makeflags_arguments, prepend_command_line_evals, read_shuffle,
 };
 use jobserver_style::{carried_switches, read_jobserver_style, unknown_jobserver_style};
+use option_values::{jobs_value, load_value, value};
 use remake::{CompilerInputBuild, Settlement, build_compiler_inputs};
 use selection::{DEFAULT_MAKEFILES, STANDARD_INPUT, is_standard_input, named_makefiles};
 pub(super) use subninja::compile as compile_subninja;
@@ -391,6 +393,16 @@ struct Invocation {
     /// the usage message afterwards; a makefile's own write loses the switch and
     /// the read goes on.
     bad: Option<String>,
+    /// What this stream had to say about a word it dropped rather than died
+    /// of.
+    ///
+    /// GNU Make's `decode_switches` prints its own complaint about an empty
+    /// string argument or a job count that is not a positive integer whatever
+    /// origin the word came from, and only the dying afterwards is the command
+    /// line's alone. A stream that refuses answers with the first of these
+    /// through `bad`; a stream that forgives carries them out to whoever
+    /// decoded it.
+    complaints: Vec<String>,
 }
 
 impl Invocation {
@@ -413,6 +425,7 @@ impl Invocation {
             output_sync: None,
             jobserver_style: None,
             bad: None,
+            complaints: Vec::new(),
         }
     }
 
@@ -562,13 +575,13 @@ impl OutputSync {
     /// The type named after `-O` or `--output-sync=`, where naming none at all
     /// is `target`. Only ever attached: `make -O line` is grouped output and a
     /// goal called `line`.
-    fn parse(name: &[u8]) -> Result<Self, Error> {
-        Ok(match name {
+    fn parse(name: &[u8]) -> Option<Self> {
+        Some(match name {
             b"" | b"target" => Self::Target,
             b"none" => Self::None,
             b"line" => Self::Line,
             b"recurse" => Self::Recurse,
-            _ => return Err(CliError::InvalidParameter { option: "-O" }.into()),
+            _ => return None,
         })
     }
 
@@ -582,6 +595,20 @@ impl OutputSync {
             Self::Recurse => "-Orecurse",
         }
     }
+}
+
+/// Record `-O`'s type, or say why it is not one.
+///
+/// GNU Make stores the word where it reads it and judges it afterwards, in
+/// `decode_output_sync_flags` — which runs once every option stream has been
+/// read and calls `fatal`. So a type Make does not have ends the run whichever
+/// stream wrote it, unlike the switches the origin forgives.
+fn read_output_sync(invocation: &mut Invocation, kind: &[u8]) {
+    if let Some(output_sync) = OutputSync::parse(kind) {
+        invocation.output_sync = Some(output_sync);
+        return;
+    }
+    invocation.undecodable(format!("invalid argument to -O: '{}'", kind.to_str_lossy()));
 }
 
 /// A GNU Make option that takes no argument: the whole of it is that it was
@@ -761,96 +788,6 @@ fn refuse(message: impl std::fmt::Display) -> Action {
     })
 }
 
-/// The value an option takes, whether it was attached or stands alone.
-fn value(
-    arguments: &[BString],
-    index: &mut usize,
-    attached: &[u8],
-    option: &str,
-) -> Result<BString, Error> {
-    if !attached.is_empty() {
-        return Ok(BString::from(attached));
-    }
-    *index += 1;
-    arguments.get(*index).cloned().ok_or_else(|| {
-        CliError::MissingOptionValue {
-            option: option.to_owned(),
-        }
-        .into()
-    })
-}
-
-/// `-j`'s argument, which GNU Make lets stand alone only when it is a number.
-///
-/// `make -j all` is unlimited jobs and one goal; `make -j 8 all` is eight jobs
-/// and one goal. Reading the next word unconditionally would swallow the goal.
-fn jobs_value(
-    arguments: &[BString],
-    index: &mut usize,
-    attached: &[u8],
-) -> Result<JobLimit, Error> {
-    let invalid = || Error::from(CliError::InvalidParameter { option: "-j" });
-    let digits = if attached.is_empty() {
-        let Some(next) = arguments
-            .get(*index + 1)
-            .filter(|argument| argument.iter().all(u8::is_ascii_digit) && !argument.is_empty())
-        else {
-            return Ok(JobLimit::Unlimited);
-        };
-        *index += 1;
-        next.clone()
-    } else {
-        BString::from(attached)
-    };
-    let count = digits
-        .to_str()
-        .ok()
-        .and_then(|digits| digits.parse::<usize>().ok())
-        .ok_or_else(invalid)?;
-    // GNU Make rejects `-j0`; every other count is a limit.
-    JobLimit::fixed(count).ok_or_else(invalid)
-}
-
-/// `-l`'s argument, which stands alone only when it is a number.
-///
-/// The same shape as `-j`'s, for the same reason: `make -l all` is one goal and
-/// no load limit at all, so reading the next word unconditionally would swallow
-/// it. A bare `-l` lifts the limit, which is the zero the scheduler reads as
-/// "do not consult the load average".
-fn load_value(
-    arguments: &[BString],
-    index: &mut usize,
-    attached: &[u8],
-) -> Result<LoadLimit, Error> {
-    let numeric = |argument: &&BString| {
-        !argument.is_empty()
-            && argument
-                .iter()
-                .all(|byte| byte.is_ascii_digit() || *byte == b'.')
-    };
-    let digits = if attached.is_empty() {
-        let Some(next) = arguments.get(*index + 1).filter(numeric) else {
-            return Ok(LoadLimit {
-                ceiling: 0.0,
-                propagated: false,
-            });
-        };
-        *index += 1;
-        next.clone()
-    } else {
-        BString::from(attached)
-    };
-    let ceiling = digits
-        .to_str()
-        .ok()
-        .and_then(|digits| digits.parse::<f64>().ok())
-        .ok_or(CliError::InvalidParameter { option: "-l" })?;
-    Ok(LoadLimit {
-        ceiling,
-        propagated: true,
-    })
-}
-
 /// Consume a deliberately ignored long option, including its required value.
 ///
 /// Options with a compiler or Ninja mapping are handled explicitly. This
@@ -862,7 +799,7 @@ fn accept_noop_long(
     option: &[u8],
     arguments: &[BString],
     index: &mut usize,
-) -> Result<bool, Error> {
+) -> bool {
     for declared in MAKE_OPTION_SURFACE
         .iter()
         .filter(|declared| declared.class == OptionClass::NoOp)
@@ -885,11 +822,22 @@ fn accept_noop_long(
                     |first| (*first).into(),
                 );
             if option == spelling {
-                if declared.argument == ArgumentShape::Required {
-                    let named = value(arguments, index, b"", &name)?;
+                // The spelling this word wrote, because getopt names the
+                // option it was given: `--old-file` is not reported as `-o`,
+                // where the empty-argument complaint below names the switch.
+                if declared.argument == ArgumentShape::Required
+                    && let Some(named) = value(
+                        invocation,
+                        source,
+                        arguments,
+                        index,
+                        b"",
+                        &String::from_utf8_lossy(spelling),
+                    )
+                {
                     invocation.discarded_argument(source, &name, named.as_bytes());
                 }
-                return Ok(true);
+                return true;
             }
             if option.starts_with(spelling)
                 && option.get(spelling.len()) == Some(&b'=')
@@ -901,11 +849,11 @@ fn accept_noop_long(
                 if declared.argument == ArgumentShape::Required {
                     invocation.discarded_argument(source, &name, &option[spelling.len() + 1..]);
                 }
-                return Ok(true);
+                return true;
             }
         }
     }
-    Ok(false)
+    false
 }
 
 /// Consume a deliberately ignored short option from a cluster.
@@ -917,7 +865,7 @@ fn accept_noop_short(
     short: &mut usize,
     arguments: &[BString],
     index: &mut usize,
-) -> Result<bool, Error> {
+) -> bool {
     let spelling = [b'-', option];
     let Some(declared) = MAKE_OPTION_SURFACE.iter().find(|declared| {
         declared.class == OptionClass::NoOp
@@ -926,15 +874,50 @@ fn accept_noop_short(
                 .iter()
                 .any(|candidate| candidate.as_bytes() == spelling.as_slice())
     }) else {
-        return Ok(false);
+        return false;
     };
     if declared.argument == ArgumentShape::Required {
         let name = String::from_utf8_lossy(&spelling);
-        let named = value(arguments, index, &argument[*short..], &name)?;
-        invocation.discarded_argument(source, &name, named.as_bytes());
+        if let Some(named) = value(
+            invocation,
+            source,
+            arguments,
+            index,
+            &argument[*short..],
+            &name,
+        ) {
+            invocation.discarded_argument(source, &name, named.as_bytes());
+        }
         *short = argument.len();
     }
-    Ok(true)
+    true
+}
+
+/// A long option whose value is the word after it, in the spellings that take
+/// one that way.
+///
+/// The option and its value are two words, so a stream that ends on the option
+/// has no value to give it — which is getopt's missing-argument case, recorded
+/// against the invocation rather than raised, and the switch is then dropped.
+fn separated_long(
+    invocation: &mut Invocation,
+    source: ArgumentSource,
+    option: &[u8],
+    arguments: &[BString],
+    index: &mut usize,
+) -> Result<(), Error> {
+    let spelling = String::from_utf8_lossy(option);
+    let Some(named) = value(invocation, source, arguments, index, b"", &spelling) else {
+        return Ok(());
+    };
+    match option {
+        b"--file" | b"--makefile" => invocation.makefile(source, named.as_bytes())?,
+        b"--directory" => invocation.directory(source, named.as_bytes())?,
+        b"--include-dir" => invocation.include_dir(source, named.as_bytes())?,
+        b"--eval" => invocation.eval_statement(source, named.as_bytes()),
+        _ => invocation.discarded_argument(source, "-W", named.as_bytes()),
+    }
+    Ok(())
 }
 
 /// A long option carrying its value after an `=`, in the spellings that take
@@ -964,15 +947,25 @@ fn attached_long(
     } else if let Some(eval) = option.strip_prefix(b"--eval=") {
         invocation.eval_statement(source, eval);
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
-        invocation.set_jobs(source, jobs_value(arguments, index, count)?);
+        // Written with an `=`, so the argument is whatever follows it and no
+        // later word can stand in: `--jobs=` is an argument GNU Make has and
+        // cannot read, where a bare `-j` is one it never had.
+        if count.is_empty() {
+            invocation.complain(
+                source,
+                "the '-j' option requires a positive integer argument".to_owned(),
+            );
+        } else if let Some(jobs) = jobs_value(invocation, source, arguments, index, count) {
+            invocation.set_jobs(source, jobs);
+        }
     } else if let Some(load) = option
         .strip_prefix(b"--load-average=")
         .or_else(|| option.strip_prefix(b"--max-load="))
     {
-        invocation.load = Some(load_value(arguments, index, load)?);
+        invocation.load = Some(load_value(arguments, index, load));
     } else if let Some(kind) = option.strip_prefix(b"--output-sync=") {
         if invocation.non_empty(source, "-O", kind) {
-            invocation.output_sync = Some(OutputSync::parse(kind)?);
+            read_output_sync(invocation, kind);
         }
     } else {
         return Ok(false);
@@ -1067,39 +1060,21 @@ fn parse_arguments(
                 }
             }
             b"--jobs" => {
-                invocation.set_jobs(source, jobs_value(arguments, &mut index, b"")?);
+                if let Some(jobs) = jobs_value(invocation, source, arguments, &mut index, b"") {
+                    invocation.set_jobs(source, jobs);
+                }
             }
             option
                 if option == b"--jobserver-style" || option.starts_with(b"--jobserver-style=") =>
             {
-                if let Some(action) =
-                    read_jobserver_style(invocation, option, arguments, &mut index)?
-                {
-                    return Ok(Some(action));
-                }
+                read_jobserver_style(invocation, source, option, arguments, &mut index);
             }
             b"--load-average" | b"--max-load" => {
-                invocation.load = Some(load_value(arguments, &mut index, b"")?);
+                invocation.load = Some(load_value(arguments, &mut index, b""));
             }
-            b"--file" | b"--makefile" => {
-                let named = value(arguments, &mut index, b"", "--file")?;
-                invocation.makefile(source, named.as_bytes())?;
-            }
-            b"--directory" => {
-                let named = value(arguments, &mut index, b"", "--directory")?;
-                invocation.directory(source, named.as_bytes())?;
-            }
-            b"--include-dir" => {
-                let named = value(arguments, &mut index, b"", "--include-dir")?;
-                invocation.include_dir(source, named.as_bytes())?;
-            }
-            b"--eval" => {
-                let eval = value(arguments, &mut index, b"", "--eval")?;
-                invocation.eval_statement(source, eval.as_bytes());
-            }
-            b"--what-if" | b"--new-file" | b"--assume-new" => {
-                let named = value(arguments, &mut index, b"", "--what-if")?;
-                invocation.discarded_argument(source, "-W", named.as_bytes());
+            b"--file" | b"--makefile" | b"--directory" | b"--include-dir" | b"--eval"
+            | b"--what-if" | b"--new-file" | b"--assume-new" => {
+                separated_long(invocation, source, argument, arguments, &mut index)?;
             }
             option if option.starts_with(b"--") => {
                 if let Some(action) =
@@ -1139,7 +1114,7 @@ fn read_other_long(
     index: &mut usize,
 ) -> Result<Option<Action>, Error> {
     if attached_long(invocation, source, option, arguments, index)?
-        || accept_noop_long(invocation, source, option, arguments, index)?
+        || accept_noop_long(invocation, source, option, arguments, index)
         || !source.refuses_a_bad_switch()
     {
         return Ok(None);
@@ -1174,29 +1149,53 @@ fn read_cluster(
         match option {
             b'h' => return Ok(Some(Action::Immediate(reported(usage())))),
             b'E' => {
-                let eval = value(arguments, index, &argument[short..], "-E")?;
+                let eval = value(
+                    invocation,
+                    source,
+                    arguments,
+                    index,
+                    &argument[short..],
+                    "-E",
+                );
                 short = argument.len();
-                invocation.eval_statement(source, eval.as_bytes());
+                if let Some(eval) = eval {
+                    invocation.eval_statement(source, eval.as_bytes());
+                }
             }
             b'j' => {
-                invocation.set_jobs(source, jobs_value(arguments, index, &argument[short..])?);
+                if let Some(jobs) =
+                    jobs_value(invocation, source, arguments, index, &argument[short..])
+                {
+                    invocation.set_jobs(source, jobs);
+                }
                 short = argument.len();
             }
             b'l' => {
-                invocation.load = Some(load_value(arguments, index, &argument[short..])?);
+                invocation.load = Some(load_value(arguments, index, &argument[short..]));
                 short = argument.len();
             }
             b'W' => {
-                let named = value(arguments, index, &argument[short..], "-W")?;
+                let named = value(
+                    invocation,
+                    source,
+                    arguments,
+                    index,
+                    &argument[short..],
+                    "-W",
+                );
                 short = argument.len();
-                invocation.discarded_argument(source, "-W", named.as_bytes());
+                if let Some(named) = named {
+                    invocation.discarded_argument(source, "-W", named.as_bytes());
+                }
             }
             b'O' => {
-                invocation.output_sync = Some(OutputSync::parse(&argument[short..])?);
+                read_output_sync(invocation, &argument[short..]);
                 short = argument.len();
             }
             b'f' | b'C' | b'I' => {
                 let named = value(
+                    invocation,
+                    source,
                     arguments,
                     index,
                     &argument[short..],
@@ -1205,8 +1204,9 @@ fn read_cluster(
                         b'I' => "-I",
                         _ => "-C",
                     },
-                )?;
+                );
                 short = argument.len();
+                let Some(named) = named else { continue };
                 if option == b'I' {
                     invocation.include_dir(source, named.as_bytes())?;
                 } else if option == b'f' {
@@ -1218,7 +1218,7 @@ fn read_cluster(
             _ => {
                 if !accept_noop_short(
                     invocation, source, option, argument, &mut short, arguments, index,
-                )? && source.refuses_a_bad_switch()
+                ) && source.refuses_a_bad_switch()
                 {
                     return Ok(Some(refuse(format_args!(
                         "invalid option -- '{}'",

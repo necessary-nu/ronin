@@ -1601,3 +1601,66 @@ fn environment_reaches_a_worked_out_name() {
     );
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// GNU Make's `decode_switches` never dies where it notices a word it cannot
+/// read: it raises a flag, consumes the word, and only the command line acts on
+/// the flag afterwards — `if (bad && origin == o_command) print_usage (bad)`.
+/// Ronin's second failure channel used to raise instead, which came out as
+/// Ninja's status rather than Make's for a command line, and ended a build a
+/// makefile would have finished.
+#[test]
+fn a_bad_switch_ends_only_argv() {
+    let directory = test_directory("unreadable-switch");
+    fs::write(directory.join("Makefile"), "all: ; @echo built > out\n").unwrap();
+
+    // The command line abandons with Make's status, not Ninja's.
+    for argument in ["-W", "-I", "-f", "--eval", "--jobserver-style", "-jabc"] {
+        let refused = make_command(&directory).arg(argument).output().unwrap();
+        assert_eq!(
+            refused.status.code(),
+            Some(2),
+            "{argument}: {}",
+            String::from_utf8_lossy(&refused.stderr)
+        );
+        assert!(
+            !directory.join("out").exists(),
+            "{argument} built something"
+        );
+    }
+
+    // A makefile's own write loses the switch and the build goes on, and the
+    // two GNU Make complains about at every origin are complained about here.
+    fs::write(
+        directory.join("Makefile"),
+        "MAKEFLAGS += -W\n\
+         MAKEFLAGS += -jabc\n\
+         MAKEFLAGS += --include-dir=\n\
+         all: ; @echo built > out\n",
+    )
+    .unwrap();
+    let built = make_command(&directory).output().unwrap();
+    assert!(
+        built.status.success(),
+        "status {:?}\n{}",
+        built.status.code(),
+        String::from_utf8_lossy(&built.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("out")).unwrap(),
+        "built\n"
+    );
+    let said = String::from_utf8_lossy(&built.stderr);
+    assert!(
+        said.contains("the '-j' option requires a positive integer argument"),
+        "{said}"
+    );
+    assert!(
+        said.contains("the '-I' option requires a non-empty string argument"),
+        "{said}"
+    );
+    assert!(
+        !said.contains("missing -W value"),
+        "a switch GNU Make's getopt loses silently is lost silently: {said}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

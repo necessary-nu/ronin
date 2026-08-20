@@ -2621,7 +2621,7 @@ fn make_mode_narrates_recipe_command() {
 // [spec:ronin:req:product.make-identity/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
-fn a_load_ceiling_is_read_in_every_spelling_and_a_bad_one_is_refused() {
+fn a_load_ceiling_in_every_spelling() {
     let directory = make_case("make-load-average", "all:\n\t@echo built\n.PHONY: all\n");
     let make = invoked_as(&directory, "make");
     let run = |arguments: &[&str]| {
@@ -2651,13 +2651,21 @@ fn a_load_ceiling_is_read_in_every_spelling_and_a_bad_one_is_refused() {
         );
     }
 
+    // A ceiling that is not a number is not refused, because GNU Make's
+    // `case floating:` in `decode_switches` is `atof (coptarg)` and nothing
+    // else: a word it cannot read is zero, and zero is the ceiling a bare `-l`
+    // sets. `-l` is the one switch with an argument that has no way of being
+    // wrong, which is why this reads as the accepting half of the list above.
     for spelling in ["-lnope", "--load-average=nope"] {
-        let refused = run(&[spelling]);
-        assert!(!refused.status.success(), "{spelling}");
-        let diagnostic = String::from_utf8_lossy(&refused.stderr);
+        let accepted = run(&[spelling]);
         assert!(
-            diagnostic.contains("invalid -l parameter"),
-            "{spelling}: {diagnostic}"
+            accepted.status.success(),
+            "{spelling}: {}",
+            String::from_utf8_lossy(&accepted.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&accepted.stdout).contains("built"),
+            "{spelling}"
         );
     }
     fs::remove_dir_all(directory).unwrap();

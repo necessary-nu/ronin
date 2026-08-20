@@ -81,6 +81,13 @@ pub(super) fn read_shuffle(
     source: ArgumentSource,
     spec: &[u8],
 ) -> Option<Action> {
+    // Before the mode is looked at, and at every origin, because GNU Make's
+    // empty-string check is `decode_switches`' own and runs before the value
+    // reaches anything that could judge it. `--shuffle` with no `=` arrives
+    // here as `random` and never sees this.
+    if !invocation.non_empty(source, "--shuffle", spec) {
+        return None;
+    }
     match source.shuffle_effect() {
         ShuffleEffect::Settles => {
             let Some(mode) = Shuffle::requested(spec) else {
@@ -463,6 +470,14 @@ pub(super) fn decode_makefile_makeflags(
         no_builtin_rules: invocation.given(Switch::NoBuiltinRules),
         no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
         include_dirs: invocation.include_dirs.clone(),
+        // What this write said about a word it dropped. GNU Make prints these
+        // where the decode reaches them, which is inside the assignment, so
+        // they are handed back for the evaluator to raise there.
+        complaints: invocation
+            .complaints
+            .iter()
+            .map(|complaint| Bytes::from(complaint.clone().into_bytes()))
+            .collect(),
     })
 }
 

@@ -913,9 +913,6 @@ case	options/dash-f.diff.18	narration	product-name+fatal-decoration+shared-refus
 case	options/dash-f.diff.19	narration	product-name+fatal-decoration+shared-refusal
 case	options/dash-f.diff.2	narration	ninja-progress
 case	options/dash-f.diff.20	narration	product-name+fatal-decoration+shared-refusal
-case	options/dash-f.diff.21	unclassified	product-name+evaluation
-case	options/dash-f.diff.22	unclassified	product-name+evaluation
-case	options/dash-f.diff.23	unclassified	product-name+evaluation
 case	options/dash-f.diff.24	narration	ninja-progress+no-work-line+recipe-echo+up-to-date-line
 case	options/dash-f.diff.25	narration	ninja-progress+no-work-line+recipe-echo+up-to-date-line
 case	options/dash-f.diff.26	narration	ninja-progress+no-work-line+recipe-echo+up-to-date-line

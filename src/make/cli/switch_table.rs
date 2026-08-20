@@ -90,12 +90,58 @@ impl Invocation {
         if !named.is_empty() {
             return true;
         }
-        if source.refuses_a_bad_switch() && self.bad.is_none() {
-            self.bad = Some(format!(
-                "the '{option}' option requires a non-empty string argument"
-            ));
-        }
+        self.complain(
+            source,
+            format!("the '{option}' option requires a non-empty string argument"),
+        );
         false
+    }
+
+    /// A word this stream could not read, which GNU Make says nothing about.
+    ///
+    /// The `bad` flag getopt raises for a switch it does not know and for one
+    /// whose argument is not there. `opterr = origin == o_command` silences
+    /// getopt's own message for every other stream, and `if (bad && origin ==
+    /// o_command) print_usage (bad)` is the only thing that then acts on the
+    /// flag — so a makefile's own `MAKEFLAGS` loses the switch and says nothing
+    /// about having lost it.
+    ///
+    /// Recorded rather than acted on where it is noticed, because GNU Make
+    /// consumes the whole word before it gives up on it.
+    pub(super) fn unreadable(&mut self, source: ArgumentSource, message: String) {
+        if source.refuses_a_bad_switch() && self.bad.is_none() {
+            self.bad = Some(message);
+        }
+    }
+
+    /// A word GNU Make complains about whichever stream it came from.
+    ///
+    /// The other half of the same `bad` flag: `decode_switches` reaches its own
+    /// `error (NILF, ...)` for an argument that is empty where a string was
+    /// wanted, and for one that is not a positive integer where a count was,
+    /// and that call is not guarded by the origin at all. Only the dying is.
+    /// So the stream that forgives the switch still says why it dropped it.
+    pub(super) fn complain(&mut self, source: ArgumentSource, message: String) {
+        if source.refuses_a_bad_switch() {
+            if self.bad.is_none() {
+                self.bad = Some(message);
+            }
+            return;
+        }
+        self.complaints.push(message);
+    }
+
+    /// A switch value no stream forgives.
+    ///
+    /// `decode_debug_flags` and `decode_output_sync_flags` run after
+    /// `decode_switches` has finished with every stream and call `fatal` rather
+    /// than raising the `bad` flag, so the origin that decides whether an
+    /// unreadable switch ends the run does not reach these. A makefile writing
+    /// `MAKEFLAGS += -Obogus` dies of it exactly as the command line does.
+    pub(super) fn undecodable(&mut self, message: String) {
+        if self.bad.is_none() {
+            self.bad = Some(message);
+        }
     }
 
     /// Add a directory `-I` named, keeping a bare `-` as the entry it is.

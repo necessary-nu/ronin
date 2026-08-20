@@ -9,7 +9,7 @@
 //! carrying it, and refusing it are therefore three separate moments, and this
 //! is all three of them.
 
-use super::{Action, BString, Error, Invocation, JobLimit, refuse, value};
+use super::{ArgumentSource, BString, Invocation, JobLimit, value};
 use crate::util::ByteSlice;
 
 /// The styles GNU Make 4.4.1 knows how to set a jobserver up in.
@@ -26,21 +26,29 @@ const JOBSERVER_STYLES: [&[u8]; 2] = [b"fifo", b"pipe"];
 /// refused on sight, which GNU does before the jobserver is ever reached.
 pub(super) fn read_jobserver_style(
     invocation: &mut Invocation,
+    source: ArgumentSource,
     option: &[u8],
     arguments: &[BString],
     index: &mut usize,
-) -> Result<Option<Action>, Error> {
-    let style = match option.strip_prefix(b"--jobserver-style=") {
-        Some(attached) => BString::from(attached),
-        None => value(arguments, index, b"", "--jobserver-style")?,
+) {
+    let style = if let Some(attached) = option.strip_prefix(b"--jobserver-style=") {
+        BString::from(attached)
+    } else if let Some(style) = value(
+        invocation,
+        source,
+        arguments,
+        index,
+        b"",
+        "--jobserver-style",
+    ) {
+        style
+    } else {
+        return;
     };
-    if style.is_empty() {
-        return Ok(Some(refuse(
-            "the '--jobserver-style' option requires a non-empty string argument",
-        )));
+    if !invocation.non_empty(source, "--jobserver-style", style.as_bytes()) {
+        return;
     }
     invocation.jobserver_style = Some(style);
-    Ok(None)
 }
 
 /// The refusal a jobserver style this Make cannot provide earns, if it earns
