@@ -14146,6 +14146,21 @@ children (
                     }
                 )
             }
+
+            {
+                id make-a-conditional-in-an-ignored-branch-is-not-read
+                title "Leave an if directive's condition unread while the branch around it is being ignored"
+                kind @fix
+                deps (make-ifeq-closing-paren-need-not-end-the-line)
+                log (
+                    {
+                        at 2026-08-20T13:00:18.400013399Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found by the probe for make-ifeq-closing-paren-need-not-end-the-line and left out of it, because it is a different mechanism: not how a condition is split, but WHETHER IT IS READ AT ALL.\n\nGNU decides it is ignoring before it looks at an `if...` condition. `conditional_line` (reference/gnumake/src/read.c) reaches\n\n    for (i = 0; i < o; ++i)\n      if (conditionals->ignoring[i])\n        {\n          /* We are already ignoring, so just push a level to match the next\n             \"else\" or \"endif\", and keep ignoring.  We don't want to expand\n             variables in the condition.  */\n          conditionals->ignoring[o] = 1;\n          return 1;\n        }\n\nBEFORE either the ifdef arm or the ifeq arm, so a conditional nested inside a branch that is not being taken is never parsed, never expanded, and never complained about. kati builds an AST at read time and parses every condition it passes, ignoring or not.\n\nMeasured against the 4.4.1 oracle, GNU on the left, all after the ifeq node landed:\n\n    ifeq (x,y)\n    ifeq (a,a junk        <- the close never arrives\n    $(info INNER)\n    endif\n    endif\n    all: ; @echo hi\n      GNU    rc 0, builds, silent          Ronin  rc 2, `invalid syntax in conditional.`\n\n    same shape with `ifeq (a,a) junk`\n      GNU    rc 0, builds, silent          Ronin  rc 0, builds, warns `extraneous text after 'ifeq' directive`\n\n    same shape with `else ifeq (a,a junk` under a TAKEN outer branch\n      GNU    rc 0, builds, silent          Ronin  rc 2, `invalid syntax in conditional.`\n\nThe first and third are build-intent divergences and not only diagnostic ones — GNU builds where Ronin refuses — which is what makes this worth a node rather than a footnote. The second is the diagnostic half of the same cause.\n\nNOT AFFECTED, and the probe says so rather than assuming: `endif junk` and `else junk` inside an ignored branch warn in BOTH tools, because their arms in `conditional_line` sit ABOVE the ignoring loop. `ifdef X junk` inside an ignored branch is silent in both, because kati's `parse_ifdef` reads the whole rest of the line as the name and never had a complaint to make. So the cell is exactly the two `ifeq`/`ifneq` spellings.\n\nWHAT IT WOULD TAKE. kati reads and evaluates in two phases where GNU does one, so the fix cannot be \"skip the parse\" — the parser does not know which branch will be taken. It has to be a deferral: `parse_ifeq` keeps the unread condition text on the `IfStmt` when it cannot split it, and the evaluator raises `invalid syntax in conditional.` only if it reaches that statement while not ignoring. The `extraneous text` warning wants the same treatment, held on the statement and emitted at evaluation. Both `kati/src-rs/parser.rs` and `kati/src/parser.cc` carry the same shape and would take the same edit.\n\nGate it on a file a recipe writes, since the interesting halves are a build that happens rather than a diagnostic: a false outer conditional wrapping an `ifeq` whose parens never balance, with the goal outside it, so GNU's silence is a built file and Ronin's refusal is not; plus the `else ifeq` spelling, which reaches the same arm by a different road."
+                    }
+                )
+            }
         )
         log (
             {
