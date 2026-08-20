@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-20T00:49:39.912891899Z
+last_sync_at 2026-08-20T01:26:46.942098006Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -66,6 +66,7 @@ derived_priorities (
     {id make-a-forgiven-makefile-is-not-remade-for-the-goals, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-a-questioned-makefile-keeps-the-questions-status-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
+    {id make-a-staging-pass-reads-text-the-first-read-never-saw, priority 3, derived_at 2026-08-20T01:26:46.942098006Z}
     {id make-a-write-to-a-special-variable-is-refused, priority 0, derived_at 2026-08-20T00:49:39.912891899Z}
     {id make-an-output-directory-is-created-where-gnu-make-would-refuse, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-an-unopenable-include-is-reported-where-gnu-reports-it, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
@@ -659,7 +660,7 @@ assertions (
     {id make-recipe-prefix-is-read-per-expanded-line, kind @complete, author "brendan@necessary.nu", at 2026-08-19T23:51:04.019987733Z}
     {id make-staging-pass-repeats-an-immediate-side-effect, kind @complete, author "brendan@necessary.nu", at 2026-08-20T00:10:25.424864122Z}
     {id make-makeflags-write-drops-an-assignment-word, kind @complete, author "brendan@necessary.nu", at 2026-08-20T00:50:05.416230708Z}
-    {id make-staging-pass-asks-the-ground-again, kind @doing, author "brendan@necessary.nu", at 2026-08-20T01:23:49.752203629Z}
+    {id make-staging-pass-asks-the-ground-again, kind @complete, author "brendan@necessary.nu", at 2026-08-20T01:26:42.878332155Z}
 )
 
 impl_evidence (
