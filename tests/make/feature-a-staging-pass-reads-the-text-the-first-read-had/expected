@@ -1,0 +1,43 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 18
+| # Two recursive children make the compiler read this text again once the first
+| # child's work is staged, and by then that child has written `gen.mk' and
+| # `parts/one.mk'. GNU Make reads once, before any recipe runs, so its read never
+| # saw either file exist -- and nothing regenerates them, so there is no restart
+| # in which it ever would.
+| #
+| # Which files a read opens is not a value handed to an expansion; it is what the
+| # read IS. A repeat that opened these would be compiling a makefile the build
+| # never had, so every answer below must be the first read's: `G' and `P' from
+| # text that was never included, `S' from a `$(shell)' that must not run, and
+| # `shelllog' holding the one line the parent's own `$(shell)' put there.
+| -include gen.mk
+| -include parts/*.mk
+| X := $(shell printf 'asked\n' >> shelllog; echo told)
+| all:
+| 	@$(MAKE) --no-print-directory -f first.mk sub
+| 	@$(MAKE) --no-print-directory -f second.mk sub
+| 	@printf 'X=[$(X)] G=[$(G)] S=[$(S)] P=[$(P)]\n' > answers
+file answers touched 1
+| X=[told] G=[] S=[] P=[]
+file first.mk kept 5
+| sub:
+| 	@printf 'G := from-a-child\nS := $$(shell printf child >> shelllog; echo asked-again)\n$$(file >> seen,the newly written text spoke)\n' > gen.mk
+| 	@mkdir -p parts
+| 	@printf 'P := from-a-glob\n' > parts/one.mk
+| 	@printf 'one\n' > first.out
+file first.out touched 1
+| one
+file gen.mk touched 3
+| G := from-a-child
+| S := $(shell printf child >> shelllog; echo asked-again)
+| $(file >> seen,the newly written text spoke)
+file parts/one.mk touched 1
+| P := from-a-glob
+file second.mk kept 1
+| sub: ; @printf 'two\n' > second.out
+file second.out touched 1
+| two
+file shelllog touched 1
+| asked

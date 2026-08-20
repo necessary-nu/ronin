@@ -341,14 +341,26 @@ fn unit_remakes(
     })
 }
 
-/// What each unit's first read of this compilation was told by the ground,
-/// keyed by cache key.
+/// What one unit's first read of this compilation was told from outside itself.
 ///
 /// Carried from pass to pass beside the units themselves, because a staging
 /// pass re-reads a unit over text that has not moved while the ground under it
 /// has: the staged work is what moved it. See
 /// [`kati::session::GroundJournal`].
-pub(crate) type ReadJournals = HashMap<Vec<u8>, Vec<kati::session::GroundAnswer>>;
+pub(crate) struct UnitJournal {
+    /// The answers the ground gave, in the order the read asked for them.
+    ground: Vec<kati::session::GroundAnswer>,
+    /// The bytes that read got for every makefile it read.
+    ///
+    /// Which files a read opens is not a value handed to an expansion, it is
+    /// what the read IS, so it is pinned rather than journalled: a makefile a
+    /// staged child has rewritten, or removed, still reads as the text GNU
+    /// Make's one read had.
+    sources: Vec<(OsString, Vec<u8>)>,
+}
+
+/// Every unit's journal, keyed by cache key.
+pub(crate) type ReadJournals = HashMap<Vec<u8>, UnitJournal>;
 
 struct CompilationState<'a> {
     cache: HashMap<Vec<u8>, UnitSubgraph>,
@@ -616,7 +628,10 @@ fn read_unit(
     // Taken before the session goes wherever it goes next: the recipes may
     // keep it alive for the build and may not, and either way this read is
     // over and what it was told belongs to the pass.
-    let journal = ev.session.ground_journal.close_read();
+    let journal = UnitJournal {
+        ground: ev.session.ground_journal.close_read(),
+        sources: ev.session.read_sources(),
+    };
     let (deferred_edges, settled_edges) = sink.take_late_edges();
     let pending_recipes = (!deferred.is_empty()).then_some((ev, deferred, layout, deferred_edges));
     Ok(UnitRead {
@@ -644,8 +659,9 @@ struct UnitRead {
     /// Edges whose recipe this read expanded for itself and which still run a
     /// process per command line.
     settled_edges: Vec<(Edge, Vec<crate::build::LateStep>)>,
-    /// What the ground told this read, for the read that repeats it.
-    journal: Vec<kati::session::GroundAnswer>,
+    /// What this read was told from outside itself, for the read that repeats
+    /// it.
+    journal: UnitJournal,
 }
 
 fn compile_unit<F>(
@@ -680,9 +696,18 @@ where
     // back because the expansion that asked has to be handed a value. A unit
     // reading for the first time — the child this pass was taken for — gets
     // nothing and asks the ground itself.
-    session
-        .ground_journal
-        .replay(replayed.cloned().unwrap_or_default());
+    session.ground_journal.replay(
+        replayed
+            .map(|journal| journal.ground.clone())
+            .unwrap_or_default(),
+    );
+    // And the text it READ, which is the other half of the same premise. A
+    // makefile a staged child has since written was not part of the first read
+    // and must not become part of this one; one it has rewritten is still the
+    // text the first read had.
+    for (name, contents) in replayed.map_or(&[][..], |journal| &journal.sources) {
+        session.supply_makefile(name.clone(), contents.clone());
+    }
     let read = in_directory(&context.directory, || {
         read_unit(session, sink, parent_scope, &context)
     });
