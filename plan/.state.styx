@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-20T02:40:54.004122988Z
+last_sync_at 2026-08-20T03:31:21.605164794Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -62,13 +62,16 @@ derived_priorities (
     {id kati-symbol-display, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-symtab-split, priority 0, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-wellknown-symbols, priority 3, derived_at 2026-08-04T18:10:27.805223477Z}
+    {id make-a-composed-recipe-is-still-one-shell, priority 0, derived_at 2026-08-20T03:31:21.605164794Z}
     {id make-a-failed-makefile-rule-still-reports-the-unread-include, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-a-forgiven-makefile-is-not-remade-for-the-goals, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-a-questioned-makefile-keeps-the-questions-status-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
+    {id make-a-scheduler-bound-recipe-is-expanded-though-its-target-is-current, priority 0, derived_at 2026-08-20T03:31:21.605164794Z}
     {id make-a-staging-pass-reads-text-the-first-read-never-saw, priority 3, derived_at 2026-08-20T01:26:46.942098006Z}
     {id make-a-worked-out-name-answers-the-wrong-origin, priority 0, derived_at 2026-08-20T02:18:30.517650912Z}
     {id make-a-write-to-a-special-variable-is-refused, priority 0, derived_at 2026-08-20T00:49:39.912891899Z}
+    {id make-always-make-rebuilds-nothing, priority 0, derived_at 2026-08-20T03:31:21.605164794Z}
     {id make-an-empty-argument-word-stops-the-build, priority 0, derived_at 2026-08-20T02:18:30.517650912Z}
     {id make-an-output-directory-is-created-where-gnu-make-would-refuse, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-an-unopenable-include-is-reported-where-gnu-reports-it, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
@@ -155,6 +158,7 @@ derived_priorities (
     {id make-modern-function-evaluation, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-multi-target-pattern-trigger-identity, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-narration-contract-audit, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
+    {id make-new-inputs-path-forms-read-the-placeholder, priority 0, derived_at 2026-08-20T03:31:21.605164794Z}
     {id make-newer-prerequisite-automatic-variable, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-notdir-strips-a-root-directory, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-oneshell-recursive-recipe-is-refused, priority 3, derived_at 2026-08-19T17:26:52.18798094Z}
@@ -665,7 +669,7 @@ assertions (
     {id make-staging-pass-asks-the-ground-again, kind @complete, author "brendan@necessary.nu", at 2026-08-20T01:26:42.878332155Z}
     {id make-a-write-to-a-special-variable-is-refused, kind @complete, author "brendan@necessary.nu", at 2026-08-20T02:18:57.155511753Z}
     {id make-escaped-percent-prerequisite-pattern-keeps-its-backslash, kind @complete, author "brendan@necessary.nu", at 2026-08-20T02:40:49.681188141Z}
-    {id make-construction-expanded-recipe-is-one-shell, kind @doing, author "brendan@necessary.nu", at 2026-08-20T02:41:16.912249235Z}
+    {id make-construction-expanded-recipe-is-one-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-20T03:31:17.251403752Z}
 )
 
 impl_evidence (
