@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-20T11:09:28.990168084Z
+last_sync_at 2026-08-20T11:29:59.568218728Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -203,6 +203,7 @@ derived_priorities (
     {id make-process-directory-isolation, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
     {id make-progress-total-shrinks-to-the-work, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-question-mode-refuses-a-makefile-it-cannot-make, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-question-mode-runs-a-plus-line, priority 1, derived_at 2026-08-20T11:29:59.568218728Z}
     {id make-question-variable-reads-an-archive-member, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-quiet-command-echo-becomes-the-description, priority 0, derived_at 2026-08-19T23:08:50.398495416Z}
     {id make-recipe-command-narration, priority 3, derived_at 2026-08-11T23:41:44.89262747Z}
@@ -699,7 +700,7 @@ assertions (
     {id make-compiler-warnings-reach-the-sink, kind @complete, author "brendan@necessary.nu", at 2026-08-20T10:15:21.669372593Z}
     {id make-endif-trailing-text-is-a-warning, kind @complete, author "brendan@necessary.nu", at 2026-08-20T10:28:24.350075896Z}
     {id make-bad-option-argument-in-a-makefiles-makeflags, kind @complete, author "brendan@necessary.nu", at 2026-08-20T11:09:24.19471213Z}
-    {id make-plus-line-runs-under-pretending, kind @doing, author "brendan@necessary.nu", at 2026-08-20T11:27:44.176502373Z}
+    {id make-plus-line-runs-under-pretending, kind @complete, author "brendan@necessary.nu", at 2026-08-20T11:29:54.357695748Z}
 )
 
 impl_evidence (
