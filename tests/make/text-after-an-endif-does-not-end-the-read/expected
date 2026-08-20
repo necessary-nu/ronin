@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| ifeq (a,a)
+| kept: ; @echo kept > kept
+| endif junk
+| ifeq (a,b)
+| skipped: ; @echo skipped > skipped
+| endif more junk
+| all: kept
+file kept touched 1
+| kept

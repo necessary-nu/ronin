@@ -696,6 +696,7 @@ assertions (
     {id make-a-command-line-file-argument-is-not-canonicalised, kind @complete, author "brendan@necessary.nu", at 2026-08-20T09:09:08.786561618Z}
     {id make-a-makefiles-own-makeflags-does-not-reach-the-include-path, kind @complete, author "brendan@necessary.nu", at 2026-08-20T09:38:53.840166284Z}
     {id make-compiler-warnings-reach-the-sink, kind @complete, author "brendan@necessary.nu", at 2026-08-20T10:15:21.669372593Z}
+    {id make-endif-trailing-text-is-a-warning, kind @doing, author "brendan@necessary.nu", at 2026-08-20T10:28:05.166011909Z}
 )
 
 impl_evidence (

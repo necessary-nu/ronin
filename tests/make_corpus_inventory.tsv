@@ -83,7 +83,6 @@ case	var_visibility_prefix_invalid_prefix_four.mk#test	extension	kati-extension	
 case	var_visibility_prefix_invalid_prefix_one.mk#test	extension	kati-extension	3fac32a95ecde20b
 case	var_visibility_prefix_invalid_prefix_three.mk#test	extension	kati-extension	be1a67d2d373cbbb
 case	var_visibility_prefix_invalid_prefix_two.mk#test	extension	kati-extension	23190c850bfe18d7
-case	warn_extra_trailings.mk#default	recorded	evaluation+corpus-todo+exit-status	b24a2c5dd8c3f262
 case	werror_find_emulator.sh#script	extension	find-emulator	50eacb35e0e5d07b
 case	werror_overriding_commands.sh#script	extension	kati-extension	b49d0d538ec9c115
 case	writable.sh#script	extension	kati-extension	6063eaf7c8245121
