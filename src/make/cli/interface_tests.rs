@@ -339,3 +339,35 @@ fn unknown_make_option_is_refused() {
         "{diagnostic}"
     );
 }
+
+/// Every switch argument is quoted on its way into the switch table, because
+/// GNU Make's `define_makeflags` runs one `quote_for_env` over `flags->arg`
+/// without asking which switch it belongs to. Two switches carry arbitrary
+/// text — `-I` and `--debug` — so those are the two that can show it.
+///
+/// What the quoting is for is the round trip: `MAKEFLAGS` is read back as a
+/// command line, so a blank must not end the word and a backslash must not be
+/// taken as quoting the byte after it. A `$` is doubled by the same rule, and
+/// what Ronin does with the doubling when the variable is READ is a decision
+/// of its own — see `docs/make-oracle-divergences.md`.
+// [spec:ronin:req:make.recursive-invocation+2/test]
+#[test]
+fn a_switch_argument_reaches_makeflags_quoted() {
+    let flags = super::compiler_flag_variables(&parsed(&["make", "--debug=b\\x$y"]));
+    assert_eq!(flags.base, " --debug=b\\\\x$$y");
+    assert_eq!(flags.mflags, "--debug=b\\\\x$$y");
+
+    let flags = super::compiler_flag_variables(&parsed(&["make", "-I", "a b$c\\d"]));
+    assert_eq!(flags.base, " -Ia\\ b$$c\\\\d");
+
+    // A spec with nothing to quote is published as it was written, which is
+    // what keeps the ordinary case readable in a child's environment.
+    let flags = super::compiler_flag_variables(&parsed(&["make", "--debug=basic"]));
+    assert_eq!(flags.base, " --debug=basic");
+
+    // And it survives being read back: the decoder unquotes exactly what the
+    // publisher quoted, so a makefile's own write settles against the same
+    // word the command line supplied.
+    let decoded = decode_makefile_makeflags(b"", b" --debug=b\\\\x$$y", b"").unwrap();
+    assert_eq!(decoded.makeflags.as_ref(), b" --debug=b\\\\x$$y");
+}

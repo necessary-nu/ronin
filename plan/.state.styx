@@ -740,6 +740,7 @@ assertions (
     {id make-an-unreadable-condition-after-else-is-extraneous-text, kind @complete, author "brendan@necessary.nu", at 2026-08-20T21:32:58.812572939Z}
     {id make-a-diagnostic-inside-a-define-names-the-call-not-the-define, kind @complete, author "brendan@necessary.nu", at 2026-08-20T22:00:07.152218267Z}
     {id make-an-environment-variable-is-a-recursive-one, kind @complete, author "brendan@necessary.nu", at 2026-08-20T22:35:44.716324909Z}
+    {id make-makeflags-holds-its-switches-as-literal-text, kind @complete, author "brendan@necessary.nu", at 2026-08-20T23:08:45.814542412Z}
 )
 
 impl_evidence (

@@ -1,0 +1,7 @@
+INTENTIONAL. Ronin's `$(MAKEFLAGS)` reads back the text it stores, so a `$` a
+switch value carried arrives doubled where GNU Make 4.4.1 halves it. Decided on
+make-makeflags-holds-its-switches-as-literal-text and recorded in
+docs/make-oracle-divergences.md; the sibling case
+`a-child-keeps-a-switch-value-a-dollar-was-written-in` measures what GNU Make's
+halving costs. Not a defect to be repaired — a change that made this case pass
+would take that one with it.

@@ -1,0 +1,14 @@
+# What a switch value carrying a `$` is worth by the time a child reads it.
+#
+# GNU Make expands MAKEFLAGS twice on the way down: `target_environment` makes
+# the exception that expands it for the child's environment, and the child's
+# `decode_env_switches` expands `$(MAKEFLAGS)` again before splitting it into
+# words. The first halving turns the stored `-Ia$$b` into `-Ia$b`; the second
+# reads `$b` as an undefined variable and the directory arrives as `-Ia`. The
+# switch is not wrong in the child — it is gone.
+#
+# Ronin expands it neither time. The stored text descends and the child's
+# decoder unquotes it once, which is the inverse of the quoting that wrote it,
+# so the directory arrives whole.
+all:
+	@$(MAKE) --no-print-directory -f child.mk > out

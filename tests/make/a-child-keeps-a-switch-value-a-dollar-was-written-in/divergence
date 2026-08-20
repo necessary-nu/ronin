@@ -1,0 +1,6 @@
+INTENTIONAL. GNU Make 4.4.1 expands MAKEFLAGS twice on the way to a child and
+the second expansion reads the halved `$b` as an undefined variable, so `-Ia$b`
+arrives as `-Ia` and the directory is lost. Ronin expands it neither time and
+the child receives the switch whole. Decided on
+make-makeflags-holds-its-switches-as-literal-text and recorded in
+docs/make-oracle-divergences.md.

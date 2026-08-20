@@ -252,9 +252,18 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
     // Deduplicated as GNU Make deduplicates them: the same `--debug` can arrive
     // from the command line and from a parent's `MAKEFLAGS` at once, and a
     // letter in the group cannot say a thing twice.
+    //
+    // Quoted like every other switch argument, because `define_makeflags` runs
+    // one `quote_for_env` over `flags->arg` and does not ask which switch it
+    // belongs to. `--debug` is the second of the two switches whose argument is
+    // arbitrary text — `-I` is the other — so it is the second place a
+    // backslash, a blank or a `$` has to survive being read back as a command
+    // line. Leaving it raw agreed with `$(MAKEFLAGS)` only by cancelling GNU
+    // Make's own halving, and disagreed with `$(value MAKEFLAGS)` and
+    // `$(MFLAGS)`, which read the stored text.
     let mut long = Vec::new();
     for spec in &invocation.debug {
-        let option = format!(" --debug={}", spec.to_str_lossy());
+        let option = format!(" --debug={}", quote_for_makeflags(&spec.to_str_lossy()));
         if !long.contains(&option) {
             long.push(option);
         }

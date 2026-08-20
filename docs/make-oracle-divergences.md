@@ -13,6 +13,9 @@ one under `kati/testcase` — were classified when the oracle moved to the
 released source.
 [`[spec:ronin:req:make.oracle-provenance]`](spec/ronin/make.md).
 
+The last section is about a fifth disagreement, and the only one Ronin chose:
+[where Ronin deliberately disagrees with the oracle](#where-ronin-deliberately-disagrees-with-the-oracle).
+
 ## The oracle
 
 Upstream GNU Make 4.4.1, built from the release tarball:
@@ -230,3 +233,79 @@ The single case it moves is the one this whole exercise was worth doing for:
 without the record, a re-record on Fedora or Arch would have silently replaced
 `ARFLAGS=-rvU` with `ARFLAGS=-rv` and nobody would have been told which of the
 two was GNU's.
+
+## Where Ronin deliberately disagrees with the oracle
+
+Everything above is one build of GNU Make against another. This section is
+Ronin against all four of them, in the one place the disagreement is a decision
+rather than a defect. A case that reaches one carries a `divergence` file
+naming it, and `tests/make_port.rs` fails in both directions: an unrecorded
+divergence fails the gate, and so does a recorded one that has started to
+agree — so nothing here can be quietly conformed away without the decision
+being reopened.
+
+### `$(MAKEFLAGS)` hands back the text it stores
+
+Owner: `make-makeflags-holds-its-switches-as-literal-text`.
+Cases: `makeflags-hands-back-the-switch-text-it-stores`,
+`a-child-keeps-a-switch-value-a-dollar-was-written-in`.
+
+GNU Make's `define_makeflags` runs `quote_for_env` over every switch argument,
+doubling each `$`, and then binds the result **recursively** —
+`define_variable_cname (MAKEFLAGS_NAME, flagstring, ..., 1)`. Reading the
+variable expands it, which halves the doubling again. So under
+`make -I 'a$b'`:
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| `$(MAKEFLAGS)` | ` -Ia$b` | ` -Ia$$b` |
+| `$(value MAKEFLAGS)` | ` -Ia$$b` | ` -Ia$$b` |
+| `$(MFLAGS)` | `-Ia$b` | `-Ia$b` |
+
+What is *stored* agrees. What reading it produces does not, and only where a
+switch value carries a literal `$` — which is `-I` and `--debug`, the two
+switches whose argument is arbitrary text.
+
+**Why the disagreement is kept.** GNU Make expands `MAKEFLAGS` twice on the way
+to a child and the second expansion destroys the switch. `target_environment`
+makes an explicit exception for this one name and expands it into the child's
+environment (` -Ia$b`); the child's `decode_env_switches` then expands
+`$(MAKEFLAGS)` *again* before splitting it into words, reads `$b` as an
+undefined variable, and the directory arrives as `-Ia`. Measured, with the
+directory present and holding an includable fragment:
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| child `$(MAKEFLAGS)` | ` -Ia --no-print-directory` | ` -Ia$$b --no-print-directory` |
+| child `$(.INCLUDE_DIRS)` | `/usr/local/include /usr/include` | `a$b /usr/local/include /usr/include` |
+| child found the fragment | no | yes |
+
+The same happens to `--debug=b$x`, which reaches the child as `--debug=b`.
+
+Ronin expands `MAKEFLAGS` neither time: the stored text is what
+`$(MAKEFLAGS)` reads, what descends to a child, and what the child's decoder
+unquotes — one string with one meaning, and the unquoting is the exact inverse
+of the quoting that wrote it. Conforming to GNU Make on the first table would
+mean reproducing the second, and reproducing a data loss is not compatibility
+of build intent.
+
+**What was checked before choosing.** The divergence needs a literal `$` inside
+a published switch value. There is none in the 932-case build-intent corpus,
+the 387-case vendored kati corpus, GNU Make's own test suite at `d66a65a`, or
+the Makefiles of vim 9.2, zsh 5.9.2, abseil or Ninja. Nothing measured here
+depends on GNU Make's spelling.
+
+**What is not part of the decision.** The quoting itself is GNU Make's and is
+matched exactly, including for `--debug`, whose argument used to be published
+raw. `$(value MAKEFLAGS)` and `$(MFLAGS)` agree with GNU Make on the switch
+table proper — `-I` and `--debug` — and on command-line assignments, which both
+tools keep behind a `$(MAKEOVERRIDES)` reference;
+`a-switch-value-is-stored-in-makeflags-as-gnu-make-quotes-it` gates that.
+
+One thing that looks like part of it is not, and is a plain gap rather than a
+decision: GNU Make keeps `--eval` fragments behind a `$(-*-eval-flags-*-)`
+reference of their own and Ronin writes them inline, so `$(value MAKEFLAGS)`
+reads ` $(-*-eval-flags-*-)` there and ` --eval=X\ :=\ a$$b` here. The two
+agree on `$(MAKEFLAGS)` itself, because the reference names a *simple*
+variable and expanding it does not halve the fragment's `$$` either.
+`make-makeflags-keeps-its-eval-fragments-behind-a-reference` owns it.
