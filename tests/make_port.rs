@@ -342,11 +342,22 @@ fn walk(root: &Path, directory: &Path, before: SystemTime, into: &mut BTreeMap<S
     }
 }
 
+/// A case's arguments, one word per whitespace-separated token.
+///
+/// `''` is a zero-length word — the shell's own spelling for one, and the only
+/// argument whitespace cannot separate. `make ""` is a shape GNU Make builds
+/// through, so a case has to be able to say it.
 fn read_words(path: &Path) -> Vec<String> {
     fs::read_to_string(path)
         .unwrap_or_default()
         .split_whitespace()
-        .map(str::to_owned)
+        .map(|word| {
+            if word == "''" {
+                String::new()
+            } else {
+                word.to_owned()
+            }
+        })
         .collect()
 }
 

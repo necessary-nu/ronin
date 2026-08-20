@@ -1215,7 +1215,16 @@ fn path_of(value: &[u8]) -> Result<PathBuf, Error> {
 /// in it assigns, and nothing else does. A command-line assignment is not an
 /// environment variable — it outranks the makefile's own, which is why it
 /// travels as an assignment rather than as an exported value.
+///
+/// A zero-length word is neither. GNU Make's `handle_non_switch_argument`
+/// guards the goal branch with `arg[0] != '\0'` (main.c), so `make ""` builds
+/// the default goal and leaves `MAKECMDGOALS` empty — the shape a wrapper hands
+/// Make whenever it expands `make "$TARGET"` with `TARGET` unset. Reading the
+/// empty word as a path instead abandons a build GNU Make runs.
 fn classify_word(invocation: &mut Invocation, word: &BString) {
+    if word.is_empty() {
+        return;
+    }
     if word.contains(&b'=') {
         invocation.variables.push(Bytes::from(word.to_vec()));
     } else {
@@ -1917,6 +1926,28 @@ mod tests {
             invocation.variables,
             vec![kati::bytes::Bytes::from_static(b"FOO=bar")]
         );
+    }
+
+    /// GNU Make's `handle_non_switch_argument` will not make a goal of a
+    /// zero-length word, so neither does this: the word is passed over
+    /// wherever it stands and the goals either side of it are the whole list.
+    // [spec:ronin:req:product.make-identity/test]
+    #[test]
+    fn an_empty_word_is_passed_over() {
+        let alone = parsed(&["make", ""]);
+        assert!(alone.goals.is_empty());
+        assert!(alone.variables.is_empty());
+
+        let surrounded = parsed(&["make", "", "all", "", "FOO=bar", ""]);
+        assert_eq!(surrounded.goals, vec![BString::from("all")]);
+        assert_eq!(
+            surrounded.variables,
+            vec![kati::bytes::Bytes::from_static(b"FOO=bar")]
+        );
+
+        // `--` stops option parsing and the same guard has to hold after it.
+        let after_terminator = parsed(&["make", "--", ""]);
+        assert!(after_terminator.goals.is_empty());
     }
 
     // [spec:ronin:req:product.make-identity/test]
