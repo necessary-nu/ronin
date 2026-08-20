@@ -1,0 +1,33 @@
+oracle GNU Make 4.4.1
+outcome success
+file %.c kept 1
+| bare
+file Makefile kept 16
+| # GNU Make's `enter_prereqs` (file.c) compresses a static pattern rule's
+| # percent escaping into a COPY of the prerequisite and throws the copy away
+| # when no wildcard survived it — `percent = find_percent (nm); if (percent)
+| # ... dp->name = ...` — so a prerequisite pattern that is not a pattern reaches
+| # the build spelt exactly as the makefile wrote it, backslash and all.
+| #
+| # `\%.c` holds no wildcard, so it names one file called `\%.c` for both
+| # targets. `\\%.c` does hold one — an even run of backslashes halves and the
+| # `%` survives — so it stands for `\a.c` and `\b.c`.
+| all: a.o b.o a.q
+| 
+| a.o b.o: %.o: \%.c
+| 	@cat '$<' > $@
+| 
+| a.q: %.q: \\%.c
+| 	@cat '$<' > $@
+file \%.c kept 1
+| escaped
+file \a.c kept 1
+| one-backslash
+file a.c kept 1
+| no-backslash
+file a.o touched 1
+| escaped
+file a.q touched 1
+| one-backslash
+file b.o touched 1
+| escaped

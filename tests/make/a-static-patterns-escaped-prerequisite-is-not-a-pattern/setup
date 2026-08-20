@@ -1,0 +1,7 @@
+# Two files whose names differ only in the backslash, so which one the build
+# read is the evidence. `%.c` is the name a tool that compressed the escaping
+# would reach for; `\%.c` is the name the makefile wrote.
+printf 'escaped\n' > '\%.c'
+printf 'bare\n' > '%.c'
+printf 'one-backslash\n' > '\a.c'
+printf 'no-backslash\n' > 'a.c'

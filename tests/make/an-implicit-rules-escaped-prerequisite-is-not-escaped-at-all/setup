@@ -1,0 +1,6 @@
+# Four names that differ only in their backslashes, so which one the search
+# reached for is the evidence.
+printf 'one-backslash\n' > '\a.c'
+printf 'two-backslashes\n' > '\\a.c'
+printf 'no-backslash\n' > 'a.c'
+printf 'the-pattern-itself\n' > '\%.c'
