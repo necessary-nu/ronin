@@ -1,0 +1,23 @@
+# GNU Make has no readonly notion for the names it works out for itself, and a
+# makefile that writes one builds all the same.
+#
+# `.VARIABLES` is rebuilt from the variable table inside `lookup_variable`
+# (`lookup_special_var`, variable.c), so a write to it is stored and never read
+# back — indistinguishable from being ignored — and that holds for an `override`
+# write too. `.SHELLSTATUS` is not one of those: it is an ordinary variable
+# `func_shell_base` defines at override origin after every `$(shell)`, so a
+# makefile's own write to it loses the precedence contest rather than stopping
+# the read, and a write made BEFORE the first `$(shell)` — when the name does
+# not exist yet — lands.
+EARLY = before-any-shell
+.SHELLSTATUS = $(EARLY)
+SEEN := $(.SHELLSTATUS)
+STATUS := $(shell exit 3)
+.VARIABLES = written
+.SHELLSTATUS = too-late
+MAKEFLAGS += .VARIABLES=through-makeflags FOO=1
+override .VARIABLES = overridden
+GOAL := reached
+all:
+	@printf 'FOO=[%s] seen=[%s] status=[%s]\n' '$(FOO)' '$(SEEN)' '$(.SHELLSTATUS)' > out
+	@printf 'names=[%s] wrote=[%s]\n' '$(filter GOAL,$(.VARIABLES))' '$(filter written through-makeflags overridden,$(.VARIABLES))' >> out

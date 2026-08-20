@@ -71,7 +71,7 @@ case	real_to_phony.sh#script	extension	kati-extension	a95e71a768400f2d
 case	recursive_self_reference.mk#default	defect	exit-status+stop-suffix	6999fe4ee4b0a2c7
 case	segfault_stack_overflow.sh#script	defect	exit-status+stop-suffix	5a04c69ebe6a42ab
 case	shellstatus_in_rule.mk#test	extension	kati-extension	3c32c2b9f1f3cf9d
-case	shellstatus_readonly.mk#test	extension	kati-extension	64b641ea62022407
+case	shellstatus_readonly.mk#test	extension	kati-extension	200d465c3d68cce1
 case	silent_ignore_error.mk#test	defect	identity-prefix+error-location	ca3a2f47b2c7169c
 case	suffix_rule_warn.sh#script	extension	kati-extension	49f6c8102c13451f
 case	top_level_phony.sh#script	extension	kati-extension	1c3662df94de401b

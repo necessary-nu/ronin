@@ -1561,3 +1561,43 @@ fn a_brace_group_holds_one_invocation() {
     assert!(written.starts_with("a{b} "), "{written}");
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// The environment is the third way a write reaches a name GNU Make works out
+/// for itself, and it is the one no corpus case can carry: the port harness
+/// runs every case with the same environment.
+///
+/// `.VARIABLES` is rebuilt from the variable table at every lookup, so what
+/// the environment says about it is stored and never read back; `.SHELLSTATUS`
+/// does not exist until a `$(shell)` has run, so an environment value for it
+/// is the name's first definition and stands until one does. Neither stops the
+/// read, which is what this gates — Ronin used to abandon with `cannot assign
+/// to readonly variable` and build nothing at all.
+#[test]
+fn environment_reaches_a_worked_out_name() {
+    let directory = test_directory("environment-write-to-a-worked-out-name");
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\
+         \t@printf 'status=[%s] wrote=[%s] foo=[%s]\\n' \
+         '$(.SHELLSTATUS)' '$(filter from-env,$(.VARIABLES))' '$(FOO)' > out\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory)
+        .env(".VARIABLES", "from-env")
+        .env(".SHELLSTATUS", "from-env")
+        .env("FOO", "from-env")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "an environment write to a worked-out name stopped the read: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let written = fs::read_to_string(directory.join("out")).unwrap();
+    assert_eq!(
+        written, "status=[from-env] wrote=[] foo=[from-env]\n",
+        "{written}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}
