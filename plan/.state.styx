@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-20T01:26:46.942098006Z
+last_sync_at 2026-08-20T02:18:30.517650912Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -67,7 +67,9 @@ derived_priorities (
     {id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-a-questioned-makefile-keeps-the-questions-status-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-a-staging-pass-reads-text-the-first-read-never-saw, priority 3, derived_at 2026-08-20T01:26:46.942098006Z}
+    {id make-a-worked-out-name-answers-the-wrong-origin, priority 0, derived_at 2026-08-20T02:18:30.517650912Z}
     {id make-a-write-to-a-special-variable-is-refused, priority 0, derived_at 2026-08-20T00:49:39.912891899Z}
+    {id make-an-empty-argument-word-stops-the-build, priority 0, derived_at 2026-08-20T02:18:30.517650912Z}
     {id make-an-output-directory-is-created-where-gnu-make-would-refuse, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-an-unopenable-include-is-reported-where-gnu-reports-it, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-an-unreadable-include-is-refused-rather-than-raised, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
