@@ -369,6 +369,14 @@ where
     // prerequisites is up to date the moment its target exists, and a file
     // with no read permission exists — and so what lets such a rule repair
     // the file and send the read around again.
+    // Ahead of both, because GNU Make stamps the `-W` files after the whole
+    // read has finished (main.c:2325) and so over whatever the read concluded
+    // about them, and because there is no syscall to make for a name the
+    // invocation has already answered about.
+    if runtime.assumed_new.contains(node) {
+        runtime.node_mut(node).observe(FileTime::NEWEST);
+        return Ok(());
+    }
     if graph.is_unread_makefile(node) {
         runtime.node_mut(node).observe(FileTime::MISSING);
         return Ok(());
@@ -554,7 +562,22 @@ where
     // && always_make_flag` (remake.c), so a name with no recipe behind it is
     // not forced — there is nothing the forcing could ask for — and a source
     // file has no generator edge here to be asked about at all.
-    let dirty = edge_data.always_dirty
+    // What forces a `.PHONY` target is that it does not exist: GNU Make starts
+    // `must_make = noexist` and a phony's date is `NONEXISTENT_MTIME`
+    // (remake.c:550). A file `-W` named HAS a date — the switch writes
+    // `NEW_MTIME` over it — so a phony the switch named stops being forced.
+    // Only that one reason yields: `-B` still forces it, because
+    // `always_make_flag` is a separate arm asking only whether there is a
+    // recipe, and a prerequisite that really changed still remakes it. Probed
+    // against 4.4.1 over `out: in ph`: `-W ph` rebuilds `out` and does not run
+    // `ph`, `-W ph -B` runs both, and `-W out` runs both because the phony ran.
+    let assumed_new = !graph.edge(edge).out.is_empty()
+        && graph
+            .edge(edge)
+            .out
+            .iter()
+            .all(|output| runtime.assumed_new.contains(*output));
+    let dirty = (edge_data.always_dirty && !assumed_new)
         || (runtime.always_make && !graph.is_phony_rule(edge_data.rule))
         || out_of_date;
 

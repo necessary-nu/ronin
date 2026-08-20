@@ -119,6 +119,22 @@ pub(crate) struct BuildOptions {
     /// scans disagree; a flag written into the edges could not.
     // [spec:ronin:req:make.semantics+1]
     pub(crate) always_make: bool,
+    /// The files this run answers about as though each had just been written,
+    /// which is GNU Make's `-W` / `--what-if` / `--assume-new` / `--new-file`.
+    ///
+    /// Names rather than nodes, because the graph a scan reads is not the graph
+    /// this was asked of: the makefile pass and the goal pass are two scans over
+    /// one graph and a `-W` name is looked up in each. A name the graph does not
+    /// hold is nothing, which is GNU Make's answer too — `enter_file` makes a
+    /// file nothing depends on.
+    ///
+    /// A scan-level setting for the same reason `-B` is one, and with the same
+    /// restart subtlety behind it: GNU Make stamps these files before the
+    /// makefile update on a first read and only after it on a restart
+    /// (main.c:2325, main.c:2837), so an assumed-new makefile prerequisite
+    /// sends the read around once and not forever.
+    // [spec:ronin:req:make.semantics+1]
+    pub(crate) assumed_new: Vec<BString>,
 }
 
 impl Default for BuildOptions {
@@ -148,6 +164,7 @@ impl Default for BuildOptions {
             archive_members: false,
             touch: false,
             always_make: false,
+            assumed_new: Vec::new(),
         }
     }
 }
@@ -673,6 +690,25 @@ impl<'a> Builder<'a> {
         }
         let mut runtime = RuntimeState::new(graph);
         runtime.always_make = options.always_make;
+        // Resolved against the graph this scan reads rather than carried as
+        // node ids, because the names were given to the invocation and the same
+        // names are looked up again for the goal pass. A name the graph does
+        // not hold answers about nothing, which is GNU Make's `enter_file` on a
+        // name no rule mentions.
+        if !options.assumed_new.is_empty() {
+            let nodes = options
+                .assumed_new
+                .iter()
+                // Looked up as the switch stored it and no further. GNU Make
+                // has no path canonicalisation: `expand_command_line_file`
+                // strips a LEADING `./` and stops, so `-W ./d/in` names the
+                // file `d/in` and `-W d/./in` names a file no rule mentions.
+                // Canonicalising here would make the second one work, which is
+                // a file GNU Make's `enter_file` creates and nothing depends on.
+                .filter_map(|name| crate::graph::nodeget(graph, name.as_slice()))
+                .collect::<Vec<_>>();
+            runtime.assumed_new.mark(&nodes, graph.node_ids().len());
+        }
         if let Some(log) = build_log.as_deref() {
             log.hydrate_runtime(graph, &mut runtime, graph.node_ids());
         }
@@ -1085,9 +1121,12 @@ impl<'a> Builder<'a> {
 
         for (node, mtime) in self.stat_targets.iter().zip(&results) {
             if let Some(mtime) = *mtime {
-                self.runtime
-                    .node_mut(*node)
-                    .observe(FileTime::observed(mtime));
+                let observed = if self.runtime.assumed_new.contains(*node) {
+                    FileTime::NEWEST
+                } else {
+                    FileTime::observed(mtime)
+                };
+                self.runtime.node_mut(*node).observe(observed);
             }
         }
     }

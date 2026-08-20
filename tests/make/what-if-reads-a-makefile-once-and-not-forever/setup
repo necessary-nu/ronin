@@ -1,0 +1,2 @@
+echo "V=0" > gen.mk
+touch stamp

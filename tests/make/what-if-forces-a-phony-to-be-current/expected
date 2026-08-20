@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| .PHONY: always
+| out: in.txt always
+| 	@echo out >> ran
+| 	@touch out
+| always: ; @echo always >> ran
+file in.txt kept 1
+| fresh
+file out touched 1
+| original
+file ran touched 1
+| out

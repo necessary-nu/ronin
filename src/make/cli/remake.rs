@@ -109,6 +109,15 @@ struct Makefiles<'a> {
     /// Whether `-B` reaches this phase, which it does on the first read and
     /// never again. See [`CompilerInputBuild::restarts`].
     force: bool,
+    /// Whether the `-W` files reach this phase, which they do on the first read
+    /// and never again.
+    ///
+    /// GNU Make stamps them before the makefile update when nothing has
+    /// restarted yet and only after it when something has (main.c:2325,
+    /// main.c:2837). The same bug is behind it as behind `force`: an
+    /// assumed-new prerequisite of a makefile with a rule would remake the
+    /// makefile, move its date, send the read around, and be assumed new again.
+    assume_new: bool,
 }
 
 /// One subset of the Makefiles, and how it is brought up to date.
@@ -485,6 +494,11 @@ impl Makefiles<'_> {
         // decides it once, for the phase, rather than per makefile.
         let phase = BuildOptions {
             always_make: self.force,
+            assumed_new: if self.assume_new {
+                self.options.assumed_new.clone()
+            } else {
+                Vec::new()
+            },
             ..self.options.clone()
         };
         let phase = &phase;
@@ -814,6 +828,7 @@ pub(super) fn build_compiler_inputs(
         goals,
         directory,
         force: options.always_make && restarts == 0,
+        assume_new: restarts == 0,
     };
     let remaking = Passes {
         graph: &mut graph,
@@ -926,6 +941,7 @@ mod tests {
             goals: &[BString::from("asked.mk")],
             directory: Path::new("."),
             force: false,
+            assume_new: true,
         };
 
         let subsets = makefiles.subsets(&graph);
@@ -954,6 +970,7 @@ mod tests {
             goals: &[BString::from("asked.mk")],
             directory: Path::new("."),
             force: false,
+            assume_new: true,
         };
 
         let subsets = makefiles.subsets(&graph);
@@ -980,6 +997,7 @@ mod tests {
             goals: &[BString::from("asked.mk")],
             directory: Path::new("."),
             force: false,
+            assume_new: true,
         };
 
         let subsets = makefiles.subsets(&graph);
@@ -1014,6 +1032,7 @@ mod tests {
             goals: &[BString::from("asked.mk")],
             directory: Path::new("."),
             force: true,
+            assume_new: true,
         };
         assert!(
             makefiles
@@ -1024,6 +1043,7 @@ mod tests {
 
         let restarted = Makefiles {
             force: false,
+            assume_new: true,
             ..makefiles
         };
         assert!(
@@ -1049,6 +1069,7 @@ mod tests {
             goals: &[],
             directory: Path::new("."),
             force: false,
+            assume_new: true,
         };
 
         let subsets = makefiles.subsets(&graph);

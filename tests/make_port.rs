@@ -81,7 +81,7 @@ const COMPARISON_REPORT: &str = "target/make-port-comparison.txt";
 /// see, so it gates on what the touch did rather than being read for discovery.
 /// `-B` left for the same reason and it is the plainer of the two: what it
 /// decides is which recipes run, and therefore which files the build writes.
-const DISCOVERY_ONLY_CASES: [&str; 8] = [
+const DISCOVERY_ONLY_CASES: [&str; 7] = [
     "dry-run-skips-a-make-reference-line",
     "dry-run-skips-a-plus-line",
     "makeflags-keep-going-precedence",
@@ -89,7 +89,6 @@ const DISCOVERY_ONLY_CASES: [&str; 8] = [
     "makeflags-value-switch-precedence",
     "makeflags-withdrawal-outranked-by-command-line",
     "phony-runs-though-the-file-is-current",
-    "what-if-option",
 ];
 
 /// What a case's build left behind.

@@ -1,0 +1,14 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| all: ; @echo all-$(V) >> ran
+| include gen.mk
+| gen.mk: stamp
+| 	@echo remade >> ran
+| 	@echo "V=1" > gen.mk
+file gen.mk touched 1
+| V=1
+file ran touched 2
+| remade
+| all-1
+file stamp kept 0

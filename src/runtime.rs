@@ -4,8 +4,10 @@ use crate::graph::{EdgeId, Graph, NodeId};
 use std::num::NonZeroU64;
 use std::ops::Range;
 
+mod assumed;
 mod deferred;
 
+pub(crate) use assumed::AssumedNew;
 pub(crate) use deferred::DeferredRuntime;
 
 /// A filesystem timestamp with the unobserved sentinel hidden behind methods.
@@ -18,6 +20,11 @@ impl FileTime {
 
     pub(crate) const UNOBSERVED: Self = Self(Self::UNOBSERVED_RAW);
     pub(crate) const MISSING: Self = Self(0);
+    /// Newer than anything a filesystem can answer, which is what GNU Make's
+    /// `-W` writes over the date of the file it names: `NEW_MTIME` is
+    /// `INTEGER_TYPE_MAXIMUM (FILE_TIMESTAMP)` (filedef.h) and the switch
+    /// stamps it on the file rather than touching it.
+    pub(crate) const NEWEST: Self = Self(i64::MAX);
     pub(crate) const fn observed(raw: i64) -> Self {
         debug_assert!(raw >= 0, "observed filesystem timestamps are nonnegative");
         Self(raw)
@@ -55,7 +62,7 @@ impl FileTime {
     ///
     /// Missing and unobserved answer for themselves. Neither is a moment.
     pub(crate) const fn to_end_of_second(self) -> Self {
-        if !self.is_observed() || self.is_missing() {
+        if !self.is_observed() || self.is_missing() || self.0 == Self::NEWEST.0 {
             return self;
         }
         Self(self.0 - self.0.rem_euclid(1_000_000_000) + 999_999_999)
@@ -307,6 +314,16 @@ pub(crate) struct RuntimeState {
     /// answers the two differently. Left alone by [`Self::reset`], which
     /// clears what a scan learned rather than what it was asked.
     pub(crate) always_make: bool,
+    /// The nodes this scan answers about as though the file had just been
+    /// written, which is GNU Make's `-W`.
+    ///
+    /// Beside `always_make` and for the same reason: it belongs to a scan
+    /// rather than to the graph, and the makefile pass and the goal pass are
+    /// answered differently — GNU Make stamps the `-W` files before the
+    /// makefile update on a first read and only after it on a restart
+    /// (main.c:2325, main.c:2837). Left alone by [`Self::reset`], which clears
+    /// what a scan learned rather than what it was asked.
+    pub(crate) assumed_new: AssumedNew,
 }
 
 impl RuntimeState {

@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| VPATH = x-dir
+| y: x
+| 	@echo "cp $< $@" >> ran
+| 	@touch y
+file ran touched 1
+| cp x-dir/x y
+file x-dir/x kept 1
+| source
+file y touched 1
+| old

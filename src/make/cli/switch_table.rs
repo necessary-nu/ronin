@@ -234,4 +234,21 @@ impl Invocation {
     ) {
         let _ = self.non_empty(source, option, named);
     }
+
+    /// Record a file `-W` named, which the run answers about as though it had
+    /// just been written.
+    ///
+    /// Through the same file-name gate every other switch that names one goes
+    /// through, because GNU Make's is the same gate: `expand_command_line_file`
+    /// is reached before the name is stored, so `-W ./x` and `-W x` name one
+    /// file. Nothing is published — `-W` is the one file switch with `toenv`
+    /// clear in the switch table (main.c:486), so it is not written into
+    /// `MAKEFLAGS` and a recursive child is never told.
+    pub(super) fn assume_new(&mut self, source: ArgumentSource, named: &[u8]) {
+        if !self.non_empty(source, "-W", named) {
+            return;
+        }
+        self.assumed_new
+            .push(BString::from(command_line_file(named)));
+    }
 }

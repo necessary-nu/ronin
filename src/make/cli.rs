@@ -383,6 +383,12 @@ struct Invocation {
     /// for one it would have accepted: a makefile guarding on the refusal would
     /// otherwise take the wrong branch.
     jobserver_style: Option<BString>,
+    /// The files `-W` named, canonicalised, in the order they were given.
+    ///
+    /// GNU Make's `new_files`, which `main` stamps `NEW_MTIME` on rather than
+    /// touching: the file reads as present and newer than everything
+    /// downstream of it, and its own rule sees nothing to do.
+    assumed_new: Vec<BString>,
     /// The first switch this stream could not read, kept until the whole word
     /// has been consumed.
     ///
@@ -424,6 +430,7 @@ impl Invocation {
             negated: 0,
             output_sync: None,
             jobserver_style: None,
+            assumed_new: Vec::new(),
             bad: None,
             complaints: Vec::new(),
         }
@@ -915,7 +922,7 @@ fn separated_long(
         b"--directory" => invocation.directory(source, named.as_bytes())?,
         b"--include-dir" => invocation.include_dir(source, named.as_bytes())?,
         b"--eval" => invocation.eval_statement(source, named.as_bytes()),
-        _ => invocation.discarded_argument(source, "-W", named.as_bytes()),
+        _ => invocation.assume_new(source, named.as_bytes()),
     }
     Ok(())
 }
@@ -943,7 +950,7 @@ fn attached_long(
         .or_else(|| option.strip_prefix(b"--new-file="))
         .or_else(|| option.strip_prefix(b"--assume-new="))
     {
-        invocation.discarded_argument(source, "-W", named);
+        invocation.assume_new(source, named);
     } else if let Some(eval) = option.strip_prefix(b"--eval=") {
         invocation.eval_statement(source, eval);
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
@@ -1185,7 +1192,7 @@ fn read_cluster(
                 );
                 short = argument.len();
                 if let Some(named) = named {
-                    invocation.discarded_argument(source, "-W", named.as_bytes());
+                    invocation.assume_new(source, named.as_bytes());
                 }
             }
             b'O' => {
@@ -1394,6 +1401,7 @@ fn build_options(
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
         maxload: invocation.load.map_or(0.0, |load| load.ceiling),
+        assumed_new: invocation.assumed_new.clone(),
         working_directory,
         ..BuildOptions::default()
     };
