@@ -12693,6 +12693,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-20T10:44:52.923403381Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The corpus-inventory count was left behind by afc0db2 and is corrected in the commit this note is attached to.\n\nRemoving `warn_extra_trailings.mk#default` from tests/make_corpus_inventory.tsv also moves the pinned totals in tests/make_corpus_inventory.rs — 53 cases to 52, `recorded` 4 to 3 — and that assertion is the running commentary on why the number is what it is, so it takes a paragraph as well as a number. It did not fail during the node's own gate run because `nplan check` answered from a witness stamped before the row was deleted, and the workspace-test count I read was the one from before it. My error: the witness is a cache of a measurement, and I read it as the measurement.\n\nNothing about the delivered behaviour changes. The lesson is the gate order — a conformance run that says a row moved has already changed what the workspace tests assert, so the workspace tests belong after it and not before."
+                        after_done true
+                    }
                 )
             }
 

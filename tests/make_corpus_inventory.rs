@@ -58,6 +58,14 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 53 when text after an `endif` stopped ending the read and became the
+    // warning GNU Make raises: `warn_extra_trailings.mk#default` — three
+    // trailing-text directives in four lines, headed by the corpus's own
+    // fix-me — became identical after normalisation and left the recorded
+    // corpus-TODO class, taking its `evaluation` and `exit-status` rows with
+    // it.
+    //
+    // Before that it moved
     // from 69 when kati adopted GNU Make 4.4.1's `'x'` quoting in place of the
     // 3.8x `` `x' `` it was written against. Sixteen cases became byte-identical
     // — `call_with_whitespace.mk#test`, `define_with_comments.mk#test`, the
@@ -154,9 +162,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 53);
+    assert_eq!(cases.len(), 52);
     assert_eq!(by_class["defect"], 17);
-    assert_eq!(by_class["recorded"], 4);
+    assert_eq!(by_class["recorded"], 3);
     assert_eq!(by_class["extension"], 31);
     assert_eq!(by_class["artefact"], 1);
 }
