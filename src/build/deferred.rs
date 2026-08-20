@@ -322,6 +322,18 @@ impl Builder<'_> {
         self.resolve_deferred_new_inputs(edge, command, NewInputsReferenceContext::InlineCommand)
     }
 
+    /// The same substitution into a launch that names its own program.
+    ///
+    /// A word of an argument list reaches the program as it stands, so the
+    /// value goes in unescaped: the quoting the inline form applies is for the
+    /// shell that would have read the command line, and a launch has no shell
+    /// between it and the program. That is the response file's case exactly —
+    /// a script a shell reads from a file is not a word in anybody's command
+    /// line either.
+    pub(super) fn deferred_launch_word(&self, edge: EdgeId, word: &BString) -> BString {
+        self.resolve_deferred_new_inputs(edge, word, NewInputsReferenceContext::ResponseFile)
+    }
+
     pub(super) fn deferred_response_file_content(
         &self,
         edge: EdgeId,

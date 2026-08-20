@@ -1087,6 +1087,73 @@ fn directory_to_impose(working_directory: &Path) -> PathBuf {
 /// The shell Ninja hands commands to on this platform.
 const SYSTEM_SHELL: &str = "/bin/sh";
 
+/// The executable that answers to `sh`, once a process entry point has said
+/// that its own does.
+#[cfg(unix)]
+static BUILTIN_SHELL: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+
+/// Say that this executable carries the shell, so a build may spawn it as one.
+///
+/// The declaration is what entitles the substitution, and it has to be a
+/// declaration rather than a discovery: `current_exe` names whatever program
+/// is running, and only a program that dispatches on its invoked name will
+/// answer as a shell when spawned as one. Ronin's own entry point does; a test
+/// binary linking this library, or a program embedding it, does not — and
+/// neither declares, so both get the machine's shell exactly as they did
+/// before there was another.
+///
+/// `current_exe` reads `/proc/self/exe` on Linux. Where there is no `/proc`,
+/// or the answer names a file that is gone, there is nothing to spawn and the
+/// declaration stands as "no builtin shell" rather than failing an invocation
+/// that has not started yet.
+// [spec:ronin:req:product.builtin-shell]
+#[cfg(unix)]
+pub fn declare_builtin_shell() {
+    let _ = BUILTIN_SHELL.set(std::env::current_exe().ok().filter(|own| own.is_file()));
+}
+
+/// Say that this executable carries the shell, which no build here can use.
+///
+/// Windows has no shell in the position a builtin one would stand in — Ninja
+/// hands the whole command line to `CreateProcess` — so the declaration is
+/// accepted and means nothing.
+#[cfg(not(unix))]
+pub fn declare_builtin_shell() {}
+
+/// The executable to spawn in place of the default shell, if any.
+///
+/// `None` until a process entry point declares one, and `None` for good on a
+/// process that never does.
+// [spec:ronin:req:product.builtin-shell]
+#[cfg(unix)]
+pub(crate) fn builtin_shell() -> Option<&'static Path> {
+    BUILTIN_SHELL.get()?.as_deref()
+}
+
+/// The process that runs the shell spelled `named`.
+///
+/// Where `named` is the default shell, that is this executable under the name
+/// the build asked for: `arg0` carries the spelling through, because dash
+/// prefixes its diagnostics with `argv[0]` exactly as written, so a
+/// substituted shell says `/bin/sh: 1: cc: not found` where the shell it
+/// replaced would have. A shell the build named — a Makefile's `SHELL`, a
+/// `--shell`, the `$SHELL` an unmarked script is run under — is spawned as
+/// named, so choosing a shell still chooses one.
+// [spec:ronin:req:product.builtin-shell]
+#[cfg(unix)]
+fn shell_process(named: &std::ffi::OsStr) -> Command {
+    use std::os::unix::process::CommandExt;
+
+    if named == std::ffi::OsStr::new(SYSTEM_SHELL)
+        && let Some(own) = builtin_shell()
+    {
+        let mut shell = Command::new(own);
+        shell.arg0(named);
+        return shell;
+    }
+    Command::new(named)
+}
+
 /// How a command string is turned into a process.
 ///
 /// Ninja hands every command to `/bin/sh -c` on Unix, which makes the shell
@@ -1174,9 +1241,15 @@ fn direct_command(
             .to_owned()
     };
     let mut command = interpreter.map_or_else(
-        || Command::new(word(&direct.argv[0])),
+        // A launch names its own program, so a front end that put the default
+        // shell there — which is what a recipe line needing a shell is — gets
+        // the build's own, under the name it wrote.
+        || shell_process(&word(&direct.argv[0])),
         |interpreter| {
-            let mut command = Command::new(interpreter);
+            // The interpreter is a shell, so it is one this executable can be:
+            // an executable file with no `#!` line is run by `$SHELL`, and
+            // where that is the default shell the build's own reads it.
+            let mut command = shell_process(interpreter);
             command.arg(word(&direct.argv[0]));
             command
         },
@@ -1241,6 +1314,15 @@ fn shell_command(
     environment: &[(std::ffi::OsString, Option<std::ffi::OsString>)],
 ) -> Command {
     let mut shell = match mode {
+        #[cfg(unix)]
+        ShellMode::Program(program) => {
+            let mut shell = shell_process(program.as_os_str());
+            shell
+                .arg("-c")
+                .arg(command.to_os_str().expect("byte strings are valid on Unix"));
+            shell
+        }
+        #[cfg(not(unix))]
         ShellMode::Program(program) => {
             let mut shell = Command::new(program);
             shell
@@ -1264,7 +1346,7 @@ fn shell_command(
         }
         #[cfg(unix)]
         ShellMode::Auto | ShellMode::Compat => {
-            let mut shell = Command::new(SYSTEM_SHELL);
+            let mut shell = shell_process(std::ffi::OsStr::new(SYSTEM_SHELL));
             shell
                 .arg("-c")
                 .arg(command.to_os_str().expect("byte strings are valid on Unix"));

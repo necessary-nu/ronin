@@ -717,6 +717,13 @@ where
     // walk that drops circular prerequisites reads the order it chose, so the
     // evaluator has to be told before it plans.
     session.flags.shuffle = compilation.shuffle;
+    // A `$(shell)` in this unit's makefile and a recipe line in the graph it
+    // compiles to are the same language, so the read uses the shell the build
+    // will use. Per unit, because a recursive child reads with its own session
+    // and must not read with a different shell than its parent.
+    // [spec:ronin:req:product.builtin-shell]
+    session.flags.default_shell_program =
+        crate::subprocess::builtin_shell().map(std::path::Path::to_path_buf);
     // Per unit rather than per pass, because a staging pass reads units it has
     // read before AND one it has not: the parent and the children behind the
     // settled boundaries are repeating themselves, while the child the pass

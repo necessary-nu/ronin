@@ -42,4 +42,4 @@ cargo build --release --example make_conformance
 
 # The example defaults to a profile path that naming the target moved, so
 # the script that knows where the build put things says so.
-exec $release/examples/make_conformance --front-end "$release/rkati" "$@"
+exec $release/examples/make_conformance --front-end "$repo_root/$release/rkati" "$@"

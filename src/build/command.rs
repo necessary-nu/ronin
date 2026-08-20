@@ -538,10 +538,7 @@ impl Builder<'_> {
         edge: EdgeId,
         step: &crate::build::LateStep,
     ) -> BuildResult<bool> {
-        let launch = match &step.launch {
-            Launch::Shell(command) => Launch::Shell(self.deferred_launch_command(edge, command)),
-            direct @ Launch::Direct(_) => direct.clone(),
-        };
+        let launch = self.deferred_launch(edge, &step.launch);
         let rendered = launch.rendered();
         let supervisor = match processes {
             Some(supervisor) => supervisor,
@@ -855,6 +852,29 @@ impl Builder<'_> {
 }
 
 impl Builder<'_> {
+    /// One launch with the scheduling-time values substituted into it.
+    ///
+    /// Both shapes carry them. A command line takes the value quoted for the
+    /// shell that will read it; an argument list takes it as it stands,
+    /// because the word reaches the program unread.
+    fn deferred_launch(
+        &self,
+        edge: EdgeId,
+        launch: &crate::subprocess::Launch,
+    ) -> crate::subprocess::Launch {
+        use crate::subprocess::Launch;
+        match launch {
+            Launch::Shell(command) => Launch::Shell(self.deferred_launch_command(edge, command)),
+            Launch::Direct(direct) => {
+                let mut direct = direct.clone();
+                for word in &mut direct.argv {
+                    *word = self.deferred_launch_word(edge, word);
+                }
+                Launch::Direct(direct)
+            }
+        }
+    }
+
     /// The processes this edge is, with the scheduling-time values the front
     /// end left for the build to fill in already substituted.
     ///
@@ -880,14 +900,7 @@ impl Builder<'_> {
         bound
             .into_iter()
             .map(|step| PreparedStep {
-                launch: match step.launch {
-                    Launch::Shell(command) => {
-                        Launch::Shell(self.deferred_launch_command(edge, &command))
-                    }
-                    // Nothing to substitute into: the front end that reads a
-                    // recipe at launch never leaves one of these unfinished.
-                    direct @ Launch::Direct(_) => direct,
-                },
+                launch: self.deferred_launch(edge, &step.launch),
                 ignore_errors: step.ignore_errors,
                 runs_while_pretending: step.runs_while_pretending,
             })

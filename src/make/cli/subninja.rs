@@ -430,7 +430,14 @@ fn shell_command_substitution(
     shell_flags: &[u8],
     parent: &CompilationContext,
 ) -> Result<Vec<u8>, MakeError> {
-    let mut command = std::process::Command::new(OsStr::from_bytes(shell));
+    // The recipe's own shell, and the build's own where that is the default:
+    // a computation deferred out of a recipe is read by the shell that would
+    // have read the recipe.
+    // [spec:ronin:req:product.builtin-shell]
+    let mut command = kati::simple_command::shell_process(
+        OsStr::from_bytes(shell),
+        crate::subprocess::builtin_shell(),
+    );
     command
         .arg(OsStr::from_bytes(shell_flags))
         .arg(OsStr::from_bytes(script))

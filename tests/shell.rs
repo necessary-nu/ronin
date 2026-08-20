@@ -372,3 +372,129 @@ fn the_differences_from_dash_are_filed() {
         );
     }
 }
+
+/// The path of the running program, as the shell that runs a command sees it.
+///
+/// `readlink /proc/$$/exe` is the one thing a command can ask that says which
+/// shell read it, and the substitution is otherwise invisible on purpose: the
+/// spelling in the graph, the diagnostics and the status are all the ones the
+/// machine's shell would have produced.
+fn which_shell(destination: &str) -> String {
+    // The trailing `:` is load-bearing: a shell asked for one simple command
+    // execs it in place rather than forking, and then `/proc/$$/exe` is the
+    // program that replaced the shell rather than the shell.
+    format!("readlink /proc/$$/exe > {destination}; :")
+}
+
+fn this_executable() -> PathBuf {
+    std::fs::canonicalize(env!("CARGO_BIN_EXE_ronin")).unwrap()
+}
+
+/// A shell the machine has that is not the default's spelling, so a build can
+/// name one and be given it.
+fn a_named_shell() -> Option<(PathBuf, PathBuf)> {
+    let named = PathBuf::from("/bin/dash");
+    // Named one way and reported another: `/proc/$$/exe` is the file, and the
+    // spelling a build wrote is a path to it.
+    let resolved = std::fs::canonicalize(&named).ok()?;
+    named.is_file().then_some((named, resolved))
+}
+
+fn ninja_build(directory: &Path, manifest: &str, arguments: &[&str]) -> Output {
+    std::fs::write(directory.join("build.ninja"), manifest).unwrap();
+    Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(directory)
+        .args(arguments)
+        .stdin(Stdio::null())
+        .output()
+        .unwrap()
+}
+
+/// Ninja mode: a command that needs a shell is read by this executable, and a
+/// `--shell` that names one is given the one it named.
+// [spec:ronin:req:product.builtin-shell/test]
+#[test]
+fn a_ninja_command_reads_here() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = format!(
+        "rule ask\n  command = {}\nbuild out: ask\n",
+        which_shell("$out")
+    )
+    .replace('$', "$$")
+    .replace("$$out", "$out");
+    let read = |arguments: &[&str]| {
+        let output = ninja_build(directory.path(), &manifest, arguments);
+        assert!(output.status.success(), "{}", stderr(&output));
+        let answer = std::fs::read_to_string(directory.path().join("out")).unwrap();
+        let _ = std::fs::remove_file(directory.path().join("out"));
+        PathBuf::from(answer.trim())
+    };
+
+    assert_eq!(read(&[]), this_executable());
+    // The whole command goes to a shell under `--compat`, and it is still this
+    // one.
+    assert_eq!(read(&["--compat"]), this_executable());
+    // Asking for the default by name asks for the program, so it is the same
+    // answer: the substitution is about which shell, not about how it was
+    // requested.
+    assert_eq!(read(&["--shell", "/bin/sh"]), this_executable());
+    if let Some((named, resolved)) = a_named_shell() {
+        // A build that names a shell is given it.
+        assert_eq!(read(&["--shell", named.to_str().unwrap()]), resolved);
+    }
+}
+
+/// Make mode: a recipe line that needs a shell is read by this executable, and
+/// a Makefile that sets `SHELL` is given the shell it set.
+// [spec:ronin:req:product.builtin-shell/test]
+#[cfg(feature = "make")]
+#[test]
+fn a_recipe_reads_through_this_shell() {
+    let directory = tempfile::tempdir().unwrap();
+    let link = shell_named(directory.path(), "make");
+    let read = |makefile: &str| {
+        std::fs::write(directory.path().join("Makefile"), makefile).unwrap();
+        let output = Command::new(&link)
+            .current_dir(directory.path())
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("CARGO_MAKEFLAGS")
+            .env_remove("MAKELEVEL")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", stderr(&output));
+        let answer = std::fs::read_to_string(directory.path().join("out")).unwrap();
+        let _ = std::fs::remove_file(directory.path().join("out"));
+        PathBuf::from(answer.trim())
+    };
+
+    // `$$$$` is a Makefile's way of writing the shell's `$$`, and the `>` is
+    // what keeps the line off the shell-free fast path.
+    assert_eq!(
+        read("out:\n\t@readlink /proc/$$$$/exe > out; :\n"),
+        this_executable()
+    );
+    // What the Makefile computed while it was being read, rather than while it
+    // was being built, goes the same way.
+    assert_eq!(
+        read("WHO := $(shell readlink /proc/$$$$/exe; :)\nout:\n\t@echo $(WHO) > out\n"),
+        this_executable()
+    );
+    if let Some((named, resolved)) = a_named_shell() {
+        assert_eq!(
+            read(&format!(
+                "SHELL := {}\nout:\n\t@readlink /proc/$$$$/exe > out; :\n",
+                named.display()
+            )),
+            resolved
+        );
+        assert_eq!(
+            read(&format!(
+                "SHELL := {}\nWHO := $(shell readlink /proc/$$$$/exe; :)\nout:\n\t@echo $(WHO) > out\n",
+                named.display()
+            )),
+            resolved
+        );
+    }
+}

@@ -24,4 +24,4 @@ fi
 cargo build --release --bin ronin --example conformance
 # The example defaults to a profile path that naming the target moved, so
 # the script that knows where the build put things says so.
-exec $release/examples/conformance --ronin "$release/ronin" "$@"
+exec $release/examples/conformance --ronin "$repo_root/$release/ronin" "$@"

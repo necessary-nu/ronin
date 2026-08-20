@@ -12,4 +12,4 @@ release=target/$(rustc -vV | sed -n 's/^host: //p')/release
 cargo build --release --bin ronin --example baseline
 # The example defaults to a profile path that naming the target moved, so
 # the script that knows where the build put things says so.
-exec $release/examples/baseline --ronin "$release/ronin" --validate "$@"
+exec $release/examples/baseline --ronin "$repo_root/$release/ronin" --validate "$@"

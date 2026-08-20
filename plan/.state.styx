@@ -1055,4 +1055,9 @@ impl_evidence (
     ), covered_claims (
         {impl_name target-impl, rule product.shell-identity}
     )}
+    {id builtin-shell-flip, covered_rules (
+        product.builtin-shell
+    ), covered_claims (
+        {impl_name target-impl, rule product.builtin-shell}
+    )}
 )

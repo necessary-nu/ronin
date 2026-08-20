@@ -170,21 +170,59 @@ impl CommandLayout {
         step: &kati::ninja::RecipeStep,
         scoped: &[kati::export::EnvironmentChange],
     ) -> crate::subprocess::Launch {
-        let Some(argv) = &step.direct else {
-            let mut command = self.prefix(scoped);
-            command.extend_from_slice(&step.shell);
-            command.push(b' ');
-            command.extend_from_slice(&step.shell_flags);
-            command.extend_from_slice(b" \"");
-            command.extend_from_slice(&escape_shell(&step.text));
-            command.push(b'"');
-            return crate::subprocess::Launch::Shell(BString::from(command));
-        };
+        if let Some(argv) = &step.direct {
+            return self.direct_launch(
+                argv.iter()
+                    .map(|word| BString::from(word.to_vec()))
+                    .collect(),
+                scoped,
+            );
+        }
+        // The shell is a program, not a word in a command line, whenever it is
+        // the default one — which is exactly when Ronin has a shell of its own
+        // to put there. `cd` and `env` in front of a command line say the same
+        // thing a launch says with a directory and an environment, and a
+        // command line cannot say the one thing that matters here: that the
+        // program is this executable while `argv[0]` stays `/bin/sh`.
+        //
+        // An empty `.SHELLFLAGS` is why the flags are words rather than one:
+        // the command line spelled `sh  "script"`, which a shell splits into
+        // `sh` and a file operand, so an empty word must vanish here too
+        // rather than become an empty argument. A `.SHELLFLAGS` of several
+        // words splits for the same reason.
+        if step.shell == kati::simple_command::DEFAULT_SHELL {
+            let mut argv = vec![BString::from(step.shell.to_vec())];
+            argv.extend(
+                step.shell_flags
+                    .split(|byte| byte.is_ascii_whitespace())
+                    .filter(|word| !word.is_empty())
+                    .map(|word| BString::from(word.to_vec())),
+            );
+            argv.push(BString::from(step.text.to_vec()));
+            return self.direct_launch(argv, scoped);
+        }
+        let mut command = self.prefix(scoped);
+        command.extend_from_slice(&step.shell);
+        command.push(b' ');
+        command.extend_from_slice(&step.shell_flags);
+        command.extend_from_slice(b" \"");
+        command.extend_from_slice(&escape_shell(&step.text));
+        command.push(b'"');
+        crate::subprocess::Launch::Shell(BString::from(command))
+    }
+
+    /// A launch of `argv` with the unit's directory and environment as values.
+    ///
+    /// What a `cd` and an `env` in front of a command line would have said,
+    /// said to the spawn instead — which is the only form that can name a
+    /// program and its `argv[0]` separately.
+    fn direct_launch(
+        &self,
+        argv: Vec<BString>,
+        scoped: &[kati::export::EnvironmentChange],
+    ) -> crate::subprocess::Launch {
         crate::subprocess::Launch::Direct(Box::new(crate::subprocess::DirectLaunch {
-            argv: argv
-                .iter()
-                .map(|word| BString::from(word.to_vec()))
-                .collect(),
+            argv,
             directory: self.command_directory.clone(),
             environment: self
                 .recipe_environment

@@ -48,6 +48,11 @@ fn main() {
     if let Some(status) = ronin::run_as_shell(&arguments) {
         std::process::exit(status);
     }
+    // This is a build, and it is one whose own executable answers to `sh` —
+    // which the line above is the proof of. Saying so is what lets a command
+    // that needs the default shell be given this one.
+    // [spec:ronin:req:product.builtin-shell]
+    ronin::declare_builtin_shell();
     // [spec:ronin:req:compat.process-integration]
     // [spec:ronin:req:runtime.guarded-signal-boundary]
     let signal_handlers = ronin::install_signal_handlers().unwrap_or_else(|error| {
