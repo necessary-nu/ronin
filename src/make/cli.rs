@@ -277,7 +277,7 @@ const MAKE_OPTION_SURFACE: &[InterfaceOption] = &[
     InterfaceOption {
         spellings: &["-W", "--what-if", "--new-file", "--assume-new"],
         argument: ArgumentShape::Required,
-        class: OptionClass::NoOp,
+        class: OptionClass::NinjaControl,
     },
     InterfaceOption {
         spellings: &["--warn-undefined-variables"],
