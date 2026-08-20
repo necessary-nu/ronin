@@ -15059,6 +15059,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-20T18:45:53.345470936Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The whole battery was re-run over the exact committed tree, on a host that had gone quiet, because two files moved between the first run and the commit: the commit gate's function-density and function-name checks fired, and the answer was to inline `Purpose`'s two constructors at their call sites and to shorten two test names. Neither can change behaviour and both were in the Make CLI, so the numbers are worth having rather than reasoning about.\n\nConformance 336 identical / 51 differing normalised and 286 raw, 17 defect + 2 recorded + 31 extension + 1 artefact, nothing unclassified. Equivalence 297 makefiles / 280 graphs / 75 rejected / 0 disagreements. Upstream inventory 1285 rows at 134 unclassified / 0 compiler / 25 interface / 1126 narration, exit clean with no drift line and `tests/make_upstream_inventory.tsv` byte-identical. Ninja conformance 425 upstream plus 10 CLI, 86 build-outcome, 3 invocation, persistence and log-content. `check-make-projects all` built vim 9.2 in 18s and zsh 5.9.2 with 36 modules in 33s at -j8. `cargo test --workspace --no-default-features` 737 passed / 0 failed. `nplan check` over the same tree: check, format and the whole workspace suite, all passing."
+                        after_done true
+                    }
                 )
             }
         )
