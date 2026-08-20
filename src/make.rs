@@ -198,6 +198,8 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
         compilation,
         cli::compile_subninja,
         &HashSet::new(),
+        // One pass, so nothing is read twice and nothing is repeating.
+        &HashSet::new(),
         RecipeExpansion::Construction,
     )
 }
@@ -348,6 +350,15 @@ struct CompilationState<'a> {
     refusals: Vec<RefusedMakefile>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
+    /// The units an earlier pass of this compilation already read, by cache
+    /// key. A unit in here is being read again over text that has not moved,
+    /// so what its read does on the way through was done then and is not done
+    /// now — see `kati::flags::Flags::is_repeated_read`.
+    read_units: &'a HashSet<Vec<u8>>,
+    /// Every unit this pass read, which is the set the next pass repeats. It
+    /// accumulates rather than replacing, because a pass reads everything the
+    /// pass before it read and then one child more.
+    units_read: HashSet<Vec<u8>>,
 }
 
 /// One unit's unexpanded recipes and everything expanding them will need,
@@ -464,19 +475,21 @@ pub(crate) fn load_with_subninjas<F>(
     root: Compilation,
     resolve: F,
     settled_boundaries: &HashSet<EvaluationBoundary>,
+    read_units: &HashSet<Vec<u8>>,
     expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError>
 where
     F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let _directory = compilation_directory_guard();
-    load_with_subninjas_unlocked(root, resolve, settled_boundaries, expansion)
+    load_with_subninjas_unlocked(root, resolve, settled_boundaries, read_units, expansion)
 }
 
 fn load_with_subninjas_unlocked<F>(
     root: Compilation,
     mut resolve: F,
     settled_boundaries: &HashSet<EvaluationBoundary>,
+    read_units: &HashSet<Vec<u8>>,
     expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError>
 where
@@ -495,6 +508,8 @@ where
         settled_boundaries,
         refusals: Vec::new(),
         evaluation_boundaries: HashSet::new(),
+        read_units,
+        units_read: HashSet::new(),
     };
     let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
     let pending_recipes = (!state.pending_recipes.is_empty()).then_some(state.pending_recipes);
@@ -509,6 +524,7 @@ where
         remake_complaints: state.remake_complaints,
         refusals: state.refusals,
         evaluation_boundaries: state.evaluation_boundaries,
+        units_read: state.units_read,
         makeflags: root.makeflags,
     })
 }
@@ -535,6 +551,12 @@ where
     // walk that drops circular prerequisites reads the order it chose, so the
     // evaluator has to be told before it plans.
     session.flags.shuffle = compilation.shuffle;
+    // Per unit rather than per pass, because a staging pass reads units it has
+    // read before AND one it has not: the parent and the children behind the
+    // settled boundaries are repeating themselves, while the child the pass
+    // was taken for is speaking for the first time.
+    session.flags.is_repeated_read = state.read_units.contains(&compilation_key);
+    state.units_read.insert(compilation_key.clone());
     let evaluated = in_directory(&context.directory, || {
         let Evaluated {
             mut ev,
@@ -1028,6 +1050,8 @@ pub struct Loaded {
     refusals: Vec<RefusedMakefile>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
+    /// The units this read covered, by cache key.
+    units_read: HashSet<Vec<u8>>,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
     makeflags: String,
     /// The recipes this graph's own executor will expand as it launches them,
@@ -1123,6 +1147,13 @@ impl Loaded {
     #[must_use]
     pub(crate) const fn evaluation_boundaries(&self) -> &HashSet<EvaluationBoundary> {
         &self.evaluation_boundaries
+    }
+
+    /// The units this pass read, which a later pass over the same text is
+    /// repeating rather than performing.
+    #[must_use]
+    pub(crate) const fn units_read(&self) -> &HashSet<Vec<u8>> {
+        &self.units_read
     }
 
     /// The switch state the Makefile left for its own build and its children.

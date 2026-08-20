@@ -1505,6 +1505,13 @@ fn prepare_graph(
     diagnostics: &mut Option<&mut dyn Write>,
 ) -> Result<PreparedGraph, Error> {
     let mut settled_boundaries = HashSet::new();
+    // Which units a pass is repeating rather than performing. A staging pass
+    // re-reads over text that has not moved, so what the read does on the way
+    // through — `$(info)`, `$(warning)`, `$(file >)` — belongs to the first
+    // read of each unit and not to the repeats. `build_compiler_inputs` both
+    // fills it and empties it, because the pass that read those units is also
+    // the pass that decides whether the next one is repeating them.
+    let mut read_units: HashSet<Vec<u8>> = HashSet::new();
     let mut restarts = 0_usize;
     for _ in 0..100 {
         let mut session = session_for(
@@ -1531,6 +1538,7 @@ fn prepare_graph(
             compilation,
             reported,
             &settled_boundaries,
+            &read_units,
         ) {
             Ok(loaded) => loaded,
             Err(result) => return Ok(PreparedGraph::Finished(result)),
@@ -1571,6 +1579,7 @@ fn prepare_graph(
             output,
             diagnostics,
             &mut settled_boundaries,
+            &mut read_units,
         )? {
             Settlement::Finished(result) => return Ok(PreparedGraph::Finished(result)),
             Settlement::Restart => restarts = restarts.saturating_add(1),
@@ -1828,6 +1837,7 @@ fn evaluated(
     context: crate::make::CompilationContext,
     reported: &str,
     settled_boundaries: &HashSet<EvaluationBoundary>,
+    read_units: &HashSet<Vec<u8>>,
 ) -> Result<crate::make::Loaded, RunResult> {
     if let Err(failure) = prepend_command_line_evals(&mut session, evals) {
         return Err(RunResult {
@@ -1848,6 +1858,7 @@ fn evaluated(
         compilation,
         compile_subninja,
         settled_boundaries,
+        read_units,
         // Make mode runs the graph it compiles, in the process that compiled
         // it, so a recipe is expanded when its edge is about to run.
         kati::build_sink::RecipeExpansion::Launch,

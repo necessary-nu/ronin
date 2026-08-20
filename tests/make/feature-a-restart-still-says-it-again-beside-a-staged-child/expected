@@ -1,0 +1,27 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 15
+| # The other half, and the one a fix could break by simply never speaking
+| # twice. A remade Makefile starts the read over on text that is new, so GNU
+| # Make says everything again and `MAKE_RESTARTS` is there so a Makefile can
+| # tell which time it is. Two recursive children stage passes around that
+| # restart and add nothing to what is said.
+| $(file >> seen,a read happened R=$(MAKE_RESTARTS))
+| 
+| include gen.mk
+| 
+| gen.mk: ; @printf 'V := built\n' > $@
+| 
+| all:
+| 	@$(MAKE) --no-print-directory -f first.mk sub
+| 	@$(MAKE) --no-print-directory -f second.mk sub
+| 	@printf 'value=[%s]\n' '$(V)' > out
+file first.mk kept 1
+| sub: ; @printf 'first\n' >> log
+file gen.mk touched 1
+| V := built
+file second.mk kept 1
+| sub: ; @printf 'second\n' >> log
+file seen touched 2
+| a read happened R=
+| a read happened R=1

@@ -678,6 +678,7 @@ pub(super) fn build_compiler_inputs(
     output: &mut Option<&mut dyn Write>,
     diagnostics: &mut Option<&mut dyn Write>,
     settled_boundaries: &mut HashSet<EvaluationBoundary>,
+    read_units: &mut HashSet<Vec<u8>>,
 ) -> Result<Settlement, Error> {
     let CompilerInputBuild {
         loaded,
@@ -687,6 +688,9 @@ pub(super) fn build_compiler_inputs(
         goals,
     } = request;
     let keep_going = invocation.given(Switch::KeepGoing);
+    // What this pass read, which a later pass over the same text repeats rather
+    // than performs.
+    read_units.extend(loaded.units_read().iter().cloned());
     let (mut graph, mut read) = Read::taken_from(loaded);
     let mut recipes = read.recipes.take();
     let (mut persistence, warning) = Persistence::open(&mut graph, directory)?;
@@ -732,6 +736,14 @@ pub(super) fn build_compiler_inputs(
         }
         Settled::Again => {
             persistence.finish()?;
+            // The two halves of what a pass leaves behind part company here.
+            // Staged work is on the ground and stays there, so the boundaries
+            // it settled survive — `feature-restart-keeps-recursive-staging-done`
+            // is that property. What a read said and wrote belongs to the text
+            // it read, and this restart happens because that text is new: GNU
+            // Make reads it again and says everything again, which is what
+            // `MAKE_RESTARTS` is there to let a Makefile notice.
+            read_units.clear();
             return Ok(Settlement::Restart);
         }
         Settled::Stands(settled) => {

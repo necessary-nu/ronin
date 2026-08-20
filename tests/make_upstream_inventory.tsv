@@ -1239,7 +1239,7 @@ case	variables/MAKEFLAGS.diff.99	narration	no-work-line+up-to-date-line
 case	variables/MAKELEVEL.diff	narration	ninja-progress+recipe-echo
 case	variables/MAKE_RESTARTS.diff	narration	ninja-progress
 case	variables/MAKE_RESTARTS.diff.1	narration	ninja-progress
-case	variables/MAKE_RESTARTS.diff.2	interface	ninja-progress+directory-announce+makeflags-content
+case	variables/MAKE_RESTARTS.diff.2	narration	ninja-progress+directory-announce
 case	variables/MFILE_LIST.diff	narration	ninja-progress
 case	variables/MFILE_LIST.diff.1	narration	ninja-progress
 case	variables/SHELL.diff	narration	ninja-progress

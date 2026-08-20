@@ -214,6 +214,7 @@ fn eval_fragments_reach_compilation() {
         context,
         "",
         &std::collections::HashSet::new(),
+        &std::collections::HashSet::new(),
     )
     .expect("the goal supplied only by --eval must compile into the graph");
     let target = loaded
@@ -263,6 +264,7 @@ fn generated_include_is_provisional_graph_root() {
         Shuffle::None,
         context,
         "",
+        &std::collections::HashSet::new(),
         &std::collections::HashSet::new(),
     )
     .expect("the missing include's rule should compile provisionally");
