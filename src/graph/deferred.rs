@@ -31,6 +31,15 @@ pub(crate) struct DeferredFreshness {
     /// respell, which is nearly all of them.
     pub(crate) new_input_names: Vec<(NodeId, BString)>,
     pub(crate) new_inputs_variable: BString,
+    /// Two further names the same value is substituted for, in the two forms
+    /// a path splits into: the directory each name carries, and the name with
+    /// that directory taken off. One word out for every word in, in the same
+    /// order, so a front end that publishes a list of paths can have the
+    /// halves of it without a value to halve existing before the scheduler
+    /// picks the list. Empty for a front end that asked for neither, which is
+    /// nearly every edge. The scheduler assigns no meaning to either name.
+    pub(crate) new_inputs_directories_variable: BString,
+    pub(crate) new_inputs_filenames_variable: BString,
     /// The directory the command reads that value from, and so the directory
     /// the names in it are spelt relative to.
     ///

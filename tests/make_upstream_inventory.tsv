@@ -1250,7 +1250,7 @@ case	variables/SHELL.diff.4	narration	ninja-progress
 case	variables/SHELL.diff.5	narration	ninja-progress
 case	variables/SHELL.diff.6	narration	ninja-progress
 case	variables/SHELL.diff.7	unclassified	ninja-progress+ninja-failure-block+recipe-error-line+evaluation
-case	variables/automatic.diff	unclassified	ninja-progress+recipe-echo+evaluation
+case	variables/automatic.diff	narration	ninja-progress+recipe-echo
 case	variables/automatic.diff.1	narration	ninja-progress
 case	variables/automatic.diff.2	narration	ninja-progress
 case	variables/automatic.diff.3	narration	ninja-progress

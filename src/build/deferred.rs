@@ -26,6 +26,43 @@ pub(super) enum Unrun {
     NoCommand,
 }
 
+/// Which of the three views of the published list a reference stands for.
+#[derive(Clone, Copy)]
+enum NewInputsView {
+    /// The names as published.
+    Whole,
+    /// One half of each name, the way a path splits into two.
+    Split(PathHalf),
+}
+
+#[derive(Clone, Copy)]
+enum PathHalf {
+    /// The directory the name carries, and `.` for a name that carries none.
+    Directory,
+    /// The name with the directory it carries taken off.
+    Filename,
+}
+
+/// One word of the published list, seen the way this reference asks for it.
+///
+/// A path splits at its last separator and the two halves are what the two
+/// derived views are made of. A name with no separator in it has `.` for a
+/// directory — which is the answer the front ends that ask for this expect,
+/// and the one a reader gets from `dirname(1)` too — and is its own filename.
+/// A name whose only separator is the leading one has nothing left on the
+/// directory side.
+fn view_of(word: &[u8], view: NewInputsView) -> &[u8] {
+    let NewInputsView::Split(half) = view else {
+        return word;
+    };
+    match (half, word.iter().rposition(|byte| *byte == b'/')) {
+        (PathHalf::Directory, None) => b".",
+        (PathHalf::Directory, Some(at)) => &word[..at],
+        (PathHalf::Filename, None) => word,
+        (PathHalf::Filename, Some(at)) => &word[at + 1..],
+    }
+}
+
 #[derive(Clone, Copy)]
 enum NewInputsReferenceContext {
     /// The recipe is nested in the outer shell's double-quoted `-c` argument.
@@ -187,17 +224,27 @@ impl Builder<'_> {
     /// from where it stands. A name that reaches outside the unit's directory
     /// keeps the only spelling it has, which is GNU Make's answer for an
     /// absolute prerequisite too.
-    fn deferred_new_inputs_value(&self, edge: EdgeId) -> Vec<u8> {
+    fn deferred_new_inputs_value(&self, edge: EdgeId, view: NewInputsView) -> Vec<u8> {
         let freshness = self.graph.deferred_freshness(edge);
         let directory = freshness
             .map(|freshness| freshness.new_inputs_directory.as_bytes())
             .unwrap_or_default();
         let mut value = Vec::new();
+        let mut push = |word: &[u8]| {
+            let word = view_of(word, view);
+            // A view can empty a word the whole list has — the directory half
+            // of a name at the root — and an empty word is not a word. The
+            // front ends that ask for these drop it too.
+            if word.is_empty() {
+                return;
+            }
+            if !value.is_empty() {
+                value.push(b' ');
+            }
+            value.extend_from_slice(word);
+        };
         if let Some(state) = self.runtime.deferred(edge) {
             for input in state.new_inputs() {
-                if !value.is_empty() {
-                    value.push(b' ');
-                }
                 // A front end may know an input by one name and have the
                 // command read another. Where it said so, its spelling is the
                 // one published, and it is published as it was given: a name
@@ -208,11 +255,11 @@ impl Builder<'_> {
                         .iter()
                         .find(|(node, _)| node == input)
                 }) {
-                    value.extend_from_slice(published.as_bytes());
+                    push(published.as_bytes());
                     continue;
                 }
                 let path = self.graph.node_path(*input);
-                value.extend_from_slice(&relative_to(path.as_bytes(), directory));
+                push(&relative_to(path.as_bytes(), directory));
             }
         }
         value
@@ -227,21 +274,38 @@ impl Builder<'_> {
         let Some(freshness) = self.graph.deferred_freshness(edge) else {
             return source.clone();
         };
-        if freshness.new_inputs_variable.is_empty() {
-            return source.clone();
-        }
-        let mut reference = Vec::with_capacity(freshness.new_inputs_variable.len() + 3);
-        reference.extend_from_slice(b"${");
-        reference.extend_from_slice(&freshness.new_inputs_variable);
-        reference.push(b'}');
-        let value = self.deferred_new_inputs_value(edge);
-        match context {
-            NewInputsReferenceContext::InlineCommand => {
-                reference.insert(0, b'\\');
-                replace_all(source, &reference, &escape_double_quoted_shell(&value))
+        let named = [
+            (&freshness.new_inputs_variable, NewInputsView::Whole),
+            (
+                &freshness.new_inputs_directories_variable,
+                NewInputsView::Split(PathHalf::Directory),
+            ),
+            (
+                &freshness.new_inputs_filenames_variable,
+                NewInputsView::Split(PathHalf::Filename),
+            ),
+        ];
+        let mut resolved = source.clone();
+        for (name, view) in named {
+            if name.is_empty() {
+                continue;
             }
-            NewInputsReferenceContext::ResponseFile => replace_all(source, &reference, &value),
+            let mut reference = Vec::with_capacity(name.len() + 4);
+            reference.extend_from_slice(b"${");
+            reference.extend_from_slice(name);
+            reference.push(b'}');
+            let value = self.deferred_new_inputs_value(edge, view);
+            resolved = match context {
+                NewInputsReferenceContext::InlineCommand => {
+                    reference.insert(0, b'\\');
+                    replace_all(&resolved, &reference, &escape_double_quoted_shell(&value))
+                }
+                NewInputsReferenceContext::ResponseFile => {
+                    replace_all(&resolved, &reference, &value)
+                }
+            };
         }
+        resolved
     }
 
     pub(super) fn deferred_launch_command(&self, edge: EdgeId, command: &BString) -> BString {
@@ -462,6 +526,37 @@ mod tests {
         // than a prefix taken off the front.
         assert_eq!(spelt("sub/up", "sub/deep"), "../up");
         assert_eq!(spelt("up", "sub/deep"), "../../up");
+    }
+
+    /// The two derived views split a published name at its last separator,
+    /// which is where GNU Make's `$(dir)`/`$(notdir)` split one too.
+    #[test]
+    fn a_view_splits_a_name_at_its_last_separator() {
+        let view = |word: &str, view| {
+            String::from_utf8(super::view_of(word.as_bytes(), view).to_vec()).unwrap()
+        };
+        use super::NewInputsView::{Split, Whole};
+        let directories = Split(super::PathHalf::Directory);
+        let filenames = Split(super::PathHalf::Filename);
+
+        assert_eq!(view("d/a", Whole), "d/a");
+        assert_eq!(view("d/a", directories), "d");
+        assert_eq!(view("d/a", filenames), "a");
+
+        assert_eq!(view("d/e/a", directories), "d/e");
+        assert_eq!(view("d/e/a", filenames), "a");
+
+        // A name carrying no directory is its own filename, and the directory
+        // it carries is this one.
+        assert_eq!(view("plain", directories), ".");
+        assert_eq!(view("plain", filenames), "plain");
+
+        // An absolute name keeps its leading separator, and one directly at
+        // the root has nothing left on the directory side — which is the word
+        // the published value then drops.
+        assert_eq!(view("/tmp/a", directories), "/tmp");
+        assert_eq!(view("/a", directories), "");
+        assert_eq!(view("/a", filenames), "a");
     }
 
     #[test]

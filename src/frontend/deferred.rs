@@ -21,6 +21,19 @@ pub struct DeferredSpec<'a> {
     /// The name the scheduler substitutes the published value for, to which it
     /// assigns no meaning of its own.
     pub new_inputs_variable: &'a [u8],
+    /// Two further names for the same value, split the way a path splits: the
+    /// directory each published name carries, and the name with that
+    /// directory taken off. One word out per word in, in order.
+    ///
+    /// A front end needs these because the value does not exist before the
+    /// scheduler picks it, so it cannot split the value itself and cannot
+    /// split the name it substitutes for one either — a reference is one word
+    /// with no directory in it, and halving it answers about the reference.
+    /// Empty for a front end that wants neither. The scheduler assigns no
+    /// meaning to either name.
+    pub new_inputs_directories_variable: &'a [u8],
+    /// The file half, under the same terms as the directory half above.
+    pub new_inputs_filenames_variable: &'a [u8],
     /// Where the command that reads the value runs, and so what the names in
     /// it are spelt relative to. A front end that reads every unit where the
     /// build runs passes nothing and gets the graph's own names.
@@ -69,6 +82,12 @@ impl BuildGraph {
                     .map(|(node, name)| (node.0, BString::from(*name)))
                     .collect(),
                 new_inputs_variable: BString::from(deferred.new_inputs_variable),
+                new_inputs_directories_variable: BString::from(
+                    deferred.new_inputs_directories_variable,
+                ),
+                new_inputs_filenames_variable: BString::from(
+                    deferred.new_inputs_filenames_variable,
+                ),
                 new_inputs_directory: BString::from(deferred.new_inputs_directory),
                 activations: IdVec::new(),
             },

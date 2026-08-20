@@ -1,0 +1,2 @@
+mkdir -p d
+echo a > d/a

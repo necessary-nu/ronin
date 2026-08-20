@@ -631,10 +631,14 @@ impl GraphSink {
 
     /// Hand one edge's late freshness to the graph.
     ///
-    /// `KATI_NEW_INPUTS` is the name kati writes into a recipe for `$?`; the
-    /// unit's path prefix is what the value's names are spelt against, because
-    /// the command runs where the unit's Makefile was read and GNU Make's
-    /// recursive child names its prerequisites the way that Makefile did.
+    /// `KATI_NEW_INPUTS` is the name kati writes into a recipe for `$?`, and
+    /// its two neighbours are the names it writes for `$(?D)` and `$(?F)` —
+    /// the same list's directory and file halves, which need names of their
+    /// own because there is nothing to halve until the scheduler has picked
+    /// the list. The unit's path prefix is what the value's names are spelt
+    /// against, because the command runs where the unit's Makefile was read
+    /// and GNU Make's recursive child names its prerequisites the way that
+    /// Makefile did.
     fn defer_freshness(&mut self, edge: Edge, deferred: &PendingDeferred) {
         let published = deferred
             .new_input_names
@@ -649,7 +653,9 @@ impl GraphSink {
                 always_new_inputs: &deferred.always_new_inputs,
                 excluded_new_inputs: &deferred.excluded_new_inputs,
                 new_input_names: &published,
-                new_inputs_variable: b"KATI_NEW_INPUTS",
+                new_inputs_variable: kati::command::NEW_INPUTS_VARIABLE,
+                new_inputs_directories_variable: kati::command::NEW_INPUTS_DIRECTORIES_VARIABLE,
+                new_inputs_filenames_variable: kati::command::NEW_INPUTS_FILENAMES_VARIABLE,
                 new_inputs_directory: self.unit.path_prefix.as_os_str().as_bytes(),
             },
         );

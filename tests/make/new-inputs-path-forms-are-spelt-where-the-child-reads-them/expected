@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # The halves are spelt against the directory the command runs in, exactly as
+| # the whole list is: a recursive child names its prerequisites the way its own
+| # Makefile did, so `$(?D)` is `d .` there and never `sub/d sub`.
+| all: ; @$(MAKE) -C sub
+file sub/Makefile kept 2
+| out: d/a b
+| 	@printf 'q=[%s] D=[%s] F=[%s]\n' '$?' '$(?D)' '$(?F)' > out
+file sub/b kept 1
+| b
+file sub/d/a kept 1
+| a
+file sub/out touched 1
+| q=[d/a b] D=[d .] F=[a b]

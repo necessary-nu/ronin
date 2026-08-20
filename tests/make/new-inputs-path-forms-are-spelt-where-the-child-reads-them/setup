@@ -1,0 +1,3 @@
+mkdir -p sub/d
+echo a > sub/d/a
+echo b > sub/b
