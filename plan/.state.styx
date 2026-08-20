@@ -671,7 +671,7 @@ assertions (
     {id make-a-write-to-a-special-variable-is-refused, kind @complete, author "brendan@necessary.nu", at 2026-08-20T02:18:57.155511753Z}
     {id make-escaped-percent-prerequisite-pattern-keeps-its-backslash, kind @complete, author "brendan@necessary.nu", at 2026-08-20T02:40:49.681188141Z}
     {id make-construction-expanded-recipe-is-one-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-20T03:31:17.251403752Z}
-    {id make-an-empty-argument-word-stops-the-build, kind @doing, author "brendan@necessary.nu", at 2026-08-20T03:41:44.831034294Z}
+    {id make-an-empty-argument-word-stops-the-build, kind @complete, author "brendan@necessary.nu", at 2026-08-20T03:58:02.952232849Z}
 )
 
 impl_evidence (
