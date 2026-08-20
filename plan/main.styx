@@ -14414,7 +14414,7 @@ children (
                         at 2026-08-20T21:32:35.509579582Z
                         author "brendan@necessary.nu"
                         kind @note
-                        text "WHERE: kati 00a11e2b7a58e6ff2a30c4a8e0e2eb1c26ea9b5c on nplan/make-an-unreadable-condition-after-else-is-extraneous-text, pushed before this pin. The kati commit adds the unit test and its reasoning and changes no behaviour; the fixture is on the Ronin side.\n\nGATES, run serially on a quiet host. fmt clean; `cargo check --workspace --all-targets` clean; all three clippy passes clean; workspace 957 passed / 0 failed (956 plus the one new kati case); `--no-default-features` 753 / 0; make_port 4/4 over 924 gated cases with no existing recording rewritten; conformance 336 identical / 51 differing normalised and 286 raw, unmoved, 17 defect + 2 recorded + 31 extension + 1 artefact and nothing unclassified; equivalence 297 makefiles / 280 graphs / 1 both-refused / 75 make-rejected / 0 disagreements; upstream inventory 1285 at 134 unclassified / 0 compiler / 25 interface / 1126 narration, tsv byte-identical, no drift line, compiler bucket ZERO; ninja conformance 425 upstream plus 10 CLI, 86 build-outcome, 3 invocation, persistence and log content; `scripts/check-make-projects.sh all` built vim 9.2 in 17s and zsh 5.9.2 with 36 modules in 28s at -j8."
+                        text "WHERE: kati 00a11e2877762a9cbf4b31fd4b69435edbf7f2c1 on nplan/make-an-unreadable-condition-after-else-is-extraneous-text, pushed before this pin. The kati commit adds the unit test and its reasoning and changes no behaviour; the fixture is on the Ronin side.\n\nGATES, run serially on a quiet host. fmt clean; `cargo check --workspace --all-targets` clean; all three clippy passes clean; workspace 957 passed / 0 failed (956 plus the one new kati case); `--no-default-features` 753 / 0; make_port 4/4 over 924 gated cases with no existing recording rewritten; conformance 336 identical / 51 differing normalised and 286 raw, unmoved, 17 defect + 2 recorded + 31 extension + 1 artefact and nothing unclassified; equivalence 297 makefiles / 280 graphs / 1 both-refused / 75 make-rejected / 0 disagreements; upstream inventory 1285 at 134 unclassified / 0 compiler / 25 interface / 1126 narration, tsv byte-identical, no drift line, compiler bucket ZERO; ninja conformance 425 upstream plus 10 CLI, 86 build-outcome, 3 invocation, persistence and log content; `scripts/check-make-projects.sh all` built vim 9.2 in 17s and zsh 5.9.2 with 36 modules in 28s at -j8."
                     }
 
                     {
@@ -14422,6 +14422,14 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-20T22:01:17.61489056Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The kati SHA in the note above was written wrong and is corrected in place. It read `00a11e2b7a58e6ff2a30c4a8e0e2eb1c26ea9b5c`, whose tail was invented from the short form rather than read; the commit is `00a11e2877762a9cbf4b31fd4b69435edbf7f2c1`, which `git rev-parse nplan/make-an-unreadable-condition-after-else-is-extraneous-text` answers and which `origin` carries. The seven-character prefix was right, so nothing pointed anywhere else; the rest of it pointed nowhere at all. Recorded rather than quietly fixed, because a SHA nobody can resolve is exactly the kind of thing a later reader would assume was a rebase."
+                        after_done true
                     }
                 )
             }
