@@ -1,0 +1,22 @@
+# `.VARIABLES` is an ordinary `default`-origin simple variable in GNU Make —
+# `define_variable_cname (".VARIABLES", "", o_default, 0)` in
+# `define_automatic_variables` — with a `special` bit that makes a lookup
+# rebuild its value. So `$(origin)` and `$(flavor)` answer about that
+# definition, not about the rebuilding, and `$(flavor)` has only ever had four
+# answers.
+#
+# The list itself walks the global variable table alone. The base automatic
+# variables are bound in the FILE's own set as a recipe is prepared, so they
+# are never in it; the `D` and `F` forms are bound once at startup in the
+# global set, so they always are — before the recipe and inside it alike.
+NAMED := yes
+READ_ORIGIN := $(origin .VARIABLES)
+READ_FLAVOUR := $(flavor .VARIABLES)
+READ_BASE := $(filter @ < ? ^ + |,$(.VARIABLES))
+READ_HALVES := $(sort $(filter @D @F <D <F ?D ?F,$(.VARIABLES)))
+all:
+	@printf 'read o=[%s] f=[%s]\n' '$(READ_ORIGIN)' '$(READ_FLAVOUR)' > out
+	@printf 'read base=[%s] halves=[%s]\n' '$(READ_BASE)' '$(READ_HALVES)' >> out
+	@printf 'recipe o=[%s] f=[%s]\n' '$(origin .VARIABLES)' '$(flavor .VARIABLES)' >> out
+	@printf 'recipe base=[%s] halves=[%s]\n' '$(filter @ < ? ^ + |,$(.VARIABLES))' '$(sort $(filter @D @F <D <F ?D ?F,$(.VARIABLES)))' >> out
+	@printf 'named=[%s]\n' '$(filter NAMED,$(.VARIABLES))' >> out

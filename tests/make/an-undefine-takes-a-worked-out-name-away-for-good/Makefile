@@ -1,0 +1,17 @@
+# `undefine` outranks a `default`-origin binding, so it reaches this one and
+# the name stops answering. GNU Make's regeneration does not resume after that:
+# the `special` bit lived on the variable struct the `undefine` freed, so a
+# name defined again afterwards is an ordinary variable holding exactly what
+# was written to it — a later assignment elsewhere does not grow it back.
+BEFORE := $(origin .VARIABLES)
+undefine .VARIABLES
+AFTER := $(origin .VARIABLES)
+AFTER_LIST := $(.VARIABLES)
+.VARIABLES := hand-written
+REWRITTEN := $(origin .VARIABLES)
+REWRITTEN_VALUE := $(.VARIABLES)
+LATER := 1
+STILL := $(.VARIABLES)
+all:
+	@printf 'before=[%s] after=[%s] list=[%s]\n' '$(BEFORE)' '$(AFTER)' '$(AFTER_LIST)' > out
+	@printf 'rewritten=[%s] value=[%s] still=[%s]\n' '$(REWRITTEN)' '$(REWRITTEN_VALUE)' '$(STILL)' >> out

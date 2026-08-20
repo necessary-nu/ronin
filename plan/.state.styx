@@ -673,6 +673,7 @@ assertions (
     {id make-construction-expanded-recipe-is-one-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-20T03:31:17.251403752Z}
     {id make-an-empty-argument-word-stops-the-build, kind @complete, author "brendan@necessary.nu", at 2026-08-20T03:58:02.952232849Z}
     {id make-new-inputs-path-forms-read-the-placeholder, kind @complete, author "brendan@necessary.nu", at 2026-08-20T04:28:24.109659346Z}
+    {id make-a-worked-out-name-answers-the-wrong-origin, kind @doing, author "brendan@necessary.nu", at 2026-08-20T04:28:54.485774924Z}
 )
 
 impl_evidence (
