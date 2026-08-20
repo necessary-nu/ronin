@@ -213,6 +213,20 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
         base.push(' ');
         base.push_str(option);
     };
+    // Between the letter group and `-j`, which is where GNU Make's switch table
+    // puts `-I`, and one word per entry rather than one for the list. The
+    // entries are the table's own, so `-I -` travels as `-I-` and a directory
+    // that is not there travels too: the table holds what was written, and it
+    // is `construct_include_path` on the far side that decides which of them a
+    // search reaches. That is the only way a child learns the search path at
+    // all, and the only way a makefile's own `MAKEFLAGS += -I dir` survives
+    // being read back.
+    for dir in &invocation.include_dirs {
+        append(
+            &mut base,
+            &format!("-I{}", quote_for_makeflags(&dir.to_string_lossy())),
+        );
+    }
     match invocation.effective_jobs() {
         Some(JobLimit::Fixed(jobs)) => append(&mut base, &format!("-j{}", jobs.get())),
         Some(JobLimit::Unlimited) => append(&mut base, "-j"),
@@ -448,6 +462,7 @@ pub(super) fn decode_makefile_makeflags(
         environment_overrides: invocation.given(Switch::EnvironmentOverrides),
         no_builtin_rules: invocation.given(Switch::NoBuiltinRules),
         no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
+        include_dirs: invocation.include_dirs.clone(),
     })
 }
 

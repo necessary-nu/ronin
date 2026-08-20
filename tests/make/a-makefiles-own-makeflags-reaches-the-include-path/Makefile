@@ -1,0 +1,19 @@
+# `reset_makeflags` (main.c) runs whenever a makefile assigns MAKEFLAGS, and its
+# middle call is `construct_include_path`. So a `-I` written here reaches the
+# search before the next `include` — and only the next one: the attempt above the
+# write is made against the path as it stood, and stays failed.
+-include frag.mk
+BEFORE := $(FOUND)
+
+MAKEFLAGS += -I inc2
+
+-include frag.mk
+
+ifeq ($(FOUND),yes)
+all: the-write-reached-the-search
+else
+all: the-write-went-nowhere
+endif
+
+the-write-reached-the-search: ; @printf 'before=[%s] after=[%s] dirs=[%s]\n' '$(BEFORE)' '$(FOUND)' '$(firstword $(.INCLUDE_DIRS))' > out
+the-write-went-nowhere: ; @printf 'unreached=[%s]\n' '$(.INCLUDE_DIRS)' > out

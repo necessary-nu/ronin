@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # `define_makeflags` writes every entry of the `-I` list into MAKEFLAGS, one
+| # `-I<dir>` word each, and that is the only way a child learns the search path:
+| # `$(MAKE)` is one word and carries nothing. The child's fragment is reachable
+| # only through the directory this makefile's own write named.
+| MAKEFLAGS += -I inc2
+| 
+| all: ; @$(MAKE) --no-print-directory -f child.mk
+file child.mk kept 2
+| -include frag.mk
+| all: ; @printf 'child found=[%s] named=[%s]\n' '$(FOUND)' '$(firstword $(.INCLUDE_DIRS))' > out
+file inc2/frag.mk kept 1
+| FOUND := yes
+file out touched 1
+| child found=[yes] named=[inc2]
