@@ -1149,12 +1149,19 @@ impl<'a> ToolRunContext<'a> {
 
 fn run_flag_tool(
     tool: crate::tool::Tool,
+    runner: &Runner,
     arguments: &[BString],
+    manifest: &BString,
     dryrun: bool,
     working_directory: &crate::os::WorkingDirectory,
 ) -> CliResult<RunResult> {
     match tool {
         crate::tool::Tool::List => Ok(RunResult::stdout(crate::tool::tool_list())),
+        // The one tool in this set that reads a file, and it reads its own:
+        // the input may be a Makefile rather than a manifest, and a manifest
+        // that will not parse is the finding rather than a reason to stop
+        // before reporting one.
+        crate::tool::Tool::Lint => crate::lint::run(runner, manifest, arguments, working_directory),
         crate::tool::Tool::Restat => {
             let mut builddir = None;
             let mut filters = Vec::new();
@@ -1662,7 +1669,9 @@ pub(crate) fn run_bytes<'sink>(
     {
         return run_flag_tool(
             tool,
+            runner,
             &invocation.tool_arguments,
+            &invocation.manifest,
             invocation.build_options.dryrun,
             &invocation.working_directory,
         );

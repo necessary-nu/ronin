@@ -17,6 +17,7 @@ pub mod frontend;
 mod graph;
 mod htab;
 mod jobserver;
+mod lint;
 mod log;
 #[cfg(all(unix, feature = "make"))]
 pub mod make;

@@ -1676,6 +1676,55 @@ fn prepare_graph(
     )))
 }
 
+/// What reading a Makefile without building it produced.
+pub(crate) struct MakefileRead {
+    /// Every diagnostic the compile raised, in the words and the located shape
+    /// the compiler that raised them wrote. A lint passes them on rather than
+    /// re-rendering them: each one already points at its own Makefile line.
+    pub(crate) raised: Vec<u8>,
+    /// What the read narrated on its way, which is a remade Makefile's build
+    /// output and nothing else.
+    pub(crate) reported: String,
+    /// The result the read ended with, when it ended before producing a graph.
+    /// A refusal is the usual reason, and its status is the one the invocation
+    /// would have left with.
+    pub(crate) stopped: Option<RunResult>,
+}
+
+/// Read a Makefile the way a build's read phase reads it, and stop there.
+///
+/// The evaluation is a build's own: `$(shell)` runs, `$(warning)` and
+/// `$(info)` print, and a Makefile the read must remake is remade, because
+/// GNU Make's read phase does all three. A report gathered from a quieter read
+/// would describe a Makefile nobody builds.
+// [spec:ronin:req:tools.lint]
+pub(crate) fn read_without_building(
+    runner: &Runner,
+    arguments: &[BString],
+) -> Result<MakefileRead, Error> {
+    let raised = Arc::new(kati::diagnostics::Diagnostics::collected());
+    let mut held = Vec::new();
+    let compiled = compile_invocation(runner, arguments, &mut None, &mut None, &raised, &mut held)?;
+    held.extend(raised.take());
+    let stopped = match compiled.prepared {
+        // The logs a compiler-input build opened are flushed rather than
+        // dropped: that build ran real commands, and what it recorded about
+        // them belongs in the log whether or not a lint asked for it.
+        PreparedGraph::Ready { persistence, .. } => {
+            if let Some(persistence) = persistence {
+                persistence.finish()?;
+            }
+            None
+        }
+        PreparedGraph::Finished(result) => Some(result),
+    };
+    Ok(MakefileRead {
+        raised: held,
+        reported: compiled.reported,
+        stopped,
+    })
+}
+
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.recursive-invocation+2]
@@ -1710,21 +1759,44 @@ pub(crate) fn run(
     result
 }
 
-/// One Make invocation, with the descriptor its compiler diagnostics reach.
-fn reported_run(
+/// One Make invocation read and compiled, with the build it was compiled for
+/// not yet started.
+///
+/// This is the seam a lint reads at. Everything above it is the read phase,
+/// which a lint performs in full because a report gathered from a lesser read
+/// would be about a different Makefile; everything below it is the build,
+/// which a lint does not perform at all.
+struct CompiledInvocation {
+    prepared: PreparedGraph,
+    /// What the read narrated on its way here, which the run that follows
+    /// leads its own output with.
+    reported: String,
+    /// Where the invocation ended up after its `-C` options were applied.
+    directory: PathBuf,
+}
+
+/// Read and compile one Make invocation, stopping where a build would begin.
+// [spec:ronin:req:tools.lint]
+fn compile_invocation(
     runner: &Runner,
     arguments: &[BString],
-    mut output: Option<&mut dyn Write>,
-    mut diagnostics: Option<&mut dyn Write>,
+    output: &mut Option<&mut dyn Write>,
+    diagnostics: &mut Option<&mut dyn Write>,
     raised: &Arc<kati::diagnostics::Diagnostics>,
     held: &mut Vec<u8>,
-) -> Result<RunResult, Error> {
+) -> Result<CompiledInvocation, Error> {
+    let mut reported = String::new();
     let invocation = match parse(arguments, runner.makeflags.as_deref())? {
-        Action::Immediate(result) => return Ok(result),
+        Action::Immediate(result) => {
+            return Ok(CompiledInvocation {
+                prepared: PreparedGraph::Finished(result),
+                reported,
+                directory: runner.working_directory.as_path().to_owned(),
+            });
+        }
         Action::Execute(invocation) => *invocation,
     };
     let invoked_as = make_named_invocation(arguments, &runner.executable);
-    let mut reported = String::new();
     let directory = enter_directories(&invocation.directories)?;
     let working_directory = crate::os::WorkingDirectory::new(&directory)
         .map_err(|source| CliError::CurrentDirectory { source })?;
@@ -1732,9 +1804,16 @@ fn reported_run(
     let level: usize = level.trim().parse().unwrap_or(0);
     let options = build_options(&invocation, runner, working_directory)?;
 
+    let finished = |result| {
+        Ok(CompiledInvocation {
+            prepared: PreparedGraph::Finished(result),
+            reported: String::new(),
+            directory: directory.clone(),
+        })
+    };
     let makefiles = named_makefiles(&invocation, &directory);
     if makefiles.is_empty() {
-        return Ok(no_makefile());
+        return finished(no_makefile());
     }
     // Standard input is drained once and replayed into every read, because a
     // Makefile remade between reads sends the whole read around again and the
@@ -1745,7 +1824,7 @@ fn reported_run(
         .filter(|named| is_standard_input(named))
         .count();
     if named_stdin > 1 {
-        return Ok(duplicate_standard_input());
+        return finished(duplicate_standard_input());
     }
     let makefile_contents = if named_stdin == 1 {
         let mut contents = Vec::new();
@@ -1771,17 +1850,43 @@ fn reported_run(
         makefile_contents: makefile_contents.as_deref(),
         level,
     };
-    let (mut graph, mut recipes, opened, invocation, options) =
-        match prepare_graph(&root, &mut reported, &mut output, &mut diagnostics, held)? {
-            PreparedGraph::Ready {
-                graph,
-                recipes,
-                persistence,
-                invocation,
-                options,
-            } => (*graph, recipes, persistence, *invocation, *options),
-            PreparedGraph::Finished(result) => return Ok(result),
-        };
+    let prepared = prepare_graph(&root, &mut reported, output, diagnostics, held)?;
+    Ok(CompiledInvocation {
+        prepared,
+        reported,
+        directory,
+    })
+}
+
+/// One Make invocation, with the descriptor its compiler diagnostics reach.
+fn reported_run(
+    runner: &Runner,
+    arguments: &[BString],
+    mut output: Option<&mut dyn Write>,
+    mut diagnostics: Option<&mut dyn Write>,
+    raised: &Arc<kati::diagnostics::Diagnostics>,
+    held: &mut Vec<u8>,
+) -> Result<RunResult, Error> {
+    let compiled = compile_invocation(
+        runner,
+        arguments,
+        &mut output,
+        &mut diagnostics,
+        raised,
+        held,
+    )?;
+    let mut reported = compiled.reported;
+    let directory = compiled.directory;
+    let (mut graph, mut recipes, opened, invocation, options) = match compiled.prepared {
+        PreparedGraph::Ready {
+            graph,
+            recipes,
+            persistence,
+            invocation,
+            options,
+        } => (*graph, recipes, persistence, *invocation, *options),
+        PreparedGraph::Finished(result) => return Ok(result),
+    };
     let mut persistence = if let Some(persistence) = opened {
         persistence
     } else {

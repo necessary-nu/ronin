@@ -60,6 +60,10 @@ pub(crate) enum Tool {
     Restat,
     Rules,
     CleanDead,
+    /// Ronin's own, and the first entry Ronin adds to a set Ninja otherwise
+    /// owns: it reports what compiling the named build establishes about it,
+    /// and builds nothing. See `[spec:ronin:req:tools.lint]`.
+    Lint,
     Urtle,
     List,
 }
@@ -74,7 +78,10 @@ pub(crate) enum ToolStage {
 impl Tool {
     pub(crate) const fn stage(self) -> ToolStage {
         match self {
-            Self::List | Self::Restat | Self::Urtle => ToolStage::Flags,
+            // Lint reads its own input, because the file it was given may not
+            // be a manifest at all and a manifest that will not parse is a
+            // finding rather than a reason to stop before reporting one.
+            Self::List | Self::Restat | Self::Urtle | Self::Lint => ToolStage::Flags,
             Self::Browse
             | Self::Clean
             | Self::Commands
@@ -156,6 +163,11 @@ const TOOLS: &[(Tool, &str, &str)] = &[
         Tool::CleanDead,
         "cleandead",
         "clean built files that are no longer produced by the manifest",
+    ),
+    (
+        Tool::Lint,
+        "lint",
+        "report what compiling a build establishes, without building it",
     ),
 ];
 
@@ -975,11 +987,14 @@ pub(crate) fn run(
         Tool::MultiInputs => multi_inputs(graph, args),
         Tool::List => Ok(tool_list().into()),
         Tool::Browse => Err(ToolError::Availability(ToolAvailability::BrowseUnsupported)),
+        // Lint sits here for the reason the others do: this entry is handed a
+        // graph, and lint reads its own input from the invocation instead.
         Tool::Deps
         | Tool::MissingDeps
         | Tool::Recompact
         | Tool::Restat
         | Tool::CleanDead
+        | Tool::Lint
         | Tool::Urtle => Err(ToolError::Availability(
             ToolAvailability::RequiresRuntimeState,
         )),
