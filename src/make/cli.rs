@@ -1505,13 +1505,17 @@ fn prepare_graph(
     diagnostics: &mut Option<&mut dyn Write>,
 ) -> Result<PreparedGraph, Error> {
     let mut settled_boundaries = HashSet::new();
-    // Which units a pass is repeating rather than performing. A staging pass
-    // re-reads over text that has not moved, so what the read does on the way
-    // through — `$(info)`, `$(warning)`, `$(file >)` — belongs to the first
-    // read of each unit and not to the repeats. `build_compiler_inputs` both
-    // fills it and empties it, because the pass that read those units is also
-    // the pass that decides whether the next one is repeating them.
-    let mut read_units: HashSet<Vec<u8>> = HashSet::new();
+    // Which units a pass is repeating rather than performing, and what the
+    // ground told each of them the first time. A staging pass re-reads over
+    // text that has not moved, so what the read does on the way through —
+    // `$(info)`, `$(warning)`, `$(file >)` — belongs to the first read of each
+    // unit and not to the repeats; and what the read is TOLD cannot be held
+    // back at all, so the first read's answers are handed back instead. The
+    // ground has moved by then and GNU Make's single read never saw it move.
+    // `build_compiler_inputs` both fills this and empties it, because the pass
+    // that read those units is also the pass that decides whether the next one
+    // is repeating them.
+    let mut read_units = crate::make::ReadJournals::new();
     let mut restarts = 0_usize;
     for _ in 0..100 {
         let mut session = session_for(
@@ -1837,7 +1841,7 @@ fn evaluated(
     context: crate::make::CompilationContext,
     reported: &str,
     settled_boundaries: &HashSet<EvaluationBoundary>,
-    read_units: &HashSet<Vec<u8>>,
+    read_units: &crate::make::ReadJournals,
 ) -> Result<crate::make::Loaded, RunResult> {
     if let Err(failure) = prepend_command_line_evals(&mut session, evals) {
         return Err(RunResult {

@@ -198,8 +198,9 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
         compilation,
         cli::compile_subninja,
         &HashSet::new(),
-        // One pass, so nothing is read twice and nothing is repeating.
-        &HashSet::new(),
+        // One pass, so nothing is read twice, nothing is repeating, and
+        // nothing has an earlier read's answers to be handed.
+        &ReadJournals::new(),
         RecipeExpansion::Construction,
     )
 }
@@ -328,6 +329,15 @@ fn unit_remakes(
     })
 }
 
+/// What each unit's first read of this compilation was told by the ground,
+/// keyed by cache key.
+///
+/// Carried from pass to pass beside the units themselves, because a staging
+/// pass re-reads a unit over text that has not moved while the ground under it
+/// has: the staged work is what moved it. See
+/// [`kati::session::GroundJournal`].
+pub(crate) type ReadJournals = HashMap<Vec<u8>, Vec<kati::session::GroundAnswer>>;
+
 struct CompilationState<'a> {
     cache: HashMap<Vec<u8>, UnitSubgraph>,
     compiling: HashSet<Vec<u8>>,
@@ -351,14 +361,17 @@ struct CompilationState<'a> {
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
     /// The units an earlier pass of this compilation already read, by cache
-    /// key. A unit in here is being read again over text that has not moved,
-    /// so what its read does on the way through was done then and is not done
-    /// now — see `kati::flags::Flags::is_repeated_read`.
-    read_units: &'a HashSet<Vec<u8>>,
+    /// key, each with what that read was told by the ground. A unit in here is
+    /// being read again over text that has not moved, so what its read does on
+    /// the way through was done then and is not done now — see
+    /// `kati::flags::Flags::is_repeated_read` — and what it was told then is
+    /// what it is told again, because the ground has moved and GNU Make's one
+    /// read never saw it move.
+    read_units: &'a ReadJournals,
     /// Every unit this pass read, which is the set the next pass repeats. It
     /// accumulates rather than replacing, because a pass reads everything the
     /// pass before it read and then one child more.
-    units_read: HashSet<Vec<u8>>,
+    units_read: ReadJournals,
 }
 
 /// One unit's unexpanded recipes and everything expanding them will need,
@@ -475,7 +488,7 @@ pub(crate) fn load_with_subninjas<F>(
     root: Compilation,
     resolve: F,
     settled_boundaries: &HashSet<EvaluationBoundary>,
-    read_units: &HashSet<Vec<u8>>,
+    read_units: &ReadJournals,
     expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError>
 where
@@ -489,7 +502,7 @@ fn load_with_subninjas_unlocked<F>(
     root: Compilation,
     mut resolve: F,
     settled_boundaries: &HashSet<EvaluationBoundary>,
-    read_units: &HashSet<Vec<u8>>,
+    read_units: &ReadJournals,
     expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError>
 where
@@ -509,7 +522,7 @@ where
         refusals: Vec::new(),
         evaluation_boundaries: HashSet::new(),
         read_units,
-        units_read: HashSet::new(),
+        units_read: ReadJournals::new(),
     };
     let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
     let pending_recipes = (!state.pending_recipes.is_empty()).then_some(state.pending_recipes);
@@ -527,6 +540,94 @@ where
         units_read: state.units_read,
         makeflags: root.makeflags,
     })
+}
+
+/// One unit's makefile read, and the build it describes emitted into the sink.
+///
+/// A function rather than a closure so the thing it produces has a name: the
+/// read is what a pass repeats, and every field below is something the read
+/// settled and the compilation around it then carries.
+fn read_unit(
+    session: Session,
+    sink: &mut GraphSink,
+    parent_scope: Option<Scope>,
+    context: &CompilationContext,
+) -> Result<UnitRead, MakeError> {
+    let Evaluated {
+        mut ev,
+        mut nodes,
+        regeneration_nodes,
+        refusals,
+    } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
+    let refusals = refused_makefiles(refusals);
+    let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
+    let exported = exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+    let command_line =
+        command_line_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+    // A Makefile may replace MAKEOVERRIDES (and therefore the recursive
+    // MAKEFLAGS value) before naming a child. That evaluated compiler
+    // variable, not the invocation's pre-evaluation seed, is what the
+    // semantic subninja parses.
+    let (makeflags, mflags) =
+        evaluated_flag_variables(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+    let flag_environment = flag_recipe_environment(&makeflags, mflags);
+    if let Some(parent) = parent_scope {
+        sink.begin_subninja(
+            parent,
+            context.path_prefix.clone(),
+            context.directory.clone(),
+        );
+    }
+    sink.serialise_unit(ev.session.flags.not_parallel);
+    let mut recipe_environment = context.recipe_environment.clone();
+    apply_recipe_environment(&mut recipe_environment, &flag_environment);
+    apply_recipe_environment(&mut recipe_environment, &exported);
+    sink.set_recipe_environment(recipe_environment);
+    let deferred = match emit_build(&nodes, &mut ev, sink) {
+        Ok(deferred) => deferred,
+        Err(error) => {
+            if let Some(failure) = sink.construction_failure() {
+                return Err(MakeError::Construct(failure));
+            }
+            return Err(MakeError::evaluate(&error));
+        }
+    };
+    // The layout is read while this unit is still the current one: it is
+    // what wraps every command this unit produces, and a recipe expanded
+    // later has to be wrapped in exactly the same thing.
+    let layout = sink.layout();
+    let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names, refusals)?;
+    let unit = sink.take_unit();
+    ev.finish().map_err(|error| MakeError::evaluate(&error))?;
+    // Taken before the session goes wherever it goes next: the recipes may
+    // keep it alive for the build and may not, and either way this read is
+    // over and what it was told belongs to the pass.
+    let journal = ev.session.ground_journal.close_read();
+    let deferred_edges = sink.take_deferred_edges();
+    let pending_recipes = (!deferred.is_empty()).then_some((ev, deferred, layout, deferred_edges));
+    Ok(UnitRead {
+        unit,
+        exported,
+        command_line,
+        unit_remakes,
+        makeflags,
+        flag_environment,
+        pending_recipes,
+        journal,
+    })
+}
+
+/// What reading one unit settled.
+struct UnitRead {
+    unit: UnitOutput,
+    exported: Vec<(OsString, Option<OsString>)>,
+    command_line: Vec<(OsString, Option<OsString>)>,
+    unit_remakes: UnitRemakes,
+    makeflags: String,
+    flag_environment: [(OsString, Option<OsString>); 2],
+    pending_recipes: Option<UnitRecipes>,
+    /// What the ground told this read, for the read that repeats it.
+    journal: Vec<kati::session::GroundAnswer>,
 }
 
 fn compile_unit<F>(
@@ -555,77 +656,35 @@ where
     // read before AND one it has not: the parent and the children behind the
     // settled boundaries are repeating themselves, while the child the pass
     // was taken for is speaking for the first time.
-    session.flags.is_repeated_read = state.read_units.contains(&compilation_key);
-    state.units_read.insert(compilation_key.clone());
-    let evaluated = in_directory(&context.directory, || {
-        let Evaluated {
-            mut ev,
-            mut nodes,
-            regeneration_nodes,
-            refusals,
-        } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
-        let refusals = refused_makefiles(refusals);
-        let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
-        let exported =
-            exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
-        let command_line =
-            command_line_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
-        // A Makefile may replace MAKEOVERRIDES (and therefore the recursive
-        // MAKEFLAGS value) before naming a child. That evaluated compiler
-        // variable, not the invocation's pre-evaluation seed, is what the
-        // semantic subninja parses.
-        let (makeflags, mflags) =
-            evaluated_flag_variables(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
-        let flag_environment = flag_recipe_environment(&makeflags, mflags);
-        if let Some(parent) = parent_scope {
-            sink.begin_subninja(
-                parent,
-                context.path_prefix.clone(),
-                context.directory.clone(),
-            );
-        }
-        sink.serialise_unit(ev.session.flags.not_parallel);
-        let mut recipe_environment = context.recipe_environment.clone();
-        apply_recipe_environment(&mut recipe_environment, &flag_environment);
-        apply_recipe_environment(&mut recipe_environment, &exported);
-        sink.set_recipe_environment(recipe_environment);
-        let deferred = match emit_build(&nodes, &mut ev, sink) {
-            Ok(deferred) => deferred,
-            Err(error) => {
-                if let Some(failure) = sink.construction_failure() {
-                    return Err(MakeError::Construct(failure));
-                }
-                return Err(MakeError::evaluate(&error));
-            }
-        };
-        // The layout is read while this unit is still the current one: it is
-        // what wraps every command this unit produces, and a recipe expanded
-        // later has to be wrapped in exactly the same thing.
-        let layout = sink.layout();
-        let unit_remakes = unit_remakes(sink, &ev.session, &regeneration_names, refusals)?;
-        let unit = sink.take_unit();
-        ev.finish().map_err(|error| MakeError::evaluate(&error))?;
-        let deferred_edges = sink.take_deferred_edges();
-        let pending_recipes =
-            (!deferred.is_empty()).then_some((ev, deferred, layout, deferred_edges));
-        Ok((
-            unit,
-            exported,
-            command_line,
-            unit_remakes,
-            makeflags,
-            flag_environment,
-            pending_recipes,
-        ))
+    let replayed = state.read_units.get(&compilation_key);
+    session.flags.is_repeated_read = replayed.is_some();
+    // And what that first read was TOLD, for the calls that cannot be held
+    // back because the expansion that asked has to be handed a value. A unit
+    // reading for the first time — the child this pass was taken for — gets
+    // nothing and asks the ground itself.
+    session
+        .ground_journal
+        .replay(replayed.cloned().unwrap_or_default());
+    let read = in_directory(&context.directory, || {
+        read_unit(session, sink, parent_scope, &context)
     });
-    let (unit, exported, command_line, unit_remakes, makeflags, flag_environment, pending_recipes) =
-        match evaluated {
-            Ok(evaluated) => evaluated,
-            Err(error) => {
-                state.compiling.remove(&compilation_key);
-                return Err(error);
-            }
-        };
+    let UnitRead {
+        unit,
+        exported,
+        command_line,
+        unit_remakes,
+        makeflags,
+        flag_environment,
+        pending_recipes,
+        journal,
+    } = match read {
+        Ok(read) => read,
+        Err(error) => {
+            state.compiling.remove(&compilation_key);
+            return Err(error);
+        }
+    };
+    state.units_read.insert(compilation_key.clone(), journal);
     state.retain(pending_recipes, &context.directory);
     state.admit(unit_remakes);
 
@@ -1050,8 +1109,9 @@ pub struct Loaded {
     refusals: Vec<RefusedMakefile>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
-    /// The units this read covered, by cache key.
-    units_read: HashSet<Vec<u8>>,
+    /// The units this read covered, by cache key, each with what the ground
+    /// told it.
+    units_read: ReadJournals,
     /// The root unit's canonical, fully evaluated `MAKEFLAGS`.
     makeflags: String,
     /// The recipes this graph's own executor will expand as it launches them,
@@ -1152,8 +1212,8 @@ impl Loaded {
     /// The units this pass read, which a later pass over the same text is
     /// repeating rather than performing.
     #[must_use]
-    pub(crate) const fn units_read(&self) -> &HashSet<Vec<u8>> {
-        &self.units_read
+    pub(crate) fn take_units_read(&mut self) -> ReadJournals {
+        std::mem::take(&mut self.units_read)
     }
 
     /// The switch state the Makefile left for its own build and its children.

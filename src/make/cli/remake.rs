@@ -678,7 +678,7 @@ pub(super) fn build_compiler_inputs(
     output: &mut Option<&mut dyn Write>,
     diagnostics: &mut Option<&mut dyn Write>,
     settled_boundaries: &mut HashSet<EvaluationBoundary>,
-    read_units: &mut HashSet<Vec<u8>>,
+    read_units: &mut crate::make::ReadJournals,
 ) -> Result<Settlement, Error> {
     let CompilerInputBuild {
         loaded,
@@ -689,8 +689,14 @@ pub(super) fn build_compiler_inputs(
     } = request;
     let keep_going = invocation.given(Switch::KeepGoing);
     // What this pass read, which a later pass over the same text repeats rather
-    // than performs.
-    read_units.extend(loaded.units_read().iter().cloned());
+    // than performs, and what the ground told it. The FIRST read's answers are
+    // the ones kept: a pass that replayed them recorded the same ones again, and
+    // a pass whose replay diverged recorded answers to a ground that had moved,
+    // which is precisely what must not be handed on.
+    let mut loaded = loaded;
+    for (unit, journal) in loaded.take_units_read() {
+        read_units.entry(unit).or_insert(journal);
+    }
     let (mut graph, mut read) = Read::taken_from(loaded);
     let mut recipes = read.recipes.take();
     let (mut persistence, warning) = Persistence::open(&mut graph, directory)?;
