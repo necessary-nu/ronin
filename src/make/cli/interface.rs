@@ -324,12 +324,26 @@ pub(super) fn makeflags_arguments(inherited: &str) -> Vec<BString> {
 /// instead of being set aside. GNU Make reads every non-switch word through
 /// `handle_non_switch_argument` whatever origin it arrived from, and that
 /// reaches `parse_variable_definition`, which is fatal on an empty name — so
-/// `MAKEFLAGS += -k := 2` abandons exactly as `make '=1'` does. Naming the
-/// word here does not apply it; a named assignment arriving this way is still
-/// dropped, which is make-makeflags-write-drops-an-assignment-word.
-fn assigned_makeflags_arguments(value: &str) -> Result<Vec<BString>, String> {
-    let mut arguments = vec![BString::from("make")];
-    for word in makeflags_words(value) {
+/// `MAKEFLAGS += -k := 2` abandons exactly as `make '=1'` does.
+///
+/// A word that names something is set aside for the evaluator instead of being
+/// dropped: `handle_non_switch_argument` hands it to `try_variable_definition`
+/// at the origin the assignment carried, which for a Makefile's own write is
+/// `o_file`. So it is an ordinary Makefile assignment made where the write
+/// stands, not a command-line variable — measured, `$(origin FOO)` answers
+/// `file` and a later `FOO = mine` outranks it.
+///
+/// The leading-cluster rule is positional, and GNU Make applies it to the
+/// first word of the value and to no other (`decode_env_switches` examines
+/// `argv[1]` alone). Counting words already kept would let an assignment in
+/// front of it hand the dash to the word behind: `MAKEFLAGS += FOO=bar ran`
+/// would silently turn on `-r -a -n`, which is a dry run.
+fn assigned_makeflags_arguments(value: &str) -> Result<MakeflagsWords, String> {
+    let mut words = MakeflagsWords {
+        arguments: vec![BString::from("make")],
+        assignments: Vec::new(),
+    };
+    for (position, word) in makeflags_words(value).into_iter().enumerate() {
         if word == "--" {
             continue;
         }
@@ -337,15 +351,23 @@ fn assigned_makeflags_arguments(value: &str) -> Result<Vec<BString>, String> {
             if command_variable_name(&word).is_some_and(str::is_empty) {
                 return Err("empty variable name".to_owned());
             }
+            words.assignments.push(word);
             continue;
         }
-        if arguments.len() == 1 && !word.starts_with('-') {
-            arguments.push(BString::from(format!("-{word}")));
+        if position == 0 && !word.starts_with('-') {
+            words.arguments.push(BString::from(format!("-{word}")));
         } else {
-            arguments.push(BString::from(word));
+            words.arguments.push(BString::from(word));
         }
     }
-    Ok(arguments)
+    Ok(words)
+}
+
+/// One `MAKEFLAGS` value split the way GNU Make splits it: the words the
+/// option grammar reads, and the words that bind a name.
+struct MakeflagsWords {
+    arguments: Vec<BString>,
+    assignments: Vec<String>,
 }
 
 /// Decode a Makefile assignment with the same option grammar as argv.
@@ -360,15 +382,28 @@ pub(super) fn decode_makefile_makeflags(
     protected: &[u8],
 ) -> Result<kati::flags::DecodedMakeflags, String> {
     let mut invocation = Invocation::new();
-    for (value, source) in [
-        (previous, ArgumentSource::Makefile),
-        (assigned, ArgumentSource::Makefile),
-        (protected, ArgumentSource::Protection),
+    let mut assignments = Vec::new();
+    for (value, source, is_the_write) in [
+        (previous, ArgumentSource::Makefile, false),
+        (assigned, ArgumentSource::Makefile, true),
+        (protected, ArgumentSource::Protection, false),
     ] {
         let value = std::str::from_utf8(value)
             .map_err(|_| "MAKEFLAGS contains non-UTF-8 option bytes".to_owned())?;
-        let arguments = assigned_makeflags_arguments(value)?;
-        if let Some(action) = parse_arguments(&mut invocation, &arguments, source)
+        let words = assigned_makeflags_arguments(value)?;
+        // Only the write itself binds anything. GNU Make decodes one value —
+        // the whole of `MAKEFLAGS` as the Makefile left it — while the switch
+        // table and the protected state are read back here as two more streams
+        // of the same grammar, and a name bound out of either of those would be
+        // bound again on every write.
+        if is_the_write {
+            assignments = words
+                .assignments
+                .into_iter()
+                .map(|word| Bytes::from(word.into_bytes()))
+                .collect();
+        }
+        if let Some(action) = parse_arguments(&mut invocation, &words.arguments, source)
             .map_err(|error| error.to_string())?
         {
             let diagnostic = match action {
@@ -399,6 +434,7 @@ pub(super) fn decode_makefile_makeflags(
     }
     let flags = compiler_flag_variables(&invocation);
     Ok(kati::flags::DecodedMakeflags {
+        assignments,
         carried: Bytes::from(carried_switches(&flags.base, &invocation).into_bytes()),
         makeflags: Bytes::from(flags.published.into_bytes()),
         mflags: Bytes::from(flags.mflags.into_bytes()),

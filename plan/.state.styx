@@ -655,6 +655,7 @@ assertions (
     {id make-empty-variable-name-does-not-abandon, kind @complete, author "brendan@necessary.nu", at 2026-08-19T23:51:00.127756267Z}
     {id make-recipe-prefix-is-read-per-expanded-line, kind @complete, author "brendan@necessary.nu", at 2026-08-19T23:51:04.019987733Z}
     {id make-staging-pass-repeats-an-immediate-side-effect, kind @complete, author "brendan@necessary.nu", at 2026-08-20T00:10:25.424864122Z}
+    {id make-makeflags-write-drops-an-assignment-word, kind @doing, author "brendan@necessary.nu", at 2026-08-20T00:46:03.258378087Z}
 )
 
 impl_evidence (

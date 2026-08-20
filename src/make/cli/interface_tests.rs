@@ -5,6 +5,7 @@ use super::{
     parse,
 };
 use crate::util::BString;
+use kati::bytes::Bytes;
 use std::path::Path;
 
 pub(super) fn parsed(arguments: &[&str]) -> Invocation {
@@ -63,6 +64,49 @@ fn makefile_makeflags_mutate_switch_table() {
         decode_makefile_makeflags(b"w", b"w -- FOO=bar --no-print-directory", b"w").unwrap();
     assert_eq!(decoded.makeflags.as_ref(), b"w");
     assert_eq!(decoded.mflags.as_ref(), b"-w");
+}
+
+/// A word of the write that binds a name is handed to the evaluator, and the
+/// leading-cluster rule belongs to the first word of the value and to no other.
+// [spec:ronin:req:make.semantics+1/test]
+#[test]
+fn a_makeflags_write_hands_back_names() {
+    let decoded = decode_makefile_makeflags(b"", b"FOO=bar", b"").unwrap();
+    assert_eq!(decoded.assignments, vec![Bytes::from("FOO=bar")]);
+    assert_eq!(decoded.makeflags.as_ref(), b"");
+
+    // Every operator the scanner knows arrives whole; what an operator means is
+    // the evaluator's answer, not this grammar's.
+    let decoded = decode_makefile_makeflags(b"", b"-k A:=1 B+=2 C?=3 D!=echo", b"").unwrap();
+    assert_eq!(
+        decoded.assignments,
+        vec![
+            Bytes::from("A:=1"),
+            Bytes::from("B+=2"),
+            Bytes::from("C?=3"),
+            Bytes::from("D!=echo"),
+        ]
+    );
+    assert_eq!(decoded.makeflags.as_ref(), b"k");
+
+    // The switch table and the protected state are read back through the same
+    // grammar, so a name bound out of either would be bound again on every
+    // write. Only the write itself binds.
+    let decoded = decode_makefile_makeflags(b"KEPT=1", b"-w", b"HELD=2").unwrap();
+    assert!(decoded.assignments.is_empty());
+
+    // A word that is not a switch and binds nothing is dropped, and the dash
+    // the leading cluster is missing goes to the first word of the value —
+    // never to a word an assignment happens to stand in front of. `-ran` is
+    // three switches, one of them a dry run.
+    let decoded = decode_makefile_makeflags(b"", b"FOO=bar ran", b"").unwrap();
+    assert_eq!(decoded.assignments, vec![Bytes::from("FOO=bar")]);
+    assert!(!decoded.is_dry_run);
+    assert_eq!(decoded.makeflags.as_ref(), b"");
+
+    let decoded = decode_makefile_makeflags(b"", b"ran FOO=bar", b"").unwrap();
+    assert!(decoded.is_dry_run);
+    assert_eq!(decoded.makeflags.as_ref(), b"nr");
 }
 
 /// GNU Make settles `--shuffle` before it reads a makefile, so a makefile's
