@@ -1,0 +1,17 @@
+# GNU Make defines MAKECMDGOALS from inside the branch of
+# `handle_non_switch_argument` that enters a goal target (main.c), and
+# MAKEOVERRIDES from inside `define_makeflags`'s `if (command_variables != 0)`.
+# A bare invocation reaches neither, so both names are absent rather than empty.
+#
+# The guard is `$(origin)` and not `ifdef`: `ifdef` asks whether the value is
+# non-empty, so an empty binding answers it the same way an absent one does.
+# `$(origin)` is the only question that can tell them apart, which makes it the
+# only one a makefile can ask about being invoked bare.
+ifeq ($(origin MAKECMDGOALS),undefined)
+all: invoked-bare
+else
+all: goal-given
+endif
+
+invoked-bare: ; @printf 'branch=[bare] goals=[%s] over=[%s] hidden=[%s]\n' '$(origin MAKECMDGOALS)' '$(origin MAKEOVERRIDES)' '$(origin -*-command-variables-*-)' > out
+goal-given: ; @printf 'branch=[goal]\n' > out

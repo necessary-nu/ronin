@@ -1,0 +1,13 @@
+# A goal word defines MAKECMDGOALS and nothing else: it never reaches
+# `command_variables`, so `define_makeflags` never reaches the pair that block
+# guards and MAKEOVERRIDES stays undefined. `ifeq ($(origin MAKEOVERRIDES),
+# undefined)` is the makefile idiom for "did anything outrank me", and it can
+# only answer while the name is absent from an invocation that overrode nothing.
+ifeq ($(origin MAKEOVERRIDES),undefined)
+deliver: nothing-outranked-me
+else
+deliver: something-outranked-me
+endif
+
+nothing-outranked-me: ; @printf 'branch=[none] goals=[%s] value=[%s] hidden=[%s]\n' '$(origin MAKECMDGOALS)' '$(MAKECMDGOALS)' '$(origin -*-command-variables-*-)' > out
+something-outranked-me: ; @printf 'branch=[some]\n' > out
