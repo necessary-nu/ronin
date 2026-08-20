@@ -714,6 +714,7 @@ assertions (
     {id make-what-if-assumed-new, kind @complete, author "brendan@necessary.nu", at 2026-08-20T12:06:37.821603546Z}
     {id make-ifeq-closing-paren-need-not-end-the-line, kind @complete, author "brendan@necessary.nu", at 2026-08-20T12:57:47.39369638Z}
     {id make-question-mode-runs-a-plus-line, kind @complete, author "brendan@necessary.nu", at 2026-08-20T13:39:15.118914789Z}
+    {id make-a-conditional-in-an-ignored-branch-is-not-read, kind @doing, author "brendan@necessary.nu", at 2026-08-20T16:07:23.9175724Z}
 )
 
 impl_evidence (

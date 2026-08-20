@@ -1748,3 +1748,47 @@ fn keep_going_passes_an_answered_goal() {
     assert!(!directory.join("ordinary.txt").exists());
     fs::remove_dir_all(directory).unwrap();
 }
+
+/// The complaint about text after an `ifeq` is owed to the branch the directive
+/// is in, not to the file.
+///
+/// GNU Make's `EXTRATEXT` sits below `conditional_line`'s ignoring loop, so it
+/// is only ever reached for a condition the read is actually looking at. The
+/// effect is the same either way — `ifeq (a,a) junk` compares `a` against `a`
+/// and builds — so nothing in the port corpus can hold this half; what moves is
+/// whether Ronin says anything at all, and the only place it can be said is
+/// here.
+#[test]
+fn an_ignored_conditional_draws_no_complaint() {
+    let directory = test_directory("ignored-branch-quiet");
+    fs::write(
+        directory.join("Makefile"),
+        "ifeq (x,y)\nifeq (a,a) junk\nendif\nendif\nall: ; @echo built > out\n",
+    )
+    .unwrap();
+    let ignored = make_command(&directory).output().unwrap();
+    let said = String::from_utf8_lossy(&ignored.stdout).into_owned()
+        + &String::from_utf8_lossy(&ignored.stderr);
+    assert_eq!(ignored.status.code(), Some(0), "{said}");
+    assert!(
+        !said.contains("extraneous text"),
+        "a condition in a branch that was never taken was complained about: {said}"
+    );
+
+    // The same line where the read does look at it, so the quiet above is the
+    // branch's doing rather than the complaint having been dropped.
+    fs::write(
+        directory.join("Makefile"),
+        "ifeq (x,x)\nifeq (a,a) junk\nendif\nendif\nall: ; @echo built > out\n",
+    )
+    .unwrap();
+    let read = make_command(&directory).output().unwrap();
+    let said =
+        String::from_utf8_lossy(&read.stdout).into_owned() + &String::from_utf8_lossy(&read.stderr);
+    assert_eq!(read.status.code(), Some(0), "{said}");
+    assert!(
+        said.contains("extraneous text after 'ifeq' directive"),
+        "a condition the read reached was not complained about: {said}"
+    );
+    fs::remove_dir_all(directory).unwrap();
+}

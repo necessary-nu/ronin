@@ -1,0 +1,8 @@
+# A conditional nothing closes is refused, and GNU Make refuses it at the END of
+# the read: `conditionals->if_cmds' is checked once the file has been read, so
+# every line above has already been read and everything those lines do has
+# already happened. This one leaves a file behind to say so.
+EARLY := $(shell printf 'ran\n' > early; echo done)
+
+ifeq (a,a)
+all: ; @echo built > out
