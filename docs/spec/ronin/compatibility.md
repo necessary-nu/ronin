@@ -70,6 +70,25 @@ the supported CLI surface.
 > happens and POSIX word splitting is not applied. `--shell` still selects one,
 > which is how a shell that runs on Windows is used there.
 
+> [spec:ronin:req:product.shell-identity]
+> Invoked under the name `sh`, Ronin is a POSIX shell rather than a build
+> tool: it reads the argument vector a dash-compatible shell reads and answers
+> as one. The name is the only way in, exactly as it is for the Make front
+> end — no option selects it, and nothing about a build reaches it. `argv[0]`
+> is reported as it was written, so a diagnostic names the shell its caller
+> named rather than the file that answered.
+
+> [spec:ronin:req:product.builtin-shell]
+> Where a command needs a shell and the shell resolved for it is the default
+> `/bin/sh`, Ronin runs that shell itself, by spawning its own executable
+> under the name the build asked for. The substitution is a spawn-time act
+> and changes nothing a consumer reads: the graph, an emitted manifest, the
+> dry run and the build log carry the spelling they carried before, so a
+> manifest Ronin writes stays runnable by a build tool that has no shell of
+> its own. A shell the build names — a Makefile's `SHELL`, a target-specific
+> `SHELL`, a command-line `SHELL=`, or `--shell` — is spawned as named, so
+> choosing a shell still chooses one.
+
 > [spec:ronin:req:product.build-outcome]
 > A build that does not finish reports why on stdout, after the build's own
 > output, and leaves with the exit status of the last command that failed — the
