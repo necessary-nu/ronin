@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-20T14:56:45.71809253Z
+last_sync_at 2026-08-20T15:33:36.33901638Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -69,6 +69,7 @@ derived_priorities (
     {id lint-machine-readable, priority 2, derived_at 2026-08-20T13:57:37.951529701Z}
     {id lint-makefile-nesting-census, priority 1, derived_at 2026-08-20T13:57:37.951529701Z}
     {id lint-manifest-checks, priority 1, derived_at 2026-08-20T13:57:37.951529701Z}
+    {id lint-reads-with-ronins-own-make, priority 2, derived_at 2026-08-20T15:33:36.33901638Z}
     {id lint-tool-surface, priority 0, derived_at 2026-08-20T13:57:37.951529701Z}
     {id make-a-command-line-file-argument-is-not-canonicalised, priority 2, derived_at 2026-08-20T08:27:31.859392001Z}
     {id make-a-composed-recipe-is-still-one-shell, priority 0, derived_at 2026-08-20T03:31:21.605164794Z}
@@ -741,11 +742,15 @@ impl_evidence (
         make.nesting-census
     ), covered_claims (
         {impl_name target-impl, rule make.nesting-census}
+    ), rule_versions_seen (
+        {id make.nesting-census, version 1}
     )}
     {id lint-manifest-checks, covered_rules (
         tools.manifest-lint
     ), covered_claims (
         {impl_name target-impl, rule tools.manifest-lint}
+    ), rule_versions_seen (
+        {id tools.manifest-lint, version 0}
     )}
     {id lint-tool-surface, covered_rules (
         tools.lint
