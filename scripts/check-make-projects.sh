@@ -33,6 +33,11 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
+# `.cargo/config.toml` names the host as an explicit target, so cargo's
+# artifacts sit under the triple rather than directly under `target/`. Ask
+# rustc for it rather than spelling it a second time.
+release=target/$(rustc -vV | sed -n 's/^host: //p')/release
+
 home=$repo_root/reference/make-projects
 mkdir -p "$home"
 
@@ -75,7 +80,7 @@ cargo build --release --bin ronin
 bin=$repo_root/target/make-projects-bin
 rm -rf "$bin"
 mkdir -p "$bin"
-ln -s "$repo_root/target/release/ronin" "$bin/make"
+ln -s "$repo_root/$release/ronin" "$bin/make"
 
 jobs=${JOBS:-8}
 

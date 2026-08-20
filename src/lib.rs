@@ -38,7 +38,7 @@ mod util;
 
 pub use cli::{NINJA_COMPAT_VERSION, PRODUCT_NAME, RunResult, Runner, run, run_os};
 pub use error::{Error, ErrorKind};
-pub use multicall::run_process;
+pub use multicall::{run_as_shell, run_process};
 pub use signal::{Signal, SignalHandlers, install_signal_handlers};
 pub use subprocess::INTERRUPTED_EXIT_CODE;
 

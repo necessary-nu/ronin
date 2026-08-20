@@ -39,13 +39,21 @@ fn is_broken_pipe(mut error: &(dyn std::error::Error + 'static)) -> bool {
 }
 
 fn main() {
+    let arguments = std::env::args_os().collect::<Vec<_>>();
+    // Whether this is a build at all is the first question, ahead of anything
+    // a build arranges. A shell presents the process it inherited — its own
+    // signal dispositions, its own standard descriptors — and every
+    // arrangement still standing when it starts is one its children see.
+    // [spec:ronin:req:product.shell-identity]
+    if let Some(status) = ronin::run_as_shell(&arguments) {
+        std::process::exit(status);
+    }
     // [spec:ronin:req:compat.process-integration]
     // [spec:ronin:req:runtime.guarded-signal-boundary]
     let signal_handlers = ronin::install_signal_handlers().unwrap_or_else(|error| {
         let _ = write_diagnostic(format_args!("failed to install signal handlers: {error}"));
         std::process::exit(1);
     });
-    let arguments = std::env::args_os().collect::<Vec<_>>();
     let stdout = std::io::stdout();
     let mut stdout = stdout.lock();
     let stderr = std::io::stderr();

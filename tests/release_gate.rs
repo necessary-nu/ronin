@@ -48,12 +48,17 @@ fn release_gate_builds_no_registry_package() {
     );
 }
 
-/// Every integration test that links the executable under a name of its own is
-/// reaching for the Make front end — that link is the only way in, and no other
-/// name is worth choosing. The front end exists only under the `make` feature,
-/// so such a file must say so: as a file-level `#![cfg(all(unix, feature =
-/// "make"))]` where every test in it reaches the front end, or per test as
-/// `tests/cli.rs` does where most do not.
+/// An integration test that links the executable under `make` or `gmake` is
+/// reaching for the Make front end — that link is the only way in. The front
+/// end exists only under the `make` feature, so such a file must say so: as a
+/// file-level `#![cfg(all(unix, feature = "make"))]` where every test in it
+/// reaches the front end, or per test as `tests/cli.rs` does where most do not.
+///
+/// A name of its own no longer implies Make, which is why the recognition
+/// names the two it means. `sh` is the other door in the same binary, it is
+/// there whether or not the Make front end was compiled, and a shell test that
+/// declared the `make` feature would stop covering the build that most needs
+/// it.
 ///
 /// This lives here, in a file that is itself ungated, because a gate that
 /// declines to compile cannot report its own absence. `tests/make_grouped.rs`
@@ -80,6 +85,9 @@ fn make_tests_declare_the_make_feature() {
         }
         let source = std::fs::read_to_string(&path).expect("an integration test source");
         if !source.contains("CARGO_BIN_EXE_ronin") || !source.contains("symlink") {
+            continue;
+        }
+        if !source.contains("\"make\"") && !source.contains("\"gmake\"") {
             continue;
         }
         checked += 1;

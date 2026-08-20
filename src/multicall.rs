@@ -16,7 +16,14 @@
 //! demanding example, and it dies on the second word. Reached through the name,
 //! `MAKE` is a path, which is all it ever needed to be.
 //!
-//! See `plan/decisions/multicall-identity.md`.
+//! A third name is not a front end at all. Invoked as `sh`, Ronin is the
+//! shell — the one it hands commands to for the rest of the time — and that
+//! question is answered before a build is set up, because a shell wants the
+//! process's own signal dispositions and its own streams rather than the ones
+//! a build arranges. See [`run_as_shell`].
+//!
+//! See `plan/decisions/multicall-identity.md` and
+//! `plan/decisions/builtin-shell.md`.
 // [spec:ronin:req:product.make-identity]
 
 use crate::Error;
@@ -48,6 +55,31 @@ pub(crate) fn is_make_name(name: &str) -> bool {
     MAKE_NAMES.contains(&name)
 }
 
+/// The program names that select the shell, and nothing else does.
+///
+/// One name, spelled as POSIX spells it. `dash` is deliberately absent: what
+/// Ronin stands in for is the shell a build resolved, which is `/bin/sh`, and
+/// answering to a second name would put Ronin in the way of a shell somebody
+/// installed on purpose.
+const SHELL_NAMES: [&str; 1] = ["sh"];
+
+/// Whether a program name asks for the shell rather than for a build.
+///
+/// Read the same way [`is_make_name`] reads its own: the whole file name, so
+/// an `sh.old` is not a shell, and the executable suffix does not count.
+pub(crate) fn is_shell_name(name: &str) -> bool {
+    let name = name.strip_suffix(".exe").unwrap_or(name);
+    SHELL_NAMES.contains(&name)
+}
+
+/// The file name an invocation arrived under, which is what selects everything.
+fn invoked_name(program: &std::ffi::OsStr) -> String {
+    Path::new(program)
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
 /// The front end `arguments` ask for.
 ///
 /// The invoked program name decides it and nothing else does, so a path and a
@@ -57,16 +89,65 @@ pub(crate) fn is_make_name(name: &str) -> bool {
 pub(crate) fn select(arguments: &[BString]) -> FrontEnd {
     arguments.first().map_or(FrontEnd::Ninja, |program| {
         let program = program.to_os_str_lossy();
-        let name = Path::new(&*program)
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if is_make_name(&name) {
+        if is_make_name(&invoked_name(std::ffi::OsStr::new(&*program))) {
             FrontEnd::Make
         } else {
             FrontEnd::Ninja
         }
     })
+}
+
+/// Runs Ronin as the shell, when the shell is the name it was invoked under.
+///
+/// Returns the status the shell left with, or `None` when this invocation is a
+/// build and the caller should carry on. It is the process entry point's first
+/// act, ahead of signal handlers and buffered streams, because a shell must
+/// present the process it inherited: dash sets its own dispositions and writes
+/// through the descriptors it was given, and a build's arrangements are
+/// visible to every child if they are still standing.
+///
+/// The shell is a whole process rather than a call into the build, and that is
+/// load-bearing rather than convenient. A shell reaps any child of the process
+/// it runs in, which a scheduler holding its own children cannot allow; this
+/// way it reaps its own and nobody else's. See
+/// `plan/decisions/builtin-shell.md`.
+// [spec:ronin:req:product.shell-identity]
+#[must_use]
+#[cfg(unix)]
+pub fn run_as_shell(arguments: &[OsString]) -> Option<i32> {
+    use std::os::unix::ffi::OsStrExt;
+
+    if !is_shell_name(&invoked_name(arguments.first()?)) {
+        return None;
+    }
+    // Rust's runtime does work between `_start` and `main` that C's does not,
+    // and a shell sits close enough to the operating system that all of it
+    // shows: SIGPIPE ignored, `/dev/null` opened over any closed standard
+    // descriptor, a SIGSEGV handler on an alternate stack. Every one of them
+    // is inherited or observable — a recipe's `cmd | head` wants SIGPIPE's
+    // default disposition — so every one of them is undone here.
+    nsh_platform::restore_shell_process_runtime_state();
+    // The operating system's representation, kept intact: an argument need not
+    // be valid UTF-8, and dash passes such bytes through untouched.
+    let argv = arguments
+        .iter()
+        .map(|argument| argument.as_bytes().to_vec())
+        .collect::<Vec<_>>();
+    Some(
+        nsh::shellmain::main_fn(argv, nsh::streams::Streams::INHERIT)
+            .code()
+            .into(),
+    )
+}
+
+/// Runs Ronin as the shell, which no build on this platform has.
+///
+/// Windows has no shell in the position Ronin would stand in — Ninja hands the
+/// whole command line to `CreateProcess` — so every invocation here is a build.
+#[must_use]
+#[cfg(not(unix))]
+pub fn run_as_shell(_arguments: &[OsString]) -> Option<i32> {
+    None
 }
 
 /// Runs Ronin as its executable does.
@@ -117,7 +198,7 @@ pub fn run_process(
 
 #[cfg(test)]
 mod tests {
-    use super::{FrontEnd, select};
+    use super::{FrontEnd, invoked_name, is_shell_name, select};
     use crate::util::BString;
 
     fn selected(arguments: &[&str]) -> FrontEnd {
@@ -155,5 +236,47 @@ mod tests {
         assert_eq!(selected(&["make", "--ninja"]), FrontEnd::Make);
         assert_eq!(selected(&["ronin", "--make"]), FrontEnd::Ninja);
         assert_eq!(selected(&["gmake", "-j4", "all"]), FrontEnd::Make);
+    }
+
+    /// Read through a path or a symlink like Make's names, and just as narrow:
+    /// the shell answers to what POSIX calls it and to nothing that merely
+    /// looks like it.
+    ///
+    /// Nothing here calls [`super::run_as_shell`] with a shell's name, because
+    /// a call that matched would replace this test process with a shell.
+    // [spec:ronin:req:product.shell-identity/test]
+    #[test]
+    fn the_shells_own_name_selects_it() {
+        let name = |program| invoked_name(std::ffi::OsStr::new(program));
+        assert!(is_shell_name(&name("sh")));
+        assert!(is_shell_name(&name("/bin/sh")));
+        assert!(is_shell_name(&name("/usr/bin/sh")));
+        assert!(is_shell_name(&name("sh.exe")));
+        // A shell somebody installed on purpose is not this one, and neither
+        // is a name that merely ends in the shell's.
+        assert!(!is_shell_name(&name("dash")));
+        assert!(!is_shell_name(&name("bash")));
+        assert!(!is_shell_name(&name("ssh")));
+        assert!(!is_shell_name(&name("sh.old")));
+        assert!(!is_shell_name(&name("ronin")));
+        assert!(!is_shell_name(&name("make")));
+    }
+
+    /// The shell is not a front end, so an option cannot ask for it any more
+    /// than an option can ask for Make mode.
+    // [spec:ronin:req:product.shell-identity/test]
+    #[test]
+    fn no_option_reaches_the_shell() {
+        use std::ffi::OsString;
+
+        assert_eq!(super::run_as_shell(&[]), None);
+        assert_eq!(
+            super::run_as_shell(&[OsString::from("ronin"), OsString::from("--sh")]),
+            None
+        );
+        assert_eq!(
+            super::run_as_shell(&[OsString::from("ronin"), OsString::from("-c")]),
+            None
+        );
     }
 }

@@ -29,3 +29,33 @@
 # without it and gets the dynamic startup cost back.
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))']
 rustflags = ["-C", "target-feature=+crt-static"]
+
+# Fetch git dependencies with the `git` program rather than cargo's own client.
+#
+# The shell arrives as a git dependency, and a checkout whose gitconfig rewrites
+# `https://github.com/` to `git@github.com:` — a common arrangement for anyone
+# who pushes to these repositories — hands cargo's built-in client an SSH URL it
+# cannot authenticate from a non-interactive session. The `git` program can, and
+# on a host with no rewrite this changes nothing: the same HTTPS URL is fetched
+# anonymously either way.
+[net]
+git-fetch-with-cli = true
+
+# Build for the host as an explicit target, so cargo keeps host tooling out of
+# the target's flags.
+#
+# This is the escape hatch the workspace note predicted and it is here for the
+# reason it predicted. `crt-static` above matches every unit when target and
+# host are the same triple, including a proc-macro — which must be a dylib, and
+# which a statically linked target cannot produce. The standing constraint was
+# therefore "no proc-macro dependencies at all", and the shell breaks it: nsh
+# reaches a line editor, which reaches postcard, which requires serde's derive.
+# Naming the target explicitly is what makes cargo compile that proc-macro for
+# the host without the target's flags, and it is the only stable way to say so.
+#
+# What it costs, so that nobody has to rediscover it: every artifact moves under
+# `target/<triple>/`, and an in-repo build on another host needs its own
+# `--target`. Delete these two lines the day the shell's dependency closure
+# holds no proc-macro; nothing else has ever needed them.
+[build]
+target = "x86_64-unknown-linux-gnu"

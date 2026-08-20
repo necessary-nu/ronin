@@ -15,7 +15,8 @@ cargo build --release
 cargo test --all-targets
 ```
 
-The executable is `target/release/ronin`:
+The executable is `target/<host triple>/release/ronin` — the build names the
+host as an explicit target, so the profile directory sits under it:
 
 ```sh
 ronin --version
@@ -29,9 +30,9 @@ On Unix, linking the Ronin executable as `make` makes the same binary behave
 as a GNU Make-compatible tool:
 
 ```sh
-ln -s ronin target/release/make
-target/release/make -j8
-target/release/make -f Makefile all
+ln -s ronin target/*/release/make
+target/*/release/make -j8
+target/*/release/make -f Makefile all
 ```
 
 When invoked as `make` (or `gmake`), Ronin reads Makefiles and uses Make-style

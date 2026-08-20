@@ -1050,4 +1050,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
     )}
+    {id builtin-shell-personality, covered_rules (
+        product.shell-identity
+    ), covered_claims (
+        {impl_name target-impl, rule product.shell-identity}
+    )}
 )
