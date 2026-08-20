@@ -736,6 +736,7 @@ assertions (
     {id builtin-shell-flip-left-the-clippy-gate-red, kind @doing, author "brendan@necessary.nu", at 2026-08-20T20:41:30.691706625Z}
     {id make-an-unterminated-call-with-no-space-is-read-as-a-reference, kind @doing, author "brendan@necessary.nu", at 2026-08-20T20:58:14.342556487Z}
     {id make-an-unreadable-condition-after-else-is-extraneous-text, kind @complete, author "brendan@necessary.nu", at 2026-08-20T21:32:58.812572939Z}
+    {id make-a-diagnostic-inside-a-define-names-the-call-not-the-define, kind @doing, author "brendan@necessary.nu", at 2026-08-20T21:45:07.38166694Z}
 )
 
 impl_evidence (

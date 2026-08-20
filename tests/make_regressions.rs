@@ -1,5 +1,6 @@
 #![cfg(all(unix, feature = "make"))]
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
@@ -1758,6 +1759,100 @@ fn keep_going_passes_an_answered_goal() {
 /// and builds — so nothing in the port corpus can hold this half; what moves is
 /// whether Ronin says anything at all, and the only place it can be said is
 /// here.
+/// Where a diagnostic raised inside an expansion points.
+///
+/// GNU Make raises them at `*expanding_var` (expand.c), which is the location
+/// of the VARIABLE being expanded rather than of the text inside it -- so a
+/// `define`, the one binding whose text spans lines, names the `define` line
+/// and not the body line the call is written on. Everything written on one line
+/// gives the two the same answer, which is why this only shows up here.
+///
+/// The three controls matter as much as the cells: `$(error)` and `$(warning)`
+/// are raised at `reading_file` instead, so they name where the expansion was
+/// asked for; and a variable the command line defined has no location of its
+/// own to install, so the reference's line stands.
+///
+/// The build-intent gate cannot see any of this -- both tools refuse and write
+/// nothing, and the only observable is the line number.
+#[test]
+fn a_define_body_names_the_define() {
+    let directory = test_directory("define-diagnostic-location");
+    // (label, argv, makefile, the located prefix it must print)
+    let cases: [(&str, &[&str], &str, &str); 9] = [
+        (
+            "a define reached by a plain reference",
+            &[],
+            "define D\n$(subst a)\nendef\n\nall: ; @echo $(D) > out\n",
+            "Makefile:1: insufficient number of arguments (1) to function 'subst'.",
+        ),
+        (
+            "a define reached by $(call), which GNU Make expands as $(D)",
+            &[],
+            "define D\n$(subst $(1))\nendef\n\nall: ; @echo $(call D,x) > out\n",
+            "Makefile:1: insufficient number of arguments (1) to function 'subst'.",
+        ),
+        (
+            "the define's own line, not the file's first",
+            &[],
+            "# pad\n# pad\ndefine D\n$(subst a)\nendef\nall: ; @echo $(D) > out\n",
+            "Makefile:3: insufficient number of arguments (1) to function 'subst'.",
+        ),
+        (
+            "the innermost define, which is the one being expanded",
+            &[],
+            "define OUTER\n$(INNER)\nendef\n\ndefine INNER\n$(subst a)\nendef\n\nall: ; @echo $(OUTER) > out\n",
+            "Makefile:5: insufficient number of arguments (1) to function 'subst'.",
+        ),
+        (
+            "a complaint raised from inside a function rather than about one",
+            &[],
+            "define D\n$(word 0,a b c)\nendef\n\nall: ; @echo $(D) > out\n",
+            "Makefile:1: first argument to 'word' function must be greater than 0.",
+        ),
+        (
+            "a one-line binding, where the binding and the call share a line",
+            &[],
+            "X = $(subst a)\nall: ; @echo $(X) > out\n",
+            "Makefile:1: insufficient number of arguments (1) to function 'subst'.",
+        ),
+        (
+            "a call written in the recipe, which is not a binding at all",
+            &[],
+            "# pad\nall: ; @echo $(subst a) > out\n",
+            "Makefile:2: insufficient number of arguments (1) to function 'subst'.",
+        ),
+        (
+            "$(error) names where the expansion was asked for, not the define",
+            &[],
+            "define D\n$(error boom)\nendef\n\nall: ; @echo $(D) > out\n",
+            "Makefile:5: boom",
+        ),
+        (
+            "a command-line binding has no location to install",
+            &["X='$(subst a)'"],
+            "# pad\n# pad\nall: ; @echo $(X) > out\n",
+            "Makefile:3: insufficient number of arguments (1) to function 'subst'.",
+        ),
+    ];
+
+    // Every case is measured before any of them is judged, so one run names
+    // every cell that moved rather than only the first.
+    let mut wrong = String::new();
+    for (label, arguments, source, located) in cases {
+        fs::write(directory.join("Makefile"), source).unwrap();
+        let (succeeded, said) = merged_make(&directory, arguments);
+        if succeeded || !said.contains(located) {
+            let _ = writeln!(
+                wrong,
+                "  {label}\n    wanted {located:?}\n    got    {:?}",
+                said.trim_end()
+            );
+        }
+    }
+    assert!(wrong.is_empty(), "located in the wrong place:\n{wrong}");
+    fs::remove_dir_all(directory).unwrap();
+}
+
 #[test]
 fn an_ignored_conditional_draws_no_complaint() {
     let directory = test_directory("ignored-branch-quiet");
