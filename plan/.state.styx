@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-21T08:57:37.788490468Z
+last_sync_at 2026-08-21T09:26:14.391358631Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -777,7 +777,8 @@ assertions (
     {id the-interrupt-tests-wait-is-too-short-under-the-suites-own-load, kind @complete, author "brendan@necessary.nu", at 2026-08-21T08:21:51.275862542Z}
     {id make-port-harness-scratch-is-shared-between-runs, kind @complete, author "brendan@necessary.nu", at 2026-08-21T08:29:50.32555867Z}
     {id make-release-pedantic-in-the-test-scope, kind @complete, author "brendan@necessary.nu", at 2026-08-21T08:57:33.766410432Z}
-    {id make-release-gate-stops-at-the-port-ladder, kind @doing, author "brendan@necessary.nu", at 2026-08-21T08:58:33.929597413Z}
+    {id make-release-gate-stops-at-the-port-ladder, kind @complete, author "brendan@necessary.nu", at 2026-08-21T09:26:05.44423272Z}
+    {id make-release-port-gate-has-no-source, kind @complete, author "brendan@necessary.nu", at 2026-08-21T09:26:09.588685724Z}
 )
 
 impl_evidence (
