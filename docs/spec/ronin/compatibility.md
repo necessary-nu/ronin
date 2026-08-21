@@ -150,10 +150,26 @@ the supported CLI surface.
 > different ready edge only where Ninja does not specify or reliably expose the
 > tie order.
 
-> [spec:ronin:req:compat.process-integration]
+> [spec:ronin:req:compat.process-integration+2]
 > Command spawning, working directories, inherited environment, signal and
 > interrupt handling, jobserver participation, child exit interpretation, and
 > terminal ownership match Ninja on each supported platform.
+>
+> What an interrupt does is Ninja's throughout. No further command is launched,
+> including the next command line of a recipe the front end gave several of; no
+> edge that was running is reported as finished or recorded; and every output
+> such an edge had already changed is withdrawn — which is what Ninja's
+> `Builder::Cleanup` does to its active edges, whatever status the command it
+> killed eventually reported.
+>
+> One departure is deliberate, and it is about how long that takes rather than
+> about what it is. Ninja signals each running command's process group and then
+> blocks in `waitpid` for every one of them with no bound, so a command that
+> declines the signal — or whose shell took it between two of the command lines
+> it was given and carried on to the next — holds the build until it finishes
+> of its own accord, and its side effects up to that point stand. Ronin sends
+> the same signal to the same groups and gives them the same chance to take it,
+> and then stops what is still standing rather than being held by it.
 
 > [spec:ronin:req:compat.command-runtime]
 > Command and response-file expansion, depfile and MSVC dependency ingestion,

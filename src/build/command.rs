@@ -242,7 +242,9 @@ pub(crate) trait LateCommands {
 
 /// What the build does next with an edge whose process just finished.
 pub(super) enum Advance {
-    /// The recipe had another command line and it is running.
+    /// The edge is not finished: its next command line is running, or the
+    /// build was cut short before that line could be launched. Either way the
+    /// edge stays where the loop keeps a running one.
     Relaunched,
     /// The edge is over, on this result.
     Finished(Result<Option<ProcessOutput>, ProcessError>),
@@ -926,6 +928,16 @@ impl Builder<'_> {
         match self.next_step(prepared, result) {
             Advance::Finished(result) => return Advance::Finished(result),
             Advance::Relaunched => {}
+        }
+        // Nothing more of a recipe is launched once the build has been cut
+        // short. The loop is about to withdraw what this edge wrote and stop,
+        // so a command line started here would be started only to be killed —
+        // and it would be a line the interrupt was meant to prevent, run
+        // because the signal happened to land in the gap between two of them.
+        // The edge stays unfinished, which is what keeps it among the running
+        // edges the loop withdraws from.
+        if crate::signal::interrupted().is_some() {
+            return Advance::Relaunched;
         }
         let (launch, pretended) = Self::take_step(prepared, self.pretending());
         let use_console = prepared.command.use_console;

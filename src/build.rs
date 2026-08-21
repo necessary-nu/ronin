@@ -1996,7 +1996,7 @@ impl<'a> Builder<'a> {
         let mut failures = 0;
         let mut last_error = None;
         let failure_limit = self.options.maxfail.max(1);
-        let mut running = Vec::new();
+        let mut running: Vec<Option<PreparedEdge>> = Vec::new();
         running.resize_with(self.graph.edge_count(), || None);
         let mut running_slots = Vec::new();
         running_slots.resize_with(self.graph.edge_count(), || None);
@@ -2055,9 +2055,32 @@ impl<'a> Builder<'a> {
             // the one wait a served jobserver cannot wake by itself.
             let mut starved = false;
             if let Some(signal) = crate::signal::interrupted() {
+                // The build ends here rather than at the next completion, which
+                // is where Ninja ends it: `DoWork` reports the interrupt ahead
+                // of the commands it was about to reap, `WaitForCommand` hands
+                // the loop back its answer with those commands still running,
+                // and `Cleanup` stops them and withdraws what they wrote. None
+                // of them is reported finished or recorded, whatever status it
+                // would eventually have left with.
+                //
+                // Waiting for them instead is what let a recipe outlive the
+                // signal and be counted as having succeeded. A shell handed
+                // several command lines takes an interrupt that arrives between
+                // two of them as a flag and runs the next one anyway — measured
+                // for Ronin's own shell, for dash and for bash alike — so the
+                // command reaching this loop again is one that finished, and
+                // the edge was recorded done with its output standing behind a
+                // build that had already been cut short.
                 processes.interrupt(signal)?;
-                failures = failure_limit;
+                // Stopped and reaped before anything is withdrawn: a command
+                // still running is a command that can still write the file
+                // being taken back.
+                processes.stop();
+                for prepared in running.iter().flatten() {
+                    self.withdraw_outputs(prepared.edge, &prepared.old_mtimes, Withdraw::Stopped);
+                }
                 last_error = Some(BuildError::Interrupted { status: None });
+                break;
             }
             let maxjobs = self.job_limit(&mut load);
             while !console_running && processes.running_len() < maxjobs && failures < failure_limit

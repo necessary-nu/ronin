@@ -780,6 +780,7 @@ assertions (
     {id make-release-gate-stops-at-the-port-ladder, kind @complete, author "brendan@necessary.nu", at 2026-08-21T09:26:05.44423272Z}
     {id make-release-port-gate-has-no-source, kind @complete, author "brendan@necessary.nu", at 2026-08-21T09:26:09.588685724Z}
     {id the-serial-default-case-races-a-loaded-host, kind @complete, author "brendan@necessary.nu", at 2026-08-21T10:12:05.025555798Z}
+    {id an-interrupt-between-a-recipes-commands-is-lost, kind @complete, author "brendan@necessary.nu", at 2026-08-21T23:24:33.895136308Z}
 )
 
 impl_evidence (

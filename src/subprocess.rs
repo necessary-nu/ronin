@@ -168,6 +168,18 @@ const MIN_REAP_INTERVAL: std::time::Duration = std::time::Duration::from_micros(
 #[cfg(unix)]
 const MAX_REAP_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
 
+/// How long a command that has been sent the interrupt is given to take it
+/// before it is killed.
+///
+/// Not a deadline on anything a caller reads. Whether the command dies of the
+/// signal within this or of the kill after it, the edge is not reported and
+/// what it wrote is withdrawn either way, so no answer depends on the number.
+/// What it buys is the command's own handler — a compiler unlinking the object
+/// file it was half-way through — and it is short enough that a build tool
+/// asked to stop does.
+#[cfg(unix)]
+const INTERRUPT_GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+
 pub(crate) struct ProcessSupervisor<External = ()> {
     sender: Sender<ProcessEvent<External>>,
     receiver: Receiver<ProcessEvent<External>>,
@@ -574,11 +586,72 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
         }
         first_error.map_or(Ok(()), Err)
     }
+
+    /// Stop every command still running, and reap it.
+    ///
+    /// Ninja does this in `SubprocessSet::Clear`, reached from
+    /// `Builder::Cleanup` the moment the build loop is handed the interrupt
+    /// back: each running group is signalled, and then every one of them is
+    /// waited for. That wait has no bound, so a command which declines the
+    /// signal — or whose shell took it between two of the command lines it was
+    /// given and carried on to the next — holds the build until it finishes of
+    /// its own accord. The same signal has already been delivered here by
+    /// [`Self::interrupt`], the same chance to take it is given, and what is
+    /// still standing after it is killed: a build tool must not be held by the
+    /// thing it has just stopped.
+    ///
+    /// Reaping happens before any output is withdrawn, in that order and for
+    /// that reason: a command still running is a command that can still write
+    /// the file being taken back.
+    pub(crate) fn stop(&mut self) {
+        #[cfg(unix)]
+        {
+            let grace = std::time::Instant::now() + INTERRUPT_GRACE;
+            let mut backoff = MIN_REAP_INTERVAL;
+            while !self.children.is_empty() && std::time::Instant::now() < grace {
+                let taken = self
+                    .children
+                    .iter_mut()
+                    .filter_map(|(edge, child)| {
+                        matches!(child.child.try_wait(), Ok(Some(_))).then_some(*edge)
+                    })
+                    .collect::<Vec<_>>();
+                for edge in taken {
+                    self.discard(edge);
+                }
+                if self.children.is_empty() {
+                    break;
+                }
+                std::thread::sleep(backoff);
+                backoff = (backoff * 2).min(MAX_REAP_INTERVAL);
+            }
+            let declined = self.children.keys().copied().collect::<Vec<_>>();
+            for edge in declined {
+                self.discard(edge);
+            }
+        }
+    }
 }
 
 // [spec:ronin:req:runtime.process-supervisor-scalability]
 #[cfg(unix)]
 impl<External: Send + 'static> ProcessSupervisor<External> {
+    /// Forget one child: unregister whatever it was writing to, make sure it
+    /// is dead, and reap it. What it had left to say is dropped with it —
+    /// nothing reports an edge the build has already stopped.
+    fn discard(&mut self, edge: EdgeId) {
+        let Some(mut child) = self.children.remove(&edge) else {
+            return;
+        };
+        if child.registered
+            && let Some(output) = child.output.as_ref()
+        {
+            let _ = self.poller.delete(output);
+        }
+        terminate_and_reap(&mut child);
+        self.running = self.running.saturating_sub(1);
+    }
+
     fn spawn_evented(
         &mut self,
         edge: EdgeId,

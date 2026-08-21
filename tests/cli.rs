@@ -401,6 +401,138 @@ fn forwards_interrupts_and_removes_partial_outputs() {
     assert!(!directory.join("output").exists());
 }
 
+/// A recipe that declines the interrupt is the case that tells the two halves
+/// of the contract apart, and it is the deterministic form of a recipe whose
+/// shell took the signal between two of the command lines it was given: either
+/// way the command reaches the end of its own script after the build was cut
+/// short. Upstream Ninja waits for such a recipe and then removes what it
+/// wrote anyway, and never reports the edge as finished — measured. Recording
+/// it instead is what left a half-written output standing behind a build that
+/// exits 130.
+///
+/// The `trap` is what makes the window a certainty rather than a rare race:
+/// the recipe cannot be killed by the signal it was sent, so what stops it is
+/// the build or nothing.
+// [spec:ronin:req:compat.process-integration+2/test]
+// [spec:ronin:req:product.build-outcome/test]
+#[cfg(unix)]
+#[test]
+fn an_interrupt_stops_an_outliving_recipe() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let directory = test_directory("interrupt-declined");
+    fs::write(
+        directory.join("build.ninja"),
+        "rule slow\n  \
+         command = trap '' INT; touch $out; touch started; sleep 30; touch survived\n\
+         build output: slow\ndefault output\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
+    let child_id = rustix::process::Pid::from_child(&child);
+    rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
+    let finished = child.wait_with_output().unwrap();
+
+    assert_eq!(finished.status.signal(), None);
+    assert_eq!(
+        finished.status.code(),
+        Some(ronin::INTERRUPTED_EXIT_CODE),
+        "{}",
+        String::from_utf8_lossy(&finished.stdout)
+    );
+    // Nothing of the command line past the signal ran, so the build stopped the
+    // recipe rather than being held by it.
+    assert!(!directory.join("survived").exists());
+    assert!(!directory.join("output").exists());
+    // And the edge never became a finished one. The `[1/1]` line is what a
+    // recorded edge says about itself, and saying it is what kept the output.
+    let narration = String::from_utf8_lossy(&finished.stdout);
+    assert!(!narration.contains("[1/1]"), "{narration:?}");
+}
+
+/// GNU Make deletes the target a recipe was making when a signal cuts it short
+/// and spares one the Makefile called `.PRECIOUS`. Measured against 4.4.1,
+/// which prints `make: *** Deleting file 'gone'` and leaves `kept` where it is;
+/// Ronin says nothing about it — Make mode narrates in the manifest front end's
+/// shape — and does the same thing to the same two files.
+///
+/// Both recipes decline the signal, which is what makes this a statement about
+/// the build rather than about the shell: with nothing to kill them, a build
+/// that waits for them records two successful edges and leaves `gone` standing.
+// [spec:ronin:req:compat.process-integration+2/test]
+// [spec:ronin:req:make.semantics+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_interrupt_spares_precious_targets() {
+    let directory = make_case(
+        "make-interrupt-precious",
+        ".PRECIOUS: kept\n\
+         all: gone kept\n\
+         gone:\n\
+         \t@trap '' INT; touch $@; touch started; sleep 30\n\
+         kept:\n\
+         \t@trap '' INT; touch $@; sleep 30\n",
+    );
+    let mut child = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-j2")
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
+    // Both recipes have to have written their target before the signal, or the
+    // `.PRECIOUS` half asserts that a file nothing ever made was spared. Its
+    // own target is the marker: the recipe writes it and then sleeps.
+    wait_for_the_recipes_marker(&mut child, &directory.join("kept"));
+    let child_id = rustix::process::Pid::from_child(&child);
+    rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
+    let finished = child.wait_with_output().unwrap();
+
+    // The status a Make-mode interrupt leaves with is its own question, filed
+    // as `make-mode-leaves-an-interrupt-with-2-where-both-references-say-130`;
+    // what this case is about is what happens to the two files.
+    assert!(!finished.status.success());
+    assert!(!directory.join("gone").exists());
+    assert!(directory.join("kept").exists());
+}
+
+/// A recipe is one process per command line here, as it is in GNU Make, so
+/// between one line ending and the next starting there is a moment when
+/// signalling the recipe's process group reaches nothing. A build that has
+/// been interrupted launches no line into that gap.
+///
+/// This one pins the contract rather than catching the defect it was written
+/// beside: before the fix the line WAS launched and then signalled where it
+/// stood, which killed it before it could leave a mark, so the files look the
+/// same either way. What changed is that there is now nothing to kill.
+// [spec:ronin:req:compat.process-integration+2/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn make_interrupt_launches_no_further_line() {
+    let directory = make_case(
+        "make-interrupt-next-line",
+        "out:\n\
+         \t@trap '' INT; touch $@; touch started; sleep 30\n\
+         \t@touch second-line-ran\n",
+    );
+    let mut child = make_command(&invoked_as(&directory, "make"), &directory)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
+    let child_id = rustix::process::Pid::from_child(&child);
+    rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
+    let finished = child.wait_with_output().unwrap();
+
+    assert!(!finished.status.success());
+    assert!(!directory.join("second-line-ran").exists());
+    assert!(!directory.join("out").exists());
+}
+
 // [spec:ronin:req:compat.manifest-semantics/test]
 #[test]
 fn a_too_new_required_version_is_refused_in_ninjas_words() {
