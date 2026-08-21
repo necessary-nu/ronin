@@ -58,6 +58,9 @@ const COMPARE_VARIABLE: &str = "MAKE_PORT_COMPARE";
 /// the run rather than scrolled back to.
 const COMPARISON_REPORT: &str = "target/make-port-comparison.txt";
 
+/// Where every run's scratch lives, one directory per run underneath.
+const WORK_ROOT: &str = "target/make-port-work";
+
 /// Cases retained as evaluator and interface discovery, but excluded from the
 /// build-intent gate because their asserted result belongs to GNU Make's
 /// executor rather than to the graph the invocation describes.
@@ -129,15 +132,17 @@ fn make_build_intent_matches_oracle() {
 
     if std::env::var_os("MAKE_PORT_RECORD").is_some() {
         record(&corpus, &cases);
+        discard_run_scratch(false);
         return;
     }
 
     if std::env::var_os(COMPARE_VARIABLE).is_some() {
         report_second_make(&corpus, &cases);
+        discard_run_scratch(false);
         return;
     }
 
-    let front_end = make_named_ronin(root);
+    let front_end = make_named_ronin();
     let mut failures = Vec::new();
     let mut repaired = Vec::new();
     for case in &cases {
@@ -150,6 +155,7 @@ fn make_build_intent_matches_oracle() {
             _ => {}
         }
     }
+    discard_run_scratch(!failures.is_empty() || !repaired.is_empty());
     assert!(
         failures.is_empty(),
         "{} of {} ported cases diverge from GNU Make's build intent:\n\n{}",
@@ -220,7 +226,7 @@ fn collect(corpus: &Path) -> Vec<Case> {
 
 /// Make mode is reached by the invoked name and by nothing else, so pointing a
 /// harness at it means a make-named link rather than a flag.
-fn make_named_ronin(root: &Path) -> PathBuf {
+fn make_named_ronin() -> PathBuf {
     // Cargo supplies the binary built for this exact test invocation. Never
     // use target/release here: it may be absent or, worse, left over from an
     // older source tree while a debug test appears to pass.
@@ -230,10 +236,12 @@ fn make_named_ronin(root: &Path) -> PathBuf {
         "Cargo did not build the Ronin binary at {}",
         binary.display()
     );
-    let directory = root.join("target/make-port-bin");
+    // Inside this run's own directory, like everything else the run writes: the
+    // link used to live at a fixed `target/make-port-bin/make`, which two runs
+    // unlink and recreate under each other while both are resolving it.
+    let directory = run_directory().join("bin");
     fs::create_dir_all(&directory).expect("a directory for the link");
     let link = directory.join("make");
-    let _ = fs::remove_file(&link);
     std::os::unix::fs::symlink(&binary, &link).expect("a make-named link");
     link
 }
@@ -286,15 +294,102 @@ fn run(case: &Case, program: &Path) -> Observed {
     }
 }
 
-/// A clean copy of the case, so a run never sees the last one's leavings.
+/// A clean copy of the case, inside the directory this run owns.
 fn scratch_for(case: &Case) -> PathBuf {
-    let scratch = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("target/make-port-work")
-        .join(&case.id);
-    let _ = fs::remove_dir_all(&scratch);
-    fs::create_dir_all(&scratch).expect("a scratch directory");
+    let scratch = run_directory().join(&case.id);
+    fs::create_dir(&scratch)
+        .unwrap_or_else(|error| panic!("{}: making {}: {error}", case.id, scratch.display()));
     copy_into(&case.directory, &scratch);
     scratch
+}
+
+/// The directory this RUN owns, made once and shared by every case in it.
+///
+/// A case's scratch used to be `target/make-port-work/<case id>` and nothing
+/// else. The name carried no run, so two harness processes in one checkout
+/// were one directory: each removed the other's tree mid-run, copied its own
+/// makefile over it, and read back a listing made of both. Measured, two runs
+/// started together: one read `"src\nsrc\ngen\ngen\n"` where GNU Make left
+/// `"src\ngen\n"`, and one failed in a case's setup because the other process
+/// had just removed the tree under it. A case failing that way reads exactly
+/// like a product defect, and one of them was investigated as one.
+///
+/// The pid alone would not settle it, which is the other half of that finding:
+/// under `scripts/sandboxed` a run has its own pid namespace, so
+/// `process::id()` is a small number that repeats exactly from one run to the
+/// next. The clock goes in the name beside it, and the directory is made with
+/// `create_dir` rather than `create_dir_all` — a name that already exists is
+/// one to walk away from, never one to build in.
+fn run_directory() -> &'static Path {
+    static DIRECTORY: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIRECTORY
+        .get_or_init(|| {
+            let work = Path::new(env!("CARGO_MANIFEST_DIR")).join(WORK_ROOT);
+            fs::create_dir_all(&work)
+                .unwrap_or_else(|error| panic!("making {}: {error}", work.display()));
+            sweep_stale_runs(&work);
+            loop {
+                let stamp = SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |since| since.as_nanos());
+                let directory = work.join(format!("run-{}-{stamp}", std::process::id()));
+                match fs::create_dir(&directory) {
+                    Ok(()) => return directory,
+                    Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(error) => panic!("making {}: {error}", directory.display()),
+                }
+            }
+        })
+        .as_path()
+}
+
+/// Remove what earlier runs left behind, once per process.
+///
+/// A unique name means a leftover can no longer poison anything, so this is
+/// housekeeping rather than correctness — but a run that fails keeps its
+/// scratch on purpose, a run that panics keeps it by accident, and nothing
+/// else would ever collect either. The whole of `target/make-port-work` is
+/// this harness's, so everything under it is a candidate, including the
+/// per-case directories the old layout left at the top level. Only entries
+/// untouched for an hour go, so a run in progress beside this one is never one
+/// of them.
+fn sweep_stale_runs(work: &Path) {
+    let stale = std::time::Duration::from_secs(60 * 60);
+    let Ok(entries) = fs::read_dir(work) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let idle = entry
+            .metadata()
+            .and_then(|metadata| metadata.modified())
+            .ok()
+            .and_then(|when| SystemTime::now().duration_since(when).ok());
+        if idle.is_some_and(|idle| idle > stale) {
+            let path = entry.path();
+            let _ = if path.is_dir() {
+                fs::remove_dir_all(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+        }
+    }
+}
+
+/// Take this run's scratch away, or say where it was left.
+///
+/// A green run's thousand case directories are worth nothing and cost twenty
+/// megabytes; a red one's are the evidence, so they stay and the path is
+/// printed rather than searched for.
+fn discard_run_scratch(keep: bool) {
+    let directory = run_directory();
+    if keep {
+        eprintln!(
+            "make_port: this run's scratch is at {}",
+            directory.display()
+        );
+    } else {
+        let _ = fs::remove_dir_all(directory);
+    }
 }
 
 fn copy_into(from: &Path, to: &Path) {

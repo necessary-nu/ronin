@@ -775,6 +775,7 @@ assertions (
     {id a-makefile-made-through-a-recursive-prerequisite-never-settles, kind @complete, author "brendan@necessary.nu", at 2026-08-21T06:47:21.444678361Z}
     {id a-remade-makefiles-recipe-hands-its-child-the-pretending-switches, kind @complete, author "brendan@necessary.nu", at 2026-08-21T07:17:44.004362899Z}
     {id the-interrupt-tests-wait-is-too-short-under-the-suites-own-load, kind @complete, author "brendan@necessary.nu", at 2026-08-21T08:21:51.275862542Z}
+    {id make-port-harness-scratch-is-shared-between-runs, kind @doing, author "brendan@necessary.nu", at 2026-08-21T08:22:19.645666914Z}
 )
 
 impl_evidence (
