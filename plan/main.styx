@@ -16142,6 +16142,14 @@ children (
                 text "The three regression cases landed under shorter names than the completion note above gives them. The commit gate's `function-name` check caps a function name at six words and forty-five characters, and all three were written past it; the refusal was fixed rather than bypassed. Read the note's names as:\n\n* `an_interrupt_stops_a_recipe_that_declines_it_and_records_nothing` → `an_interrupt_stops_an_outliving_recipe`\n* `make_mode_interrupt_deletes_the_target_and_spares_a_precious_one` → `make_interrupt_spares_precious_targets`\n* `make_mode_launches_no_further_recipe_line_after_an_interrupt` → `make_interrupt_launches_no_further_line`\n\nEach case's doc comment carries what the name no longer spells out, and the teeth transcript quoted in the note names the two that failed by their original spelling."
                 after_done true
             }
+
+            {
+                at 2026-08-21T23:48:20.59190101Z
+                author "brendan@necessary.nu"
+                kind @errata
+                text "The completion note says the rule bump left nothing stale. That was true of the SOURCE side only once the references were pinned, and it was not the whole picture; the correction is recorded here rather than by rewriting it.\n\nBumping `compat.process-integration` to +2 had two consequences the note does not mention.\n\nFirst, the twenty-one references that predate the bump were recorded against v0 and went stale the moment `nplan sync` wrote version 2 into `plan/.state.styx` — after this node's own commit, so the release gate that ran green before it did not see them. Each was re-read against the new body and pinned to +2 in a follow-up commit; coverage is back to 225 of 225 with no stale references, and the release gate is green on the final tree. What the note reports as \"no stale references\" describes the tree after that commit, not after this one.\n\nSecond, `ronin-process-integration` implements the bumped rule and has been Done since long before it, so it now reads Stale — recorded evidence at version 0 against a rule at version 2. `nplan sync` will not clear it and `nplan start` refuses a Stale node, which is the no-reopen invariant working as intended. Filed as `carry-process-integrations-evidence-to-the-bumped-rule`, with the evidence that already exists, rather than stamped by the dispatch that caused it.\n\nNeither is a product defect and no gate is red over either."
+                after_done true
+            }
         )
     }
 
@@ -16200,6 +16208,21 @@ children (
                 author "brendan@necessary.nu"
                 kind @note
                 text "The regression case named at the end of the note above landed as `tests/cli.rs::make_interrupt_spares_precious_targets` — the commit gate caps a function name at six words and the original spelling was past it. Its contract is unchanged: it asserts the two files and deliberately asserts only `!status.success()`, so that fixing this node's status does not have to move it."
+            }
+        )
+    }
+
+    {
+        id carry-process-integrations-evidence-to-the-bumped-rule
+        title "Carry process integration's evidence forward to the bumped interrupt rule"
+        kind @test
+        deps (an-interrupt-between-a-recipes-commands-is-lost)
+        log (
+            {
+                at 2026-08-21T23:48:03.349957661Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Opened by `an-interrupt-between-a-recipes-commands-is-lost`, which bumped `[spec:ronin:req:compat.process-integration]` from unversioned to +2 to state what an interrupt does and to name the one bounded departure from Ninja's unbounded wait. `ronin-process-integration` implements that rule and had been Done since long before the bump, so it is now Stale: its recorded evidence in `plan/.state.styx` reads `rule_versions_seen {id compat.process-integration, version 0}` against a rule at version 2.\n\nWHAT IS ALREADY SETTLED, so that this node is not read as larger than it is. The SOURCE side is finished and committed: every one of the twenty-one references was re-read against the new body and pinned to +2, and `nplan spec` reports 225 of 225 rules covered with no stale references. What is left is only the NODE's evidence.\n\nWHY SYNC WILL NOT DO IT. Three separate `nplan sync` runs applied nothing, and `nplan start ronin-process-integration` is refused — \"node is Stale; start only transitions Todo → Doing\". That is the no-reopen invariant working as designed: a Done node whose rule moved under it returns to Done by being worked again, which forms the epoch the append-only log is built around. The precedent is in the tree — `make-ninja-narration` and `make-recipe-command-narration` both record `{id make.narration, version 1}` and both read Done, so evidence at a bumped version does get carried forward; it is carried by a fresh cycle rather than by sync alone.\n\nWHAT RE-VERIFICATION MEANS. The rule's claims are command spawning, working directories, inherited environment, signal and interrupt handling, jobserver participation, child exit interpretation and terminal ownership matching Ninja — plus, at +2, what an interrupt does (nothing further launched, no running edge reported or recorded, every changed output withdrawn) and the bounded departure (Ronin stops what declined the signal instead of waiting for it without bound, as Ninja does).\n\nEVIDENCE THAT ALREADY EXISTS, measured on 2026-08-21/22 against the tree this node would re-record: ninja conformance 425 of 425 upstream tests plus 10 CLI differentials, 86 build-outcome cases, 3 invocation-boundary cases, the persistence round trip and log content; workspace 981 passed / 0 failed, which is every `subprocess` and `signal` unit test; and the three new interrupt regressions in `tests/cli.rs` — `an_interrupt_stops_an_outliving_recipe`, `make_interrupt_spares_precious_targets`, `make_interrupt_launches_no_further_line`. The +2 half was probed against upstream Ninja and GNU Make 4.4.1 directly; both probes are recorded on the interrupt node.\n\nSO THE WORK IS: decide whether that evidence is accepted as the re-verification or whether the integration wants a fresh pass, then move the node through a cycle so its `rule_versions_seen` records version 2. It is bookkeeping over a P0 integration node, which is exactly the kind of thing that should be deliberate rather than silently stamped by the agent that caused the bump — which is why it was filed rather than forced.\n\nNOT URGENT AND NOT A PRODUCT DEFECT: nothing about the build is wrong, no gate is red, and `nplan lint` is clean. The visible cost is one node reading Stale on the frontier."
             }
         )
     }
