@@ -1,0 +1,10 @@
+# -W FILE says to pretend FILE is infinitely new, so a target the switch names
+# is up to date and its recipe does not run. Whether a recursive recipe has to
+# run is decided at compile time rather than by the build, and that question was
+# asked with a runtime that had never heard of the switch: the wrapper was judged
+# dirty, its earlier lines were staged, and from there the recipe was committed.
+# GNU Make says 'pre.out' is up to date and leaves the directory as it found it.
+pre.out:
+	@echo before > pre.out
+	@$(MAKE) -f sub.mk sub
+	@echo after >> pre.out

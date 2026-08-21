@@ -206,6 +206,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             // No invocation to have carried the switch: this entry compiles a
             // Makefile for a caller that runs the graph itself.
             always_make: false,
+            assumed_new: Vec::new(),
             level,
             jobs: session.flags.num_jobs.max(1),
             environment,
@@ -271,6 +272,20 @@ pub(crate) struct CompilationContext {
     /// Inherited by every child compilation, because `-B` reaches a recursive
     /// child through `MAKEFLAGS` and a child of a forced Make is forced.
     pub(crate) always_make: bool,
+    /// The names `-W` gave this invocation, which are infinitely new.
+    ///
+    /// Carried here for the reason `always_make` is, and for the same single
+    /// question: whether a recursive recipe has to run is decided at compile
+    /// time, and a switch that answers about a file has to reach the place
+    /// where that file's date is asked for. Without it the recipe of a target
+    /// the switch named runs, where GNU Make says the target is up to date.
+    ///
+    /// NOT inherited by a child compilation, and that is the difference from
+    /// `always_make`: GNU Make does not put `-W` in `MAKEFLAGS`, so a recursive
+    /// child never hears about it. Probed rather than assumed — a child's
+    /// `MAKEFLAGS` under `make -W foo` reads ` --no-print-directory` and
+    /// nothing else, where under `-n` it reads `n --no-print-directory`.
+    pub(crate) assumed_new: Vec<crate::util::BString>,
     pub(crate) level: usize,
     pub(crate) jobs: usize,
     /// The environment this unit imports while kati evaluates it.
@@ -915,7 +930,13 @@ where
         // date, and a recursive recipe is a recipe.
         let begun =
             state.recipe_begun(compilation_key, pending_index) || descendant_context.always_make;
-        let wrapper = match stage_recursive_wrapper(sink, &mut pending, &disk, begun)? {
+        let wrapper = match stage_recursive_wrapper(
+            sink,
+            &mut pending,
+            &disk,
+            begun,
+            &descendant_context.assumed_new,
+        )? {
             RecursiveWrapper::Current(wrapper) => {
                 subtree_edges.push(wrapper);
                 continue;
@@ -1198,12 +1219,13 @@ fn stage_recursive_wrapper(
     pending: &mut sink::PendingSubninja,
     disk: &crate::os::RealDiskInterface,
     begun: bool,
+    assumed_new: &[crate::util::BString],
 ) -> Result<RecursiveWrapper, MakeError> {
     let edge = sink.probe_subninja(pending).map_err(MakeError::Construct)?;
     let mut stat = |path: &std::path::Path| disk.stat(path);
     let dirty = begun
         || sink
-            .settle_subninja_freshness(edge, &mut stat)
+            .settle_subninja_freshness(edge, &mut stat, assumed_new)
             .map_err(|error| MakeError::Evaluate(error.to_string()))?;
     Ok(if dirty {
         RecursiveWrapper::Dirty(edge)

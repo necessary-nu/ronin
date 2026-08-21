@@ -712,12 +712,28 @@ impl BuildGraph {
         &self,
         edge: Edge,
         stat: &mut F,
+        assumed_new: &[crate::util::BString],
     ) -> Result<bool, crate::error::GraphError>
     where
         F: FnMut(&std::path::Path) -> std::io::Result<i64>,
     {
         let target = self.arenas.edge(edge.0).out[0];
         let mut runtime = RuntimeState::new(&self.arenas);
+        // `-W FILE` is an answer about a file, and this question is about a
+        // file, so the switch reaches it. Resolved against the graph here for
+        // the reason the build resolves it against its own: the names were
+        // given to the invocation, and one the graph does not hold answers
+        // about nothing. Looked up as the switch stored it and no further,
+        // because GNU Make does not canonicalise them either.
+        if !assumed_new.is_empty() {
+            let nodes = assumed_new
+                .iter()
+                .filter_map(|name| crate::graph::nodeget(&self.arenas, name.as_slice()))
+                .collect::<Vec<_>>();
+            runtime
+                .assumed_new
+                .mark(&nodes, self.arenas.node_ids().len());
+        }
         recompute_dirty_with_validations(
             &self.arenas,
             &mut runtime,

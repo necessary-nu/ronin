@@ -2113,6 +2113,7 @@ fn compilation_context(
         reporting,
         makeflags: propagated_makeflags(invocation),
         always_make: invocation.given(Switch::AlwaysMake),
+        assumed_new: invocation.assumed_new.clone(),
         level,
         jobs,
         // Everything this unit was evaluated with except how many times it has
