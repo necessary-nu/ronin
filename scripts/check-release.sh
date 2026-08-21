@@ -23,13 +23,16 @@ scripts/check-make-equivalence.sh
 # a Makefile per feature and the generated-Makefile gate is one program's
 # output; these are thirty years of maintenance using recursion the way a
 # generator never would, and both of them found a defect nothing else had.
-#
-# Ahead of the port ladder deliberately: that check is red for a bookkeeping
-# reason (make-release-gate-stops-at-the-port-ladder) and `set -eu` means
-# nothing below it runs, so a gate placed after it would not be a gate.
 scripts/check-make-projects.sh
 
-nplan port check --wave 4
+# The port's ledger, where `nplan port check --wave=4` used to be. That ladder
+# gates a source annotation per symbol, and the C corpus those symbols came
+# from was retired from this repository, so it read 0/170 and refused whatever
+# the rest of the port did — which, with `set -eu`, is why nothing below this
+# line ran for forty dispatches. The script asserts the three columns whose
+# subject still exists and asserts the fourth is empty, so a source side coming
+# back is itself a finding. See make-release-gate-stops-at-the-port-ladder.
+scripts/check-port-ledger.sh
 
 scripts/check-ninja-conformance.sh \
     --ninja-source "$ninja_source" \

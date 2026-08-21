@@ -19,7 +19,11 @@ fn release_gate_wires_every_candidate_check() {
         "scripts/check-lints.sh",
         "cargo doc --no-deps",
         "cargo test --all-targets --no-fail-fast",
-        "nplan port check --wave 4",
+        // Where `nplan port check --wave=4` used to be: that ladder gates an
+        // annotation in the C source each symbol was ported from, and that
+        // corpus has been retired, so it refused whatever the port had done.
+        // The ledger asserts the columns whose subject still exists.
+        "scripts/check-port-ledger.sh",
         "scripts/check-ninja-conformance.sh",
         "scripts/check-performance.sh",
         "nplan spec uncovered",
