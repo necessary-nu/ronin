@@ -765,6 +765,7 @@ assertions (
     {id the-recipe-stage-proxy-leaves-a-directory-in-the-tree, kind @complete, author "brendan@necessary.nu", at 2026-08-21T04:14:26.679311129Z}
     {id a-staged-recipe-segment-obeys-n-and-t-where-a-remake-would-not, kind @complete, author "brendan@necessary.nu", at 2026-08-21T04:39:56.290674607Z}
     {id a-recursive-recipes-freshness-probe-cannot-see-dash-w, kind @complete, author "brendan@necessary.nu", at 2026-08-21T05:09:35.270455339Z}
+    {id pretending-over-an-assembled-recipe, kind @complete, author "brendan@necessary.nu", at 2026-08-21T05:25:01.872267434Z}
 )
 
 impl_evidence (
