@@ -14,7 +14,7 @@
 //! shapes the graph — and the engine asks for one as it launches its edge.
 
 use super::layout::Script;
-use super::sink::CommandLayout;
+use super::sink::{CommandLayout, SettledSteps};
 use crate::build::{LateBinding, LateCommand, LateCommands, LateStep};
 use crate::graph::EdgeId;
 use crate::htab::RapidHashMap;
@@ -74,7 +74,21 @@ pub(crate) struct PendingRecipes {
     /// process per command line. There is no expansion to do and no session to
     /// do it in, which is why this is a map of its own rather than a second
     /// kind of unit.
-    settled: RapidHashMap<EdgeId, Vec<LateStep>>,
+    settled: RapidHashMap<EdgeId, SettledSteps>,
+    /// Whether the build now running is the makefile update.
+    ///
+    /// GNU Make recomputes `MAKEFLAGS` without `-n`, `-t` and `-q` for the
+    /// length of that phase and computes it again with them for the goals
+    /// (`define_makeflags`, main.c), so a `$(MAKE)` inside the recipe that
+    /// remakes a Makefile starts a child that is not pretending either. It is
+    /// the same reason the update itself is not pretended: a Makefile only
+    /// half-made is one whose contents the read would then have to guess, and
+    /// a child that pretends on the update's behalf leaves exactly that.
+    ///
+    /// Held here rather than read off the build, because the phase is the
+    /// front end's own idea — the engine schedules a graph and has no notion
+    /// of a makefile update — and this is the front end's side of the launch.
+    remaking_makefiles: bool,
 }
 
 impl PendingRecipes {
@@ -84,12 +98,22 @@ impl PendingRecipes {
             units: Vec::new(),
             edges: RapidHashMap::default(),
             settled: RapidHashMap::default(),
+            remaking_makefiles: false,
         }
+    }
+
+    /// Say whether the builds that follow are the makefile update.
+    ///
+    /// Said by the front end at each phase rather than derived, because the
+    /// same graph is built over twice and only the caller knows which time it
+    /// is looking at.
+    pub(crate) const fn remaking_makefiles(&mut self, remaking: bool) {
+        self.remaking_makefiles = remaking;
     }
 
     /// Retain the launches of one unit's recipes that were read while the
     /// graph was built.
-    pub(crate) fn admit_settled(&mut self, edges: Vec<(crate::frontend::Edge, Vec<LateStep>)>) {
+    pub(crate) fn admit_settled(&mut self, edges: Vec<(crate::frontend::Edge, SettledSteps)>) {
         self.settled
             .extend(edges.into_iter().map(|(edge, steps)| (edge.id(), steps)));
     }
@@ -187,8 +211,11 @@ impl LateCommands for PendingRecipes {
             // once — the makefile remake pass, then the goals — and `-q` asks
             // this same question without running anything.
             return Ok(match self.settled.get(&edge) {
-                Some(steps) if !steps.is_empty() => LateBinding::Steps(steps.clone()),
-                _ => LateBinding::Settled,
+                Some(settled) => match settled.during(self.remaking_makefiles) {
+                    [] => LateBinding::Settled,
+                    steps => LateBinding::Steps(steps.to_vec()),
+                },
+                None => LateBinding::Settled,
             });
         };
         let RecipeUnit {
@@ -212,12 +239,22 @@ impl LateCommands for PendingRecipes {
         if expanded.runs_nothing {
             return Ok(LateBinding::Nothing);
         }
+        // The makefile update hands a recipe's child a `MAKEFLAGS` the
+        // pretending switches have been taken out of, which is how GNU Make's
+        // own update reaches a `$(MAKE)` a recipe line holds. Composed here
+        // rather than when the graph was built, because whether an edge
+        // belongs to the update is a fact about the pass and not about the
+        // edge: the goals build the same graph with the switches back on.
+        let mut environment = expanded.recipe_environment.clone();
+        if self.remaking_makefiles {
+            environment.extend(layout.while_remaking_makefiles(&environment));
+        }
         let launched = layout.launch(
             &expanded.shell,
             &expanded.shell_flags,
             &expanded.script,
             output,
-            &expanded.recipe_environment,
+            &environment,
         );
         // GNU Make runs each command line of a recipe as its own process, so
         // that is what the edge is handed. The assembled script stays as the
@@ -234,7 +271,7 @@ impl LateCommands for PendingRecipes {
                 .steps
                 .iter()
                 .map(|step| LateStep {
-                    launch: layout.launch_step(step, &expanded.recipe_environment),
+                    launch: layout.launch_step(step, &environment),
                     ignore_errors: step.ignore_error,
                     runs_while_pretending: step.recursive_line,
                 })
@@ -248,7 +285,7 @@ impl LateCommands for PendingRecipes {
                         Some((path, _)) => Script::File(path),
                         None => Script::Argument(&expanded.script),
                     },
-                    &expanded.recipe_environment,
+                    &environment,
                 )
                 .map(|launch| LateStep {
                     launch,

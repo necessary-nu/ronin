@@ -339,6 +339,7 @@ impl Passes<'_, '_, '_> {
     /// left out of the comparison however it left the disk behind it: a rule
     /// that writes its target and then exits non-zero starts nothing over.
     fn remake_makefiles(&mut self, makefiles: &Makefiles<'_>) -> Remaking {
+        self.remaking_makefiles(true);
         let mut restart = false;
         let mut settled = SettledMakefiles::default();
         for mut subset in makefiles.subsets(self.graph) {
@@ -414,6 +415,7 @@ impl Passes<'_, '_, '_> {
         invocation: &Invocation,
         options: &BuildOptions,
     ) -> Pass {
+        self.remaking_makefiles(true);
         match self.run(staged.for_makefiles, remaking_options(options), false) {
             Pass::Current => {}
             // The recipe of a Makefile echoes as it runs exactly as it does
@@ -425,8 +427,20 @@ impl Passes<'_, '_, '_> {
         self.stage(staged.for_goals, invocation, options.clone())
     }
 
+    /// Say which of GNU Make's two phases the builds that follow belong to.
+    ///
+    /// The update turns `-n`, `-t` and `-q` off and keeps them out of the
+    /// `MAKEFLAGS` a recipe hands its child; the goals put both back. Said
+    /// rather than derived, because the same graph is built over twice.
+    fn remaking_makefiles(&mut self, remaking: bool) {
+        if let Some(recipes) = self.recipes.as_deref_mut() {
+            recipes.remaking_makefiles(remaking);
+        }
+    }
+
     /// Build one goal's staged segments, under the invocation's own switches.
     fn stage(&mut self, staged: &[Node], invocation: &Invocation, options: BuildOptions) -> Pass {
+        self.remaking_makefiles(false);
         if invocation.questioning() {
             return self.ask(staged, options);
         }

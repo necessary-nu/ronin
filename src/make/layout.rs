@@ -94,6 +94,55 @@ impl CommandLayout {
         command
     }
 
+    /// What a recipe of this unit would carry under `name`, the target's own
+    /// `export` having the last word over the unit's.
+    fn held(&self, name: &[u8], scoped: &[kati::export::EnvironmentChange]) -> Option<Vec<u8>> {
+        scoped
+            .iter()
+            .rev()
+            .find(|(candidate, _)| candidate.as_ref() == name)
+            .map(|(_, value)| value.as_ref().map(|value| value.to_vec()))
+            .or_else(|| {
+                self.recipe_environment
+                    .iter()
+                    .rev()
+                    .find(|(candidate, _)| candidate == name)
+                    .map(|(_, value)| value.clone())
+            })
+            .flatten()
+    }
+
+    /// This unit's `MAKEFLAGS` and `MFLAGS` as the makefile update hands them
+    /// to a recipe's child.
+    ///
+    /// Appended to what the recipe already carries rather than replacing it,
+    /// because `env` reads its arguments in order and the last word on a name
+    /// is the one that stands — the same thing that lets a target's own
+    /// `export` win over its unit's. Empty when neither value would move, so a
+    /// recipe with nothing to hide is launched exactly as it always was.
+    pub(crate) fn while_remaking_makefiles(
+        &self,
+        scoped: &[kati::export::EnvironmentChange],
+    ) -> Vec<kati::export::EnvironmentChange> {
+        let mut changes = Vec::new();
+        if let Some(value) = self.held(b"MAKEFLAGS", scoped) {
+            let remade = makeflags_while_remaking(&value);
+            if remade != value {
+                changes.push((
+                    Bytes::copy_from_slice(b"MAKEFLAGS"),
+                    Some(Bytes::from(remade)),
+                ));
+            }
+        }
+        if let Some(value) = self.held(b"MFLAGS", scoped) {
+            let remade = mflags_while_remaking(&value);
+            if remade != value {
+                changes.push((Bytes::copy_from_slice(b"MFLAGS"), Some(Bytes::from(remade))));
+            }
+        }
+        changes
+    }
+
     /// Where this unit writes the response file for the edge producing
     /// `output`, which is per edge because the output is.
     pub(super) fn response_file(&self, output: &[u8]) -> Vec<u8> {
@@ -348,7 +397,26 @@ impl SettledScript {
     ///
     /// `None` for a recipe naming a shell of its own, which the composed
     /// command line runs exactly as it always did.
-    pub(crate) fn launch(&self, output: &[u8]) -> Option<crate::build::LateStep> {
+    pub(crate) fn launch(&self, output: &[u8]) -> Option<SettledSteps> {
+        let ordinary = self.launched(output, &self.scoped)?;
+        let remaking = self.layout.while_remaking_makefiles(&self.scoped);
+        if remaking.is_empty() {
+            return Some(SettledSteps::same(vec![ordinary]));
+        }
+        let mut scoped = self.scoped.clone();
+        scoped.extend(remaking);
+        Some(SettledSteps {
+            ordinary: vec![ordinary],
+            while_remaking: self.launched(output, &scoped).map(|step| vec![step]),
+        })
+    }
+
+    /// The launch this script becomes under one environment.
+    fn launched(
+        &self,
+        output: &[u8],
+        scoped: &[kati::export::EnvironmentChange],
+    ) -> Option<crate::build::LateStep> {
         // A rule holding no script of its own is one whose script was written
         // out for the shell to read, and this edge's output is what that file
         // is named after.
@@ -362,7 +430,7 @@ impl SettledScript {
             .as_deref()
             .map_or(Script::File(&response_file), Script::Argument);
         self.layout
-            .launch_script(&self.shell, &self.shell_flags, script, &self.scoped)
+            .launch_script(&self.shell, &self.shell_flags, script, scoped)
             .map(|launch| crate::build::LateStep {
                 launch,
                 ignore_errors: self.ignore_errors,
@@ -373,6 +441,52 @@ impl SettledScript {
                 // program says nothing new about it.
                 runs_while_pretending: false,
             })
+    }
+}
+
+/// One recipe's launches, in the shapes GNU Make's two phases need.
+///
+/// A recipe the compiler had to read for itself has its `MAKEFLAGS` written
+/// into the command line by the time the graph is built, and which value
+/// belongs there is not a fact about the edge: the makefile update hands a
+/// `$(MAKE)` a value without the pretending switches and the goals hand it one
+/// with them, over the same graph and the same edge. So both are built where
+/// the environment is still in hand, and the pass that runs chooses.
+#[derive(Clone)]
+pub(crate) struct SettledSteps {
+    ordinary: Vec<crate::build::LateStep>,
+    /// The same launches without the pretending switches, and nothing when the
+    /// two would be the same command — which is every invocation carrying none
+    /// of `-n`, `-t` and `-q`, so the ordinary run pays nothing for this.
+    while_remaking: Option<Vec<crate::build::LateStep>>,
+}
+
+impl SettledSteps {
+    /// Launches the two phases share, because nothing in them would move.
+    pub(crate) const fn same(steps: Vec<crate::build::LateStep>) -> Self {
+        Self {
+            ordinary: steps,
+            while_remaking: None,
+        }
+    }
+
+    /// One recipe's launches under each of the two environments.
+    pub(crate) const fn split(
+        ordinary: Vec<crate::build::LateStep>,
+        while_remaking: Vec<crate::build::LateStep>,
+    ) -> Self {
+        Self {
+            ordinary,
+            while_remaking: Some(while_remaking),
+        }
+    }
+
+    /// The launches for the phase now running.
+    pub(crate) fn during(&self, remaking_makefiles: bool) -> &[crate::build::LateStep] {
+        if remaking_makefiles && let Some(steps) = &self.while_remaking {
+            return steps;
+        }
+        &self.ordinary
     }
 }
 
@@ -400,3 +514,72 @@ pub(crate) struct LaunchedScript {
 /// How long a script has to be before it reaches the shell as a file rather
 /// than as an argument. kati's own threshold, kept in step with it.
 const RESPONSE_FILE_THRESHOLD: usize = 100 * 1000;
+
+/// The switches GNU Make keeps out of what the makefile update hands a
+/// recipe's child.
+///
+/// These three and nothing else: `n`, `q` and `t` are the only entries in GNU
+/// Make's switch table carrying `no_makefile`, and `define_makeflags (1)` —
+/// called once ahead of the update and undone by `define_makeflags (0)` after
+/// it (main.c) — is what leaves them out. The reason is the update's own: a
+/// Makefile only pretended to be remade is one whose contents the read would
+/// then have to guess, and a child pretending on the update's behalf leaves
+/// exactly that behind.
+const NOT_WHILE_REMAKING: &[u8] = b"nqt";
+
+/// `MAKEFLAGS` without the pretending switches.
+///
+/// The value opens with the group of single-letter switches — empty when there
+/// are none, in which case what follows is preceded by a space — so taking a
+/// letter out is taking it out of the first word and leaving the rest alone.
+/// Everything else the invocation propagates it still propagates: `-j`, `-k`,
+/// `-B`, the long options and the `--` assignments reach the child exactly as
+/// they would have.
+fn makeflags_while_remaking(value: &[u8]) -> Vec<u8> {
+    let end = value
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(value.len());
+    let (group, rest) = value.split_at(end);
+    let mut kept = group
+        .iter()
+        .copied()
+        .filter(|letter| !NOT_WHILE_REMAKING.contains(letter))
+        .collect::<Vec<_>>();
+    kept.extend_from_slice(rest);
+    kept
+}
+
+/// `MFLAGS` without the pretending switches.
+///
+/// The same switches under GNU Make's other spelling: the letter group carries
+/// a leading `-`, the `--` assignments are not there at all, and a group that
+/// empties takes its whole word with it — `-t -j3` becomes `-j3` rather than
+/// `- -j3`, and `-t` alone becomes nothing.
+fn mflags_while_remaking(value: &[u8]) -> Vec<u8> {
+    let Some(after) = value.strip_prefix(b"-") else {
+        return value.to_vec();
+    };
+    let end = after
+        .iter()
+        .position(u8::is_ascii_whitespace)
+        .unwrap_or(after.len());
+    let (group, rest) = after.split_at(end);
+    // A word carrying anything but letters is a switch with an argument, which
+    // the group never holds and which nothing here takes out.
+    if !group.iter().all(u8::is_ascii_alphabetic) {
+        return value.to_vec();
+    }
+    let kept = group
+        .iter()
+        .copied()
+        .filter(|letter| !NOT_WHILE_REMAKING.contains(letter))
+        .collect::<Vec<_>>();
+    if kept.is_empty() {
+        return rest.strip_prefix(b" ").unwrap_or(rest).to_vec();
+    }
+    let mut remade = vec![b'-'];
+    remade.extend_from_slice(&kept);
+    remade.extend_from_slice(rest);
+    remade
+}

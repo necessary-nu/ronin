@@ -64,7 +64,7 @@ impl Bindings {
     }
 }
 
-pub(crate) use super::layout::{CommandLayout, SettledScript};
+pub(crate) use super::layout::{CommandLayout, SettledScript, SettledSteps};
 
 /// One static recursive invocation within a held recipe.
 pub(crate) struct SubninjaInvocation {
@@ -228,13 +228,13 @@ pub struct GraphSink {
     deferred_edges: Vec<(Edge, DeferredRecipeId)>,
     /// The launches a recipe read while compiling became, waiting for the edge
     /// that names their rule.
-    settled_rules: HashMap<RuleId, Vec<crate::build::LateStep>>,
+    settled_rules: HashMap<RuleId, SettledSteps>,
     /// Rules whose recipe reaches one shell as a whole script, waiting for the
     /// edge whose output names the response file that script may be read from.
     settled_scripts: HashMap<RuleId, SettledScript>,
     /// Edges whose recipe was read while compiling and which still run a
     /// process per command line.
-    settled_edges: Vec<(Edge, Vec<crate::build::LateStep>)>,
+    settled_edges: Vec<(Edge, SettledSteps)>,
     /// Recursive rules are not executor rules. They wait for their immediately
     /// following edge so the compiler can replace that edge with graph
     /// composition.
@@ -266,10 +266,7 @@ impl Default for GraphSink {
 
 /// The two ways an edge can still have something to say for itself once the
 /// graph is built, taken together because they are taken at the same moment.
-pub(crate) type LateEdges = (
-    Vec<(Edge, DeferredRecipeId)>,
-    Vec<(Edge, Vec<crate::build::LateStep>)>,
-);
+pub(crate) type LateEdges = (Vec<(Edge, DeferredRecipeId)>, Vec<(Edge, SettledSteps)>);
 
 impl GraphSink {
     /// A sink over an empty graph.
@@ -521,9 +518,9 @@ impl GraphSink {
         if pending.residual_rule.is_some()
             && let Some(held) = &pending.residual_script
             && let Some(output) = pending.explicit_outputs.first().copied()
-            && let Some(step) = held.launch(self.graph.path(output))
+            && let Some(steps) = held.launch(self.graph.path(output))
         {
-            self.settled_edges.push((edge, vec![step]));
+            self.settled_edges.push((edge, steps));
         }
         if let Some(deferred) = pending.deferred {
             self.defer_freshness(edge, &deferred);
@@ -629,9 +626,9 @@ impl GraphSink {
             bindings: Vec::new(),
         })?;
         if let Some(held) = &pending.invocations[index].preceding_script
-            && let Some(step) = held.launch(self.graph.path(proxy))
+            && let Some(steps) = held.launch(self.graph.path(proxy))
         {
-            self.settled_edges.push((built, vec![step]));
+            self.settled_edges.push((built, steps));
         }
         Ok(Some(proxy))
     }
@@ -1054,9 +1051,9 @@ impl GraphSink {
         }
         if let Some(held) = self.settled_scripts.remove(&id)
             && let Some(output) = output
-            && let Some(step) = held.launch(self.graph.path(output))
+            && let Some(steps) = held.launch(self.graph.path(output))
         {
-            self.settled_edges.push((built, vec![step]));
+            self.settled_edges.push((built, steps));
         }
     }
 
@@ -1078,7 +1075,7 @@ impl GraphSink {
     /// of it, and those segments become edges while the children are being
     /// compiled — after this unit's own edges were claimed, and possibly after
     /// the last of them.
-    pub(crate) fn take_settled_edges(&mut self) -> Vec<(Edge, Vec<crate::build::LateStep>)> {
+    pub(crate) fn take_settled_edges(&mut self) -> Vec<(Edge, SettledSteps)> {
         std::mem::take(&mut self.settled_edges)
     }
 
@@ -1298,16 +1295,29 @@ impl BuildSink for GraphSink {
         // argument needs a response file, and the file is named per edge.
         if CommandLayout::launches_line_by_line(rule.steps) {
             let layout = self.layout();
-            self.settled_rules.insert(
-                rule.id,
+            let launched = |environment: &[kati::export::EnvironmentChange]| {
                 rule.steps
                     .iter()
                     .map(|step| crate::build::LateStep {
-                        launch: layout.launch_step(step, rule.recipe_environment),
+                        launch: layout.launch_step(step, environment),
                         ignore_errors: step.ignore_error,
                         runs_while_pretending: step.recursive_line,
                     })
-                    .collect(),
+                    .collect::<Vec<_>>()
+            };
+            // Both phases' launches, because the makefile update hands a
+            // `$(MAKE)` on one of these lines a `MAKEFLAGS` the goals do not.
+            // See [`SettledSteps`].
+            let remaking = layout.while_remaking_makefiles(rule.recipe_environment);
+            self.settled_rules.insert(
+                rule.id,
+                if remaking.is_empty() {
+                    SettledSteps::same(launched(rule.recipe_environment))
+                } else {
+                    let mut environment = rule.recipe_environment.to_vec();
+                    environment.extend(remaking);
+                    SettledSteps::split(launched(rule.recipe_environment), launched(&environment))
+                },
             );
         } else if rule.deferred_recipe.is_none() {
             // A recipe whose lines are not the launches — one whose script a

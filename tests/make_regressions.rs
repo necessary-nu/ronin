@@ -2071,3 +2071,81 @@ fn a_makefile_through_a_recursion_settles() {
     );
     assert!(!asked.join("out").exists(), "the goal's recipe ran: {said}");
 }
+
+/// A Makefile remade by a recipe whose `$(MAKE)` cannot compose starts a real
+/// nested Make, and that child is not pretending either.
+///
+/// GNU Make recomputes `MAKEFLAGS` without `-n`, `-t` and `-q` for the length
+/// of the makefile update and computes it again with them for the goals
+/// (`define_makeflags`, main.c). The three carry `no_makefile` in its switch
+/// table and nothing else does, so everything else — `-j`, `-k`, `-B`, the long
+/// options, the `--` assignments — still reaches the child.
+///
+/// The corpus records this shape's effects on its files. Here for the exit
+/// status, which the corpus keeps only as success or failure: a child handed
+/// `-q` answers 1, the shell command carrying it exits 1, and the parent reads
+/// the Makefile's own recipe as having FAILED — GNU's 1 is a question's answer
+/// and that 2 is a build that broke.
+#[test]
+fn a_nested_remake_hides_the_switches() {
+    // (switches, exit status)
+    for (switches, status) in [("-n", 0), ("-t", 0), ("-q", 1)] {
+        let directory = test_directory("nested-remake-switches");
+        fs::create_dir(directory.join("sub")).unwrap();
+        fs::write(
+            directory.join("Makefile"),
+            "all: ; @printf '%s\\n' '$(GENERATED)' > out\n\ninclude gen.mk\n\ngen.mk:\n\t@printf 'GENERATED := from-generated\\n' > $@; $(MAKE) --no-print-directory -C sub marker\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("sub").join("Makefile"),
+            "marker: ; @printf 'child\\n' > marker\n",
+        )
+        .unwrap();
+
+        let output = make_command(&directory)
+            .args([switches, "all"])
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_eq!(output.status.code(), Some(status), "{switches}: {said}");
+        assert_eq!(
+            fs::read_to_string(directory.join("sub").join("marker"))
+                .ok()
+                .as_deref(),
+            Some("child\n"),
+            "{switches}: the child of the remaking recipe pretended: {said}"
+        );
+        assert!(
+            !directory.join("out").exists(),
+            "{switches}: the goal's own recipe ran: {said}"
+        );
+    }
+}
+
+/// The other side of the same split, which must not move with it: a `+` line in
+/// a GOAL's recipe keeps the switches the command line gave, because GNU Make
+/// has put them back by the time the goals are built.
+#[test]
+fn a_marked_goal_line_keeps_them() {
+    // (switches, what the child was told)
+    for (switches, told) in [("-t", "t"), ("-q", "q")] {
+        let directory = test_directory("goal-marked-line-switches");
+        fs::write(
+            directory.join("Makefile"),
+            "goal:\n\t+@printf '%s\\n' \"$$MAKEFLAGS\" > seen\n",
+        )
+        .unwrap();
+
+        let output = make_command(&directory)
+            .args([switches, "goal"])
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_eq!(
+            fs::read_to_string(directory.join("seen")).ok().as_deref(),
+            Some(format!("{told}\n").as_str()),
+            "{switches}: the goal's marked line was handed the update's flags: {said}"
+        );
+    }
+}

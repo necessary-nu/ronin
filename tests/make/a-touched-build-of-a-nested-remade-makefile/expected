@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # The same under -t, where the difference is visible in the bytes: GNU Makes
+| # child RUNS its recipe, so marker.out holds what the recipe wrote. A child
+| # that was handed -t would touch the file instead and leave it empty.
+| all: ; @printf '%s\n' '$(GENERATED)' > out
+| 
+| include gen.mk
+| 
+| gen.mk:
+| 	@printf 'GENERATED := from-generated\n' > $@; $(MAKE) --no-print-directory -C sub marker
+file all touched 0
+file gen.mk touched 1
+| GENERATED := from-generated
+file sub/Makefile kept 1
+| marker: ; @printf %s child-ran > marker.out
+file sub/marker.out touched 2
+| child-ran

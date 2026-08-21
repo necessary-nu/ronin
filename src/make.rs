@@ -847,7 +847,7 @@ struct UnitRead {
     pending_recipes: Option<UnitRecipes>,
     /// Edges whose recipe this read expanded for itself and which still run a
     /// process per command line.
-    settled_edges: Vec<(Edge, Vec<crate::build::LateStep>)>,
+    settled_edges: Vec<(Edge, sink::SettledSteps)>,
     /// What this read was told from outside itself, for the read that repeats
     /// it.
     journal: UnitJournal,
