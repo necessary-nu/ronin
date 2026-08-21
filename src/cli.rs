@@ -91,6 +91,12 @@ pub struct Runner {
     /// How deep in a recursive Make tree this invocation is, as its parent said.
     #[cfg(all(unix, feature = "make"))]
     pub(crate) makelevel: Option<String>,
+    /// The second option stream GNU Make reads out of the environment, decoded
+    /// exactly as `MAKEFLAGS` is and then emptied. Held apart from `makeflags`
+    /// because whether the name was there at all is observable: a Make that was
+    /// not given one does not invent one for its children.
+    #[cfg(all(unix, feature = "make"))]
+    pub(crate) gnumakeflags: Option<String>,
 }
 
 impl Runner {
@@ -114,6 +120,8 @@ impl Runner {
             executable: std::env::current_exe().unwrap_or_else(|_| PathBuf::from(PRODUCT_NAME)),
             #[cfg(all(unix, feature = "make"))]
             makelevel: None,
+            #[cfg(all(unix, feature = "make"))]
+            gnumakeflags: None,
         })
     }
 
@@ -132,6 +140,7 @@ impl Runner {
         #[cfg(all(unix, feature = "make"))]
         {
             runner.makelevel = std::env::var("MAKELEVEL").ok();
+            runner.gnumakeflags = std::env::var(crate::make::cli::GNUMAKEFLAGS).ok();
         }
         runner.status_format = std::env::var(NINJA_STATUS_ENV).ok();
         // Asked once, of the real descriptor, because the build writes through

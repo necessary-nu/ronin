@@ -65,6 +65,21 @@ use switch_table::path_of;
 /// deeper.
 const MAKELEVEL: &str = "MAKELEVEL";
 
+/// The environment's second option stream.
+///
+/// GNU Make decodes it exactly as it decodes `MAKEFLAGS`, immediately before
+/// it, and then empties the name so a child does not read the same switches a
+/// second time — `decode_env_switches (STRING_SIZE_TUPLE (GNUMAKEFLAGS_NAME),
+/// o_command)` followed by `define_variable_cname (GNUMAKEFLAGS_NAME, "",
+/// o_env, 0)` in `main` (main.c). Everything the switches asked for is carried
+/// onward by `MAKEFLAGS`, which is where they end up.
+///
+/// The name is a distribution's and a user's place to say what every Make in a
+/// tree should do without writing it into `MAKEFLAGS`, where a Makefile
+/// reading `$(MAKEFLAGS)` would then be told about it before Make has had a
+/// chance to fold it in.
+pub(crate) const GNUMAKEFLAGS: &str = "GNUMAKEFLAGS";
+
 /// How many times the read has started over to pick up a remade Makefile.
 ///
 /// Absent on the first read and `1` after one restart, which is what a Makefile
@@ -980,15 +995,30 @@ fn attached_long(
     Ok(true)
 }
 
-/// Read one Make command line, over whatever a parent make put in `MAKEFLAGS`.
+/// Read one Make command line, over whatever a parent make put in the
+/// environment's two option streams.
+///
+/// `GNUMAKEFLAGS` is read first and `MAKEFLAGS` second, which is the order GNU
+/// Make's `main` calls `decode_env_switches` in and the order that decides
+/// which spelling of a switch taking an argument is the one left standing.
+/// Both are decoded at the same origin — `o_command`, so a word either of them
+/// got wrong ends the run — and the words the two streams contribute are
+/// indistinguishable afterwards: everything published is published as
+/// `MAKEFLAGS`.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.interface-compatibility]
-fn parse(arguments: &[BString], inherited: Option<&str>) -> Result<Action, Error> {
+fn parse(
+    arguments: &[BString],
+    inherited: Option<&str>,
+    gnumakeflags: Option<&str>,
+) -> Result<Action, Error> {
     let mut invocation = Invocation::new();
-    if let Some(inherited) = inherited {
-        let inherited = makeflags_arguments(inherited);
-        if let Some(action) =
-            parse_arguments(&mut invocation, &inherited, ArgumentSource::Inherited)?
+    for stream in [gnumakeflags, inherited] {
+        let Some(stream) = stream else {
+            continue;
+        };
+        let stream = makeflags_arguments(stream);
+        if let Some(action) = parse_arguments(&mut invocation, &stream, ArgumentSource::Inherited)?
         {
             return Ok(action);
         }
@@ -1836,7 +1866,11 @@ fn compile_invocation(
     held: &mut Vec<u8>,
 ) -> Result<CompiledInvocation, Error> {
     let mut reported = String::new();
-    let invocation = match parse(arguments, runner.makeflags.as_deref())? {
+    let invocation = match parse(
+        arguments,
+        runner.makeflags.as_deref(),
+        runner.gnumakeflags.as_deref(),
+    )? {
         Action::Immediate(result) => {
             return Ok(CompiledInvocation {
                 prepared: PreparedGraph::Finished(result),
@@ -2021,6 +2055,16 @@ fn record_invocation_variables(
         .invocation_environment
         .get_or_insert_with(|| std::env::vars_os().collect());
     environment.retain(|(candidate, _)| candidate != "MAKEFLAGS");
+    // GNU Make empties `GNUMAKEFLAGS` rather than withdrawing it: `main` writes
+    // `define_variable_cname (GNUMAKEFLAGS_NAME, "", o_env, 0)` the instant its
+    // switches have been decoded, so a Makefile reads an empty value at the
+    // environment's own rank and a child is handed the name with nothing in it.
+    // Emptying and withdrawing are two different things here, and the
+    // difference is what upstream's own case asks about: a Make that was given
+    // no `GNUMAKEFLAGS` does not invent one for its children.
+    if environment.iter().any(|(name, _)| name == GNUMAKEFLAGS) {
+        record_invocation(session, GNUMAKEFLAGS, String::new());
+    }
     let flags = compiler_flag_variables(invocation);
     record_invocation(session, "MFLAGS", flags.mflags);
 }
@@ -2034,10 +2078,24 @@ fn compilation_context(
     session: &Session,
     reporting: bool,
 ) -> crate::make::CompilationContext {
-    let recipe_environment = vec![(
+    let mut recipe_environment = vec![(
         OsString::from(MAKELEVEL),
         Some(OsString::from(level.saturating_add(1).to_string())),
     )];
+    // A recipe's environment is a delta over the process's, so an emptied
+    // `GNUMAKEFLAGS` has to be said again here: the process still holds the
+    // switches this invocation already folded into `MAKEFLAGS`, and a child
+    // reading them a second time would apply them twice. Taken from what the
+    // invocation was recorded with, so a run that was given no second stream
+    // says nothing rather than inventing an empty one.
+    recipe_environment.extend(
+        session
+            .invocation_environment
+            .iter()
+            .flatten()
+            .find(|(name, _)| name == GNUMAKEFLAGS)
+            .map(|(name, value)| (name.clone(), Some(value.clone()))),
+    );
     crate::make::CompilationContext {
         root_directory: directory.clone(),
         directory,
@@ -2138,7 +2196,7 @@ mod interface_tests;
 
 #[cfg(test)]
 mod tests {
-    use super::interface_tests::{parsed, parsed_under, refused};
+    use super::interface_tests::{parsed, parsed_under, parsed_with_environment, refused};
     use super::{Invocation, MAKE_RESTARTS, OutputSync, Shuffle, Switch, descendant_environment};
     use crate::build::JobLimit;
     use crate::util::BString;
@@ -2562,6 +2620,51 @@ mod tests {
             super::compiler_flag_variables(&adopted).makeflags,
             "k --debug=b --trace --shuffle=12345"
         );
+    }
+
+    /// The environment's two option streams, read in GNU Make's order.
+    ///
+    /// Pinned at the parser because what distinguishes them is only the order
+    /// and not the grammar: everything either stream contributes is published
+    /// as `MAKEFLAGS`, so a later gate cannot say which of them a switch came
+    /// from, and the one thing the order decides is which spelling of a switch
+    /// taking an argument is left standing.
+    // [spec:ronin:req:make.interface-compatibility/test]
+    #[test]
+    fn gnumakeflags_is_read_before_makeflags() {
+        let flags = |gnumakeflags: Option<&str>, inherited: Option<&str>| {
+            let invocation = parsed_with_environment(gnumakeflags, inherited, &["make"]);
+            super::compiler_flag_variables(&invocation).makeflags
+        };
+
+        // The stream alone, with the leading cluster's dash prepended exactly
+        // as `decode_env_switches` prepends it to `argv[1]`.
+        assert_eq!(flags(Some("-k"), None), "k");
+        assert_eq!(flags(Some("k"), None), "k");
+        assert_eq!(
+            flags(Some("--no-print-directory -e -r -R --trace"), None),
+            "erR --trace --no-print-directory"
+        );
+
+        // Beside `MAKEFLAGS`, which is read second and therefore last.
+        assert_eq!(flags(Some("-k"), Some("s")), "ks");
+        assert_eq!(
+            flags(Some("-I first"), Some("-I second")),
+            " -Ifirst -Isecond"
+        );
+        assert_eq!(
+            flags(Some("--debug=b"), Some("--debug=j")),
+            " --debug=b --debug=j"
+        );
+
+        // A word holding an `=` is a command-line assignment in either stream,
+        // and is the one first word the prepended dash is withheld from.
+        assert_eq!(flags(Some("FOO=bar"), None), " -- FOO=bar");
+
+        // Nothing at all is not an empty stream: neither reads a switch, and
+        // an empty one contributes no word rather than an empty one.
+        assert_eq!(flags(None, None), "");
+        assert_eq!(flags(Some(""), None), "");
     }
 
     // [spec:ronin:req:product.make-identity/test]

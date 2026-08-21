@@ -13,11 +13,20 @@ pub(super) fn parsed(arguments: &[&str]) -> Invocation {
 }
 
 pub(super) fn parsed_under(inherited: Option<&str>, arguments: &[&str]) -> Invocation {
+    parsed_with_environment(None, inherited, arguments)
+}
+
+/// Both environment option streams, in the order GNU Make reads them.
+pub(super) fn parsed_with_environment(
+    gnumakeflags: Option<&str>,
+    inherited: Option<&str>,
+    arguments: &[&str],
+) -> Invocation {
     let arguments = arguments
         .iter()
         .map(|argument| BString::from(*argument))
         .collect::<Vec<_>>();
-    match parse(&arguments, inherited).unwrap() {
+    match parse(&arguments, inherited, gnumakeflags).unwrap() {
         Action::Execute(invocation) => *invocation,
         Action::Immediate(_) => panic!("these arguments describe a build"),
     }
@@ -30,7 +39,7 @@ pub(super) fn refused(arguments: &[&str]) -> Option<String> {
         .iter()
         .map(|argument| BString::from(*argument))
         .collect::<Vec<_>>();
-    match parse(&arguments, None).unwrap() {
+    match parse(&arguments, None, None).unwrap() {
         Action::Immediate(result) => {
             // An option Make does not know is a build it will not attempt,
             // and GNU Make abandons with two whatever the reason.
@@ -167,7 +176,7 @@ fn accepts_every_make_option_shape() {
             .iter()
             .map(|argument| BString::from(argument.as_str()))
             .collect::<Vec<_>>();
-        match parse(&arguments, inherited) {
+        match parse(&arguments, inherited, None) {
             Ok(Action::Execute(_)) => true,
             Ok(Action::Immediate(result)) => result.exit_code == 0,
             Err(_) => false,

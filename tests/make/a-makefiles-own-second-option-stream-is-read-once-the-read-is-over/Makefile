@@ -1,0 +1,24 @@
+# GNUMAKEFLAGS is not a special variable, so a write to it is not intercepted
+# the way a write to MAKEFLAGS is (`set_special_var`, variable.c). Its switches
+# are read once, after the last makefile has been read, over whatever the name
+# holds by then — `decode_env_switches (… GNUMAKEFLAGS_NAME …, o_env)` in
+# main.c, just past `read_all_makefiles`.
+#
+# So the read below still sees the text this file wrote, at `file` origin, and
+# MAKEFLAGS has not heard of it yet; and by the time a recipe expands, the
+# switches have been folded in and the name has been emptied again — this time
+# at `override`, which is where the origin a recipe reads comes from.
+#
+# The `-k` gates it: `good` runs after `bad` fails only because the write was
+# read as switches at all.
+GNUMAKEFLAGS := -k
+
+$(file > read,read gmf=[$(GNUMAKEFLAGS)] origin=[$(origin GNUMAKEFLAGS)] mf=[$(MAKEFLAGS)])
+
+all: bad good
+
+bad:
+	@exit 1
+
+good:
+	@printf 'recipe gmf=[$(GNUMAKEFLAGS)] origin=[$(origin GNUMAKEFLAGS)] mf=[$(MAKEFLAGS)]\n' > kept-going

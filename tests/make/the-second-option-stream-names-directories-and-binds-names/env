@@ -1,0 +1,1 @@
+GNUMAKEFLAGS=-Ifragments FOO=from-the-second-stream

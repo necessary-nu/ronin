@@ -264,6 +264,11 @@ fn run(case: &Case, program: &Path) -> Observed {
         .current_dir(&scratch)
         .env("LC_ALL", "C")
         .env_remove("MAKEFLAGS")
+        // The environment's second option stream, which decodes exactly as
+        // MAKEFLAGS does. A host that exports one would be handing every case
+        // in the corpus switches the case never asked for, and the recording
+        // would carry them.
+        .env_remove("GNUMAKEFLAGS")
         .env_remove("MAKELEVEL");
     for (name, value) in read_environment(&case.directory.join("env")) {
         match value {

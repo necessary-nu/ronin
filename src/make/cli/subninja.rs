@@ -1,7 +1,7 @@
 //! Turn one statically expanded `$(MAKE)` command into a child compilation.
 
 use super::{
-    Action, MAKELEVEL, compilation_key, named_makefiles, parse, path_of,
+    Action, GNUMAKEFLAGS, MAKELEVEL, compilation_key, named_makefiles, parse, path_of,
     prepend_command_line_evals, propagated_makeflags, record_invocation_variables, session_for,
 };
 use crate::make::{Compilation, CompilationContext, MakeError};
@@ -23,19 +23,31 @@ pub(in crate::make) fn compile(
     let (words, mut directory) =
         invocation_words(command, expanded_make, shell, shell_flags, parent)?;
     let inherited = (!parent.makeflags.is_empty()).then_some(parent.makeflags.as_str());
-    let invocation =
-        match parse(&words, inherited).map_err(|error| MakeError::Evaluate(error.to_string()))? {
-            Action::Execute(invocation) => *invocation,
-            Action::Immediate(result) => {
-                let mut diagnostic = result.stderr;
-                diagnostic.extend(result.stdout);
-                let diagnostic = String::from_utf8_lossy(&diagnostic);
-                return Err(MakeError::Evaluate(format!(
-                    "recursive Make invocation does not describe a graph: {}",
-                    diagnostic.trim()
-                )));
-            }
-        };
+    // A composed child reads the environment its parent settled, where
+    // `GNUMAKEFLAGS` has already been emptied — so its own decode finds nothing
+    // and the switches reach it once, through `MAKEFLAGS`, exactly as they
+    // reach a child GNU Make starts. Read rather than assumed empty, because a
+    // Makefile is free to write the name again before the `$(MAKE)` line.
+    let gnumakeflags = parent
+        .environment
+        .iter()
+        .rev()
+        .find(|(name, _)| name == GNUMAKEFLAGS)
+        .map(|(_, value)| value.to_string_lossy().into_owned());
+    let invocation = match parse(&words, inherited, gnumakeflags.as_deref())
+        .map_err(|error| MakeError::Evaluate(error.to_string()))?
+    {
+        Action::Execute(invocation) => *invocation,
+        Action::Immediate(result) => {
+            let mut diagnostic = result.stderr;
+            diagnostic.extend(result.stdout);
+            let diagnostic = String::from_utf8_lossy(&diagnostic);
+            return Err(MakeError::Evaluate(format!(
+                "recursive Make invocation does not describe a graph: {}",
+                diagnostic.trim()
+            )));
+        }
+    };
     for selected in &invocation.directories {
         directory = compilation_directory(&directory, selected)?;
     }

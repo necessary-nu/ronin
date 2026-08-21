@@ -742,6 +742,7 @@ assertions (
     {id make-a-diagnostic-inside-a-define-names-the-call-not-the-define, kind @complete, author "brendan@necessary.nu", at 2026-08-20T22:00:07.152218267Z}
     {id make-an-environment-variable-is-a-recursive-one, kind @complete, author "brendan@necessary.nu", at 2026-08-20T22:35:44.716324909Z}
     {id make-makeflags-holds-its-switches-as-literal-text, kind @complete, author "brendan@necessary.nu", at 2026-08-20T23:08:45.814542412Z}
+    {id make-gnumakeflags-carries-switches-too, kind @doing, author "brendan@necessary.nu", at 2026-08-20T23:26:15.808746906Z}
 )
 
 impl_evidence (

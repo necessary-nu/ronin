@@ -1,0 +1,1 @@
+GNUMAKEFLAGS=-Itst/bad
