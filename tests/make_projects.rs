@@ -22,21 +22,25 @@
 #![cfg(all(unix, feature = "make"))]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
-/// Copy the named reduction into a scratch directory of its own.
-fn reduction(name: &str) -> PathBuf {
-    let path =
-        std::env::temp_dir().join(format!("ronin-make-project-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&path);
+#[path = "support/scratch.rs"]
+mod scratch_directory;
+
+use scratch_directory::Scratch;
+
+/// Copy the named reduction into a scratch directory of its own, which goes
+/// away with the test.
+fn reduction(name: &str) -> Scratch {
+    let directory = Scratch::named(&format!("ronin-make-project-{name}-"));
     copy_tree(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/make-project-reductions")
             .join(name),
-        &path,
+        &directory,
     );
-    path
+    directory
 }
 
 fn copy_tree(source: &Path, destination: &Path) {
@@ -96,7 +100,6 @@ fn a_guard_holds_an_unliftable_make() {
         directory.join("src/built.stamp").exists(),
         "the child unit's recipe did not run"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// zsh's generated `Src/Makemod` builds each module header through a chain of
@@ -125,7 +128,6 @@ fn a_wrapper_behind_a_middleman() {
     );
     assert!(directory.join("mdhs").exists(), "mdhs was never made");
     assert!(directory.join("mdh").exists(), "mdh was never made");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// zsh compiles a module's object with `.c.$(OBJ):` where `OBJ` is `.o`, so
@@ -152,7 +154,6 @@ fn a_declared_suffix_holds_a_dot() {
         fs::read_to_string(directory.join("foo..o")).unwrap(),
         "dyn from foo.c\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The Linux kernel's build, reduced to one object per shape.
@@ -199,7 +200,6 @@ fn a_quiet_command_is_said_once() {
     );
     assert!(directory.join("fused.o").exists(), "fused.o was never made");
     assert!(directory.join("split.o").exists(), "split.o was never made");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A recipe that left one of its expanded lines loud is not a quiet command,
@@ -236,5 +236,4 @@ fn loud_expanded_line_keeps_the_command() {
          out of a recipe that left a line loud: {progress}"
     );
     assert!(directory.join("loud.o").exists(), "loud.o was never made");
-    fs::remove_dir_all(directory).unwrap();
 }

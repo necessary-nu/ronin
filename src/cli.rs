@@ -1828,10 +1828,8 @@ pub(crate) fn run_bytes<'sink>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::scratch_directory::Scratch;
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static NEXT_RUN: AtomicUsize = AtomicUsize::new(0);
 
     fn parse_options(arguments: &[&str]) -> CliResult<BuildOptions> {
         let arguments = arguments
@@ -1925,12 +1923,7 @@ mod tests {
     fn tool_targets_and_graph_output_preserve_native_bytes() {
         use std::os::unix::ffi::OsStrExt;
 
-        let directory = std::env::temp_dir().join(format!(
-            "ronin-byte-tool-{}-{}",
-            std::process::id(),
-            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&directory).unwrap();
+        let directory = Scratch::named("ronin-byte-tool-");
         let manifest = directory.join("build.ninja");
         fs::write(&manifest, b"build target-\xff: phony\n").unwrap();
         let arguments = [
@@ -1949,7 +1942,6 @@ mod tests {
                 .windows(b"target-\xff".len())
                 .any(|window| window == b"target-\xff")
         );
-        fs::remove_dir_all(directory).unwrap();
     }
 
     // [spec:ronin:req:runtime.explicit-invocation-boundary/test]
@@ -1982,11 +1974,7 @@ mod tests {
             std::env::current_dir().unwrap()
         };
         let original_directory = process_directory();
-        let base = std::env::temp_dir().join(format!(
-            "ronin-runner-directory-{}-{}",
-            std::process::id(),
-            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
-        ));
+        let base = Scratch::named("ronin-runner-directory-");
         let working_directory = base.join("second");
         fs::create_dir_all(&working_directory).unwrap();
         // Ninja keeps one directory that each -C overwrites, so this decoy is
@@ -2036,17 +2024,11 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.to_string(), "invalid -j parameter");
         assert_eq!(process_directory(), original_directory);
-        fs::remove_dir_all(base).unwrap();
     }
 
     #[test]
     fn runner_streams_only_to_explicit_sinks() {
-        let directory = std::env::temp_dir().join(format!(
-            "ronin-runner-sinks-{}-{}",
-            std::process::id(),
-            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&directory).unwrap();
+        let directory = Scratch::named("ronin-runner-sinks-");
         fs::write(
             directory.join("build.ninja"),
             "rule emit\n  command = printf child-output\nbuild output: emit\n",
@@ -2066,7 +2048,6 @@ mod tests {
                 .any(|value| value == b"child-output")
         );
         assert!(diagnostics.is_empty());
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[cfg(unix)]
@@ -2186,12 +2167,7 @@ mod tests {
 
     #[test]
     fn rust_cli_builds_requested_target_with_logs() {
-        let directory = std::env::temp_dir().join(format!(
-            "ronin-rust-cli-{}-{}",
-            std::process::id(),
-            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&directory).unwrap();
+        let directory = Scratch::named("ronin-rust-cli-");
         let input = directory.join("in");
         let output = directory.join("out");
         let manifest = directory.join("build.ninja");
@@ -2218,17 +2194,11 @@ mod tests {
         assert_eq!(fs::read_to_string(&output).unwrap(), "cli");
         assert!(directory.join(".ninja_log").exists());
         assert!(directory.join(".ninja_deps").exists());
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn rust_cli_rebuilds_and_reloads_manifest_before_targets() {
-        let directory = std::env::temp_dir().join(format!(
-            "ronin-rust-cli-manifest-{}-{}",
-            std::process::id(),
-            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&directory).unwrap();
+        let directory = Scratch::named("ronin-rust-cli-manifest-");
         let manifest = directory.join("build.ninja");
         let template = directory.join("next.ninja");
         let output = directory.join("out");
@@ -2259,17 +2229,11 @@ mod tests {
             fs::read_to_string(&manifest).unwrap(),
             render_manifest("new")
         );
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn rust_cli_continues_when_manifest_restat_prunes_rebuild() {
-        let directory = std::env::temp_dir().join(format!(
-            "ronin-rust-cli-manifest-restat-{}-{}",
-            std::process::id(),
-            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&directory).unwrap();
+        let directory = Scratch::named("ronin-rust-cli-manifest-restat-");
         let manifest = directory.join("build.ninja");
         let trigger = directory.join("trigger");
         let output = directory.join("out");
@@ -2296,17 +2260,11 @@ mod tests {
         assert!(status.lines().any(|line| line.ends_with("true")));
         assert!(status.contains("printf built"));
         assert_eq!(fs::read_to_string(&output).unwrap(), "built");
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn rust_cli_clean_rule_and_generator_options() {
-        let directory = std::env::temp_dir().join(format!(
-            "ronin-rust-cli-clean-{}-{}",
-            std::process::id(),
-            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&directory).unwrap();
+        let directory = Scratch::named("ronin-rust-cli-clean-");
         let manifest = directory.join("build.ninja");
         let ordinary = directory.join("ordinary");
         let generated = directory.join("generated");
@@ -2341,17 +2299,11 @@ mod tests {
         generator_arguments.push("-g".into());
         assert_eq!(run(&generator_arguments).unwrap(), "Cleaning... 1 files.");
         assert!(!generated.exists());
-        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
     fn rust_cli_compdb_expands_response_files_without_rule_filter() {
-        let directory = std::env::temp_dir().join(format!(
-            "ronin-rust-cli-compdb-{}-{}",
-            std::process::id(),
-            NEXT_RUN.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir_all(&directory).unwrap();
+        let directory = Scratch::named("ronin-rust-cli-compdb-");
         let manifest = directory.join("build.ninja");
         let input = directory.join("in");
         let output = directory.join("out");
@@ -2375,6 +2327,5 @@ mod tests {
         let database = run(&arguments).unwrap();
         assert!(database.contains("-DCLI"));
         assert!(!database.contains(&format!("@{}.rsp", output.display())));
-        fs::remove_dir_all(directory).unwrap();
     }
 }

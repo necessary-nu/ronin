@@ -109,18 +109,13 @@ fn expanded_names(graph: &Graph, rule: crate::env::RuleId) -> HashSet<VarId> {
 #[cfg(test)]
 mod tests {
     use super::super::Report;
+    use crate::scratch_directory::Scratch;
     use std::fs;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-
-    static NEXT: AtomicUsize = AtomicUsize::new(0);
 
     /// What the checks say about one manifest, as the lines a reader sees.
     fn checked(source: &str) -> String {
-        let path = std::env::temp_dir().join(format!(
-            "ronin-manifest-lint-{}-{}.ninja",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        let directory = Scratch::named("ronin-manifest-lint-");
+        let path = directory.join("build.ninja");
         fs::write(&path, source).unwrap();
         let graph = crate::parse::load_manifest_reporting(
             &path,
@@ -129,7 +124,6 @@ mod tests {
             &mut Vec::new(),
         )
         .expect("the source parses");
-        fs::remove_file(&path).unwrap();
         let mut report = Report::default();
         super::check(&graph, &mut report);
         String::from_utf8(report.finish("done").stdout).expect("findings are text")

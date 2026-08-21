@@ -10,26 +10,22 @@
 #![cfg(unix)]
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
-static NEXT_TEST: AtomicUsize = AtomicUsize::new(0);
+#[path = "support/scratch.rs"]
+mod scratch_directory;
+
+use scratch_directory::Scratch;
 
 /// The two lines the reference ninja prints for the second build of the tree
 /// below, and what Ronin has to print for either language of it.
 const SECOND_BUILD: &str = "[1/10] touch -m -d @1000000000 base\n[2/2] touch z\n";
 
-fn test_directory(label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "ronin-{label}-{}-{}",
-        std::process::id(),
-        NEXT_TEST.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).unwrap();
-    path
+/// A scratch directory of this test's own, which goes away with the test.
+fn test_directory(label: &str) -> Scratch {
+    Scratch::named(&format!("ronin-{label}-"))
 }
 
 /// Set a file's content and its modification time, so freshness is decided by
@@ -86,7 +82,6 @@ fn a_prune_leaves_the_total() {
             .unwrap()
     });
     assert_eq!(reported, SECOND_BUILD);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The same shape written as a Makefile, which is where it was reported from:
@@ -122,5 +117,4 @@ fn make_mode_prunes_the_total_too() {
             .unwrap()
     });
     assert_eq!(reported, SECOND_BUILD);
-    fs::remove_dir_all(directory).unwrap();
 }

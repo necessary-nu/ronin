@@ -1,16 +1,15 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
-static NEXT_TEST: AtomicUsize = AtomicUsize::new(0);
+#[path = "support/scratch.rs"]
+mod scratch_directory;
 
-fn test_directory(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!(
-        "ronin-{label}-{}-{}",
-        std::process::id(),
-        NEXT_TEST.fetch_add(1, Ordering::Relaxed)
-    ))
+use scratch_directory::Scratch;
+
+/// A scratch directory of this test's own, which goes away with the test.
+fn test_directory(label: &str) -> Scratch {
+    Scratch::named(&format!("ronin-{label}-"))
 }
 
 // [spec:ronin:req:product.ronin-identity/test]
@@ -54,7 +53,6 @@ fn binary_is_ronin_and_ignores_samuflags() {
 #[test]
 fn default_manifest_and_state_files_keep_ninja_names() {
     let directory = test_directory("ninja-names");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule emit\n  command = printf ronin > $out\nbuild output: emit\ndefault output\n",
@@ -77,7 +75,6 @@ fn default_manifest_and_state_files_keep_ninja_names() {
     );
     assert!(directory.join(".ninja_log").exists());
     assert!(directory.join(".ninja_deps").exists());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[cfg(unix)]
@@ -85,7 +82,6 @@ fn default_manifest_and_state_files_keep_ninja_names() {
 #[test]
 fn missing_manifest_names_selected_source() {
     let directory = test_directory("missing-manifest");
-    fs::create_dir_all(&directory).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
         .current_dir(&directory)
         .args(["-f", "absent.custom"])
@@ -98,7 +94,6 @@ fn missing_manifest_names_selected_source() {
         output.stderr,
         b"ronin: error: loading 'absent.custom': No such file or directory\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[cfg(unix)]
@@ -106,7 +101,6 @@ fn missing_manifest_names_selected_source() {
 #[test]
 fn stale_jobserver_uses_local_scheduler() {
     let directory = test_directory("stale-jobserver");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule emit\n  command = printf built > $out\nbuild output: emit\ndefault output\n",
@@ -142,14 +136,12 @@ fn stale_jobserver_uses_local_scheduler() {
         fs::read_to_string(directory.join("output")).unwrap(),
         "built"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:compat.cli-and-tools/test]
 #[test]
 fn ninja_compatible_options_tools_streams_and_statuses_are_connected() {
     let directory = test_directory("cli-tools");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         concat!(
@@ -246,7 +238,6 @@ fn ninja_compatible_options_tools_streams_and_statuses_are_connected() {
     assert!(quiet.status.success());
     assert!(quiet.stdout.is_empty());
     assert!(quiet.stderr.is_empty());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[cfg(unix)]
@@ -256,7 +247,6 @@ fn accepts_a_non_utf8_manifest_argument() {
     use std::os::unix::ffi::OsStringExt;
 
     let directory = test_directory("byte-argument");
-    fs::create_dir_all(&directory).unwrap();
     let mut manifest_name = b"build-".to_vec();
     manifest_name.push(0xff);
     manifest_name.extend_from_slice(b".ninja");
@@ -283,13 +273,11 @@ fn accepts_a_non_utf8_manifest_argument() {
         fs::read_to_string(directory.join("output")).unwrap(),
         "exact"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
 fn streams_failure_context_and_buffered_output_before_the_final_diagnostic() {
     let directory = test_directory("failure-output");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule fail\n  command = printf child; false\n  description = failing action\nbuild output: fail\ndefault output\n",
@@ -312,13 +300,11 @@ fn streams_failure_context_and_buffered_output_before_the_final_diagnostic() {
     assert!(child < stdout.find("build stopped").unwrap());
     assert!(result.stderr.is_empty());
     assert_eq!(result.status.code(), Some(1));
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
 fn writes_explanations_to_stderr_and_status_to_stdout() {
     let directory = test_directory("explain-streams");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule emit\n  command = touch $out\nbuild output: emit\ndefault output\n",
@@ -337,7 +323,6 @@ fn writes_explanations_to_stderr_and_status_to_stdout() {
     let stderr = String::from_utf8(result.stderr).unwrap();
     assert!(stderr.starts_with("ronin explain: output output"));
     assert!(!stderr.contains("[1/1]"));
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[cfg(unix)]
@@ -350,7 +335,6 @@ fn forwards_interrupts_and_removes_partial_outputs() {
     use std::time::Duration;
 
     let directory = test_directory("interrupt-forwarding");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule slow\n  command = touch $out; touch started; sleep 30\nbuild output: slow\ndefault output\n",
@@ -376,14 +360,12 @@ fn forwards_interrupts_and_removes_partial_outputs() {
     assert_eq!(status.signal(), None);
     assert_eq!(status.code(), Some(ronin::INTERRUPTED_EXIT_CODE));
     assert!(!directory.join("output").exists());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:compat.manifest-semantics/test]
 #[test]
 fn a_too_new_required_version_is_refused_in_ninjas_words() {
     let directory = test_directory("required-version-too-new");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "ninja_required_version = 1.99\nrule t\n  command = touch $out\nbuild o: t\n",
@@ -401,14 +383,12 @@ fn a_too_new_required_version_is_refused_in_ninjas_words() {
             ronin::NINJA_COMPAT_VERSION
         )
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:compat.manifest-semantics/test]
 #[test]
 fn an_older_required_major_is_accepted_with_ninjas_warning() {
     let directory = test_directory("required-version-older-major");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "ninja_required_version = 0.9\nrule t\n  command = touch $out\nbuild o: t\n",
@@ -428,14 +408,12 @@ fn an_older_required_major_is_accepted_with_ninjas_warning() {
         )
     );
     assert_eq!(result.exit_code, 0);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:compat.cli-and-tools/test]
 #[test]
 fn dupbuild_is_deprecated_and_duplicates_stay_fatal() {
     let directory = test_directory("warn-dupbuild");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule t\n  command = touch $out\nbuild o: t\nbuild o: t\n",
@@ -460,14 +438,12 @@ fn dupbuild_is_deprecated_and_duplicates_stay_fatal() {
             "{flag}: {error}"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:compat.cli-and-tools/test]
 #[test]
 fn a_self_referencing_phony_warns_by_default_and_errors_on_request() {
     let directory = test_directory("warn-phonycycle");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("build.ninja"), "build a: phony a\n").unwrap();
 
     let mut stderr = Vec::new();
@@ -496,14 +472,12 @@ fn a_self_referencing_phony_warns_by_default_and_errors_on_request() {
         ])
         .unwrap_err();
     assert!(error.to_string().contains("dependency cycle"), "{error}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:product.command-execution/test]
 #[test]
 fn a_command_needing_no_shell_behaves_the_same_with_and_without_one() {
     let directory = test_directory("launcher-equivalence");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule cc\n  command = touch $out\nbuild out: cc\n",
@@ -525,7 +499,6 @@ fn a_command_needing_no_shell_behaves_the_same_with_and_without_one() {
         assert!(directory.join("out").exists());
     }
     assert_eq!(outputs[0], outputs[1]);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:product.command-execution/test]
@@ -534,7 +507,6 @@ fn a_missing_program_still_gets_the_shells_diagnostic() {
     // The direct path cannot produce `sh: 1: …: not found`, so it must hand
     // the command back to the shell rather than invent a message of its own.
     let directory = test_directory("launcher-not-found");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule x\n  command = ronin-no-such-program-exists\nbuild out: x\n",
@@ -553,7 +525,6 @@ fn a_missing_program_still_gets_the_shells_diagnostic() {
     );
     // The shell's own status for a command it could not find, carried out.
     assert_eq!(result.exit_code, 127);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:compat.cli-and-tools/test]
@@ -563,7 +534,6 @@ fn a_failing_command_carries_its_own_status_out_of_the_process() {
     // The number a CI reads: it distinguishes a compile error from an OOM kill,
     // and Ronin reported 1 for both until this was measured against Ninja.
     let directory = test_directory("exit-status-propagation");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("build.ninja"),
         "rule f\n  command = exit 7\nrule g\n  command = exit 5\n\
@@ -594,8 +564,6 @@ fn a_failing_command_carries_its_own_status_out_of_the_process() {
         String::from_utf8_lossy(&kept_going.stdout)
             .ends_with("ronin: build stopped: cannot make progress due to previous errors.\n")
     );
-
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:compat.cli-and-tools/test]
@@ -647,15 +615,12 @@ fn entering_a_directory_is_announced_unless_output_is_being_parsed() {
         "ronin: fatal: chdir to 'nope' - No such file or directory\n"
     );
     assert_eq!(missing_code, Some(1));
-
-    fs::remove_dir_all(base).unwrap();
 }
 
 // [spec:ronin:req:compat.graph-semantics/test]
 #[test]
 fn a_dependency_cycle_is_named_by_the_path_around_it() {
     let directory = test_directory("cycle-path");
-    fs::create_dir_all(&directory).unwrap();
     let run = |manifest: &str, arguments: &[&str]| {
         fs::write(directory.join("build.ninja"), manifest).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
@@ -697,15 +662,12 @@ fn a_dependency_cycle_is_named_by_the_path_around_it() {
         ),
         "ronin: error: dependency cycle: a -> c -> a\n"
     );
-
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:compat.manifest-semantics/test]
 #[test]
 fn a_manifest_diagnostic_points_at_the_token_it_is_about() {
     let directory = test_directory("diagnostic-anchor");
-    fs::create_dir_all(&directory).unwrap();
     let run = |manifest: &str| {
         fs::write(directory.join("build.ninja"), manifest).unwrap();
         let output = Command::new(env!("CARGO_BIN_EXE_ronin"))
@@ -745,8 +707,6 @@ fn a_manifest_diagnostic_points_at_the_token_it_is_about() {
         indented,
         "ronin: error: build.ninja:1: unexpected indent\n\n"
     );
-
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The peak number of work units alive at once, from a log of start and end
@@ -879,12 +839,11 @@ fn a_recursive_make_tree_shares_one_job_budget() {
 
     // The fifo belongs to the run that created it and outlives none of them.
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A Makefile tree with a recipe that reports what Make told it about itself.
 #[cfg(all(unix, feature = "make"))]
-fn makefile_tree(label: &str) -> PathBuf {
+fn makefile_tree(label: &str) -> Scratch {
     let directory = test_directory(label);
     fs::create_dir_all(directory.join("sub")).unwrap();
     fs::write(directory.join("in.txt"), "source\n").unwrap();
@@ -948,7 +907,6 @@ fn make_mode_finds_a_prerequisite_through_vpath() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A leading dot is Make's own spelling only for the names it reserves; `.1`
@@ -958,7 +916,6 @@ fn make_mode_finds_a_prerequisite_through_vpath() {
 #[test]
 fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
     let directory = test_directory("make-dot-target");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "all: .1\n\
@@ -982,7 +939,6 @@ fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
     // as a missing `made .1` with the rest still passing.
     assert!(stdout.contains("made .1"), "{stdout}");
     assert!(stdout.contains("built all from .1"), "{stdout}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `.RECIPEPREFIX` decides what introduces a recipe line, from where it is
@@ -992,7 +948,6 @@ fn make_mode_builds_a_target_whose_name_begins_with_a_dot() {
 #[test]
 fn make_mode_reads_a_recipe_introduced_by_the_declared_prefix() {
     let directory = test_directory("make-recipeprefix");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         ".RECIPEPREFIX = >\n\
@@ -1017,7 +972,6 @@ fn make_mode_reads_a_recipe_introduced_by_the_declared_prefix() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("made one"), "{stdout}");
     assert!(stdout.contains("made two"), "{stdout}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `undefine` removes a variable rather than emptying it, and reaches no
@@ -1027,7 +981,6 @@ fn make_mode_reads_a_recipe_introduced_by_the_declared_prefix() {
 #[test]
 fn make_mode_undefines_a_variable() {
     let directory = test_directory("make-undefine");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "a = one\n\
@@ -1057,7 +1010,6 @@ fn make_mode_undefines_a_variable() {
         stdout.contains("[undefined][undefined][recursive][undefined][kept]"),
         "{stdout}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `!=` runs its right-hand side and keeps what the command printed, folding
@@ -1067,7 +1019,6 @@ fn make_mode_undefines_a_variable() {
 #[test]
 fn make_mode_assigns_what_a_shell_command_printed() {
     let directory = test_directory("make-shell-assignment");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "one!=printf 'a\\nb\\n'\n\
@@ -1089,7 +1040,6 @@ fn make_mode_assigns_what_a_shell_command_printed() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A variable name is one word, so `x y = 1` is not an assignment at all and
@@ -1100,7 +1050,6 @@ fn make_mode_assigns_what_a_shell_command_printed() {
 #[test]
 fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
     let directory = test_directory("make-spaced-name");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("Makefile"), "x y = 1\nall: ; @echo built\n").unwrap();
 
     let output = make_command(&invoked_as(&directory, "make"), &directory)
@@ -1113,7 +1062,6 @@ fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
         "{stderr}"
     );
     assert!(!stderr.contains("***"), "{stderr}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.semantics+1/test]
@@ -1121,7 +1069,6 @@ fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
 #[test]
 fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
     let directory = test_directory("make-wait");
-    fs::create_dir_all(&directory).unwrap();
     // pre1 is the slow one and comes first, so unbarriered these invert.
     fs::write(
         directory.join("Makefile"),
@@ -1149,7 +1096,6 @@ fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
         .collect::<Vec<_>>();
     assert_eq!(recipes, ["pre1", "pre2"], "{stdout}");
     assert!(stdout.contains("all from pre1 pre2"), "{stdout}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The first expansion leaves `$$@` as `$@`; the second happens when the rule
@@ -1159,7 +1105,6 @@ fn make_mode_treats_wait_as_a_barrier_and_not_as_a_prerequisite() {
 #[test]
 fn make_mode_expands_prerequisites_again_under_second_expansion() {
     let directory = test_directory("make-second-expansion");
-    fs::create_dir_all(&directory).unwrap();
     // `early` is above the declaration and must not get it.
     fs::write(
         directory.join("Makefile"),
@@ -1194,7 +1139,6 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
         "{}",
         String::from_utf8_lossy(&early.stderr)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A pattern rule is chosen by whether its prerequisites are there, so under
@@ -1205,7 +1149,6 @@ fn make_mode_expands_prerequisites_again_under_second_expansion() {
 #[test]
 fn make_mode_expands_a_pattern_rules_prerequisites_again() {
     let directory = test_directory("make-second-expansion-pattern");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         ".SECONDEXPANSION:\n\
@@ -1236,7 +1179,6 @@ fn make_mode_expands_a_pattern_rules_prerequisites_again() {
         .output()
         .unwrap();
     assert!(!missing.status.success());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The prerequisite patterns after a static pattern rule's second colon get the
@@ -1246,7 +1188,6 @@ fn make_mode_expands_a_pattern_rules_prerequisites_again() {
 #[test]
 fn make_mode_expands_a_static_pattern_rules_prerequisites_again() {
     let directory = test_directory("make-second-expansion-statpat");
-    fs::create_dir_all(&directory).unwrap();
     // `$<` and `$^` are worth what the rule above recorded, and `%` is the stem.
     fs::write(
         directory.join("Makefile"),
@@ -1273,7 +1214,6 @@ fn make_mode_expands_a_static_pattern_rules_prerequisites_again() {
         stdout.contains("built one.o from first.c first.c.one one.h"),
         "{stdout}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A `|` ends the word it falls in, so the order-only list can arrive from the
@@ -1283,7 +1223,6 @@ fn make_mode_expands_a_static_pattern_rules_prerequisites_again() {
 #[test]
 fn make_mode_reads_an_order_only_marker_out_of_an_expansion() {
     let directory = test_directory("make-second-expansion-order-only");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         ".SECONDEXPANSION:\n\
@@ -1304,7 +1243,6 @@ fn make_mode_reads_an_order_only_marker_out_of_an_expansion() {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("all from [dep] and [after]"), "{stdout}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.semantics+1/test]
@@ -1312,7 +1250,6 @@ fn make_mode_reads_an_order_only_marker_out_of_an_expansion() {
 #[test]
 fn make_mode_exports_variables_to_the_recipe_environment() {
     let directory = test_directory("make-export");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "export NAMED\n\
@@ -1340,7 +1277,6 @@ fn make_mode_exports_variables_to_the_recipe_environment() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `.EXPORT_ALL_VARIABLES` covers what the Makefile defined and nothing else —
@@ -1350,7 +1286,6 @@ fn make_mode_exports_variables_to_the_recipe_environment() {
 #[test]
 fn make_mode_exports_every_variable_the_makefile_defined() {
     let directory = test_directory("make-export-all");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         ".EXPORT_ALL_VARIABLES:\n\
@@ -1372,7 +1307,6 @@ fn make_mode_exports_every_variable_the_makefile_defined() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `.IGNORE` is `-i` asked for by the Makefile, and with prerequisites it is
@@ -1382,7 +1316,6 @@ fn make_mode_exports_every_variable_the_makefile_defined() {
 #[test]
 fn make_mode_ignores_recipe_failures_the_makefile_named() {
     let directory = test_directory("make-ignore");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         ".IGNORE: forgiven\n\
@@ -1418,7 +1351,6 @@ fn make_mode_ignores_recipe_failures_the_makefile_named() {
         .output()
         .unwrap();
     assert!(!strict.status.success());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Every Make dry-run spelling is Ninja's dry run over the compiled graph, so
@@ -1433,7 +1365,6 @@ fn make_mode_ignores_recipe_failures_the_makefile_named() {
 #[test]
 fn dry_run_spellings_run_nothing() {
     let directory = test_directory("make-dry-run");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "all:\n\
@@ -1467,7 +1398,6 @@ fn dry_run_spellings_run_nothing() {
             );
         }
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A dry run over a recursive Makefile prints the child's work too, because
@@ -1514,7 +1444,6 @@ fn dry_run_shows_the_composed_child() {
             "the dry run wrote {skipped}"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.semantics+1/test]
@@ -1550,7 +1479,6 @@ fn make_mode_searches_the_include_directories() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `-I -` is a restart of the search path, not a directory called `-`.
@@ -1584,7 +1512,6 @@ fn make_mode_forgets_the_include_directories_before_a_bare_dash() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A `.x.y:` rule is a suffix rule only while both suffixes are on the list.
@@ -1593,7 +1520,6 @@ fn make_mode_forgets_the_include_directories_before_a_bare_dash() {
 #[test]
 fn make_mode_reads_the_declared_suffix_list() {
     let directory = test_directory("make-suffixes");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("hello.bar"), "source\n").unwrap();
     fs::write(directory.join("hello.baz"), "source\n").unwrap();
     fs::write(
@@ -1620,7 +1546,6 @@ fn make_mode_reads_the_declared_suffix_list() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.semantics+1/test]
@@ -1628,7 +1553,6 @@ fn make_mode_reads_the_declared_suffix_list() {
 #[test]
 fn make_mode_answers_the_order_only_automatic_variable() {
     let directory = test_directory("make-order-only-var");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "all: a | oo1 oo2 oo1\n\
@@ -1652,7 +1576,6 @@ fn make_mode_answers_the_order_only_automatic_variable() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A phony prerequisite still makes the rule run, but filtering it out of `$?`
@@ -1665,7 +1588,6 @@ fn make_filters_phony_from_new_inputs() {
     use std::time::{Duration, SystemTime};
 
     let directory = test_directory("make-filter-newer-prerequisites");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         ".PHONY: FORCE\n\
@@ -1692,7 +1614,6 @@ fn make_filters_phony_from_new_inputs() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(fs::read(directory.join("answer")).unwrap(), b"[new]\n");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Make's step 7: the recipe for a target nothing else could make.
@@ -1701,7 +1622,6 @@ fn make_filters_phony_from_new_inputs() {
 #[test]
 fn make_mode_falls_back_to_the_default_rule() {
     let directory = test_directory("make-default-rule");
-    fs::create_dir_all(&directory).unwrap();
     // `declared` has a rule, so it is not the default rule's business even
     // though that rule makes nothing.
     fs::write(
@@ -1724,7 +1644,6 @@ fn make_mode_falls_back_to_the_default_rule() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("default made nowhere"), "{stdout}");
     assert!(!stdout.contains("default made declared"), "{stdout}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Step 6 of GNU Make's implicit rule search.
@@ -1733,7 +1652,6 @@ fn make_mode_falls_back_to_the_default_rule() {
 #[test]
 fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
     let directory = test_directory("make-implicit-chain");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("hello.f"), "source\n").unwrap();
     fs::write(
         directory.join("Makefile"),
@@ -1765,7 +1683,6 @@ fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
             "{expected} missing from {stdout}"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `build_options` starts at `JobLimit::Auto`, meaning nothing was asked for;
@@ -1776,7 +1693,6 @@ fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
 #[test]
 fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
     let directory = test_directory("make-serial-default");
-    fs::create_dir_all(&directory).unwrap();
     // Descending sleeps: serially these finish a, b, c; at once, c, b, a.
     fs::write(
         directory.join("Makefile"),
@@ -1807,7 +1723,6 @@ fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
     assert_eq!(recipes(&[]), "abc");
     // Without this a build incapable of parallelism would also pass.
     assert_eq!(recipes(&["-j4"]), "cba");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `.NOTPARALLEL` serialises this Makefile's own recipes and leaves what it
@@ -1879,7 +1794,6 @@ fn make_mode_serialises_only_the_makefile_that_declared_notparallel() {
         JOBS,
         "the sub-make lost the budget its parent only declined for itself"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Without `.ONESHELL` each recipe line is isolated; with it they share one
@@ -1889,7 +1803,6 @@ fn make_mode_serialises_only_the_makefile_that_declared_notparallel() {
 #[test]
 fn make_mode_shares_one_shell_across_a_recipe_only_under_oneshell() {
     let directory = test_directory("make-oneshell");
-    fs::create_dir_all(&directory).unwrap();
     let recipe = "all:\n\
                   \t@V=set\n\
                   \t@false\n\
@@ -1911,7 +1824,6 @@ fn make_mode_shares_one_shell_across_a_recipe_only_under_oneshell() {
     let (ok, reported) = run(&format!(".ONESHELL:\n{recipe}"));
     assert!(ok, "{reported}");
     assert!(reported.contains("[set]"), "{reported}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `-R` withholds the tool defaults and implies `-r`, but leaves what Make
@@ -1921,7 +1833,6 @@ fn make_mode_shares_one_shell_across_a_recipe_only_under_oneshell() {
 #[test]
 fn make_mode_withholds_the_builtin_variables_under_dash_r() {
     let directory = test_directory("make-no-builtin-vars");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "all: ; @echo \"[$(CC)][$(AR)][$(MAKE_VERSION)][$(MAKEFLAGS)]\"\n",
@@ -1947,7 +1858,6 @@ fn make_mode_withholds_the_builtin_variables_under_dash_r() {
         let reported = run(spelling);
         assert!(reported.contains("[][][4.4.1][rR]"), "{reported}");
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `+=` on a target reads the target's own scope, not the one outside it.
@@ -1956,7 +1866,6 @@ fn make_mode_withholds_the_builtin_variables_under_dash_r() {
 #[test]
 fn make_mode_appends_to_a_target_variable_from_the_targets_own_scope() {
     let directory = test_directory("make-targetvar-append");
-    fs::create_dir_all(&directory).unwrap();
     // The append is written above the assignment it reads, so getting this
     // right cannot be a matter of taking them in the order they appear.
     fs::write(
@@ -1982,7 +1891,6 @@ fn make_mode_appends_to_a_target_variable_from_the_targets_own_scope() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The second reads the first, so their order decides the answer.
@@ -1991,7 +1899,6 @@ fn make_mode_appends_to_a_target_variable_from_the_targets_own_scope() {
 #[test]
 fn make_mode_applies_target_specific_variables_in_a_settled_order() {
     let directory = test_directory("make-targetvar-order");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "BLAH := foo\n\
@@ -2015,7 +1922,6 @@ fn make_mode_applies_target_specific_variables_in_a_settled_order() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert!(stdout.contains("bar snafu bar"), "{stdout}");
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.semantics+1/test]
@@ -2023,7 +1929,6 @@ fn make_mode_applies_target_specific_variables_in_a_settled_order() {
 #[test]
 fn make_mode_claims_only_the_features_it_has() {
     let directory = test_directory("make-features");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         // target-specific: the assignment reaches only this target's recipe.
@@ -2099,7 +2004,6 @@ fn make_mode_claims_only_the_features_it_has() {
             "target-specific",
         ]
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.interface-compatibility/test]
@@ -2127,7 +2031,6 @@ fn make_passes_linux_output_sync_guard() {
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A Makefile write is visible immediately, controls this unit's scheduler,
@@ -2177,7 +2080,6 @@ fn assigned_makeflags_control_build_and_children() {
         fs::read_to_string(directory.join("child.flags")).unwrap(),
         "GOALS=child-output MAKEFLAGS=krR --no-print-directory\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.narration+1/test]
@@ -2211,7 +2113,6 @@ fn make_mode_synchronizes_each_target_output() {
         left_last < right_first || right_last < left_first,
         "target output was interleaved:\n{stdout}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Run the binary under a name of our choosing, which is what selects the front
@@ -2277,7 +2178,6 @@ fn the_invoked_name_selects_make_mode_and_builds_without_a_manifest() {
     );
     assert!(directory.join("out.txt").exists());
     assert!(!directory.join("build.ninja").exists());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Ninja mode is what every other name selects, including the one a build
@@ -2287,7 +2187,6 @@ fn the_invoked_name_selects_make_mode_and_builds_without_a_manifest() {
 #[test]
 fn ninja_mode_is_reachable_from_a_ninja_named_invocation() {
     let directory = test_directory("ninja-named-ninja-mode");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("in"), "manifest\n").unwrap();
     fs::write(
         directory.join("build.ninja"),
@@ -2308,7 +2207,6 @@ fn ninja_mode_is_reachable_from_a_ninja_named_invocation() {
         fs::read_to_string(directory.join("out")).unwrap(),
         "manifest\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:product.make-identity/test]
@@ -2359,15 +2257,13 @@ fn make_options_reach_the_scheduler_and_the_evaluation() {
         .output()
         .unwrap();
     assert!(!unknown.status.success());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A Makefile that records each recipe that ran, so a build's effect can be
 /// read back rather than inferred from what the scheduler printed.
 #[cfg(all(unix, feature = "make"))]
-fn make_case(label: &str, makefile: &str) -> PathBuf {
+fn make_case(label: &str, makefile: &str) -> Scratch {
     let directory = test_directory(label);
-    fs::create_dir_all(&directory).unwrap();
     fs::write(directory.join("Makefile"), makefile).unwrap();
     directory
 }
@@ -2417,7 +2313,6 @@ fn always_make_rebuilds_every_target() {
         .unwrap();
     assert!(output.status.success());
     assert_eq!(written(), "line\nline\nline\nline\n");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.question-status/test]
@@ -2457,7 +2352,6 @@ fn question_mode_answers_in_the_status_and_builds_nothing() {
     // A question that cannot be answered is neither of the two answers.
     let (code, said) = ask(&["-q", "nothing-declares-this"]);
     assert_eq!(code, Some(2), "{said}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:product.make-identity/test]
@@ -2489,7 +2383,6 @@ fn ignore_errors_runs_the_rest_of_the_recipe() {
             "ran\n"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:product.make-identity/test]
@@ -2519,7 +2412,6 @@ fn environment_overrides_outrank_the_makefiles_own_assignment() {
     // A command-line assignment still outranks both, which is what -e does not
     // change.
     assert!(where_is(&["-e", "WHERE=command-line"]).contains("where=command-line"));
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:product.make-identity/test]
@@ -2552,7 +2444,6 @@ fn no_builtin_rules_withdraws_the_rules_nobody_wrote() {
         let diagnostic = String::from_utf8_lossy(&refused.stderr);
         assert!(diagnostic.contains("hello.o"), "{spelling}: {diagnostic}");
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.narration+1/test]
@@ -2589,7 +2480,6 @@ fn make_narration_flags_are_accepted_noops() {
             assert!(!said.contains(make_only), "{arguments:?}: {said}");
         }
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.narration+1/test]
@@ -2615,7 +2505,6 @@ fn make_mode_narrates_recipe_command() {
         stdout,
         "[1/2] printf '%s\\n' payload > out\n[2/2] cp out installed\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:product.make-identity/test]
@@ -2668,7 +2557,6 @@ fn a_load_ceiling_in_every_spelling() {
             "{spelling}"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.recursive-invocation+2/test]
@@ -2732,7 +2620,6 @@ fn recursive_make_compiles_as_subninja() {
         !directory.join("sub/nested-make-ran").exists(),
         "{reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.recursive-invocation+2/test]
@@ -2740,7 +2627,6 @@ fn recursive_make_compiles_as_subninja() {
 #[test]
 fn recursive_subtree_waits_for_parent_inputs() {
     let directory = test_directory("make-recursive-prerequisite-boundary");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "all: prepare\n\
@@ -2786,7 +2672,6 @@ fn recursive_subtree_waits_for_parent_inputs() {
         assert!(output.status.success(), "attempt {attempt}: {reported}");
         assert!(directory.join("second.leaf").is_file(), "{reported}");
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.recursive-invocation+2/test]
@@ -2794,7 +2679,6 @@ fn recursive_subtree_waits_for_parent_inputs() {
 #[test]
 fn recursive_evaluation_waits_for_parent_inputs() {
     let directory = test_directory("make-recursive-evaluation-boundary");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "all: generate\n\
@@ -2842,7 +2726,6 @@ fn recursive_evaluation_waits_for_parent_inputs() {
             "parent prerequisite ran more than once on attempt {attempt}: {reported}"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.recursive-invocation+2/test]
@@ -2850,7 +2733,6 @@ fn recursive_evaluation_waits_for_parent_inputs() {
 #[test]
 fn nested_recursive_evaluation_boundary() {
     let directory = test_directory("make-recursive-evaluation-nested-boundary");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "all: generate\n\
@@ -2895,7 +2777,6 @@ fn nested_recursive_evaluation_boundary() {
         "#define GENERATED 1\n",
         "{reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.semantics+1/test]
@@ -2904,7 +2785,6 @@ fn nested_recursive_evaluation_boundary() {
 #[test]
 fn reassigned_export_reaches_grandchild() {
     let directory = test_directory("make-inherited-export-reassignment");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "export ROOT := inherited-before-child\n\
@@ -2941,7 +2821,6 @@ fn reassigned_export_reaches_grandchild() {
         fs::read_to_string(directory.join("result")).unwrap(),
         "ROOT=. VALUE=inherited\nRAW=$(EXPANDED) SHELL=/caller/shell\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.recursive-invocation+2/test]
@@ -3011,7 +2890,6 @@ fn mixed_recipe_composes_subninjas() {
         "complete"
     );
     assert!(!directory.join("nested-make-ran").exists(), "{reported}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.recursive-invocation+2/test]
@@ -3045,7 +2923,6 @@ fn recursive_targets_are_invocation_local() {
     assert!(output.status.success(), "{reported}");
     assert!(directory.join("one.out").is_file(), "{reported}");
     assert!(directory.join("two.out").is_file(), "{reported}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A recipe line that is nothing but invocations joined by `&&` names each of
@@ -3102,7 +2979,6 @@ fn conjoined_submakes_compose_in_order() {
     assert!(!directory.join("nested-make-ran").exists(), "{reported}");
     let order = fs::read_to_string(directory.join("order")).unwrap();
     assert_eq!(order, "first\nsecond\nthird\nresidual\n", "{reported}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:make.recursive-invocation+2/test]
@@ -3110,7 +2986,6 @@ fn conjoined_submakes_compose_in_order() {
 #[test]
 fn make_reference_as_data_stays_recipe() {
     let directory = test_directory("make-reference-data");
-    fs::create_dir_all(&directory).unwrap();
     fs::write(
         directory.join("Makefile"),
         "MAKE := ./not-an-invocation\n\
@@ -3132,7 +3007,6 @@ fn make_reference_as_data_stays_recipe() {
         fs::read_to_string(directory.join("result")).unwrap(),
         "./not-an-invocation"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A composed child uses the same Ninja narrator as every other edge; there is
@@ -3175,7 +3049,6 @@ fn recursive_make_uses_ninja_narration() {
         assert!(!said.contains("Leaving directory"), "{arguments:?}: {said}");
         assert!(!said.contains("ronin["), "{arguments:?}: {said}");
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[cfg(all(unix, feature = "make"))]
@@ -3268,7 +3141,6 @@ fn recursive_make_tree_uses_one_budget() {
         );
     }
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A child `-j` remains accepted interface data; it cannot create another
@@ -3351,7 +3223,6 @@ fn child_jobs_keep_one_scheduler() {
     assert!(!said.contains("resetting jobserver mode"), "{said}");
 
     assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A Makefile-compiled graph fails in the same shape as a manifest graph.
@@ -3379,7 +3250,6 @@ fn make_recipe_failure_uses_ninja_narration() {
     for make_only in ["***", "Stop.", "ronin["] {
         assert!(!said.contains(make_only), "{said}");
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// An I/O failure reading a Makefile names the file and the line that asked
@@ -3419,7 +3289,6 @@ fn make_io_failures_name_their_source() {
         said.contains("Makefile:1: inc.mk: Permission denied"),
         "{said}"
     );
-    fs::remove_dir_all(&directory).unwrap();
 
     // `$(file >)` onto a file that will not open: the line of the expansion.
     let directory = make_case("make-io-file-write", "all:;@echo hi\n$(file >out.txt,x)\n");
@@ -3429,7 +3298,6 @@ fn make_io_failures_name_their_source() {
         said.contains("Makefile:2: open: out.txt: Permission denied"),
         "{said}"
     );
-    fs::remove_dir_all(&directory).unwrap();
 
     // The Makefile itself. No directive asked for it, so there is no line to
     // point at, and it is still named with the system's own reason.
@@ -3437,7 +3305,6 @@ fn make_io_failures_name_their_source() {
     unreadable(&directory, "Makefile", "all:;@echo hi\n");
     let said = diagnostic_of(&directory);
     assert!(said.contains("Makefile: Permission denied"), "{said}");
-    fs::remove_dir_all(&directory).unwrap();
 
     // `-include` is a Makefile saying it does not care whether the file is
     // there or readable, and GNU Make 4.4.1 reports neither. Verified side by
@@ -3453,7 +3320,6 @@ fn make_io_failures_name_their_source() {
     let said = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(0), "{said}");
     assert!(!said.contains("inc.mk"), "{said}");
-    fs::remove_dir_all(&directory).unwrap();
 }
 
 /// Compiler diagnostics keep their Makefile source without borrowing GNU
@@ -3473,5 +3339,4 @@ fn make_evaluation_uses_ordinary_diagnostics() {
     for make_only in ["***", "Stop.", "ronin["] {
         assert!(!diagnostic.contains(make_only), "{diagnostic}");
     }
-    fs::remove_dir_all(directory).unwrap();
 }

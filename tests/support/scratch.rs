@@ -3,6 +3,8 @@
 //! Included by `#[path]` rather than shared through a crate, because an
 //! integration test is its own crate and `tests/support/` is not a target
 //! cargo builds on its own — the same arrangement `support/oracle.rs` uses.
+//! The library includes it the same way from `lib.rs` under `cfg(test)`, so
+//! its own unit tests answer to this file too rather than to a second copy.
 //!
 //! A suite that names a directory after its own process and leaves it behind
 //! accumulates one per case per run: pids rotate, nothing collects them, and

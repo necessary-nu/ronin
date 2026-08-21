@@ -7,6 +7,11 @@ use std::error::Error as _;
 use std::ffi::OsString;
 use std::num::NonZeroUsize;
 
+#[path = "support/scratch.rs"]
+mod scratch_directory;
+
+use scratch_directory::Scratch;
+
 #[test]
 fn public_api_classifies_cli_errors() {
     let error = run(&[
@@ -23,11 +28,8 @@ fn public_api_classifies_cli_errors() {
 
 #[test]
 fn public_api_preserves_manifest_io_causes() {
-    let missing_manifest = std::env::temp_dir().join(format!(
-        "ronin-missing-manifest-{}-{}.ninja",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
+    let directory = Scratch::named("ronin-missing-manifest-");
+    let missing_manifest = directory.join("build.ninja");
     let error = run_os(&[
         OsString::from("ronin"),
         OsString::from("-f"),
@@ -103,13 +105,8 @@ fn build_by_hand() -> BuildGraph {
     graph
 }
 
-fn manifest_fixture() -> std::path::PathBuf {
-    let directory = std::env::temp_dir().join(format!(
-        "ronin-frontend-api-{}-{}",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
+fn manifest_fixture() -> Scratch {
+    let directory = Scratch::named("ronin-frontend-api-");
     std::fs::write(
         directory.join("build.ninja"),
         "rule cat\n  command = cat $in > $out\n\
@@ -149,7 +146,6 @@ fn public_api_builds_the_same_graph_a_manifest_would() {
     };
     assert_eq!(defaults(&assembled), [b"out".to_vec()]);
     assert_eq!(defaults(&assembled), defaults(&parsed.graph));
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 /// `out` is copied from `mid`, which is copied from the source file `in`.
@@ -206,12 +202,7 @@ fn copy_graph(directory: &std::path::Path) -> BuildGraph {
 // [spec:ronin:req:frontend.graph-construction/test]
 #[test]
 fn public_api_runs_a_graph_no_manifest_described() {
-    let directory = std::env::temp_dir().join(format!(
-        "ronin-execute-api-{}-{}",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
-    std::fs::create_dir_all(&directory).unwrap();
+    let directory = Scratch::named("ronin-execute-api-");
     std::fs::write(directory.join("in"), b"source\n").unwrap();
 
     let mut graph = copy_graph(&directory);
@@ -243,7 +234,6 @@ fn public_api_runs_a_graph_no_manifest_described() {
         .unwrap();
     assert!(planned.already_up_to_date());
     persistence.finish().unwrap();
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 // [spec:ronin:req:frontend.graph-construction/test]
@@ -293,13 +283,7 @@ fn public_api_builds_a_makefile_through_ronins_scheduler() {
     use ronin::make::{Shuffle, load_makefile};
     use std::ffi::OsString;
 
-    let directory = std::env::temp_dir().join(format!(
-        "ronin-make-graph-direct-{}-{}",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
-    let _ = std::fs::remove_dir_all(&directory);
-    std::fs::create_dir_all(&directory).unwrap();
+    let directory = Scratch::named("ronin-make-graph-direct-");
     std::fs::write(directory.join("in"), b"source\n").unwrap();
     let at = |name: &str| directory.join(name).to_string_lossy().into_owned();
     let makefile = directory.join("Makefile");
@@ -366,7 +350,6 @@ fn public_api_builds_a_makefile_through_ronins_scheduler() {
         .unwrap();
     assert!(planned.already_up_to_date());
     persistence.finish().unwrap();
-    std::fs::remove_dir_all(directory).unwrap();
 }
 
 /// A library caller that hands the compiler a descriptor to collect what it
@@ -388,13 +371,7 @@ fn public_api_collects_compiler_warnings() {
     use std::ffi::OsString;
     use std::sync::Arc;
 
-    let directory = std::env::temp_dir().join(format!(
-        "ronin-make-collected-warnings-{}-{}",
-        std::process::id(),
-        std::thread::current().name().unwrap_or("test")
-    ));
-    let _ = std::fs::remove_dir_all(&directory);
-    std::fs::create_dir_all(&directory).unwrap();
+    let directory = Scratch::named("ronin-make-collected-warnings-");
     let makefile = directory.join("Makefile");
     std::fs::write(
         &makefile,
@@ -427,5 +404,4 @@ fn public_api_collects_compiler_warnings() {
         collected.take().is_empty(),
         "a drained descriptor holds nothing"
     );
-    std::fs::remove_dir_all(directory).unwrap();
 }
