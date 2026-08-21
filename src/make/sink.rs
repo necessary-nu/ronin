@@ -481,11 +481,18 @@ impl GraphSink {
     /// work it needs. The wrapper becomes a phony alias for child targets whose
     /// identities remain local to their own recursive compilation units.
     // [spec:ronin:req:make.recursive-invocation+2]
+    ///
+    /// `begun` is whether the recipe has already run part of itself at a
+    /// compilation boundary, which the finished edge has to carry: one of
+    /// those lines may have written this wrapper's own target, and reading the
+    /// date it then has would be reading the recipe's work as a reason not to
+    /// finish the recipe. See [`crate::graph::Edge::recipe_begun`].
     pub(crate) fn complete_subninja(
         &mut self,
         edge: Edge,
         pending: PendingSubninja,
         child_groups: &[UnitSubgraph],
+        begun: bool,
     ) -> Result<Edge, FrontendError> {
         debug_assert_eq!(pending.invocations.len(), child_groups.len());
         let child_targets = self.attach_child_ordering(&pending, child_groups);
@@ -524,6 +531,9 @@ impl GraphSink {
         }
         if let Some(output) = pending.completion_output {
             self.graph.set_completion_join(edge, output);
+        }
+        if begun {
+            self.graph.mark_recipe_begun(edge);
         }
         Ok(edge)
     }

@@ -35,6 +35,7 @@ use std::num::NonZeroUsize;
 mod deferred;
 mod execute;
 mod ordering;
+mod staging;
 
 pub use crate::parse::{Manifest, ManifestOptions, load_manifest};
 pub use deferred::DeferredSpec;
@@ -706,11 +707,6 @@ impl BuildGraph {
         }
     }
 
-    /// Replace the command rule of an edge whose structure was staged first.
-    pub(crate) fn set_edge_rule(&mut self, edge: Edge, rule: Rule) {
-        self.arenas.edge_mut(edge.0).rule = Some(rule.0);
-    }
-
     /// Evaluate one staged edge's timestamp freshness without executing it.
     pub(crate) fn edge_dirty_with<F>(
         &self,
@@ -853,6 +849,10 @@ impl BuildGraph {
                     .retain(|candidate| *candidate != edge);
             }
             self.arenas.edge_mut(edge).always_dirty = false;
+            // And a recursive recipe the update ran to its end is a recipe
+            // that is over: what the goals compare against from here is the
+            // file it left, exactly as for the `always_dirty` half above.
+            self.arenas.edge_mut(edge).recipe_begun = false;
         }
     }
 

@@ -489,6 +489,26 @@ impl CompilationState<'_> {
         }
     }
 
+    /// Whether this recursive recipe has already run part of itself.
+    ///
+    /// A settled boundary is work an earlier pass of this same invocation put
+    /// on the ground. Two of the three kinds are the recipe's own: the lines
+    /// written ahead of an invocation, and a child group an earlier invocation
+    /// in the same recipe already started. The third — the wrapper's
+    /// prerequisites — is not the recipe, it is what GNU Make settles before
+    /// the recipe begins, and building it is no reason to call the recipe
+    /// started.
+    fn recipe_begun(&self, compilation_key: &[u8], pending_index: usize) -> bool {
+        self.settled_boundaries.iter().any(|boundary| {
+            boundary.compilation_key == compilation_key
+                && boundary.pending_index == pending_index
+                && matches!(
+                    boundary.predecessor,
+                    EvaluationPredecessor::PrecedingLines(_) | EvaluationPredecessor::ChildGroup(_)
+                )
+        })
+    }
+
     /// Whether the compilation may go past one boundary, and what it takes if
     /// it may not.
     ///
@@ -835,7 +855,8 @@ where
             sink.mark_subgraphs_prebuilt(&parent_inputs);
         }
 
-        let wrapper = match stage_recursive_wrapper(sink, &mut pending, &disk)? {
+        let begun = state.recipe_begun(compilation_key, pending_index);
+        let wrapper = match stage_recursive_wrapper(sink, &mut pending, &disk, begun)? {
             RecursiveWrapper::Current(wrapper) => {
                 subtree_edges.push(wrapper);
                 continue;
@@ -843,70 +864,19 @@ where
             RecursiveWrapper::Dirty(wrapper) => wrapper,
         };
 
-        let mut child_groups = Vec::with_capacity(pending.invocations.len());
-        for (group_index, invocation) in pending.invocations.iter().enumerate() {
-            // The recipe's own lines ahead of this invocation are compiler
-            // input for it, for the same reason its prerequisites are: the
-            // child Makefile is read off the disk those lines write to.
-            if let Some(staged) = sink
-                .stage_preceding_lines(&pending, group_index)
-                .map_err(MakeError::Construct)?
-                && !stage_preceding(
-                    sink,
-                    state,
-                    (compilation_key, pending_index, group_index),
-                    staged,
-                )
-            {
-                return Ok(incomplete_unit(targets, subtree_edges));
-            }
-            let child = match resolve(
-                &invocation.command,
-                &invocation.make,
-                &invocation.shell,
-                &invocation.shell_flags,
-                descendant_context,
-            ) {
-                Ok(child) => child,
-                // A report names the invocation and reads the rest of the
-                // build. A build cannot: there is no child graph to compose and
-                // the recipe line that would have started a Make of its own was
-                // lifted out of the recipe, so the work would simply not happen.
-                Err(MakeError::MissingChildMakefile { directory })
-                    if descendant_context.reporting =>
-                {
-                    child_groups.push(unreadable_child(descendant_context, invocation, &directory));
-                    continue;
-                }
-                Err(refusal) => return Err(refusal),
-            };
-            let child_key = child.cache_key.clone();
-            let child_subgraph = if let Some(subgraph) = state.cache.get(&child_key) {
-                subgraph.clone()
-            } else {
-                let child_scope = pending.scope;
-                let child = compile_unit(child, sink, Some(child_scope), resolve, state)?;
-                if !child.complete {
-                    return Ok(incomplete_unit(targets, subtree_edges));
-                }
-                state.cache.insert(child_key, child.subgraph.clone());
-                child.subgraph
-            };
-            child_groups.push(child_subgraph);
-
-            if group_index + 1 < pending.invocations.len()
-                && !stage_completed_group(
-                    sink,
-                    state,
-                    (compilation_key, pending_index, group_index),
-                    &child_groups[group_index].targets,
-                )
-            {
-                return Ok(incomplete_unit(targets, subtree_edges));
-            }
-        }
+        let Some(child_groups) = compose_child_groups(
+            &pending,
+            (compilation_key, pending_index),
+            sink,
+            resolve,
+            descendant_context,
+            state,
+        )?
+        else {
+            return Ok(incomplete_unit(targets, subtree_edges));
+        };
         let wrapper = sink
-            .complete_subninja(wrapper, pending, &child_groups)
+            .complete_subninja(wrapper, pending, &child_groups, begun)
             .map_err(MakeError::Construct)?;
         for edge in child_groups.into_iter().flat_map(|child| child.edges) {
             if !subtree_edges.contains(&edge) {
@@ -922,6 +892,90 @@ where
         },
         complete: true,
     })
+}
+
+/// Compile every child one recursive recipe starts, in the order the recipe
+/// wrote them, with what each of them is read off staged first.
+///
+/// `None` where the compilation stopped at a boundary: something a child is
+/// read off is not on the ground yet, and the unit it belongs to is left
+/// incomplete for the pass that follows the build of it.
+///
+/// `at` is where in the compilation this recipe sits: the unit's key and which
+/// pending recursive recipe of that unit it is.
+fn compose_child_groups<F>(
+    pending: &sink::PendingSubninja,
+    at: (&[u8], usize),
+    sink: &mut GraphSink,
+    resolve: &mut F,
+    descendant_context: &CompilationContext,
+    state: &mut CompilationState<'_>,
+) -> Result<Option<Vec<UnitSubgraph>>, MakeError>
+where
+    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
+{
+    let (compilation_key, pending_index) = at;
+    let mut child_groups = Vec::with_capacity(pending.invocations.len());
+    for (group_index, invocation) in pending.invocations.iter().enumerate() {
+        // The recipe's own lines ahead of this invocation are compiler input
+        // for it, for the same reason its prerequisites are: the child Makefile
+        // is read off the disk those lines write to.
+        if let Some(staged) = sink
+            .stage_preceding_lines(pending, group_index)
+            .map_err(MakeError::Construct)?
+            && !stage_preceding(
+                sink,
+                state,
+                (compilation_key, pending_index, group_index),
+                staged,
+            )
+        {
+            return Ok(None);
+        }
+        let child = match resolve(
+            &invocation.command,
+            &invocation.make,
+            &invocation.shell,
+            &invocation.shell_flags,
+            descendant_context,
+        ) {
+            Ok(child) => child,
+            // A report names the invocation and reads the rest of the build. A
+            // build cannot: there is no child graph to compose and the recipe
+            // line that would have started a Make of its own was lifted out of
+            // the recipe, so the work would simply not happen.
+            Err(MakeError::MissingChildMakefile { directory }) if descendant_context.reporting => {
+                child_groups.push(unreadable_child(descendant_context, invocation, &directory));
+                continue;
+            }
+            Err(refusal) => return Err(refusal),
+        };
+        let child_key = child.cache_key.clone();
+        let child_subgraph = if let Some(subgraph) = state.cache.get(&child_key) {
+            subgraph.clone()
+        } else {
+            let child_scope = pending.scope;
+            let child = compile_unit(child, sink, Some(child_scope), resolve, state)?;
+            if !child.complete {
+                return Ok(None);
+            }
+            state.cache.insert(child_key, child.subgraph.clone());
+            child.subgraph
+        };
+        child_groups.push(child_subgraph);
+
+        if group_index + 1 < pending.invocations.len()
+            && !stage_completed_group(
+                sink,
+                state,
+                (compilation_key, pending_index, group_index),
+                &child_groups[group_index].targets,
+            )
+        {
+            return Ok(None);
+        }
+    }
+    Ok(Some(child_groups))
 }
 
 /// Stage the recipe's own lines written ahead of one invocation, and say
@@ -1030,16 +1084,26 @@ enum RecursiveWrapper {
     Dirty(Edge),
 }
 
+/// Decide whether one recursive recipe has to run, before any child Makefile
+/// of it has been read.
+///
+/// `begun` outranks the disk. A recipe whose earlier lines have already run at
+/// a compilation boundary is a recipe GNU Make is in the middle of, and one of
+/// those lines may have written the target this wrapper makes: asking the disk
+/// again would read the recipe's own work as evidence that the recipe need not
+/// run. GNU Make asks once, before the first line, and then runs all of it.
 fn stage_recursive_wrapper(
     sink: &mut GraphSink,
     pending: &mut sink::PendingSubninja,
     disk: &crate::os::RealDiskInterface,
+    begun: bool,
 ) -> Result<RecursiveWrapper, MakeError> {
     let edge = sink.probe_subninja(pending).map_err(MakeError::Construct)?;
     let mut stat = |path: &std::path::Path| disk.stat(path);
-    let dirty = sink
-        .subninja_is_dirty(edge, &mut stat)
-        .map_err(|error| MakeError::Evaluate(error.to_string()))?;
+    let dirty = begun
+        || sink
+            .subninja_is_dirty(edge, &mut stat)
+            .map_err(|error| MakeError::Evaluate(error.to_string()))?;
     Ok(if dirty {
         RecursiveWrapper::Dirty(edge)
     } else {

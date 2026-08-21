@@ -167,6 +167,29 @@ pub(crate) struct Edge {
     /// itself.
     // [spec:ronin:req:make.remade-target-re-observed]
     pub(crate) outputs_reobserved: bool,
+    /// Whether part of this edge's recipe has already run, somewhere no
+    /// reading of the edge itself could show.
+    ///
+    /// A recursive recipe is cut into segments around its `$(MAKE)` line: the
+    /// lines written ahead of the invocation run at a compilation boundary, so
+    /// that the child Makefile is read off the disk they write to, and this
+    /// edge carries what is left of the recipe. Those lines are the recipe's
+    /// own, and one of them may write the very target this edge makes — after
+    /// which the file is on the ground with nothing newer behind it and every
+    /// ordinary reading says the target is current.
+    ///
+    /// GNU Make is never in that position: it decides whether a target is out
+    /// of date once, before the recipe starts, and then runs the whole recipe.
+    /// So the verdict taken when the first segment was staged is recorded here
+    /// and the rest of the recipe runs whatever date its target has acquired
+    /// in the meantime. A target whose recipe has begun is a target being
+    /// remade.
+    ///
+    /// Not [`Self::always_dirty`], which is `.PHONY` and yields to `-W`: a
+    /// file the switch names has a date, and a `.PHONY` name has none, so the
+    /// switch answers one and cannot answer the other. This is a fact about
+    /// work that has already happened, and no switch can make it untrue.
+    pub(crate) recipe_begun: bool,
     pub(crate) freshness_history: FreshnessHistory,
     partitions: EdgePartitions,
 }
@@ -559,6 +582,11 @@ where
     // runs: a phony edge settles its outputs' mtimes there, and a consumer of
     // one reads them.
     //
+    // An edge whose recipe has already begun is the same conclusion reached
+    // from the other end: the comparison above is reading a target its own
+    // recipe wrote, so what it says about the target is evidence of the work
+    // rather than a reason to skip it.
+    //
     // A scan answering `-B` says the same thing about every edge that has
     // something to run. GNU Make's own test is `!must_make && file->cmds != 0
     // && always_make_flag` (remake.c), so a name with no recipe behind it is
@@ -579,7 +607,8 @@ where
             .out
             .iter()
             .all(|output| runtime.assumed_new.contains(*output));
-    let dirty = (edge_data.always_dirty && !assumed_new)
+    let dirty = edge_data.recipe_begun
+        || (edge_data.always_dirty && !assumed_new)
         || (runtime.always_make && !graph.is_phony_rule(edge_data.rule))
         || out_of_date;
 
@@ -849,6 +878,7 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         outputs_unaliased: false,
         outputs_low_resolution: false,
         outputs_reobserved: false,
+        recipe_begun: false,
         freshness_history: FreshnessHistory::default(),
         partitions: EdgePartitions::default(),
     });
