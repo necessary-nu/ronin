@@ -5,7 +5,7 @@
 //! the status it leaves with, the way the narration-contract tests do.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 
 /// The composed line a census writes for the checked-in reduction.
@@ -61,12 +61,39 @@ const WRITE_IT_AS_THE_COMMAND: &str = concat!(
     "`cd DIR && $(MAKE) ...`, with any test settled where the Makefile can answer it\n",
 );
 
-/// A scratch directory of this test's own.
-fn scratch(name: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("ronin-lint-{name}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).unwrap();
-    path
+/// A scratch directory of this test's own, which goes away with the test.
+///
+/// Held rather than returned as a path, because the directory lives exactly as
+/// long as this value does: a test that took the path and dropped the handle
+/// would be reading a directory that had already been removed. It stands in
+/// for a `&Path` everywhere a path is wanted, so a case reads the same as it
+/// did when the directory was named and left behind.
+struct Scratch(tempfile::TempDir);
+
+impl std::ops::Deref for Scratch {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+impl AsRef<Path> for Scratch {
+    fn as_ref(&self) -> &Path {
+        self.0.path()
+    }
+}
+
+/// A scratch directory of this test's own. The name is the prefix rather than
+/// the whole of it, so two cases of one name cannot collide and nothing has to
+/// clear the directory before using it.
+fn scratch(name: &str) -> Scratch {
+    Scratch(
+        tempfile::Builder::new()
+            .prefix(&format!("ronin-lint-{name}-"))
+            .tempdir()
+            .unwrap(),
+    )
 }
 
 fn write(directory: &Path, name: &str, contents: &str) {
@@ -84,6 +111,24 @@ fn ronin(directory: &Path, arguments: &[&str]) -> Output {
 
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// The harness's own promise, gated because nothing else would notice it
+/// breaking: a suite that leaves a directory per case per run accumulates
+/// them by the hundred on a developer's machine, and the only symptom is a
+/// `/tmp` that looks like evidence of a leak in the tool under test.
+#[test]
+fn a_scratch_goes_with_its_test() {
+    let path = {
+        let directory = scratch("self-removing");
+        assert!(directory.is_dir(), "{}", directory.display());
+        directory.to_path_buf()
+    };
+    assert!(
+        !path.exists(),
+        "the scratch outlived the test that made it: {}",
+        path.display()
+    );
 }
 
 /// Lint is Ronin's own entry in a tool set Ninja otherwise owns, and it is
@@ -239,23 +284,22 @@ fn a_raised_warning_is_passed_on() {
 /// Copy a checked-in reduction into a scratch directory of its own, so the
 /// reproduction a reader does by hand is the one the test does.
 #[cfg(all(unix, feature = "make"))]
-fn reduction(name: &str) -> PathBuf {
+fn reduction(name: &str) -> Scratch {
     reduction_at(name, name)
 }
 
 /// The same, into a scratch directory the caller names, so two tests can read
 /// one reduction without sharing a directory or racing each other in it.
 #[cfg(all(unix, feature = "make"))]
-fn reduction_at(name: &str, label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("ronin-lint-{label}-{}", std::process::id()));
-    let _ = fs::remove_dir_all(&path);
+fn reduction_at(name: &str, label: &str) -> Scratch {
+    let directory = scratch(label);
     copy_tree(
         &Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/make-project-reductions")
             .join(name),
-        &path,
+        &directory,
     );
-    path
+    directory
 }
 
 #[cfg(all(unix, feature = "make"))]
