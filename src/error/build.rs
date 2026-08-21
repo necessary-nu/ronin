@@ -157,7 +157,7 @@ mod tests {
     /// The `-q` answer reads its status off the refusal, so a failure that is
     /// not a refusal at all must never be mistaken for the cheap one. The
     /// refusal's own two arms need a node the graph minted, so they are held by
-    /// `keep_going_keeps_the_questions_status` in tests/make_regressions.rs,
+    /// `keep_going_keeps_the_questions_status` in `tests/make_regressions.rs`,
     /// which puts the question to a real Makefile.
     #[test]
     fn only_a_refusal_carries_a_question() {

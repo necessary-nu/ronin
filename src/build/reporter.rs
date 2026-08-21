@@ -889,7 +889,7 @@ mod tests {
                 &mut reporter,
                 2,
                 4,
-                first + REPAINT_INTERVAL - Duration::from_millis(1)
+                first + REPAINT_INTERVAL.saturating_sub(Duration::from_millis(1))
             ),
             "",
             "a repaint this soon is skipped"

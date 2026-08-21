@@ -1,18 +1,22 @@
 // [spec:ronin:req:release.compatibility-gate]
 const RELEASE_GATE: &str = include_str!("../scripts/check-release.sh");
 
+/// The lint gate, which the release gate calls rather than restates.
+///
+/// Two files because two things run it: a release, and every dispatch that
+/// wants to know whether the tree is clean before it commits. It was written
+/// out in both places and they disagreed for weeks, which is the whole reason
+/// there is now one of it.
+// [spec:ronin:req:release.compatibility-gate]
+const LINT_GATE: &str = include_str!("../scripts/check-lints.sh");
+
 // [spec:ronin:req:release.compatibility-gate/test]
 #[test]
 fn release_gate_wires_every_candidate_check() {
     for command in [
         "cargo fmt --all -- --check",
         "cargo check --all-targets",
-        "cargo clippy --all-targets",
-        // The Make front end is a vendored fork that used to deny warnings in
-        // its own source. It stopped, because a compiler release should not
-        // break everybody's build; this line is where that denial went, so it
-        // is not free to disappear.
-        "cargo clippy -p kati --all-targets -- -D warnings",
+        "scripts/check-lints.sh",
         "cargo doc --no-deps",
         "cargo test --all-targets --no-fail-fast",
         "nplan port check --wave 4",
@@ -26,6 +30,30 @@ fn release_gate_wires_every_candidate_check() {
         assert!(
             RELEASE_GATE.contains(command),
             "release gate is missing {command}"
+        );
+    }
+}
+
+/// What the lint gate must keep saying, wherever it is called from.
+///
+/// The first line is Ronin's own code at the standard `[lints.clippy]`
+/// declares, and it carries NO `-W` groups on purpose: adding them would
+/// override the package's own `redundant_pub_crate = "allow"` rather than
+/// restate the standard, which is how seventeen findings that are a decision
+/// being overridden used to stop this gate. The second is the vendored fork,
+/// which used to deny warnings in its own source and stopped, because a
+/// compiler release should not break everybody's build; that line is where the
+/// denial went, so it is not free to disappear.
+// [spec:ronin:req:release.compatibility-gate/test]
+#[test]
+fn the_lint_gate_holds_both_standards() {
+    for command in [
+        "cargo clippy --all-targets --no-deps -- -D warnings\n",
+        "cargo clippy -p kati --all-targets -- -D warnings\n",
+    ] {
+        assert!(
+            LINT_GATE.contains(command),
+            "lint gate is missing {command}"
         );
     }
 }

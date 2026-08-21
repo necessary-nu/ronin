@@ -86,9 +86,9 @@ pub fn probe(oracle: &Path) -> Provenance {
     let plain = ask(oracle, false);
     let under_posix = ask(oracle, true);
     let posix = under_posix
-        .answers
+        .defaults
         .into_iter()
-        .filter(|(name, value)| plain.answers.get(name) != Some(value))
+        .filter(|(name, value)| plain.defaults.get(name) != Some(value))
         .collect();
 
     Provenance {
@@ -96,7 +96,7 @@ pub fn probe(oracle: &Path) -> Provenance {
         version: version(oracle),
         host: plain.host,
         features: plain.features,
-        defaults: plain.answers,
+        defaults: plain.defaults,
         posix,
     }
 }
@@ -177,7 +177,8 @@ fn compare(
 struct Answers {
     host: String,
     features: BTreeSet<String>,
-    answers: BTreeMap<String, String>,
+    /// The default-origin variables, which is what `Provenance` calls them.
+    defaults: BTreeMap<String, String>,
 }
 
 /// Ask through a makefile rather than through the command line, because the
@@ -217,29 +218,29 @@ fn ask(oracle: &Path, posix: bool) -> Answers {
     );
 
     let text = fs::read_to_string(scratch.join("answers")).expect("the probe's answers");
-    let mut collected = Answers {
-        host: String::new(),
-        features: BTreeSet::new(),
-        answers: BTreeMap::new(),
-    };
+    let mut host = None;
+    let mut features = BTreeSet::new();
+    let mut defaults = BTreeMap::new();
     for line in text.lines() {
-        record_answer(line, &mut collected);
+        let (kind, rest) = split(line);
+        match kind {
+            // One line each, and the last one wins — an `Option` rather than a
+            // field written over, which is the same rule said in one place.
+            "host" => host = Some(rest.to_owned()),
+            "feature" => {
+                features.insert(rest.to_owned());
+            }
+            "default" => {
+                let (name, value) = split(rest);
+                defaults.insert(name.to_owned(), value.to_owned());
+            }
+            _ => {}
+        }
     }
-    collected
-}
-
-fn record_answer(line: &str, into: &mut Answers) {
-    let (kind, rest) = split(line);
-    match kind {
-        "host" => into.host = rest.to_owned(),
-        "feature" => {
-            into.features.insert(rest.to_owned());
-        }
-        "default" => {
-            let (name, value) = split(rest);
-            into.answers.insert(name.to_owned(), value.to_owned());
-        }
-        _ => {}
+    Answers {
+        host: host.unwrap_or_default(),
+        features,
+        defaults,
     }
 }
 
@@ -278,36 +279,43 @@ pub fn render(provenance: &Provenance) -> String {
 }
 
 pub fn parse(text: &str) -> Provenance {
-    let mut provenance = Provenance {
-        build: String::new(),
-        version: String::new(),
-        host: String::new(),
-        features: BTreeSet::new(),
-        defaults: BTreeMap::new(),
-        posix: BTreeMap::new(),
-    };
+    // The three single-valued records are collected as options and the record
+    // is built once at the end. Written that way rather than as fields assigned
+    // over: an absent line and an empty one then mean the same thing in one
+    // place instead of in three, and nothing is allocated to be overwritten.
+    let mut build = None;
+    let mut version = None;
+    let mut host = None;
+    let mut features = BTreeSet::new();
+    let mut defaults = BTreeMap::new();
+    let mut posix = BTreeMap::new();
     for line in text.lines() {
         let (kind, rest) = split(line);
         let (name, value) = split(rest);
         match kind {
-            "build" => provenance.build = rest.to_owned(),
-            "version" => provenance.version = rest.to_owned(),
-            "host" => provenance.host = rest.to_owned(),
+            "build" => build = Some(rest.to_owned()),
+            "version" => version = Some(rest.to_owned()),
+            "host" => host = Some(rest.to_owned()),
             "feature" => {
-                provenance.features.insert(rest.to_owned());
+                features.insert(rest.to_owned());
             }
             "default" => {
-                provenance
-                    .defaults
-                    .insert(name.to_owned(), value.to_owned());
+                defaults.insert(name.to_owned(), value.to_owned());
             }
             "posix" => {
-                provenance.posix.insert(name.to_owned(), value.to_owned());
+                posix.insert(name.to_owned(), value.to_owned());
             }
             other => panic!("{RECORD}: unknown record `{other}`"),
         }
     }
-    provenance
+    Provenance {
+        build: build.unwrap_or_default(),
+        version: version.unwrap_or_default(),
+        host: host.unwrap_or_default(),
+        features,
+        defaults,
+        posix,
+    }
 }
 
 /// The first word and everything after it, with an empty value where a

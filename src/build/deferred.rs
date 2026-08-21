@@ -554,10 +554,11 @@ mod tests {
     /// which is where GNU Make's `$(dir)`/`$(notdir)` split one too.
     #[test]
     fn a_view_splits_a_name_at_its_last_separator() {
+        use super::NewInputsView::{Split, Whole};
+
         let view = |word: &str, view| {
             String::from_utf8(super::view_of(word.as_bytes(), view).to_vec()).unwrap()
         };
-        use super::NewInputsView::{Split, Whole};
         let directories = Split(super::PathHalf::Directory);
         let filenames = Split(super::PathHalf::Filename);
 

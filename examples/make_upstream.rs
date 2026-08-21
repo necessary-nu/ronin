@@ -845,51 +845,27 @@ fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSi
     side
 }
 
-fn classify(divergence: &Divergence, source: &Source) -> Verdict {
-    let ours = read_our_side(&divergence.actual, source);
-    if ours.refused_an_option {
-        // Exclusive, and deliberately so. Once Ronin has refused the option the
-        // test passed, it did not run the build, so nothing else in the diff is
-        // evidence about anything: the whole of the output is missing for one
-        // known reason. Letting the absence also count as an evaluation
-        // difference would file two hundred cases under the one family that is
-        // supposed to mean "we do not know why".
-        return Verdict {
-            families: vec!["option-refused"],
-            class: Class::Interface,
-            expected: Vec::new(),
-            actual: Vec::new(),
-        };
+/// Add a family to the list once, whoever noticed it.
+fn note(families: &mut Vec<&'static str>, family: &'static str) {
+    if !families.contains(&family) {
+        families.push(family);
     }
-    let theirs = read_their_side(&divergence.expected, source, &ours);
+}
 
-    let mut families = ours.families;
-    let mut note = |family: &'static str| {
-        if !families.contains(&family) {
-            families.push(family);
-        }
-    };
-    for family in theirs.families {
-        note(family);
-    }
-    let mut residual_actual = ours.residue;
-    let mut residual_expected = theirs.residue;
-
-    // Both tools refused, and every line either of them left is a diagnostic
-    // rather than a build. A refusal is a refusal whatever it is worded like:
-    // each tool decided to build nothing, which is the same decision, and
-    // `make.narration` puts the sentence each chose outside the contract.
-    let both_refused = theirs.refused_fatally
-        && residual_expected.all_diagnostics()
-        && residual_actual.all_diagnostics();
-    // Make refused and Ronin built anyway. The opposite case, and not narration
-    // at all: the refusal was the whole of Make's output, so anything Ronin ran
-    // is work Make never authorised.
-    let built_through_refusal = theirs.refused_fatally
-        && !residual_expected.lines.is_empty()
-        && !ours.commands.is_empty()
-        && !residual_actual.diagnostics.iter().any(|marked| *marked);
-
+/// Name what the residue is, where it has a recognisable shape, and say whether
+/// anything was named.
+///
+/// Lifted out of `classify` rather than left inline because it is a self
+/// contained question — every one of these reads the two residues and the case's
+/// own text, and none of them reads the comparison that follows.
+fn name_residue(
+    divergence: &Divergence,
+    source: &Source,
+    residual_actual: &Leftovers,
+    residual_expected: &Leftovers,
+    both_refused: bool,
+    families: &mut Vec<&'static str>,
+) -> bool {
     // Name what the residue is, where it has a recognisable shape. Each of
     // these was a slice of `evaluation` — the family that means nothing more
     // than "not recognised" — and naming one turns a share of that number into
@@ -914,7 +890,7 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
         // Ronin could not read something Make read, and a makefile Make also
         // rejected is not that.
         if !both_refused && residue().any(|line| line.contains(marker)) {
-            note(family);
+            note(families, family);
             named_residue = true;
         }
     }
@@ -935,15 +911,18 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
                 .any(|missing| missing == command)
         })
     {
-        note("command-not-found-text");
+        note(families, "command-not-found-text");
         named_residue = true;
     }
     if let Some(refusal) = refusal_of(&divergence.actual) {
-        note(match refusal_target(&divergence.expected) {
-            None => "no-rule-to-make",
-            Some(theirs) if theirs == refusal => "shared-refusal",
-            Some(_) => "refusal-attribution",
-        });
+        note(
+            families,
+            match refusal_target(&divergence.expected) {
+                None => "no-rule-to-make",
+                Some(theirs) if theirs == refusal => "shared-refusal",
+                Some(_) => "refusal-attribution",
+            },
+        );
         named_residue = true;
     }
     // A residue that is nothing but switches and assignments is a makefile
@@ -959,19 +938,74 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
                 || (source.reads_makeflags && quotes_a_flag_list(line))
         })
     {
-        note("makeflags-content");
+        note(families, "makeflags-content");
         named_residue = true;
     }
+
+    named_residue
+}
+
+fn classify(divergence: &Divergence, source: &Source) -> Verdict {
+    let ours = read_our_side(&divergence.actual, source);
+    if ours.refused_an_option {
+        // Exclusive, and deliberately so. Once Ronin has refused the option the
+        // test passed, it did not run the build, so nothing else in the diff is
+        // evidence about anything: the whole of the output is missing for one
+        // known reason. Letting the absence also count as an evaluation
+        // difference would file two hundred cases under the one family that is
+        // supposed to mean "we do not know why".
+        return Verdict {
+            families: vec!["option-refused"],
+            class: Class::Interface,
+            expected: Vec::new(),
+            actual: Vec::new(),
+        };
+    }
+    let theirs = read_their_side(&divergence.expected, source, &ours);
+
+    let mut families = ours.families;
+    for family in theirs.families {
+        note(&mut families, family);
+    }
+    let mut residual_actual = ours.residue;
+    let mut residual_expected = theirs.residue;
+
+    // Both tools refused, and every line either of them left is a diagnostic
+    // rather than a build. A refusal is a refusal whatever it is worded like:
+    // each tool decided to build nothing, which is the same decision, and
+    // `make.narration` puts the sentence each chose outside the contract.
+    let both_refused = theirs.refused_fatally
+        && residual_expected.all_diagnostics()
+        && residual_actual.all_diagnostics();
+    // Make refused and Ronin built anyway. The opposite case, and not narration
+    // at all: the refusal was the whole of Make's output, so anything Ronin ran
+    // is work Make never authorised.
+    let built_through_refusal = theirs.refused_fatally
+        && !residual_expected.lines.is_empty()
+        && !ours.commands.is_empty()
+        && !residual_actual.diagnostics.iter().any(|marked| *marked);
+
+    let mut named_residue = name_residue(
+        divergence,
+        source,
+        &residual_actual,
+        &residual_expected,
+        both_refused,
+        &mut families,
+    );
 
     // Read after the families above so the more particular ones still get to
     // name the case; this only reports what is left.
     if both_refused || built_through_refusal {
         if !named_residue {
-            note(if both_refused {
-                "shared-refusal"
-            } else {
-                "refusal-not-made"
-            });
+            note(
+                &mut families,
+                if both_refused {
+                    "shared-refusal"
+                } else {
+                    "refusal-not-made"
+                },
+            );
         }
         named_residue = true;
         residual_expected.lines.clear();
@@ -995,9 +1029,9 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
         // the same lines came out of both tools; a concurrent run is simply
         // not entitled to the further claim about which came out first.
     } else if permuted {
-        note("recipe-interleave");
+        note(&mut families, "recipe-interleave");
     } else {
-        note("evaluation");
+        note(&mut families, "evaluation");
     }
 
     if families.is_empty() {
@@ -1297,8 +1331,8 @@ fn settled(inventory: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        Class, Divergence, Side, Source, classify, echoes, normalise, read_divergence, record,
-        settled,
+        Class, Divergence, Leftovers, Side, Source, classify, echoes, name_residue, normalise,
+        read_divergence, record, settled,
     };
 
     fn lines(text: &[&str]) -> Vec<String> {
@@ -1349,6 +1383,45 @@ mod tests {
 
     /// When both tools refused, the residue is narration. If GNU Make built the
     /// target, the missing rule is a compiler candidate pending reproduction.
+    /// The residue-naming half of `classify`, asked directly now that it has a
+    /// name: a marker in either side's leftovers names the family, and the same
+    /// marker names nothing when Make refused too, because `parse-failure` means
+    /// Ronin could not read something Make read.
+    #[test]
+    fn a_marker_names_an_unread_residue() {
+        let unreadable = || {
+            let mut leftovers = Leftovers::default();
+            leftovers.push("ronin: f.mk:2: missing separator".to_owned(), true);
+            leftovers
+        };
+        let nothing = Divergence {
+            expected: lines(&[]),
+            actual: lines(&[]),
+        };
+
+        let mut families = Vec::new();
+        assert!(name_residue(
+            &nothing,
+            &unread(),
+            &unreadable(),
+            &Leftovers::default(),
+            false,
+            &mut families
+        ));
+        assert!(families.contains(&"parse-failure"), "{families:?}");
+
+        let mut families = Vec::new();
+        assert!(!name_residue(
+            &nothing,
+            &unread(),
+            &unreadable(),
+            &Leftovers::default(),
+            true,
+            &mut families
+        ));
+        assert!(families.is_empty(), "{families:?}");
+    }
+
     #[test]
     fn shared_refusal_is_narration() {
         let refused = |theirs: &str| {

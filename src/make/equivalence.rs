@@ -218,6 +218,40 @@ enum Outcome {
     Compared(Vec<String>),
 }
 
+impl Outcome {
+    /// Whether both graphs were built and found to say the same thing.
+    fn agreed(&self) -> bool {
+        matches!(self, Self::Compared(differences) if differences.is_empty())
+    }
+}
+
+/// What this outcome is, said once so that every caller reports it alike.
+///
+/// Written as `Display` rather than as a `match` at each site because there are
+/// three of them and a fourth would otherwise have reached for `Err(_)`, which
+/// names no reason at all.
+impl std::fmt::Display for Outcome {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Compared(differences) if differences.is_empty() => {
+                formatter.write_str("the two graphs agree")
+            }
+            Self::Compared(differences) => formatter.write_str(&differences.join("\n")),
+            Self::NotAccepted(why) => write!(formatter, "make rejected the fixture: {why}"),
+            Self::BothRefused { direct, manifest } => {
+                write!(
+                    formatter,
+                    "both paths refused the fixture: {direct} / {manifest}"
+                )
+            }
+            Self::OnlyDirectRefused(why) => write!(formatter, "the direct graph refused: {why}"),
+            Self::OnlyManifestRefused(why) => {
+                write!(formatter, "ronin refused the manifest: {why}")
+            }
+        }
+    }
+}
+
 /// One edge, written so that two graphs can be compared as text.
 ///
 /// Everything the equivalence rule names is here — outputs and their explicit
@@ -272,6 +306,83 @@ fn describe_ignore_semantics<'a>(
     Some(command)
 }
 
+/// What one side says about a deferred edge, in the words both sides answer in.
+///
+/// A value rather than the seven-element tuple this used to destructure: the
+/// two sides answer the same seven questions from quite different places, and
+/// naming them is what lets each answer be read beside its own source. Note
+/// that it is not `DeferredSemantics` above: that one is what the writer's
+/// output was read back as, and this one is either side's answer in the shape
+/// the comparison prints.
+struct DeferredAnswer {
+    outputs: Vec<Vec<u8>>,
+    always_dirty_output: bool,
+    always_new_inputs: Vec<Vec<u8>>,
+    excluded_new_inputs: Vec<Vec<u8>>,
+    new_input_names: Vec<Vec<u8>>,
+    completion_join: bool,
+    variable: Vec<u8>,
+}
+
+/// The paths a graph knows these nodes by, as the bytes the comparison reads.
+fn node_path_bytes(arenas: &crate::graph::Graph, nodes: &[crate::graph::NodeId]) -> Vec<Vec<u8>> {
+    nodes
+        .iter()
+        .map(|node| arenas.node_path(*node).as_bytes().to_vec())
+        .collect()
+}
+
+/// The direct graph's answer, read off the edge's own late-freshness record.
+fn direct_deferred_semantics(graph: &BuildGraph, edge: crate::graph::EdgeId) -> DeferredAnswer {
+    let arenas = graph.arenas();
+    let freshness = arenas.deferred_freshness(edge);
+    DeferredAnswer {
+        outputs: freshness.map_or_else(Vec::new, |freshness| {
+            node_path_bytes(arenas, &freshness.outputs)
+        }),
+        always_dirty_output: freshness.is_some_and(|freshness| freshness.always_dirty_output),
+        always_new_inputs: freshness.map_or_else(Vec::new, |freshness| {
+            node_path_bytes(arenas, &freshness.always_new_inputs)
+        }),
+        excluded_new_inputs: freshness.map_or_else(Vec::new, |freshness| {
+            node_path_bytes(arenas, &freshness.excluded_new_inputs)
+        }),
+        new_input_names: freshness.map_or_else(Vec::new, |freshness| {
+            freshness
+                .new_input_names
+                .iter()
+                .map(|(node, published)| {
+                    let mut pair = arenas.node_path(*node).as_bytes().to_vec();
+                    pair.push(b'=');
+                    pair.extend_from_slice(published.as_bytes());
+                    pair
+                })
+                .collect()
+        }),
+        completion_join: arenas.is_completion_join(edge),
+        variable: freshness
+            .map_or_else(Vec::new, |freshness| freshness.new_inputs_variable.to_vec()),
+    }
+}
+
+/// The manifest graph's answer, read back out of what the writer emitted.
+fn manifest_deferred_semantics(recorded: Option<&DeferredSemantics>) -> DeferredAnswer {
+    DeferredAnswer {
+        outputs: recorded.map_or_else(Vec::new, |semantic| semantic.outputs.clone()),
+        always_dirty_output: recorded.is_some_and(|semantic| semantic.always_dirty_output),
+        always_new_inputs: recorded
+            .map_or_else(Vec::new, |semantic| semantic.always_new_inputs.clone()),
+        excluded_new_inputs: recorded
+            .map_or_else(Vec::new, |semantic| semantic.excluded_new_inputs.clone()),
+        new_input_names: recorded
+            .map_or_else(Vec::new, |semantic| semantic.new_input_names.clone()),
+        completion_join: recorded.is_some_and(|semantic| semantic.completion_join),
+        variable: recorded
+            .filter(|semantic| !semantic.outputs.is_empty())
+            .map_or_else(Vec::new, |_| b"KATI_NEW_INPUTS".to_vec()),
+    }
+}
+
 fn describe_deferred_semantics(
     graph: &BuildGraph,
     edge: crate::graph::EdgeId,
@@ -280,79 +391,9 @@ fn describe_deferred_semantics(
     side: Side,
     described: &mut String,
 ) {
-    let recorded = semantics.deferred.get(output);
-    let (
-        outputs,
-        always_dirty_output,
-        always_new_inputs,
-        excluded_new_inputs,
-        new_input_names,
-        completion_join,
-        variable,
-    ) = match side {
-        Side::Direct => {
-            let arenas = graph.arenas();
-            let freshness = arenas.deferred_freshness(edge);
-            (
-                freshness
-                    .map(|freshness| {
-                        freshness
-                            .outputs
-                            .iter()
-                            .map(|node| arenas.node_path(*node).as_bytes().to_vec())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default(),
-                freshness.is_some_and(|freshness| freshness.always_dirty_output),
-                freshness
-                    .map(|freshness| {
-                        freshness
-                            .always_new_inputs
-                            .iter()
-                            .map(|node| arenas.node_path(*node).as_bytes().to_vec())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default(),
-                freshness
-                    .map(|freshness| {
-                        freshness
-                            .excluded_new_inputs
-                            .iter()
-                            .map(|node| arenas.node_path(*node).as_bytes().to_vec())
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default(),
-                freshness
-                    .map(|freshness| {
-                        freshness
-                            .new_input_names
-                            .iter()
-                            .map(|(node, published)| {
-                                let mut pair = arenas.node_path(*node).as_bytes().to_vec();
-                                pair.push(b'=');
-                                pair.extend_from_slice(published.as_bytes());
-                                pair
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default(),
-                arenas.is_completion_join(edge),
-                freshness
-                    .map(|freshness| freshness.new_inputs_variable.as_slice())
-                    .unwrap_or_default(),
-            )
-        }
-        Side::Manifest => (
-            recorded.map_or_else(Vec::new, |semantic| semantic.outputs.clone()),
-            recorded.is_some_and(|semantic| semantic.always_dirty_output),
-            recorded.map_or_else(Vec::new, |semantic| semantic.always_new_inputs.clone()),
-            recorded.map_or_else(Vec::new, |semantic| semantic.excluded_new_inputs.clone()),
-            recorded.map_or_else(Vec::new, |semantic| semantic.new_input_names.clone()),
-            recorded.is_some_and(|semantic| semantic.completion_join),
-            recorded
-                .filter(|semantic| !semantic.outputs.is_empty())
-                .map_or(&[][..], |_| &b"KATI_NEW_INPUTS"[..]),
-        ),
+    let answered = match side {
+        Side::Direct => direct_deferred_semantics(graph, edge),
+        Side::Manifest => manifest_deferred_semantics(semantics.deferred.get(output)),
     };
     let list = |paths: &[Vec<u8>]| {
         paths
@@ -361,28 +402,33 @@ fn describe_deferred_semantics(
             .collect::<Vec<_>>()
             .join(" ")
     };
-    let _ = writeln!(described, "  deferred outputs: {}", list(&outputs));
+    let _ = writeln!(described, "  deferred outputs: {}", list(&answered.outputs));
     let _ = writeln!(
         described,
-        "  deferred output always dirty: {always_dirty_output}"
+        "  deferred output always dirty: {}",
+        answered.always_dirty_output
     );
     let _ = writeln!(
         described,
         "  deferred always-new inputs: {}",
-        list(&always_new_inputs)
+        list(&answered.always_new_inputs)
     );
     let _ = writeln!(
         described,
         "  deferred excluded new inputs: {}",
-        list(&excluded_new_inputs)
+        list(&answered.excluded_new_inputs)
     );
     let _ = writeln!(
         described,
         "  deferred new-input names: {}",
-        list(&new_input_names)
+        list(&answered.new_input_names)
     );
-    let _ = writeln!(described, "  deferred variable: {:?}", variable.as_bstr());
-    let _ = writeln!(described, "  completion join: {completion_join}");
+    let _ = writeln!(
+        described,
+        "  deferred variable: {:?}",
+        answered.variable.as_bstr()
+    );
+    let _ = writeln!(described, "  completion join: {}", answered.completion_join);
 }
 
 fn destination_specific_binding(name: &str, command: Option<&IgnoredCommand>) -> bool {
@@ -698,10 +744,8 @@ impl Case {
     }
 
     fn both(&self) -> Both {
-        match build_both(self.directory.path(), self.argv.clone()) {
-            Ok(both) => both,
-            Err(_) => panic!("the fixture did not produce two graphs"),
-        }
+        build_both(self.directory.path(), self.argv.clone())
+            .unwrap_or_else(|outcome| panic!("the fixture did not produce two graphs: {outcome}"))
     }
 }
 
@@ -803,16 +847,8 @@ fn outputs_where(graph: &BuildGraph, wanted: impl Fn(&crate::graph::Edge) -> boo
 /// Assert that one Makefile produces the same graph both ways.
 #[track_caller]
 fn agrees(makefile: &str, flags: &[&str]) {
-    match Case::new(makefile, flags).compare() {
-        Outcome::Compared(differences) if differences.is_empty() => {}
-        Outcome::Compared(differences) => panic!("{}", differences.join("\n")),
-        Outcome::NotAccepted(why) => panic!("make rejected the fixture: {why}"),
-        Outcome::BothRefused { direct, manifest } => {
-            panic!("both paths refused the fixture: {direct} / {manifest}")
-        }
-        Outcome::OnlyDirectRefused(why) => panic!("the direct graph refused: {why}"),
-        Outcome::OnlyManifestRefused(why) => panic!("ronin refused the manifest: {why}"),
-    }
+    let outcome = Case::new(makefile, flags).compare();
+    assert!(outcome.agreed(), "{outcome}");
 }
 
 // [spec:ronin:req:make.graph-direct/test]

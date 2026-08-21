@@ -9,6 +9,7 @@
 
 #![cfg(unix)]
 
+use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -69,7 +70,7 @@ fn a_prune_leaves_the_total() {
          build base: stamp src\n",
     );
     for index in 1..=8 {
-        manifest.push_str(&format!("build o{index}: copy base\n"));
+        let _ = writeln!(manifest, "build o{index}: copy base");
     }
     manifest.push_str("build z: copy o1 o2 o3 o4 o5 o6 o7 o8 zsrc\ndefault z\n");
     fs::write(directory.join("build.ninja"), manifest).unwrap();

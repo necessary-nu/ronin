@@ -82,8 +82,18 @@ lto = "fat"
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 
+# The house standard, and the ONLY statement of it: `scripts/check-lints.sh`
+# runs `-D warnings` and adds no `-W` groups of its own, so what a bare
+# `cargo clippy` says here is what the gate says. A command-line `-W
+# clippy::nursery` would not repeat this declaration, it would override the
+# allow below.
 [lints.clippy]
 nursery = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
+# `pub(crate)` in a private module is the house spelling and reads as the
+# intent: this crate, not the world. The lint's advice — write `pub`, since a
+# private module makes them the same thing — would have every support module
+# included by `#[path]` claim a visibility it does not want, and would say so
+# seventeen times in examples/support/workloads.rs alone.
 redundant_pub_crate = "allow"
 undocumented_unsafe_blocks = "deny"

@@ -188,10 +188,8 @@ fn known_divergence(case: &Case) -> Option<String> {
 /// on a host that has one, so what the reader needs at that moment is the note
 /// beside the case rather than a search for which build the answer came from.
 fn failure(case: &Case, difference: &str) -> String {
-    match sidecar(case, "note") {
-        Some(note) => format!("{}: {difference}\n  {note}", case.id),
-        None => format!("{}: {difference}", case.id),
-    }
+    let note = sidecar(case, "note").map_or_else(String::new, |note| format!("\n  {note}"));
+    format!("{}: {difference}{note}", case.id)
 }
 
 /// A case's prose beside it, if the case wrote any.
@@ -354,7 +352,7 @@ fn run_directory() -> &'static Path {
 /// untouched for an hour go, so a run in progress beside this one is never one
 /// of them.
 fn sweep_stale_runs(work: &Path) {
-    let stale = std::time::Duration::from_secs(60 * 60);
+    let stale = std::time::Duration::from_hours(1);
     let Ok(entries) = fs::read_dir(work) else {
         return;
     };

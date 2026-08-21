@@ -350,7 +350,7 @@ fn wait_for_the_recipes_marker(child: &mut std::process::Child, marker: &std::pa
     // Far above what a loaded host needs, and far below the wrapper's own
     // wall-clock ceiling, so an expiry here is a finding rather than a second
     // flapper.
-    let budget = Duration::from_secs(60);
+    let budget = Duration::from_mins(1);
     let waited_since = Instant::now();
     while !marker.exists() {
         if let Some(status) = child.try_wait().expect("waiting on the build") {
