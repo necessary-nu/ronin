@@ -64,7 +64,7 @@ impl Bindings {
     }
 }
 
-pub(crate) use super::layout::CommandLayout;
+pub(crate) use super::layout::{CommandLayout, SettledScript};
 
 /// One static recursive invocation within a held recipe.
 pub(crate) struct SubninjaInvocation {
@@ -76,6 +76,8 @@ pub(crate) struct SubninjaInvocation {
     /// runs them. `None` when the invocation is the first thing the recipe
     /// does after the one before it.
     pub(crate) preceding_rule: Option<Rule>,
+    /// How that rule's script is launched, once its edge exists.
+    preceding_script: Option<SettledScript>,
     /// The Makefile and line the recipe line was written on, for a report that
     /// has to point at the invocation it is about. `None` for a build, which
     /// has nothing to say about it.
@@ -101,6 +103,8 @@ pub(crate) struct PendingSubninja {
     pub(crate) invocations: Vec<SubninjaInvocation>,
     pub(crate) scope: Scope,
     residual_rule: Option<Rule>,
+    /// How the residual rule's script is launched, once its edge exists.
+    residual_script: Option<SettledScript>,
     diagnostic_command: Vec<u8>,
     explicit_outputs: Vec<Node>,
     implicit_outputs: Vec<Node>,
@@ -153,6 +157,7 @@ struct PendingDeferred {
 struct SubninjaRule {
     invocations: Vec<SubninjaInvocation>,
     residual_rule: Option<Rule>,
+    residual_script: Option<SettledScript>,
     diagnostic_command: Vec<u8>,
 }
 
@@ -224,6 +229,9 @@ pub struct GraphSink {
     /// The launches a recipe read while compiling became, waiting for the edge
     /// that names their rule.
     settled_rules: HashMap<RuleId, Vec<crate::build::LateStep>>,
+    /// Rules whose recipe reaches one shell as a whole script, waiting for the
+    /// edge whose output names the response file that script may be read from.
+    settled_scripts: HashMap<RuleId, SettledScript>,
     /// Edges whose recipe was read while compiling and which still run a
     /// process per command line.
     settled_edges: Vec<(Edge, Vec<crate::build::LateStep>)>,
@@ -317,6 +325,7 @@ impl GraphSink {
             deferred_rules: HashMap::new(),
             deferred_edges: Vec::new(),
             settled_rules: HashMap::new(),
+            settled_scripts: HashMap::new(),
             settled_edges: Vec::new(),
             subninja_rules: HashMap::new(),
             interned: HashMap::new(),
@@ -500,6 +509,15 @@ impl GraphSink {
             self.phony
         };
         self.graph.set_edge_rule(edge, rule);
+        // The wrapper edge is where the parent's trailing lines end up, so it
+        // is the edge whose output names their response file.
+        if pending.residual_rule.is_some()
+            && let Some(held) = &pending.residual_script
+            && let Some(output) = pending.explicit_outputs.first().copied()
+            && let Some(step) = held.launch(self.graph.path(output))
+        {
+            self.settled_edges.push((edge, vec![step]));
+        }
         if let Some(deferred) = pending.deferred {
             self.defer_freshness(edge, &deferred);
             self.graph.add_deferred_activations(edge, &child_targets);
@@ -582,7 +600,7 @@ impl GraphSink {
             .chain(&pending.order_only_inputs)
             .copied()
             .collect::<Vec<_>>();
-        self.graph.add_edge(EdgeSpec {
+        let built = self.graph.add_edge(EdgeSpec {
             scope: pending.scope,
             rule,
             explicit_outputs: &[proxy],
@@ -600,6 +618,11 @@ impl GraphSink {
             outputs_low_resolution: false,
             bindings: Vec::new(),
         })?;
+        if let Some(held) = &pending.invocations[index].preceding_script
+            && let Some(step) = held.launch(self.graph.path(proxy))
+        {
+            self.settled_edges.push((built, vec![step]));
+        }
         Ok(Some(proxy))
     }
 
@@ -811,12 +834,6 @@ impl GraphSink {
         }
     }
 
-    /// The shell prefix that gives a compilation unit its Make `-C` working
-    /// directory and environment without moving Ronin's executor.
-    fn command_prefix(&self, scoped: &[kati::export::EnvironmentChange]) -> Template {
-        Template::literal(&self.layout().prefix(scoped))
-    }
-
     /// Everything about this unit that a command line is built around, kept
     /// separately so a recipe expanded when its edge is launched is wrapped
     /// exactly as the same recipe expanded here would have been.
@@ -844,7 +861,10 @@ impl GraphSink {
     ) -> Vec<(Binding, Template)> {
         match command {
             SinkCommand::Inline(script) => {
-                let mut command = self.command_prefix(scoped);
+                // The `cd` and `env` that give a compilation unit its Make `-C`
+                // working directory and environment without moving Ronin's
+                // executor.
+                let mut command = Template::literal(&self.layout().prefix(scoped));
                 command.push_literal(shell);
                 command.push_literal(b" ");
                 command.push_literal(shell_flags);
@@ -865,7 +885,7 @@ impl GraphSink {
                 }
                 response_file.push_variable(self.bindings.out);
                 response_file.push_literal(b".rsp");
-                let mut command = self.command_prefix(scoped);
+                let mut command = Template::literal(&self.layout().prefix(scoped));
                 command.push_literal(shell);
                 command.push_literal(b" ");
                 if !self.unit.root && !self.root_directory.as_os_str().is_empty() {
@@ -984,8 +1004,9 @@ impl GraphSink {
     /// launches of one it did.
     ///
     /// Never both — a deferred recipe carries its steps on the expansion
-    /// instead — and neither for an edge with no rule at all.
-    fn record_late_bindings(&mut self, built: Edge, rule: Option<RuleId>) {
+    /// instead — and neither for an edge with no rule at all. `output` is the
+    /// edge's own, which is what a response file is named after.
+    fn record_late_bindings(&mut self, built: Edge, rule: Option<RuleId>, output: Option<Node>) {
         let Some(id) = rule else {
             return;
         };
@@ -994,6 +1015,12 @@ impl GraphSink {
         }
         if let Some(steps) = self.settled_rules.remove(&id) {
             self.settled_edges.push((built, steps));
+        }
+        if let Some(held) = self.settled_scripts.remove(&id)
+            && let Some(output) = output
+            && let Some(step) = held.launch(self.graph.path(output))
+        {
+            self.settled_edges.push((built, vec![step]));
         }
     }
 
@@ -1004,8 +1031,19 @@ impl GraphSink {
     pub(crate) fn take_late_edges(&mut self) -> LateEdges {
         (
             std::mem::take(&mut self.deferred_edges),
-            std::mem::take(&mut self.settled_edges),
+            self.take_settled_edges(),
         )
+    }
+
+    /// The same launches for the edges a recursive recipe's segments reach,
+    /// which are made after the unit that wrote them has been taken.
+    ///
+    /// A parent's recipe is cut into segments around the invocations lifted out
+    /// of it, and those segments become edges while the children are being
+    /// compiled — after this unit's own edges were claimed, and possibly after
+    /// the last of them.
+    pub(crate) fn take_settled_edges(&mut self) -> Vec<(Edge, Vec<crate::build::LateStep>)> {
+        std::mem::take(&mut self.settled_edges)
     }
 
     /// Bindings for a run of a recipe's own lines that is not the edge making
@@ -1153,6 +1191,13 @@ impl BuildSink for GraphSink {
                     self.define_executor_rule(name.as_bytes(), bindings)
                 })
                 .transpose()?;
+            // A segment of a recipe is a script like any other, and reaches one
+            // shell like any other: the lines it holds were never the ones the
+            // split would have launched separately, because the invocation
+            // lifted out from between them is not among them.
+            let residual_script = rule.residual_command.map(|command| {
+                SettledScript::held(self.layout(), rule, command, rule.residual_ignore_errors)
+            });
             let mut invocations = Vec::with_capacity(rule.subninjas.len());
             for (index, subninja) in rule.subninjas.iter().enumerate() {
                 let preceding_rule = match subninja.preceding {
@@ -1167,12 +1212,21 @@ impl BuildSink for GraphSink {
                     }
                     None => None,
                 };
+                let preceding_script = subninja.preceding.map(|command| {
+                    SettledScript::held(
+                        self.layout(),
+                        rule,
+                        command,
+                        subninja.preceding_ignore_errors,
+                    )
+                });
                 invocations.push(SubninjaInvocation {
                     command: subninja.command.to_vec(),
                     make: subninja.make.to_vec(),
                     shell: rule.shell.to_vec(),
                     shell_flags: rule.shell_flags.to_vec(),
                     preceding_rule,
+                    preceding_script,
                     location: subninja.location.map(ToOwned::to_owned),
                 });
             }
@@ -1181,6 +1235,7 @@ impl BuildSink for GraphSink {
                 SubninjaRule {
                     invocations,
                     residual_rule,
+                    residual_script,
                     diagnostic_command: script.to_vec(),
                 },
             );
@@ -1218,6 +1273,16 @@ impl BuildSink for GraphSink {
                     })
                     .collect(),
             );
+        } else if rule.deferred_recipe.is_none() {
+            // A recipe whose lines are not the launches — one whose script a
+            // depfile extraction rewrote, and one holding a line too long to be
+            // an argument — still runs as one script under one shell, and which
+            // shell that is is not the recipe's to change. The recipe expanded
+            // at launch is not this: it has no text here to launch anything
+            // with, and settles its own script when it gets one.
+            let settled =
+                SettledScript::held(self.layout(), rule, rule.command, rule.ignore_errors);
+            self.settled_scripts.insert(rule.id, settled);
         }
         Ok(())
     }
@@ -1262,6 +1327,7 @@ impl BuildSink for GraphSink {
                 invocations: rule.invocations,
                 scope: self.unit.scope,
                 residual_rule: rule.residual_rule,
+                residual_script: rule.residual_script,
                 diagnostic_command: rule.diagnostic_command,
                 explicit_outputs: outputs,
                 implicit_outputs,
@@ -1316,7 +1382,7 @@ impl BuildSink for GraphSink {
         };
         match self.graph.add_edge(spec) {
             Ok(built) => {
-                self.record_late_bindings(built, edge.rule);
+                self.record_late_bindings(built, edge.rule, outputs.first().copied());
                 // Every Make target is one GNU Make decides from the disk, and
                 // looks at again once its recipe has run whatever the recipe
                 // did, so this is what Make is here rather than something a

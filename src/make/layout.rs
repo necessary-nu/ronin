@@ -96,7 +96,7 @@ impl CommandLayout {
 
     /// Where this unit writes the response file for the edge producing
     /// `output`, which is per edge because the output is.
-    fn response_file(&self, output: &[u8]) -> Vec<u8> {
+    pub(super) fn response_file(&self, output: &[u8]) -> Vec<u8> {
         let mut path = Vec::new();
         if !self.root && !self.root_directory.as_os_str().is_empty() {
             path.extend_from_slice(self.root_directory.as_os_str().as_bytes());
@@ -153,6 +153,57 @@ impl CommandLayout {
         }
     }
 
+    /// The launch that runs a whole assembled script.
+    ///
+    /// The same substitution [`Self::launch_step`] makes for one recipe line,
+    /// for a recipe that could not be handed over as its lines. The command
+    /// line built by [`Self::launch`] cannot make it: its own work is to `exec
+    /// env`, and `env` execs the shell spelled inside it, which is the
+    /// machine's however the line itself was launched.
+    ///
+    /// `None` where the recipe names a shell of its own — the substitution
+    /// boundary [`Self::launch_step`] draws in the same place. There is no
+    /// executable to stand in for a shell that is not the default one, so the
+    /// composed command line runs it exactly as it always did.
+    pub(crate) fn launch_script(
+        &self,
+        shell: &[u8],
+        shell_flags: &[u8],
+        script: Script<'_>,
+        scoped: &[kati::export::EnvironmentChange],
+    ) -> Option<crate::subprocess::Launch> {
+        if shell != kati::simple_command::DEFAULT_SHELL {
+            return None;
+        }
+        let mut argv = vec![BString::from(shell.to_vec())];
+        match script {
+            // What the command line spells as `<shell> <flags> "<script>"`.
+            Script::Argument(text) => {
+                argv.extend(Self::shell_flag_words(shell_flags));
+                argv.push(BString::from(text.to_vec()));
+            }
+            // And what it spells as `<shell> <path>`: a script the shell reads
+            // out of a file is a file operand, and takes no flags in front of
+            // it here for the same reason it takes none there.
+            Script::File(path) => argv.push(BString::from(path.to_vec())),
+        }
+        Some(self.direct_launch(argv, scoped))
+    }
+
+    /// `.SHELLFLAGS` as the words a launch passes.
+    ///
+    /// An empty `.SHELLFLAGS` is why they are words rather than one: the
+    /// command line spelled `sh  "script"`, which a shell splits into `sh` and
+    /// a file operand, so an empty word must vanish here too rather than become
+    /// an empty argument. A `.SHELLFLAGS` of several words splits for the same
+    /// reason.
+    fn shell_flag_words(shell_flags: &[u8]) -> impl Iterator<Item = BString> {
+        shell_flags
+            .split(u8::is_ascii_whitespace)
+            .filter(|word| !word.is_empty())
+            .map(|word| BString::from(word.to_vec()))
+    }
+
     /// The launch that runs one recipe line.
     ///
     /// GNU Make asks `construct_command_argv` per line and gets one of two
@@ -184,20 +235,9 @@ impl CommandLayout {
         // thing a launch says with a directory and an environment, and a
         // command line cannot say the one thing that matters here: that the
         // program is this executable while `argv[0]` stays `/bin/sh`.
-        //
-        // An empty `.SHELLFLAGS` is why the flags are words rather than one:
-        // the command line spelled `sh  "script"`, which a shell splits into
-        // `sh` and a file operand, so an empty word must vanish here too
-        // rather than become an empty argument. A `.SHELLFLAGS` of several
-        // words splits for the same reason.
         if step.shell == kati::simple_command::DEFAULT_SHELL {
             let mut argv = vec![BString::from(step.shell.to_vec())];
-            argv.extend(
-                step.shell_flags
-                    .split(u8::is_ascii_whitespace)
-                    .filter(|word| !word.is_empty())
-                    .map(|word| BString::from(word.to_vec())),
-            );
+            argv.extend(Self::shell_flag_words(&step.shell_flags));
             argv.push(BString::from(step.text.to_vec()));
             return self.direct_launch(argv, scoped);
         }
@@ -256,6 +296,98 @@ impl CommandLayout {
                 .iter()
                 .all(|step| step.text.len() <= RESPONSE_FILE_THRESHOLD)
     }
+}
+
+/// A whole assembled script one rule runs, waiting for the edge that runs it.
+///
+/// A recipe handed over as its command lines needs nothing from the edge: each
+/// line is a finished launch by the time the rule is declared. One handed over
+/// whole may be read out of a response file instead, and that file is named
+/// after the edge's output, so the launch cannot be finished until there is an
+/// edge to name it after.
+///
+/// The layout travels with it because the unit that declared the rule is not
+/// the current one by the time a recursive recipe's segments reach their edges:
+/// the children have been compiled in between, each with a layout of its own.
+pub(crate) struct SettledScript {
+    layout: CommandLayout,
+    shell: Vec<u8>,
+    shell_flags: Vec<u8>,
+    /// The script itself, or `None` where it is the response file's content and
+    /// the shell reads it from there.
+    script: Option<Vec<u8>>,
+    /// What the target's own scope changes about the environment, over what the
+    /// layout already carries for the unit.
+    scoped: Vec<kati::export::EnvironmentChange>,
+    ignore_errors: bool,
+}
+
+impl SettledScript {
+    /// One rule's assembled script, held until there is an edge to launch it
+    /// for.
+    pub(crate) fn held(
+        layout: CommandLayout,
+        rule: &kati::build_sink::SinkRule<'_>,
+        command: kati::build_sink::SinkCommand<'_>,
+        ignore_errors: bool,
+    ) -> Self {
+        Self {
+            layout,
+            shell: rule.shell.to_vec(),
+            shell_flags: rule.shell_flags.to_vec(),
+            script: match command {
+                kati::build_sink::SinkCommand::Inline(script) => Some(script.to_vec()),
+                kati::build_sink::SinkCommand::ResponseFile(_) => None,
+            },
+            scoped: rule.recipe_environment.to_vec(),
+            ignore_errors,
+        }
+    }
+
+    /// The launch, once `output` says what the edge's response file is called.
+    ///
+    /// `None` for a recipe naming a shell of its own, which the composed
+    /// command line runs exactly as it always did.
+    pub(crate) fn launch(&self, output: &[u8]) -> Option<crate::build::LateStep> {
+        // A rule holding no script of its own is one whose script was written
+        // out for the shell to read, and this edge's output is what that file
+        // is named after.
+        let response_file = if self.script.is_some() {
+            Vec::new()
+        } else {
+            self.layout.response_file(output)
+        };
+        let script = self
+            .script
+            .as_deref()
+            .map_or(Script::File(&response_file), Script::Argument);
+        self.layout
+            .launch_script(&self.shell, &self.shell_flags, script, &self.scoped)
+            .map(|launch| crate::build::LateStep {
+                launch,
+                ignore_errors: self.ignore_errors,
+                // What the command line this replaces was given, unchanged. A
+                // recipe of several lines has no single answer — GNU Make runs
+                // the marked lines of one and skips the rest, and a script
+                // assembled into one process can do neither — so naming the
+                // program says nothing new about it.
+                runs_while_pretending: false,
+            })
+    }
+}
+
+/// How a shell is given the script it is to run.
+///
+/// The two ways [`CommandLayout::launch`] writes it into a command line, said
+/// to a launch instead.
+#[derive(Clone, Copy)]
+pub(crate) enum Script<'a> {
+    /// Passed as an argument, which is what a script short enough to be one
+    /// is.
+    Argument(&'a [u8]),
+    /// Read out of this file, which is where a script too long to be an
+    /// argument was written.
+    File(&'a [u8]),
 }
 
 /// A command line, and the response file it needs when the script was too long

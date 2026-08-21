@@ -502,3 +502,107 @@ fn a_recipe_reads_through_this_shell() {
         );
     }
 }
+
+/// The same question, written the way a recipe writes it: a Makefile spells
+/// the shell's `$` as `$$`.
+#[cfg(feature = "make")]
+fn which_shell_recipe(destination: &str) -> String {
+    which_shell(destination).replace('$', "$$")
+}
+
+/// Make mode: a recipe that reaches ONE shell as a whole assembled script is
+/// read by this executable too.
+///
+/// Three shapes cannot be handed over as the command lines they are made of,
+/// and each of them arrives as the script instead: a line too long to be an
+/// argument, whose response file is named per edge and so can only be one; a
+/// script a depfile extraction rewrote, which is no longer those lines; and the
+/// segments a recipe is cut into around a `$(MAKE)` composed into the graph.
+/// The command line that runs such a script names `/bin/sh` in its own text,
+/// which is the machine's however the line reaches a shell, so each shape needs
+/// the launch to name the program instead.
+// [spec:ronin:req:product.builtin-shell/test]
+#[cfg(feature = "make")]
+#[test]
+fn an_assembled_script_reads_here() {
+    let directory = tempfile::tempdir().unwrap();
+    let link = shell_named(directory.path(), "make");
+    let make = |makefile: &str| {
+        std::fs::write(directory.path().join("Makefile"), makefile).unwrap();
+        Command::new(&link)
+            .current_dir(directory.path())
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("CARGO_MAKEFLAGS")
+            .env_remove("MAKELEVEL")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let built = |makefile: &str| {
+        let output = make(makefile);
+        assert!(output.status.success(), "{}", stderr(&output));
+    };
+    let who = |name: &str| {
+        let path = directory.path().join(name);
+        let answer = std::fs::read_to_string(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        PathBuf::from(answer.trim())
+    };
+
+    // Generated rather than checked in: what matters is the length, and a file
+    // holding it would be a hundred kilobytes of `x`.
+    let too_long = "x".repeat(120 * 1000);
+    built(&format!(
+        "out:\n\t@{}; : {too_long}\n",
+        which_shell_recipe("out")
+    ));
+    assert_eq!(who("out"), this_executable());
+
+    // A depfile makes the script the edge's own program: kati withholds the
+    // lines because the extraction rewrote what they said.
+    built(&format!(
+        "out: .KATI_DEPFILE := out.d\nout:\n\t@echo 'out:' > out.d; {}\n",
+        which_shell_recipe("out")
+    ));
+    assert_eq!(who("out"), this_executable());
+
+    // A composed `$(MAKE)` cuts the recipe into the lines written ahead of the
+    // invocation and the lines written after it. Both are scripts of their own,
+    // and the child's own recipe is a whole recipe again.
+    std::fs::write(
+        directory.path().join("sub.mk"),
+        format!("sub:\n\t@{}\n", which_shell_recipe("child")),
+    )
+    .unwrap();
+    built(&format!(
+        "recurse:\n\t@{}\n\t@$(MAKE) -f sub.mk sub\n\t@{}\n",
+        which_shell_recipe("before"),
+        which_shell_recipe("after")
+    ));
+    assert_eq!(who("before"), this_executable());
+    assert_eq!(who("child"), this_executable());
+    assert_eq!(who("after"), this_executable());
+
+    // The recipe's own answer about a failure is still the recipe's: kati sets
+    // it only where every line of the assembled script said so.
+    let ignored = make(&format!(
+        "out:\n\t-@: {too_long}\n\t-@false\n\t-@{}\n",
+        which_shell_recipe("out")
+    ));
+    assert!(ignored.status.success(), "{}", stderr(&ignored));
+    assert_eq!(who("out"), this_executable());
+    let refused = make(&format!("out:\n\t@: {too_long}\n\t@false\n"));
+    assert_eq!(refused.status.code(), Some(2), "{}", stderr(&refused));
+
+    // The substitution boundary: a recipe naming a shell of its own is given
+    // it, whole script and all.
+    if let Some((named, resolved)) = a_named_shell() {
+        built(&format!(
+            "SHELL := {}\nout:\n\t@{}; : {too_long}\n",
+            named.display(),
+            which_shell_recipe("out")
+        ));
+        assert_eq!(who("out"), resolved);
+    }
+}

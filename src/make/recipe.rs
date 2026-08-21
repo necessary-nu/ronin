@@ -13,6 +13,7 @@
 //! unexpanded stay unexpanded — the compiler still reads the ones whose text
 //! shapes the graph — and the engine asks for one as it launches its edge.
 
+use super::layout::Script;
 use super::sink::CommandLayout;
 use crate::build::{LateBinding, LateCommand, LateCommands, LateStep};
 use crate::graph::EdgeId;
@@ -224,6 +225,10 @@ impl LateCommands for PendingRecipes {
         // all want the whole of it — and as the fallback for a recipe holding
         // a line too long to be an argument, which cannot be launched on its
         // own because the response file it would need is named per edge.
+        //
+        // That fallback is still a launch rather than a command line: the
+        // recipe reaches one shell instead of several, and which shell that is
+        // does not change with it.
         let steps = if CommandLayout::launches_line_by_line(&expanded.steps) {
             expanded
                 .steps
@@ -235,7 +240,31 @@ impl LateCommands for PendingRecipes {
                 })
                 .collect()
         } else {
-            Vec::new()
+            layout
+                .launch_script(
+                    &expanded.shell,
+                    &expanded.shell_flags,
+                    match &launched.response_file {
+                        Some((path, _)) => Script::File(path),
+                        None => Script::Argument(&expanded.script),
+                    },
+                    &expanded.recipe_environment,
+                )
+                .map(|launch| LateStep {
+                    launch,
+                    // The recipe's own, which is what the assembled script
+                    // could be believed about: kati sets it only where every
+                    // line of the recipe said so.
+                    ignore_errors: expanded.ignore_errors,
+                    // Unchanged from what the command line this replaces was
+                    // given. A recipe of several lines has no single answer —
+                    // GNU Make runs the marked lines of one and skips the rest,
+                    // and a script assembled into one process can do neither —
+                    // so the substitution says nothing new about it.
+                    runs_while_pretending: false,
+                })
+                .into_iter()
+                .collect()
         };
         // [spec:ronin:req:make.narration+1]
         // The same choice the sink makes for a recipe it expanded itself:

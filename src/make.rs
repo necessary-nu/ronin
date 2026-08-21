@@ -790,6 +790,11 @@ where
     );
     state.compiling.remove(&compilation_key);
     let composed = composed?;
+    // A recursive recipe's own lines reach their edges while the children are
+    // composed, which is after this unit's edges were claimed.
+    state
+        .pending_recipes
+        .admit_settled(sink.take_settled_edges());
     Ok(CompiledUnit {
         subgraph: composed.subgraph,
         makeflags,
