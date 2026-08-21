@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-21T01:25:26.204987864Z
+last_sync_at 2026-08-21T01:56:43.16299854Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -53,6 +53,7 @@ rule_versions (
 
 derived_priorities (
     {id a-recursive-recipe-that-writes-its-own-target-first, priority 0, derived_at 2026-08-21T01:25:26.204987864Z}
+    {id a-remade-makefile-that-composes-a-recursion-runs-the-probe, priority 0, derived_at 2026-08-21T01:56:43.16299854Z}
     {id builtin-shell-design, priority 0, derived_at 2026-08-20T20:57:41.240518327Z}
     {id builtin-shell-flip, priority 2, derived_at 2026-08-20T20:57:41.240518327Z}
     {id builtin-shell-flip-left-the-clippy-gate-red, priority 3, derived_at 2026-08-20T20:57:41.240518327Z}
@@ -79,6 +80,7 @@ derived_priorities (
     {id lint-manifest-checks, priority 1, derived_at 2026-08-20T13:57:37.951529701Z}
     {id lint-reads-with-ronins-own-make, priority 2, derived_at 2026-08-20T15:33:36.33901638Z}
     {id lint-reports-a-recursion-whose-makefile-is-missing, priority 2, derived_at 2026-08-20T20:57:41.240518327Z}
+    {id lint-tests-leave-their-scratch-behind, priority 0, derived_at 2026-08-21T01:56:43.16299854Z}
     {id lint-tool-surface, priority 0, derived_at 2026-08-20T13:57:37.951529701Z}
     {id make-a-command-line-file-argument-is-not-canonicalised, priority 2, derived_at 2026-08-20T08:27:31.859392001Z}
     {id make-a-composed-recipe-is-still-one-shell, priority 0, derived_at 2026-08-20T03:31:21.605164794Z}
