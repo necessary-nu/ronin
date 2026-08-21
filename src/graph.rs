@@ -247,6 +247,16 @@ pub(crate) struct Graph {
     /// Makefiles the read wanted and did not get, whatever stands at their name.
     /// Beside the arena for the same reason `unmade_makefiles` is.
     unread_makefiles: crate::htab::RapidHashSet<NodeId>,
+    /// Names a front end invented to ask for work by, which no command writes
+    /// and no `stat` can find.
+    ///
+    /// A recipe segment run for its effects makes no file the Makefile named,
+    /// so the compilation gives it an output of its own to be reached through.
+    /// The build must be told, or it does to that name everything it does to a
+    /// file: create the directory it appears to sit in, and stat it. Beside the
+    /// arena for the reason `withdrawal` is — no node of a Ninja manifest is
+    /// ever in it.
+    invented_outputs: crate::htab::RapidHashSet<NodeId>,
     /// Waits whose consumer outlives a failure of what it waited for. See
     /// [`mod@forgiven`]; beside the arena for the reason `withdrawal` is.
     forgiven_order: crate::htab::RapidHashSet<(EdgeId, NodeId)>,

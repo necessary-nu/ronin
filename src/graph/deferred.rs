@@ -85,13 +85,29 @@ impl Graph {
         self.completion_joins.get(&edge).copied()
     }
 
+    /// A name a front end invented rather than one a build file wrote, which
+    /// stands for work rather than for a file.
+    ///
+    /// Two of these are read off the edge that makes them: a deferred-freshness
+    /// rule and a `::` completion join both write to a name the graph made to
+    /// sequence them, and the file the Makefile named is reached through the
+    /// edge instead. The third is said outright, because nothing about the edge
+    /// gives it away — a recipe segment staged for its effects has an output
+    /// that is a handle and nothing else.
     pub(crate) fn is_virtual_output(&self, node: NodeId) -> bool {
-        self.node(node).generator.is_some_and(|edge| {
-            self.deferred_freshness.contains_key(&edge)
-                || self
-                    .completion_join_output(edge)
-                    .is_some_and(|observed| observed != node)
-        })
+        self.invented_outputs.contains(&node)
+            || self.node(node).generator.is_some_and(|edge| {
+                self.deferred_freshness.contains_key(&edge)
+                    || self
+                        .completion_join_output(edge)
+                        .is_some_and(|observed| observed != node)
+            })
+    }
+
+    /// Say that `node` is a name and not a file, so the build stops treating it
+    /// as one.
+    pub(crate) fn mark_invented_output(&mut self, node: NodeId) {
+        self.invented_outputs.insert(node);
     }
 
     pub(crate) fn redirect_node_uses(&mut self, from: NodeId, to: NodeId) {

@@ -1844,3 +1844,68 @@ fn an_ignored_conditional_draws_no_complaint() {
         "a condition the read reached was not complained about: {said}"
     );
 }
+
+/// A recipe whose `$(MAKE)` composes is cut into segments, and the lines ahead
+/// of the invocation are staged as an edge of their own. That edge needs a name
+/// for the compilation to ask for it by, and the name is a handle rather than a
+/// file: `.ronin_recipe_stage/N`, which nothing writes and nothing reads.
+///
+/// The build could not tell a handle from a file and did to it what it does to
+/// every output — created the directory it appears to sit in. So a tree whose
+/// recipe recursed was left with an empty `.ronin_recipe_stage/` in its build
+/// root, a working name of Ronin's own in a directory a Makefile author owns.
+/// GNU Make 4.4.1 leaves nothing there in any of these modes.
+///
+/// `-n` is the row that makes it more than untidiness: a mode whose promise is
+/// that nothing reaches the disk was creating a directory.
+#[test]
+fn a_stage_proxy_makes_no_directory() {
+    for switches in [&[][..], &["-n"][..], &["-t"][..], &["-q"][..], &["-B"][..]] {
+        let directory = test_directory("recipe-stage-proxy");
+        fs::write(
+            directory.join("Makefile"),
+            "pre.out:\n\t@echo before > pre.out\n\t@$(MAKE) -f sub.mk sub\n\t@echo after >> pre.out\n",
+        )
+        .unwrap();
+        fs::write(directory.join("sub.mk"), "sub:\n\t@echo sub > sub.out\n").unwrap();
+
+        let mut arguments = switches.to_vec();
+        arguments.push("pre.out");
+        let output = make_command(&directory).args(&arguments).output().unwrap();
+
+        assert!(
+            !directory.join(".ronin_recipe_stage").exists(),
+            "a staged segment left its own name in the tree under {switches:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// The build the row above is the tidiness of: a composed recursion still runs
+/// all three lines and the child, so the name that stopped being a file did not
+/// take the work with it.
+#[test]
+fn a_staged_segment_runs_the_recipe() {
+    let directory = test_directory("recipe-stage-effects");
+    fs::write(
+        directory.join("Makefile"),
+        "pre.out:\n\t@echo before > pre.out\n\t@$(MAKE) -f sub.mk sub\n\t@echo after >> pre.out\n",
+    )
+    .unwrap();
+    fs::write(directory.join("sub.mk"), "sub:\n\t@echo sub > sub.out\n").unwrap();
+
+    let output = make_command(&directory).arg("pre.out").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("pre.out")).unwrap(),
+        "before\nafter\n"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("sub.out")).unwrap(),
+        "sub\n"
+    );
+}

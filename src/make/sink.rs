@@ -835,7 +835,10 @@ impl GraphSink {
     ///
     /// Never written and never read: the edge under it is always dirty, and
     /// what makes the run count is the compiler seeing it finish rather than
-    /// anything appearing on the disk.
+    /// anything appearing on the disk. Said to the graph rather than left to be
+    /// inferred, because the build cannot tell a handle from a file by looking
+    /// at it and would otherwise create the directory this name appears to sit
+    /// in.
     fn recipe_stage_proxy(&mut self) -> Result<Node, FrontendError> {
         loop {
             let path = format!(".ronin_recipe_stage/{}", self.recipe_stages);
@@ -843,7 +846,9 @@ impl GraphSink {
             if self.graph.lookup(path.as_bytes()).is_some() {
                 continue;
             }
-            return self.graph.node(path.as_bytes());
+            let node = self.graph.node(path.as_bytes())?;
+            self.graph.mark_invented_output(node);
+            return Ok(node);
         }
     }
 

@@ -101,6 +101,18 @@ impl BuildGraph {
         self.arenas.set_completion_join(edge.0, observed_output.0);
     }
 
+    /// Say that a node is a name this front end invented rather than a file,
+    /// so the build neither stats it nor creates the directory it appears to
+    /// sit in.
+    ///
+    /// The other two kinds of invented name are read off the edge that makes
+    /// them — a deferred-freshness rule and a completion join both point at the
+    /// real output through the edge. A staged recipe segment has no such
+    /// indirection to be recognised by, so it says so.
+    pub(crate) fn mark_invented_output(&mut self, node: Node) {
+        self.arenas.mark_invented_output(node.0);
+    }
+
     /// Add graph roots that become order-only dependencies only after a
     /// deferred freshness predicate succeeds.
     pub(crate) fn add_deferred_activations(&mut self, edge: Edge, roots: &[Node]) {

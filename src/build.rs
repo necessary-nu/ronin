@@ -1213,7 +1213,15 @@ impl<'a> Builder<'a> {
         );
         let old_mtimes = self.mtimes_the_outputs_hold(edge, &completion_outputs);
 
-        for output in &completion_outputs {
+        // A name the graph invented to be asked for by has no file behind it,
+        // so the directory it appears to sit in is one nothing would ever write
+        // into. Making it anyway left an empty `.ronin_recipe_stage/` in the
+        // build root of every tree whose recipe composed a `$(MAKE)` — under
+        // `-n` as well, where nothing at all may reach the disk.
+        for output in completion_outputs
+            .iter()
+            .filter(|output| !self.graph.is_virtual_output(**output))
+        {
             let path = self.graph.node_path(*output).to_owned();
             self.disk
                 .make_dirs(path.to_path().expect("byte paths are valid on Unix"))
