@@ -115,6 +115,7 @@ pub(in crate::make) fn compile(
             directory,
             path_prefix,
             makeflags,
+            always_make: parent.always_make,
             level,
             jobs: parent.jobs,
             environment,

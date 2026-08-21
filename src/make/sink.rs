@@ -636,16 +636,36 @@ impl GraphSink {
         Ok(Some(proxy))
     }
 
-    /// Ask the ordinary graph evaluator whether a staged wrapper must run.
-    pub(crate) fn subninja_is_dirty<F>(
-        &self,
+    /// Ask the ordinary graph evaluator whether a staged wrapper must run, and
+    /// take the question off the edge when the answer is that it must not.
+    ///
+    /// One act rather than two, because the probe rule exists only to be asked
+    /// and its command is `false`. A wrapper that has to run reaches
+    /// [`Self::complete_subninja`], which replaces the rule with what the
+    /// recipe left; a wrapper that does not has no children to compose and no
+    /// recipe to run, so it never reaches that call and would otherwise carry
+    /// the probe into the graph the build is made from. Anything that then
+    /// reached the edge — `-B`, a prerequisite that moved after the question
+    /// was asked, a makefile update asking for the file — would run `false`.
+    ///
+    /// What it becomes is a target with no command whose outputs are its own
+    /// files: unaliased, because a recursive target's outputs are read off the
+    /// disk and are not names standing in for child goals this one turned out
+    /// not to need.
+    pub(crate) fn settle_subninja_freshness<F>(
+        &mut self,
         edge: Edge,
         stat: &mut F,
     ) -> Result<bool, crate::error::GraphError>
     where
         F: FnMut(&Path) -> std::io::Result<i64>,
     {
-        self.graph.edge_dirty_with(edge, stat)
+        if self.graph.edge_dirty_with(edge, stat)? {
+            return Ok(true);
+        }
+        self.graph.set_edge_rule(edge, self.phony);
+        self.graph.unalias_outputs(edge);
+        Ok(false)
     }
 
     /// The graph, or the first thing kati asked for that a graph cannot hold.

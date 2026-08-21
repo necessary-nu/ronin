@@ -594,6 +594,9 @@ struct Read {
     complaints: Vec<(Node, String)>,
     staged: Vec<Node>,
     boundaries: HashSet<EvaluationBoundary>,
+    /// The recursive recipes this read staged and did not finish compiling,
+    /// whose edges hold the freshness probe rather than a recipe.
+    unfinished: Vec<Node>,
     recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
 }
 
@@ -607,6 +610,7 @@ impl Read {
             complaints: loaded.take_remake_complaints(),
             staged: loaded.staged_targets(),
             boundaries: loaded.evaluation_boundaries().clone(),
+            unfinished: loaded.unfinished_targets().to_vec(),
             recipes: loaded.take_pending_recipes().map(Box::new),
         };
         let unread = loaded.unread_remake_targets().to_vec();
@@ -818,10 +822,12 @@ pub(super) fn build_compiler_inputs(
         complaints,
         staged,
         boundaries,
+        unfinished,
         ..
     } = read;
+    let reachable = makeable_now(&graph, &remakes, &unfinished);
     let makefiles = Makefiles {
-        remakes: &remakes,
+        remakes: &reachable,
         forgiven: &forgiven,
         invocation,
         options: &options,
@@ -856,6 +862,15 @@ pub(super) fn build_compiler_inputs(
     };
     graph.mark_makefiles_settled(&stands.remade, &stands.unmade, &stands.questioned);
 
+    // What the staged work leaves on disk can be a Makefile this read
+    // consulted: the lines ahead of a composed `$(MAKE)` are the recipe that
+    // remakes it, and the first of them is usually the one that writes the
+    // file. GNU Make reaches the same point through its own makefile update and
+    // then starts the read over on the new text, so the same comparison is made
+    // here — over the Makefiles alone, because a staged edge that wrote
+    // anything else wrote a target and not a text the read is made of.
+    let paths = paths_of(&graph, &remakes);
+    let before = makefile_stamps(&paths, directory);
     let pass = Passes {
         graph: &mut graph,
         persistence: &mut persistence,
@@ -868,6 +883,95 @@ pub(super) fn build_compiler_inputs(
         silent: invocation.given(Switch::Silent),
     }
     .stage(&staged, invocation, options);
+    let remade = makefile_stamps(&paths, directory) != before;
+    after_staging(
+        pass,
+        Compiled {
+            graph,
+            recipes,
+            persistence,
+        },
+        StagedBoundary {
+            boundaries,
+            settled_boundaries,
+            read_units,
+            remade,
+        },
+        reported,
+        keep_going,
+    )
+}
+
+/// The Makefiles this pass can bring up to date, which is all of them unless
+/// the compilation stopped part way.
+///
+/// A Makefile whose own rule is a recipe holding a composed `$(MAKE)` is made
+/// through a wrapper edge, and a wrapper the compilation has not finished with
+/// wears the freshness probe it was staged with rather than a recipe — a rule
+/// whose command is `false` and which is never allowed to run. Asking the
+/// update for such a Makefile is asking the build to run it. So it is held
+/// back, the staged work settles the boundary the compilation stopped at, and
+/// the pass after that has a wrapper carrying the recipe and remakes the
+/// Makefile through it.
+///
+/// One Makefile held back rather than the whole update deferred, because
+/// everything else in it is unaffected and the order of the two phases is GNU
+/// Make's: the Makefiles are brought up to date, and then the goals' work
+/// begins. Deferring the update wholesale moves a goal's own staged recipe
+/// lines ahead of it, which is a different build.
+fn makeable_now(graph: &BuildGraph, remakes: &[Node], unfinished: &[Node]) -> Vec<Node> {
+    let blocked = graph.blocked_targets(remakes, unfinished);
+    remakes
+        .iter()
+        .copied()
+        .filter(|target| !blocked.contains(target))
+        .collect()
+}
+
+/// What one settled compilation boundary leaves the read to carry forward.
+struct StagedBoundary<'a> {
+    /// The boundaries this pass reached, which the next one is past.
+    boundaries: HashSet<EvaluationBoundary>,
+    settled_boundaries: &'a mut HashSet<EvaluationBoundary>,
+    read_units: &'a mut crate::make::ReadJournals,
+    /// Whether the staged work moved a Makefile the read consulted.
+    remade: bool,
+}
+
+/// What this pass compiled, ready either to be handed to the goals or to be
+/// thrown away for a read that will produce a better one.
+struct Compiled {
+    graph: BuildGraph,
+    recipes: Option<Box<crate::make::recipe::PendingRecipes>>,
+    persistence: Persistence,
+}
+
+/// Turn what building the staged work came to into what this read does next.
+///
+/// A read that staged nothing and had nothing to stage is finished, and its
+/// graph is the compilation the goals build from. Otherwise the staged work is
+/// on the ground, the boundary is behind this compilation for good, and the
+/// read happens again — over the same text, unless the staged work was the
+/// recipe that remade one of the Makefiles, in which case this is GNU Make's
+/// restart and the read starts over on what the recipe wrote.
+fn after_staging(
+    pass: Pass,
+    compiled: Compiled,
+    staged: StagedBoundary<'_>,
+    reported: &mut String,
+    keep_going: bool,
+) -> Result<Settlement, Error> {
+    let Compiled {
+        graph,
+        recipes,
+        persistence,
+    } = compiled;
+    let StagedBoundary {
+        boundaries,
+        settled_boundaries,
+        read_units,
+        remade,
+    } = staged;
     match pass {
         Pass::Finished(result) => {
             let _ = persistence.finish();
@@ -891,8 +995,15 @@ pub(super) fn build_compiler_inputs(
         // recursive child whose parent's prerequisites did not build has
         // nothing to be evaluated from.
         Pass::Current | Pass::Ran(_) | Pass::Lost(_) => {
+            // Staged work is on the ground and stays there whichever of the
+            // two this is, which is what keeps the boundaries settled across a
+            // restart as well as across a repeat.
             settled_boundaries.extend(boundaries);
             persistence.finish()?;
+            if remade {
+                read_units.clear();
+                return Ok(Settlement::Restart);
+            }
             Ok(Settlement::Staged)
         }
     }

@@ -581,6 +581,63 @@ fn a_generated_manifest_lints_clean() {
     assert_eq!(stdout(&output), "ronin: read 1 manifest\n");
 }
 
+/// The same read where the remaking recipe's `$(MAKE)` COMPOSES rather than
+/// nests, which is the shape the census calls the good one — and the shape the
+/// whole read used to fail on.
+///
+/// A composed invocation is compiled into the graph instead of being left in
+/// the recipe, so the edge that remakes the makefile is waiting for a child
+/// while the makefile update wants to run it. Running an unfinished wrapper
+/// runs the internal freshness probe, whose command is `false`, and the read
+/// died reporting `FAILED: [code=1] gen.mk`.
+///
+/// Gated on effects rather than on the report alone: the makefile the read
+/// needed is on disk with what its own recipe wrote in it, and the child's
+/// target was made, which is the whole of what "the read ran the recipe" means.
+// [spec:ronin:req:tools.lint/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_composed_remake_recursion_runs() {
+    let directory = scratch("composed-remake");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    write(
+        &directory,
+        "sub/Makefile",
+        "marker: ; @printf %s child-ran > marker.out\n",
+    );
+    write(
+        &directory,
+        "Makefile",
+        "all: ; @printf '%s\\n' '$(GENERATED)' > out\n\
+         \n\
+         include gen.mk\n\
+         \n\
+         gen.mk:\n\
+         \t@printf 'GENERATED := from-generated\\n' > $@\n\
+         \t@$(MAKE) -C sub marker\n",
+    );
+    let output = ronin(&directory, &["-f", "Makefile", "-t", "lint", "all"]);
+    // Nothing here is a finding: the one invocation composed.
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert!(
+        stdout(&output).ends_with("ronin: 1 recursive invocation: 1 composed, 0 nested\n"),
+        "{}",
+        stdout(&output)
+    );
+    // The read remade the makefile it needed, by running the recipe that makes
+    // it, and the composed child was built rather than probed.
+    assert_eq!(
+        fs::read_to_string(directory.join("gen.mk")).unwrap(),
+        "GENERATED := from-generated\n"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("sub").join("marker.out")).unwrap(),
+        "child-ran"
+    );
+    // A read is a read: the goal is not built.
+    assert!(!directory.join("out").exists());
+}
+
 /// A read that has to remake an include runs the recipe that remakes it, and a
 /// `$(MAKE)` in that recipe starts the Make the report is about.
 ///

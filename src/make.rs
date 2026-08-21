@@ -203,6 +203,9 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             directory,
             path_prefix: PathBuf::new(),
             makeflags: environment_value("MAKEFLAGS").unwrap_or_default(),
+            // No invocation to have carried the switch: this entry compiles a
+            // Makefile for a caller that runs the graph itself.
+            always_make: false,
             level,
             jobs: session.flags.num_jobs.max(1),
             environment,
@@ -256,6 +259,18 @@ pub(crate) struct CompilationContext {
     pub(crate) directory: PathBuf,
     pub(crate) path_prefix: PathBuf,
     pub(crate) makeflags: String,
+    /// Whether `-B` is in force: every target with a recipe is out of date.
+    ///
+    /// Carried into the compilation because one freshness question is asked
+    /// here rather than by the build — whether a recursive recipe has to run,
+    /// which has to be answered before any child Makefile of it can be read.
+    /// GNU Make asks that question with `always_make_flag` in hand, so this
+    /// one is asked with the same thing in hand: a `-B` run composes the
+    /// children it is about to rebuild instead of deciding it has none.
+    ///
+    /// Inherited by every child compilation, because `-B` reaches a recursive
+    /// child through `MAKEFLAGS` and a child of a forced Make is forced.
+    pub(crate) always_make: bool,
     pub(crate) level: usize,
     pub(crate) jobs: usize,
     /// The environment this unit imports while kati evaluates it.
@@ -415,6 +430,14 @@ struct CompilationState<'a> {
     refusals: Vec<RefusedMakefile>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
+    /// The outputs of every recursive wrapper this pass staged and did not
+    /// finish, because the compilation stopped at a boundary before its
+    /// children were composed.
+    ///
+    /// Their edges are still wearing the freshness probe, whose command is
+    /// `false` and which is never allowed to execute, so nothing this pass
+    /// builds may reach one of them.
+    unfinished: Vec<Node>,
     /// The units an earlier pass of this compilation already read, by cache
     /// key, each with what that read was told by the ground. A unit in here is
     /// being read again over text that has not moved, so what its read does on
@@ -598,6 +621,7 @@ where
         settled_boundaries,
         refusals: Vec::new(),
         evaluation_boundaries: HashSet::new(),
+        unfinished: Vec::new(),
         read_units,
         units_read: ReadJournals::new(),
     };
@@ -614,6 +638,7 @@ where
         remake_complaints: state.remake_complaints,
         refusals: state.refusals,
         evaluation_boundaries: state.evaluation_boundaries,
+        unfinished: state.unfinished,
         units_read: state.units_read,
         makeflags: root.makeflags,
     })
@@ -855,7 +880,11 @@ where
             sink.mark_subgraphs_prebuilt(&parent_inputs);
         }
 
-        let begun = state.recipe_begun(compilation_key, pending_index);
+        // `-B` outranks the disk here exactly as it does in the build: GNU
+        // Make's `always_make_flag` makes every target with a recipe out of
+        // date, and a recursive recipe is a recipe.
+        let begun =
+            state.recipe_begun(compilation_key, pending_index) || descendant_context.always_make;
         let wrapper = match stage_recursive_wrapper(sink, &mut pending, &disk, begun)? {
             RecursiveWrapper::Current(wrapper) => {
                 subtree_edges.push(wrapper);
@@ -873,6 +902,10 @@ where
             state,
         )?
         else {
+            // The wrapper's edge exists and still carries the probe, because
+            // only completing it replaces the rule. Whatever asks for these
+            // outputs before the next pass would run `false`.
+            state.unfinished.extend(pending.outputs());
             return Ok(incomplete_unit(targets, subtree_edges));
         };
         let wrapper = sink
@@ -1102,7 +1135,7 @@ fn stage_recursive_wrapper(
     let mut stat = |path: &std::path::Path| disk.stat(path);
     let dirty = begun
         || sink
-            .subninja_is_dirty(edge, &mut stat)
+            .settle_subninja_freshness(edge, &mut stat)
             .map_err(|error| MakeError::Evaluate(error.to_string()))?;
     Ok(if dirty {
         RecursiveWrapper::Dirty(edge)
@@ -1349,6 +1382,9 @@ pub struct Loaded {
     refusals: Vec<RefusedMakefile>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
+    /// The targets of every recursive recipe this read staged and did not
+    /// finish compiling, whose edges still hold the freshness probe.
+    unfinished: Vec<Node>,
     /// The units this read covered, by cache key, each with what the ground
     /// told it.
     units_read: ReadJournals,
@@ -1447,6 +1483,18 @@ impl Loaded {
     #[must_use]
     pub(crate) const fn evaluation_boundaries(&self) -> &HashSet<EvaluationBoundary> {
         &self.evaluation_boundaries
+    }
+
+    /// The targets of every recursive recipe this read staged and did not
+    /// finish compiling.
+    ///
+    /// Their edges hold the freshness probe rather than a recipe, and the
+    /// probe's command is `false`. A build made from this graph must not reach
+    /// one, which for the Makefiles means holding back whichever of them is
+    /// made through one until the pass that finishes the compilation.
+    #[must_use]
+    pub(crate) fn unfinished_targets(&self) -> &[Node] {
+        &self.unfinished
     }
 
     /// The units this pass read, which a later pass over the same text is

@@ -2112,6 +2112,7 @@ fn compilation_context(
         census: Arc::clone(&session.census),
         reporting,
         makeflags: propagated_makeflags(invocation),
+        always_make: invocation.given(Switch::AlwaysMake),
         level,
         jobs,
         // Everything this unit was evaluated with except how many times it has

@@ -1,0 +1,29 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 16
+| # Two makefiles to remake, one of them by a recipe that composes and one by an
+| # ordinary recipe, and the includes written below both rules rather than above
+| # them. Where the include sits decides nothing: GNU Make reads the whole file
+| # before it updates any of them, so both are remade and the read starts over
+| # with both texts in it.
+| all: ; @printf '%s %s\n' '$(GENERATED)' '$(PLAIN)' > out
+| 
+| gen.mk:
+| 	@printf 'GENERATED := from-generated\n' > $@
+| 	@$(MAKE) -C sub marker
+| 
+| plain.mk:
+| 	@printf 'PLAIN := from-plain\n' > $@
+| 
+| include gen.mk
+| include plain.mk
+file gen.mk touched 1
+| GENERATED := from-generated
+file out touched 1
+| from-generated from-plain
+file plain.mk touched 1
+| PLAIN := from-plain
+file sub/Makefile kept 1
+| marker: ; @printf %s child-ran > marker.out
+file sub/marker.out touched 2
+| child-ran
