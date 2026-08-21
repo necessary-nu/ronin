@@ -118,9 +118,13 @@ pub(super) struct CompilerFlagVariables {
     /// what MFLAGS is spelled from. It holds no `--eval` fragment, for the
     /// reason [`compiler_flag_variables`] gives.
     pub(super) base: String,
-    /// `MAKEFLAGS` before its `MAKEOVERRIDES` reference is expanded — the
-    /// switch table with this invocation's `--eval` fragments behind it.
-    pub(super) published: String,
+    /// This invocation's `--eval` fragments, quoted as `MAKEFLAGS` carries
+    /// them and joined by one space, or empty where there are none.
+    ///
+    /// `MAKEFLAGS` names them rather than containing them, so this is what the
+    /// name resolves to. See [`compiler_flag_variables`] for why they are not
+    /// in the switch table.
+    pub(super) eval_flags: String,
     /// The expanded value inherited by a semantic subninja.
     pub(super) makeflags: String,
     /// The same options in command-line spelling, without assignments.
@@ -304,15 +308,17 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
     // appends it again. `decode_makefile_makeflags` reads its three inputs into
     // one invocation, so a fragment left in the protected table would multiply
     // every time a Makefile wrote to MAKEFLAGS.
-    let mut published = base.clone();
-    for eval in &invocation.evals {
-        append(
-            &mut published,
-            &format!("--eval={}", quote_for_makeflags(&eval.to_str_lossy())),
-        );
-    }
+    let eval_flags = invocation
+        .evals
+        .iter()
+        .map(|eval| format!("--eval={}", quote_for_makeflags(&eval.to_str_lossy())))
+        .collect::<Vec<_>>()
+        .join(" ");
     let overrides = command_overrides(invocation);
-    let mut makeflags = published.clone();
+    let mut makeflags = base.clone();
+    if !eval_flags.is_empty() {
+        append(&mut makeflags, &eval_flags);
+    }
     if !overrides.is_empty() {
         // GNU Make ends the switches at a `--` before the assignments, so that
         // one beginning with a dash cannot be read as another switch.
@@ -321,7 +327,7 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
     }
     CompilerFlagVariables {
         base,
-        published,
+        eval_flags,
         makeflags,
         mflags,
         overrides,
@@ -470,7 +476,8 @@ pub(super) fn decode_makefile_makeflags(
     Ok(kati::flags::DecodedMakeflags {
         assignments,
         carried: Bytes::from(carried_switches(&flags.base, &invocation).into_bytes()),
-        makeflags: Bytes::from(flags.published.into_bytes()),
+        makeflags: Bytes::from(flags.base.into_bytes()),
+        eval_flags: Bytes::from(flags.eval_flags.into_bytes()),
         mflags: Bytes::from(flags.mflags.into_bytes()),
         is_dry_run: invocation.given(Switch::DryRun),
         is_silent_mode: invocation.given(Switch::Silent),

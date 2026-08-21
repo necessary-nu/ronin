@@ -1322,7 +1322,13 @@ fn session_for(
     session.census = Arc::clone(census);
     let compiler_flags = compiler_flag_variables(invocation);
     let carried = Bytes::from(carried_switches(&compiler_flags.base, invocation).into_bytes());
-    let makeflags = Bytes::from(compiler_flags.published.into_bytes());
+    // The switch table alone. What `MAKEFLAGS` reads back is this plus the two
+    // references it names, which the evaluator assembles: GNU Make's
+    // `define_makeflags` writes the fragments and the assignments as
+    // `$(-*-eval-flags-*-)` and `$(MAKEOVERRIDES)` rather than inline.
+    let makeflags = Bytes::from(compiler_flags.base.into_bytes());
+    let eval_flags = Bytes::from(compiler_flags.eval_flags.into_bytes());
+    let has_evals = !eval_flags.is_empty();
     let make_overrides = Bytes::from(compiler_flags.overrides.into_bytes());
     session.flags = Flags {
         makefiles: makefiles
@@ -1354,12 +1360,14 @@ fn session_for(
         // which is the order Make applies them.
         cl_vars: invocation.variables.clone(),
         makeflags: Some(makeflags),
+        eval_flags,
         make_overrides: Some(make_overrides.clone()),
         makeflags_assignment: Some(kati::flags::MakeflagsAssignment {
             decoder: decode_makefile_makeflags,
             protected: carried.clone(),
             effective: carried,
             has_overrides: !make_overrides.is_empty(),
+            has_evals,
         }),
         // One word, and that word is a path. GNU Make answers `$(MAKE)` this
         // way and a great deal of software execs the answer rather than running
@@ -2452,6 +2460,12 @@ mod tests {
     /// backslashed, the fragments after every switch and before the `--`, and
     /// MFLAGS carrying none of them because GNU Make spells MFLAGS from the
     /// switch string before it appends them.
+    ///
+    /// `makeflags` is the whole of it, which is what descends and what a child
+    /// decodes; `eval_flags` is the part `MAKEFLAGS` names rather than holds,
+    /// and `base` is the switch table with neither. The three are asserted
+    /// together because their relationship is the thing: `base`, one space and
+    /// `eval_flags` is exactly the text the reference resolves to.
     // [spec:ronin:req:make.recursive-invocation+2/test]
     #[test]
     fn propagates_eval_fragments() {
@@ -2461,6 +2475,7 @@ mod tests {
         // empty and the first thing after it still gets its separator.
         let one = variables(&["make", "--eval=$(info eval)"]);
         assert_eq!(one.makeflags, r" --eval=$$(info\ eval)");
+        assert_eq!(one.eval_flags, r"--eval=$$(info\ eval)");
         assert_eq!(one.base, "");
         assert_eq!(one.mflags, "");
 
@@ -2468,6 +2483,7 @@ mod tests {
         // order they were written in.
         let two = variables(&["make", "-E", "A=1", "--eval=B=2"]);
         assert_eq!(two.makeflags, " --eval=A=1 --eval=B=2");
+        assert_eq!(two.eval_flags, "--eval=A=1 --eval=B=2");
 
         // Beside a switch group, a long option and an assignment, which is
         // where the position is decided.
@@ -2483,7 +2499,14 @@ mod tests {
             r"k --no-print-directory --eval=X\ :=\ 1 -- FOO=bar"
         );
         assert_eq!(placed.base, "k --no-print-directory");
+        assert_eq!(placed.eval_flags, r"--eval=X\ :=\ 1");
         assert_eq!(placed.mflags, "-k --no-print-directory");
+
+        // And nothing at all where no fragment was given, which is what makes
+        // `MAKEFLAGS` name no variable rather than name an empty one.
+        let none = variables(&["make", "-k", "FOO=bar"]);
+        assert_eq!(none.eval_flags, "");
+        assert_eq!(none.makeflags, "k -- FOO=bar");
 
         // A backslash is escaped too, so the fragment comes back as one word.
         let escaped = variables(&["make", r"--eval=P := a\b"]);
