@@ -1727,23 +1727,28 @@ fn make_mode_chains_implicit_rules_through_an_intermediate_file() {
 /// `build_options` starts at `JobLimit::Auto`, meaning nothing was asked for;
 /// `normalize_runtime_options` resolves that to one job. Reading only the first
 /// half says Make mode defaults to parallel, which it does not.
+///
+/// Neither half is timed, because neither claim is about speed. A build that
+/// runs one recipe at a time writes each recipe's arrival immediately before
+/// its own departure, in prerequisite order, and no second recipe can take the
+/// claim while the first still holds it — true of every scheduler, on every
+/// host. A build asked for four jobs is asked for something a serial one
+/// cannot supply at all: three recipes that each wait for the other two, so
+/// finishing is the proof. That wait ends on a deadline rather than on a
+/// stopwatch, so a host too loaded to start three shells promptly is still a
+/// host that starts them.
 // [spec:ronin:req:make.semantics+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
-    let directory = test_directory("make-serial-default");
-    // Descending sleeps: serially these finish a, b, c; at once, c, b, a.
-    fs::write(
-        directory.join("Makefile"),
-        "all: a b c\n\
-         a: ; @sleep 0.3; echo a\n\
-         b: ; @sleep 0.2; echo b\n\
-         c: ; @sleep 0.1; echo c\n",
-    )
-    .unwrap();
-
-    let recipes = |arguments: &[&str]| {
-        let output = make_command(&invoked_as(&directory, "make"), &directory)
+    let script = |directory: &std::path::Path, name: &str, body: &str| {
+        let path = directory.join(name);
+        fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+    };
+    let build = |directory: &std::path::Path, arguments: &[&str]| {
+        let output = make_command(&invoked_as(directory, "make"), directory)
             .args(arguments)
             .output()
             .unwrap();
@@ -1752,16 +1757,61 @@ fn make_mode_runs_one_recipe_at_a_time_unless_asked_otherwise() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter(|line| ["a", "b", "c"].contains(line))
-            .collect::<Vec<_>>()
-            .join("")
     };
 
-    assert_eq!(recipes(&[]), "abc");
-    // Without this a build incapable of parallelism would also pass.
-    assert_eq!(recipes(&["-j4"]), "cba");
+    let serial = make_case(
+        "make-serial-default",
+        "all: a b c\n\
+         a: ; @./alone.sh $@\n\
+         b: ; @./alone.sh $@\n\
+         c: ; @./alone.sh $@\n",
+    );
+    // `mkdir` is the claim: one system call, and it refuses a name that is
+    // already there. A recipe that finds the claim taken says so outright,
+    // where a stopwatch could only catch the overlap it happened to be
+    // watching for.
+    script(
+        &serial,
+        "alone.sh",
+        "#!/bin/sh\n\
+         mkdir claim || { echo \"$1 found another recipe already running\" >&2; exit 1; }\n\
+         printf '%s in\\n' \"$1\" >> order\n\
+         printf '%s out\\n' \"$1\" >> order\n\
+         rmdir claim\n",
+    );
+    build(&serial, &[]);
+    assert_eq!(
+        fs::read_to_string(serial.join("order")).unwrap(),
+        "a in\na out\nb in\nb out\nc in\nc out\n"
+    );
+
+    let parallel = make_case(
+        "make-parallel-when-asked",
+        "all: a b c\n\
+         a: ; @./together.sh $@\n\
+         b: ; @./together.sh $@\n\
+         c: ; @./together.sh $@\n",
+    );
+    // No recipe here can finish until the other two have started, so a build
+    // that finishes ran all three at once. One that runs them one at a time
+    // waits out the deadline in the first recipe and fails, which is a bound
+    // on the failure rather than a hang.
+    script(
+        &parallel,
+        "together.sh",
+        "#!/bin/sh\n\
+         touch \"$1.ready\"\n\
+         turns=0\n\
+         while test ! -e a.ready || test ! -e b.ready || test ! -e c.ready; do\n\
+         \tturns=$((turns + 1))\n\
+         \tif [ \"$turns\" -gt 6000 ]; then\n\
+         \t\techo \"$1 waited a minute and the other recipes never came\" >&2\n\
+         \t\texit 1\n\
+         \tfi\n\
+         \tsleep 0.01\n\
+         done\n",
+    );
+    build(&parallel, &["-j4"]);
 }
 
 /// `.NOTPARALLEL` serialises this Makefile's own recipes and leaves what it
