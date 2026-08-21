@@ -296,6 +296,42 @@ pub(crate) fn run(
     }
 }
 
+/// A `make` of this read's own, for the read to name itself by.
+///
+/// A read that has to remake an include runs the recipe that remakes it, and
+/// such a recipe runs `$(MAKE)`. That value is a string a shell runs, so it can
+/// only name this executable by naming a path — and this executable reached by
+/// its own name is a Ninja, because the front end is selected by the name it
+/// was invoked under and by nothing else. A path whose last component is `make`
+/// and whose target is this binary is both at once, which is exactly what a
+/// build has whenever Make is installed under that name: `make_named_invocation`
+/// hands such a build the absolute path of the entry it found, and the recipe
+/// execs it.
+///
+/// The directory is this run's own, so two reads at once cannot collide, and it
+/// is removed with the value that owns it when the read is over.
+///
+/// `None` where the link cannot be made. A read that names `make` and gets
+/// whatever the machine has is what happened before this existed, and is a
+/// better answer than a report refused over a temporary directory.
+#[cfg(all(unix, feature = "make"))]
+fn make_of_this_reads_own(executable: &Path) -> Option<(tempfile::TempDir, BString)> {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let directory = tempfile::Builder::new()
+        .prefix("ronin-make-")
+        .tempdir()
+        .ok()?;
+    let link = directory.path().join("make");
+    // The binary itself rather than the name this process was reached by: the
+    // link is exec'd from a recipe's own directory, and a relative name would
+    // be resolved against that.
+    let executable = std::fs::canonicalize(executable).ok()?;
+    std::os::unix::fs::symlink(&executable, &link).ok()?;
+    let named = BString::from(link.as_os_str().as_bytes().to_vec());
+    Some((directory, named))
+}
+
 /// Report on a Makefile, by compiling it the way a build would.
 #[cfg(all(unix, feature = "make"))]
 fn makefile(
@@ -304,10 +340,15 @@ fn makefile(
     operands: &[BString],
     working_directory: &crate::os::WorkingDirectory,
 ) -> Result<RunResult, crate::Error> {
+    // Held for the length of the read: the link has to be there when a recipe
+    // execs it, and gone afterwards.
+    let staged = make_of_this_reads_own(&runner.executable);
     // The Make compiler reads the process directory, and Ninja's `-C` moved
     // only the invocation's idea of one, so where to read is named outright.
     let mut arguments = vec![
-        BString::from(&b"make"[..]),
+        staged
+            .as_ref()
+            .map_or_else(|| BString::from(&b"make"[..]), |(_, named)| named.clone()),
         BString::from(&b"-C"[..]),
         BString::from(working_directory.as_path().as_os_str().as_encoded_bytes()),
         BString::from(&b"-f"[..]),

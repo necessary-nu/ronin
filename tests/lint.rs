@@ -536,3 +536,63 @@ fn a_generated_manifest_lints_clean() {
     assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
     assert_eq!(stdout(&output), "ronin: read 1 manifest\n");
 }
+
+/// A read that has to remake an include runs the recipe that remakes it, and a
+/// `$(MAKE)` in that recipe starts the Make the report is about.
+///
+/// The one place a lint's own contract could fail to be true of itself: the
+/// read is the read phase a build would perform, and a build's `$(MAKE)` is the
+/// path of the Make that is running. Gated on what the child left behind rather
+/// than on what either tool printed — a build log in the child's own directory
+/// is a thing only a Make of ours writes.
+// [spec:ronin:req:tools.lint/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_remade_include_recurses_here() {
+    let directory = scratch("remade-include");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    write(
+        &directory,
+        "sub/Makefile",
+        "marker: ; @printf '%s\\n' '$(MAKE)' > marker.out\n",
+    );
+    // The `;` is what keeps the invocation off the recipe line's own command,
+    // so it stays in the recipe as something to run rather than being composed
+    // into the graph — zsh's shape, and the one the read has to start.
+    write(
+        &directory,
+        "Makefile",
+        "all: ; @printf '%s\\n' '$(GENERATED)' > out\n\
+         \n\
+         include gen.mk\n\
+         \n\
+         gen.mk:\n\
+         \t@printf 'GENERATED := from-generated\\n' > $@; $(MAKE) -C sub marker\n",
+    );
+    let output = ronin(&directory, &["-f", "Makefile", "-t", "lint", "all"]);
+    // The nested invocation is a finding, so the report closes with one.
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        stdout(&output).ends_with("ronin: 1 recursive invocation: 0 composed, 1 nested\n"),
+        "{}",
+        stdout(&output)
+    );
+    // The child ran, and it was one of ours: nothing else writes a build log.
+    assert!(
+        directory.join("sub").join(".ninja_log").is_file(),
+        "the child left no build log, so it was not this Make"
+    );
+    // And what it was reached by: a path, ending in the name that selects the
+    // front end, which is the only way a string a recipe runs can name this
+    // executable and get a Make.
+    let named = fs::read_to_string(directory.join("sub").join("marker.out")).unwrap();
+    let named = Path::new(named.trim());
+    assert!(named.is_absolute(), "{}", named.display());
+    assert_eq!(named.file_name(), Some(std::ffi::OsStr::new("make")));
+    // The link is this read's own and goes with it, which is also why the
+    // child's own answer cannot be resolved from here any more.
+    assert!(
+        !named.exists(),
+        "the staged make outlived the read that staged it"
+    );
+}

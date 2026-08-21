@@ -748,6 +748,7 @@ assertions (
     {id make-gnumakeflags-carries-switches-too, kind @complete, author "brendan@necessary.nu", at 2026-08-21T00:05:25.725832453Z}
     {id make-makeflags-keeps-its-eval-fragments-behind-a-reference, kind @complete, author "brendan@necessary.nu", at 2026-08-21T00:38:12.832729047Z}
     {id builtin-shell-oversized-recipe-line, kind @complete, author "brendan@necessary.nu", at 2026-08-21T01:18:09.00992716Z}
+    {id lint-reads-with-ronins-own-make, kind @complete, author "brendan@necessary.nu", at 2026-08-21T01:55:22.609685575Z}
 )
 
 impl_evidence (
