@@ -758,6 +758,7 @@ assertions (
     {id lint-tests-leave-their-scratch-behind, kind @complete, author "brendan@necessary.nu", at 2026-08-21T03:41:43.537557598Z}
     {id a-recursive-recipe-that-writes-its-own-target-first, kind @complete, author "brendan@necessary.nu", at 2026-08-21T03:41:39.090550018Z}
     {id a-remade-makefile-that-composes-a-recursion-runs-the-probe, kind @complete, author "brendan@necessary.nu", at 2026-08-21T03:41:28.62907032Z}
+    {id make-regression-tests-leave-their-scratch-behind, kind @complete, author "brendan@necessary.nu", at 2026-08-21T03:54:16.316343018Z}
 )
 
 impl_evidence (

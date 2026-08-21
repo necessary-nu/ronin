@@ -15692,12 +15692,49 @@ children (
         title "Take the Make regression suite's scratch directories away with it"
         kind @test
         deps (lint-tests-leave-their-scratch-behind)
+        sealed true
         log (
             {
                 at 2026-08-21T03:33:12.86989688Z
                 author "brendan@necessary.nu"
                 kind @note
                 text "The same defect `lint-tests-leave-their-scratch-behind` was filed and fixed for, in the file next door. Found by looking for it once the lint suite's own leak was swept.\n\n    $ ls -d /tmp/ronin-make-regression-* | wc -l\n    353\n\n`tests/make_regressions.rs::test_directory` names its directory `ronin-make-regression-<label>-<pid>` under TMPDIR, removes whatever is there and creates it. Some cases end with `fs::remove_dir_all(directory)` and some do not, and a case that fails never reaches its own removal at all — so the leak is partial, which is worse than total: what is left behind is exactly the runs that went wrong, mixed with the ones that happened to forget, and nothing says which is which.\n\nTHE FIX IS WRITTEN, in `tests/lint.rs`: a `Scratch` newtype over `tempfile::TempDir` carrying `Deref<Target = Path>` and `AsRef<Path>`, so every call site reads as it did, plus the gate `a_scratch_goes_with_its_test` which fails against the old helper rather than merely asserting the new one. Copy both. The explicit `remove_dir_all` calls at the ends of cases come out with it — a handle that removes on drop makes them noise, and the one at the START goes too, because a prefixed temp directory cannot collide.\n\nSweep `/tmp/ronin-make-regression-*` on the host as part of landing, and nothing else: `/tmp` on this machine also holds a few hundred hand-made probe directories from earlier dispatches, which are somebody's evidence and not a leak."
+            }
+
+            {
+                at 2026-08-21T03:52:33.535495147Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-21T03:53:01.941877233Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Delivered, and NOT by copying: the pattern came out of `tests/lint.rs` into `tests/support/scratch.rs` and both suites include it, because a second copy of a twenty-line lifetime is a second thing to drift. `tests/support/` is already this repo's shared-test-code convention — `support/oracle.rs` is `#[path]`-included by `make_port.rs`, and cargo does not build a subdirectory of `tests/` as a target of its own, which is what makes that arrangement work.\n\nWHAT WAS WRONG, and the filing understated one half of it. `test_directory` named `ronin-make-regression-<label>-<pid>` under TMPDIR, cleared it, and created it. 42 call sites; 42 explicit `fs::remove_dir_all` at the ends of cases. So the steady-state leak on a passing run is not 42 — it is ONE: `shell_function_names_the_missing_program` is the single case that never removes. That is exactly what the host census said before the sweep, and it is the number worth writing down:\n\n    328  ronin-make-regression-shell-direct-*\n     17  ronin-make-regression-stdin-twice-*\n      2  ronin-make-regression-symlink-freshness-*\n      2  ronin-make-regression-submake-shell-boundary-*\n    ...  356 in total\n\nOne case leaking every run, and a scatter of others leaking only the runs that FAILED — a case that panics never reaches the removal written at its end. The scatter is the more useful half: what survives is precisely the evidence of runs that went wrong, mixed with one that always survives, and nothing distinguishes them.\n\nWHAT IT IS NOW. `Scratch(tempfile::TempDir)` with `Deref<Target = Path>` and `AsRef<Path>`, constructed by `Scratch::named(prefix)`; each suite keeps a one-line wrapper that spells its own prefix (`scratch` in lint.rs, `test_directory` here), so every call site reads exactly as it did. The removal is now a drop, which is why it covers the failing run as well as the passing one. The 42 explicit removals came out, and so did the up-front `remove_dir_all` — a prefixed temp directory cannot collide with a concurrent run, so the defence it existed for has no subject. `unreadable_include_repaired_by_its_rule`'s early return loses its removal too and simply returns.\n\nTEETH, measured by parking rather than asserted, `/tmp` swept to zero before each:\n\n* full suite passing, fix parked: 1 directory left (`ronin-make-regression-shell-direct-43`). With the fix: 0.\n* one case made to fail on purpose (`assert!(false)` in `a_define_body_names_the_define`), fix parked: `ronin-make-regression-define-diagnostic-location-43` survives the failure. With the fix: 0. This is the case the explicit removals cannot cover and the drop does.\n* the gate `a_scratch_goes_with_its_test`, with `Scratch` changed to hold the path from `TempDir::keep()` — which is the old behaviour exactly, a named directory left behind:\n\n      thread 'scratch_directory::a_scratch_goes_with_its_test' panicked at tests/support/scratch.rs:69:5:\n      the scratch outlived the test that made it: /tmp/ronin-scratch-self-removing-I1Zb3j\n\n  The gate is written against behaviour rather than against the type, which is what lets it be parked that way at all.\n\nTHE SWEEP: 356 `/tmp/ronin-make-regression-*` removed on this host and nothing else; zero remain, and zero after the workspace suite ran. Deliberately not swept: `/tmp` also holds `ronin-rust-cli-manifest-*` (24), `ronin-runner-directory-*` (12), `ronin-jobserver-*` (8) and a few hundred hand-made probe directories from earlier dispatches. The probe directories are somebody's evidence. The others are the same defect in other suites, filed rather than swept.\n\nFOUND WHILE SWEEPING and filed as `more-suites-leave-their-scratch-behind`: `tests/public_api.rs`, `tests/cli.rs`, `tests/progress.rs`, `tests/make_projects.rs`, `src/build/tests.rs`, `src/tool/test_support.rs` and `src/lint/manifest.rs` all name a directory after their own pid the same way. The shared module is now the place to point them at, which is the other reason it is a module.\n\nGATES for this landing, which is two test files and one new support file: fmt clean; `cargo check --workspace --all-targets` clean; all three clippy passes clean; `RUSTDOCFLAGS=-D warnings cargo doc --no-deps` clean; workspace 965 passed / 0 failed, up from 964 by the gate now compiling into `make_regressions` as well as `lint`; `--no-default-features` 754 / 0, unchanged because `make_regressions.rs` is `#![cfg(feature = \"make\")]` and the gate is not reached there. The corpus gates read no file this commit touches and are not evidence for it; they run in the end-of-dispatch battery."
+            }
+
+            {
+                at 2026-08-21T03:54:16.316343018Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
+    }
+
+    {
+        id more-suites-leave-their-scratch-behind
+        title "Point the remaining suites at the scratch that goes with its test"
+        kind @test
+        deps (make-regression-tests-leave-their-scratch-behind)
+        log (
+            {
+                at 2026-08-21T03:54:09.083133866Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "The same defect `lint-tests-leave-their-scratch-behind` and `make-regression-tests-leave-their-scratch-behind` were filed and fixed for, in every other suite that makes a directory. Found by census rather than by reading: `/tmp` on this host, after the make-regression sweep, still holds the leavings of six more.\n\nWHERE IT IS, with the prefix each one leaves behind and what it counts on this host:\n\n| site | naming | explicit removals | leaked here |\n| `src/lint/manifest.rs:119` | `ronin-manifest-lint-<pid>-<n>.ninja` | none at all | 24 |\n| `src/tool/test_support.rs:15` | `ronin-tool-<label>-<pid>-<n>` | 1 | (via `ronin-runner-directory-*`, 12) |\n| `tests/public_api.rs` | `std::env::temp_dir().join(...)` ×5 | 6 | — |\n| `tests/cli.rs:9` | one helper, per-pid | 82 | — |\n| `tests/progress.rs:25` | `ronin-<label>-<pid>-<n>` | 3 | — |\n| `tests/make_projects.rs:31` | `ronin-make-project-<name>-<pid>` | 6 | 6 |\n\nThe shape is identical everywhere: name after the process, `let _ = remove_dir_all` up front, `create_dir_all`, and a removal written at the end of each case that a panicking case never reaches. `src/lint/manifest.rs` has no removal at all, which is why it is the biggest count after the one already swept.\n\nTHE FIX IS WRITTEN AND SHARED: `tests/support/scratch.rs` holds `Scratch::named(prefix)` — a `tempfile::TempDir` newtype with `Deref<Target = Path>` and `AsRef<Path>` — plus the gate `a_scratch_goes_with_its_test`, which is written against behaviour and so fails against a helper that returns a bare path. `tests/lint.rs` and `tests/make_regressions.rs` both `#[path]`-include it and keep a one-line wrapper naming their own prefix. Point the other test crates at the same file the same way.\n\nTHE TWO IN `src/` ARE A DIFFERENT PROBLEM and should be probed before being lumped in: `tests/support/` is not reachable from a `#[cfg(test)]` module inside the library, so either the newtype moves somewhere both can include it, or those two get their own. Decide that from the code rather than assuming the module can simply be reached.\n\nSweep each prefix as its own landing lands, and nothing else — `/tmp` here also holds a few hundred hand-made probe directories from earlier dispatches, which are somebody's evidence and not a leak."
             }
         )
     }

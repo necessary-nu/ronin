@@ -1,5 +1,9 @@
 #![cfg(all(unix, feature = "make"))]
 
+#[path = "support/scratch.rs"]
+mod scratch_directory;
+
+use scratch_directory::Scratch;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write as _};
@@ -7,14 +11,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime};
 
-fn test_directory(label: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!(
-        "ronin-make-regression-{label}-{}",
-        std::process::id()
-    ));
-    let _ = fs::remove_dir_all(&path);
-    fs::create_dir_all(&path).unwrap();
-    path
+/// A scratch directory of this case's own, which goes away with the case.
+fn test_directory(label: &str) -> Scratch {
+    Scratch::named(&format!("ronin-make-regression-{label}-"))
 }
 
 fn invoked_as(directory: &Path) -> PathBuf {
@@ -81,7 +80,6 @@ fn make_stdin_bootstraps_automake_depfiles() {
     );
     assert!(directory.join(".deps/alias.Po").exists());
     assert!(directory.join(".deps/cd.Po").exists());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A current wrapper must stop graph composition before a recursive recipe.
@@ -107,7 +105,6 @@ fn make_skips_current_recursive_wrapper() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "self\n");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Automake's suffix rules use `$*` to give each object a distinct dependency
@@ -154,7 +151,6 @@ fn make_populates_suffix_rule_stem() {
         "two.o\n"
     );
     assert!(!child.join(".deps/.Po").exists());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Command-line variables must survive a recursive Make hidden inside a shell
@@ -193,7 +189,6 @@ fn shell_loop_submake_inherits_overrides() {
     assert!(reported.contains("MFLAGS=-k -j2"), "{reported}");
     assert!(reported.contains("VALUE=\n"), "{reported}");
     assert!(!reported.contains("file-default"), "{reported}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Zstd selects a recursive build directory with a deferred `$(shell ...)`.
@@ -221,7 +216,6 @@ fn submake_expands_shell_computed_assignment() {
         fs::read_to_string(directory.join("result")).unwrap(),
         "obj/conf_hash\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Deferred command substitution must observe files made by the recursive
@@ -248,7 +242,6 @@ fn submake_shell_waits_for_prerequisite() {
         fs::read_to_string(directory.join("result")).unwrap(),
         "ready\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Zstd converts C and assembler names in two suffix-substitution passes. A
@@ -274,7 +267,6 @@ fn substitution_reference_keeps_nonmatches() {
         fs::read_to_string(directory.join("result")).unwrap(),
         "debug.o start.o notes.txt\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Findutils links one generated manual fragment to another. A later recursive
@@ -318,7 +310,6 @@ fn symlink_freshness_ignores_old_build_log() {
         fs::read_to_string(directory.join("source")).unwrap(),
         "updated"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Every autoconf tree carries `config.h: stamp-h1` with a recipe that does
@@ -377,7 +368,6 @@ fn an_unmoved_stamp_rebuilds_nothing() {
         "run\n",
         "a moved header must remake what reads it: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Zstd's object rules consist of nothing but GNU Make's built-in compile
@@ -433,7 +423,6 @@ fn builtin_compile_variables_drive_recipes() {
         fs::read_to_string(directory.join("huf.o")).unwrap(),
         "-Wa,--noexecstack -c -o huf.o huf.S\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Feed a Makefile through standard input and report what the run said and did.
@@ -499,7 +488,6 @@ fn make_refuses_standard_input_twice() {
         );
         assert!(!directory.join("out").exists(), "{spelling:?} built anyway");
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// One `-f-` among several files is read in its turn, and the default goal
@@ -533,7 +521,6 @@ fn make_orders_standard_input_among_files() {
     );
     assert!(succeeded, "{reported}");
     assert_eq!(fs::read_to_string(directory.join("out")).unwrap(), "hello");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// GNU Make expands a recipe, finds it came to no command line at all, runs
@@ -558,7 +545,6 @@ fn empty_expansion_reports_no_command() {
         reported.contains("no work to do"),
         "a build that ran nothing did not say so: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A dry run stands in for the update a prerequisite's command would have
@@ -589,7 +575,6 @@ fn dry_run_stops_at_empty_expansion() {
             "{arguments:?}: remade a target GNU Make leaves alone: {reported}"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// One stream, in the order the run wrote it.
@@ -660,7 +645,6 @@ fn include_complaint_waits_for_the_refusal() {
         complaint < refusal,
         "the complaint came out after what it explains: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The complaint belongs to the `include` line that asked for the file, so a
@@ -688,7 +672,6 @@ fn named_makefile_complains_at_the_read() {
         complaint < remade,
         "a Makefile the command line named was complained of at the refusal: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `-q` is a status, and the three it can give are three different answers:
@@ -744,7 +727,6 @@ fn question_refuses_a_forgiven_makefile_goal() {
         String::from_utf8_lossy(&required.stderr)
     );
     assert!(!directory.join("one.mk").exists());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The same question under `-k`, which is the only thing that lets GNU Make's
@@ -804,7 +786,6 @@ fn keep_going_keeps_the_questions_status() {
             "an ordinary goal with no rule stopped answering 2 under {arguments:?}"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `-k` makes `complain()` report rather than die (remake.c:422), so the
@@ -852,7 +833,6 @@ fn keep_going_refuses_every_makefile() {
         !reported.contains("Failed to remake makefile"),
         "the run repeated names it had already reported: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Without `-k` the same case stops at the first: `complain()` is `fatal`, so
@@ -876,7 +856,6 @@ fn one_refusal_without_keep_going() {
         !reported.contains("nope2.mk"),
         "a makefile behind the refusal was considered: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `show_goal_error` has two callers, and this is the second: `child_error`
@@ -916,7 +895,6 @@ fn lost_remake_reports_its_unread_include() {
         !said.contains("No such file or directory"),
         "the complaint was narrated on stdout: {said}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The same complaint, once per makefile, when `-k` lets the update reach more
@@ -986,7 +964,6 @@ fn keep_going_complains_per_lost_makefile() {
         !reported.contains("two.mk"),
         "a makefile behind the fatal complaint was considered: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A name `MAKEFILES` gave is remade like any other makefile the read reached.
@@ -1032,7 +1009,6 @@ fn makefiles_variable_entries_are_remade() {
         !reported.contains("nope.mk"),
         "a forgiven name was reported: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The complaint belongs to the goal, not to the recipe that lost. GNU Make's
@@ -1063,7 +1039,6 @@ fn a_lost_prerequisite_reports_the_goal() {
         !reported.contains("MAKEGEN"),
         "the makefile's own recipe ran after its prerequisite lost: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `-include` never complains however it fails. GNU Make's guard is
@@ -1087,7 +1062,6 @@ fn a_forgiven_remake_makes_no_complaint() {
         !reported.contains("No such file or directory"),
         "an optional include complained about a read it forgave: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// Whether this host lets an unreadable file be unreadable.
@@ -1128,7 +1102,6 @@ fn permissions_are_enforced(directory: &Path) -> bool {
 fn unreadable_include_repaired_by_its_rule() {
     let directory = test_directory("unreadable-include-repaired");
     if !permissions_are_enforced(&directory) {
-        fs::remove_dir_all(directory).unwrap();
         return;
     }
     fs::write(
@@ -1152,7 +1125,6 @@ fn unreadable_include_repaired_by_its_rule() {
         reported.contains("ALL-1"),
         "the read did not start over on the repaired file: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A Makefile the command line named that would not open is complained of at
@@ -1198,7 +1170,6 @@ fn unopenable_makefile_refused_after_remaking() {
         remade < refusal,
         "the refusal came out before the Makefiles ahead of it were remade: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// GNU Make prints an `$(info ...)` while it expands the recipe, so the text
@@ -1221,7 +1192,6 @@ fn printing_alone_starts_no_command() {
         !reported.contains("printf") && !reported.contains("[1/"),
         "the text was printed rather than run: {reported}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `$(error)` in recipe position is raised out of the expansion, which is what
@@ -1240,7 +1210,6 @@ fn a_dry_run_raises_the_error() {
     assert!(!succeeded, "{reported}");
     assert!(reported.contains("Makefile:1: BOOM"), "{reported}");
     assert!(!directory.join("out").exists(), "{reported}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A `$(shell)` command with no shell syntax in it is exec'd directly, so the
@@ -1323,7 +1292,6 @@ fn recipe_lines_report_output_in_order() {
         order.iter().all(Option::is_some) && order.windows(2).all(|pair| pair[0] < pair[1]),
         "{said}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A line the makefile said to ignore fails without the build noticing, and
@@ -1353,7 +1321,6 @@ fn an_ignored_line_does_not_fail() {
         fs::read_to_string(directory.join("reached")).unwrap(),
         "reached\n"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// GNU Make execs a command line with no shell syntax in it itself, so it is
@@ -1378,7 +1345,6 @@ fn make_reports_a_missing_program() {
     // account of a program it went looking for.
     assert!(!said.contains("not found"), "{said}");
     assert!(said.contains("code=127"), "{said}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A recipe line GNU Make classifies recursive whose invocation cannot be
@@ -1461,7 +1427,6 @@ fn an_unliftable_line_keeps_its_siblings() {
     );
     assert!(directory.join("mentioned").exists());
     assert!(directory.join("a").join("built").exists());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A recipe line that is one invocation inside a subshell is one invocation.
@@ -1503,7 +1468,6 @@ fn a_subshell_holds_one_invocation() {
         !directory.join("sub").join("child").exists(),
         "the dry run wrote the child's target"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// A brace group is the subshell written the other way and holds the same one
@@ -1560,7 +1524,6 @@ fn a_brace_group_holds_one_invocation() {
     );
     let written = fs::read_to_string(directory.join("mentioned")).unwrap();
     assert!(written.starts_with("a{b} "), "{written}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The environment is the third way a write reaches a name GNU Make works out
@@ -1600,7 +1563,6 @@ fn environment_reaches_a_worked_out_name() {
         written, "status=[from-env] wrote=[] foo=[from-env]\n",
         "{written}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// GNU Make's `decode_switches` never dies where it notices a word it cannot
@@ -1663,7 +1625,6 @@ fn a_bad_switch_ends_only_argv() {
         !said.contains("missing -W value"),
         "a switch GNU Make's getopt loses silently is lost silently: {said}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// What `-q` exits with once a `+` line has run inside it.
@@ -1711,7 +1672,6 @@ fn question_status_reads_the_plus_line() {
             "the question ran the line it was supposed to answer on"
         );
     }
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// `-k` is the only thing that lets a `+` line past an answer already given.
@@ -1747,7 +1707,6 @@ fn keep_going_passes_an_answered_goal() {
         "-k did not carry the question past the goal that answered"
     );
     assert!(!directory.join("ordinary.txt").exists());
-    fs::remove_dir_all(directory).unwrap();
 }
 
 /// The complaint about text after an `ifeq` is owed to the branch the directive
@@ -1850,7 +1809,6 @@ fn a_define_body_names_the_define() {
         }
     }
     assert!(wrong.is_empty(), "located in the wrong place:\n{wrong}");
-    fs::remove_dir_all(directory).unwrap();
 }
 
 #[test]
@@ -1885,5 +1843,4 @@ fn an_ignored_conditional_draws_no_complaint() {
         said.contains("extraneous text after 'ifeq' directive"),
         "a condition the read reached was not complained about: {said}"
     );
-    fs::remove_dir_all(directory).unwrap();
 }

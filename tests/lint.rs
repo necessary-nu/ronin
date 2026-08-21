@@ -4,6 +4,10 @@
 //! the report IS the product, so these tests assert on the bytes it writes and
 //! the status it leaves with, the way the narration-contract tests do.
 
+#[path = "support/scratch.rs"]
+mod scratch_directory;
+
+use scratch_directory::Scratch;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
@@ -62,38 +66,8 @@ const WRITE_IT_AS_THE_COMMAND: &str = concat!(
 );
 
 /// A scratch directory of this test's own, which goes away with the test.
-///
-/// Held rather than returned as a path, because the directory lives exactly as
-/// long as this value does: a test that took the path and dropped the handle
-/// would be reading a directory that had already been removed. It stands in
-/// for a `&Path` everywhere a path is wanted, so a case reads the same as it
-/// did when the directory was named and left behind.
-struct Scratch(tempfile::TempDir);
-
-impl std::ops::Deref for Scratch {
-    type Target = Path;
-
-    fn deref(&self) -> &Path {
-        self.0.path()
-    }
-}
-
-impl AsRef<Path> for Scratch {
-    fn as_ref(&self) -> &Path {
-        self.0.path()
-    }
-}
-
-/// A scratch directory of this test's own. The name is the prefix rather than
-/// the whole of it, so two cases of one name cannot collide and nothing has to
-/// clear the directory before using it.
 fn scratch(name: &str) -> Scratch {
-    Scratch(
-        tempfile::Builder::new()
-            .prefix(&format!("ronin-lint-{name}-"))
-            .tempdir()
-            .unwrap(),
-    )
+    Scratch::named(&format!("ronin-lint-{name}-"))
 }
 
 fn write(directory: &Path, name: &str, contents: &str) {
@@ -111,24 +85,6 @@ fn ronin(directory: &Path, arguments: &[&str]) -> Output {
 
 fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-/// The harness's own promise, gated because nothing else would notice it
-/// breaking: a suite that leaves a directory per case per run accumulates
-/// them by the hundred on a developer's machine, and the only symptom is a
-/// `/tmp` that looks like evidence of a leak in the tool under test.
-#[test]
-fn a_scratch_goes_with_its_test() {
-    let path = {
-        let directory = scratch("self-removing");
-        assert!(directory.is_dir(), "{}", directory.display());
-        directory.to_path_buf()
-    };
-    assert!(
-        !path.exists(),
-        "the scratch outlived the test that made it: {}",
-        path.display()
-    );
 }
 
 /// Lint is Ronin's own entry in a tool set Ninja otherwise owns, and it is
