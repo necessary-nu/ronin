@@ -394,12 +394,38 @@ impl Passes<'_, '_, '_> {
         }
     }
 
-    /// Build the work staged so a recursive unit can be evaluated at all, under
-    /// the invocation's own switches.
+    /// Build the work staged so a recursive unit can be evaluated at all.
     ///
-    /// GNU Make has no such phase, so there is nothing here it would have
-    /// disabled: `-n` describes this work and does none of it, which leaves the
-    /// child that was waiting for it uncompilable and the run over.
+    /// Two lists, because the phase a segment belongs to decides the switches
+    /// it runs under, and that is the split GNU Make makes in
+    /// `update_goal_chain`. A segment of a Makefile's own recipe is part of the
+    /// makefile update, which `-n`, `-t` and `-q` do not reach: a Makefile only
+    /// pretended to be remade is one whose contents the read would then have to
+    /// guess. Nothing here answers a question either — the update builds, and
+    /// the goals are asked afterwards.
+    ///
+    /// A goal's segment keeps the invocation's own switches. GNU Make has no
+    /// such phase there, so there is nothing of its behaviour to copy: `-n`
+    /// describes this work and does none of it, which leaves the child that was
+    /// waiting for it uncompilable and the run over.
+    fn stage_all(
+        &mut self,
+        staged: &Staged<'_>,
+        invocation: &Invocation,
+        options: &BuildOptions,
+    ) -> Pass {
+        match self.run(staged.for_makefiles, remaking_options(options), false) {
+            Pass::Current => {}
+            // The recipe of a Makefile echoes as it runs exactly as it does
+            // under the update proper, and it runs before the goals' work is
+            // even described.
+            Pass::Ran(outcome) => self.narrate(&outcome),
+            settled => return settled,
+        }
+        self.stage(staged.for_goals, invocation, options.clone())
+    }
+
+    /// Build one goal's staged segments, under the invocation's own switches.
     fn stage(&mut self, staged: &[Node], invocation: &Invocation, options: BuildOptions) -> Pass {
         if invocation.questioning() {
             return self.ask(staged, options);
@@ -593,6 +619,9 @@ struct Read {
     forgiven: Vec<Node>,
     complaints: Vec<(Node, String)>,
     staged: Vec<Node>,
+    /// The staged work belonging to a Makefile's own recipe, which the makefile
+    /// update would have run had the wrapper not been held back from it.
+    makefile_staged: Vec<Node>,
     boundaries: HashSet<EvaluationBoundary>,
     /// The recursive recipes this read staged and did not finish compiling,
     /// whose edges hold the freshness probe rather than a recipe.
@@ -609,6 +638,7 @@ impl Read {
             forgiven: loaded.forgiven_remake_targets().to_vec(),
             complaints: loaded.take_remake_complaints(),
             staged: loaded.staged_targets(),
+            makefile_staged: loaded.makefile_staged_targets(),
             boundaries: loaded.evaluation_boundaries().clone(),
             unfinished: loaded.unfinished_targets().to_vec(),
             recipes: loaded.take_pending_recipes().map(Box::new),
@@ -821,6 +851,7 @@ pub(super) fn build_compiler_inputs(
         forgiven,
         complaints,
         staged,
+        makefile_staged,
         boundaries,
         unfinished,
         ..
@@ -848,7 +879,7 @@ pub(super) fn build_compiler_inputs(
         silent: invocation.given(Switch::Silent),
     }
     .remake_makefiles(&makefiles);
-    let (mut persistence, stands) = match after_remaking(
+    let (persistence, stands) = match after_remaking(
         remaking,
         refusals,
         keep_going,
@@ -862,14 +893,85 @@ pub(super) fn build_compiler_inputs(
     };
     graph.mark_makefiles_settled(&stands.remade, &stands.unmade, &stands.questioned);
 
-    // What the staged work leaves on disk can be a Makefile this read
-    // consulted: the lines ahead of a composed `$(MAKE)` are the recipe that
-    // remakes it, and the first of them is usually the one that writes the
-    // file. GNU Make reaches the same point through its own makefile update and
-    // then starts the read over on the new text, so the same comparison is made
-    // here — over the Makefiles alone, because a staged edge that wrote
-    // anything else wrote a target and not a text the read is made of.
-    let paths = paths_of(&graph, &remakes);
+    build_staged_work(
+        StagedWork {
+            staged: Staged {
+                for_makefiles: &makefile_staged,
+                for_goals: &staged,
+            },
+            boundaries,
+            settled_boundaries,
+            read_units,
+            complaints: &complaints,
+            invocation,
+            options: &options,
+            directory,
+            remakes: &remakes,
+            keep_going,
+        },
+        Compiled {
+            graph,
+            recipes,
+            persistence,
+        },
+        reported,
+        output,
+        diagnostics,
+    )
+}
+
+/// Everything building one read's staged work needs that is not the graph it
+/// builds against.
+struct StagedWork<'a> {
+    staged: Staged<'a>,
+    /// The boundaries this pass reached, which the next one is past.
+    boundaries: HashSet<EvaluationBoundary>,
+    settled_boundaries: &'a mut HashSet<EvaluationBoundary>,
+    read_units: &'a mut crate::make::ReadJournals,
+    complaints: &'a [(Node, String)],
+    invocation: &'a Invocation,
+    options: &'a BuildOptions,
+    directory: &'a Path,
+    /// The Makefiles this read consulted, whose dates say whether the staged
+    /// work was the recipe that remade one of them.
+    remakes: &'a [Node],
+    keep_going: bool,
+}
+
+/// Build what the read staged and turn it into what the read does next.
+///
+/// What the staged work leaves on disk can be a Makefile this read consulted:
+/// the lines ahead of a composed `$(MAKE)` are the recipe that remakes it, and
+/// the first of them is usually the one that writes the file. GNU Make reaches
+/// the same point through its own makefile update and then starts the read over
+/// on the new text, so the same comparison is made here — over the Makefiles
+/// alone, because a staged edge that wrote anything else wrote a target and not
+/// a text the read is made of.
+fn build_staged_work(
+    work: StagedWork<'_>,
+    compiled: Compiled,
+    reported: &mut String,
+    output: &mut Option<&mut dyn Write>,
+    diagnostics: &mut Option<&mut dyn Write>,
+) -> Result<Settlement, Error> {
+    let StagedWork {
+        staged,
+        boundaries,
+        settled_boundaries,
+        read_units,
+        complaints,
+        invocation,
+        options,
+        directory,
+        remakes,
+        keep_going,
+    } = work;
+    let Compiled {
+        mut graph,
+        mut recipes,
+        mut persistence,
+    } = compiled;
+    let paths = paths_of(&graph, remakes);
     let before = makefile_stamps(&paths, directory);
     let pass = Passes {
         graph: &mut graph,
@@ -878,11 +980,11 @@ pub(super) fn build_compiler_inputs(
         output,
         diagnostics,
         reported,
-        complaints: &complaints,
+        complaints,
         keep_going,
         silent: invocation.given(Switch::Silent),
     }
-    .stage(&staged, invocation, options);
+    .stage_all(&staged, invocation, options);
     let remade = makefile_stamps(&paths, directory) != before;
     after_staging(
         pass,
@@ -926,6 +1028,17 @@ fn makeable_now(graph: &BuildGraph, remakes: &[Node], unfinished: &[Node]) -> Ve
         .copied()
         .filter(|target| !blocked.contains(target))
         .collect()
+}
+
+/// The work one read staged, in the two phases it belongs to.
+///
+/// The split is GNU Make's own: the Makefiles are brought up to date with
+/// `-n`, `-t` and `-q` turned off, and the goals are then asked with them back
+/// on. What decides which side a recursive recipe's segments fall on is whose
+/// recipe it is, which the compilation records where it stages them.
+struct Staged<'a> {
+    for_makefiles: &'a [Node],
+    for_goals: &'a [Node],
 }
 
 /// What one settled compilation boundary leaves the read to carry forward.

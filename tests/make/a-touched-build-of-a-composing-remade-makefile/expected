@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # -t is off across the makefile update for the reason -n is: a Makefile dated
+| # and not written is one the read cannot use. gen.mk is written for real and the
+| # child runs, and then all is touched rather than made.
+| all: ; @printf '%s\n' '$(GENERATED)' > out
+| 
+| include gen.mk
+| 
+| gen.mk:
+| 	@printf 'GENERATED := from-generated\n' > $@
+| 	@$(MAKE) -C sub marker
+file all touched 0
+file gen.mk touched 1
+| GENERATED := from-generated
+file sub/Makefile kept 1
+| marker: ; @printf %s child-ran > marker.out
+file sub/marker.out touched 2
+| child-ran

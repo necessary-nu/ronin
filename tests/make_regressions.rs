@@ -1909,3 +1909,99 @@ fn a_staged_segment_runs_the_recipe() {
         "sub\n"
     );
 }
+
+/// GNU Make turns `-n`, `-t` and `-q` off across the makefile update and back
+/// on for the goals (`update_goal_chain`, main.c), because a Makefile it only
+/// pretended to remake is one whose contents the read would then have to guess.
+///
+/// A Makefile whose own rule holds a composed `$(MAKE)` has that recipe cut
+/// into segments, and the segments run at a compilation boundary rather than
+/// inside the update — so they used to be built under the invocation's own
+/// switches and were pretended where GNU Make executes. `gen.mk` was never
+/// written, the child never ran, and the read carried on over the text that
+/// was missing.
+///
+/// The corpus records the same three cases on their files; this one is here for
+/// the exit status, which the corpus records only as success or failure and
+/// which is the whole of what `-q` answers.
+#[test]
+fn a_composing_remake_is_not_pretended() {
+    // (switches, exit status, whether `all` is touched)
+    for (switches, status, touched) in [("-n", 0, false), ("-t", 0, true), ("-q", 1, false)] {
+        let directory = test_directory("composing-remake-pretended");
+        fs::create_dir(directory.join("sub")).unwrap();
+        fs::write(
+            directory.join("Makefile"),
+            "all: ; @printf '%s\\n' '$(GENERATED)' > out\n\ninclude gen.mk\n\ngen.mk:\n\t@printf 'GENERATED := from-generated\\n' > $@\n\t@$(MAKE) -C sub marker\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("sub").join("Makefile"),
+            "marker: ; @printf 'child\\n' > marker\n",
+        )
+        .unwrap();
+
+        let output = make_command(&directory)
+            .args([switches, "all"])
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert_eq!(output.status.code(), Some(status), "{switches}: {said}");
+        assert_eq!(
+            fs::read_to_string(directory.join("gen.mk")).ok().as_deref(),
+            Some("GENERATED := from-generated\n"),
+            "{switches}: the makefile was pretended rather than remade: {said}"
+        );
+        assert!(
+            directory.join("sub").join("marker").exists(),
+            "{switches}: the child of the remaking recipe never ran: {said}"
+        );
+        assert!(
+            !directory.join("out").exists(),
+            "{switches}: the goal's own recipe ran: {said}"
+        );
+        assert_eq!(
+            directory.join("all").exists(),
+            touched,
+            "{switches}: the goal's touch went the wrong way: {said}"
+        );
+    }
+}
+
+/// The other side of the split, which must not move with it: a segment of an
+/// ORDINARY goal's recipe keeps the switches the command line gave. GNU Make
+/// has no staging phase there, so `-n` describes the recipe and runs none of
+/// it, and `-t` touches the goal rather than making it.
+#[test]
+fn a_goals_segment_keeps_the_switches() {
+    // (switches, whether the child's target is made)
+    for (switches, child) in [("-n", false), ("-t", true), ("-q", false)] {
+        let directory = test_directory("goal-staged-segment");
+        fs::create_dir(directory.join("sub")).unwrap();
+        fs::write(
+            directory.join("Makefile"),
+            "goal:\n\t@printf 'before\\n' > pre.out\n\t@$(MAKE) -C sub marker\n\t@printf 'after\\n' >> pre.out\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("sub").join("Makefile"),
+            "marker: ; @printf 'child\\n' > marker\n",
+        )
+        .unwrap();
+
+        let output = make_command(&directory)
+            .args([switches, "goal"])
+            .output()
+            .unwrap();
+        let said = String::from_utf8_lossy(&output.stderr).into_owned();
+        assert!(
+            !directory.join("pre.out").exists(),
+            "{switches}: a goal's staged segment ran: {said}"
+        );
+        assert_eq!(
+            directory.join("sub").join("marker").exists(),
+            child,
+            "{switches}: the child went the wrong way: {said}"
+        );
+    }
+}

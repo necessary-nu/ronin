@@ -419,6 +419,16 @@ struct CompilationState<'a> {
     /// edges it produced are the edges the cache hands back.
     pending_recipes: recipe::PendingRecipes,
     regenerations: Vec<Node>,
+    /// The staged work belonging to a Makefile's own recipe rather than to a
+    /// goal's.
+    ///
+    /// A subset of `regenerations`. GNU Make turns `-n`, `-t` and `-q` off
+    /// across the whole makefile update and back on for the goals, because a
+    /// Makefile it only pretended to remake is one it would then have to guess
+    /// the contents of. A recipe cut into segments around a composed `$(MAKE)`
+    /// has those segments built here rather than by the update, so the split
+    /// the update makes has to be made here too.
+    makefile_staged: Vec<Node>,
     remakes: Vec<Node>,
     forgiven_remakes: Vec<Node>,
     /// The Makefiles whose contents the read wanted and did not get.
@@ -545,6 +555,7 @@ impl CompilationState<'_> {
         pending_index: usize,
         predecessor: EvaluationPredecessor,
         staged: &[Node],
+        for_makefile: bool,
     ) -> bool {
         let boundary = EvaluationBoundary {
             compilation_key: compilation_key.to_vec(),
@@ -557,6 +568,11 @@ impl CompilationState<'_> {
         self.regenerations.extend_from_slice(staged);
         self.regenerations.sort_unstable();
         self.regenerations.dedup();
+        if for_makefile {
+            self.makefile_staged.extend_from_slice(staged);
+            self.makefile_staged.sort_unstable();
+            self.makefile_staged.dedup();
+        }
         self.evaluation_boundaries.insert(boundary);
         false
     }
@@ -614,6 +630,7 @@ where
             &root.context.diagnostics,
         )),
         regenerations: Vec::new(),
+        makefile_staged: Vec::new(),
         remakes: Vec::new(),
         forgiven_remakes: Vec::new(),
         unread_remakes: Vec::new(),
@@ -632,6 +649,7 @@ where
         graph,
         pending_recipes,
         regenerations: state.regenerations,
+        makefile_staged: state.makefile_staged,
         remakes: state.remakes,
         forgiven_remakes: state.forgiven_remakes,
         unread_remakes: state.unread_remakes,
@@ -867,6 +885,17 @@ where
     let disk = freshness_disk(descendant_context)?;
     for (pending_index, mut pending) in dependency_ordered(subninjas, sink).into_iter().enumerate()
     {
+        // Whose recipe this is decides which switches its segments run under.
+        // A recursive recipe the makefile update would run — a Makefile's own,
+        // or that of anything a Makefile is made from — is part of the phase
+        // GNU Make turns `-n`, `-t` and `-q` off across; a goal's keeps what
+        // the command line gave. Asked here because this is the only place
+        // where the wrapper's outputs and the read's Makefiles are both in
+        // hand: by the time the staged work is built, the wrapper is still
+        // wearing the freshness probe and the staged edge is not yet linked to
+        // it, so nothing downstream could work it out.
+        let outputs = pending.outputs().collect::<Vec<_>>();
+        let for_makefile = made_for_a_makefile(sink, &state.remakes, &outputs);
         let parent_inputs = pending.evaluation_inputs();
         if !parent_inputs.is_empty() {
             if !state.stage(
@@ -874,6 +903,7 @@ where
                 pending_index,
                 EvaluationPredecessor::ParentPrerequisites,
                 &parent_inputs,
+                for_makefile,
             ) {
                 return Ok(incomplete_unit(targets, subtree_edges));
             }
@@ -900,6 +930,7 @@ where
             resolve,
             descendant_context,
             state,
+            for_makefile,
         )?
         else {
             // The wrapper's edge exists and still carries the probe, because
@@ -943,6 +974,7 @@ fn compose_child_groups<F>(
     resolve: &mut F,
     descendant_context: &CompilationContext,
     state: &mut CompilationState<'_>,
+    for_makefile: bool,
 ) -> Result<Option<Vec<UnitSubgraph>>, MakeError>
 where
     F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
@@ -961,6 +993,7 @@ where
                 state,
                 (compilation_key, pending_index, group_index),
                 staged,
+                for_makefile,
             )
         {
             return Ok(None);
@@ -1003,12 +1036,43 @@ where
                 state,
                 (compilation_key, pending_index, group_index),
                 &child_groups[group_index].targets,
+                for_makefile,
             )
         {
             return Ok(None);
         }
     }
     Ok(Some(child_groups))
+}
+
+/// Whether the makefile update would run this recursive recipe.
+///
+/// GNU Make brings a Makefile up to date by updating everything it is MADE
+/// FROM, with `-n`, `-t` and `-q` off across the whole of that phase. So a
+/// recipe reached from a Makefile this read consulted — its own, or that of
+/// anything the Makefile is made from — belongs to the update; one nothing in
+/// the read reaches belongs to the goals and keeps the switches the command
+/// line gave. Probed against 4.4.1 rather than reasoned from: a `gen.mk:
+/// helper` whose `helper` holds the recursion is remade for real under all
+/// three switches exactly as one whose own recipe holds it is.
+///
+/// Walked through `prerequisites_of` for the reason `dependency_ordered` walks
+/// it: held recursive edges are not in the graph while this decision is being
+/// made, so everything between one wrapper and a Makefile is an ordinary
+/// target.
+fn made_for_a_makefile(sink: &GraphSink, makefiles: &[Node], outputs: &[Node]) -> bool {
+    let mut walked = HashSet::new();
+    let mut frontier = makefiles.to_vec();
+    while let Some(node) = frontier.pop() {
+        if !walked.insert(node) {
+            continue;
+        }
+        if outputs.contains(&node) {
+            return true;
+        }
+        frontier.extend(sink.prerequisites_of(node));
+    }
+    false
 }
 
 /// Stage the recipe's own lines written ahead of one invocation, and say
@@ -1018,6 +1082,7 @@ fn stage_preceding(
     state: &mut CompilationState<'_>,
     at: (&[u8], usize, usize),
     staged: Node,
+    for_makefile: bool,
 ) -> bool {
     let (compilation_key, pending_index, group_index) = at;
     if !state.stage(
@@ -1025,6 +1090,7 @@ fn stage_preceding(
         pending_index,
         EvaluationPredecessor::PrecedingLines(group_index),
         &[staged],
+        for_makefile,
     ) {
         return false;
     }
@@ -1046,6 +1112,7 @@ fn stage_completed_group(
     state: &mut CompilationState<'_>,
     at: (&[u8], usize, usize),
     completed: &[Node],
+    for_makefile: bool,
 ) -> bool {
     let (compilation_key, pending_index, group_index) = at;
     if !state.stage(
@@ -1053,6 +1120,7 @@ fn stage_completed_group(
         pending_index,
         EvaluationPredecessor::ChildGroup(group_index),
         completed,
+        for_makefile,
     ) {
         return false;
     }
@@ -1343,6 +1411,13 @@ pub struct Loaded {
     pub graph: BuildGraph,
     /// Compiler inputs this provisional graph knows how to build.
     regenerations: Vec<Node>,
+    /// The staged work among those that belongs to a Makefile's own recipe.
+    ///
+    /// See [`Self::makefile_staged_targets`]: GNU Make brings the Makefiles up
+    /// to date with `-n`, `-t` and `-q` turned off and the goals with them back
+    /// on, and a Makefile whose recipe composes a `$(MAKE)` reaches its own
+    /// segments through here rather than through the update.
+    makefile_staged: Vec<Node>,
     /// The subset of those inputs that are Makefiles this read consulted.
     ///
     /// Building one of the others stages a recursive unit's prerequisites;
@@ -1463,16 +1538,38 @@ impl Loaded {
         std::mem::take(&mut self.refusals)
     }
 
-    /// The compiler inputs that are not Makefiles: work staged so a recursive
-    /// unit can be evaluated at all.
+    /// The compiler inputs that are not Makefiles and belong to a goal's
+    /// recipe: work staged so a recursive unit can be evaluated at all.
     ///
-    /// The other half of [`Self::regeneration_targets`]. GNU Make has no such
-    /// phase — it is how a `$(MAKE)` recipe's prerequisites reach the ground
-    /// before the child is compiled — so it is built under the invocation's own
+    /// The other half of [`Self::regeneration_targets`], less what
+    /// [`Self::makefile_staged_targets`] claims. GNU Make has no such phase —
+    /// it is how a `$(MAKE)` recipe's prerequisites reach the ground before the
+    /// child is compiled — so a goal's is built under the invocation's own
     /// switches rather than under the ones a Makefile is remade with.
     #[must_use]
     pub(crate) fn staged_targets(&self) -> Vec<Node> {
         self.regenerations
+            .iter()
+            .copied()
+            .filter(|target| !self.remakes.contains(target))
+            .filter(|target| !self.makefile_staged.contains(target))
+            .collect()
+    }
+
+    /// The staged work that belongs to the makefile update rather than to the
+    /// goals.
+    ///
+    /// A Makefile whose own rule is a recipe holding a composed `$(MAKE)` is
+    /// cut into segments, and the segments are staged here instead of being run
+    /// by the update — the wrapper is held back from it until the compilation
+    /// is finished with. They are still that Makefile's recipe, so they are
+    /// built the way the update builds one: `-n`, `-t` and `-q` off, because a
+    /// Makefile only pretended to be remade is one whose contents the read
+    /// would then have to guess. GNU Make makes the same split in
+    /// `update_goal_chain`.
+    #[must_use]
+    pub(crate) fn makefile_staged_targets(&self) -> Vec<Node> {
+        self.makefile_staged
             .iter()
             .copied()
             .filter(|target| !self.remakes.contains(target))

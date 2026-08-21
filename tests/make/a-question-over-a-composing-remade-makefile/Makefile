@@ -1,0 +1,10 @@
+# A question is asked of the GOALS. The Makefiles are brought up to date first
+# and the question does not reach them, so gen.mk is written for real and the
+# child runs; then the goal is asked about and the answer is 1.
+all: ; @printf '%s\n' '$(GENERATED)' > out
+
+include gen.mk
+
+gen.mk:
+	@printf 'GENERATED := from-generated\n' > $@
+	@$(MAKE) -C sub marker
