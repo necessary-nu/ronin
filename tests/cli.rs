@@ -325,14 +325,59 @@ fn writes_explanations_to_stderr_and_status_to_stdout() {
     assert!(!stderr.contains("[1/1]"));
 }
 
+/// Wait for the marker a recipe writes when it starts, on wall-clock rather
+/// than on a turn count.
+///
+/// The case below used to poll two hundred times with a 10 ms sleep between —
+/// a two-second budget for spawning a freshly linked binary, reading a
+/// manifest, planning, launching a shell, and having that shell reach the
+/// second word of a recipe. Generous on an idle host, and not a bound at all
+/// under `cargo test --workspace`, where twenty-odd test binaries run at once
+/// beside a corpus harness doing a thousand subprocess-heavy cases. When the
+/// budget ran out nothing was ever signalled, so the recipe's own `sleep` ran
+/// to the end and the suite paid twenty-three seconds for the failure.
+///
+/// A deadline says what the case means: wait for as long as it takes, within
+/// reason, and if the marker never comes, stop paying for the recipe and say
+/// what was being waited for. The two ways of not arriving are told apart
+/// because they mean different things — a build that ended before writing the
+/// marker is a product defect, and a build still going without having written
+/// it is a hang or a host slower than any deadline.
 #[cfg(unix)]
+fn wait_for_the_recipes_marker(child: &mut std::process::Child, marker: &std::path::Path) {
+    use std::time::{Duration, Instant};
+
+    // Far above what a loaded host needs, and far below the wrapper's own
+    // wall-clock ceiling, so an expiry here is a finding rather than a second
+    // flapper.
+    let budget = Duration::from_secs(60);
+    let waited_since = Instant::now();
+    while !marker.exists() {
+        if let Some(status) = child.try_wait().expect("waiting on the build") {
+            panic!(
+                "the build ended with {status} before writing {}",
+                marker.display()
+            );
+        }
+        if waited_since.elapsed() > budget {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!(
+                "the build did not write {} within {budget:?}",
+                marker.display()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 // [spec:ronin:req:compat.process-integration/test]
 // [spec:ronin:req:product.build-outcome/test]
+#[cfg(unix)]
 #[test]
 // [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn forwards_interrupts_and_removes_partial_outputs() {
     use std::os::unix::process::ExitStatusExt;
-    use std::time::Duration;
 
     let directory = test_directory("interrupt-forwarding");
     fs::write(
@@ -344,13 +389,7 @@ fn forwards_interrupts_and_removes_partial_outputs() {
         .current_dir(&directory)
         .spawn()
         .unwrap();
-    for _ in 0..200 {
-        if directory.join("started").exists() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    assert!(directory.join("started").exists());
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
     let child_id = rustix::process::Pid::from_child(&child);
     rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
     let status = child.wait().unwrap();
