@@ -865,7 +865,7 @@ fn parse_run_arguments(
 /// `unshared` is the limit for a build that named none and found no jobserver
 /// to join, which is the one answer the two front ends give differently.
 ///
-// [spec:ronin:req:compat.process-integration]
+// [spec:ronin:req:compat.process-integration+2]
 pub(crate) fn normalize_runtime_options(
     options: &mut BuildOptions,
     makeflags: Option<&str>,

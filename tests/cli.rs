@@ -97,7 +97,7 @@ fn missing_manifest_names_selected_source() {
 }
 
 #[cfg(unix)]
-// [spec:ronin:req:compat.process-integration/test]
+// [spec:ronin:req:compat.process-integration+2/test]
 #[test]
 fn stale_jobserver_uses_local_scheduler() {
     let directory = test_directory("stale-jobserver");
@@ -371,7 +371,7 @@ fn wait_for_the_recipes_marker(child: &mut std::process::Child, marker: &std::pa
     }
 }
 
-// [spec:ronin:req:compat.process-integration/test]
+// [spec:ronin:req:compat.process-integration+2/test]
 // [spec:ronin:req:product.build-outcome/test]
 #[cfg(unix)]
 #[test]

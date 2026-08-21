@@ -100,7 +100,7 @@ pub(super) fn normalize_ninja_runtime_options(
 mod tests {
     use super::JobserverNotice;
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn jobserver_notice_uses_ninja_streams() {
         let notice = JobserverNotice {
@@ -130,7 +130,7 @@ mod tests {
         assert!(buffered_diagnostics.is_empty());
     }
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn quiet_jobserver_notice_keeps_the_error() {
         let notice = JobserverNotice {

@@ -343,7 +343,7 @@ impl<External> ProcessSupervisor<External> {
     }
 }
 
-// [spec:ronin:req:compat.process-integration]
+// [spec:ronin:req:compat.process-integration+2]
 impl<External: Send + 'static> ProcessSupervisor<External> {
     pub(crate) fn spawn(
         &mut self,
@@ -1017,7 +1017,7 @@ fn terminate_and_reap(child: &mut RunningChild) {
 /// itself, but which in a child is an ordinary failure. A build stops on this
 /// without reporting the command as failed, because the command did not fail —
 /// the whole build was being brought down around it.
-// [spec:ronin:req:compat.process-integration]
+// [spec:ronin:req:compat.process-integration+2]
 pub(crate) fn status_interrupted(status: std::process::ExitStatus) -> bool {
     #[cfg(unix)]
     {
@@ -1082,7 +1082,7 @@ pub(crate) fn signalled_exit_code(status: std::process::ExitStatus) -> Option<i3
 /// dumping `SIGQUIT` reports 259 rather than 131. That is Ninja's arithmetic and
 /// it is visible in the `FAILED: [code=…]` line, so it is reproduced rather than
 /// corrected.
-// [spec:ronin:req:compat.process-integration]
+// [spec:ronin:req:compat.process-integration+2]
 pub(crate) fn exit_status_code(status: std::process::ExitStatus) -> i32 {
     if let Some(code) = status.code() {
         return code;
@@ -1635,7 +1635,7 @@ mod tests {
     }
 
     #[cfg(unix)]
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     // [spec:ronin:req:product.build-outcome/test]
     #[test]
     fn a_finished_child_is_read_the_way_ninja_reads_it() {
@@ -1861,7 +1861,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     // [spec:ronin:req:runtime.process-supervisor-scalability/test]
     fn ronin_process_supervisor_reports_keyed_signal_completion() {
         let edge = EdgeId::from_event_key(7 + 1).expect("test edge key is nonzero");
@@ -1922,7 +1922,7 @@ mod tests {
 mod launcher_tests {
     use super::{direct_argv, needs_shell};
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn a_plain_command_does_not_need_a_shell() {
         assert!(!needs_shell(b"touch jobs/0"));
@@ -1930,7 +1930,7 @@ mod launcher_tests {
         assert!(!needs_shell(b"cp  a   b"));
     }
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn anything_the_shell_would_interpret_keeps_the_shell() {
         for command in [
@@ -1960,7 +1960,7 @@ mod launcher_tests {
         }
     }
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn a_leading_assignment_is_the_shells_business() {
         // `execvp` would look for a program literally named `FOO=1`.
@@ -1970,14 +1970,14 @@ mod launcher_tests {
         assert!(!needs_shell(b"cmd FOO=1"));
     }
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn an_empty_command_is_left_to_the_shell() {
         assert!(needs_shell(b""));
         assert!(needs_shell(b"   "));
     }
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn a_leading_exec_needs_the_shell() {
         // `exec` is the shell's builtin for "run this in my place", and
@@ -1988,7 +1988,7 @@ mod launcher_tests {
         assert!(!needs_shell(b"cmd exec"));
     }
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn splitting_collapses_runs_of_spaces_as_the_shell_would() {
         assert_eq!(direct_argv(b"cp  a   b"), vec![&b"cp"[..], b"a", b"b"]);

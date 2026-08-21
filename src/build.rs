@@ -1352,7 +1352,7 @@ impl<'a> Builder<'a> {
     /// `ExitInterrupted` — so a command that plainly exited 130 of its own
     /// accord takes the same branch, with no way for Ninja to tell the two
     /// apart and no attempt to. That is the contract, oddity included.
-    // [spec:ronin:req:compat.process-integration]
+    // [spec:ronin:req:compat.process-integration+2]
     // [spec:ronin:req:product.build-outcome]
     fn command_interrupted(&self, status: std::process::ExitStatus) -> bool {
         if status_interrupted(status) {
@@ -1961,7 +1961,7 @@ impl<'a> Builder<'a> {
     }
 
     // [spec:ronin:req:compat.scheduling]
-    // [spec:ronin:req:compat.process-integration]
+    // [spec:ronin:req:compat.process-integration+2]
     // [spec:ronin:def:build.catchsig-fn]
     // [spec:ronin:sem:build.catchsig-fn]
     // [spec:ronin:def:build.build-fn]

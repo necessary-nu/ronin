@@ -1250,7 +1250,7 @@ fn compare_build_case(ninja: &Path, ronin: &Path, case: &BuildCase) -> Result<()
 }
 
 // [spec:ronin:req:compat.upstream-conformance]
-// [spec:ronin:req:compat.process-integration]
+// [spec:ronin:req:compat.process-integration+2]
 fn compare_invocation_case(
     ninja: &Path,
     ronin: &Path,
@@ -1640,7 +1640,7 @@ mod tests {
         }
     }
 
-    // [spec:ronin:req:compat.process-integration/test]
+    // [spec:ronin:req:compat.process-integration+2/test]
     #[test]
     fn normalizes_invocation_output() {
         let directory = Path::new("/tmp/ronin-invocation-case");

@@ -53,7 +53,7 @@ fn main() {
     // that needs the default shell be given this one.
     // [spec:ronin:req:product.builtin-shell]
     ronin::declare_builtin_shell();
-    // [spec:ronin:req:compat.process-integration]
+    // [spec:ronin:req:compat.process-integration+2]
     // [spec:ronin:req:runtime.guarded-signal-boundary]
     let signal_handlers = ronin::install_signal_handlers().unwrap_or_else(|error| {
         let _ = write_diagnostic(format_args!("failed to install signal handlers: {error}"));
