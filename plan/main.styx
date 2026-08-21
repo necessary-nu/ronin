@@ -11685,6 +11685,7 @@ children (
                 id make-release-pedantic-in-the-test-scope
                 title "Bring the harnesses up to the standard the product code is held to"
                 kind @refactor
+                sealed true
                 log (
                     {
                         at 2026-08-15T18:32:30.016920983Z
@@ -11712,6 +11713,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Two commit-gate refusals on the way in, both fixed rather than bypassed, and one of them was worth the interruption.\n\n`function-name`: the new release-gate case was `the_lint_gate_holds_both_bodies_of_code_to_their_standard` — eleven words, fifty-seven characters, a sentence rather than a name. Now `the_lint_gate_holds_both_standards`.\n\n`test-footprint`: splitting `classify` moved lines into `name_residue` and took examples' test-to-production ratio from 0.175 to 0.174, under the 0.200 floor. The gate is right about what it measures and the fix is the one it was asking for — the extracted half is now a named function, so it can be asked directly, and `a_marker_names_a_residue_make_read` does exactly that: a `missing separator` in Ronin's leftovers names `parse-failure`, and the identical residue names NOTHING when Make refused too, which is the one conditional in that block that a reader would otherwise have to take on trust. The example's own suite is 22 passed / 0 failed.\n\nAlso recorded because the numbers in the note above are for the workspace suite: `cargo test --workspace` does not build example targets, so those 22 are counted by the release script's `--all-targets` run and not by the 978."
+                    }
+
+                    {
+                        at 2026-08-21T08:57:33.766410432Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
