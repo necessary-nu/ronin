@@ -2005,3 +2005,69 @@ fn a_goals_segment_keeps_the_switches() {
         );
     }
 }
+
+/// A Makefile made THROUGH a recursive prerequisite settles, and settles once.
+///
+/// GNU Make brings `helper` up to date, runs its child, writes `gen.mk`, starts
+/// the read over once and builds the goal from the new text — one restart, the
+/// same one it makes when a Makefile's own recipe remakes it.
+///
+/// Ronin cuts `helper`'s recipe into segments around its composed `$(MAKE)` and
+/// finishes it across passes, and a recipe cut that way has to stop being called
+/// begun once it is over. One that keeps saying it leaves `helper` dirty for the
+/// whole invocation: `gen.mk` is remade on every pass, its stamp moves, the read
+/// starts over, and the run ends at the hundred-try backstop with exit 2.
+///
+/// The corpus records the effects of the same shape on its files. Here for the
+/// two things it cannot: `-q`'s answer is its exit STATUS, which the corpus
+/// records only as success or failure, and the defect is a COUNT — the number of
+/// times `gen.mk` is remade, which is what separates settling from looping.
+#[test]
+fn a_makefile_through_a_recursion_settles() {
+    let directory = test_directory("makefile-through-a-recursive-prerequisite");
+    fs::create_dir(directory.join("sub")).unwrap();
+    let makefile = "all: ; @printf '%s\\n' '$(GENERATED)' > out\n\n\
+                    include gen.mk\n\n\
+                    gen.mk: helper\n\t@printf 'GENERATED := from-generated\\n' > $@\n\n\
+                    helper:\n\t@printf 'h\\n' > helper\n\t@$(MAKE) -C sub marker\n";
+    let child = "marker: ; @printf 'child\\n' > marker\n";
+    fs::write(directory.join("Makefile"), makefile).unwrap();
+    fs::write(directory.join("sub").join("Makefile"), child).unwrap();
+
+    let output = make_command(&directory).arg("all").output().unwrap();
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    let narrated = String::from_utf8_lossy(&output.stdout).into_owned();
+    assert_eq!(output.status.code(), Some(0), "{said}{narrated}");
+    // The count is the whole point: a read that never settles remakes the
+    // Makefile once per pass until the backstop stops it.
+    assert_eq!(
+        narrated.matches("> gen.mk").count(),
+        1,
+        "the Makefile was remade more than once: {narrated}"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("out")).unwrap(),
+        "from-generated\n"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("sub").join("marker")).unwrap(),
+        "child\n"
+    );
+
+    // `-q` over the same shape answers about the goal alone: GNU Make makes the
+    // Makefile for real and then reports the goal out of date with 1. A run that
+    // gave up at the backstop reports 2, which is a build that broke.
+    let asked = test_directory("makefile-through-a-recursive-prerequisite-question");
+    fs::create_dir(asked.join("sub")).unwrap();
+    fs::write(asked.join("Makefile"), makefile).unwrap();
+    fs::write(asked.join("sub").join("Makefile"), child).unwrap();
+    let output = make_command(&asked).args(["-q", "all"]).output().unwrap();
+    let said = String::from_utf8_lossy(&output.stderr).into_owned();
+    assert_eq!(output.status.code(), Some(1), "{said}");
+    assert_eq!(
+        fs::read_to_string(asked.join("gen.mk")).ok().as_deref(),
+        Some("GENERATED := from-generated\n"),
+        "the question pretended the makefile update: {said}"
+    );
+    assert!(!asked.join("out").exists(), "the goal's recipe ran: {said}");
+}

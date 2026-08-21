@@ -819,8 +819,7 @@ pub(super) fn build_compiler_inputs(
     reported: &mut String,
     output: &mut Option<&mut dyn Write>,
     diagnostics: &mut Option<&mut dyn Write>,
-    settled_boundaries: &mut HashSet<EvaluationBoundary>,
-    read_units: &mut crate::make::ReadJournals,
+    settled: &mut crate::make::Groundwork,
 ) -> Result<Settlement, Error> {
     let CompilerInputBuild {
         loaded,
@@ -838,7 +837,7 @@ pub(super) fn build_compiler_inputs(
     // which is precisely what must not be handed on.
     let mut loaded = loaded;
     for (unit, journal) in loaded.take_units_read() {
-        read_units.entry(unit).or_insert(journal);
+        settled.read_units.entry(unit).or_insert(journal);
     }
     let (mut graph, mut read) = Read::taken_from(loaded);
     let mut recipes = read.recipes.take();
@@ -886,7 +885,7 @@ pub(super) fn build_compiler_inputs(
         reported,
         diagnostics,
         persistence,
-        read_units,
+        &mut settled.read_units,
     )? {
         AfterRemaking::Finished(settlement) => return Ok(settlement),
         AfterRemaking::Stands(persistence, stands) => (persistence, stands),
@@ -900,8 +899,7 @@ pub(super) fn build_compiler_inputs(
                 for_goals: &staged,
             },
             boundaries,
-            settled_boundaries,
-            read_units,
+            settled,
             complaints: &complaints,
             invocation,
             options: &options,
@@ -926,8 +924,8 @@ struct StagedWork<'a> {
     staged: Staged<'a>,
     /// The boundaries this pass reached, which the next one is past.
     boundaries: HashSet<EvaluationBoundary>,
-    settled_boundaries: &'a mut HashSet<EvaluationBoundary>,
-    read_units: &'a mut crate::make::ReadJournals,
+    /// What the passes before this one settled, which this one adds to.
+    settled: &'a mut crate::make::Groundwork,
     complaints: &'a [(Node, String)],
     invocation: &'a Invocation,
     options: &'a BuildOptions,
@@ -957,8 +955,7 @@ fn build_staged_work(
     let StagedWork {
         staged,
         boundaries,
-        settled_boundaries,
-        read_units,
+        settled,
         complaints,
         invocation,
         options,
@@ -995,8 +992,7 @@ fn build_staged_work(
         },
         StagedBoundary {
             boundaries,
-            settled_boundaries,
-            read_units,
+            settled,
             remade,
         },
         reported,
@@ -1045,8 +1041,8 @@ struct Staged<'a> {
 struct StagedBoundary<'a> {
     /// The boundaries this pass reached, which the next one is past.
     boundaries: HashSet<EvaluationBoundary>,
-    settled_boundaries: &'a mut HashSet<EvaluationBoundary>,
-    read_units: &'a mut crate::make::ReadJournals,
+    /// What the passes before this one laid down, which this one adds to.
+    settled: &'a mut crate::make::Groundwork,
     /// Whether the staged work moved a Makefile the read consulted.
     remade: bool,
 }
@@ -1081,8 +1077,7 @@ fn after_staging(
     } = compiled;
     let StagedBoundary {
         boundaries,
-        settled_boundaries,
-        read_units,
+        settled,
         remade,
     } = staged;
     match pass {
@@ -1111,10 +1106,10 @@ fn after_staging(
             // Staged work is on the ground and stays there whichever of the
             // two this is, which is what keeps the boundaries settled across a
             // restart as well as across a repeat.
-            settled_boundaries.extend(boundaries);
+            settled.boundaries.extend(boundaries);
             persistence.finish()?;
             if remade {
-                read_units.clear();
+                settled.read_units.clear();
                 return Ok(Settlement::Restart);
             }
             Ok(Settlement::Staged)

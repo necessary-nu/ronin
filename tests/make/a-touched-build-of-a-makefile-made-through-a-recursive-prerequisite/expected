@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 12
+| # The same shape under -t. The makefile update is not pretended, so helper, the
+| # child and gen.mk are made rather than dated, and only the goal is touched.
+| all: ; @printf '%s\n' '$(GENERATED)' > out
+| 
+| include gen.mk
+| 
+| gen.mk: helper
+| 	@printf 'GENERATED := from-generated\n' > $@
+| 
+| helper:
+| 	@printf 'h\n' > helper
+| 	@$(MAKE) -C sub marker
+file all touched 0
+file gen.mk touched 1
+| GENERATED := from-generated
+file helper touched 1
+| h
+file sub/Makefile kept 1
+| marker: ; @printf %s child-ran > marker.out
+file sub/marker.out touched 2
+| child-ran

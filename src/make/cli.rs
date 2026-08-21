@@ -23,16 +23,15 @@ use crate::build::{BuildOptions, JobLimit};
 use crate::cli::{PRODUCT_NAME, RunResult, Runner};
 use crate::error::CliError;
 use crate::frontend::{Build, BuildGraph, Persistence};
+use crate::make::Shuffle;
 use crate::make::report::{
     ABANDONED, abandoned, answered, discard_intermediates, duplicate_standard_input, finished,
     no_makefile, ordinary_diagnostic,
 };
-use crate::make::{EvaluationBoundary, Shuffle};
 use crate::util::{BString, ByteSlice, terminated};
 use kati::bytes::Bytes;
 use kati::flags::Flags;
 use kati::session::Session;
-use std::collections::HashSet;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -1633,18 +1632,26 @@ fn prepare_graph(
     diagnostics: &mut Option<&mut dyn Write>,
     held: &mut Vec<u8>,
 ) -> Result<PreparedGraph, Error> {
-    let mut settled_boundaries = HashSet::new();
-    // Which units a pass is repeating rather than performing, and what the
-    // ground told each of them the first time. A staging pass re-reads over
-    // text that has not moved, so what the read does on the way through —
-    // `$(info)`, `$(warning)`, `$(file >)` — belongs to the first read of each
-    // unit and not to the repeats; and what the read is TOLD cannot be held
-    // back at all, so the first read's answers are handed back instead. The
-    // ground has moved by then and GNU Make's single read never saw it move.
-    // `build_compiler_inputs` both fills this and empties it, because the pass
-    // that read those units is also the pass that decides whether the next one
-    // is repeating them.
-    let mut read_units = crate::make::ReadJournals::new();
+    // What the passes before each one settled: the compiler-input boundaries
+    // whose staged work is on the ground, the recursive recipes an earlier pass
+    // carried to their end, and which units a pass is repeating rather than
+    // performing.
+    //
+    // A recipe cut into segments has to stop being called begun once it is
+    // over. One that keeps saying it leaves its target dirty for the whole
+    // invocation, so a Makefile made FROM that target is remade on every pass
+    // and starts the read over for ever — where GNU Make restarts once, its
+    // re-exec keeping nothing but the disk.
+    //
+    // A staging pass re-reads over text that has not moved, so what the read
+    // does on the way through — `$(info)`, `$(warning)`, `$(file >)` — belongs
+    // to the first read of each unit and not to the repeats; and what the read
+    // is TOLD cannot be held back at all, so the first read's answers are
+    // handed back instead. The ground has moved by then and GNU Make's single
+    // read never saw it move. `build_compiler_inputs` both fills the journals
+    // and empties them, because the pass that read those units is also the pass
+    // that decides whether the next one is repeating them.
+    let mut settled = crate::make::Groundwork::default();
     let mut restarts = 0_usize;
     for _ in 0..100 {
         // Each pass reads the whole compilation again, so what an earlier one
@@ -1670,19 +1677,23 @@ fn prepare_graph(
             root.level,
             &session,
             root.reporting,
+            restarts,
         );
-        let loaded = match evaluated(
+        let mut loaded = match evaluated(
             session,
             &root.invocation.evals,
             root.invocation.shuffle,
             compilation,
             reported,
-            &settled_boundaries,
-            &read_units,
+            &settled,
         ) {
             Ok(loaded) => loaded,
             Err(refusal) => return led_by_raised(refusal, root.diagnostics, diagnostics, held),
         };
+        // Taken here rather than after the build, because `recipe_begun` is
+        // consulted while compiling: what is recorded now reaches the pass
+        // after this one and not this one.
+        settled.recipes.extend(loaded.take_recipes_carried_whole());
         emit_raised(root.diagnostics, diagnostics, held)?;
         let effective_invocation = evaluated_invocation(loaded.makeflags())?;
         let effective_options = evaluated_build_options(root.options, &effective_invocation);
@@ -1702,14 +1713,8 @@ fn prepare_graph(
             goals: &root.invocation.goals,
             restarts,
         };
-        let settlement = build_compiler_inputs(
-            compiler_inputs,
-            reported,
-            output,
-            diagnostics,
-            &mut settled_boundaries,
-            &mut read_units,
-        );
+        let settlement =
+            build_compiler_inputs(compiler_inputs, reported, output, diagnostics, &mut settled);
         emit_raised(root.diagnostics, diagnostics, held)?;
         match settlement? {
             Settlement::Finished(result) => return Ok(PreparedGraph::Finished(result)),
@@ -2085,6 +2090,7 @@ fn compilation_context(
     level: usize,
     session: &Session,
     reporting: bool,
+    restarts: usize,
 ) -> crate::make::CompilationContext {
     let mut recipe_environment = vec![(
         OsString::from(MAKELEVEL),
@@ -2113,6 +2119,7 @@ fn compilation_context(
         reporting,
         makeflags: propagated_makeflags(invocation),
         always_make: invocation.given(Switch::AlwaysMake),
+        restarted: restarts > 0,
         assumed_new: invocation.assumed_new.clone(),
         level,
         jobs,
@@ -2167,8 +2174,7 @@ fn evaluated(
     shuffle: Shuffle,
     context: crate::make::CompilationContext,
     reported: &str,
-    settled_boundaries: &HashSet<EvaluationBoundary>,
-    read_units: &crate::make::ReadJournals,
+    settled: &crate::make::Groundwork,
 ) -> Result<crate::make::Loaded, RunResult> {
     if let Err(failure) = prepend_command_line_evals(&mut session, evals) {
         return Err(RunResult {
@@ -2188,8 +2194,7 @@ fn evaluated(
     crate::make::load_with_subninjas(
         compilation,
         compile_subninja,
-        settled_boundaries,
-        read_units,
+        settled,
         // Make mode runs the graph it compiles, in the process that compiled
         // it, so a recipe is expanded when its edge is about to run.
         kati::build_sink::RecipeExpansion::Launch,

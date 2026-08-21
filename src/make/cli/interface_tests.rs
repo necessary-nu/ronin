@@ -266,6 +266,7 @@ fn eval_fragments_reach_compilation() {
         0,
         &session,
         false,
+        0,
     );
     let loaded = super::evaluated(
         session,
@@ -273,8 +274,7 @@ fn eval_fragments_reach_compilation() {
         Shuffle::None,
         context,
         "",
-        &std::collections::HashSet::new(),
-        &crate::make::ReadJournals::new(),
+        &crate::make::Groundwork::default(),
     )
     .expect("the goal supplied only by --eval must compile into the graph");
     let target = loaded
@@ -320,6 +320,7 @@ fn generated_include_is_provisional_graph_root() {
         0,
         &session,
         false,
+        0,
     );
     let loaded = super::evaluated(
         session,
@@ -327,8 +328,7 @@ fn generated_include_is_provisional_graph_root() {
         Shuffle::None,
         context,
         "",
-        &std::collections::HashSet::new(),
-        &crate::make::ReadJournals::new(),
+        &crate::make::Groundwork::default(),
     )
     .expect("the missing include's rule should compile provisionally");
 

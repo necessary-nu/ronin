@@ -206,6 +206,8 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             // No invocation to have carried the switch: this entry compiles a
             // Makefile for a caller that runs the graph itself.
             always_make: false,
+            // One read, so it has not started over.
+            restarted: false,
             assumed_new: Vec::new(),
             level,
             jobs: session.flags.num_jobs.max(1),
@@ -222,10 +224,10 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
     load_with_subninjas_unlocked(
         compilation,
         cli::compile_subninja,
-        &HashSet::new(),
-        // One pass, so nothing is read twice, nothing is repeating, and
-        // nothing has an earlier read's answers to be handed.
-        &ReadJournals::new(),
+        // One pass, so nothing was staged, no recipe was carried to its end by
+        // an earlier one, nothing is read twice, and nothing has an earlier
+        // read's answers to be handed.
+        &Groundwork::default(),
         RecipeExpansion::Construction,
     )
 }
@@ -272,6 +274,23 @@ pub(crate) struct CompilationContext {
     /// Inherited by every child compilation, because `-B` reaches a recursive
     /// child through `MAKEFLAGS` and a child of a forced Make is forced.
     pub(crate) always_make: bool,
+    /// Whether the read has already started over, which is what takes `-B` off
+    /// the makefile update.
+    ///
+    /// GNU Make sets `always_make_flag = always_make_set && (restarts == 0)`
+    /// ahead of the update and back to `always_make_set` for the goals
+    /// (main.c), so a restarted read stops forcing the Makefiles and goes on
+    /// forcing the goals. Ronin compiles ONE graph for both phases, and the
+    /// phase a recursive recipe belongs to is known right where the question is
+    /// asked — `made_for_a_makefile` is that answer — so the rule is applied a
+    /// recipe at a time instead of a phase at a time.
+    ///
+    /// Without it a Makefile made through a forced recursion is remade on every
+    /// pass, moves its own stamp, and the read never settles.
+    ///
+    /// Inherited by every child compilation for the reason `always_make` is:
+    /// the restart belongs to the invocation and not to one of its units.
+    pub(crate) restarted: bool,
     /// The names `-W` gave this invocation, which are infinitely new.
     ///
     /// Carried here for the reason `always_make` is, and for the same single
@@ -455,6 +474,26 @@ struct CompilationState<'a> {
     refusals: Vec<RefusedMakefile>,
     settled_boundaries: &'a HashSet<EvaluationBoundary>,
     evaluation_boundaries: HashSet<EvaluationBoundary>,
+    /// The recursive recipes an earlier pass carried to their end.
+    ///
+    /// A recipe cut into segments is mid-flight from the moment its first
+    /// segment is staged until the wrapper holding the rest of it runs, and
+    /// [`Self::recipe_begun`] is what says so. It has to stop saying it. A
+    /// recipe still called begun on every later pass leaves its target dirty
+    /// for the whole invocation, and a Makefile made FROM that target is then
+    /// remade on every pass, moves its own stamp, and starts the read over
+    /// again — where GNU Make restarts once and settles, because after its
+    /// re-exec nothing survives but the disk.
+    finished_recipes: &'a HashSet<RecursiveRecipe>,
+    /// The recursive recipes this pass compiled whole, which the pass after it
+    /// counts as finished.
+    ///
+    /// Recorded here and weighed by the caller, because whether the pass ran
+    /// them is not a fact about the compilation: a pass that stopped at some
+    /// other recipe's boundary builds the staged work alone, so a wrapper it
+    /// composed on the way there has not run and its recipe is still in
+    /// flight. See [`Loaded::completed_recipes`].
+    completed_recipes: HashSet<RecursiveRecipe>,
     /// The outputs of every recursive wrapper this pass staged and did not
     /// finish, because the compilation stopped at a boundary before its
     /// children were composed.
@@ -537,7 +576,8 @@ impl CompilationState<'_> {
         }
     }
 
-    /// Whether this recursive recipe has already run part of itself.
+    /// Whether this recursive recipe has already run part of itself, and not
+    /// yet all of it.
     ///
     /// A settled boundary is work an earlier pass of this same invocation put
     /// on the ground. Two of the three kinds are the recipe's own: the lines
@@ -546,7 +586,17 @@ impl CompilationState<'_> {
     /// prerequisites — is not the recipe, it is what GNU Make settles before
     /// the recipe begins, and building it is no reason to call the recipe
     /// started.
+    ///
+    /// A recipe an earlier pass carried to its end is not begun but over: what
+    /// reads its target from here reads a file, exactly as it does for a
+    /// Makefile the update reached and won (`mark_makefiles_settled`). See
+    /// [`Self::finished_recipes`] for what happens when it keeps saying begun.
     fn recipe_begun(&self, compilation_key: &[u8], pending_index: usize) -> bool {
+        if self.finished_recipes.iter().any(|recipe| {
+            recipe.compilation_key == compilation_key && recipe.pending_index == pending_index
+        }) {
+            return false;
+        }
         self.settled_boundaries.iter().any(|boundary| {
             boundary.compilation_key == compilation_key
                 && boundary.pending_index == pending_index
@@ -593,6 +643,19 @@ impl CompilationState<'_> {
     }
 }
 
+/// One recursive recipe of one compilation unit, named by where it sits.
+///
+/// A recipe holding a composed `$(MAKE)` is cut into segments and finished
+/// across several passes, so the passes need a name for it that survives them.
+/// The unit's cache key and the recipe's place among that unit's recursive
+/// recipes are that name — the same pair an [`EvaluationBoundary`] is keyed on,
+/// which is how a boundary and the recipe it belongs to find each other.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub(crate) struct RecursiveRecipe {
+    compilation_key: Vec<u8>,
+    pending_index: usize,
+}
+
 /// The work that must finish before one recursive child can be evaluated.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub(crate) struct EvaluationBoundary {
@@ -616,22 +679,36 @@ enum EvaluationPredecessor {
 pub(crate) fn load_with_subninjas<F>(
     root: Compilation,
     resolve: F,
-    settled_boundaries: &HashSet<EvaluationBoundary>,
-    read_units: &ReadJournals,
+    settled: &Groundwork,
     expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError>
 where
     F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
     let _directory = compilation_directory_guard();
-    load_with_subninjas_unlocked(root, resolve, settled_boundaries, read_units, expansion)
+    load_with_subninjas_unlocked(root, resolve, settled, expansion)
+}
+
+/// What the passes before this one settled, which this one starts from.
+///
+/// Carried as one value because the three answer one question between them —
+/// what of this invocation is already done — and because a pass that adds to
+/// any of them is adding to the same record.
+#[derive(Default)]
+pub(crate) struct Groundwork {
+    /// The compiler-input boundaries whose staged work is on the ground.
+    pub(crate) boundaries: HashSet<EvaluationBoundary>,
+    /// The recursive recipes an earlier pass carried to their end.
+    pub(crate) recipes: HashSet<RecursiveRecipe>,
+    /// The units an earlier pass read, which this one repeats rather than
+    /// performs.
+    pub(crate) read_units: ReadJournals,
 }
 
 fn load_with_subninjas_unlocked<F>(
     root: Compilation,
     mut resolve: F,
-    settled_boundaries: &HashSet<EvaluationBoundary>,
-    read_units: &ReadJournals,
+    settled: &Groundwork,
     expansion: RecipeExpansion,
 ) -> Result<Loaded, MakeError>
 where
@@ -650,11 +727,13 @@ where
         forgiven_remakes: Vec::new(),
         unread_remakes: Vec::new(),
         remake_complaints: Vec::new(),
-        settled_boundaries,
+        settled_boundaries: &settled.boundaries,
         refusals: Vec::new(),
         evaluation_boundaries: HashSet::new(),
+        finished_recipes: &settled.recipes,
+        completed_recipes: HashSet::new(),
         unfinished: Vec::new(),
-        read_units,
+        read_units: &settled.read_units,
         units_read: ReadJournals::new(),
     };
     let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
@@ -671,6 +750,7 @@ where
         remake_complaints: state.remake_complaints,
         refusals: state.refusals,
         evaluation_boundaries: state.evaluation_boundaries,
+        completed_recipes: state.completed_recipes,
         unfinished: state.unfinished,
         units_read: state.units_read,
         makeflags: root.makeflags,
@@ -925,16 +1005,27 @@ where
             sink.mark_subgraphs_prebuilt(&parent_inputs);
         }
 
-        // `-B` outranks the disk here exactly as it does in the build: GNU
-        // Make's `always_make_flag` makes every target with a recipe out of
-        // date, and a recursive recipe is a recipe.
-        let begun =
-            state.recipe_begun(compilation_key, pending_index) || descendant_context.always_make;
+        let begun = state.recipe_begun(compilation_key, pending_index);
+        // `-B` outranks the disk for the COMPOSITION exactly as it does in the
+        // build: GNU Make's `always_make_flag` makes every target with a recipe
+        // out of date, a recursive recipe is a recipe, and a wrapper the switch
+        // is going to force has to reach the graph as a recursion rather than
+        // be short-circuited to a phony. In the phase the switch is on for:
+        // GNU turns it off across the makefile update of a restarted read and
+        // back on for the goals, and `for_makefile` is which phase this recipe
+        // belongs to. See [`CompilationContext::restarted`].
+        //
+        // And it stops at the composition. `recipe_begun` on the finished edge
+        // is a fact about work that has already happened, which no switch can
+        // make untrue and no phase can turn off; spelling `-B` that way makes
+        // the update force what GNU has stopped forcing.
+        let forced =
+            descendant_context.always_make && !(for_makefile && descendant_context.restarted);
         let wrapper = match stage_recursive_wrapper(
             sink,
             &mut pending,
             &disk,
-            begun,
+            begun || forced,
             &descendant_context.assumed_new,
         )? {
             RecursiveWrapper::Current(wrapper) => {
@@ -963,6 +1054,12 @@ where
         let wrapper = sink
             .complete_subninja(wrapper, pending, &child_groups, begun)
             .map_err(MakeError::Construct)?;
+        // Compiled whole: every segment of this recipe is in the graph, so the
+        // pass that builds this graph is the one that runs the rest of it.
+        state.completed_recipes.insert(RecursiveRecipe {
+            compilation_key: compilation_key.to_vec(),
+            pending_index,
+        });
         for edge in child_groups.into_iter().flat_map(|child| child.edges) {
             if !subtree_edges.contains(&edge) {
                 subtree_edges.push(edge);
@@ -1479,6 +1576,14 @@ pub struct Loaded {
     refusals: Vec<RefusedMakefile>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
     evaluation_boundaries: HashSet<EvaluationBoundary>,
+    /// The recursive recipes this read compiled whole.
+    ///
+    /// Worth carrying out because a recipe cut into segments has to stop being
+    /// called begun once it is over — see `CompilationState::finished_recipes`
+    /// — and only the caller knows whether this pass was the one that ran it.
+    /// Ask [`Self::compilation_ran_to_the_end`] first: a read that stopped at a
+    /// boundary builds the staged work alone.
+    completed_recipes: HashSet<RecursiveRecipe>,
     /// The targets of every recursive recipe this read staged and did not
     /// finish compiling, whose edges still hold the freshness probe.
     unfinished: Vec<Node>,
@@ -1614,6 +1719,25 @@ impl Loaded {
     #[must_use]
     pub(crate) fn unfinished_targets(&self) -> &[Node] {
         &self.unfinished
+    }
+
+    /// The recursive recipes this pass carried whole, taken out for the passes
+    /// that follow.
+    ///
+    /// EMPTY for a read that stopped at a boundary, however much it composed on
+    /// the way there. Such a pass builds the staged work and nothing else, so a
+    /// wrapper it assembled has not run and its recipe is still in flight —
+    /// which is the difference between a recipe a pass finished and one it
+    /// merely put together. A read that reached the end of every unit hands
+    /// over a graph holding every recipe whole, and the pass over it is the one
+    /// that BUILDS: the makefile update, and then the goals.
+    #[must_use]
+    pub(crate) fn take_recipes_carried_whole(&mut self) -> HashSet<RecursiveRecipe> {
+        if self.evaluation_boundaries.is_empty() {
+            std::mem::take(&mut self.completed_recipes)
+        } else {
+            HashSet::new()
+        }
     }
 
     /// The units this pass read, which a later pass over the same text is

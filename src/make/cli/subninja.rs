@@ -116,6 +116,7 @@ pub(in crate::make) fn compile(
             path_prefix,
             makeflags,
             always_make: parent.always_make,
+            restarted: parent.restarted,
             // Deliberately not `parent.assumed_new`. GNU Make does not put
             // `-W` in `MAKEFLAGS`, so a recursive child is never told about a
             // file the parent was asked to pretend was new — and the names are
