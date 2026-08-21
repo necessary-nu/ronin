@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-21T05:09:57.346756757Z
+last_sync_at 2026-08-21T05:25:20.303712313Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -52,12 +52,14 @@ rule_versions (
 )
 
 derived_priorities (
+    {id a-composed-recipe-segment-arrives-without-its-lines, priority 3, derived_at 2026-08-21T05:25:20.303712313Z}
     {id a-makefile-made-through-a-recursive-prerequisite-never-settles, priority 2, derived_at 2026-08-21T04:53:05.472910521Z}
     {id a-recursive-recipe-that-writes-its-own-target-first, priority 0, derived_at 2026-08-21T01:25:26.204987864Z}
     {id a-recursive-recipes-freshness-probe-cannot-see-dash-w, priority 1, derived_at 2026-08-21T03:40:42.512499937Z}
     {id a-remade-makefile-that-composes-a-recursion-runs-the-probe, priority 0, derived_at 2026-08-21T01:56:43.16299854Z}
     {id a-remade-makefiles-recipe-hands-its-child-the-pretending-switches, priority 2, derived_at 2026-08-21T04:53:05.472910521Z}
     {id a-staged-recipe-segment-obeys-n-and-t-where-a-remake-would-not, priority 1, derived_at 2026-08-21T03:40:42.512499937Z}
+    {id an-oversized-recipes-marked-lines-cannot-be-split-out, priority 3, derived_at 2026-08-21T05:25:20.303712313Z}
     {id builtin-shell-design, priority 0, derived_at 2026-08-20T20:57:41.240518327Z}
     {id builtin-shell-flip, priority 2, derived_at 2026-08-20T20:57:41.240518327Z}
     {id builtin-shell-flip-left-the-clippy-gate-red, priority 3, derived_at 2026-08-20T20:57:41.240518327Z}
