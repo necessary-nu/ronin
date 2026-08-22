@@ -1,0 +1,25 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # Each `::` record was filed under the name the makefile wrote, and the rename
+| # moves the target rather than the records. Both run, both make the found path,
+| # and the stem each reads is the renamed name with a known suffix taken off.
+| VPATH = build
+| GPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o:: out.c ; @printf 'one [%s] from [%s] stem [%s]\n' '$@' '$<' '$*' > one
+| out.o:: out.h ; @printf 'two [%s] from [%s] stem [%s]\n' '$@' '$<' '$*' > two
+file build/out.o kept 1
+| old
+file one touched 1
+| one [build/out.o] from [out.c] stem [build/out]
+file out.c kept 1
+| src
+file out.h kept 1
+| hdr
+file seen touched 1
+| all sees build/out.o
+file two touched 1
+| two [build/out.o] from [out.h] stem [build/out]

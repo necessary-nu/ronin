@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # One rule, two targets, and only one of them found elsewhere. Each keeps the
+| # prerequisite its own name derived, so the renamed target reads out.c and the
+| # one that stayed here reads two.c.
+| VPATH = build
+| GPATH = build
+| 
+| all: out.o two.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o two.o: %.o: %.c ; @printf 'made [%s] from [%s] stem [%s]\n' '$@' '$<' '$*' > $@
+file build/out.o touched 1
+| made [build/out.o] from [out.c] stem [out]
+file out.c kept 1
+| one
+file seen touched 1
+| all sees build/out.o two.o
+file two.c kept 1
+| two
+file two.o touched 1
+| made [two.o] from [two.c] stem [two]

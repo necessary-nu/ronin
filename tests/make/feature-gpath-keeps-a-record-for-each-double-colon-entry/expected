@@ -1,0 +1,25 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # A `::` entry that is also a static pattern rule records its own prerequisite
+| # per target, so the rename carries two records rather than one and each entry
+| # reads the source its own prerequisite pattern derived.
+| VPATH = build
+| GPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o:: %.o: %.c ; @printf 'one [%s] from [%s] stem [%s]\n' '$@' '$<' '$*' > one
+| out.o:: %.o: %.h ; @printf 'two [%s] from [%s] stem [%s]\n' '$@' '$<' '$*' > two
+file build/out.o kept 1
+| old
+file one touched 1
+| one [build/out.o] from [out.c] stem [out]
+file out.c kept 1
+| src
+file out.h kept 1
+| hdr
+file seen touched 1
+| all sees build/out.o
+file two touched 1
+| two [build/out.o] from [out.h] stem [out]

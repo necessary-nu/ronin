@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # A `%` in a static pattern rule's second-expanded prerequisites stands for the
+| # stem the read worked out, and the read worked it out against the name as
+| # written. So the rename does not send it looking for build/out.h.
+| .SECONDEXPANSION:
+| VPATH = build
+| GPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o: %.o: %.c $$(addsuffix .h,%) ; @printf 'made [%s] whole [%s] stem [%s]\n' '$@' '$^' '$*' > $@
+file build/out.o touched 1
+| made [build/out.o] whole [out.c out.h] stem [out]
+file out.c kept 1
+| src
+file out.h kept 1
+| hdr
+file seen touched 1
+| all sees build/out.o

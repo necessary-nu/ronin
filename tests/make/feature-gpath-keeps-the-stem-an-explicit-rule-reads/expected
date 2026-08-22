@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # An explicit rule records no target pattern, so there is no stem to carry and
+| # `$*` is read the way Unix Make reads one: the target's own name with a known
+| # suffix taken off. That name is the one the rename left, directory and all.
+| VPATH = build
+| GPATH = build
+| .SUFFIXES: .o .c
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o: out.c ; @printf 'made [%s] from [%s] stem [%s]\n' '$@' '$<' '$*' > $@
+file build/out.o touched 1
+| made [build/out.o] from [out.c] stem [build/out]
+file out.c kept 1
+| src
+file seen touched 1
+| all sees build/out.o
