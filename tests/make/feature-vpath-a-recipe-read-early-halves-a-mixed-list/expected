@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # A list holding both a name the build has still to settle and one it never had
+| # to: the reference is halved by choosing the half's own reference, and the name
+| # beside it is halved here and now.
+| VPATH = build
+| 
+| all: out.o sub/plain.h ; @printf 'hatD [%s] hatF [%s] new [%s]\n' '$(^D)' '$(^F)' '$?' > seen
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file seen touched 1
+| hatD [build sub] hatF [out.o plain.h] new [build/out.o sub/plain.h]
+file sub/plain.h kept 1
+| plain

@@ -23,6 +23,8 @@ use std::num::NonZeroUsize;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
+mod invented;
+
 /// The binding names an edge kati produced can carry.
 ///
 /// Interned once. Every edge names most of them, and interning is a hash of the
@@ -793,6 +795,56 @@ impl GraphSink {
         Ok(resolved)
     }
 
+    /// Both halves of what the directory search left for the build to settle:
+    /// where this target was found, and the references its own command carries
+    /// for prerequisites that were.
+    ///
+    /// The first is said of the output because it is the file that was found,
+    /// and everything that asks — the edge's own freshness, and the name a
+    /// dependent reads it by — asks about the name. The second is said
+    /// relative to the unit's own directory, because the command runs where its
+    /// Makefile was read and names its prerequisites the way that Makefile did.
+    fn record_searched_spellings(
+        &mut self,
+        built: Edge,
+        names: &dyn Interner,
+        edge: &SinkEdge<'_>,
+        output: Option<Node>,
+    ) -> Result<(), anyhow::Error> {
+        let found = edge
+            .searched_at
+            .zip(output)
+            .map(|(found, output)| (output, names.symtab().name(found)));
+        // The variable's spelling is kept as kati wrote it, for the same reason
+        // `published_names` keeps its own: a name this side does not use is not
+        // a path this side may relocate.
+        let mut references = Vec::with_capacity(edge.settled_names.len());
+        for settled in edge.settled_names {
+            let node = self.node(names, settled.input)?;
+            references.push((
+                names.symtab().name(settled.variable).to_vec(),
+                node,
+                match settled.view {
+                    kati::build_sink::SettledNameView::Whole => crate::graph::SettledView::Whole,
+                    kati::build_sink::SettledNameView::Directory => {
+                        crate::graph::SettledView::Directory
+                    }
+                    kati::build_sink::SettledNameView::Filename => {
+                        crate::graph::SettledView::Filename
+                    }
+                },
+            ));
+        }
+        let directory = self.unit.path_prefix.as_os_str().as_bytes().to_vec();
+        self.graph.set_searched_spellings(
+            built,
+            found.as_ref().map(|(output, found)| (*output, &**found)),
+            &directory,
+            references,
+        );
+        Ok(())
+    }
+
     fn deferred_edge(
         &mut self,
         names: &dyn Interner,
@@ -809,45 +861,6 @@ impl GraphSink {
             excluded_new_inputs: self.node_list(names, edge.deferred_excluded_new_inputs)?,
             new_input_names: self.published_names(names, edge.deferred_new_input_names)?,
         }))
-    }
-
-    /// A recursive child may build the real member named by its parent
-    /// grouped action. The parent's public completion point therefore needs a
-    /// graph-only identity while it continues to observe that real file.
-    fn completion_proxy(&mut self) -> Result<Node, anyhow::Error> {
-        loop {
-            let path = format!(".ronin_grouped_join/{}", self.completion_proxies);
-            self.completion_proxies += 1;
-            if self.graph.lookup(path.as_bytes()).is_some() {
-                continue;
-            }
-            return self
-                .graph
-                .node(path.as_bytes())
-                .map_err(|failure| self.refuse(failure));
-        }
-    }
-
-    /// A run of a recipe's own lines makes no file the Makefile named, so it
-    /// needs a name of its own for the compilation to ask for it by.
-    ///
-    /// Never written and never read: the edge under it is always dirty, and
-    /// what makes the run count is the compiler seeing it finish rather than
-    /// anything appearing on the disk. Said to the graph rather than left to be
-    /// inferred, because the build cannot tell a handle from a file by looking
-    /// at it and would otherwise create the directory this name appears to sit
-    /// in.
-    fn recipe_stage_proxy(&mut self) -> Result<Node, FrontendError> {
-        loop {
-            let path = format!(".ronin_recipe_stage/{}", self.recipe_stages);
-            self.recipe_stages += 1;
-            if self.graph.lookup(path.as_bytes()).is_some() {
-                continue;
-            }
-            let node = self.graph.node(path.as_bytes())?;
-            self.graph.mark_invented_output(node);
-            return Ok(node);
-        }
     }
 
     /// Qualify a Makefile-relative auxiliary path the same way as its graph
@@ -1440,14 +1453,7 @@ impl BuildSink for GraphSink {
                 self.graph
                     .set_withdrawal(built, withdrawal.outputs, withdrawal.on_error);
                 self.graph.set_peer_outputs(built, peer_outputs);
-                // Where the directory search found this target, said of the
-                // output because it is the file that was found and everything
-                // that asks — the edge's own freshness, and the name a
-                // dependent reads it by — asks about the name.
-                if let (Some(found), Some(output)) = (edge.searched_at, outputs.first()) {
-                    self.graph
-                        .set_searched_at(*output, &names.symtab().name(found));
-                }
+                self.record_searched_spellings(built, names, edge, outputs.first().copied())?;
                 if let Some(deferred) = deferred {
                     self.defer_freshness(built, &deferred);
                 }

@@ -16,10 +16,58 @@ use crate::util::{BString, ByteSlice as _};
 use std::io;
 use std::path::Path;
 
+/// Which part of a settled name one reference stands for.
+///
+/// GNU Make reads a prerequisite in three forms — the name, the directory it
+/// carries, and the name with that directory taken off — and a reference is
+/// written for the form the recipe asked for, because a reference is one word
+/// with no directory in it and halving it would answer about the reference.
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) enum SettledView {
+    /// The whole name.
+    Whole,
+    /// The directory the name carries, and `.` for a name that carries none.
+    Directory,
+    /// The name with that directory taken off.
+    Filename,
+}
+
+/// One name a front end could not write down, and the name it wrote instead.
+pub(crate) struct SettledNameReference {
+    /// The name the command reads the spelling from.
+    pub(crate) variable: BString,
+    /// The node it stands for.
+    pub(crate) node: NodeId,
+    /// Which part of that node's settled name to substitute.
+    pub(crate) view: SettledView,
+}
+
+/// Every such reference in one edge's command, and where they are spelt from.
+pub(crate) struct SettledNames {
+    /// The directory the command runs in, and so the directory the names it
+    /// reads are relative to. Empty for a command that runs where the build
+    /// does, which is the common case.
+    pub(crate) directory: BString,
+    pub(crate) references: Vec<SettledNameReference>,
+}
+
 impl Graph {
     /// Where else `node` may be found, when it is not where it is named.
     pub(crate) fn searched_at(&self, id: NodeId) -> Option<&BString> {
         self.searched_at.get(&id)
+    }
+
+    /// The spellings this edge's command left for the build to fill in.
+    pub(crate) fn settled_names(&self, edge: EdgeId) -> Option<&SettledNames> {
+        self.settled_names.get(&edge)
+    }
+
+    /// Say that `edge`'s command carries references rather than names.
+    pub(crate) fn set_settled_names(&mut self, edge: EdgeId, settled: SettledNames) {
+        if settled.references.is_empty() {
+            return;
+        }
+        self.settled_names.insert(edge, settled);
     }
 
     /// Say that `node` was found at `found`, and so is observed there for as

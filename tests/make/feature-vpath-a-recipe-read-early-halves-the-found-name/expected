@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The `D` and `F` forms are halves of the same names, so a recipe read early
+| # carries a reference per half rather than halving the reference.
+| VPATH = build
+| 
+| all: out.o ; @printf 'hatD [%s] hatF [%s] lessD [%s] lessF [%s] new [%s]\n' '$(^D)' '$(^F)' '$(<D)' '$(<F)' '$?' > seen
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file seen touched 1
+| hatD [build] hatF [out.o] lessD [build] lessF [out.o] new [build/out.o]

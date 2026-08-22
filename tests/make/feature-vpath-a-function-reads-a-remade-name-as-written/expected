@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # The other side of the boundary the marker beside this records. A prerequisite
+| # the build remade here has one name again, so a function handed it reads what
+| # GNU Make's would: declining the reference inside a function argument is what
+| # keeps this case answering as it always did.
+| VPATH = build
+| 
+| all: out.o plain.h ; @printf 'whole [%s] filtered [%s] based [%s] new [%s]\n' '$^' '$(filter %.o,$^)' '$(basename $^)' '$?' > seen
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file out.o touched 1
+| made
+file plain.h kept 1
+| plain
+file seen touched 1
+| whole [out.o plain.h] filtered [out.o] based [out plain] new [out.o plain.h]

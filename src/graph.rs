@@ -33,7 +33,10 @@ use marks::{VisitMarks, VisitState};
 pub(crate) use path::{nodepath_bytes, shell_escape_path};
 pub(crate) use peer::trigger_output;
 use searched::settle_searched_outputs;
-pub(crate) use searched::{elsewhere_mtime, found_name_stands, mark_written_here};
+pub(crate) use searched::{
+    SettledNameReference, SettledNames, SettledView, elsewhere_mtime, found_name_stands,
+    mark_written_here,
+};
 use std::io;
 use std::path::Path;
 use withdrawal::Withdrawal;
@@ -279,6 +282,14 @@ pub(crate) struct Graph {
     /// it is made when something has. Beside the arena for the reason
     /// `withdrawal` is: no node of a Ninja manifest is ever in it.
     searched_at: crate::htab::RapidHashMap<NodeId, BString>,
+    /// The spellings a front end left for the build to fill in, for the edges
+    /// whose command it had to read before the build could settle them.
+    ///
+    /// The other end of `searched_at`: a command that names a node with two
+    /// names, written down before the build chose between them, carries a
+    /// reference where the name would have gone. Beside the arena for the same
+    /// reason: no manifest edge has one.
+    settled_names: crate::htab::RapidHashMap<EdgeId, SettledNames>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
     names: crate::names::Names,

@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # The boundary of what a reference can do. A word standing for a name the build
+| # has still to settle reaches the command whole, and a function handed one
+| # reads a word whose content is not the name: `$(filter %.o,$^)` would match
+| # nothing and `$(basename $^)` would cut nothing off. So a value a function is
+| # about to read carries the name as written instead.
+| VPATH = build
+| 
+| all: out.o plain.h ; @printf 'whole [%s] filtered [%s] based [%s] new [%s]\n' '$^' '$(filter %.o,$^)' '$(basename $^)' '$?' > seen
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file plain.h kept 1
+| plain
+file seen touched 1
+| whole [build/out.o plain.h] filtered [build/out.o] based [build/out plain] new [build/out.o plain.h]

@@ -1,0 +1,6 @@
+mkdir -p build
+printf 'source\n' > out.c
+printf 'plain\n' > plain.h
+printf 'old\n' > build/out.o
+touch -d '2021-01-01 00:00' build/out.o
+touch -d '2020-01-01 00:00' out.c plain.h

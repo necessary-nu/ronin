@@ -798,6 +798,7 @@ assertions (
     {id make-vpath-found-name-merges-two-declared-targets, kind @complete, author "brendan@necessary.nu", at 2026-08-22T05:28:31.453634792Z}
     {id make-upstream-intermediate-sweep-narration-unrecognised, kind @complete, author "brendan@necessary.nu", at 2026-08-22T05:47:56.494706891Z}
     {id make-gpath-rename-keeps-the-recorded-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-22T06:23:32.539880754Z}
+    {id make-vpath-name-reaches-a-recipe-read-early, kind @complete, author "brendan@necessary.nu", at 2026-08-22T07:08:40.400870179Z}
 )
 
 impl_evidence (

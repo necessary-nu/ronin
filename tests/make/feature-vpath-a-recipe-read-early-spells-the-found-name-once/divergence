@@ -1,1 +1,0 @@
-Ronin spells a found-current prerequisite as written in `$^`, `$<` and `$+` when the recipe also names `$?`, because that recipe is read before the build and those names are settled into its text; make-vpath-name-reaches-a-recipe-read-early.

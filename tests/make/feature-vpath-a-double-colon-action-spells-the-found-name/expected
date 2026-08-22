@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # Each `::` record is an action of its own and its recipe is read while the
+| # graph is built, so it carries the same references a `$?` recipe does.
+| VPATH = build
+| 
+| all:: out.o ; @printf 'one [%s] first [%s]\n' '$^' '$<' > one
+| 
+| all:: out.o ; @printf 'two [%s] first [%s]\n' '$^' '$<' > two
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file one touched 1
+| one [build/out.o] first [build/out.o]
+file out.c kept 1
+| source
+file two touched 1
+| two [build/out.o] first [build/out.o]

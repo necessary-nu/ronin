@@ -285,12 +285,65 @@ impl Builder<'_> {
         value
     }
 
+    /// The spelling this build settled on for one node a front end could not
+    /// write down, seen the way the reference that stands for it asks.
+    ///
+    /// The same reading `$?` gets, and deliberately: GNU Make reads every
+    /// prerequisite name off the file objects `update_file_1` has already
+    /// chosen the names of, so a recipe read early has to be answered the same
+    /// way as one read late.
+    fn settled_spelling(&self, node: NodeId, view: NewInputsView, directory: &[u8]) -> Vec<u8> {
+        let path = match self.graph.searched_at(node) {
+            Some(found) if crate::graph::found_name_stands(&self.runtime, node) => found.as_bstr(),
+            _ => self.graph.node_path(node),
+        };
+        view_of(&relative_to(path.as_bytes(), directory), view).to_vec()
+    }
+
+    /// Fill in the names an early-read command carries references for.
+    ///
+    /// Separate from the late new-input value above because an edge can have
+    /// either without the other: a recursive child's recipe names no `$?` and
+    /// still names prerequisites the build had to settle.
+    fn resolve_settled_names(
+        &self,
+        edge: EdgeId,
+        source: &BString,
+        context: NewInputsReferenceContext,
+    ) -> BString {
+        let Some(settled) = self.graph.settled_names(edge) else {
+            return source.clone();
+        };
+        let mut resolved = source.clone();
+        for reference in &settled.references {
+            let view = match reference.view {
+                crate::graph::SettledView::Whole => NewInputsView::Whole,
+                crate::graph::SettledView::Directory => NewInputsView::Split(PathHalf::Directory),
+                crate::graph::SettledView::Filename => NewInputsView::Split(PathHalf::Filename),
+            };
+            let value = self.settled_spelling(reference.node, view, settled.directory.as_bytes());
+            let mut spelt = Vec::with_capacity(reference.variable.len() + 4);
+            spelt.extend_from_slice(b"${");
+            spelt.extend_from_slice(reference.variable.as_bytes());
+            spelt.push(b'}');
+            resolved = match context {
+                NewInputsReferenceContext::InlineCommand => {
+                    spelt.insert(0, b'\\');
+                    replace_all(&resolved, &spelt, &escape_double_quoted_shell(&value))
+                }
+                NewInputsReferenceContext::ResponseFile => replace_all(&resolved, &spelt, &value),
+            };
+        }
+        resolved
+    }
+
     fn resolve_deferred_new_inputs(
         &self,
         edge: EdgeId,
         source: &BString,
         context: NewInputsReferenceContext,
     ) -> BString {
+        let source = &self.resolve_settled_names(edge, source, context);
         let Some(freshness) = self.graph.deferred_freshness(edge) else {
             return source.clone();
         };

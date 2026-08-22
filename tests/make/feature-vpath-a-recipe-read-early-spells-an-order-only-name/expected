@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # An order-only prerequisite is searched for like any other, and `$|` reads it
+| # off the same file object the rest do.
+| VPATH = build
+| 
+| all: plain.h | out.o ; @printf 'bar [%s] whole [%s] new [%s]\n' '$|' '$^' '$?' > seen
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file plain.h kept 1
+| plain
+file seen touched 1
+| bar [build/out.o] whole [plain.h] new [plain.h]

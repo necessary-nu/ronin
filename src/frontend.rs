@@ -614,8 +614,42 @@ impl BuildGraph {
     /// Nothing in a Ninja manifest says this, so a graph parsed from one never
     /// carries it — the same bounded divergence `intermediate` and `disposable`
     /// already have.
-    pub(crate) fn set_searched_at(&mut self, output: Node, found: &[u8]) {
-        self.arenas.set_searched_at(output.0, found.into());
+    /// The second half is the same answer about this edge's PREREQUISITES. A
+    /// front end that runs the build expands a recipe as it launches it and so
+    /// writes whatever name the build settled on; some recipes it has to read
+    /// for itself while the graph is being built — a recursive child, an
+    /// automatic depfile, a grouped action, a value the scheduler binds — and
+    /// those are written before any of that is decided. Each such name is a
+    /// reference instead, spelt relative to `directory`, and the build
+    /// substitutes the spelling.
+    ///
+    /// Both halves are carried, not interpreted: nothing here reads any name.
+    pub(crate) fn set_searched_spellings(
+        &mut self,
+        edge: Edge,
+        found: Option<(Node, &[u8])>,
+        directory: &[u8],
+        references: Vec<(Vec<u8>, Node, crate::graph::SettledView)>,
+    ) {
+        if let Some((output, found)) = found {
+            self.arenas.set_searched_at(output.0, found.into());
+        }
+        self.arenas.set_settled_names(
+            edge.0,
+            crate::graph::SettledNames {
+                directory: directory.into(),
+                references: references
+                    .into_iter()
+                    .map(
+                        |(variable, node, view)| crate::graph::SettledNameReference {
+                            variable: variable.as_slice().into(),
+                            node: node.0,
+                            view,
+                        },
+                    )
+                    .collect(),
+            },
+        );
     }
 
     /// The value `edge`'s own bindings give `name`, before its rule or the

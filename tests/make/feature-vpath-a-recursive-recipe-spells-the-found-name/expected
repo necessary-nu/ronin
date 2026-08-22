@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # A recipe composing a recursive `$(MAKE)` is one the compiler has to read
+| # before the build, so the names in it are references until the build settles
+| # which of a searched-for prerequisite's two names stands.
+| VPATH = build
+| 
+| all: out.o ; @printf 'whole [%s] first [%s]\n' '$^' '$<' > seen; $(MAKE) -f sub.mk
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file seen touched 1
+| whole [build/out.o] first [build/out.o]
+file sub.mk kept 1
+| sub: ; @printf "sub\n" > subseen
+file subseen touched 1
+| sub
