@@ -15394,6 +15394,21 @@ children (
                     }
                 )
             }
+
+            {
+                id make-a-one-shell-recipe-reads-its-prefixes-off-the-first-line
+                title "Read a .ONESHELL recipe's prefix characters the way GNU reads them"
+                kind @fix
+                deps (make-manifest-oneshell-recipe-is-not-a-manifest)
+                log (
+                    {
+                        at 2026-08-22T19:20:58.739138612Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while landing make-manifest-oneshell-recipe-is-not-a-manifest, and older than it: Ronin's Make mode has it too, and never sees a manifest.\n\nGNU Make's manual says the prefix characters `@`, `-` and `+` are removed from the FIRST line of a `.ONESHELL` recipe and apply to the whole of it, and that prefix characters on later lines are not removed and are passed to the shell. kati reads them per line, as it does for every other recipe.\n\nMeasured, GNU Make 4.4.1 beside `rkati --ninja` through stock ninja 1.14.0.git and beside Ronin's Make mode, on the exit status and the markers made:\n\n    .ONESHELL:\n    all: out\n    out:\n    \t-@touch m1\n    \tfalse\n\n  GNU Make 4.4.1     m1 made, exit 0   — the `-` on the first line forgave the recipe\n  manifest + ninja   m1 made, exit 1\n  Ronin's Make mode  m1 made, exit 2\n\nThe `-` never reaches `wholly_ignored`, which kati computes as every line being prefixed, so nothing mutes the script and the failing last line decides. It shows only when the first line carries the prefix AND a later line fails: `-@touch m1; false` then `@touch m2` agrees, because the last line succeeds either way, and a recipe every line of which is prefixed agrees because `wholly_ignored` is true by accident.\n\nThe same reading question covers `@` and `+`, and they were probed and are NOT settled. GNU's answer for a prefix on a LATER line differs between its own two paths: with `SHELL` named by the Makefile — the slow path — a spy shell records `arg2=[touch m1\\n-touch m2\\ntouch m3]`, the `-` passed through as text; with the default `/bin/sh` — the fast path — the same recipe makes m1, m2 and m3 and exits 0, which a literal `-touch m2` could not do. So GNU's own behaviour there depends on a scan the manual does not describe, and reproducing the manual rather than the fast path is a decision this node has to make explicitly. The same fast path is what makes an unterminated quote spanning a `.ONESHELL` line boundary report a syntax error while still writing the file correctly, recorded on make-manifest-oneshell-recipe-is-not-a-manifest.\n\nScope: `dep.rs` reads `.ONESHELL` into `flags.one_shell` and `command.rs` reads the prefixes; neither knows the other's answer at the point the prefix is read. Teeth: the recipe above as a make_port fixture — it fails through Ronin's Make mode, which make_port drives — and a `one_shell_edge` case beside the ones the manifest node added.\n\nSibling: make-a-one-shell-line-keeps-the-semicolons-it-ends-on is the other `.ONESHELL` reading defect that landing turned up. Both are about what a line of such a recipe means rather than about how the recipe is written down, and either could be taken first."
+                    }
+                )
+            }
         )
         log (
             {
