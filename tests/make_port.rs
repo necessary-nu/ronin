@@ -79,12 +79,23 @@ const WORK_ROOT: &str = "target/make-port-work";
 /// `recursive-dry-run-writes-nothing` is the same question where the two tools
 /// agree, and it gates.
 ///
+/// The `-W` case is where a refusal falls rather than whether it happens. GNU
+/// Make updates a double-colon chain entry by entry and meets the recipe-less
+/// entry the switch appended last, so a `::` rule with work to do RUNS and the
+/// run is refused afterwards. A compiled graph is planned before any of it
+/// runs, so the refusal comes first and that recipe never does. Both refuse,
+/// both leave the dependent alone, and the recording holds the file GNU Make
+/// wrote on its way to the same answer. The shape where the chain has nothing
+/// to do agrees exactly and gates —
+/// `a-what-if-file-a-double-colon-declares-refuses-the-run`.
+///
 /// `-t` used to be here beside `-W` and is not any more: it brings the goals up
 /// to date without making them, which is a filesystem effect this harness can
 /// see, so it gates on what the touch did rather than being read for discovery.
 /// `-B` left for the same reason and it is the plainer of the two: what it
 /// decides is which recipes run, and therefore which files the build writes.
-const DISCOVERY_ONLY_CASES: [&str; 7] = [
+const DISCOVERY_ONLY_CASES: [&str; 8] = [
+    "a-what-if-file-that-is-double-colon-refuses-after-the-chain-ran",
     "dry-run-skips-a-make-reference-line",
     "dry-run-skips-a-plus-line",
     "makeflags-keep-going-precedence",

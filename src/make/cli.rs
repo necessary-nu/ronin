@@ -1428,6 +1428,18 @@ fn session_for(
             .iter()
             .map(|name| Bytes::from(name.to_vec()))
             .collect(),
+        // The one thing `-W` decides that the read decides rather than a scan,
+        // and it is a refusal: GNU Make stamps a `-W` name by entering it, and
+        // for a double-colon target `enter_file` makes a fresh entry with a
+        // date and no recipe, which the update then complains over. The record
+        // that makes it one is the read's to see — by the time the graph
+        // exists a `::` target is actions and a join, and the name the Makefile
+        // wrote is not what either is called.
+        new_files: invocation
+            .assumed_new
+            .iter()
+            .map(|name| Bytes::from(name.to_vec()))
+            .collect(),
         ..Flags::default()
     };
     session.flags.targets = invocation

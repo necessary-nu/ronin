@@ -835,6 +835,7 @@ assertions (
     {id make-a-one-shell-recipe-reads-its-prefixes-off-the-first-line, kind @complete, author "brendan@necessary.nu", at 2026-08-22T20:36:27.351541314Z}
     {id make-kati-option-row-past-the-letters-it-can-honour, kind @complete, author "brendan@necessary.nu", at 2026-08-22T21:14:51.644103896Z}
     {id make-a-one-shell-prefix-survives-a-shell-make-does-not-know, kind @complete, author "brendan@necessary.nu", at 2026-08-22T22:41:59.60655073Z}
+    {id make-a-what-if-file-that-is-double-colon-refuses, kind @doing, author "brendan@necessary.nu", at 2026-08-22T22:42:45.728868046Z}
 )
 
 impl_evidence (

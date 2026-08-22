@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 14
+| # Discovery: where the refusal falls relative to the chain's own work. GNU Make
+| # updates the `::` entries in order and meets the fresh recipe-less one last, so
+| # a rule with something to do — here a `::` rule with no prerequisites, which is
+| # always out of date — RUNS, and the run is refused afterwards. Ronin plans the
+| # whole graph before any of it runs, so the refusal comes first and `out` is
+| # never touched. Both refuse, both leave `app` alone, and the file the recipe
+| # would have written is the difference.
+| all: app
+| app: out
+| 	touch app
+| out::
+| 	touch out
+| out:: b
+| 	touch out
+file a kept 0
+file app kept 0
+file b kept 0
+file out touched 0
