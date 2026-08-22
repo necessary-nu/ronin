@@ -934,6 +934,15 @@ impl GraphSink {
                 let mut command = Template::literal(&self.layout().prefix(scoped));
                 command.push_literal(shell);
                 command.push_literal(b" ");
+                // The script travels differently and the shell is the same
+                // shell: `-e` a `.POSIX:` recipe was given still has to be on
+                // this launch, and only the letter that would take the file
+                // name for the command comes off.
+                let flags = kati::ninja::script_file_flags(shell_flags);
+                if !flags.is_empty() {
+                    command.push_literal(&flags);
+                    command.push_literal(b" ");
+                }
                 if !self.unit.root && !self.root_directory.as_os_str().is_empty() {
                     command.push_literal(self.root_directory.as_os_str().as_bytes());
                     command.push_literal(std::path::MAIN_SEPARATOR_STR.as_bytes());

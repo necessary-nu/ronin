@@ -183,6 +183,16 @@ impl CommandLayout {
         command.push(b' ');
         if script.len() > RESPONSE_FILE_THRESHOLD {
             let path = self.response_file(output);
+            // The flags come too, less the letter that says the next word is
+            // the command: here the next word is a file name, and everything
+            // else the flags say is about the shell rather than about how the
+            // script reached it. Dropping them was how a `.POSIX:` recipe lost
+            // its `-e` on crossing the threshold.
+            let flags = kati::ninja::script_file_flags(shell_flags);
+            if !flags.is_empty() {
+                command.extend_from_slice(&flags);
+                command.push(b' ');
+            }
             match crate::graph::shell_escape_path(&path) {
                 Some(quoted) => command.extend_from_slice(&quoted),
                 None => command.extend_from_slice(&path),
@@ -231,10 +241,18 @@ impl CommandLayout {
                 argv.extend(Self::shell_flag_words(shell_flags));
                 argv.push(BString::from(text.to_vec()));
             }
-            // And what it spells as `<shell> <path>`: a script the shell reads
-            // out of a file is a file operand, and takes no flags in front of
-            // it here for the same reason it takes none there.
-            Script::File(path) => argv.push(BString::from(path.to_vec())),
+            // And what it spells as `<shell> <flags> <path>`: a script the
+            // shell reads out of a file is a file operand, so the letter that
+            // would have taken it for the command comes off — and every other
+            // letter stays, because they are about the shell rather than about
+            // how the script reached it. A `.POSIX:` recipe that crossed the
+            // length threshold used to lose its `-e` right here.
+            Script::File(path) => {
+                argv.extend(Self::shell_flag_words(&kati::ninja::script_file_flags(
+                    shell_flags,
+                )));
+                argv.push(BString::from(path.to_vec()));
+            }
         }
         Some(self.direct_launch(argv, scoped))
     }

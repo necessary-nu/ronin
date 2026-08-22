@@ -49,8 +49,37 @@ fn a_long_script_becomes_a_file() {
     let (path, content) = launched.response_file.expect("a response file");
     assert_eq!(path, b"out.rsp".to_vec());
     assert_eq!(content, script);
-    // The flags belong to a `-c` and a string, and there is neither here.
+    // `-c` says the next word is the command and the next word is a file name,
+    // so that letter comes off — and a plain recipe's flags are nothing else,
+    // so nothing is left to write.
     assert!(!launched.command.ends_with(b"-c"));
+}
+
+/// A `.POSIX:` recipe's strictness is the shell's `-e` and not something the
+/// script says for itself, so the launch that hands the shell a file has to
+/// carry it. It used to write the flags away entirely, which made the length
+/// of a recipe decide whether it stopped at its first failure.
+#[test]
+fn a_long_posix_script_keeps_errexit() {
+    let script = vec![b'x'; 100 * 1000 + 1];
+    let launched = layout().launch(b"/bin/sh", b"-ec", &script, b"out", &[]);
+    assert_eq!(
+        String::from_utf8(launched.command).expect("ascii"),
+        "exec /bin/sh -e out.rsp"
+    );
+}
+
+/// Flags a Makefile wrote for itself are not only `-e`, and the same rule
+/// carries all of them: the `c` comes off whichever cluster holds it, a word
+/// that is an option's argument is left alone, and everything else is copied.
+#[test]
+fn a_long_script_keeps_makefile_flags() {
+    let script = vec![b'x'; 100 * 1000 + 1];
+    let launched = layout().launch(b"/bin/bash", b"-o pipefail -xec", &script, b"out", &[]);
+    assert_eq!(
+        String::from_utf8(launched.command).expect("ascii"),
+        "exec /bin/bash -o pipefail -xe out.rsp"
+    );
 }
 
 #[test]

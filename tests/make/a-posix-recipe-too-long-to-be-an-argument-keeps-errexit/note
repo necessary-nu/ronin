@@ -1,0 +1,4 @@
+The script crosses the length that makes it reach the shell as a file rather
+than as an argument, and `.POSIX:` is what puts `-e` on the shell. The two are
+independent, which is the defect: the launch that hands over a file used to
+carry no flags at all, so this recipe ran to its end and made m1.

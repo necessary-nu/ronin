@@ -1,0 +1,3 @@
+A shell the Makefile named is not the one a direct launch is allowed to start,
+so this recipe reaches its shell through the composed command line. That is the
+third place the file-shaped script is spelled, and it dropped the flags too.
