@@ -11,7 +11,73 @@
 //! consumer can answer it. So it is asked here, on the way back down.
 
 use super::{DirtyEvaluator, EdgeId, Graph, NodeId};
-use crate::runtime::RuntimeState;
+use crate::runtime::{FileTime, RuntimeState};
+
+/// Whether this edge's outputs are a file the Makefile never names, invented to
+/// complete a chain and not there.
+///
+/// GNU Make hides such a file's absence from whatever reads it, standing the
+/// newest thing behind it in its place, and remakes it only once something that
+/// reads it has to be remade anyway. [`DirtyEvaluator::push_intermediates`] is
+/// that second half, which is why the answer is recorded and not merely used —
+/// an output holding an input's date no longer looks absent, and a build scans
+/// the same edge more than once.
+pub(super) fn record_absent_intermediate(
+    graph: &Graph,
+    runtime: &mut RuntimeState,
+    edge: EdgeId,
+    peers: &[NodeId],
+) -> bool {
+    let edge_data = graph.edge(edge);
+    let absent = edge_data.intermediate
+        && (runtime.edge(edge).absent_intermediate()
+            || edge_data
+                .out
+                .iter()
+                .filter(|output| !peers.contains(output))
+                .all(|output| runtime.node(*output).mtime().is_missing()));
+    runtime.edge_mut(edge).set_absent_intermediate(absent);
+    absent
+}
+
+/// Stand an intermediate that IS there in for what is behind it, and hold back
+/// what the scan concluded about the file itself.
+///
+/// `check_dep` (remake.c) asks an intermediate whether it is newer than the file
+/// being checked and, when it is not, walks its own non-intermediate
+/// prerequisites against that same date. So what a dependent sees is the later
+/// of the file's date and the newest thing under it, and never the fact that the
+/// file is stale.
+///
+/// The staleness is not thrown away, it is held: [`DirtyEvaluator::push_intermediates`]
+/// asks for it wherever a dependent has to run anyway, which is `update_file_1`'s
+/// second loop over its intermediate prerequisites. Holding it has to be sticky
+/// for the same reason the substitution is recorded — an output carrying the date
+/// of what stands behind it no longer looks stale, so a second scan of the same
+/// edge cannot reach the answer again. It is cleared where the absence flag is,
+/// the moment the edge's own command observes real outputs.
+///
+/// An intermediate that is NOT there is the same substitution with nothing of
+/// its own to contribute, so it arrives here too: its outputs hold no date, the
+/// later of the two is whatever stands behind them, and a file that is not there
+/// always has work left. The substitution is redone on every scan rather than
+/// kept, because what it stands in for moves — a scan taken after the newest
+/// thing behind an intermediate was itself remade must see the date that thing
+/// now has.
+pub(super) fn stand_in_for_an_intermediate(
+    runtime: &mut RuntimeState,
+    edge: EdgeId,
+    outputs: &[NodeId],
+    newest_input: FileTime,
+    stale: bool,
+) {
+    let pending = stale || runtime.edge(edge).intermediate_pending();
+    runtime.edge_mut(edge).set_intermediate_pending(pending);
+    for output in outputs {
+        let standing_in = runtime.node(*output).mtime().max(newest_input);
+        runtime.node_mut(*output).set_mtime(standing_in);
+    }
+}
 
 impl DirtyEvaluator {
     /// Ask for the intermediates whose absence was excused, wherever something
@@ -71,7 +137,7 @@ impl DirtyEvaluator {
                         let Some(generator) = graph.node(input).generator else {
                             continue;
                         };
-                        if runtime.edge(generator).absent_intermediate() {
+                        if runtime.edge(generator).intermediate_pending() {
                             ask_for(graph, runtime, generator);
                         } else if !runtime.node(input).dirty()
                             && !runtime.node(input).absent_on_disk()

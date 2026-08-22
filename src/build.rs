@@ -1739,8 +1739,10 @@ impl<'a> Builder<'a> {
         // An invented file's outputs stood in for the newest thing behind them
         // while the file was not there. The command has now been run and the
         // outputs stat'd, so whatever they hold is theirs and a later scan must
-        // not substitute over it.
+        // not substitute over it. The work the scan was holding for it is done
+        // with the same breath, so nothing can come back and ask for it again.
         self.runtime.edge_mut(edge).set_absent_intermediate(false);
+        self.runtime.edge_mut(edge).set_intermediate_pending(false);
         let unchanged_outputs = old_mtimes
             .iter()
             .zip(&new_mtimes)

@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 13
+| # The second loop updates an intermediate rather than forcing it: build/out.o is
+| # newer than out.c, so the dependent runs and the intermediate does not, and app
+| # is written from the bytes that were already there.
+| VPATH = build
+| GPATH = build
+| 
+| .SECONDARY: out.o
+| 
+| all: app
+| 
+| app: out.o ; @cat $< > $@
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file app touched 1
+| old
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source

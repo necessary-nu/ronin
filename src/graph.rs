@@ -28,6 +28,7 @@ use deferred::{
 use edge::EdgePartitions;
 use index::NodeIndex;
 pub(crate) use index::{allocate_node, mknode, nodeget};
+use intermediate::{record_absent_intermediate, stand_in_for_an_intermediate};
 pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 pub(crate) use path::{nodepath_bytes, shell_escape_path};
@@ -538,35 +539,11 @@ where
         newest_input = newest_input.max(input.mtime());
     }
 
-    // A file the Makefile never names, invented to complete a chain and not
-    // there: GNU Make hides its absence from whatever reads it, standing the
-    // newest thing behind it in its place, and remakes it only once something
-    // that reads it has to be remade anyway. `push_intermediates` is that
-    // second half, which is why the substitution is recorded and not merely
-    // done — an output holding an input's timestamp no longer looks absent,
-    // and a build scans the same edge more than once.
-    let absent_intermediate = edge_data.intermediate
-        && (runtime.edge(edge).absent_intermediate()
-            || edge_data
-                .out
-                .iter()
-                .filter(|output| !peers.contains(output))
-                .all(|output| runtime.node(*output).mtime().is_missing()));
-    runtime
-        .edge_mut(edge)
-        .set_absent_intermediate(absent_intermediate);
+    let absent_intermediate = record_absent_intermediate(graph, runtime, edge, peers);
     let edge_data = graph.edge(edge);
 
     let out_of_date = if absent_intermediate {
-        // The substitution is redone rather than kept, because what it stands
-        // in for moves: a scan after the newest thing behind an absent
-        // intermediate was itself remade must see the timestamp that thing now
-        // has. The recorded flag is cleared the moment the edge's own command
-        // observes real outputs, so nothing here can overwrite an mtime the
-        // file actually acquired.
-        for output in &edge_data.out {
-            runtime.node_mut(*output).set_mtime(newest_input);
-        }
+        stand_in_for_an_intermediate(runtime, edge, &edge_data.out, newest_input, true);
         input_dirty
     } else if graph.is_phony_rule(edge_data.rule) && !edge_data.outputs_unaliased {
         // An alias stands in for an output it does not have, and is out of date
@@ -605,12 +582,18 @@ where
         }
         let oldest_output = oldest_output.unwrap_or(FileTime::MISSING);
         let edge_state = runtime.edge(edge);
-        oldest_output.is_missing()
+        let comparison = oldest_output.is_missing()
             || edge_state.deps_missing()
             || edge_state.command_dirty()
             || input_dirty
             || oldest_recorded_output.is_some_and(|output_mtime| newest_input > output_mtime)
-            || newest_input > oldest_output
+            || newest_input > oldest_output;
+        if edge_data.intermediate {
+            stand_in_for_an_intermediate(runtime, edge, &edge_data.out, newest_input, comparison);
+            input_dirty
+        } else {
+            comparison
+        }
     };
 
     // An edge that declares itself never up to date is dirty whatever the

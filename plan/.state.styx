@@ -803,6 +803,7 @@ assertions (
     {id make-recipe-continuation-bytes, kind @complete, author "brendan@necessary.nu", at 2026-08-22T09:45:17.469884809Z}
     {id make-posix-continuation-blanks, kind @complete, author "brendan@necessary.nu", at 2026-08-22T10:31:10.459863171Z}
     {id make-an-intermediate-the-build-found-is-not-swept-up, kind @complete, author "brendan@necessary.nu", at 2026-08-22T11:33:27.725399812Z}
+    {id make-an-existing-intermediate-does-not-force-its-dependent, kind @complete, author "brendan@necessary.nu", at 2026-08-22T12:32:00.710102757Z}
 )
 
 impl_evidence (

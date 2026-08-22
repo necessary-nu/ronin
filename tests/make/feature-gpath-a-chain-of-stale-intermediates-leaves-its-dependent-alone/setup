@@ -1,0 +1,9 @@
+mkdir -p build
+printf 'source\n' > out.c
+printf 'oldo\n' > build/out.o
+printf 'oldm\n' > build/mid.o
+printf 'app\n' > app
+touch -d '2020-01-01 00:00' build/out.o
+touch -d '2020-06-01 00:00' build/mid.o
+touch -d '2021-01-01 00:00' out.c
+touch -d '2023-01-01 00:00' app

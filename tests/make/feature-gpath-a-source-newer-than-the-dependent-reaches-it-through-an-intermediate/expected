@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 13
+| # What a dependent sees through an intermediate is the newest thing under it,
+| # which is why the walk carries the DEPENDENT's date down rather than the
+| # intermediate's: out.c is newer than app though build/out.o is older than both.
+| VPATH = build
+| GPATH = build
+| 
+| .SECONDARY: out.o
+| 
+| all: app
+| 
+| app: out.o ; @cat $< > $@
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file app touched 1
+| made
+file build/out.o touched 1
+| made
+file out.c kept 1
+| source

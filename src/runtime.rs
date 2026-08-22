@@ -6,9 +6,11 @@ use std::ops::Range;
 
 mod assumed;
 mod deferred;
+mod edge;
 
 pub(crate) use assumed::AssumedNew;
 pub(crate) use deferred::DeferredRuntime;
+pub(crate) use edge::EdgeRuntime;
 
 /// A filesystem timestamp with the unobserved sentinel hidden behind methods.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -202,121 +204,6 @@ impl NodeRuntime {
 
     pub(crate) const fn set_dyndep_pending(&mut self, pending: bool) {
         self.dyndep_pending = pending;
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-#[repr(transparent)]
-struct EdgeRuntimeFlags(u8);
-
-impl EdgeRuntimeFlags {
-    const DEPS_LOADED: u8 = 1 << 0;
-    const DEPS_MISSING: u8 = 1 << 1;
-    const COMMAND_DIRTY: u8 = 1 << 2;
-    const RESTAT_CLEAN: u8 = 1 << 3;
-    const COMMAND_HASH_VALID: u8 = 1 << 4;
-    const ABSENT_INTERMEDIATE: u8 = 1 << 5;
-
-    const fn contains(self, flag: u8) -> bool {
-        self.0 & flag != 0
-    }
-
-    const fn set(&mut self, flag: u8, value: bool) {
-        if value {
-            self.0 |= flag;
-        } else {
-            self.0 &= !flag;
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct EdgeRuntime {
-    command_hash: CommandHash,
-    depfile_dependencies: usize,
-    flags: EdgeRuntimeFlags,
-}
-
-impl Default for EdgeRuntime {
-    fn default() -> Self {
-        Self {
-            command_hash: CommandHash::MISSING,
-            depfile_dependencies: 0,
-            flags: EdgeRuntimeFlags::default(),
-        }
-    }
-}
-
-impl EdgeRuntime {
-    pub(crate) const fn command_hash(self) -> Option<CommandHash> {
-        if self.flags.contains(EdgeRuntimeFlags::COMMAND_HASH_VALID) {
-            Some(self.command_hash)
-        } else {
-            None
-        }
-    }
-
-    pub(crate) const fn set_command_hash(&mut self, hash: CommandHash) {
-        self.command_hash = hash;
-        self.flags.set(EdgeRuntimeFlags::COMMAND_HASH_VALID, true);
-    }
-
-    pub(crate) const fn invalidate_command_hash(&mut self) {
-        self.command_hash = CommandHash::MISSING;
-        self.flags.set(EdgeRuntimeFlags::COMMAND_HASH_VALID, false);
-    }
-
-    pub(crate) const fn deps_loaded(self) -> bool {
-        self.flags.contains(EdgeRuntimeFlags::DEPS_LOADED)
-    }
-
-    pub(crate) const fn set_deps_loaded(&mut self, loaded: bool) {
-        self.flags.set(EdgeRuntimeFlags::DEPS_LOADED, loaded);
-    }
-
-    pub(crate) const fn deps_missing(self) -> bool {
-        self.flags.contains(EdgeRuntimeFlags::DEPS_MISSING)
-    }
-
-    pub(crate) const fn set_deps_missing(&mut self, missing: bool) {
-        self.flags.set(EdgeRuntimeFlags::DEPS_MISSING, missing);
-    }
-
-    pub(crate) const fn depfile_dependencies(self) -> usize {
-        self.depfile_dependencies
-    }
-
-    pub(crate) const fn set_depfile_dependencies(&mut self, count: usize) {
-        self.depfile_dependencies = count;
-    }
-
-    pub(crate) const fn command_dirty(self) -> bool {
-        self.flags.contains(EdgeRuntimeFlags::COMMAND_DIRTY)
-    }
-
-    pub(crate) const fn set_command_dirty(&mut self, dirty: bool) {
-        self.flags.set(EdgeRuntimeFlags::COMMAND_DIRTY, dirty);
-    }
-
-    /// Whether the last scan excused this edge's outputs for not being there,
-    /// because they are intermediate: nothing reading them was called out of
-    /// date for their absence, so anything that has to be rebuilt anyway must
-    /// ask for them explicitly.
-    pub(crate) const fn absent_intermediate(self) -> bool {
-        self.flags.contains(EdgeRuntimeFlags::ABSENT_INTERMEDIATE)
-    }
-
-    pub(crate) const fn set_absent_intermediate(&mut self, absent: bool) {
-        self.flags
-            .set(EdgeRuntimeFlags::ABSENT_INTERMEDIATE, absent);
-    }
-
-    pub(crate) const fn restat_clean(self) -> bool {
-        self.flags.contains(EdgeRuntimeFlags::RESTAT_CLEAN)
-    }
-
-    pub(crate) const fn set_restat_clean(&mut self, clean: bool) {
-        self.flags.set(EdgeRuntimeFlags::RESTAT_CLEAN, clean);
     }
 }
 

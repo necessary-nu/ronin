@@ -1,0 +1,25 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 14
+| # `check_dep` recurses with the same date it was given, so a whole chain of
+| # intermediates is weighed against the dependent and never against each other.
+| VPATH = build
+| GPATH = build
+| 
+| .SECONDARY: out.o mid.o
+| 
+| all: app
+| 
+| app: mid.o ; @cat $< > $@
+| 
+| mid.o: out.o ; @cat $< > $@
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file app kept 1
+| app
+file build/mid.o kept 1
+| oldm
+file build/out.o kept 1
+| oldo
+file out.c kept 1
+| source
