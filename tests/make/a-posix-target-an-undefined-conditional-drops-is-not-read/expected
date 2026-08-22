@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # The same for `ifdef`, which is the plausible spelling of it: a makefile that
+| # offers POSIX behind a variable must not get it when the variable is unset.
+| ifdef POSIXLY_CORRECT
+| .POSIX:
+| endif
+| 
+| A = a   \
+|   b
+| 
+| all: ; @printf '[%s]\n' '$(A)' > out
+file out touched 1
+| [a b]

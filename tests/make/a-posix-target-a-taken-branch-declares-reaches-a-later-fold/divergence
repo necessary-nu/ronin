@@ -1,0 +1,9 @@
+KNOWN GAP, owned by `make-a-posix-target-is-read-where-it-is-written`.
+
+GNU Make evaluates a conditional as it reads, so `.POSIX:` in the branch that
+wins is read before the fold below it. This read buffers both branches and the
+evaluation chooses between them afterwards, so the flag turns on too late for a
+line already read. The evaluator sets it for whatever is read after that.
+
+GNU Make 4.4.1 keeps the blanks in front of the fold and writes `[a    b]`;
+Ronin writes `[a b]`.
