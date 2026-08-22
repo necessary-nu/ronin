@@ -186,6 +186,41 @@ fn an_interrupt_stops_an_outliving_recipe() {
     // recorded edge says about itself, and saying it is what kept the output.
     let narration = String::from_utf8_lossy(&finished.stdout);
     assert!(!narration.contains("[1/1]"), "{narration:?}");
+    // `[spec:ronin:req:compat.process-integration+2]` says such an edge is
+    // neither reported as finished NOR RECORDED, and those are two different
+    // places: the line above is the report, and the build log is the record. A
+    // recorded edge would be treated as up to date by the next build, which is
+    // the half a caller feels rather than reads. Measured against upstream
+    // Ninja, which writes no log at all for this run; Ronin opens one and
+    // leaves no entry in it, and both are the clause being honoured.
+    let log = directory.join(".ninja_log");
+    let recorded = fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        !recorded.contains("output"),
+        "the interrupted edge was recorded in the build log: {recorded:?}"
+    );
+}
+
+/// The other side of the recording assertion above: a build left alone DOES
+/// record its edge, so that the assertion is a statement about the interrupt
+/// rather than about a log Ronin never writes.
+// [spec:ronin:req:compat.process-integration+2/test]
+#[test]
+fn a_finished_edge_is_recorded() {
+    let directory = test_directory("interrupt-log-control");
+    fs::write(
+        directory.join("build.ninja"),
+        "rule quick\n  command = touch $out\nbuild output: quick\ndefault output\n",
+    )
+    .unwrap();
+    let finished = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .output()
+        .unwrap();
+
+    assert!(finished.status.success());
+    let recorded = fs::read_to_string(directory.join(".ninja_log")).unwrap();
+    assert!(recorded.contains("output"), "{recorded:?}");
 }
 
 /// GNU Make deletes the target a recipe was making when a signal cuts it short
