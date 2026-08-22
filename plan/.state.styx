@@ -786,6 +786,7 @@ assertions (
     {id the-serial-default-case-races-a-loaded-host, kind @complete, author "brendan@necessary.nu", at 2026-08-21T10:12:05.025555798Z}
     {id an-interrupt-between-a-recipes-commands-is-lost, kind @complete, author "brendan@necessary.nu", at 2026-08-21T23:24:33.895136308Z}
     {id make-mode-leaves-an-interrupt-with-2-where-both-references-say-130, kind @complete, author "brendan@necessary.nu", at 2026-08-22T00:48:37.662169967Z}
+    {id carry-process-integrations-evidence-to-the-bumped-rule, kind @complete, author "brendan@necessary.nu", at 2026-08-22T01:06:08.17817441Z}
 )
 
 impl_evidence (
@@ -1053,8 +1054,6 @@ impl_evidence (
         compat.process-integration
     ), covered_claims (
         {impl_name target-impl, rule compat.process-integration}
-    ), rule_versions_seen (
-        {id compat.process-integration, version 0}
     )}
     {id ronin-product-identity, covered_rules (
         compat.ninja-owned-names
