@@ -321,12 +321,23 @@ fn stopped_status(outcome: &Outcome) -> i32 {
 /// rules without adding Make's `rm ...` narration.
 ///
 /// Last of everything the build does, and it happens whether the build finished
-/// or gave up: what was invented on the way is rubbish either way. `-n` ran
-/// nothing, so it removes nothing.
-pub(super) fn discard_intermediates(disposable: &[Vec<u8>], pretending: bool) {
+/// or gave up: what was invented on the way is rubbish either way.
+///
+/// `swept_by_nothing` is `remove_intermediates`' own early return (`file.c`),
+/// which gives up on the whole run rather than on one file. `-q` and `-t` are
+/// two of the four flags it reads, and it reads them where it runs, which is
+/// once, at the end — so a file `-t` brought into existence by touching it, and
+/// one a Makefile pass made in earnest while `-q` was set aside for it, are both
+/// files no sweep reaches. `-n` is the caller's other term: GNU Make still walks
+/// the list under it and only declines the `unlink`, which comes to the same
+/// thing here because nothing was made to remove. The remaining two — a bare
+/// `.SECONDARY:` and `.NOTINTERMEDIATE:` — are answered where the manifest is
+/// compiled, because they are what the makefile said rather than what the
+/// invocation asked.
+pub(super) fn discard_intermediates(disposable: &[Vec<u8>], swept_by_nothing: bool) {
     use std::os::unix::ffi::OsStrExt;
 
-    if disposable.is_empty() || pretending {
+    if disposable.is_empty() || swept_by_nothing {
         return;
     }
     for path in disposable {

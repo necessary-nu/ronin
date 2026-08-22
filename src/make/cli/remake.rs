@@ -189,6 +189,15 @@ struct Passes<'a, 'out, 'diagnostics> {
     /// make gets its own.
     keep_going: bool,
     silent: bool,
+    /// Whether this run sweeps up no intermediate at all, whatever a pass makes.
+    ///
+    /// `remove_intermediates` (file.c) reads `question_flag` and `touch_flag`
+    /// where it runs, which is once, at the end. `update_goal_chain` clears both
+    /// of them while the Makefiles are being remade, so the pass that made an
+    /// intermediate can have run its recipe in earnest and the sweep still never
+    /// reach it — which is why this is the invocation's answer rather than the
+    /// pass's own.
+    swept_by_nothing: bool,
 }
 
 impl Passes<'_, '_, '_> {
@@ -201,7 +210,7 @@ impl Passes<'_, '_, '_> {
         if targets.is_empty() {
             return Pass::Current;
         }
-        let dryrun = options.dryrun;
+        let swept_by_nothing = self.swept_by_nothing || options.dryrun;
         let mut build = Build::with_options(self.graph, self.persistence, options);
         if let Some(recipes) = self.recipes.as_deref_mut() {
             build = build.late_commands(recipes);
@@ -224,7 +233,7 @@ impl Passes<'_, '_, '_> {
             Ok(outcome) => outcome,
             Err(failure) => return self.abandon(failure, forgive),
         };
-        discard_intermediates(&disposable, dryrun);
+        discard_intermediates(&disposable, swept_by_nothing);
         if outcome.exit_code() != 0 {
             if !forgive {
                 let reported = std::mem::take(self.reported);
@@ -895,6 +904,7 @@ pub(super) fn build_compiler_inputs(
         complaints: &complaints,
         keep_going,
         silent: invocation.given(Switch::Silent),
+        swept_by_nothing: sweeps_nothing(invocation),
     }
     .remake_makefiles(&makefiles);
     let (persistence, stands) = match after_remaking(
@@ -999,6 +1009,7 @@ fn build_staged_work(
         complaints,
         keep_going,
         silent: invocation.given(Switch::Silent),
+        swept_by_nothing: sweeps_nothing(invocation),
     }
     .stage_all(&staged, invocation, options);
     let remade = makefile_stamps(&paths, directory) != before;
@@ -1017,6 +1028,18 @@ fn build_staged_work(
         reported,
         keep_going,
     )
+}
+
+/// Whether this run sweeps up no intermediate at all, whatever any pass makes.
+///
+/// `remove_intermediates` (file.c) gives up on the whole run under `-q` or `-t`,
+/// and it asks at the end, once. `update_goal_chain` clears both flags while the
+/// Makefiles are being remade, so a pass can have run an intermediate's recipe in
+/// earnest and the sweep still never reach it — which is why the invocation is
+/// asked and not the pass. `-n` is separate and is asked beside this: GNU Make
+/// still walks the list under it and only declines the `unlink`.
+pub(super) const fn sweeps_nothing(invocation: &Invocation) -> bool {
+    invocation.given(Switch::Question) || invocation.given(Switch::Touch)
 }
 
 /// The Makefiles this pass can bring up to date, which is all of them unless

@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # `remove_intermediates` (file.c) punts on the whole run under -t, so an
+| # intermediate the touch brought into existence outlives the build that made it.
+| .INTERMEDIATE: out.o
+| 
+| all: app
+| 
+| app: out.o ; @cat $< > $@
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file app touched 0
+file out.c kept 1
+| source
+file out.o touched 0

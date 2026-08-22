@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # The same for -t, which `update_goal_chain` also sets aside for the Makefiles:
+| # gen.z is made rather than touched and is still there when the run ends.
+| include gen.mk
+| 
+| all: ; @printf 'all\n' > out
+| 
+| %.mk: %.z ; @cat $< > $@
+| %.z: %.x ; @cat $< > $@
+file all touched 0
+file gen.mk touched 1
+| V=1
+file gen.x kept 1
+| V=1
+file gen.z touched 1
+| V=1

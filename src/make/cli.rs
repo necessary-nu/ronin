@@ -52,7 +52,7 @@ use interface::{
 };
 use jobserver_style::{carried_switches, read_jobserver_style, unknown_jobserver_style};
 use option_values::{jobs_value, load_value, value};
-use remake::{CompilerInputBuild, Settlement, build_compiler_inputs};
+use remake::{CompilerInputBuild, Settlement, build_compiler_inputs, sweeps_nothing};
 use selection::{DEFAULT_MAKEFILES, STANDARD_INPUT, is_standard_input, named_makefiles};
 pub(super) use subninja::compile as compile_subninja;
 use switch_table::path_of;
@@ -2041,7 +2041,10 @@ fn reported_run(
     };
     flushed?;
     let silent = invocation.given(Switch::Silent);
-    discard_intermediates(&disposable, invocation.given(Switch::DryRun));
+    discard_intermediates(
+        &disposable,
+        sweeps_nothing(&invocation) || invocation.given(Switch::DryRun),
+    );
     Ok(finished(reported, up_to_date, &outcome, silent))
 }
 

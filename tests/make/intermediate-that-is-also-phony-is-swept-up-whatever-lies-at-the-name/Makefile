@@ -1,0 +1,11 @@
+# A `.PHONY` name carries `NONEXISTENT_MTIME` from the read and is never stated
+# (file.c), so the turn-off in `f_mtime` never reaches it and the declared
+# intermediate bit survives whatever happens to be lying at the name.
+.PHONY: out.o
+.INTERMEDIATE: out.o
+
+all: app
+
+app: out.o ; @printf 'app\n' > $@
+
+out.o: ; @printf 'made\n' > $@

@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # The control for the one beside it: the same makefile with nothing at out.o, so
+| # the build is what put the file there and the sweep is entitled to it.
+| .INTERMEDIATE: out.o
+| 
+| all: app
+| 
+| app: out.o ; @cat $< > $@
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file app touched 1
+| made
+file out.c kept 1
+| source

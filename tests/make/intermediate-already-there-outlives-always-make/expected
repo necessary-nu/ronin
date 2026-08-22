@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # -B remakes the file and does not make it the build's: what decides that is the
+| # date the first stat found, and -B does not change what was lying there.
+| .INTERMEDIATE: out.o
+| 
+| all: app
+| 
+| app: out.o ; @cat $< > $@
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file app touched 1
+| made
+file out.c kept 1
+| source
+file out.o touched 1
+| made

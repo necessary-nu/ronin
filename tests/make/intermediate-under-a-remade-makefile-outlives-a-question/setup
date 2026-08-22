@@ -1,0 +1,2 @@
+printf 'V=1\n' > gen.x
+touch -d '2021-01-01 00:00' gen.x
