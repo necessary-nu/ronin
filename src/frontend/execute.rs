@@ -432,6 +432,17 @@ impl Outcome {
         self.stopped.as_ref().map_or(0, |(_, status)| *status)
     }
 
+    /// Whether what stopped the build was the user cutting it short.
+    ///
+    /// A front end that collapses every way of not finishing into one status
+    /// still has to tell an interrupt apart from the rest, and the number
+    /// cannot say it: [`Outcome::exit_code`] answers 130 both for a build cut
+    /// short and for a recipe that exited 130 of its own accord. The reason is
+    /// the only thing that distinguishes them, so the reason is what is asked.
+    pub(crate) const fn interrupted(&self) -> bool {
+        matches!(self.stopped, Some((BuildStop::Interrupted, _)))
+    }
+
     /// Which of the targets asked for the build actually regenerated.
     ///
     /// A target is here when its command ran and a `restat` rule did not then

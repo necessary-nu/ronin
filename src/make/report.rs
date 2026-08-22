@@ -232,16 +232,43 @@ pub(super) fn complained_of(
     RunResult {
         stdout,
         stderr,
-        // Ninja reports the failing command's own status here, which is the
-        // right answer for Ninja and the wrong one for Make: GNU Make has two
-        // statuses, and every way of not finishing is the second. A recipe that
-        // exits 3 makes Make exit 2, not 3.
-        exit_code: if outcome.exit_code() == 0 {
-            0
-        } else {
-            ABANDONED
-        },
+        exit_code: stopped_status(outcome),
     }
+}
+
+/// The status a Make-mode build leaves with once it has run.
+///
+/// Ninja reports the failing command's own status, which is the right answer
+/// for Ninja and the wrong one for Make: GNU Make has two statuses, and every
+/// way of not finishing is the second. A recipe that exits 3 makes Make exit 2,
+/// not 3.
+///
+/// A build cut short is not one of those ways. `ABANDONED` is what the refusals
+/// enumerated above this file leave with — an option Make does not know, no
+/// makefile to read, a makefile that will not evaluate, a target with no rule,
+/// a recipe that failed — and each of them is a build that would not or could
+/// not go on. An interrupt is the user stopping a build that was going fine,
+/// and both references say so with the same number: GNU Make 4.4.1 exits 130 by
+/// dying of the signal it caught, upstream Ninja exits 130 without re-raising,
+/// and `[spec:ronin:req:product.build-outcome]` — which
+/// `[spec:ronin:req:make.question-status]` names as governing every Make
+/// invocation's status but `-q`'s — takes Ninja's spelling of it.
+///
+/// The reason is read rather than the number: a recipe that exits 130 of its
+/// own accord is a failed recipe, and Make mode reports it as the 2 that every
+/// other failed recipe gets. That is also why the signal is not re-raised for
+/// `SIGTERM`, where GNU Make leaves 143 — Ronin leaves 130 for every signal it
+/// treats as an interrupt, as its own Ninja front end does, so the status says
+/// the build was cut short rather than how far it had got.
+// [spec:ronin:req:product.build-outcome]
+fn stopped_status(outcome: &Outcome) -> i32 {
+    if outcome.exit_code() == 0 {
+        return 0;
+    }
+    if outcome.interrupted() {
+        return crate::subprocess::INTERRUPTED_EXIT_CODE;
+    }
+    ABANDONED
 }
 
 /// Throw away the files the build invented to complete a chain of implicit
