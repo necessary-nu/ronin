@@ -102,10 +102,10 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
 /// re-raised. Whatever the read narrated before the signal still goes out,
 /// which is what a restarted read's remaking narration is.
 ///
-/// What the read does to the command it was waiting for — abandon it rather than
-/// signal it, as GNU Make does — is not this rule's, and is not
-/// `compat.process-integration`'s either: that one says what an interrupt does
-/// to a BUILD, and a read has no edges. See the node beside this one.
+/// What the read does to the command it was waiting for — abandon it rather
+/// than signal it, as GNU Make does — is `[spec:ronin:req:make.read-interrupt]`
+/// and not this rule's, and it is not `compat.process-integration`'s either:
+/// that one says what an interrupt does to a BUILD, and a read has no edges.
 // [spec:ronin:req:product.build-outcome]
 pub(super) fn cut_short(reported: String) -> RunResult {
     RunResult {

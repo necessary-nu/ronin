@@ -448,6 +448,7 @@ fn a_signalled_recipe_abandons_with_two() {
 /// write end, so a test that read the tool's stdout to EOF would block on the
 /// orphan for the whole thirty seconds and report the wait it was written to
 /// catch as a pass.
+// [spec:ronin:req:make.read-interrupt/test]
 // [spec:ronin:req:product.build-outcome/test]
 #[cfg(feature = "make")]
 #[test]
@@ -511,7 +512,7 @@ fn a_read_interrupt_abandons_its_command() {
 /// end and the interrupt was only noticed once the build started; the build
 /// then narrated `ronin: build stopped: interrupted by user.`, which GNU does
 /// not say here because GNU never reached a build.
-// [spec:ronin:req:compat.process-integration+2/test]
+// [spec:ronin:req:make.read-interrupt/test]
 // [spec:ronin:req:product.build-outcome/test]
 #[cfg(feature = "make")]
 #[test]
@@ -567,6 +568,7 @@ fn an_interrupted_read_launches_nothing_further() {
 /// the path it was written for. `[spec:ronin:req:product.builtin-shell]` is what
 /// makes the two spellings different, and it is a Makefile-visible choice rather
 /// than a trick.
+// [spec:ronin:req:make.read-interrupt/test]
 // [spec:ronin:req:product.build-outcome/test]
 #[cfg(feature = "make")]
 #[test]

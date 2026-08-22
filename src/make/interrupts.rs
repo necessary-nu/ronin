@@ -19,7 +19,7 @@
 /// is process-wide; the descriptor beside it is the same wake pipe the process
 /// supervisor waits on, polled here and never read from, so an interrupt ends
 /// the wait as soon as the handler writes rather than on the next poll interval.
-// [spec:ronin:req:compat.process-integration+2]
+// [spec:ronin:req:make.read-interrupt]
 pub(super) struct ReadInterrupts {
     /// Readable once a handled signal has arrived. `None` when no handlers are
     /// installed — a library caller compiling a Makefile — which leaves the

@@ -40,6 +40,34 @@ manifest-derived graph is.
 > process supervision, and reporter contain no Make-specific execution
 > semantics.
 
+> [spec:ronin:req:make.read-interrupt]
+> An interrupt during the read stops the read. Compiling a Makefile runs
+> commands — a `$(shell)` call is a command line like any other — and Ronin
+> MUST stop waiting for one as soon as an interruption signal arrives, whether
+> it is waiting for that command's output or, the output having ended, for the
+> command itself. No further command is launched afterwards, so an interrupt
+> between two shell functions means the second does not run at all. The
+> invocation leaves with the interrupted status
+> `[spec:ronin:req:product.build-outcome]` gives it and writes nothing to
+> either stream: no build was reached, and a build's narration belongs to a
+> build.
+>
+> The command that was running is ABANDONED and MUST NOT be signalled, killed,
+> or reaped. It and its own children are left running and unsignalled, to be
+> reparented and buried by the init process. This is GNU Make 4.4.1's
+> behaviour, measured: `fatal_error_signal` waits for the children Make runs as
+> jobs and knows nothing about the one a shell function left behind, so it
+> re-raises and is gone in single-digit milliseconds while that child runs on.
+>
+> This is the Make front end's rule and not
+> `[spec:ronin:req:compat.process-integration]`'s, which governs an interrupted
+> BUILD. A read has no edge to leave unreported and no changed output to
+> withdraw, and where a build sends the signal Ninja sends to the same process
+> groups and then stops what is still standing, a read sends nothing at all.
+> The oracle is GNU Make rather than Ninja, which has no read phase to match,
+> and that is what makes this a compiler-boundary rule rather than a departure
+> from the Ninja contract.
+
 > [spec:ronin:req:make.phony-always-dirty]
 > A `.PHONY` target is never up to date. The edge it produces is out of date
 > whenever it is reached, whatever its outputs' timestamps are and whatever the
