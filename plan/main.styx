@@ -16292,6 +16292,14 @@ children (
                 kind @status
                 text "Doing → Done (nplan complete)"
             }
+
+            {
+                at 2026-08-22T01:17:23.331971626Z
+                author "brendan@necessary.nu"
+                kind @errata
+                text "CORRECTION to the mechanism described in the delivery note above, measured rather than inferred, because the first attempt half-worked and the difference is the useful part.\n\nThe note says evidence is rebuilt \"from the commits that NAME a node\". Naming is necessary and is NOT sufficient. Observed here, in order:\n\n1. `07c6b05` named both nodes and touched nothing but `plan/`. It cleared `ronin-process-integration`'s stale `rule_versions_seen {compat.process-integration, version 0}` and the node went Stale → Done. TWO subsequent `nplan sync` runs then wrote nothing but a timestamp, and the node was left with NO `rule_versions_seen` at all.\n2. `83fa098` named both nodes and touched `tests/interrupts.rs`, which carries `[spec:ronin:req:compat.process-integration+2/test]`. `nplan_commit` derived `nplan-rule: [spec:ronin:req:compat.process-integration/test]` from that delta, and the next `nplan sync` wrote `{id compat.process-integration, version 2}`.\n\nSo the rebuild needs a commit that names the node AND carries a rule trailer for the rule — and the trailer is derived from the staged delta's own annotations, which means a plan-only commit can never produce one. State 1 is exactly what d645a55 warned about in the precedent: \"leaving them with nothing to drift from\". A node in that state reads Done and is not Stale, but a future bump of its rule would not mark it Stale either, because there is no recorded version to drift from — a silent hole rather than a visible one.\n\nWHAT THIS MEANS FOR THE NEXT CYCLE OF THIS KIND. Carrying a Done node's evidence across a rule bump cannot be done by bookkeeping alone: the cycle has to produce a real change at a site that annotates the rule, or the version never lands. That is a good property rather than an awkward one — it makes \"re-verified\" mean a verification site was touched — and it is why this cycle went looking for a clause with no always-on verification instead of restamping. The precedent did the same thing for the same reason (`9ee428b` added a verify site for `make.manifest-equivalence`'s new clause); what was not written down there is that it HAD to.\n\nBoth syncs and both commits are on `main` and pushed, so the sequence above is readable in the history rather than only here."
+                after_done true
+            }
         )
     }
 
