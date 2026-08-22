@@ -118,11 +118,14 @@ pub(in crate::make) fn compile(
             makeflags,
             always_make: parent.always_make,
             restarted: parent.restarted,
-            // Deliberately not `parent.assumed_new`. GNU Make does not put
-            // `-W` in `MAKEFLAGS`, so a recursive child is never told about a
-            // file the parent was asked to pretend was new — and the names are
-            // the parent's own directory's in any case.
+            // Deliberately not `parent.assumed_new` or `parent.assumed_old`.
+            // GNU Make puts neither `-W` nor `-o` in `MAKEFLAGS`, so a
+            // recursive child is never told about a file the parent was asked
+            // to pretend was new or old — and the names are the parent's own
+            // directory's in any case. Measured: under `make -o sub` the child
+            // remakes `sub` exactly as it would have without the switch.
             assumed_new: Vec::new(),
+            assumed_old: Vec::new(),
             level,
             jobs: parent.jobs,
             environment,

@@ -226,7 +226,7 @@ const MAKE_OPTION_SURFACE: &[InterfaceOption] = &[
     InterfaceOption {
         spellings: &["-o", "--old-file", "--assume-old"],
         argument: ArgumentShape::Required,
-        class: OptionClass::NoOp,
+        class: OptionClass::NinjaControl,
     },
     InterfaceOption {
         spellings: &["-O", "--output-sync"],
@@ -403,6 +403,13 @@ struct Invocation {
     /// touching: the file reads as present and newer than everything
     /// downstream of it, and its own rule sees nothing to do.
     assumed_new: Vec<BString>,
+    /// The files `-o` named, canonicalised, in the order they were given.
+    ///
+    /// GNU Make's `old_files`, which `main` stamps `OLD_MTIME` on and marks
+    /// updated and finished: the file reads as present and older than every
+    /// real file, and its own rule — and everything beneath it — is never
+    /// considered.
+    assumed_old: Vec<BString>,
     /// The first switch this stream could not read, kept until the whole word
     /// has been consumed.
     ///
@@ -445,6 +452,7 @@ impl Invocation {
             output_sync: None,
             jobserver_style: None,
             assumed_new: Vec::new(),
+            assumed_old: Vec::new(),
             bad: None,
             complaints: Vec::new(),
         }
@@ -831,9 +839,11 @@ fn accept_noop_long(
             .filter(|spelling| spelling.starts_with("--"))
         {
             let spelling = spelling.as_bytes();
-            // GNU Make names the switch rather than the spelling that reached
-            // it, and the switch's name is its short letter wherever it has
-            // one: `--old-file=` complains about `-o`.
+            // GNU Make names the switch rather than the spelling that
+            // reached it, and the switch's name is its short letter wherever
+            // it has one. No switch that lands here has one today — every
+            // no-op switch taking an argument is long-only — so the fallback
+            // is what runs, and the rule is here for the row that changes.
             let name = declared
                 .spellings
                 .first()
@@ -844,8 +854,9 @@ fn accept_noop_long(
                 );
             if option == spelling {
                 // The spelling this word wrote, because getopt names the
-                // option it was given: `--old-file` is not reported as `-o`,
-                // where the empty-argument complaint below names the switch.
+                // option it was given for a MISSING argument — `--what-if`
+                // requires an argument, where the switch is `-W` — and the
+                // empty-argument complaint below names the switch instead.
                 if declared.argument == ArgumentShape::Required
                     && let Some(named) = value(
                         invocation,
@@ -936,6 +947,7 @@ fn separated_long(
         b"--directory" => invocation.directory(source, named.as_bytes())?,
         b"--include-dir" => invocation.include_dir(source, named.as_bytes())?,
         b"--eval" => invocation.eval_statement(source, named.as_bytes()),
+        b"--old-file" | b"--assume-old" => invocation.assume_old(source, named.as_bytes()),
         _ => invocation.assume_new(source, named.as_bytes()),
     }
     Ok(())
@@ -965,6 +977,11 @@ fn attached_long(
         .or_else(|| option.strip_prefix(b"--assume-new="))
     {
         invocation.assume_new(source, named);
+    } else if let Some(named) = option
+        .strip_prefix(b"--old-file=")
+        .or_else(|| option.strip_prefix(b"--assume-old="))
+    {
+        invocation.assume_old(source, named);
     } else if let Some(eval) = option.strip_prefix(b"--eval=") {
         invocation.eval_statement(source, eval);
     } else if let Some(count) = option.strip_prefix(b"--jobs=") {
@@ -1109,7 +1126,7 @@ fn parse_arguments(
                 invocation.load = Some(load_value(arguments, &mut index, b""));
             }
             b"--file" | b"--makefile" | b"--directory" | b"--include-dir" | b"--eval"
-            | b"--what-if" | b"--new-file" | b"--assume-new" => {
+            | b"--what-if" | b"--new-file" | b"--assume-new" | b"--old-file" | b"--assume-old" => {
                 separated_long(invocation, source, argument, arguments, &mut index)?;
             }
             option if option.starts_with(b"--") => {
@@ -1210,18 +1227,27 @@ fn read_cluster(
                 invocation.load = Some(load_value(arguments, index, &argument[short..]));
                 short = argument.len();
             }
-            b'W' => {
+            // The two switches that assert a file's date instead of reading
+            // it, and they are one shape: GNU Make's table gives them the same
+            // row but for which list the name lands in and which sentinel is
+            // stamped on it (main.c:484, main.c:486).
+            b'W' | b'o' => {
+                let assumed_new = option == b'W';
                 let named = value(
                     invocation,
                     source,
                     arguments,
                     index,
                     &argument[short..],
-                    "-W",
+                    if assumed_new { "-W" } else { "-o" },
                 );
                 short = argument.len();
                 if let Some(named) = named {
-                    invocation.assume_new(source, named.as_bytes());
+                    if assumed_new {
+                        invocation.assume_new(source, named.as_bytes());
+                    } else {
+                        invocation.assume_old(source, named.as_bytes());
+                    }
                 }
             }
             b'O' => {
@@ -1390,6 +1416,18 @@ fn session_for(
             "output-sync".to_owned(),
         ],
         include_dirs: invocation.include_dirs.clone(),
+        // The one thing `-o` decides that the read decides rather than a scan.
+        // A name whose date the invocation asserted is a name `f_mtime` never
+        // runs for, so the intermediate turn-off at the end of `f_mtime` is
+        // never reached for it — and an `-o` name declared intermediate and
+        // lying there already is swept up, where the same file without the
+        // switch is kept. Everything else the switch decides belongs to a scan,
+        // and a scan is answered where the build runs.
+        old_files: invocation
+            .assumed_old
+            .iter()
+            .map(|name| Bytes::from(name.to_vec()))
+            .collect(),
         ..Flags::default()
     };
     session.flags.targets = invocation
@@ -1444,6 +1482,7 @@ fn build_options(
         // further while the load average is above it, and zero is no ceiling.
         maxload: invocation.load.map_or(0.0, |load| load.ceiling),
         assumed_new: invocation.assumed_new.clone(),
+        assumed_old: invocation.assumed_old.clone(),
         working_directory,
         ..BuildOptions::default()
     };
@@ -2130,6 +2169,7 @@ fn compilation_context(
         always_make: invocation.given(Switch::AlwaysMake),
         restarted: restarts > 0,
         assumed_new: invocation.assumed_new.clone(),
+        assumed_old: invocation.assumed_old.clone(),
         level,
         jobs,
         // Everything this unit was evaluated with except how many times it has

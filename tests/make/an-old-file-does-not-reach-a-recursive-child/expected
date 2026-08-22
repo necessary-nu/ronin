@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # -o has toenv clear in the switch table (main.c:484), so it is not written
+| # into MAKEFLAGS and a recursive child is never told. The child remakes sub
+| # exactly as it would have without the switch.
+| pre.out:
+| 	@echo before > pre.out
+| 	@$(MAKE) -f sub.mk sub
+| 	@echo after >> pre.out
+file pre.out touched 2
+| before
+| after
+file sub.mk kept 1
+| sub: ; @echo sub > sub.out
+file sub.out touched 1
+| sub

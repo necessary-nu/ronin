@@ -1,0 +1,7 @@
+echo a > a
+echo b > b
+echo start > out
+echo oldapp > app
+touch -d '2020-01-01 00:00' app
+touch -d '2022-01-01 00:00' out
+touch -d '2021-01-01 00:00' a b

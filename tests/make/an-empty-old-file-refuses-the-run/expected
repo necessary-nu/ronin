@@ -1,0 +1,7 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 4
+| # decode_switches refuses an empty argument to a switch that names a file,
+| # before the name is stored. Exit 2 with nothing built.
+| all:
+| 	@echo made > out

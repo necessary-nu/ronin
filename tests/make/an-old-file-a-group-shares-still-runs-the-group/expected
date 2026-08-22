@@ -1,0 +1,16 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # -o is answered per name. One member of a grouped record being settled is no
+| # reason to spare the record: b is still out of date, the recipe runs, and it
+| # writes a as well.
+| all: a b
+| a b &: src
+| 	@echo made > a
+| 	@echo made > b
+file a touched 1
+| made
+file b touched 1
+| made
+file src kept 1
+| s

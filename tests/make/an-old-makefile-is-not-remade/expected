@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # The -o files are stamped before the makefile update rather than after it, and
+| # with no restarts guard beside them, so a makefile the switch names is not
+| # remade and the read does not go around.
+| include gen.mk
+| all:
+| 	@echo hi-$(V) > ran
+| gen.mk: gen.src
+| 	@echo "V=1" > $@
+| 	@echo remade >> genlog
+file gen.mk kept 1
+| V=0
+file gen.src kept 1
+| s
+file ran touched 1
+| hi-0

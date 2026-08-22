@@ -1,0 +1,9 @@
+KNOWN GAP, owned by `make-a-switch-names-a-target-gpath-renamed`.
+
+A GPATH rename replaces the name the makefile wrote with the path the search
+found, and the written name is then not in the graph at all — so `-o out.o`
+reaches nothing and `-o src/out.o` reaches a target GNU Make would say the
+switch never named. `-W` has the same hole from the other side, and both halves
+belong to that node rather than to this one.
+
+GNU Make 4.4.1 leaves `app` alone; Ronin remakes it.

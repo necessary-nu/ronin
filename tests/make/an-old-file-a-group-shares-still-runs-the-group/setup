@@ -1,0 +1,5 @@
+echo s > src
+echo olda > a
+echo oldb > b
+touch -d '2020-01-01 00:00' a b
+touch -d '2023-01-01 00:00' src

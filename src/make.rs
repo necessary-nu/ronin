@@ -225,6 +225,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             // One read, so it has not started over.
             restarted: false,
             assumed_new: Vec::new(),
+            assumed_old: Vec::new(),
             level,
             jobs: session.flags.num_jobs.max(1),
             environment,
@@ -327,6 +328,17 @@ pub(crate) struct CompilationContext {
     /// `MAKEFLAGS` under `make -W foo` reads ` --no-print-directory` and
     /// nothing else, where under `-n` it reads `n --no-print-directory`.
     pub(crate) assumed_new: Vec<crate::util::BString>,
+    /// What `-o` named, and here for the reason `assumed_new` is here: whether
+    /// a recursive recipe has to run is decided at compile time, and a switch
+    /// that answers about a file has to reach the place where that file's date
+    /// is asked for. Without it the recipe of a target the switch named runs,
+    /// where GNU Make says the target is up to date.
+    ///
+    /// Not inherited by a child compilation either: `-o` shares `-W`'s cleared
+    /// `toenv` in GNU Make's switch table (main.c), so neither reaches
+    /// `MAKEFLAGS` and neither reaches a recursive child. Measured — a child's
+    /// `MAKEFLAGS` under `make -o foo` reads empty.
+    pub(crate) assumed_old: Vec<crate::util::BString>,
     pub(crate) level: usize,
     pub(crate) jobs: usize,
     /// The environment this unit imports while kati evaluates it.
@@ -1052,7 +1064,10 @@ where
             &mut pending,
             &disk,
             begun || forced,
-            &descendant_context.assumed_new,
+            crate::runtime::AssertedDates {
+                new: &descendant_context.assumed_new,
+                old: &descendant_context.assumed_old,
+            },
         )? {
             RecursiveWrapper::Current(wrapper) => {
                 subtree_edges.push(wrapper);
@@ -1342,13 +1357,13 @@ fn stage_recursive_wrapper(
     pending: &mut sink::PendingSubninja,
     disk: &crate::os::RealDiskInterface,
     begun: bool,
-    assumed_new: &[crate::util::BString],
+    asserted: crate::runtime::AssertedDates<'_>,
 ) -> Result<RecursiveWrapper, MakeError> {
     let edge = sink.probe_subninja(pending).map_err(MakeError::Construct)?;
     let mut stat = |path: &std::path::Path| disk.stat(path);
     let dirty = begun
         || sink
-            .settle_subninja_freshness(edge, &mut stat, assumed_new)
+            .settle_subninja_freshness(edge, &mut stat, asserted)
             .map_err(|error| MakeError::Evaluate(error.to_string()))?;
     Ok(if dirty {
         RecursiveWrapper::Dirty(edge)

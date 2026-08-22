@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # -o FILE says the file is very old and must not be remade. GNU Make stamps
+| # OLD_MTIME on it and marks it updated (main.c), so its own recipe never runs
+| # however stale the file is.
+| all: app
+| app: out.o
+| 	@echo made > $@
+| out.o: out.c
+| 	@echo remade > $@
+file app touched 1
+| made
+file out.c kept 1
+| src
+file out.o kept 1
+| old

@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # The directory search preserves OLD_MTIME rather than stating the file it
+| # found (vpath.c), so -o names the file as the makefile wrote it and the answer
+| # survives the search. app stays as it was.
+| VPATH = src
+| all: app
+| app: out.o
+| 	@echo made > $@
+| out.o: out.c
+| 	@echo remade > $@
+file app kept 1
+| oldapp
+file src/out.c kept 1
+| src
+file src/out.o kept 1
+| old

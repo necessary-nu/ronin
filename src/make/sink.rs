@@ -655,12 +655,12 @@ impl GraphSink {
         &mut self,
         edge: Edge,
         stat: &mut F,
-        assumed_new: &[crate::util::BString],
+        asserted: crate::runtime::AssertedDates<'_>,
     ) -> Result<bool, crate::error::GraphError>
     where
         F: FnMut(&Path) -> std::io::Result<i64>,
     {
-        if self.graph.edge_dirty_with(edge, stat, assumed_new)? {
+        if self.graph.edge_dirty_with(edge, stat, asserted)? {
             return Ok(true);
         }
         self.graph.set_edge_rule(edge, self.phony);

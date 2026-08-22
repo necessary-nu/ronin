@@ -1,0 +1,11 @@
+# GPATH says a target found in src is remade in src, so rename_file moves the
+# file object to the found path and the rule the makefile wrote goes on making
+# it. The name the invocation gives -o is still the written one: f_mtime never
+# runs for it, so the rename never changes what the switch answered about.
+VPATH = src
+GPATH = src
+all: app
+app: out.o
+	@echo made > $@
+out.o: out.c
+	@echo remade > $@

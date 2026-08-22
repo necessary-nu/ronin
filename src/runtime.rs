@@ -8,7 +8,7 @@ mod assumed;
 mod deferred;
 mod edge;
 
-pub(crate) use assumed::AssumedNew;
+pub(crate) use assumed::{AssertedDates, AssumedNodes};
 pub(crate) use deferred::DeferredRuntime;
 pub(crate) use edge::EdgeRuntime;
 
@@ -27,6 +27,17 @@ impl FileTime {
     /// `INTEGER_TYPE_MAXIMUM (FILE_TIMESTAMP)` (filedef.h) and the switch
     /// stamps it on the file rather than touching it.
     pub(crate) const NEWEST: Self = Self(i64::MAX);
+    /// Present, and older than anything a filesystem can answer, which is what
+    /// GNU Make's `-o` writes over the date of the file it names: `OLD_MTIME`
+    /// is 2 and sits one below `ORDINARY_MTIME_MIN` and one above
+    /// `NONEXISTENT_MTIME` (filedef.h), so the name reads as there and as older
+    /// than every real file — and what depends on it therefore does not rebuild.
+    ///
+    /// One rather than two because the two encodings differ by where absence
+    /// sits: GNU Make spends 0 on "not yet asked" and 1 on "not there", and
+    /// here the sentinel for "not yet asked" is negative, so absence is 0 and
+    /// the smallest present moment is 1.
+    pub(crate) const OLDEST: Self = Self(1);
     pub(crate) const fn observed(raw: i64) -> Self {
         debug_assert!(raw >= 0, "observed filesystem timestamps are nonnegative");
         Self(raw)
@@ -64,7 +75,11 @@ impl FileTime {
     ///
     /// Missing and unobserved answer for themselves. Neither is a moment.
     pub(crate) const fn to_end_of_second(self) -> Self {
-        if !self.is_observed() || self.is_missing() || self.0 == Self::NEWEST.0 {
+        if !self.is_observed()
+            || self.is_missing()
+            || self.0 == Self::NEWEST.0
+            || self.0 == Self::OLDEST.0
+        {
             return self;
         }
         Self(self.0 - self.0.rem_euclid(1_000_000_000) + 999_999_999)
@@ -233,7 +248,21 @@ pub(crate) struct RuntimeState {
     /// makefile update on a first read and only after it on a restart
     /// (main.c:2325, main.c:2837). Left alone by [`Self::reset`], which clears
     /// what a scan learned rather than what it was asked.
-    pub(crate) assumed_new: AssumedNew,
+    pub(crate) assumed_new: AssumedNodes,
+    /// The nodes this scan answers about as though the file were older than
+    /// everything, and had already been brought up to date, which is GNU
+    /// Make's `-o`.
+    ///
+    /// Beside `assumed_new`, and the two are asked in that order because
+    /// `main` stamps them in that order: `-o` writes `OLD_MTIME` first
+    /// (main.c:2312) and `-W` writes `NEW_MTIME` over it (main.c:2325), so a
+    /// name given to both is new whichever order the words were written in.
+    ///
+    /// Unlike `assumed_new` this reaches every pass. `-W` is withheld from a
+    /// restarted read because an assumed-new makefile prerequisite would send
+    /// the read around forever; an assumed-OLD one cannot, and GNU Make's
+    /// stamp carries no `restarts` guard to match.
+    pub(crate) assumed_old: AssumedNodes,
     /// For each node the graph gave a second place to look for, which of the
     /// two places this build has settled on. See [`crate::graph::searched`];
     /// absent means unsettled, which is every node of every graph but the few a

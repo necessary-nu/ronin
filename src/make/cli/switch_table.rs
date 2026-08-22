@@ -241,14 +241,30 @@ impl Invocation {
     /// Through the same file-name gate every other switch that names one goes
     /// through, because GNU Make's is the same gate: `expand_command_line_file`
     /// is reached before the name is stored, so `-W ./x` and `-W x` name one
-    /// file. Nothing is published — `-W` is the one file switch with `toenv`
-    /// clear in the switch table (main.c:486), so it is not written into
-    /// `MAKEFLAGS` and a recursive child is never told.
+    /// file. Nothing is published — `-W` and `-o` are the two file switches
+    /// with `toenv` clear in the switch table (main.c:484, main.c:486), so
+    /// neither is written into `MAKEFLAGS` and a recursive child is never told.
     pub(super) fn assume_new(&mut self, source: ArgumentSource, named: &[u8]) {
         if !self.non_empty(source, "-W", named) {
             return;
         }
         self.assumed_new
+            .push(BString::from(command_line_file(named)));
+    }
+
+    /// Record a file `-o` named, which the run answers about as though it were
+    /// older than everything and had already been brought up to date.
+    ///
+    /// Through the same gate as `-W`, and published the same way — which is to
+    /// say not at all. A repeated name is kept rather than filtered, as it is
+    /// for `-W`: GNU Make de-duplicates only the list switches it marks for it
+    /// and neither of these is one, and stamping a name twice says what
+    /// stamping it once says.
+    pub(super) fn assume_old(&mut self, source: ArgumentSource, named: &[u8]) {
+        if !self.non_empty(source, "-o", named) {
+            return;
+        }
+        self.assumed_old
             .push(BString::from(command_line_file(named)));
     }
 }

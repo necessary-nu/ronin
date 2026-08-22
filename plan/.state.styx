@@ -806,6 +806,7 @@ assertions (
     {id make-an-existing-intermediate-does-not-force-its-dependent, kind @complete, author "brendan@necessary.nu", at 2026-08-22T12:32:00.710102757Z}
     {id make-a-posix-target-is-read-where-it-is-written, kind @doing, author "brendan@necessary.nu", at 2026-08-22T12:53:41.802927303Z}
     {id make-a-posix-target-is-read-off-text-that-names-none, kind @complete, author "brendan@necessary.nu", at 2026-08-22T13:21:19.608991641Z}
+    {id make-an-old-file-is-not-remade, kind @complete, author "brendan@necessary.nu", at 2026-08-22T14:53:53.177148372Z}
 )
 
 impl_evidence (

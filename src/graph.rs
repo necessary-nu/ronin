@@ -439,6 +439,14 @@ where
         runtime.node_mut(node).observe(FileTime::NEWEST);
         return Ok(());
     }
+    // `-o` is the same stamp with the sign turned round, and it is asked after
+    // `-W` because `main` writes it before: `OLD_MTIME` goes down first
+    // (main.c:2312) and `NEW_MTIME` goes over it (main.c:2325), so a name given
+    // to both switches is new however the words were ordered.
+    if runtime.assumed_old.contains(node) {
+        runtime.node_mut(node).observe(FileTime::OLDEST);
+        return Ok(());
+    }
     if graph.is_unread_makefile(node) {
         runtime.node_mut(node).observe(FileTime::MISSING);
         return Ok(());
@@ -690,6 +698,27 @@ impl DirtyEvaluator {
                         return Err(cycle_through(graph, &path, node));
                     }
                     VisitState::New => {
+                        // A name `-o` asserted a date for is where the walk
+                        // stops. GNU Make's `-o` sets `updated`, `us_success`
+                        // and `cs_finished` beside the date (main.c:2312), and
+                        // `update_file_1` returns on `file->updated` before it
+                        // looks at a recipe, a prerequisite or the switches —
+                        // so the name is not remade, nothing beneath it is
+                        // considered, `-B` does not reach it, and a name with
+                        // no rule that is not there is no longer an error. All
+                        // four measured against 4.4.1.
+                        //
+                        // The stamp is not enough on its own: a scan that
+                        // descended would find a stale prerequisite, call the
+                        // edge dirty and remake the very name the switch named.
+                        if runtime.assumed_old.contains(node) {
+                            if runtime.node(node).mtime().is_unobserved() {
+                                runtime.node_mut(node).observe(FileTime::OLDEST);
+                            }
+                            runtime.node_mut(node).set_dirty(false);
+                            self.nodes.set(node.index(), VisitState::Done);
+                            continue;
+                        }
                         let Some(edge) = graph.node(node).generator else {
                             if runtime.node(node).mtime().is_unobserved() {
                                 nodestat_with(graph, runtime, node, stat)?;

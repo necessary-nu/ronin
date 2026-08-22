@@ -135,6 +135,18 @@ pub(crate) struct BuildOptions {
     /// sends the read around once and not forever.
     // [spec:ronin:req:make.semantics+1]
     pub(crate) assumed_new: Vec<BString>,
+    /// The files this run answers about as though each were older than
+    /// everything and had already been brought up to date, which is GNU Make's
+    /// `-o` / `--old-file` / `--assume-old`.
+    ///
+    /// Names rather than nodes for the same reason `assumed_new` holds names.
+    /// Unlike it, this reaches every pass: GNU Make's `-W` stamp is withheld
+    /// from a restarted read because an assumed-new makefile prerequisite would
+    /// remake the makefile, move its date and send the read around again, and
+    /// an assumed-old one cannot — so `main` stamps the `-o` files with no
+    /// `restarts` guard beside them (main.c:2312).
+    // [spec:ronin:req:make.semantics+1]
+    pub(crate) assumed_old: Vec<BString>,
 }
 
 impl Default for BuildOptions {
@@ -165,6 +177,7 @@ impl Default for BuildOptions {
             touch: false,
             always_make: false,
             assumed_new: Vec::new(),
+            assumed_old: Vec::new(),
         }
     }
 }
@@ -692,23 +705,12 @@ impl<'a> Builder<'a> {
         runtime.always_make = options.always_make;
         // Resolved against the graph this scan reads rather than carried as
         // node ids, because the names were given to the invocation and the same
-        // names are looked up again for the goal pass. A name the graph does
-        // not hold answers about nothing, which is GNU Make's `enter_file` on a
-        // name no rule mentions.
-        if !options.assumed_new.is_empty() {
-            let nodes = options
-                .assumed_new
-                .iter()
-                // Looked up as the switch stored it and no further. GNU Make
-                // has no path canonicalisation: `expand_command_line_file`
-                // strips a LEADING `./` and stops, so `-W ./d/in` names the
-                // file `d/in` and `-W d/./in` names a file no rule mentions.
-                // Canonicalising here would make the second one work, which is
-                // a file GNU Make's `enter_file` creates and nothing depends on.
-                .filter_map(|name| crate::graph::nodeget(graph, name.as_slice()))
-                .collect::<Vec<_>>();
-            runtime.assumed_new.mark(&nodes, graph.node_ids().len());
+        // names are looked up again for the goal pass.
+        crate::runtime::AssertedDates {
+            new: &options.assumed_new,
+            old: &options.assumed_old,
         }
+        .mark_on(graph, &mut runtime);
         if let Some(log) = build_log.as_deref() {
             log.hydrate_runtime(graph, &mut runtime, graph.node_ids());
         }
@@ -818,6 +820,16 @@ impl<'a> Builder<'a> {
         while let Some(item) = work.pop() {
             match item {
                 Work::Enter(node) => {
+                    // Stopping where the dirty scan stops. A name `-o` asserted
+                    // a date for is one GNU Make's `update_file_1` returns on
+                    // before it reaches a prerequisite, so nothing beneath it
+                    // is considered — and an edge this walk called out of date
+                    // on the way past would stay called that, because the scan
+                    // that stops at the `-o` name never reaches it to say
+                    // otherwise.
+                    if self.runtime.assumed_old.contains(node) {
+                        continue;
+                    }
                     let Some(edge) = self.graph.node(node).generator else {
                         if self.runtime.node(node).mtime().is_unobserved() {
                             let mut stat = |path: &Path| disk.stat(path);
@@ -1136,8 +1148,13 @@ impl<'a> Builder<'a> {
         }
         for (node, mtime) in self.stat_targets.iter().zip(&results) {
             if let Some(mtime) = *mtime {
+                // `-W` is asked first because GNU Make stamps it last: `-o`
+                // writes `OLD_MTIME` and `-W` writes `NEW_MTIME` over it, so a
+                // name given to both is new whichever order it was written in.
                 let observed = if self.runtime.assumed_new.contains(*node) {
                     FileTime::NEWEST
+                } else if self.runtime.assumed_old.contains(*node) {
+                    FileTime::OLDEST
                 } else {
                     FileTime::observed(mtime)
                 };
@@ -1167,22 +1184,53 @@ impl<'a> Builder<'a> {
     /// in their own right, and being a target is what being intermediate is
     /// the absence of — so a build that sweeps up the invented file leaves the
     /// name written beside it.
+    ///
+    /// A name `-o` asserted a date for is swept too, and it is the one file the
+    /// build was never going to make that GNU Make deletes anyway. The test in
+    /// `remove_intermediates` (file.c) is `f->update_status == us_none` — "if
+    /// nothing would have created this file yet, don't print an rm command for
+    /// it" — and `-o` writes `us_success` over exactly that field
+    /// (main.c:2312) at the same moment it writes the date. Which is how the
+    /// switch comes to delete a file: the date is asserted rather than stated,
+    /// so `f_mtime` never runs and never turns the intermediate bit off, and
+    /// the status says something made it. Measured against 4.4.1, where
+    /// `-o out.o` over `.INTERMEDIATE: out.o` says `rm out.o` and the same
+    /// build without the switch keeps the file.
     pub(crate) fn disposable_outputs(&self) -> Vec<BString> {
-        self.plan
-            .wanted_edges(self.graph)
+        let mut seen = crate::graph::MarkSet::default();
+        seen.begin(self.graph.node_ids().len());
+        let mut swept = Vec::new();
+        for edge in self.plan.wanted_edges(self.graph) {
+            let outputs: &[NodeId] = &self.graph.edge(edge).out;
+            for output in outputs {
+                self.sweep_disposable(*output, &mut seen, &mut swept);
+            }
+        }
+        for node in self.runtime.assumed_old.marked(self.graph) {
+            self.sweep_disposable(node, &mut seen, &mut swept);
+        }
+        swept
             .into_iter()
-            .filter(|edge| self.graph.edge(*edge).disposable)
-            .flat_map(|edge| {
-                let peers = self.graph.peer_outputs(edge);
-                self.graph
-                    .edge(edge)
-                    .out
-                    .iter()
-                    .filter(|output| !peers.contains(output))
-                    .copied()
-            })
             .map(|output| self.graph.node_path(output).to_owned())
             .collect()
+    }
+
+    /// Record `node` as one to sweep, unless it is not one or already is.
+    fn sweep_disposable(
+        &self,
+        node: NodeId,
+        seen: &mut crate::graph::MarkSet,
+        swept: &mut Vec<NodeId>,
+    ) {
+        let Some(edge) = self.graph.node(node).generator else {
+            return;
+        };
+        if !self.graph.edge(edge).disposable || self.graph.peer_outputs(edge).contains(&node) {
+            return;
+        }
+        if !seen.replace(node.index()) {
+            swept.push(node);
+        }
     }
 
     /// What this build did about the command that generates `node`.
