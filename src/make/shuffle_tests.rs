@@ -18,7 +18,8 @@ fn minted(makefile: &str, shuffle: Shuffle) -> Vec<String> {
         OsString::from("make"),
         OsString::from("-f"),
         path.into_os_string(),
-    ]);
+    ])
+    .expect("a taken argv");
     let graph = load_makefile(session, shuffle)
         .expect("the makefile describes a graph")
         .graph

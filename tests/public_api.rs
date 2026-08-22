@@ -303,7 +303,8 @@ fn public_api_builds_a_makefile_through_ronins_scheduler() {
             OsString::from("ronin"),
             OsString::from("-f"),
             makefile.into_os_string(),
-        ]),
+        ])
+        .expect("a taken argv"),
         Shuffle::None,
     )
     .unwrap()
@@ -386,7 +387,8 @@ fn public_api_collects_compiler_warnings() {
         OsString::from("ronin"),
         OsString::from("-f"),
         makefile.clone().into_os_string(),
-    ]);
+    ])
+    .expect("a taken argv");
     let collected = Arc::new(Diagnostics::collected());
     session.diagnostics = Arc::clone(&collected);
     load_makefile(session, Shuffle::None).unwrap();

@@ -2278,7 +2278,7 @@ mod tests {
     /// child is — GNU Make marks the count no-export for the same reason.
     #[test]
     fn child_does_not_inherit_restart_count() {
-        let mut session = Session::from_args(vec![OsString::from("make")]);
+        let mut session = Session::from_args(vec![OsString::from("make")]).expect("a taken argv");
         session.invocation_environment = Some(vec![
             (OsString::from(MAKE_RESTARTS), OsString::from("2")),
             (OsString::from("PATH"), OsString::from("/bin")),

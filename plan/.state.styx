@@ -830,6 +830,7 @@ assertions (
     {id make-manifest-oneshell-recipe-is-not-a-manifest, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:17:03.927957914Z}
     {id make-a-one-shell-line-keeps-the-semicolons-it-ends-on, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:57:35.172898565Z}
     {id make-a-one-shell-recipe-reads-its-prefixes-off-the-first-line, kind @complete, author "brendan@necessary.nu", at 2026-08-22T20:36:27.351541314Z}
+    {id make-kati-option-row-past-the-letters-it-can-honour, kind @complete, author "brendan@necessary.nu", at 2026-08-22T21:14:51.644103896Z}
 )
 
 impl_evidence (

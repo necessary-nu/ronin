@@ -696,7 +696,12 @@ fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
 /// comparison deliberately does not describe, and assert which side has it.
 fn build_both(directory: &Path, argv: Vec<OsString>) -> Result<Both, Outcome> {
     let _directory = super::compilation_directory_guard();
-    let session = Session::from_args(argv);
+    // A front end that will not take the argv has no graph to compare, and
+    // says so where every other unusable command line says it.
+    let session = match Session::from_args(argv) {
+        Ok(session) => session,
+        Err(refusal) => return Err(Outcome::NotAccepted(refusal.to_string())),
+    };
     let manifest_path = directory.join("build.ninja");
     let options = NinjaWriterOptions::from_flags(&session.flags);
 
@@ -891,6 +896,44 @@ fn outputs_where(graph: &BuildGraph, wanted: impl Fn(&crate::graph::Edge) -> boo
         .collect::<Vec<_>>();
     paths.sort();
     paths
+}
+
+/// A command line kati's front end will not take is an outcome, not a crash.
+///
+/// This gate hands its flags straight to `Session::from_args`, so the option
+/// table's refusals arrive here rather than in a process anyone can exit from.
+/// Every letter of GNU Make's short-option row that kati cannot honour used to
+/// reach `panic!("Unknown flag: ...")` there — sixteen of them, including
+/// `-rR`, which is not one letter but two and which the corpus under
+/// tests/make/ writes seven times. A panic inside this gate takes the gate
+/// down; a refusal is a value it can report.
+///
+/// `-q` is the letter that would be worst to accept quietly: it says answer
+/// whether there is work instead of doing it, and a front end that compiled
+/// the graph and reported success would be answering for a build that never
+/// ran. `-rR` is the cluster beside it, and both sinks have to see both
+/// letters — `no_builtin_rules` and `no_builtin_variables` are compiler input,
+/// so a cluster read as one unknown word would compile a different graph.
+#[test]
+fn a_refused_switch_is_an_outcome() {
+    let makefile = "all: out\nout:\n\t@touch m1\n";
+    let outcome = Case::new(makefile, &["-q"]).compare();
+    assert_eq!(
+        outcome.to_string(),
+        "make rejected the fixture: rkati: unsupported option -- 'q'"
+    );
+    // And the cluster beside it is read as the two switches it is, all the way
+    // through to a graph both sinks agree on.
+    agrees(
+        "\
+all: out
+out: out.c
+\t@printf '%s\\n' '$(CC)' '$(AR)' > $@
+out.c:
+\t@touch $@
+",
+        &["-rR"],
+    );
 }
 
 /// Assert that one Makefile produces the same graph both ways.
