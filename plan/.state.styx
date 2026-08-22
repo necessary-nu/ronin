@@ -824,9 +824,9 @@ assertions (
     {id make-an-old-file-is-not-remade, kind @complete, author "brendan@necessary.nu", at 2026-08-22T14:53:53.177148372Z}
     {id make-recursive-invocation-spans-a-continued-line, kind @complete, author "brendan@necessary.nu", at 2026-08-22T15:45:41.623229893Z}
     {id make-manifest-recipe-line-keeps-its-errexit, kind @complete, author "brendan@necessary.nu", at 2026-08-22T16:55:39.766026385Z}
-    {id make-kati-option-table-reads-i-as-n, kind @doing, author "brendan@necessary.nu", at 2026-08-22T17:17:06.851992073Z}
-    {id make-manifest-response-file-keeps-the-shell-flags, kind @doing, author "brendan@necessary.nu", at 2026-08-22T17:49:44.445551984Z}
-    {id make-manifest-oneshell-recipe-is-not-a-manifest, kind @doing, author "brendan@necessary.nu", at 2026-08-22T18:26:40.224134206Z}
+    {id make-kati-option-table-reads-i-as-n, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:16:50.278912053Z}
+    {id make-manifest-response-file-keeps-the-shell-flags, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:16:59.394982602Z}
+    {id make-manifest-oneshell-recipe-is-not-a-manifest, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:17:03.927957914Z}
 )
 
 impl_evidence (
