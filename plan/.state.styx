@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-22T03:21:46.26536221Z
+last_sync_at 2026-08-22T04:58:50.532688793Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -310,11 +310,13 @@ derived_priorities (
     {id make-two-worked-out-names-exist-before-gnu-defines-them, priority 0, derived_at 2026-08-20T04:48:58.527069983Z}
     {id make-unknown-switch-in-a-makefiles-makeflags, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-upstream-failure-block-narration-unrecognised, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
+    {id make-upstream-intermediate-sweep-narration-unrecognised, priority 3, derived_at 2026-08-22T04:58:50.532688793Z}
     {id make-upstream-parallelism-interleave-flaps, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-upstream-residue-triage, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-variable-is-one-word, priority 3, derived_at 2026-08-08T21:00:59.885791732Z}
     {id make-vpath-found-name-merges-two-declared-targets, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-vpath-gpath-output-location, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
+    {id make-vpath-name-reaches-a-recipe-read-early, priority 3, derived_at 2026-08-22T04:58:50.532688793Z}
     {id make-vpath-name-survives-only-a-current-target, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-vpath-prerequisite-resolves-to-a-target, priority 1, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-what-if-assumed-new, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
