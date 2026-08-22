@@ -114,13 +114,27 @@ manifest-derived graph is.
 > Ninja execution control, or an accepted no-op; no option introduces a
 > Make-only scheduler, persistence, jobserver, or reporting path.
 
-> [spec:ronin:req:make.question-status]
+> [spec:ronin:req:make.question-status+1]
 > Make mode's `-q` answers whether the goals are already up to date and runs
 > nothing at all, and it answers in the exit status alone: zero when nothing
 > would run, one when something would, two when the question could not be
 > answered. This is the one place a Make invocation's status is GNU Make's
 > rather than the build outcome `compatibility.md` governs, because no build is
 > run to have a status of its own.
+>
+> An interrupt is not one of those three answers, and it overrides whichever of
+> them the run had reached: a `-q` the user stops leaves with the interrupt's
+> status, not with zero, one or two. The three answers are about what the
+> makefile says, and two of them are affirmative — a run cut short before it
+> could finish asking must not report that it finished asking, and a script
+> branching on `-q` must not be told there is nothing to do by a run that never
+> found out. GNU Make 4.4.1 agrees in every case measured, including one where
+> it had already learned the answer was one and left 130 anyway; the two it
+> leaves is for a question the makefile cannot answer — a goal with no rule, a
+> makefile that will not parse, no makefile at all — and never for a signal.
+> The status itself is the build outcome's 130 rather than GNU's re-raised
+> signal, because the exception above is about `-q`'s own three endings and an
+> interrupt is not one of them.
 
 > [spec:ronin:req:make.narration+1]
 > A Makefile becomes a Ninja graph, and a Ninja graph is narrated Ninja's way.

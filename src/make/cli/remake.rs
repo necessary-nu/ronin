@@ -370,7 +370,12 @@ impl Passes<'_, '_, '_> {
                 Pass::Answered(Ok(false)) if subset.question => subset.targets.clone(),
                 Pass::Answered(question) => {
                     let reported = std::mem::take(self.reported);
-                    return Remaking::Finished(answered(reported, question, self.keep_going));
+                    return Remaking::Finished(answered(
+                        reported,
+                        question,
+                        self.keep_going,
+                        crate::signal::interrupted().is_some(),
+                    ));
                 }
                 Pass::Current => Vec::new(),
             };
@@ -1106,6 +1111,7 @@ fn after_staging(
                 std::mem::take(reported),
                 question,
                 keep_going,
+                crate::signal::interrupted().is_some(),
             )))
         }
         Pass::Current if boundaries.is_empty() => Ok(Settlement::Settled {

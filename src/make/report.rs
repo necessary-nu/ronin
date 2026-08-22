@@ -174,13 +174,30 @@ pub(super) fn refused_makefile(
 /// The refusal is reported either way, on stderr with every other diagnostic.
 /// It is the reason the question could not be answered any other way, so it is
 /// a failure being reported rather than a run being narrated.
-// [spec:ronin:req:make.question-status]
+///
+/// `cut_short` outranks all three. A question the user stopped was not answered
+/// and must not report that it was — least of all with the affirmative zero,
+/// which tells a script branching on `-q` that there is nothing to do. The
+/// interrupt is READ rather than inferred from the walk: `interrogate` answers
+/// `Ok(true)` for a `+` line that DECLINES the signal and reaches the end of its
+/// own script, so the walk's own result cannot tell an interrupted run from an
+/// uneventful one, and a `+` line killed by a signal nobody sent this process is
+/// an ordinary failure that keeps its 2. Measured across the whole `-q` matrix:
+/// GNU Make 4.4.1 leaves 130 for an interrupt during a `+` line trapping or not,
+/// under `-k`, with more work behind it, and through a recursive child, and
+/// leaves 2 only for a question the makefile cannot answer with no signal in
+/// sight.
+// [spec:ronin:req:make.question-status+1]
 // [spec:ronin:req:make.narration+1]
 pub(super) fn answered(
     reported: String,
     question: Result<bool, Error>,
     keep_going: bool,
+    cut_short: bool,
 ) -> RunResult {
+    if cut_short {
+        return self::cut_short(reported);
+    }
     match question {
         Ok(up_to_date) => RunResult {
             stdout: terminated(reported),
@@ -278,8 +295,10 @@ pub(super) fn complained_of(
 /// and both references say so with the same number: GNU Make 4.4.1 exits 130 by
 /// dying of the signal it caught, upstream Ninja exits 130 without re-raising,
 /// and `[spec:ronin:req:product.build-outcome]` — which
-/// `[spec:ronin:req:make.question-status]` names as governing every Make
-/// invocation's status but `-q`'s — takes Ninja's spelling of it.
+/// `[spec:ronin:req:make.question-status+1]` names as governing every Make
+/// invocation's status but `-q`'s THREE ANSWERS — takes Ninja's spelling of it.
+/// An interrupted `-q` is not one of those three, and leaves the same 130 as
+/// this.
 ///
 /// The reason is read rather than the number: a recipe that exits 130 of its
 /// own accord is a failed recipe, and Make mode reports it as the 2 that every

@@ -789,6 +789,7 @@ assertions (
     {id make-mode-leaves-an-interrupt-with-2-where-both-references-say-130, kind @complete, author "brendan@necessary.nu", at 2026-08-22T00:48:37.662169967Z}
     {id carry-process-integrations-evidence-to-the-bumped-rule, kind @complete, author "brendan@necessary.nu", at 2026-08-22T01:06:08.17817441Z}
     {id a-read-phase-interrupt-waits-for-the-shell-function, kind @complete, author "brendan@necessary.nu", at 2026-08-22T02:36:40.880979219Z}
+    {id question-mode-answers-up-to-date-after-an-interrupt, kind @doing, author "brendan@necessary.nu", at 2026-08-22T02:37:21.111568953Z}
 )
 
 impl_evidence (

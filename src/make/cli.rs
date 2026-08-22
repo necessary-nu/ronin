@@ -2021,6 +2021,11 @@ fn reported_run(
             reported,
             question,
             invocation.given(Switch::KeepGoing),
+            // The reason, not the walk's result: a `+` line that declines the
+            // signal reaches the end of its own script and answers as if
+            // nothing had happened, which is the case that made `-q` report
+            // "already up to date" for a run the user cut short.
+            crate::signal::interrupted().is_some(),
         ));
     }
     let outcome = planned.and_then(|planned| {
@@ -2836,7 +2841,7 @@ mod tests {
     }
 
     /// Accepted runner no-ops do not change Ninja's question operation.
-    // [spec:ronin:req:make.question-status/test]
+    // [spec:ronin:req:make.question-status+1/test]
     #[test]
     fn touch_does_not_override_question_mode() {
         assert!(parsed(&["make", "-q"]).questioning());

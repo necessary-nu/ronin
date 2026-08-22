@@ -608,3 +608,110 @@ fn an_interrupt_ends_the_second_wait() {
     );
     assert!(!directory.join("out").exists());
 }
+
+/// A question the user stops answers neither of the two things it could.
+///
+/// `-q` runs no recipe except a line the makefile marked `+`, which runs
+/// anyway, and a run interrupted while such a line is running used to answer
+/// ZERO — the affirmative one. It did not merely mis-number the answer: a script
+/// branching on `-q` was told there was nothing to do by a run that was cut
+/// short before it could find out.
+///
+/// The makefile signals the tool itself, so there is no race to lose and no
+/// signal for this suite to send: `$$PPID` reaches the shell as `$PPID`, and the
+/// shell a recipe line runs in is the tool's own child. The line then exits
+/// successfully, which is the case that made this a defect rather than an
+/// oversight — the walk's own result cannot tell an interrupted run from an
+/// uneventful one, so the interrupt has to be read rather than inferred.
+///
+/// Measured across the whole `-q` matrix, three rounds a cell: GNU Make 4.4.1
+/// leaves 130 for an interrupt during a `+` line trapping or not, under `-k`,
+/// with work behind it, and through a recursive child, and never leaves 2 for a
+/// signal. Ronin leaves the same 130 without re-raising, as everywhere else.
+// [spec:ronin:req:make.question-status+1/test]
+// [spec:ronin:req:product.build-outcome/test]
+#[cfg(feature = "make")]
+#[test]
+fn a_stopped_question_answers_neither() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let directory = make_case(
+        "make-question-interrupted",
+        "out:\n\t+@kill -INT $$PPID; touch $@\n",
+    );
+    let finished = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-q")
+        .output()
+        .unwrap();
+
+    assert_eq!(finished.status.signal(), None);
+    assert_eq!(
+        finished.status.code(),
+        Some(ronin::INTERRUPTED_EXIT_CODE),
+        "{}",
+        String::from_utf8_lossy(&finished.stdout)
+    );
+    // `-q` answers in the status alone, interrupted or not.
+    assert_eq!(String::from_utf8_lossy(&finished.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&finished.stderr), "");
+}
+
+/// And it outranks an answer the run had already reached.
+///
+/// The half that makes the rule a statement about the interrupt rather than
+/// about the affirmative zero. Here the `+` line is followed by a line that
+/// would have to run, so the question's answer is ONE and the walk knows it
+/// before it stops — and GNU Make 4.4.1 discards that answer and leaves 130
+/// anyway, measured three rounds with and without `-k`. A fix that only stopped
+/// `-q` claiming "already up to date" would leave this cell answering 1.
+// [spec:ronin:req:make.question-status+1/test]
+#[cfg(feature = "make")]
+#[test]
+fn an_interrupt_outranks_the_answer() {
+    let directory = make_case(
+        "make-question-outranked",
+        "out:\n\t+@kill -INT $$PPID\n\t@echo would-run\n",
+    );
+    let finished = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-q")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        finished.status.code(),
+        Some(ronin::INTERRUPTED_EXIT_CODE),
+        "{}",
+        String::from_utf8_lossy(&finished.stdout)
+    );
+}
+
+/// A `+` line killed by a signal nobody sent the tool is an ordinary refusal.
+///
+/// The boundary from the other side, and the reason the interrupt is read from
+/// the tool's own flag rather than from anything the question walk reports: the
+/// line here dies of exactly the signal the two cases above send, and the run
+/// must still answer 2, because the question could not be answered rather than
+/// the user having stopped asking it. Measured: GNU Make 4.4.1 answers 2, and so
+/// does a `+` line that exits 130 of its own accord.
+// [spec:ronin:req:make.question-status+1/test]
+#[cfg(feature = "make")]
+#[test]
+fn a_signalled_question_line_answers_two() {
+    let directory = make_case(
+        "make-question-line-signalled",
+        // `$$$$` is one `$$` after the makefile is read and the shell's own pid
+        // after that, so the line signals ITSELF and never this process.
+        "out:\n\t+@touch $@; kill -INT $$$$\n",
+    );
+    let finished = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-q")
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        finished.status.code(),
+        Some(2),
+        "{}",
+        String::from_utf8_lossy(&finished.stdout)
+    );
+}

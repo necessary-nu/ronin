@@ -2328,7 +2328,7 @@ fn always_make_rebuilds_every_target() {
     assert_eq!(written(), "line\nline\nline\nline\n");
 }
 
-// [spec:ronin:req:make.question-status/test]
+// [spec:ronin:req:make.question-status+1/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn question_mode_answers_in_the_status_and_builds_nothing() {
