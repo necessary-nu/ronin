@@ -15244,6 +15244,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-22T17:08:43.235665722Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The one open item, measured rather than asserted: scripts/check-performance.sh could not be run on a quiet host, and its failures are noise.\n\nThe host carried another workload for the whole dispatch — a sandboxed build under `silo-`, dozens of clang++ and cc1 processes belonging to nothing in this tree, holding the load average between 28 and 43 on 32 cores for over an hour, never once dropping below 28.\n\nThree runs of the gate, three DIFFERENT workloads flagged:\n\n  wide-noop-build                 1.00x against a recorded 0.82x\n  manifest-command-evaluation     0.61x against a recorded 0.49x\n  clean-tree-noop                 0.87x against a recorded 0.65x\n\nA regression does not move between workloads run to run. Two back-to-back runs of the baseline example on the same unchanged release binary say the same thing directly:\n\n  manifest-command-evaluation   run 1: ronin 17.482 ms, ninja 36.123 ms -> 0.484x\n                                run 2: ronin 13.496 ms, ninja 26.224 ms -> 0.515x\n  wide-noop-build               run 1: ronin 21.735 ms, ninja 23.095 ms -> 0.941x\n                                run 2: ronin 19.616 ms, ninja 22.598 ms -> 0.868x\n\nBoth of those runs would have PASSED validation; the run before them, on the same binary, reported 0.61x for the first of them. The spread across consecutive runs is wider than the gate's own 20% tolerance, and the absolute medians are around three times the recorded ones (6.015 ms recorded against 17.482 measured), which is the load and nothing else.\n\nAttribution, independently of the noise: both flagged workloads are pure Ninja mode. `manifest-command-evaluation` runs `ronin -t commands all` over a generated manifest and `wide-noop-build` a no-op build over another; `clean-tree-noop` likewise. None reads a Makefile, so none reaches kati at all, and this node changed one function in kati's manifest writer.\n\nRe-run `scripts/check-release.sh` on a quiet host. Everything else in the battery is green and recorded in the note above."
+                        after_done true
+                    }
                 )
             }
 
