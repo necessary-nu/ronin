@@ -284,7 +284,7 @@ case	features/jobserver.diff.8	narration	product-name+fatal-decoration+shared-re
 case	features/jobserver.diff.9	narration	ninja-progress
 case	features/mult_rules.diff	narration	product-name+fatal-decoration+shared-refusal
 case	features/mult_rules.diff.1	narration	ninja-progress
-case	features/mult_rules.diff.2	unclassified	no-work-line+up-to-date-line+evaluation
+case	features/mult_rules.diff.2	narration	no-work-line+up-to-date-line
 case	features/mult_targets.diff	narration	ninja-progress
 case	features/mult_targets.diff.1	narration	ninja-progress
 case	features/order_only.diff	narration	ninja-progress
@@ -451,7 +451,7 @@ case	features/se_explicit.diff.23	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.24	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.25	narration	no-work-line+up-to-date-line+recipe-interleave
 case	features/se_explicit.diff.26	narration	no-work-line
-case	features/se_explicit.diff.27	unclassified	no-work-line+up-to-date-line+evaluation
+case	features/se_explicit.diff.27	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.28	narration	no-work-line
 case	features/se_explicit.diff.29	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line
 case	features/se_explicit.diff.3	unclassified	no-work-line+evaluation

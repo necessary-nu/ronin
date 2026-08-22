@@ -794,6 +794,7 @@ assertions (
     {id question-mode-answers-up-to-date-after-an-interrupt, kind @complete, author "brendan@necessary.nu", at 2026-08-22T03:06:59.634595734Z}
     {id an-interrupted-read-has-no-rule-of-its-own, kind @complete, author "brendan@necessary.nu", at 2026-08-22T03:18:41.060220735Z}
     {id make-vpath-name-survives-only-a-current-target, kind @complete, author "brendan@necessary.nu", at 2026-08-22T04:47:45.160182175Z}
+    {id make-vpath-found-name-merges-two-declared-targets, kind @complete, author "brendan@necessary.nu", at 2026-08-22T05:28:31.453634792Z}
 )
 
 impl_evidence (

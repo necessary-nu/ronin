@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # A static pattern rule's prerequisites are worked out when the rule is read,
+| # against the name as written, and GPATH then renames the one object that
+| # carries them. So the target is made at the found path from the prerequisite
+| # the written name derived, and the stem is the written name's.
+| VPATH = build
+| GPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o: %.o: %.c ; @printf 'made [%s] from [%s] stem [%s]\n' '$@' '$<' '$*' > $@
+file build/out.o touched 1
+| made [build/out.o] from [out.c] stem [out]
+file out.c kept 1
+| src
+file seen touched 1
+| all sees build/out.o

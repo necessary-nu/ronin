@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # `.PHONY` alone makes the found name a target, so the search takes it and the
+| # merge happens with an object that has no recipe: the one written here runs,
+| # under the found name.
+| vpath %.te d/
+| 
+| all: fail.te
+| 	@printf 'all from [%s]\n' '$<' > seen
+| 
+| .PHONY: d/fail.te
+| fail.te: ; @printf 'here [%s]\n' '$@' > seen2
+file seen touched 1
+| all from [d/fail.te]
+file seen2 touched 1
+| here [d/fail.te]

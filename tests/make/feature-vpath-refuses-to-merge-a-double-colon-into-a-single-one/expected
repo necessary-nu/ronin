@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 8
+| # The same refusal the other way round.
+| vpath %.te d/
+| 
+| all: fail.te
+| 	@printf 'all from [%s]\n' '$<' > seen
+| 
+| fail.te:: ; @printf 'here [%s]\n' '$@' > seen2
+| d/fail.te: ; @printf 'there [%s]\n' '$@' > seen3
