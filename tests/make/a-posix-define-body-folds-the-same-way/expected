@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # A `define` body is read line by line like anything else, so its continuations
+| # answer to `.POSIX:` too.
+| .POSIX:
+| define A
+| a   \
+|   b
+| endef
+| all: ; @printf '%s' '$(A)' | od -An -c > out
+file out touched 1
+|    a                   b

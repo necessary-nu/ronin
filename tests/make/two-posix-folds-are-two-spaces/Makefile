@@ -1,0 +1,9 @@
+# One space per folded newline. Ordinarily the second fold discards the space
+# the first one wrote and puts its own in place of it, so a run of them is one
+# space however long it is; under `.POSIX:` nothing is discarded and the run is
+# as long as it is written.
+.POSIX:
+A = a  \
+  \
+  b
+all: ; @printf '%s' '$(A)' | od -An -c > out

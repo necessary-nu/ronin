@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # Half of an odd run survives into the value, and what survives is not a blank:
+| # the discarding stops at it in both readings, so this is where they agree.
+| .POSIX:
+| A = a  \\\
+|   b
+| all: ; @printf '%s' '$(A)' | od -An -c > out
+file out touched 1
+|    a           \       b

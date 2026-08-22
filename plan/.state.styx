@@ -801,6 +801,7 @@ assertions (
     {id make-vpath-name-reaches-a-recipe-read-early, kind @complete, author "brendan@necessary.nu", at 2026-08-22T07:08:40.400870179Z}
     {id make-gpath-rename-carries-a-targets-own-flags, kind @complete, author "brendan@necessary.nu", at 2026-08-22T08:42:25.80922143Z}
     {id make-recipe-continuation-bytes, kind @complete, author "brendan@necessary.nu", at 2026-08-22T09:45:17.469884809Z}
+    {id make-posix-continuation-blanks, kind @complete, author "brendan@necessary.nu", at 2026-08-22T10:31:10.459863171Z}
 )
 
 impl_evidence (

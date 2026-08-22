@@ -1,0 +1,8 @@
+# `check_specials` (read.c) sets `posix_pedantic` as the rule is READ, and
+# `collapse_continuations` runs on each logical line as it is read too. A line
+# above the target was folded before the flag existed and keeps that folding
+# however late it is expanded.
+A = a   \
+  b
+.POSIX:
+all: ; @printf '%s' '$(A)' | od -An -c > out

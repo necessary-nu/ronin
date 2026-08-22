@@ -809,8 +809,8 @@ case	misc/bs-nl.diff.12	narration	ninja-progress
 case	misc/bs-nl.diff.13	narration	ninja-progress
 case	misc/bs-nl.diff.14	narration	ninja-progress
 case	misc/bs-nl.diff.15	narration	ninja-progress
-case	misc/bs-nl.diff.16	unclassified	ninja-progress+evaluation
-case	misc/bs-nl.diff.17	unclassified	ninja-progress+evaluation
+case	misc/bs-nl.diff.16	narration	ninja-progress
+case	misc/bs-nl.diff.17	narration	ninja-progress
 case	misc/bs-nl.diff.18	narration	ninja-progress+recipe-echo
 case	misc/bs-nl.diff.19	narration	ninja-progress
 case	misc/bs-nl.diff.2	narration	ninja-progress

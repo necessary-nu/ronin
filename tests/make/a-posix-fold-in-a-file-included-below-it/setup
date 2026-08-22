@@ -1,0 +1,1 @@
+printf 'A = a   \\\n  b\n' > inc.mk

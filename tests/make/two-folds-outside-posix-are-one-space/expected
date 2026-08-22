@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # The control for the run: without `.POSIX:` the whole of it, blanks and all,
+| # comes out as a single space.
+| A = a  \
+|   \
+|   b
+| all: ; @printf '%s' '$(A)' | od -An -c > out
+file out touched 1
+|    a       b

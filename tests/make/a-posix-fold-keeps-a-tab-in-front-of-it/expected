@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # `ISBLANK` is a space or a tab, so a tab in front of the backslash is kept by
+| # the same rule the spaces are.
+| .POSIX:
+| A = a		\
+|   b
+| all: ; @printf '%s' '$(A)' | od -An -c > out
+file out touched 1
+|    a  \t  \t       b
