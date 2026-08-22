@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # The same throwing away in the middle of a chain: the search finds inter.b in
+| # work/, it is out of date there, so it is made here and what reads it reads
+| # the bare name. The copy the search found is left where it was.
+| VPATH = work
+| .SECONDARY:
+| 
+| all: final.a ; @printf 'all sees %s\n' '$^' > seen
+| 
+| final.a: inter.b ; @printf 'final from %s\n' '$<' > $@
+| inter.b: final.src ; @printf 'inter from %s\n' '$<' > $@
+file final.a touched 1
+| final from inter.b
+file final.src kept 1
+| a
+file inter.b touched 1
+| inter from final.src
+file seen touched 1
+| all sees final.a
+file work/inter.b kept 1
+| old-b

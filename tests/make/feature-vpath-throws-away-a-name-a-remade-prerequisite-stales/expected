@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # The cell that says the choice cannot be made when the Makefile is read. When
+| # the read ends, build/out.o is newer than out.c and a compile-time fold would
+| # keep the found name; out.c's own rule then runs and the answer flips, so the
+| # target is remade here and its dependents read the bare name.
+| VPATH = build
+| 
+| all: out.o ; @printf 'all sees %s\n' '$^' > seen
+| 
+| out.o: out.c ; @printf '%s from %s\n' '$@' '$<' > $@
+| out.c: gen.in ; @printf 'regenerated\n' > $@
+file build/out.o kept 1
+| old
+file gen.in kept 1
+| seed
+file out.c touched 1
+| regenerated
+file out.o touched 1
+| out.o from out.c
+file seen touched 1
+| all sees out.o

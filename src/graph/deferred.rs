@@ -258,6 +258,7 @@ where
         output_state.set_mtime(baseline);
         output_state.set_dirty(dirty);
     }
+    super::settle_searched_outputs(graph, runtime, edge, dirty);
     Ok(dirty)
 }
 
@@ -288,6 +289,7 @@ where
         output.set_mtime(observed_mtime);
         output.set_dirty(dirty);
     }
+    super::settle_searched_outputs(graph, runtime, edge, dirty);
     Ok(dirty)
 }
 

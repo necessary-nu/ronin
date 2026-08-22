@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # A target found where the search looked and current there is spelt that way in
+| # every list a recipe reads it from, `$?` included — GNU Make reads them all off
+| # one file object, whose name update_file_1 has already settled.
+| VPATH = build
+| 
+| all: out.o ; @printf 'new [%s]\n' '$?' > seen
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file seen touched 1
+| new [build/out.o]

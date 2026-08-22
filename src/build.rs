@@ -1119,6 +1119,21 @@ impl<'a> Builder<'a> {
         let mut results = vec![None; paths.len()];
         self.disk.stat_many(&paths, &mut results);
 
+        // A name the front end found somewhere else needs the second look the
+        // batch cannot make for it, and there are never many: the batch is
+        // issued for every node the scan will reach, and this runs only for the
+        // ones that came back absent and carry a second place to look.
+        let mut fallback = |path: &Path| self.disk.stat(path);
+        for (node, mtime) in self.stat_targets.iter().zip(&mut results) {
+            let Some(observed) = *mtime else { continue };
+            if !FileTime::observed(observed).is_missing() {
+                continue;
+            }
+            if let Ok(found) = crate::graph::elsewhere_mtime(graph, *node, observed, &mut fallback)
+            {
+                *mtime = Some(found);
+            }
+        }
         for (node, mtime) in self.stat_targets.iter().zip(&results) {
             if let Some(mtime) = *mtime {
                 let observed = if self.runtime.assumed_new.contains(*node) {
@@ -1304,6 +1319,7 @@ impl<'a> Builder<'a> {
                 .unwrap_or(i64::MAX)
         };
         self.executed_edges.insert(edge);
+        crate::graph::mark_written_here(self.graph, &mut self.runtime, edge);
         if self.output_sink.is_none() {
             self.commands_ran.push(command.command.clone());
         }

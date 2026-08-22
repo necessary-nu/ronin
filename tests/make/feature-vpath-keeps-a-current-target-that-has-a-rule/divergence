@@ -1,1 +1,0 @@
-Ronin remakes a VPATH-found target that is already current there instead of keeping the name the search returned; make-vpath-name-survives-only-a-current-target.

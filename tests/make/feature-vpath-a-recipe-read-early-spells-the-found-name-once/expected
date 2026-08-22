@@ -1,0 +1,18 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # A recipe naming `$?` is one the compiler has to read before the build, so the
+| # prerequisite names in it are settled then. `$?` is a value the scheduler binds
+| # and takes the found spelling; `$^`, `$<` and `$+` were written into the text
+| # and keep the name as it was written.
+| VPATH = build
+| 
+| all: out.o ; @printf 'whole [%s] new [%s] first [%s]\n' '$^' '$?' '$<' > seen
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file seen touched 1
+| whole [build/out.o] new [build/out.o] first [build/out.o]

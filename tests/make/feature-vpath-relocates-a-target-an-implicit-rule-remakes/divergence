@@ -1,1 +1,0 @@
-Ronin keeps the VPATH name of a target an implicit rule has to remake instead of remaking it here; make-vpath-name-survives-only-a-current-target.

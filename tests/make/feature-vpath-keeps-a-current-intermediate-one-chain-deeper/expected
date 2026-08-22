@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # And the other way in the same chain: the copy the search found is current, so
+| # nothing is made here at all and final.a is built from the found path.
+| VPATH = work
+| .SECONDARY:
+| 
+| all: final.a ; @printf 'all sees %s\n' '$^' > seen
+| 
+| final.a: inter.b ; @printf 'final from %s\n' '$<' > $@
+| inter.b: final.src ; @printf 'inter from %s\n' '$<' > $@
+file final.a touched 1
+| final from work/inter.b
+file final.src kept 1
+| a
+file seen touched 1
+| all sees final.a
+file work/inter.b kept 1
+| old-b

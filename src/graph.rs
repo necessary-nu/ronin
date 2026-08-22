@@ -10,6 +10,7 @@ mod intermediate;
 mod marks;
 mod path;
 mod peer;
+mod searched;
 mod unmade;
 mod validation;
 mod withdrawal;
@@ -31,6 +32,8 @@ pub(crate) use marks::MarkSet;
 use marks::{VisitMarks, VisitState};
 pub(crate) use path::{nodepath_bytes, shell_escape_path};
 pub(crate) use peer::trigger_output;
+use searched::settle_searched_outputs;
+pub(crate) use searched::{elsewhere_mtime, found_name_stands, mark_written_here};
 use std::io;
 use std::path::Path;
 use withdrawal::Withdrawal;
@@ -264,6 +267,18 @@ pub(crate) struct Graph {
     /// edges that have any. Beside the arena for the reason `withdrawal`
     /// is: almost no edge in almost any graph has one.
     peer_outputs: crate::htab::RapidHashMap<EdgeId, IdVec<NodeId>>,
+    /// A second place to look for an output, for the outputs a front end found
+    /// somewhere other than where the build file named them.
+    ///
+    /// GNU Make's directory search answers about a target that is not here, and
+    /// the answer does not replace the name: `f_mtime` hangs the found path off
+    /// the file object beside the written one and takes the found file's date
+    /// for the target, and only after the prerequisites have settled does
+    /// `update_file_1` choose between them. So this is where the target is
+    /// observed while nothing has remade it, and the name in the arena is where
+    /// it is made when something has. Beside the arena for the reason
+    /// `withdrawal` is: no node of a Ninja manifest is ever in it.
+    searched_at: crate::htab::RapidHashMap<NodeId, BString>,
     phony_rule: Option<RuleId>,
     console_pool: Option<PoolId>,
     names: crate::names::Names,
@@ -426,6 +441,7 @@ where
             source,
         }
     })?;
+    let mtime = elsewhere_mtime(graph, node, mtime, stat)?;
     runtime.node_mut(node).observe(FileTime::observed(mtime));
     Ok(())
 }
@@ -625,6 +641,7 @@ where
     for output in &graph.edge(edge).out {
         runtime.node_mut(*output).set_dirty(dirty);
     }
+    settle_searched_outputs(graph, runtime, edge, dirty);
     Ok(dirty)
 }
 
@@ -1700,6 +1717,75 @@ mod tests {
         assert_eq!(runtime.node(middle).mtime(), FileTime::MISSING);
         assert!(!runtime.node(aliased).dirty());
         assert_eq!(runtime.node(aliased).mtime(), FileTime::observed(1));
+    }
+
+    /// A target the front end found somewhere else is read there while nothing
+    /// has put it here, and read here the moment something has — which is
+    /// exactly the order `f_mtime` asks in, and is what decides whether the
+    /// edge that makes it has anything to do.
+    #[test]
+    fn ronin_graph_searched_output_reads_elsewhere() {
+        let mut graph = parse_graph("build out.o: cat out.c\n");
+        let output = nodeget(&graph, b"out.o").unwrap();
+        graph.set_searched_at(output, BString::from("build/out.o"));
+
+        // Nothing at `out.o`, a newer copy at `build/out.o`: the edge has
+        // nothing to do and the copy's date is the one the target has.
+        let found = BTreeMap::from([
+            ("out.c".to_owned(), 1),
+            ("build/out.o".to_owned(), 2),
+            ("out.o".to_owned(), 0),
+        ]);
+        let mut stat = |path: &Path| Ok(*found.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(!recompute_dirty_with(&graph, &mut runtime, output, &mut stat).unwrap());
+        assert_eq!(runtime.node(output).mtime(), FileTime::observed(2));
+        assert!(crate::graph::found_name_stands(&runtime, output));
+
+        // The same copy, older than the source: the edge has to run, and the
+        // found name is not the one anything will read.
+        let stale = BTreeMap::from([("out.c".to_owned(), 3), ("build/out.o".to_owned(), 2)]);
+        let mut stat = |path: &Path| Ok(*stale.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(recompute_dirty_with(&graph, &mut runtime, output, &mut stat).unwrap());
+        assert!(!crate::graph::found_name_stands(&runtime, output));
+
+        // And a file that really is here is read here, whatever the search
+        // found: the second place is only ever a second place.
+        let here = BTreeMap::from([
+            ("out.c".to_owned(), 1),
+            ("build/out.o".to_owned(), 9),
+            ("out.o".to_owned(), 5),
+        ]);
+        let mut stat = |path: &Path| Ok(*here.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(!recompute_dirty_with(&graph, &mut runtime, output, &mut stat).unwrap());
+        assert_eq!(runtime.node(output).mtime(), FileTime::observed(5));
+    }
+
+    /// The build having written the target here is the one answer a later scan
+    /// may not take back. The scan after the work reads the file the work
+    /// wrote and would say the target was current all along.
+    #[test]
+    fn ronin_graph_written_name_is_final() {
+        let mut graph = parse_graph("build out.o: cat out.c\n");
+        let output = nodeget(&graph, b"out.o").unwrap();
+        let edge = graph.node(output).generator.unwrap();
+        graph.set_searched_at(output, BString::from("build/out.o"));
+
+        let stale = BTreeMap::from([("out.c".to_owned(), 3), ("build/out.o".to_owned(), 2)]);
+        let mut stat = |path: &Path| Ok(*stale.get(&*path.to_string_lossy()).unwrap_or(&0));
+        let mut runtime = RuntimeState::new(&graph);
+        assert!(recompute_dirty_with(&graph, &mut runtime, output, &mut stat).unwrap());
+        crate::graph::mark_written_here(&graph, &mut runtime, edge);
+
+        // What the build left behind: the edge ran and the target is here, and
+        // the run re-observes it exactly as `outputs_reobserved` says.
+        runtime.node_mut(output).observe(FileTime::observed(4));
+        let made = BTreeMap::from([("out.c".to_owned(), 3), ("out.o".to_owned(), 4)]);
+        let mut stat = |path: &Path| Ok(*made.get(&*path.to_string_lossy()).unwrap_or(&0));
+        assert!(!recompute_edge_dirty_with(&graph, &mut runtime, edge, &mut stat).unwrap());
+        assert!(!crate::graph::found_name_stands(&runtime, output));
     }
 
     /// A whole-second record dates a file a fraction before the thing it was

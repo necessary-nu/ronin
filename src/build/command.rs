@@ -215,6 +215,14 @@ pub(crate) trait LateCommands {
     /// binds that name to this one; `output` stays what the edge writes first,
     /// because a response file belongs to the edge rather than to the run.
     ///
+    /// `settled` answers, for each of this edge's inputs the graph was given a
+    /// second place to look for, which of the two places the build settled on:
+    /// the name in the graph when the build made that input, and the other name
+    /// when it did not have to. The engine can answer it and the front end
+    /// cannot, because it is a fact about what this build did rather than about
+    /// what the build file said. Empty for every edge no input of which has a
+    /// second name, which is nearly all of them.
+    ///
     /// # Errors
     ///
     /// A rendered diagnostic, when the front end could not produce the
@@ -225,6 +233,7 @@ pub(crate) trait LateCommands {
         edge: EdgeId,
         output: &[u8],
         trigger: &[u8],
+        settled: &[(&[u8], &[u8])],
     ) -> Result<LateBinding, String>;
 
     /// Whatever binding a command had to say short of failing, rendered and
@@ -605,7 +614,30 @@ impl Builder<'_> {
             || output.clone(),
             |output| self.graph.node_path(output).to_vec(),
         );
-        let bound = recipes.command(edge, &output, &trigger);
+        // Which of its two names each searched-for input settled on. A name
+        // the graph was given a second place to look for is read there for as
+        // long as nothing has remade it here, and whatever reads it spells it
+        // that way — GNU Make's `update_file_1` taking `file->name =
+        // file->hname` for a target it found nothing to do for, and throwing
+        // the found name away for one it had to remake. The scan recorded that
+        // verdict when it settled the input's own edge, which is where GNU Make
+        // reaches it and is before any dependent's command is bound.
+        let settled = self
+            .graph
+            .edge(edge)
+            .input
+            .iter()
+            .filter_map(|input| {
+                let found = self.graph.searched_at(*input)?;
+                crate::graph::found_name_stands(&self.runtime, *input)
+                    .then(|| (self.graph.node_path(*input).to_vec(), found.to_vec()))
+            })
+            .collect::<Vec<_>>();
+        let settled = settled
+            .iter()
+            .map(|(written, found)| (written.as_slice(), found.as_slice()))
+            .collect::<Vec<_>>();
+        let bound = recipes.command(edge, &output, &trigger, &settled);
         // Taken whether the binding worked or not: an expansion that ended in a
         // refusal may have warned on its way there.
         let raised = recipes.raised();

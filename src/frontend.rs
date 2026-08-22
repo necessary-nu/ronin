@@ -599,6 +599,25 @@ impl BuildGraph {
             .set_peer_outputs(edge.0, outputs.into_iter().map(|node| node.0).collect());
     }
 
+    /// Say that `output` was found at `found`, so the build observes it there
+    /// while nothing has written it where it is named.
+    ///
+    /// GNU Make's directory search answering about a TARGET rather than about a
+    /// prerequisite. The answer does not replace the name: `f_mtime` takes the
+    /// found file's date for the target and keeps both spellings, and only once
+    /// the prerequisites have settled does `update_file_1` choose — the found
+    /// name for a target it need not remake, its own for one it must. The
+    /// choice cannot be folded in when the graph is built, because a target
+    /// current then is made stale by a prerequisite's own recipe, so the graph
+    /// carries the second place to look and the build decides.
+    ///
+    /// Nothing in a Ninja manifest says this, so a graph parsed from one never
+    /// carries it — the same bounded divergence `intermediate` and `disposable`
+    /// already have.
+    pub(crate) fn set_searched_at(&mut self, output: Node, found: &[u8]) {
+        self.arenas.set_searched_at(output.0, found.into());
+    }
+
     /// The value `edge`'s own bindings give `name`, before its rule or the
     /// scope around it are consulted.
     ///

@@ -1,0 +1,5 @@
+mkdir -p work
+printf 'a\n' > final.src
+printf 'old-b\n' > work/inter.b
+touch -d '2020-01-01 00:00' work/inter.b
+touch -d '2021-01-01 00:00' final.src

@@ -106,6 +106,29 @@ pub(crate) struct NodeRuntime {
     absent_on_disk: bool,
 }
 
+/// Which of a searched-for node's two names the build has settled on.
+///
+/// GNU Make's `update_file_1` choosing between `file->name` and `file->hname`
+/// once the prerequisites are updated: a target it finds nothing to do for
+/// takes the found name and everything reading it reads that path, and one it
+/// remakes throws the found name away. Ronin reaches the same fork twice over —
+/// the scan can say a target need not be made, and the build can make it — so
+/// the two answers are distinguished rather than folded into a flag.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum SearchedName {
+    /// The build has not settled it, or nothing was searched for here.
+    #[default]
+    Unsettled,
+    /// The build found nothing to do, so the path the search returned stands.
+    Found,
+    /// The build made the node here, so the name as written stands.
+    ///
+    /// Final. A scan after the work reads the file the work wrote and would
+    /// answer the other way, and GNU Make asks the question once — before the
+    /// recipe, not after it.
+    Written,
+}
+
 impl Default for NodeRuntime {
     fn default() -> Self {
         Self {
@@ -324,6 +347,11 @@ pub(crate) struct RuntimeState {
     /// (main.c:2325, main.c:2837). Left alone by [`Self::reset`], which clears
     /// what a scan learned rather than what it was asked.
     pub(crate) assumed_new: AssumedNew,
+    /// For each node the graph gave a second place to look for, which of the
+    /// two places this build has settled on. See [`crate::graph::searched`];
+    /// absent means unsettled, which is every node of every graph but the few a
+    /// directory search answered about.
+    pub(crate) searched_names: crate::htab::RapidHashMap<NodeId, SearchedName>,
 }
 
 impl RuntimeState {
@@ -341,6 +369,7 @@ impl RuntimeState {
             .resize(graph.edge_count(), EdgeRuntime::default());
         self.edges.fill(EdgeRuntime::default());
         self.deferred.clear();
+        self.searched_names.clear();
         for edge in graph.edge_ids() {
             if let Some(dyndep) = graph.edge(edge).dyndep {
                 self.node_mut(dyndep).set_dyndep_pending(true);

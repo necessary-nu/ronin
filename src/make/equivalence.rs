@@ -832,6 +832,21 @@ fn low_resolution(graph: &BuildGraph) -> Vec<String> {
     outputs_where(graph, |edge| edge.outputs_low_resolution)
 }
 
+/// Every output either graph was given a second place to look for, as sorted
+/// `output -> found` pairs.
+fn searched(graph: &BuildGraph) -> Vec<String> {
+    let arenas = graph.arenas();
+    let mut pairs = arenas
+        .node_ids()
+        .filter_map(|node| {
+            let found = arenas.searched_at(node)?;
+            Some(format!("{} -> {}", arenas.node_path(node), found))
+        })
+        .collect::<Vec<_>>();
+    pairs.sort();
+    pairs
+}
+
 fn outputs_where(graph: &BuildGraph, wanted: impl Fn(&crate::graph::Edge) -> bool) -> Vec<String> {
     let arenas = graph.arenas();
     let mut paths = arenas
@@ -1154,6 +1169,56 @@ clean:
 /// Every Make edge is one whose outputs the build looks at again once its
 /// command has run, and only the direct graph says so.
 ///
+/// A target the directory search found elsewhere keeps both names, and only the
+/// direct graph is told the second one.
+///
+/// GNU Make hangs the found path off the file object beside the written name
+/// and lets `update_file_1` choose once the prerequisites have settled, so the
+/// compiler cannot fold the choice in. A manifest has one path per name and no
+/// way to say a second, which is the same bounded divergence `intermediate` and
+/// `disposable` have — and the manifest names the target as written, which is
+/// where the build would put it if it had to make it.
+// [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
+#[test]
+fn searched_name_reaches_only_direct_graph() {
+    let found = tempfile::tempdir().expect("a directory for the search to find");
+    std::fs::write(found.path().join("vpath-equivalence.o"), "old")
+        .expect("the scratch directory is writable");
+    let case = Case::new(
+        &format!(
+            "\
+VPATH = {}
+all: vpath-equivalence.o
+\t@printf '%s' '$^' > seen
+vpath-equivalence.o: vpath-equivalence.c
+\t@printf 'made' > $@
+vpath-equivalence.c:
+\t@printf 'source' > $@
+",
+            found.path().display()
+        ),
+        &[],
+    );
+    let both = case.both();
+    assert_eq!(
+        searched(&both.direct),
+        vec![format!(
+            "vpath-equivalence.o -> {}/vpath-equivalence.o",
+            found.path().display()
+        )],
+        "the target the search answered about carries both names"
+    );
+    assert!(
+        searched(&both.parsed).is_empty(),
+        "a manifest has no way to say this, so reading one back must not invent it"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
+    );
+}
+
 /// The manifest keeps saying `restat` for `.KATI_RESTAT` and for nothing else,
 /// because that binding is what the Makefile asked for and the property here
 /// is what Make is. The comparison is deliberately silent about the property,

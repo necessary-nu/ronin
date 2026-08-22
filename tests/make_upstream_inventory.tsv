@@ -655,10 +655,10 @@ case	features/vpath.diff.2	narration	ninja-progress
 case	features/vpath.diff.3	narration	ninja-progress
 case	features/vpath.diff.4	unclassified	ninja-progress+evaluation
 case	features/vpathgpath.diff	narration	no-work-line
-case	features/vpathplus.diff	unclassified	no-work-line+evaluation
+case	features/vpathplus.diff	narration	ninja-progress+recipe-echo
 case	features/vpathplus.diff.1	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line
 case	features/vpathplus.diff.2	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/vpathplus.diff.3	unclassified	ninja-progress+evaluation
+case	features/vpathplus.diff.3	unclassified	ninja-progress+recipe-echo+evaluation
 case	functions/abspath.diff	narration	ninja-progress
 case	functions/addprefix.diff	narration	ninja-progress
 case	functions/addsuffix.diff	narration	ninja-progress

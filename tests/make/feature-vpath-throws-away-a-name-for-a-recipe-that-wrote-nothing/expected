@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # Whether the found name survives is decided by whether the target had to be
+| # remade, not by what the remaking left behind. This recipe runs and writes no
+| # file at all, and the dependents still read the bare name.
+| VPATH = build
+| 
+| all: out.o ; @printf 'all sees [%s] first [%s]\n' '$^' '$<' > seen
+| 
+| out.o: out.c ; @printf 'ran\n' > ran
+file build/out.o kept 1
+| old
+file out.c kept 1
+| source
+file ran touched 1
+| ran
+file seen touched 1
+| all sees [out.o] first [out.o]

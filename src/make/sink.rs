@@ -1440,6 +1440,14 @@ impl BuildSink for GraphSink {
                 self.graph
                     .set_withdrawal(built, withdrawal.outputs, withdrawal.on_error);
                 self.graph.set_peer_outputs(built, peer_outputs);
+                // Where the directory search found this target, said of the
+                // output because it is the file that was found and everything
+                // that asks — the edge's own freshness, and the name a
+                // dependent reads it by — asks about the name.
+                if let (Some(found), Some(output)) = (edge.searched_at, outputs.first()) {
+                    self.graph
+                        .set_searched_at(*output, &names.symtab().name(found));
+                }
                 if let Some(deferred) = deferred {
                     self.defer_freshness(built, &deferred);
                 }
