@@ -1,0 +1,9 @@
+# `+` is read off the first line, but the `$(MAKE)` search `chop_commands` runs
+# beside it reads the whole line it chopped — and under `.ONESHELL` that line is
+# the whole recipe. So a reference on any line marks all of it, and `-t` runs
+# the recipe instead of touching the target.
+.ONESHELL:
+all:
+	@echo one > one.txt
+	@echo two > two.txt
+	@: $(MAKE)
