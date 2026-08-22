@@ -894,6 +894,55 @@ fn agrees(makefile: &str, flags: &[&str]) {
     assert!(outcome.agreed(), "{outcome}");
 }
 
+/// `-i` is GNU Make's `--ignore-errors`, and the letter has to reach both
+/// sinks rather than merely set a field somewhere.
+///
+/// This comparison drives kati's own command line — `Case` hands the flags
+/// straight to `Session::from_args` — and that table read `-i` as the dry run.
+/// So this Makefile compiled to a manifest with no muting anywhere and a graph
+/// that bound nothing: the two sides agreed with each other and both disagreed
+/// with Make, which is the shape a comparison cannot catch on its own. Ronin's
+/// Make mode never had it, because its front end parses its own options.
+///
+/// GNU Make 4.4.1, `make -i` over this recipe: both markers made, exit 0.
+#[test]
+fn ignore_errors_switch_reaches_both_sinks() {
+    let makefile = "\
+all: out
+out:
+\t@touch m1; false
+\t@touch m2
+";
+    let both = Case::new(makefile, &["-i"]).both();
+    assert!(
+        !both.semantics.semantic.is_empty()
+            && both
+                .semantics
+                .semantic
+                .values()
+                .all(|command| command.ignore_errors),
+        "-i has to forgive every recipe, and the manifest says so by muting it"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
+    );
+    // A semantic override is recorded only for a rule that ignores errors or
+    // had to be respelled, and this recipe holds no newline — so an empty map
+    // is the whole statement that nothing was forgiven. The dry run is the
+    // letter that was standing here, and it must not acquire this meaning.
+    for flags in [&[] as &[&str], &["-n"]] {
+        assert!(
+            Case::new(makefile, flags)
+                .both()
+                .semantics
+                .semantic
+                .is_empty(),
+            "only -i forgives a failure, not {flags:?}"
+        );
+    }
+}
+
 // [spec:ronin:req:make.graph-direct/test]
 // [spec:ronin:req:make.graph-direct/test]
 #[test]
