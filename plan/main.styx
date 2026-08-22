@@ -14976,6 +14976,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-22T13:29:01.996443594Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "GATES for the landing above, run serially on this tree at 93ef3c76de58383ffdce712cf1147dc205cbe0b2 with kati pinned at fb63376b7a43c006a8448dc76d6fec51c93659f0.\n\nfmt clean in both trees; `cargo check --workspace --all-targets` clean; `scripts/check-lints.sh` clean; workspace tests 1005 passed / 0 failed / 1 ignored, unmoved; make_port 4/4 over 1,047 gated cases with eight new recordings and none rewritten, seven divergence sidecars unmoved; conformance 336 normalised identical / 51 differing, 286 raw, unmoved; equivalence 297 makefiles / 280 graphs / 75 rejected / 0 disagreements / 8 manifest respellings, unmoved; upstream inventory 1,285 rows at 100 unclassified / 0 compiler / 24 interface / 1,161 narration, tsv untouched, no row moved; `scripts/check-make-projects.sh all` built vim 9.2 in 17 s and zsh 5.9.2 with 36 modules in 29 s; ninja conformance 425/425 plus 10 differentials, 86 build-outcome cases, 3 invocation-boundary cases, persistence round trip and log content; `cargo test --workspace --no-default-features` 773 passed / 0 failed.\n\n`scripts/check-release.sh` was not run against this commit alone. The host carried another tenant's build all afternoon — 15-minute load averages between 5 and 25 — and the gate's last stage is the performance comparison, which is the recorded flake under load. It was run end to end against the final tree of the dispatch instead; the result is recorded on the last node landed."
+                        after_done true
+                    }
                 )
             }
 
@@ -15012,6 +15020,14 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-22T13:29:22.00814476Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "GATES for the landing above, run serially on this tree at 7d9d12a614b1ef2a1613ab816fa75e4e3c57ded9. No kati change: the submodule stayed pinned at fb63376b7a43c006a8448dc76d6fec51c93659f0, this node's whole subject being the dirty scan.\n\nfmt clean in both trees; `cargo check --workspace --all-targets` clean; `scripts/check-lints.sh` clean; workspace tests 1,009 passed / 0 failed / 1 ignored — up four from 1,005, and the four are this node's own, the unit tests `src/runtime/edge.rs` gained when `EdgeRuntime` moved into a module of its own; make_port 4/4 over 1,054 gated cases with seven new recordings and none rewritten, seven divergence sidecars unmoved; conformance 336 normalised identical / 51 differing, 286 raw, unmoved; equivalence 297 makefiles / 280 graphs / 75 rejected / 0 disagreements / 8 manifest respellings, unmoved; upstream inventory 1,285 rows at 100 unclassified / 0 compiler / 24 interface / 1,161 narration, tsv untouched, no row moved; `scripts/check-make-projects.sh all` built vim 9.2 in 31 s and zsh 5.9.2 with 36 modules in 46 s, both on a host carrying another tenant's build; ninja conformance 425/425 plus every differential, outcome, boundary and persistence band — the gate that matters most for a change inside the dirty walk, and it was run twice, once before the extraction into `graph::intermediate` and once after; `cargo test --workspace --no-default-features` 777 passed / 0 failed, up four for the same reason.\n\nTwo code-quality gates fired and were fixed rather than bypassed: `recompute_edge_dirty_with` went over the line count, which is why the intermediate arms moved to `graph::intermediate`; and `src/runtime.rs` went over the function count, which is why `EdgeRuntime` has a module of its own — and the module then owed the test-footprint floor, which is where the four new tests came from."
+                        after_done true
                     }
                 )
             }
@@ -15079,6 +15095,22 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-22T13:29:52.81082318Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "GATES for the landing above, run serially on this tree at fc7d63183cbaba6a556c9d045bd7bcda00a7157c with kati pinned at 74c5fc2b3fdf8563e0f8a9d12d84be8c53382d52.\n\nfmt clean in both trees; `cargo check --workspace --all-targets` clean; `scripts/check-lints.sh` clean; workspace tests 1,009 passed / 0 failed / 1 ignored, unmoved; make_port 4/4 over 1,059 gated cases with five new recordings and none rewritten — the divergence sidecars go from seven to NINE, and the two added are named above and owned by make-a-posix-target-is-read-where-it-is-written; conformance 336 normalised identical / 51 differing, 286 raw, unmoved; equivalence 297 makefiles / 280 graphs / 75 rejected / 0 disagreements / 8 manifest respellings, unmoved; upstream inventory 1,285 rows at 100 unclassified / 0 compiler / 24 interface / 1,161 narration, tsv untouched, no row moved; `scripts/check-make-projects.sh all` built vim 9.2 in 32 s and zsh 5.9.2 with 36 modules in 58 s, on a host carrying another tenant's build; ninja conformance 425/425 plus every differential, outcome, boundary and persistence band; `cargo test --workspace --no-default-features` 777 passed / 0 failed.\n\n`scripts/check-release.sh` was run stage by stage on this tree rather than as one command, because its last stage is the performance comparison and the host was not this dispatch's alone: another tenant's build kept the 15-minute load average between 5 and 25 from early afternoon onward. Every deterministic stage is green here — `cargo fmt --all -- --check`, `cargo check --all-targets`, `scripts/check-lints.sh`, `RUSTDOCFLAGS=-D warnings cargo doc --no-deps`, `cargo test --all-targets --no-fail-fast`, equivalence, the real-project builds, `scripts/check-port-ledger.sh` at 170 symbols with every rule written, claimed and tested, ninja conformance, `nplan spec uncovered` clear, `nplan spec stale` clear, `nplan lint` clean and `nplan audit` clean. The performance comparison is the one recorded flake under load and is the only stage this tree has not been measured against on a quiet host."
+                        after_done true
+                    }
+
+                    {
+                        at 2026-08-22T13:32:36.898523881Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The performance stage was measured after all, and it is green, so `scripts/check-release.sh` is complete on this tree.\n\n`scripts/check-performance.sh --warmups 2 --repetitions 15` run TWICE against the pinned Ninja, both exit 0, both while the host carried another tenant's build at a 15-minute load average of 21 to 22 — which is a harder test than a quiet host rather than an easier one, since a refusal is what load produces. The two workloads that have refused under load in this campaign both held: `clean-tree-noop` at 14.289 ms against Ninja's 21.729 and 13.545 against 21.728, a ratio of 0.66 and 0.62 against the recorded 0.65; `dependency-log-load` at 6.160 against 8.145 and 5.855 against 7.510, a ratio of 0.76 and 0.78 against the recorded 0.73 and inside the gate's 120% band. `large-manifest-parse` ran at 293 and 295 ms against Ninja's 602 and 591.\n\nWall clock on a loaded host is not a number to compare against a quiet-host baseline, and it is not offered as one. What it settles is the gate's verdict, which is a ratio between two binaries measured back to back in the same conditions."
+                        after_done true
                     }
                 )
             }
