@@ -963,10 +963,15 @@ impl GraphSink {
         command: SinkCommand<'_>,
         ignore_errors: bool,
     ) -> Vec<(Binding, Template)> {
-        let description = rule.description.or(match command {
-            SinkCommand::Inline(script) => Some(script),
+        // A recipe that continued across a newline reaches the shell with the
+        // newline still in it, and a description is one line: `single_line`
+        // takes the continuation back out for the narration alone, leaving the
+        // command the recipe's own bytes.
+        let described = match command {
+            SinkCommand::Inline(script) => Some(kati::ninja::single_line(script)),
             SinkCommand::ResponseFile(_) => None,
-        });
+        };
+        let description = rule.description.map(Bytes::copy_from_slice).or(described);
         let mut bindings = self.command_bindings(
             rule.shell,
             rule.shell_flags,
@@ -978,7 +983,7 @@ impl GraphSink {
         // recipe with its own expanded text, without exposing the environment
         // and shell wrapper needed to execute it.
         if let Some(description) = description {
-            bindings.push((self.bindings.description, Template::literal(description)));
+            bindings.push((self.bindings.description, Template::literal(&description)));
         }
         // GNU Make decides whether a recipe is current from timestamps alone.
         // Ninja's generator control expresses exactly the command-hash half of
@@ -1115,12 +1120,15 @@ impl GraphSink {
         // [spec:ronin:req:make.narration+1]
         // The recipe's own words where it chose them, and otherwise the text of
         // the lines being run, which is what the line itself says.
-        let description = rule.description.or(match command {
-            SinkCommand::Inline(script) => Some(script),
-            SinkCommand::ResponseFile(_) => None,
-        });
+        let description = rule
+            .description
+            .map(Bytes::copy_from_slice)
+            .or(match command {
+                SinkCommand::Inline(script) => Some(kati::ninja::single_line(script)),
+                SinkCommand::ResponseFile(_) => None,
+            });
         if let Some(description) = description {
-            bindings.push((self.bindings.description, Template::literal(description)));
+            bindings.push((self.bindings.description, Template::literal(&description)));
         }
         bindings.push((self.bindings.generator, Template::literal(b"1")));
         if ignore_errors {

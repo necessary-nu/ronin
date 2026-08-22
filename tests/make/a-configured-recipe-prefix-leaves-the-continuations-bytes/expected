@@ -1,0 +1,12 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # `.RECIPEPREFIX` decides which character the continuation loses, and a tab is
+| # then ordinary text: the one `>` goes and the tab after it arrives inside the
+| # quotes.
+| .RECIPEPREFIX = >
+| all:
+| >@printf '%s' 'a\
+| >	b' | od -An -c > out
+file out touched 1
+|    a   \  \n  \t   b

@@ -82,13 +82,26 @@ struct Tee<'a> {
 
 /// A rule property whose two sinks intentionally encode differently.
 struct RuleSemantics {
-    ignored_command: Option<IgnoredCommand>,
+    semantic_command: Option<SemanticCommand>,
     recursive: bool,
 }
 
-enum IgnoredCommand {
-    Inline(Vec<u8>),
-    ResponseFile(Vec<u8>),
+/// One script as it crossed the sink, kept because the two destinations write
+/// it down differently.
+struct SemanticCommand {
+    /// Whether the writer passes it as an argument or through a file, which is
+    /// which of the two bindings carries it.
+    response_file: bool,
+    /// The manifest has no edge property for an ignored failure and encodes it
+    /// by muting the script; the graph binds it and leaves the script alone.
+    ignore_errors: bool,
+    /// The script holds a newline, so the manifest cannot write it down at
+    /// all: a binding ends at one and no escape puts it back. The writer drops
+    /// each continuation's backslash and newline, and Ronin's own sink is
+    /// handed the recipe's launches instead of a script it would have to
+    /// spell. The two paths therefore do not agree about the bytes here, and
+    /// cannot, so the comparison judges the script that reached them both.
+    respelled: bool,
 }
 
 /// Semantic overrides keyed by the rule's primary output.
@@ -101,7 +114,7 @@ enum IgnoredCommand {
 /// rather than require their destination-specific spellings to be identical.
 #[derive(Default)]
 struct EdgeSemantics {
-    ignored: BTreeMap<Vec<u8>, IgnoredCommand>,
+    semantic: BTreeMap<Vec<u8>, SemanticCommand>,
     recursive: BTreeSet<Vec<u8>>,
     deferred: BTreeMap<Vec<u8>, DeferredSemantics>,
 }
@@ -122,14 +135,20 @@ impl BuildSink for Tee<'_> {
     }
 
     fn declare_rule(&mut self, names: &dyn Interner, rule: &SinkRule<'_>) -> anyhow::Result<()> {
-        let ignored_command = rule.ignore_errors.then(|| match rule.command {
-            SinkCommand::Inline(script) => IgnoredCommand::Inline(script.to_vec()),
-            SinkCommand::ResponseFile(script) => IgnoredCommand::ResponseFile(script.to_vec()),
+        let (script, response_file) = match rule.command {
+            SinkCommand::Inline(script) => (script, false),
+            SinkCommand::ResponseFile(script) => (script, true),
+        };
+        let respelled = script.contains(&b'\n');
+        let semantic_command = (rule.ignore_errors || respelled).then_some(SemanticCommand {
+            response_file,
+            ignore_errors: rule.ignore_errors,
+            respelled,
         });
         self.rule_semantics.insert(
             rule.id,
             RuleSemantics {
-                ignored_command,
+                semantic_command,
                 recursive: !rule.subninjas.is_empty(),
             },
         );
@@ -140,8 +159,8 @@ impl BuildSink for Tee<'_> {
     fn declare_edge(&mut self, names: &dyn Interner, edge: &SinkEdge<'_>) -> anyhow::Result<()> {
         let output = names.symtab().name(edge.output).to_vec();
         if let Some(semantics) = edge.rule.and_then(|rule| self.rule_semantics.remove(&rule)) {
-            if let Some(command) = semantics.ignored_command {
-                self.edge_semantics.ignored.insert(output.clone(), command);
+            if let Some(command) = semantics.semantic_command {
+                self.edge_semantics.semantic.insert(output.clone(), command);
             }
             if semantics.recursive {
                 self.edge_semantics.recursive.insert(output.clone());
@@ -214,14 +233,20 @@ enum Outcome {
     OnlyDirectRefused(String),
     /// Only the manifest path refused it.
     OnlyManifestRefused(String),
-    /// Both graphs were built. Empty when they agree.
-    Compared(Vec<String>),
+    /// Both graphs were built. `differences` is empty when they agree, and
+    /// `respelled` counts the rules whose script the manifest could not write
+    /// down — the comparison judged those at the sink boundary instead, so the
+    /// number is reported rather than left to be inferred from a silence.
+    Compared {
+        differences: Vec<String>,
+        respelled: usize,
+    },
 }
 
 impl Outcome {
     /// Whether both graphs were built and found to say the same thing.
     fn agreed(&self) -> bool {
-        matches!(self, Self::Compared(differences) if differences.is_empty())
+        matches!(self, Self::Compared { differences, .. } if differences.is_empty())
     }
 }
 
@@ -233,10 +258,10 @@ impl Outcome {
 impl std::fmt::Display for Outcome {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Compared(differences) if differences.is_empty() => {
+            Self::Compared { differences, .. } if differences.is_empty() => {
                 formatter.write_str("the two graphs agree")
             }
-            Self::Compared(differences) => formatter.write_str(&differences.join("\n")),
+            Self::Compared { differences, .. } => formatter.write_str(&differences.join("\n")),
             Self::NotAccepted(why) => write!(formatter, "make rejected the fixture: {why}"),
             Self::BothRefused { direct, manifest } => {
                 write!(
@@ -270,15 +295,15 @@ enum Side {
     Manifest,
 }
 
-fn describe_ignore_semantics<'a>(
+fn describe_command_semantics<'a>(
     graph: &BuildGraph,
     edge: crate::graph::EdgeId,
     output: &[u8],
     semantics: &'a EdgeSemantics,
     side: Side,
     described: &mut String,
-) -> Option<&'a IgnoredCommand> {
-    let command = semantics.ignored.get(output)?;
+) -> Option<&'a SemanticCommand> {
+    let command = semantics.semantic.get(output)?;
     let ignored = match side {
         Side::Direct => graph
             .arenas()
@@ -288,21 +313,14 @@ fn describe_ignore_semantics<'a>(
             .is_some_and(|value| !value.is_empty()),
         // The writer received this property at the common sink boundary and
         // encodes it by muting the script in the manifest.
-        Side::Manifest => true,
+        Side::Manifest => command.ignore_errors,
     };
     let _ = writeln!(described, "  ignore errors: {ignored}");
-    match command {
-        IgnoredCommand::Inline(script) => {
-            let _ = writeln!(described, "  semantic command: {:?}", script.as_bstr());
-        }
-        IgnoredCommand::ResponseFile(script) => {
-            let _ = writeln!(
-                described,
-                "  semantic response content: {:?}",
-                script.as_bstr()
-            );
-        }
-    }
+    let _ = writeln!(
+        described,
+        "  respelled for the manifest: {}",
+        command.respelled
+    );
     Some(command)
 }
 
@@ -431,12 +449,15 @@ fn describe_deferred_semantics(
     let _ = writeln!(described, "  completion join: {}", answered.completion_join);
 }
 
-fn destination_specific_binding(name: &str, command: Option<&IgnoredCommand>) -> bool {
-    matches!(
-        (name, command),
-        ("command", Some(IgnoredCommand::Inline(_)))
-            | ("rspfile_content", Some(IgnoredCommand::ResponseFile(_)))
-    )
+fn destination_specific_binding(name: &str, command: Option<&SemanticCommand>) -> bool {
+    let Some(command) = command else {
+        return false;
+    };
+    match name {
+        "command" => !command.response_file,
+        "rspfile_content" => command.response_file,
+        _ => false,
+    }
 }
 
 /// Return the Make-visible path for a graph node.
@@ -531,8 +552,8 @@ fn describe_edge(
     );
     let _ = writeln!(described, "  always dirty: {always_dirty}");
     describe_deferred_semantics(graph, edge, &outputs[0], semantics, side, &mut described);
-    let ignored_command =
-        describe_ignore_semantics(graph, edge, &outputs[0], semantics, side, &mut described);
+    let semantic_command =
+        describe_command_semantics(graph, edge, &outputs[0], semantics, side, &mut described);
     let _ = writeln!(
         described,
         "  pool: {}",
@@ -546,7 +567,7 @@ fn describe_edge(
         )
     );
     for (name, style) in BINDINGS {
-        if destination_specific_binding(name, ignored_command) {
+        if destination_specific_binding(name, semantic_command) {
             continue;
         }
         let Some(id) = arenas.names().lookup(BStr::new(name)) else {
@@ -650,7 +671,14 @@ fn compare(directory: &Path, argv: Vec<OsString>) -> Outcome {
                     semantics.recursive.len()
                 ));
             }
-            Outcome::Compared(found)
+            Outcome::Compared {
+                differences: found,
+                respelled: semantics
+                    .semantic
+                    .values()
+                    .filter(|command| command.respelled)
+                    .count(),
+            }
         }
         Err(outcome) => outcome,
     }
@@ -1317,7 +1345,9 @@ all: {target}
         &[],
     );
     match case.compare() {
-        Outcome::Compared(differences) => assert!(differences.is_empty(), "{differences:?}"),
+        Outcome::Compared { differences, .. } => {
+            assert!(differences.is_empty(), "{differences:?}");
+        }
         _ => panic!("expected both graph paths to accept the alias"),
     }
 
@@ -1474,7 +1504,7 @@ all:
     )
     .compare();
     match outcome {
-        Outcome::Compared(differences) => {
+        Outcome::Compared { differences, .. } => {
             assert!(
                 differences.iter().any(|why| why.contains("phony_output")),
                 "{differences:?}"
@@ -1598,6 +1628,7 @@ const KNOWN_TO_DISAGREE: [(&str, &str); 1] = [("equal_in_target.mk#test", "unkno
 #[derive(Default)]
 struct Report {
     compared: usize,
+    respelled: usize,
     not_accepted: Vec<String>,
     both_refused: Vec<(String, String, String)>,
     disagreed: Vec<(String, Vec<String>)>,
@@ -1618,8 +1649,12 @@ impl Report {
                 case.to_owned(),
                 vec![format!("only the manifest was refused: {why}")],
             )),
-            Outcome::Compared(differences) => {
+            Outcome::Compared {
+                differences,
+                respelled,
+            } => {
                 self.compared += 1;
+                self.respelled += respelled;
                 if !differences.is_empty() {
                     self.disagreed.push((case.to_owned(), differences));
                 }
@@ -1637,6 +1672,7 @@ impl Report {
     fn assert_clean(&self, makefiles: usize) {
         println!("makefiles:          {makefiles}");
         println!("graphs compared:    {}", self.compared);
+        println!("manifest respellings: {}", self.respelled);
         println!("both refused:       {}", self.both_refused.len());
         for (case, direct, manifest) in &self.both_refused {
             println!("  {case}: direct {direct}; manifest {manifest}");

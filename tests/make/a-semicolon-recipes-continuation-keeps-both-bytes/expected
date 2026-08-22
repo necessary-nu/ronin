@@ -1,0 +1,9 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # A recipe written after the target's own `;` is continued exactly as one
+| # written on its own line.
+| all: ; @printf '%s' 'a\
+| 	b' | od -An -c > out
+file out touched 1
+|    a   \  \n   b

@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # The only thing the recipe reader removes after the newline is ONE recipe
+| # prefix character. A second tab is text, and reaches the shell inside the
+| # quotes with the continuation's own two bytes.
+| all:
+| 	@printf '%s' 'a\
+| 		b' | od -An -c > out
+file out touched 1
+|    a   \  \n  \t   b

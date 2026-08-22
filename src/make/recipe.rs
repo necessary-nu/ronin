@@ -311,7 +311,10 @@ impl LateCommands for PendingRecipes {
         // script too long to be a description.
         let description = match (&expanded.description, &launched.response_file) {
             (Some(text), _) => BString::from(text.to_vec()),
-            (None, None) => BString::from(expanded.script.to_vec()),
+            // A description is one line, and a recipe that continued across a
+            // newline still holds it here: the continuation comes back out for
+            // the narration and stays in what the shell is given.
+            (None, None) => BString::from(kati::ninja::single_line(&expanded.script).to_vec()),
             (None, Some(_)) => BString::default(),
         };
         let (rspfile, rspfile_content) = match launched.response_file {

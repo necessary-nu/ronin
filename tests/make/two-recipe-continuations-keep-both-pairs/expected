@@ -1,0 +1,11 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # Each continuation is read on its own, so a line continued twice reaches the
+| # shell with two pairs in it and neither of them folded into the other.
+| all:
+| 	@printf '%s' 'a\
+| 	b\
+| 	c' | od -An -c > out
+file out touched 1
+|    a   \  \n   b   \  \n   c
