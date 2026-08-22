@@ -11,6 +11,7 @@ family	product-name	narration	the diagnostic is Ronin's by name, where the suite
 family	directory-announce	narration	the two tools bracket a -C build with Entering and Leaving at different moments.
 family	no-work-line	narration	Ronin says it had nothing to do; Make says nothing at all.
 family	up-to-date-line	narration	Make announced a goal was already up to date; Ronin either said nothing or counted the goal as a build step and printed its progress line.
+family	intermediate-sweep	narration	Make announces the intermediate files it deletes at the end of a build with one `rm` line; Ronin sweeps the same files and says nothing. Recognised from the sweep's own payload — every name on the line has to be one this run's own commands named — not from the word `rm`.
 family	recipe-interleave	narration	the same lines in a different order: Make interleaves each recipe line with the output of running it, and Ronin reports an edge's output once the whole recipe has finished.
 family	option-refused	interface	interface observation: Ronin refused an option spelling the test passed and GNU Make accepted.
 family	unsupported-feature	compiler	compiler candidate: the evaluator says outright that it does not support a Makefile construct.
@@ -25,7 +26,7 @@ family	parse-failure	compiler	compiler candidate: Ronin could not parse a Makefi
 family	evaluation	unclassified	unclassified residue: exact output cannot distinguish graph intent from runner behavior; reproduce it through the build-intent gate.
 case	features/archives.diff	narration	ninja-progress+recipe-echo
 case	features/archives.diff.1	narration	ninja-progress+recipe-echo
-case	features/archives.diff.10	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/archives.diff.10	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	features/archives.diff.11	narration	no-work-line
 case	features/archives.diff.12	unclassified	ninja-progress+recipe-echo+evaluation
 case	features/archives.diff.13	narration	no-work-line+up-to-date-line
@@ -344,7 +345,7 @@ case	features/patspecific_vars.diff.9	narration	ninja-progress
 case	features/patternrules.diff	narration	ninja-progress
 case	features/patternrules.diff.1	narration	ninja-progress
 case	features/patternrules.diff.10	narration	ninja-progress+recipe-echo
-case	features/patternrules.diff.11	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/patternrules.diff.11	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	features/patternrules.diff.12	narration	ninja-progress+recipe-echo
 case	features/patternrules.diff.13	narration	ninja-progress
 case	features/patternrules.diff.14	narration	no-work-line
@@ -355,13 +356,13 @@ case	features/patternrules.diff.18	narration	ninja-progress
 case	features/patternrules.diff.19	narration	no-work-line
 case	features/patternrules.diff.2	narration	ninja-progress+recipe-echo
 case	features/patternrules.diff.20	narration	ninja-progress
-case	features/patternrules.diff.21	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/patternrules.diff.22	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/patternrules.diff.23	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/patternrules.diff.24	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/patternrules.diff.25	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/patternrules.diff.26	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/patternrules.diff.27	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/patternrules.diff.21	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	features/patternrules.diff.22	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	features/patternrules.diff.23	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	features/patternrules.diff.24	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	features/patternrules.diff.25	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	features/patternrules.diff.26	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	features/patternrules.diff.27	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	features/patternrules.diff.28	narration	ninja-progress+recipe-echo
 case	features/patternrules.diff.29	narration	ninja-progress+recipe-echo
 case	features/patternrules.diff.3	narration	ninja-progress+ninja-failure-block+recipe-error-line
@@ -370,12 +371,12 @@ case	features/patternrules.diff.31	unclassified	ninja-progress+recipe-echo+evalu
 case	features/patternrules.diff.32	narration	no-work-line+up-to-date-line
 case	features/patternrules.diff.33	narration	ninja-progress
 case	features/patternrules.diff.34	unclassified	ninja-progress+no-work-line+recipe-echo+up-to-date-line+evaluation
-case	features/patternrules.diff.35	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/patternrules.diff.35	unclassified	ninja-progress+recipe-echo+intermediate-sweep+evaluation
 case	features/patternrules.diff.36	narration	no-work-line
 case	features/patternrules.diff.37	narration	no-work-line
 case	features/patternrules.diff.38	narration	no-work-line
 case	features/patternrules.diff.39	narration	no-work-line
-case	features/patternrules.diff.4	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/patternrules.diff.4	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	features/patternrules.diff.40	narration	no-work-line
 case	features/patternrules.diff.41	narration	no-work-line
 case	features/patternrules.diff.42	narration	no-work-line
@@ -657,8 +658,8 @@ case	features/vpath.diff.4	unclassified	ninja-progress+evaluation
 case	features/vpathgpath.diff	narration	no-work-line
 case	features/vpathplus.diff	narration	ninja-progress+recipe-echo
 case	features/vpathplus.diff.1	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line
-case	features/vpathplus.diff.2	unclassified	ninja-progress+recipe-echo+evaluation
-case	features/vpathplus.diff.3	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/vpathplus.diff.2	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	features/vpathplus.diff.3	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	functions/abspath.diff	narration	ninja-progress
 case	functions/addprefix.diff	narration	ninja-progress
 case	functions/addsuffix.diff	narration	ninja-progress
@@ -985,16 +986,16 @@ case	targets/DEFAULT.diff	unclassified	no-work-line+directory-announce+evaluatio
 case	targets/DELETE_ON_ERROR.diff	unclassified	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+product-name+evaluation
 case	targets/DELETE_ON_ERROR.diff.1	unclassified	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+product-name+evaluation
 case	targets/FORCE.diff	narration	ninja-progress+recipe-echo
-case	targets/INTERMEDIATE.diff	unclassified	ninja-progress+recipe-echo+evaluation
+case	targets/INTERMEDIATE.diff	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	targets/INTERMEDIATE.diff.1	narration	no-work-line+up-to-date-line
-case	targets/INTERMEDIATE.diff.2	unclassified	ninja-progress+recipe-echo+evaluation
-case	targets/INTERMEDIATE.diff.3	unclassified	ninja-progress+recipe-echo+evaluation
+case	targets/INTERMEDIATE.diff.2	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	targets/INTERMEDIATE.diff.3	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	targets/INTERMEDIATE.diff.4	narration	no-work-line+up-to-date-line
-case	targets/INTERMEDIATE.diff.5	unclassified	ninja-progress+recipe-echo+evaluation
+case	targets/INTERMEDIATE.diff.5	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	targets/INTERMEDIATE.diff.6	narration	ninja-progress+recipe-echo
-case	targets/INTERMEDIATE.diff.7	unclassified	ninja-progress+recipe-echo+evaluation
+case	targets/INTERMEDIATE.diff.7	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	targets/INTERMEDIATE.diff.8	narration	no-work-line
-case	targets/INTERMEDIATE.diff.9	unclassified	ninja-progress+recipe-echo+evaluation
+case	targets/INTERMEDIATE.diff.9	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	targets/NOTINTERMEDIATE.diff	narration	ninja-progress+recipe-echo
 case	targets/NOTINTERMEDIATE.diff.1	narration	no-work-line+up-to-date-line
 case	targets/NOTINTERMEDIATE.diff.10	narration	ninja-progress+recipe-echo
@@ -1030,16 +1031,16 @@ case	targets/POSIX.diff.7	narration	ninja-progress
 case	targets/POSIX.diff.8	narration	ninja-progress
 case	targets/SECONDARY.diff	narration	ninja-progress+recipe-echo
 case	targets/SECONDARY.diff.1	narration	no-work-line+up-to-date-line
-case	targets/SECONDARY.diff.10	unclassified	ninja-progress+recipe-echo+evaluation
-case	targets/SECONDARY.diff.11	unclassified	ninja-progress+recipe-echo+evaluation
+case	targets/SECONDARY.diff.10	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	targets/SECONDARY.diff.11	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	targets/SECONDARY.diff.2	narration	ninja-progress+recipe-echo
 case	targets/SECONDARY.diff.3	narration	ninja-progress+recipe-echo
 case	targets/SECONDARY.diff.4	narration	no-work-line+up-to-date-line
 case	targets/SECONDARY.diff.5	narration	ninja-progress+recipe-echo
 case	targets/SECONDARY.diff.6	narration	no-work-line+up-to-date-line
 case	targets/SECONDARY.diff.7	narration	ninja-progress
-case	targets/SECONDARY.diff.8	unclassified	ninja-progress+recipe-echo+evaluation
-case	targets/SECONDARY.diff.9	unclassified	ninja-progress+recipe-echo+evaluation
+case	targets/SECONDARY.diff.8	narration	ninja-progress+recipe-echo+intermediate-sweep
+case	targets/SECONDARY.diff.9	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	targets/SILENT.diff	narration	ninja-progress+recipe-echo
 case	targets/SILENT.diff.1	narration	ninja-progress
 case	targets/SILENT.diff.2	narration	ninja-progress+recipe-echo

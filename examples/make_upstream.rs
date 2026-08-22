@@ -63,7 +63,7 @@ struct Family {
     reason: &'static str,
 }
 
-const FAMILIES: [Family; 24] = [
+const FAMILIES: [Family; 25] = [
     Family {
         name: "fatal-decoration",
         class: Class::Narration,
@@ -123,6 +123,11 @@ const FAMILIES: [Family; 24] = [
         name: "up-to-date-line",
         class: Class::Narration,
         reason: "Make announced a goal was already up to date; Ronin either said nothing or counted the goal as a build step and printed its progress line.",
+    },
+    Family {
+        name: "intermediate-sweep",
+        class: Class::Narration,
+        reason: "Make announces the intermediate files it deletes at the end of a build with one `rm` line; Ronin sweeps the same files and says nothing. Recognised from the sweep's own payload — every name on the line has to be one this run's own commands named — not from the word `rm`.",
     },
     Family {
         name: "recipe-interleave",
@@ -450,6 +455,41 @@ fn is_shell_invocation(line: &str) -> bool {
         }
     }
     rest.starts_with("/bin/sh -c \"")
+}
+
+/// The files a sweep line named, if the line is one.
+///
+/// `remove_intermediates` (file.c) writes `rm `, then each file's own name with
+/// a single space between them, and nothing else: no options, no quoting and no
+/// shell in the way. So a candidate is a payload of plain names, and whether it
+/// really is the sweep is settled by the caller against what the build ran.
+fn swept_intermediates(line: &str) -> Option<Vec<&str>> {
+    let names = line.strip_prefix("rm ")?.split(' ').collect::<Vec<_>>();
+    names
+        .iter()
+        .all(|name| {
+            !name.is_empty()
+                && !name.starts_with('-')
+                && !name.contains(|character: char| "*?[]{}$;&|<>()'\"`\\\t".contains(character))
+        })
+        .then_some(names)
+}
+
+/// Whether a command names this file as a word of its own.
+///
+/// `cat inter.c > inter.b` names `inter.c`, and so does `cat inter.c>inter.b`;
+/// `cat winter.city` names neither, which is the whole point of asking by word
+/// rather than by substring.
+fn names_file(command: &str, name: &str) -> bool {
+    command
+        .split(|character: char| {
+            character.is_whitespace()
+                || matches!(
+                    character,
+                    '>' | '<' | '|' | ';' | '&' | '(' | ')' | '"' | '\''
+                )
+        })
+        .any(|word| word == name)
 }
 
 /// Whether `printed` is what `recipe` looks like once Make expanded it.
@@ -838,6 +878,23 @@ fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSi
                 .any(|command| *command == kept || command.contains(&kept))
         {
             note("recipe-echo", &mut side.families);
+            continue;
+        }
+        // The intermediate files Make swept once the build was over. Ronin
+        // deletes the same files and announces nothing, so the line has no
+        // counterpart to cancel against and is read from its own payload
+        // instead: every name on it has to be one this run's commands named.
+        // A recipe that runs `rm` is already accounted for above, and a build
+        // that never made the files is not explained by a line about deleting
+        // them.
+        if let Some(swept) = swept_intermediates(&kept)
+            && swept.iter().all(|name| {
+                ours.commands
+                    .iter()
+                    .any(|command| names_file(command, name))
+            })
+        {
+            note("intermediate-sweep", &mut side.families);
             continue;
         }
         side.residue.push(kept, contribution.diagnostic);
@@ -1574,6 +1631,89 @@ mod tests {
             actual: lines(&["[1/1] touch something.else"]),
         };
         assert_eq!(classify(&unexplained, &unread()).class, Class::Unclassified);
+    }
+
+    /// Make deletes the intermediate files it made and says so; Ronin deletes
+    /// the same files and says nothing, which is the whole of the difference in
+    /// features/vpathplus's intermediate cases. The line is read from its own
+    /// payload — the names it lists — and explains only itself: a case with
+    /// anything else left over is still unclassified.
+    #[test]
+    fn a_sweep_line_explains_only_itself() {
+        let built = || {
+            lines(&[
+                "[1/3] cat vp/inter.d > inter.c",
+                "[2/3] cat inter.c > inter.b 2>/dev/null || exit 1",
+                "[3/3] cat inter.b > inter.a",
+            ])
+        };
+        let swept = Divergence {
+            expected: lines(&[
+                "cat vp/inter.d > inter.c",
+                "cat inter.c > inter.b 2>/dev/null || exit 1",
+                "cat inter.b > inter.a",
+                "rm inter.c",
+            ]),
+            actual: built(),
+        };
+        let verdict = classify(&swept, &unread());
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(
+            verdict.families.contains(&"intermediate-sweep"),
+            "{:?}",
+            verdict.families
+        );
+
+        // Explains only itself. Another unaccounted line and the case stays in
+        // the bucket that says the residue is not understood.
+        let mut expected = swept.expected.clone();
+        expected.push("something else entirely".to_owned());
+        let verdict = classify(
+            &Divergence {
+                expected,
+                actual: built(),
+            },
+            &unread(),
+        );
+        assert_eq!(verdict.class, Class::Unclassified);
+        assert!(
+            verdict.families.contains(&"intermediate-sweep"),
+            "{:?}",
+            verdict.families
+        );
+
+        // A name this run's commands never mentioned is not this run's sweep.
+        let unrelated = Divergence {
+            expected: lines(&["rm elsewhere.o"]),
+            actual: lines(&["[1/1] cat a > b"]),
+        };
+        let verdict = classify(&unrelated, &unread());
+        assert_eq!(verdict.class, Class::Unclassified);
+        assert!(
+            !verdict.families.contains(&"intermediate-sweep"),
+            "{:?}",
+            verdict.families
+        );
+    }
+
+    /// What the sweep can look like, read off `remove_intermediates`: `rm `, the
+    /// names, single spaces, nothing else.
+    #[test]
+    fn a_sweep_line_is_only_names() {
+        assert_eq!(
+            super::swept_intermediates("rm inter.b inter.c"),
+            Some(vec!["inter.b", "inter.c"])
+        );
+        assert_eq!(super::swept_intermediates("rm"), None);
+        assert_eq!(super::swept_intermediates("rm "), None);
+        assert_eq!(super::swept_intermediates("rm -f inter.c"), None);
+        assert_eq!(super::swept_intermediates("rm inter.c && echo gone"), None);
+        assert_eq!(super::swept_intermediates("rm $(FILES)"), None);
+        assert_eq!(super::swept_intermediates("cat inter.b > inter.a"), None);
+
+        assert!(super::names_file("cat inter.c > inter.b", "inter.c"));
+        assert!(super::names_file("cat inter.c>inter.b", "inter.b"));
+        assert!(!super::names_file("cat winter.city > x", "inter.c"));
     }
 
     /// The `exec` that replaces the intermediate shell and the `env` that
