@@ -14776,6 +14776,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-22T07:35:02.699816843Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Two details of the note above were written before the commit gate had finished with the change, and the gate moved them.\n\nWHAT THE EXTRACTION ACTUALLY WAS. The note says one function was extracted and names `record_searched_spellings` and `names_an_archive_member`. The first is right; the second was tried, then given back. `src/make/sink.rs` was at the density cap of 50 functions before this change, so the file had to lose one for the change to add one: the two names the compiler invents for itself — `completion_proxy` and `recipe_stage_proxy`, the same loop twice over a different prefix and counter — are now `src/make/sink/invented.rs`, a child module, which is why they can still read the sink's own fields. `declare_edge` stayed under the line cap without `names_an_archive_member` because the block it now calls one function for used to be eight lines inline. On the same pass, `BuildGraph::set_searched_at` and `set_settled_names` became one `set_searched_spellings`: the sink says both halves of the search's answer at one point, so the boundary crossing is one call. No behaviour moved with any of it — the corpus was rerun after each step.\n\nTHE WORKSPACE TEST COUNT IS 1005, not the 1004 the note records. `src/make/sink/invented.rs` needed a test of its own to clear the test-footprint gate on a new module, and `make::sink::invented::tests::an_invented_name_is_never_reused` is it: each invented name is its own, and one the graph already holds is stepped over rather than handed out twice, which is why those are loops rather than a counter read once.\n\nEvery other gate number in the note stands, and all of them were measured again on the committed tree after these three edits: fmt clean; `cargo check --workspace --all-targets` clean; `scripts/check-lints.sh` clean; workspace tests 1005 passed / 0 failed / 1 ignored; make_port 4/4 over 1005 cases; conformance 336 normalised identical / 51 differing, 286 raw; equivalence 297 / 280 / 75 / 0 disagreements; upstream inventory 1285 rows at 107 / 0 / 24 / 1154, no drift, compiler ZERO; vim 9.2 in 15 s and zsh 5.9.2 in 26 s; ninja conformance 425/425 plus every differential; `cargo test --workspace --no-default-features` 773 / 0; `scripts/check-release.sh` green end to end."
+                        after_done true
+                    }
                 )
             }
 
