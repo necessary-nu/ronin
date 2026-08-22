@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 12
+| # `.IGNORE` is a bit on the file object, and `GPATH` moves the object rather
+| # than looking the name up again: `rehash_file` (file.c) reinserts it under the
+| # found path with everything it carries. So the failure at build/out.o is the
+| # one out.o was forgiven, and the build carries on.
+| VPATH = build
+| GPATH = build
+| 
+| .IGNORE: out.o
+| 
+| all: out.o ; @printf 'all ran\n' > seen
+| 
+| out.o: out.c ; @printf 'made\n' > $@; exit 1
+file build/out.o touched 1
+| made
+file out.c kept 1
+| source
+file seen touched 1
+| all ran

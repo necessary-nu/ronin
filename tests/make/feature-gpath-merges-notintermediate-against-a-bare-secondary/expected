@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 15
+| # A bare `.SECONDARY:` makes every name intermediate, and `.NOTINTERMEDIATE`
+| # takes one back out — `remake.c` asks `!file->notintermediate` before it grants
+| # the blanket. The bit was declared for out.o and lands on the object standing
+| # at build/out.o, so this stale target is remade rather than forgiven.
+| VPATH = build
+| GPATH = build
+| 
+| .SECONDARY:
+| .NOTINTERMEDIATE: out.o
+| 
+| all: app
+| 
+| app: out.o ; @cat $< > $@
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file app touched 1
+| made
+file build/out.o touched 1
+| made
+file out.c kept 1
+| source

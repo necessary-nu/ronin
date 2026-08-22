@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 15
+| # The same reading for `notintermediate`, which is in the `MERGE` run beside
+| # `secondary`. Writing both for ONE name is a read-time error, so a rename is
+| # the only way a file object comes to hold `.INTERMEDIATE` and
+| # `.NOTINTERMEDIATE` at once — and then the sweep leaves it alone.
+| VPATH = build
+| GPATH = build
+| 
+| .INTERMEDIATE: build/out.o
+| .NOTINTERMEDIATE: out.o
+| 
+| all: app
+| 
+| app: out.o ; @cat $< > $@
+| 
+| out.o: out.c ; @printf 'made\n' > $@
+file app touched 1
+| made
+file build/out.o touched 1
+| made
+file out.c kept 1
+| source
