@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-22T05:29:09.056251776Z
+last_sync_at 2026-08-22T14:57:14.354837333Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -102,10 +102,14 @@ derived_priorities (
     {id make-a-makefile-whose-recipe-lost-is-listed-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-a-makefiles-own-makeflags-does-not-reach-the-include-path, priority 2, derived_at 2026-08-20T08:27:31.859392001Z}
     {id make-a-plain-dash-word-becomes-a-goal, priority 0, derived_at 2026-08-20T03:57:30.737801017Z}
+    {id make-a-posix-target-is-read-off-text-that-names-none, priority 1, derived_at 2026-08-22T14:57:14.354837333Z}
+    {id make-a-posix-target-is-read-where-it-is-written, priority 1, derived_at 2026-08-22T14:57:14.354837333Z}
     {id make-a-questioned-makefile-keeps-the-questions-status-under-keep-going, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-a-refused-conditions-first-string-is-not-expanded, priority 3, derived_at 2026-08-20T16:18:59.498989423Z}
     {id make-a-scheduler-bound-recipe-is-expanded-though-its-target-is-current, priority 0, derived_at 2026-08-20T03:31:21.605164794Z}
     {id make-a-staging-pass-reads-text-the-first-read-never-saw, priority 3, derived_at 2026-08-20T01:26:46.942098006Z}
+    {id make-a-switch-names-a-target-gpath-renamed, priority 2, derived_at 2026-08-22T14:57:14.354837333Z}
+    {id make-a-what-if-file-that-is-double-colon-refuses, priority 2, derived_at 2026-08-22T14:57:14.354837333Z}
     {id make-a-worked-out-name-answers-the-wrong-origin, priority 0, derived_at 2026-08-20T02:18:30.517650912Z}
     {id make-a-worked-out-names-value-is-its-own-name, priority 0, derived_at 2026-08-20T04:48:58.527069983Z}
     {id make-a-write-to-a-special-variable-is-refused, priority 0, derived_at 2026-08-20T00:49:39.912891899Z}
@@ -113,6 +117,9 @@ derived_priorities (
     {id make-an-empty-argument-word-stops-the-build, priority 0, derived_at 2026-08-20T02:18:30.517650912Z}
     {id make-an-environment-option-stream-is-expanded-before-it-is-split, priority 3, derived_at 2026-08-21T00:05:30.07958273Z}
     {id make-an-environment-variable-is-a-recursive-one, priority 0, derived_at 2026-08-20T21:59:17.812494617Z}
+    {id make-an-existing-intermediate-does-not-force-its-dependent, priority 3, derived_at 2026-08-22T14:57:14.354837333Z}
+    {id make-an-intermediate-the-build-found-is-not-swept-up, priority 3, derived_at 2026-08-22T14:57:14.354837333Z}
+    {id make-an-old-file-is-not-remade, priority 1, derived_at 2026-08-22T14:57:14.354837333Z}
     {id make-an-output-directory-is-created-where-gnu-make-would-refuse, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-an-unopenable-include-is-reported-where-gnu-reports-it, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-an-unreadable-condition-after-else-is-extraneous-text, priority 3, derived_at 2026-08-20T20:57:41.240518327Z}
@@ -172,6 +179,7 @@ derived_priorities (
     {id make-filter-percent-escaping, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-four-names-gnu-works-out-are-missing, priority 0, derived_at 2026-08-20T04:48:58.527069983Z}
     {id make-gnumakeflags-carries-switches-too, priority 0, derived_at 2026-08-20T22:36:45.025045514Z}
+    {id make-gpath-rename-carries-a-targets-own-flags, priority 2, derived_at 2026-08-22T14:57:14.354837333Z}
     {id make-gpath-rename-keeps-the-recorded-prerequisites, priority 1, derived_at 2026-08-22T05:29:09.056251776Z}
     {id make-graph-equivalence, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-grouped-double-colon-actions, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
