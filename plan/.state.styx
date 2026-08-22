@@ -825,6 +825,7 @@ assertions (
     {id make-manifest-recipe-line-keeps-its-errexit, kind @complete, author "brendan@necessary.nu", at 2026-08-22T16:55:39.766026385Z}
     {id make-kati-option-table-reads-i-as-n, kind @doing, author "brendan@necessary.nu", at 2026-08-22T17:17:06.851992073Z}
     {id make-manifest-response-file-keeps-the-shell-flags, kind @doing, author "brendan@necessary.nu", at 2026-08-22T17:49:44.445551984Z}
+    {id make-manifest-oneshell-recipe-is-not-a-manifest, kind @doing, author "brendan@necessary.nu", at 2026-08-22T18:26:40.224134206Z}
 )
 
 impl_evidence (

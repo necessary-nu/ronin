@@ -456,6 +456,12 @@ fn destination_specific_binding(name: &str, command: Option<&SemanticCommand>) -
     match name {
         "command" => !command.response_file,
         "rspfile_content" => command.response_file,
+        // A script the manifest had to respell cannot be its own narration
+        // there: the binding holds one line, and the reconstruction that
+        // carries the recipe is plumbing rather than the recipe. The sink that
+        // keeps the script in memory narrates it with its own bytes, and the
+        // two spellings are as destination-specific as the command is.
+        "description" => command.respelled,
         _ => false,
     }
 }
@@ -892,6 +898,45 @@ fn outputs_where(graph: &BuildGraph, wanted: impl Fn(&crate::graph::Edge) -> boo
 fn agrees(makefile: &str, flags: &[&str]) {
     let outcome = Case::new(makefile, flags).compare();
     assert!(outcome.agreed(), "{outcome}");
+}
+
+/// A `.ONESHELL` recipe is the one recipe whose script holds a newline, and a
+/// `build.ninja` binding ends at one.
+///
+/// This used to emit a manifest that was not a manifest: the recipe's own
+/// separators went into the binding as they were, the stanza broke in two, and
+/// stock ninja answered `expected 'command =' line`. Reaching `both()` at all
+/// is the assertion — the manifest is written here and read back by Ronin's
+/// own reader, which refused it too.
+///
+/// GNU Make 4.4.1 over this recipe: m1 and m2 both made, and make succeeds.
+/// One shell for the whole recipe and no `-e` anywhere, so the failing line
+/// stops nothing — which the two sinks have to keep agreeing about across a
+/// respelling only one of them needs.
+#[test]
+fn one_shell_recipe_reaches_a_reader() {
+    let both = Case::new(
+        "\
+.ONESHELL:
+all: out
+out:
+\t@touch m1; false
+\t@touch m2
+",
+        &[],
+    )
+    .both();
+    assert!(
+        both.semantics
+            .semantic
+            .values()
+            .all(|command| command.respelled),
+        "the script holds a newline, which is what the manifest cannot say"
+    );
+    assert_eq!(
+        differences(&both.direct, &both.parsed, &both.semantics),
+        Vec::<String>::new()
+    );
 }
 
 /// `-i` is GNU Make's `--ignore-errors`, and the letter has to reach both
