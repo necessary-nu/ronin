@@ -418,3 +418,193 @@ fn a_signalled_recipe_abandons_with_two() {
     // and for every other recipe that did not finish.
     assert!(!directory.join("out").exists());
 }
+
+/// A read the user stops does not wait for the `$(shell)` that was running.
+///
+/// The read phase is the compiler, not the build, and it runs processes: a
+/// `$(shell)` call is a command line like any other. Before this case Ronin ran
+/// the shell function to its end, finished compiling, started the build and only
+/// then noticed the flag the handler had set, so Ctrl-C took as long as the
+/// makefile's slowest shell function — measured at 10,007 ms against GNU Make
+/// 4.4.1's 8 ms for the same makefile, both numbers being the child's `sleep` to
+/// the millisecond.
+///
+/// What GNU does with the child is ABANDON it, and that is what is reproduced
+/// here rather than a kill. `fatal_error_signal` (commands.c) waits for the
+/// children Make is running as jobs and knows nothing about the one a `$(shell)`
+/// left behind, so it re-raises and is gone while that child runs on. Measured
+/// through `scripts/sandboxed`, SIGINT to the tool alone: GNU left in 1-3 ms
+/// over three rounds and its `/bin/sh` and `sleep` were still there afterwards,
+/// reparented to the namespace's init and never reaped. Ronin now leaves in the
+/// same 2-3 ms and leaves the same child standing.
+///
+/// The `trap` makes the window a certainty rather than a race, exactly as it
+/// does for the recipe case above: the child cannot be killed by the signal, so
+/// what stops the tool waiting for it is the fix or nothing. `survived` is the
+/// teeth — the child writes it thirty seconds later, so a tool that waited would
+/// have it and a tool that abandoned cannot.
+///
+/// Deliberately NOT `wait_with_output`: the abandoned child inherits the pipe's
+/// write end, so a test that read the tool's stdout to EOF would block on the
+/// orphan for the whole thirty seconds and report the wait it was written to
+/// catch as a pass.
+// [spec:ronin:req:product.build-outcome/test]
+#[cfg(feature = "make")]
+#[test]
+fn a_read_interrupt_abandons_its_command() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let directory = make_case(
+        "make-read-phase-interrupt",
+        "X := $(shell trap '' INT; touch started; sleep 30; touch survived)\n\
+         out:\n\t@touch $@\n",
+    );
+    let mut child = make_command(&invoked_as(&directory, "make"), &directory)
+        .spawn()
+        .unwrap();
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
+    let child_id = rustix::process::Pid::from_child(&child);
+    let signalled = std::time::Instant::now();
+    rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
+    let status = child.wait().unwrap();
+    let waited = signalled.elapsed();
+
+    assert_eq!(status.signal(), None);
+    assert_eq!(status.code(), Some(ronin::INTERRUPTED_EXIT_CODE));
+    // The child is still sleeping, so the read did not wait for it. Read before
+    // any assertion that could leave the check unrun.
+    assert!(
+        !directory.join("survived").exists(),
+        "the read waited for the shell function it was interrupted during"
+    );
+    // And the same thing said as a bound rather than as a file, far enough
+    // under the child's thirty seconds to be a finding rather than a flapper.
+    assert!(
+        waited < std::time::Duration::from_secs(10),
+        "the tool took {waited:?} to leave after the signal"
+    );
+    // The compile never finished, so nothing was built.
+    assert!(!directory.join("out").exists());
+}
+
+/// An interrupted read starts no further shell function.
+///
+/// The other half of the same contract, and the one that needs no signal from
+/// this suite at all: the makefile's own first `$(shell)` interrupts the tool,
+/// which makes the moment the interrupt arrives a fact of the makefile rather
+/// than a race against a sleep. What must not happen afterwards is the second
+/// `$(shell)` running, and that is a file rather than a timing.
+///
+/// The first line is written the way it is so that the interrupt lands where
+/// nothing is being waited for, which is the only place the evaluator's own
+/// check is what stops the read. `exec >/dev/null` closes the pipe the tool is
+/// reading, so the tool sees the end of the output and stops reading BEFORE the
+/// signal is sent; it is then inside `wait` for the child, which the sleep holds
+/// open long enough for the flag to be set. So the read of the first command
+/// completes normally, and the interrupt is there to be found between one
+/// statement and the next.
+///
+/// Measured against GNU Make 4.4.1 for this exact makefile: exit 130,
+/// `second-shell-ran` absent, `out` absent, and nothing written to either
+/// stream. Before the fix Ronin left the same 130 — the parent node had settled
+/// that — with `second-shell-ran` PRESENT, because the read carried on to the
+/// end and the interrupt was only noticed once the build started; the build
+/// then narrated `ronin: build stopped: interrupted by user.`, which GNU does
+/// not say here because GNU never reached a build.
+// [spec:ronin:req:compat.process-integration+2/test]
+// [spec:ronin:req:product.build-outcome/test]
+#[cfg(feature = "make")]
+#[test]
+fn an_interrupted_read_launches_nothing_further() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let directory = make_case(
+        "make-read-phase-next-shell",
+        // `$$PPID` reaches the shell as `$PPID`, and the shell a `$(shell)`
+        // starts is the tool's own child, so this is the tool being signalled.
+        "X := $(shell echo one; exec >/dev/null; kill -INT $$PPID; sleep 0.2)\n\
+         Y := $(shell touch second-shell-ran; echo two)\n\
+         out:\n\t@touch $@\n",
+    );
+    let finished = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+
+    assert_eq!(finished.status.signal(), None);
+    assert_eq!(
+        finished.status.code(),
+        Some(ronin::INTERRUPTED_EXIT_CODE),
+        "{}",
+        String::from_utf8_lossy(&finished.stdout)
+    );
+    assert!(
+        !directory.join("second-shell-ran").exists(),
+        "the read ran a shell function after it had been interrupted"
+    );
+    assert!(!directory.join("out").exists());
+    // GNU says nothing here, having re-raised before it could. Ronin's build
+    // narration belongs to a build, and this run never started one.
+    assert_eq!(String::from_utf8_lossy(&finished.stdout), "");
+    assert_eq!(String::from_utf8_lossy(&finished.stderr), "");
+}
+
+/// A read the user stops does not wait for a shell function that closed its
+/// output early either.
+///
+/// The other half of the wait, and the half a fixed read leaves standing on its
+/// own. A `$(shell)` is read to the end of its output and then WAITED for, and
+/// a command that is told `exec >/dev/null` reaches the end of its output while
+/// it is still running — so the read finishes at once and everything left is the
+/// wait for the child. Measured before the fix: 20,013 ms of a twenty-second
+/// child, against GNU Make 4.4.1's 2 ms for the same makefile, with `survived`
+/// present rather than absent.
+///
+/// The shell has to be a real one for the case to be the one it says it is. A
+/// `SHELL` spelled `/bin/sh` is stood in for by Ronin's own builtin shell,
+/// which holds the pipe until the command ends and so reaches the interrupt
+/// through the READ rather than through the wait; naming the same shell through
+/// a symlink of this test's own takes the stand-in out and puts the case back on
+/// the path it was written for. `[spec:ronin:req:product.builtin-shell]` is what
+/// makes the two spellings different, and it is a Makefile-visible choice rather
+/// than a trick.
+// [spec:ronin:req:product.build-outcome/test]
+#[cfg(feature = "make")]
+#[test]
+fn an_interrupt_ends_the_second_wait() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let directory = test_directory("make-read-phase-wait");
+    let shell = directory.join("realsh");
+    std::os::unix::fs::symlink("/bin/sh", &shell).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        format!(
+            "SHELL := {}\n\
+             X := $(shell exec >/dev/null 2>&1; touch started; trap '' INT; sleep 30; touch survived)\n\
+             out:\n\t@touch $@\n",
+            shell.display()
+        ),
+    )
+    .unwrap();
+    let mut child = make_command(&invoked_as(&directory, "make"), &directory)
+        .spawn()
+        .unwrap();
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
+    let child_id = rustix::process::Pid::from_child(&child);
+    let signalled = std::time::Instant::now();
+    rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
+    let status = child.wait().unwrap();
+    let waited = signalled.elapsed();
+
+    assert_eq!(status.signal(), None);
+    assert_eq!(status.code(), Some(ronin::INTERRUPTED_EXIT_CODE));
+    assert!(
+        !directory.join("survived").exists(),
+        "the read waited for a shell function that had closed its output"
+    );
+    assert!(
+        waited < std::time::Duration::from_secs(10),
+        "the tool took {waited:?} to leave after the signal"
+    );
+    assert!(!directory.join("out").exists());
+}

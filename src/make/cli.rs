@@ -25,8 +25,8 @@ use crate::error::CliError;
 use crate::frontend::{Build, BuildGraph, Persistence};
 use crate::make::Shuffle;
 use crate::make::report::{
-    ABANDONED, abandoned, answered, discard_intermediates, duplicate_standard_input, finished,
-    no_makefile, ordinary_diagnostic,
+    ABANDONED, abandoned, answered, cut_short, discard_intermediates, duplicate_standard_input,
+    finished, no_makefile, ordinary_diagnostic,
 };
 use crate::util::{BString, ByteSlice, terminated};
 use kati::bytes::Bytes;
@@ -2115,6 +2115,7 @@ fn compilation_context(
         directory,
         path_prefix: PathBuf::new(),
         diagnostics: Arc::clone(&session.diagnostics),
+        interrupts: crate::make::interrupts::ReadInterrupts::installed(),
         census: Arc::clone(&session.census),
         reporting,
         makeflags: propagated_makeflags(invocation),
@@ -2199,10 +2200,15 @@ fn evaluated(
         // it, so a recipe is expanded when its edge is about to run.
         kati::build_sink::RecipeExpansion::Launch,
     )
-    .map_err(|failure| RunResult {
-        stdout: terminated(reported),
-        stderr: ordinary_diagnostic(failure),
-        exit_code: ABANDONED,
+    .map_err(|failure| match failure {
+        // The read was stopped rather than refused, so it leaves with the
+        // interrupt's status and says nothing about the Makefile.
+        crate::make::MakeError::Interrupted => cut_short(reported.to_owned()),
+        failure => RunResult {
+            stdout: terminated(reported),
+            stderr: ordinary_diagnostic(failure),
+            exit_code: ABANDONED,
+        },
     })
 }
 

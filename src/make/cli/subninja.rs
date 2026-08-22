@@ -109,6 +109,7 @@ pub(in crate::make) fn compile(
         shuffle: invocation.shuffle,
         context: CompilationContext {
             diagnostics: std::sync::Arc::clone(&parent.diagnostics),
+            interrupts: std::sync::Arc::clone(&parent.interrupts),
             census: std::sync::Arc::clone(&parent.census),
             reporting: parent.reporting,
             root_directory: parent.root_directory.clone(),

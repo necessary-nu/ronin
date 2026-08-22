@@ -88,6 +88,33 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
     }
 }
 
+/// What a read the user stopped reports.
+///
+/// Not [`abandoned`], although the read did not finish: `ABANDONED` is the
+/// status for every way of NOT BEING ABLE to build, and an interrupt is the
+/// user stopping a read that was going fine — the same distinction
+/// [`stopped_status`] draws for a build, drawn where the compiler is what was
+/// cut short. GNU Make 4.4.1 leaves 130 here too, by dying of the signal it
+/// caught while a `$(shell)` ran.
+///
+/// Nothing is written about it. There is no diagnostic to give, because the
+/// Makefile said nothing wrong; GNU Make prints nothing either, having already
+/// re-raised. Whatever the read narrated before the signal still goes out,
+/// which is what a restarted read's remaking narration is.
+///
+/// What the read does to the command it was waiting for — abandon it rather than
+/// signal it, as GNU Make does — is not this rule's, and is not
+/// `compat.process-integration`'s either: that one says what an interrupt does
+/// to a BUILD, and a read has no edges. See the node beside this one.
+// [spec:ronin:req:product.build-outcome]
+pub(super) fn cut_short(reported: String) -> RunResult {
+    RunResult {
+        stdout: terminated(reported),
+        stderr: Vec::new(),
+        exit_code: crate::subprocess::INTERRUPTED_EXIT_CODE,
+    }
+}
+
 /// What a run that ended over a required Makefile nothing can make reports.
 ///
 /// The same ending as [`abandoned`], but reached after work rather than instead

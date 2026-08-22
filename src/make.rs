@@ -23,6 +23,7 @@
 pub use kati;
 
 pub(crate) mod cli;
+mod interrupts;
 mod layout;
 mod recipe;
 mod report;
@@ -101,6 +102,13 @@ pub enum MakeError {
         /// of the names a Make reads.
         directory: PathBuf,
     },
+    /// The user stopped the read before it could finish.
+    ///
+    /// Its own variant because it is not a rejection: the Makefile said nothing
+    /// wrong, and nothing is to be reported about it. What it decides is the
+    /// status the invocation leaves with, which is the interrupt's rather than
+    /// the 2 every refusal shares.
+    Interrupted,
 }
 
 impl fmt::Display for MakeError {
@@ -108,6 +116,7 @@ impl fmt::Display for MakeError {
         match self {
             Self::Evaluate(diagnostic) => formatter.write_str(diagnostic),
             Self::Construct(error) => error.fmt(formatter),
+            Self::Interrupted => formatter.write_str("interrupted"),
             Self::MissingChildMakefile { directory } => write!(
                 formatter,
                 "no makefile found for recursive compilation in '{}'",
@@ -120,7 +129,7 @@ impl fmt::Display for MakeError {
 impl error::Error for MakeError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
-            Self::Evaluate(_) | Self::MissingChildMakefile { .. } => None,
+            Self::Evaluate(_) | Self::MissingChildMakefile { .. } | Self::Interrupted => None,
             Self::Construct(error) => Some(error),
         }
     }
@@ -129,6 +138,12 @@ impl error::Error for MakeError {
 impl MakeError {
     /// kati's failure, rendered the way kati renders it: one cause per line.
     fn evaluate(error: &kati::anyhow::Error) -> Self {
+        // Asked of the error rather than of its text: a read that stopped is
+        // not a Makefile that would not evaluate, and the two leave with
+        // different statuses.
+        if kati::interrupt::was_interrupted(error) {
+            return Self::Interrupted;
+        }
         let mut diagnostic = String::new();
         for cause in error.chain() {
             if !diagnostic.is_empty() {
@@ -197,6 +212,7 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
     let compilation = Compilation {
         context: CompilationContext {
             diagnostics: std::sync::Arc::clone(&session.diagnostics),
+            interrupts: interrupts::ReadInterrupts::installed(),
             census: std::sync::Arc::clone(&session.census),
             reporting: false,
             root_directory: directory.clone(),
@@ -243,6 +259,12 @@ pub(crate) struct CompilationContext {
     /// belongs to the invocation that asked, not to the process it happens to
     /// run in.
     pub(crate) diagnostics: std::sync::Arc<kati::diagnostics::Diagnostics>,
+    /// What every session composed under this one is told about being stopped.
+    ///
+    /// Shared for the reason the diagnostics descriptor is: one Ctrl-C stops
+    /// the whole invocation, not the one recursive unit that happened to be
+    /// waiting for a `$(shell)`.
+    pub(crate) interrupts: std::sync::Arc<dyn kati::interrupt::Interruptible>,
     /// Where every one of them records what it classified about a recursive
     /// invocation, for a caller that asked for a report rather than a build.
     pub(crate) census: std::sync::Arc<kati::census::Census>,
@@ -882,6 +904,10 @@ where
     // [spec:ronin:req:product.builtin-shell]
     session.flags.default_shell_program =
         crate::subprocess::builtin_shell().map(std::path::Path::to_path_buf);
+    // Per unit for the same reason, and the same watch in every one of them: a
+    // recursive child reading its own makefile is stopped by the interrupt its
+    // parent was sent.
+    session.interrupts = Some(std::sync::Arc::clone(&context.interrupts));
     // Per unit rather than per pass, because a staging pass reads units it has
     // read before AND one it has not: the parent and the children behind the
     // settled boundaries are repeating themselves, while the child the pass
