@@ -15095,6 +15095,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-22T14:59:09.698287403Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "GATES for the landing above, run serially on this tree with kati pinned at 4cd013b4db27703ea96a5cee481bc27dead77fb6 (branch nplan/make-an-old-file-is-not-remade, pushed before the pin).\n\nfmt clean in both trees; `cargo check --workspace --all-targets` clean; `scripts/check-lints.sh` clean — it caught `read_cluster` at 109 lines and the two switches were merged into one arm, which is what they are; workspace tests 1,009 passed / 0 failed / 1 ignored, unmoved; make_port 4/4 over 1,078 gated cases with nineteen new recordings and none rewritten, divergence sidecars nine → ten and the tenth is the filed GPATH cell; conformance 336 normalised identical / 51 differing, 286 raw, unmoved; equivalence 297 makefiles / 280 graphs / 75 rejected / 0 disagreements / 8 manifest respellings, unmoved; upstream inventory 1,285 rows at 100 unclassified / 0 compiler / 24 interface / 1,161 narration, tsv untouched, no row moved; `scripts/check-make-projects.sh all` built vim 9.2 in 17 s and zsh 5.9.2 with 36 modules in 33 s; ninja conformance 425/425 across 33 suites plus 10 differentials, 86 build-outcome cases, 3 invocation-boundary cases, persistence round trip and log content; `cargo test --workspace --no-default-features` 777 passed / 0 failed.\n\n`scripts/check-release.sh` was run END TO END against this tree and exited 0, performance comparison included. The host carried another tenant's nextest run for part of the dispatch — 15-minute load averages between 8 and 30, which is why the teeth measurements took as long as they did — but it had left by the time the release gate reached its last stage, and the run needed no retry."
+                        after_done true
+                    }
                 )
             }
 
