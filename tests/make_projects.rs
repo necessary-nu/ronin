@@ -237,3 +237,37 @@ fn loud_expanded_line_keeps_the_command() {
     );
     assert!(directory.join("loud.o").exists(), "loud.o was never made");
 }
+
+/// The kernel's top-level Makefile re-invokes itself once to set
+/// `--no-print-directory`, and writes that invocation over two lines with a
+/// backslash before the newline. That pair is the escape standing for
+/// nothing: the shell removes it and joins what is on either side, which is
+/// how a long argument list is written at all.
+///
+/// The lifted invocation's word splitter read it as an escaped newline and
+/// put the byte at the front of the following word, so the child was asked
+/// for a goal spelled with a newline in front of `-f`. Nothing names such a
+/// file, and the build was refused — which is every external kernel module,
+/// because `__sub-make` is on the way to all of them.
+///
+/// The second target is the same escape inside double quotes, where the shell
+/// removes it too.
+#[test]
+fn an_invocation_continued_over_two_lines() {
+    let directory = reduction("recursive-invocation-continued-over-two-lines");
+
+    let output = make_command(&directory).arg("both").output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        directory.join("made").exists(),
+        "the continued invocation's goal was never made"
+    );
+    assert!(
+        directory.join("also-made").exists(),
+        "the goal of the invocation continued inside quotes was never made"
+    );
+}

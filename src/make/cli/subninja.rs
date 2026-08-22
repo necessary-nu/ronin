@@ -256,6 +256,14 @@ fn compilation_directory(base: &Path, selected: &Path) -> Result<PathBuf, MakeEr
 /// have received their results as argv. Shell expansion, pipelines, lists,
 /// redirections and globbing are rejected: those are runtime programs, not a
 /// statically selected subninja.
+///
+/// A backslash before a newline is the one escape that stands for nothing.
+/// The shell removes the pair and joins what is on either side of it, and it
+/// is how a long invocation is written over two lines — the kernel's
+/// `__sub-make` writes `$(MAKE) … -C $(abs_objtree) \` and its `-f` on the
+/// line below. Reading it as an escaped newline puts that byte inside the
+/// next word, and the child is then asked to build a goal spelled with a
+/// newline in front of it.
 fn shell_words(command: &[u8]) -> Result<Vec<BString>, MakeError> {
     shell_words_with(command, None)
 }
@@ -297,7 +305,9 @@ fn shell_words_with(
                 b'\\' => {
                     index += 1;
                     let escaped = command.get(index).copied().ok_or_else(&failure)?;
-                    word.push(escaped);
+                    if escaped != b'\n' {
+                        word.push(escaped);
+                    }
                 }
                 b'$' if command.get(index + 1) == Some(&b'(') => {
                     let end = command_substitution_end(command, index + 2).ok_or_else(&failure)?;
@@ -315,7 +325,9 @@ fn shell_words_with(
                 b'\\' => {
                     index += 1;
                     let escaped = command.get(index).copied().ok_or_else(&failure)?;
-                    word.push(escaped);
+                    if escaped != b'\n' {
+                        word.push(escaped);
+                    }
                 }
                 b'&' if command.get(index + 1) == Some(&b'&') => {
                     if !word.is_empty() {
