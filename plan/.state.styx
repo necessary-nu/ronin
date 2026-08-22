@@ -828,6 +828,7 @@ assertions (
     {id make-kati-option-table-reads-i-as-n, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:16:50.278912053Z}
     {id make-manifest-response-file-keeps-the-shell-flags, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:16:59.394982602Z}
     {id make-manifest-oneshell-recipe-is-not-a-manifest, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:17:03.927957914Z}
+    {id make-a-one-shell-line-keeps-the-semicolons-it-ends-on, kind @complete, author "brendan@necessary.nu", at 2026-08-22T19:57:35.172898565Z}
 )
 
 impl_evidence (
