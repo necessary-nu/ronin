@@ -1,0 +1,11 @@
+# `.ONESHELL` hands the whole recipe to one shell, and the prefix characters on
+# the lines below the first are taken out of the script only when that shell's
+# basename is one of the seven GNU Make knows (`is_bourne_compatible_shell`,
+# job.c). `./spy` is `/bin/sh` under a name that is not on the list, so the `@`
+# stays where it was written and the shell is the one that has to read it.
+SHELL = ./spy
+.ONESHELL:
+all:
+	touch m1
+	@touch m2
+	touch m3

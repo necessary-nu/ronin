@@ -1014,7 +1014,7 @@ case	targets/ONESHELL.diff.10	narration	ninja-progress
 case	targets/ONESHELL.diff.2	narration	ninja-progress+recipe-echo
 case	targets/ONESHELL.diff.3	unclassified	ninja-progress+evaluation
 case	targets/ONESHELL.diff.4	unclassified	ninja-progress+evaluation
-case	targets/ONESHELL.diff.5	unclassified	ninja-progress+ninja-failure-block+evaluation
+case	targets/ONESHELL.diff.5	unclassified	ninja-progress+evaluation
 case	targets/ONESHELL.diff.6	narration	ninja-progress
 case	targets/ONESHELL.diff.7	narration	ninja-progress
 case	targets/ONESHELL.diff.8	unclassified	ninja-progress+ninja-failure-block+recipe-error-line+evaluation
