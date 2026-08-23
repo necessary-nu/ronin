@@ -1,0 +1,5 @@
+cat > sh <<'INNER'
+#!/bin/sh
+> pwned
+INNER
+chmod +x sh

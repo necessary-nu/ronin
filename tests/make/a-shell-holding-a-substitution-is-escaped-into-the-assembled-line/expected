@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 18
+| # Where a launch has to go to a shell, GNU Make assembles `$(SHELL)
+| # $(.SHELLFLAGS) LINE` as text and copies the SHELL in one character at a time,
+| # putting a backslash in front of every character special to the shell (job.c).
+| # Its comment gives the reason it was written for — without the escaping the
+| # assembly recurses "ad nauseam, or until stack overflow" — and the reason it
+| # matters from a Makefile is this: a `SHELL` holding a command substitution is
+| # a NAME with those characters in it, not a command to run.
+| #
+| # GNU Make 4.4.1 escapes the `$` and the `(`, so its own tokenizer hands the
+| # line back as the words `./sh$(touch`, `pwned)`, `-c`, `echo one > out` and
+| # execs the first as a path. It is not there, the build stops at 127, and
+| # neither `pwned` nor `out` is ever written.
+| #
+| # THE GATE IS THE FILE. `pwned` is what the substitution would leave behind, and
+| # the recording holds a build in which it does not exist.
+| SHELL := ./sh$$(touch pwned)
+| all:
+| 	@echo one > out

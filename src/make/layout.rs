@@ -179,7 +179,11 @@ impl CommandLayout {
         scoped: &[kati::export::EnvironmentChange],
     ) -> LaunchedScript {
         let mut command = self.prefix(scoped);
-        command.extend_from_slice(shell);
+        // Escaped into the line, because it is going into a line: a `SHELL`
+        // holding shell syntax is a name with those characters in it and not a
+        // command, and GNU Make's assembly says so one character at a time.
+        // See [`kati::simple_command::escaped_shell_name`].
+        command.extend_from_slice(&kati::simple_command::escaped_shell_name(shell));
         command.push(b' ');
         if script.len() > RESPONSE_FILE_THRESHOLD {
             let path = self.response_file(output);
@@ -332,7 +336,7 @@ impl CommandLayout {
             return self.direct_launch(argv, scoped);
         }
         let mut command = self.prefix(scoped);
-        command.extend_from_slice(&step.shell);
+        command.extend_from_slice(&kati::simple_command::escaped_shell_name(&step.shell));
         command.push(b' ');
         command.extend_from_slice(&step.shell_flags);
         command.extend_from_slice(b" \"");

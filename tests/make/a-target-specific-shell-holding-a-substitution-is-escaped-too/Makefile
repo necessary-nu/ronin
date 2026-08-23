@@ -1,0 +1,6 @@
+# `$(SHELL)` is expanded per launch with the target's own scope, so a `SHELL`
+# one target sets reaches the same assembly and the same escaping. Nothing about
+# where the value came from changes what happens to it on the way into the line.
+all: SHELL := ./sh$$(touch pwned)
+all:
+	@echo one > out

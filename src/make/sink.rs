@@ -963,7 +963,12 @@ impl GraphSink {
                 // working directory and environment without moving Ronin's
                 // executor.
                 let mut command = Template::literal(&self.layout().prefix(scoped));
-                command.push_literal(shell);
+                // The shell is escaped into the line and the flags are not,
+                // which is GNU Make's own asymmetry -- see
+                // [`kati::simple_command::escaped_shell_name`]. The manifest
+                // escaping the writer adds on top composes with it: a `\$` here
+                // is written `\$$` there and reaches the shell as one `$`.
+                command.push_literal(&kati::simple_command::escaped_shell_name(shell));
                 command.push_literal(b" ");
                 command.push_literal(shell_flags);
                 command.push_literal(b" \"");
@@ -984,7 +989,7 @@ impl GraphSink {
                 response_file.push_variable(self.bindings.out);
                 response_file.push_literal(b".rsp");
                 let mut command = Template::literal(&self.layout().prefix(scoped));
-                command.push_literal(shell);
+                command.push_literal(&kati::simple_command::escaped_shell_name(shell));
                 command.push_literal(b" ");
                 // The script travels differently and the shell is the same
                 // shell: `-e` a `.POSIX:` recipe was given still has to be on
