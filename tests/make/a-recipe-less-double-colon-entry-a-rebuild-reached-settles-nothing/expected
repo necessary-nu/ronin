@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 13
+| # What the recipe-less entry IS decided by: whether a prerequisite was
+| # actually remade. `deps_changed` gathers a bit set where the prerequisite was
+| # rebuilt, and a set bit withholds the overruling — so the entry is out of date
+| # and renames nothing, and the entry after it writes the name as written. The
+| # prerequisite here is absent and has a rule, so this run makes it.
+| VPATH = src
+| out.o:: keep
+| out.o:: late
+| 	@echo "two at=$@" >> log.txt
+| 	@echo two >> $@
+| keep:
+| 	@echo "made keep" >> log.txt
+| 	@touch keep
+file keep touched 0
+file late kept 0
+file log.txt touched 2
+| made keep
+| two at=out.o
+file out.o touched 1
+| two
+file src/out.o kept 0

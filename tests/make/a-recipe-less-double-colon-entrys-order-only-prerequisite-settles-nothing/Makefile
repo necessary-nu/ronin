@@ -1,0 +1,12 @@
+# Which prerequisites are gathered into the answer: GNU Make sums the rebuild
+# bits under `if (! d->ignore_mtime)`, so an ORDER-ONLY prerequisite the run
+# rebuilds is not one of them. `gen` is absent and has a rule, so this run
+# makes it, and the entry above renames the chain anyway.
+VPATH = src
+out.o:: | gen
+out.o:: late
+	@echo "two at=$@" >> log.txt
+	@echo two >> $@
+gen:
+	@echo "made gen" >> log.txt
+	@touch gen

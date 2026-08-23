@@ -10,6 +10,11 @@ pub struct DeferredSpec<'a> {
     pub outputs: &'a [Node],
     /// Whether those outputs count as dirty however their timestamps compare.
     pub always_dirty_output: bool,
+    /// Whether the edge's freshness is settled without comparing dates at all,
+    /// by whether a prerequisite is itself going to be rebuilt. A front end
+    /// whose language has a rule of that shape says so here; the scheduler
+    /// reads it and asks nothing about why.
+    pub dates_do_not_decide: bool,
     /// Normal inputs that always enter the late new-input set.
     pub always_new_inputs: &'a [Node],
     /// Inputs that still affect freshness but stay out of the published value.
@@ -66,6 +71,7 @@ impl BuildGraph {
             DeferredFreshness {
                 outputs: deferred.outputs.iter().map(|node| node.0).collect(),
                 always_dirty_output: deferred.always_dirty_output,
+                dates_do_not_decide: deferred.dates_do_not_decide,
                 always_new_inputs: deferred
                     .always_new_inputs
                     .iter()

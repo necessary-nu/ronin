@@ -853,6 +853,7 @@ assertions (
     {id make-a-double-colon-entry-remakes-the-target-where-an-earlier-one-left-it, kind @complete, author "brendan@necessary.nu", at 2026-08-23T06:02:56.34174913Z}
     {id make-a-double-colon-chains-name-reaches-a-dependents-new-inputs-as-the-proxy, kind @complete, author "brendan@necessary.nu", at 2026-08-23T07:01:45.138425592Z}
     {id make-a-target-specific-shell-does-not-reach-katis-own-executor, kind @complete, author "brendan@necessary.nu", at 2026-08-23T07:29:06.46416779Z}
+    {id make-a-recipe-less-double-colon-entry-decides-nothing-about-the-chains-name, kind @complete, author "brendan@necessary.nu", at 2026-08-23T08:18:03.178053696Z}
 )
 
 impl_evidence (

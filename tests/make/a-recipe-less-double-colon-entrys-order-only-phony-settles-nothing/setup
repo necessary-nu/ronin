@@ -1,0 +1,5 @@
+mkdir -p src
+: > src/out.o
+: > late
+touch -d @100 src/out.o
+touch -d @200 late

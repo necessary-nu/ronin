@@ -16,6 +16,18 @@ use std::path::Path;
 pub(crate) struct DeferredFreshness {
     pub(crate) outputs: IdVec<NodeId>,
     pub(crate) always_dirty_output: bool,
+    /// Whether this edge's freshness is decided without comparing dates.
+    ///
+    /// GNU Make overrules the comparison outright for a target that exists and
+    /// has no recipe (`update_file_1`'s `!noexist && file->is_target &&
+    /// !deps_changed && file->cmds == 0` clause), so a prerequisite that is
+    /// merely newer decides nothing and only one this run actually remade
+    /// does. `--always-make` withholds the overruling and the comparison
+    /// stands again, which is the same clause read the other way round.
+    ///
+    /// A `::` chain's recipe-less entry is what asks for this, and it asks
+    /// because it still answers for the chain's name.
+    pub(crate) dates_do_not_decide: bool,
     pub(crate) always_new_inputs: IdVec<NodeId>,
     /// Inputs that affect the late freshness predicate but are omitted from
     /// the value substituted for Make's `$?` automatic variable.
@@ -182,7 +194,13 @@ where
     // the edge runs, and GNU Make's `$?` holds every prerequisite because
     // `d->changed || always_make_flag` is what fills it (commands.c). Both
     // fall out of the one flag the absent-output case already sets.
-    let mut missing = freshness.always_dirty_output || runtime.always_make;
+    //
+    // Withheld from an edge no date decides, because `-B` does not force one
+    // of those either: `always_make_flag` reaches a target through
+    // `file->cmds != 0` (remake.c), and what it does to an edge with no recipe
+    // is give the ordinary comparison back rather than answer for it.
+    let mut missing =
+        freshness.always_dirty_output || (runtime.always_make && !freshness.dates_do_not_decide);
     for output in &freshness.outputs {
         if runtime.node(*output).mtime().is_unobserved() {
             nodestat_with(graph, runtime, *output, stat)?;
@@ -242,23 +260,62 @@ where
     // timestamp comparison below rather than run on every invocation.
     let mut timestamp_dirty =
         all_inputs_new || (edge_data.always_dirty && edge_data.non_order_only_inputs().is_empty());
+    // Whether a prerequisite being newer than the outputs is a reason to run.
+    // For nearly every edge it is the question. For an edge the front end said
+    // no date decides, it is not asked at all unless `-B` gives it back — see
+    // `DeferredFreshness::dates_do_not_decide`, and the `-B` clause in the
+    // capture above, which is the same withholding from the other side.
+    let dates_decide = !freshness.dates_do_not_decide || runtime.always_make;
     // The comparison has the outputs on the target side, where GNU Make reads a
     // whole-second record as the end of its second. What is published below is
     // the plain baseline, because what reads these outputs as prerequisites
     // must see the date they actually have.
     let target_baseline = edge_data.target_mtime(baseline);
-    for input in edge_data.non_order_only_inputs() {
-        let input_state = runtime.node(*input);
-        timestamp_dirty |= freshness.always_new_inputs.contains(input)
-            || input_state.mtime().is_missing()
-            || input_state.mtime() > target_baseline;
+    if dates_decide {
+        for input in edge_data.non_order_only_inputs() {
+            let input_state = runtime.node(*input);
+            timestamp_dirty |= freshness.always_new_inputs.contains(input)
+                || input_state.mtime().is_missing()
+                || input_state.mtime() > target_baseline;
+        }
     }
     let semantic_dirty =
         timestamp_dirty || runtime.edge(edge).deps_missing() || runtime.edge(edge).command_dirty();
-    let dependency_dirty = edge_data
-        .input
-        .iter()
-        .any(|input| runtime.node(*input).dirty());
+    // For an edge no date decides, an out-of-date ordinary prerequisite is the
+    // whole answer, and it is remembered rather than re-asked: GNU Make's
+    // `deps_changed |= d->changed` gathers a bit `update_file` set when it
+    // remade the prerequisite and nothing clears, while the prerequisite's own
+    // out-of-dateness ends the moment it is made.
+    //
+    // Order-only prerequisites are left out of it because GNU Make gathers
+    // that sum under `if (! d->ignore_mtime)`. The names the compiler invented
+    // to sequence a `::` chain are order-only too and are NOT left out: they
+    // are not prerequisites anybody wrote, they are how this entry waits its
+    // turn, and an entry that settled the chain's name before its turn would
+    // answer for the entries in front of it.
+    if freshness.dates_do_not_decide
+        && edge_data
+            .non_order_only_inputs()
+            .iter()
+            .any(|input| runtime.node(*input).dirty())
+    {
+        runtime.deferred_mut(edge).note_deps_changed();
+    }
+    let edge_data = graph.edge(edge);
+    let dependency_dirty = if freshness.dates_do_not_decide {
+        runtime
+            .deferred(edge)
+            .expect("deferred capture populated runtime state")
+            .deps_changed()
+            || edge_data.input[edge_data.non_order_only_input_count()..]
+                .iter()
+                .any(|input| graph.is_virtual_output(*input) && runtime.node(*input).dirty())
+    } else {
+        edge_data
+            .input
+            .iter()
+            .any(|input| runtime.node(*input).dirty())
+    };
     let dirty = semantic_dirty || dependency_dirty;
     if !runtime
         .deferred(edge)

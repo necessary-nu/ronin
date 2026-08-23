@@ -7,6 +7,7 @@ pub(crate) struct DeferredRuntime {
     decision: DeferredDecision,
     phase: DeferredPhase,
     new_inputs: Vec<NodeId>,
+    deps_changed: bool,
 }
 
 #[derive(Debug)]
@@ -42,6 +43,7 @@ impl Default for DeferredRuntime {
             decision: DeferredDecision::Undecided,
             phase: DeferredPhase::Pending,
             new_inputs: Vec::new(),
+            deps_changed: false,
         }
     }
 }
@@ -91,6 +93,7 @@ impl DeferredRuntime {
         self.decision = DeferredDecision::Undecided;
         self.phase = DeferredPhase::Pending;
         self.new_inputs.clear();
+        self.deps_changed = false;
     }
 
     pub(crate) const fn decide_initial(&mut self, initial_run: bool, candidate_only: bool) {
@@ -101,6 +104,23 @@ impl DeferredRuntime {
         } else {
             DeferredDecision::Clean
         };
+    }
+
+    /// Whether a prerequisite of this edge has been out of date at any point
+    /// in this build, rather than only at the moment being asked about.
+    ///
+    /// GNU Make's `d->changed`, which `update_file` sets when it remakes a
+    /// prerequisite and nothing clears. An edge whose freshness no date
+    /// decides has this for its whole answer, so it has to be remembered: the
+    /// prerequisite that forced it stops being out of date the moment it is
+    /// made, and asking again afterwards would find nothing wrong.
+    pub(crate) const fn deps_changed(&self) -> bool {
+        self.deps_changed
+    }
+
+    /// Say that a prerequisite was out of date. Never unsaid.
+    pub(crate) const fn note_deps_changed(&mut self) {
+        self.deps_changed = true;
     }
 
     pub(crate) fn new_inputs(&self) -> &[NodeId] {
