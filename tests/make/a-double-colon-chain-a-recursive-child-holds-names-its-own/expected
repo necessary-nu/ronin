@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # A `::` chain inside a recursive child. The child's recipe runs where the
+| # child's Makefile was read, so GNU Make answers `$?` with the name that
+| # Makefile wrote — never one qualified from the parent's directory, which
+| # would point at a file that is not there from where the recipe stands.
+| all:
+| 	@$(MAKE) -C sub
+file log.txt touched 1
+| new=out.o dir=. file=out.o
+file sub/Makefile kept 6
+| all: out.o
+| 	@echo "new=$? dir=$(?D) file=$(?F)" >> ../log.txt
+| out.o:: p1
+| 	@echo one >> $@
+| out.o:: p2
+| 	@echo two >> $@
+file sub/out.o touched 2
+| one
+| two
+file sub/p1 kept 0
+file sub/p2 kept 0

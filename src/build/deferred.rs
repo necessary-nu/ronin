@@ -268,16 +268,22 @@ impl Builder<'_> {
                     push(published.as_bytes());
                     continue;
                 }
+                // Asked of the file rather than of the name that stands in for
+                // it. A `::` chain's target reaches its dependents as the
+                // completion proxy so they wait for every entry, and the proxy
+                // is a name the compiler invented — a value GNU Make fills
+                // with the Makefile's own name must not carry it.
+                let input = self.graph.observed_file(*input);
                 // A name the graph was given a second place to look for is
                 // spelt the way this build settled it, exactly as it is in the
                 // recipe's other prerequisite lists: GNU Make reads `$?` off
                 // the same file objects `$^` comes from, and `update_file_1`
                 // has already chosen their names by the time either is read.
-                let path = match self.graph.searched_at(*input) {
-                    Some(found) if crate::graph::found_name_stands(&self.runtime, *input) => {
+                let path = match self.graph.searched_at(input) {
+                    Some(found) if crate::graph::found_name_stands(&self.runtime, input) => {
                         found.as_bstr()
                     }
-                    _ => self.graph.node_path(*input),
+                    _ => self.graph.node_path(input),
                 };
                 push(&relative_to(path.as_bytes(), directory));
             }

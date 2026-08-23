@@ -1,0 +1,31 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 16
+| # The reading is not the dependent's alone: an entry of a chain whose own
+| # prerequisite is another chain reads the same value, and the entry beside it
+| # whose prerequisite is an ordinary file is the control that says the two
+| # spellings come from the same list.
+| all: a.o
+| 	@echo "all new=$?" >> log.txt
+| a.o:: b.o
+| 	@echo "one new=$?" >> log.txt
+| 	@echo one >> $@
+| a.o:: p2
+| 	@echo "two new=$?" >> log.txt
+| 	@echo two >> $@
+| b.o:: p1
+| 	@echo three >> $@
+| b.o:: p2
+| 	@echo four >> $@
+file a.o touched 2
+| one
+| two
+file b.o touched 2
+| three
+| four
+file log.txt touched 3
+| one new=b.o
+| two new=p2
+| all new=a.o
+file p1 kept 0
+file p2 kept 0

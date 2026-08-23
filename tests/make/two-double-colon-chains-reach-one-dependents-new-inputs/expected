@@ -1,0 +1,26 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 13
+| # Two chains on one prerequisite list, which settles that the reading is per
+| # word rather than per value: each target has a proxy of its own, and `$(?D)`
+| # repeats the directory once for every name GNU Make puts in `$?`.
+| all: a.o b.o
+| 	@echo "new=$? dir=$(?D) file=$(?F)" >> log.txt
+| a.o:: p1
+| 	@echo one >> $@
+| a.o:: p2
+| 	@echo two >> $@
+| b.o:: p1
+| 	@echo three >> $@
+| b.o:: p2
+| 	@echo four >> $@
+file a.o touched 2
+| one
+| two
+file b.o touched 2
+| three
+| four
+file log.txt touched 1
+| new=a.o b.o dir=. . file=a.o b.o
+file p1 kept 0
+file p2 kept 0
