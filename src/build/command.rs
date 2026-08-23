@@ -628,9 +628,13 @@ impl Builder<'_> {
             .input
             .iter()
             .filter_map(|input| {
-                let found = self.graph.searched_at(*input)?;
-                crate::graph::found_name_stands(&self.runtime, *input)
-                    .then(|| (self.graph.node_path(*input).to_vec(), found.to_vec()))
+                // Asked of the file rather than of the name that stands in
+                // for it: a `::` chain's target reaches its dependents as the
+                // completion proxy, and the search answered about the target.
+                let observed = self.graph.observed_file(*input);
+                let found = self.graph.searched_at(observed)?;
+                crate::graph::found_name_stands(&self.runtime, observed)
+                    .then(|| (self.graph.node_path(observed).to_vec(), found.to_vec()))
             })
             .collect::<Vec<_>>();
         let settled = settled

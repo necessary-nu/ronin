@@ -104,6 +104,22 @@ impl Graph {
             })
     }
 
+    /// The file a node stands for, which for a `::` chain's completion proxy is
+    /// the target the Makefile wrote rather than the name that sequences it.
+    ///
+    /// The chain's target is redirected onto the proxy so everything naming it
+    /// waits for every entry, which leaves the dependents holding a name no
+    /// search ever answered about. A question about the FILE — where it was
+    /// found, which of its two names the build settled on — has to be asked of
+    /// the target instead. Every other node is its own file and answers itself.
+    pub(crate) fn observed_file(&self, node: NodeId) -> NodeId {
+        self.node(node)
+            .generator
+            .and_then(|edge| self.completion_join_output(edge))
+            .filter(|observed| *observed != node)
+            .unwrap_or(node)
+    }
+
     /// Say that `node` is a name and not a file, so the build stops treating it
     /// as one.
     pub(crate) fn mark_invented_output(&mut self, node: NodeId) {

@@ -1,0 +1,9 @@
+mkdir -p src
+: > src/out.o
+: > first
+: > keep
+: > last
+touch -d @100 src/out.o
+touch -d @200 first
+touch -d @50 keep
+touch -d @300 last

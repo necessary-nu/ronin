@@ -79,7 +79,18 @@ impl Builder<'_> {
         }
         let disk = self.disk.clone();
         for output in self.touchable_outputs(edge) {
-            let path = self.graph.node_path(output).to_owned();
+            // Where the build settled the name, which for a `::` chain an
+            // earlier entry found current is the path the search returned:
+            // GNU Make renames the file before it reaches the touch, so
+            // `touch_file` (remake.c) is handed `file->name` already changed.
+            // Touching the written name instead would make a second file
+            // beside the one the build is standing in for.
+            let path = match self.graph.searched_at(output) {
+                Some(found) if crate::graph::found_name_stands(&self.runtime, output) => {
+                    found.clone()
+                }
+                _ => self.graph.node_path(output).to_owned(),
+            };
             disk.touch(path.to_path().expect("byte paths are valid on Unix"))
                 .map_err(|source| {
                     BuildError::io(BuildOperation::TouchOutput, Some(path), Some(edge), source)

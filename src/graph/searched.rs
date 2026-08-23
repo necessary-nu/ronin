@@ -104,6 +104,11 @@ impl Graph {
         self.double_colon_targets.insert(node, declared);
     }
 
+    /// Whether a `::` record declares this node at all.
+    pub(crate) fn is_double_colon_target(&self, node: NodeId) -> bool {
+        self.double_colon_targets.contains_key(&node)
+    }
+
     /// Whether a `::` record declares this node under the name `spelt`.
     ///
     /// True for both shapes such a record compiles to, because GNU Make's
@@ -143,11 +148,44 @@ pub(super) fn settle_searched_outputs(
     let deferred = graph
         .deferred_freshness(edge)
         .map_or::<&[NodeId], _>(&[], |freshness| &freshness.outputs);
-    for output in graph.edge(edge).out.iter().chain(deferred) {
+    for output in &graph.edge(edge).out {
         if graph.searched_at(*output).is_some() {
             settle(runtime, *output, settled);
         }
     }
+    for output in deferred {
+        if graph.searched_at(*output).is_some() {
+            settle_shared(graph, runtime, *output, settled);
+        }
+    }
+}
+
+/// Settle a target more than one edge answers about, which is a `::` chain's.
+///
+/// The chain is one name and many entries, walked in order, and GNU Make's
+/// `update_file_1` ends an entry it does not have to remake by renaming that
+/// entry and every entry after it — `while (file) { file->name = file->hname;
+/// file = file->prev; }`, where `prev` chains forward through the record.
+///
+/// So the found path, once an entry is current, is the answer for the rest of
+/// the chain — a LATER entry with work to do remakes the file where the earlier
+/// one left it, and only an entry reached before any of them was current writes
+/// the name as written. Nothing takes the rename back, which is what makes this
+/// a latch rather than the last scan's opinion: an entry running here would
+/// otherwise be answered by whichever of its neighbours was scanned last.
+///
+/// Said only of a `::` target, because it is the only name whose freshness more
+/// than one edge decides. Every other deferred output has one edge behind it,
+/// where a later scan is a better answer about the same question rather than a
+/// different entry's answer to a different one.
+fn settle_shared(graph: &Graph, runtime: &mut RuntimeState, node: NodeId, settled: SearchedName) {
+    if matches!(settled, SearchedName::Unsettled)
+        && graph.is_double_colon_target(node)
+        && found_name_stands(runtime, node)
+    {
+        return;
+    }
+    settle(runtime, node, settled);
 }
 
 /// The date a node really has, once the second place to look has been

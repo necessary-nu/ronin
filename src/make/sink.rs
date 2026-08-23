@@ -763,21 +763,17 @@ impl GraphSink {
             .collect()
     }
 
-    fn observed_node_list(
+    /// The node one name observes, which for a `::` chain's target is the file
+    /// rather than the completion proxy everything naming it depends on.
+    fn observed_node(
         &mut self,
         names: &dyn Interner,
-        symbols: &[Symbol],
-    ) -> Result<Vec<Node>, anyhow::Error> {
-        let mut nodes = Vec::with_capacity(symbols.len());
-        for symbol in symbols {
-            let node = if let Some(node) = self.observed_members.get(symbol) {
-                *node
-            } else {
-                self.node(names, *symbol)?
-            };
-            nodes.push(node);
-        }
-        Ok(nodes)
+        symbol: Symbol,
+    ) -> Result<Node, anyhow::Error> {
+        self.observed_members
+            .get(&symbol)
+            .copied()
+            .map_or_else(|| self.node(names, symbol), Ok)
     }
 
     /// The spellings kati asked for, with each name resolved to the node it
@@ -858,7 +854,13 @@ impl GraphSink {
         // a path this side may relocate.
         let mut references = Vec::with_capacity(edge.settled_names.len());
         for settled in edge.settled_names {
-            let node = self.node(names, settled.input)?;
+            // The file the name stands for, and not the proxy that sequences
+            // the work behind it: a `::` chain's target is redirected to the
+            // completion join so everything naming it waits for the whole
+            // chain, and a spelling is a question about the file. The proxy is
+            // a name the compiler invented, which no search ever answered
+            // about, so reading the spelling off it would answer with that.
+            let node = self.observed_node(names, settled.input)?;
             references.push((
                 names.symtab().name(settled.variable).to_vec(),
                 node,
@@ -891,7 +893,10 @@ impl GraphSink {
         names: &dyn Interner,
         edge: &SinkEdge<'_>,
     ) -> Result<Option<PendingDeferred>, anyhow::Error> {
-        let outputs = self.observed_node_list(names, edge.deferred_freshness_outputs)?;
+        let mut outputs = Vec::with_capacity(edge.deferred_freshness_outputs.len());
+        for symbol in edge.deferred_freshness_outputs {
+            outputs.push(self.observed_node(names, *symbol)?);
+        }
         if outputs.is_empty() {
             return Ok(None);
         }

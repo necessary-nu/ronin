@@ -1,0 +1,15 @@
+# The other side of the same walk, and the cell that shows the rename is a
+# latch rather than a property of the chain: `first` is stale and runs BEFORE
+# anything was found current, so it writes the name as written; `keep` is
+# current and commits the rename; `last` runs after it and writes the found
+# path. Two entries of one chain, two different files.
+VPATH = src
+out.o:: first
+	@echo "one at=$@" >> log.txt
+	@echo one >> $@
+out.o:: keep
+	@echo "two at=$@" >> log.txt
+	@echo two >> $@
+out.o:: last
+	@echo "three at=$@" >> log.txt
+	@echo three >> $@
