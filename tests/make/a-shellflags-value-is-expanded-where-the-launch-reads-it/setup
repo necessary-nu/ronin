@@ -1,0 +1,5 @@
+cat > shell <<'INNER'
+#!/bin/sh
+for a in "$@"; do printf '<%s>\n' "$a" >> args.txt; done
+INNER
+chmod +x shell

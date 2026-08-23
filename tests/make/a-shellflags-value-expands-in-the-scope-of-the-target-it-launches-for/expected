@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # The second expansion is `..._for_file`, and the file is the target whose
+| # recipe is about to run — so a target-specific binding is what the `$` in the
+| # flags resolves against, and the same global `.SHELLFLAGS` gives two targets
+| # two different flags.
+| X := global
+| SHELL = ./shell
+| .SHELLFLAGS := -e $$X -c
+| all: X := pertarget
+| all:
+| 	@echo hello
+file args.txt touched 4
+| <-e>
+| <pertarget>
+| <-c>
+| <echo hello>
+file shell kept 2
+| #!/bin/sh
+| for a in "$@"; do printf '<%s>\n' "$a" >> args.txt; done
