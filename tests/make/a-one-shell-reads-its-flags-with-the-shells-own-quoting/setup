@@ -1,0 +1,5 @@
+cat > shell <<'SH'
+#!/bin/sh
+for a in "$@"; do printf '<%s>\n' "$a" >> args.txt; done
+SH
+chmod +x shell

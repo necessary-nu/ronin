@@ -1,0 +1,5 @@
+cat > shell <<'SH'
+#!/bin/sh
+exec /bin/sh "$@"
+SH
+chmod +x shell

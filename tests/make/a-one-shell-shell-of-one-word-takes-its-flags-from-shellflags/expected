@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 10
+| # The control beside the case above, and where the flags legitimately live:
+| # `$(SHELL)` names one path, `.SHELLFLAGS` carries the words that go with it,
+| # and the recipe runs. A launch that split the shell value would pass this too;
+| # one that stopped splitting it and did not keep this working would not.
+| .ONESHELL:
+| SHELL = ./shell
+| .SHELLFLAGS = -x -c
+| all:
+| 	echo one > one.txt
+| 	echo two > two.txt
+file one.txt touched 1
+| one
+file shell kept 2
+| #!/bin/sh
+| exec /bin/sh "$@"
+file two.txt touched 1
+| two

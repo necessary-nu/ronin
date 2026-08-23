@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # The other side of GNU Make's asymmetry: without `.ONESHELL` the same value
+| # goes back through the tokeniser, `./shell` is the program and `-x` its first
+| # argument, and both lines run. The two cases differ in nothing but the
+| # `.ONESHELL:` line.
+| SHELL = ./shell -x
+| all:
+| 	echo one > one.txt
+| 	echo two > two.txt
+file one.txt touched 1
+| one
+file shell kept 3
+| #!/bin/sh
+| shift
+| exec /bin/sh "$@"
+file two.txt touched 1
+| two

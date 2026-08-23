@@ -845,6 +845,7 @@ assertions (
     {id make-a-what-if-double-colon-refusal-reads-the-implicit-search, kind @complete, author "brendan@necessary.nu", at 2026-08-23T00:18:24.369970266Z}
     {id make-a-double-colon-action-searches-for-its-own-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-23T00:55:30.944920625Z}
     {id make-a-target-specific-shell-is-not-the-one-that-runs, kind @doing, author "brendan@necessary.nu", at 2026-08-23T01:37:54.880383536Z}
+    {id make-a-one-shell-shell-is-one-word, kind @doing, author "brendan@necessary.nu", at 2026-08-23T02:30:53.000323369Z}
 )
 
 impl_evidence (

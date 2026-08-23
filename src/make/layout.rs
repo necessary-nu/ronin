@@ -302,9 +302,29 @@ impl CommandLayout {
         // thing a launch says with a directory and an environment, and a
         // command line cannot say the one thing that matters here: that the
         // program is this executable while `argv[0]` stays `/bin/sh`.
-        if step.shell == kati::simple_command::DEFAULT_SHELL {
+        // A `.ONESHELL` step's shell is a path and not a command line — see
+        // [`kati::ninja::RecipeStep::shell_is_a_path`] — so it is named as the
+        // program whatever is in it, and a value of more than one word is a
+        // program of more than one word that nothing can start. That is the
+        // same launch the default shell gets, and asking about the default
+        // first is what keeps the builtin substitution: `/bin/sh` under
+        // `.ONESHELL` is still `/bin/sh`.
+        if step.shell == kati::simple_command::DEFAULT_SHELL || step.shell_is_a_path {
             let mut argv = vec![BString::from(step.shell.to_vec())];
-            argv.extend(Self::shell_flag_words(&step.shell_flags));
+            // A `.ONESHELL` launch reads its flags the way GNU Make's
+            // one-shell branch does, with the shell's own tokenizer, so a
+            // quoted flag with a space in it stays one word. Every other
+            // launch splits on whitespace because the flags it carries were
+            // going to be words on a command line either way.
+            if step.shell_is_a_path {
+                argv.extend(
+                    kati::simple_command::shell_flag_argv(&step.shell_flags)
+                        .into_iter()
+                        .map(|word| BString::from(word.to_vec())),
+                );
+            } else {
+                argv.extend(Self::shell_flag_words(&step.shell_flags));
+            }
             argv.push(BString::from(step.text.to_vec()));
             return self.direct_launch(argv, scoped);
         }
