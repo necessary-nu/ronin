@@ -16017,6 +16017,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-23T10:24:19.86737883Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Count correction on the completion note above. The matrix is THIRTEEN cells, not the unstated number the closing line implied, and the placeholder reached the reader in TEN of them rather than in six — the sentence \"it showed the placeholder in six\" is wrong and undercounts the fix.\n\nCounted off the note's own table: WHICH REFERENCE is four cells, three FIXED and `$^`/`$<` the control; WHICH READER is six, four FIXED with `-q` and the response-file threshold as controls; WHICH VALUE is three, all FIXED. Three controls, ten fixed, thirteen in all.\n\nNothing else in the note changes: every cell listed was measured against reference/make-oracle/make-4.4.1/make and then against Ronin, and every FIXED mark is a cell where the narration held `${KATI_NEW_INPUTS}`, one of its two halves, or a `KATI_SETTLED_N` before this landed and holds the value after."
+                        after_done true
+                    }
                 )
             }
 
@@ -16054,6 +16062,22 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-23T10:24:35.995689526Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Count correction on the completion note above, and one cell mislabelled. The matrix is NINETEEN cells, not twenty; seventeen now agree, not eighteen; and rkati diverged on THIRTEEN of them before this landed, not eleven.\n\nCounted off the note's own table: THE THREE THE FILING NAMED is three, THE PREFIXES is five, WHAT DECIDES THE STATUS is three, BESIDE IT is eight. Four cells agreed before and after — `-n`, a single-line `.ONESHELL` recipe, `all: ;`, and a bare blank line in the middle. Thirteen diverged and are fixed. Two diverged and still do; both are filed as their own nodes.\n\nThe mislabelled one is `$(MAKE)` on a line below the first, which the note marks \"agreed\". The child ran in both tools before this landed and runs in both after, so the effect was never wrong — but the ECHO was: rkati printed each line as it reached it, so `echo one` and its output came out before the `$(MAKE)` line was announced, where GNU Make echoes the whole script and then runs it. It belongs with the thirteen and is why that number is thirteen rather than twelve."
+                        after_done true
+                    }
+
+                    {
+                        at 2026-08-23T10:28:35.426484133Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "THE RELEASE GATE FOR THIS DISPATCH, run on the tree at 85e0c03 with all three nodes landed.\n\n`scripts/check-release.sh` PASSED IN FULL, exit 0, every stage including the performance one — and this time NOT on a quiet host, which is the measurement worth recording. The foreign silo the previous dispatch measured against was running throughout: four `silo-920c8636f8` processes, two of them at about 100%, with the load average between 13.5 and 17.4 across the run.\n\nThat is the third reading of the same question and it settles the standing note rather than merely repeating it. The previous dispatch found the gate green on a quiet host and then found `check-release.sh` and `check-performance.sh` refusing over two different workloads under the same silo. Here the gate is green WITH the silo on the machine. A regression does not come and go with another tenant's load; the refusals were noise, and so is the load.\n\nThe numbers, in nanoseconds and as the gate reports them (mean, min, max):\n\n    large-manifest-parse   ronin 151.8   ninja 319.2   samurai-c 308.4\n    scheduler-barrier      ronin  42.2   ninja  38.9   samurai-c  35.9\n    clean-tree-noop        ronin   8.6   ninja  14.0   samurai-c  11.4\n\nNothing this dispatch changed is on any of those paths, and the reason is the same one the previous note gave: every workload here is a Ninja manifest, and the three changes are the narration substitution for an edge carrying deferred freshness, a second settled-name answer for an output more than one edge decides, and kati's own executor — a relation a Ninja manifest cannot declare, and a binary these workloads never load.\n\nBeside it, and unchanged: `nplan spec uncovered` says no uncovered rules; `nplan spec stale` says no stale references; `nplan lint` clean; `nplan audit` proposes no transitions and reports HEAD on main. The 51 unsealed completions the audit lists are the standing backlog and belong to nobody here."
+                        after_done true
+                    }
                 )
             }
 
@@ -16090,6 +16114,14 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+
+                    {
+                        at 2026-08-23T10:24:22.063368519Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "Count correction on the completion note above. The matrix is FOURTEEN cells, not fifteen. Counted off the note's own table: WHOSE VERDICT THE DEPENDENT READS is six, WHICH VARIABLES is two, BESIDE IT is six.\n\nThe rest of the arithmetic holds: six cells were fixed here — the four under WHOSE VERDICT marked FIXED and both under WHICH VARIABLES — and the other eight agreed before and after, five of them as controls that were already gated."
+                        after_done true
                     }
                 )
             }
