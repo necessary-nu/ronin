@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 15
+| # GNU Make's `one_shell` is a GLOBAL and not a parameter, and `func_shell_base`
+| # reaches `construct_command_argv` like every other launch, so a `$(shell)`
+| # under `.ONESHELL:` is read by the one-shell branch too. The branch's newline
+| # gate is `else if (one_shell && *p == '\n') goto slow` (job.c:3034): a command
+| # whose text holds a newline goes to a shell, which runs the two commands the
+| # newline separates. Read as one command line the same text is one exec, and
+| # the newline is a word separator like any other blank.
+| define CMD
+| echo a
+| echo b
+| endef
+| .ONESHELL:
+| V := $(shell $(CMD))
+| all:
+| 	@printf '%s' 'v=<$(V)>' > out
+file out touched 2
+| v=<a b>
