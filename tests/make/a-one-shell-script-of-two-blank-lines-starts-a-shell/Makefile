@@ -1,0 +1,20 @@
+# Where the boundary is between a `.ONESHELL` recipe that runs nothing and one
+# that runs a script of blank lines.
+#
+# GNU Make asks it once, of the one line the recipe is:
+# `construct_command_argv_internal` skips the blanks at the front and answers no
+# argv at all if the text ends there. A NEWLINE IS NOT A BLANK — so `one`, whose
+# whole expansion is empty, starts no shell and is remade by doing nothing,
+# while `two` is a script of one newline and really does start one.
+#
+# `witness` is the shell, and it appends a line every time it is started, so
+# `ran.out` counts the launches: exactly one, made by `two`.
+.ONESHELL:
+SHELL := ./witness
+EMPTY =
+all: one two
+one:
+	$(EMPTY)
+two:
+	$(EMPTY)
+	$(EMPTY)

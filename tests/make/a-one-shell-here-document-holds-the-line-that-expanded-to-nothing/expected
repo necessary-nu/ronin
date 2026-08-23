@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 16
+| # `.ONESHELL` hands the whole recipe to one shell as one script, and a line
+| # whose expansion came out empty is a BLANK LINE of that script rather than a
+| # line that vanished: `chop_commands` (commands.c) never chopped the recipe, so
+| # the newlines around the line are still where the makefile put them.
+| #
+| # A here-document is what makes that more than a blank line in an echo, because
+| # there the script is reading its own text: the blank line is written into the
+| # file. GNU Make 4.4.1 writes an empty line and then `line`; a build that drops
+| # the line writes a different file.
+| .ONESHELL:
+| EMPTY =
+| all:
+| 	@cat <<'BODY' > out
+| 	$(EMPTY)
+| 	line
+| 	BODY
+file out touched 2
+| 
+| line

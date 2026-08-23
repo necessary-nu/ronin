@@ -1,0 +1,6 @@
+# The shell both recipes would start, which says so by appending to a file.
+cat > witness <<'PROGRAM'
+#!/bin/sh
+echo ran >> ran.out
+PROGRAM
+chmod +x witness
