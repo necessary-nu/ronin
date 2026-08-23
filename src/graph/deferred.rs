@@ -28,6 +28,18 @@ pub(crate) struct DeferredFreshness {
     /// A `::` chain's recipe-less entry is what asks for this, and it asks
     /// because it still answers for the chain's name.
     pub(crate) dates_do_not_decide: bool,
+    /// Whether this edge is the first of the several that decide one output's
+    /// freshness, in the order they are meant to be reached.
+    ///
+    /// An output more than one edge answers about carries two settled names:
+    /// the one the edges hand along to each other, which each of them reads in
+    /// its turn, and this edge's, which is what everything outside the group
+    /// reads. See [`super::searched::settle_shared`].
+    ///
+    /// A `::` record's first entry is what asks for this, and it asks because
+    /// GNU Make's rename reaches forward through the record while a dependent
+    /// holds the entry the record was filed under.
+    pub(crate) heads_the_group: bool,
     pub(crate) always_new_inputs: IdVec<NodeId>,
     /// Inputs that affect the late freshness predicate but are omitted from
     /// the value substituted for Make's `$?` automatic variable.

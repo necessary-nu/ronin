@@ -280,7 +280,14 @@ impl Builder<'_> {
                 // the same file objects `$^` comes from, and `update_file_1`
                 // has already chosen their names by the time either is read.
                 let path = match self.graph.searched_at(input) {
-                    Some(found) if crate::graph::found_name_stands(&self.runtime, input) => {
+                    Some(found)
+                        if crate::graph::settled_name_stands(
+                            self.graph,
+                            &self.runtime,
+                            edge,
+                            input,
+                        ) =>
+                    {
                         found.as_bstr()
                     }
                     _ => self.graph.node_path(input),
@@ -298,9 +305,19 @@ impl Builder<'_> {
     /// prerequisite name off the file objects `update_file_1` has already
     /// chosen the names of, so a recipe read early has to be answered the same
     /// way as one read late.
-    fn settled_spelling(&self, node: NodeId, view: NewInputsView, directory: &[u8]) -> Vec<u8> {
+    fn settled_spelling(
+        &self,
+        edge: EdgeId,
+        node: NodeId,
+        view: NewInputsView,
+        directory: &[u8],
+    ) -> Vec<u8> {
         let path = match self.graph.searched_at(node) {
-            Some(found) if crate::graph::found_name_stands(&self.runtime, node) => found.as_bstr(),
+            Some(found)
+                if crate::graph::settled_name_stands(self.graph, &self.runtime, edge, node) =>
+            {
+                found.as_bstr()
+            }
             _ => self.graph.node_path(node),
         };
         view_of(&relative_to(path.as_bytes(), directory), view).to_vec()
@@ -327,7 +344,8 @@ impl Builder<'_> {
                 crate::graph::SettledView::Directory => NewInputsView::Split(PathHalf::Directory),
                 crate::graph::SettledView::Filename => NewInputsView::Split(PathHalf::Filename),
             };
-            let value = self.settled_spelling(reference.node, view, settled.directory.as_bytes());
+            let value =
+                self.settled_spelling(edge, reference.node, view, settled.directory.as_bytes());
             let mut spelt = Vec::with_capacity(reference.variable.len() + 4);
             spelt.extend_from_slice(b"${");
             spelt.extend_from_slice(reference.variable.as_bytes());

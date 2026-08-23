@@ -1,0 +1,5 @@
+mkdir -p src
+: > src/out.o
+: > keep
+touch -d @100 src/out.o
+touch -d @50 keep

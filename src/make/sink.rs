@@ -149,6 +149,7 @@ struct PendingDeferred {
     outputs: Vec<Node>,
     always_dirty_output: bool,
     dates_do_not_decide: bool,
+    heads_the_group: bool,
     always_new_inputs: Vec<Node>,
     excluded_new_inputs: Vec<Node>,
     /// What kati says the published value calls an input it knows by another
@@ -709,6 +710,7 @@ impl GraphSink {
                 outputs: &deferred.outputs,
                 always_dirty_output: deferred.always_dirty_output,
                 dates_do_not_decide: deferred.dates_do_not_decide,
+                heads_the_group: deferred.heads_the_group,
                 always_new_inputs: &deferred.always_new_inputs,
                 excluded_new_inputs: &deferred.excluded_new_inputs,
                 new_input_names: &published,
@@ -906,6 +908,7 @@ impl GraphSink {
             outputs,
             always_dirty_output: edge.deferred_freshness_always_dirty,
             dates_do_not_decide: edge.deferred_freshness_ignores_dates,
+            heads_the_group: edge.deferred_freshness_heads_the_record,
             always_new_inputs: self.node_list(names, edge.deferred_always_new_inputs)?,
             excluded_new_inputs: self.node_list(names, edge.deferred_excluded_new_inputs)?,
             new_input_names: self.published_names(names, edge.deferred_new_input_names)?,

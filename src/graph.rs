@@ -35,8 +35,8 @@ pub(crate) use path::{nodepath_bytes, shell_escape_path};
 pub(crate) use peer::trigger_output;
 use searched::settle_searched_outputs;
 pub(crate) use searched::{
-    SettledNameReference, SettledNames, SettledView, elsewhere_mtime, found_name_stands,
-    mark_written_here,
+    SettledNameReference, SettledNames, SettledView, elsewhere_mtime, mark_written_here,
+    settled_name_stands,
 };
 use std::io;
 use std::path::Path;
@@ -1796,7 +1796,7 @@ mod tests {
         let mut runtime = RuntimeState::new(&graph);
         assert!(!recompute_dirty_with(&graph, &mut runtime, output, &mut stat).unwrap());
         assert_eq!(runtime.node(output).mtime(), FileTime::observed(2));
-        assert!(crate::graph::found_name_stands(&runtime, output));
+        assert!(searched::found_name_stands(&runtime, output));
 
         // The same copy, older than the source: the edge has to run, and the
         // found name is not the one anything will read.
@@ -1804,7 +1804,7 @@ mod tests {
         let mut stat = |path: &Path| Ok(*stale.get(&*path.to_string_lossy()).unwrap_or(&0));
         let mut runtime = RuntimeState::new(&graph);
         assert!(recompute_dirty_with(&graph, &mut runtime, output, &mut stat).unwrap());
-        assert!(!crate::graph::found_name_stands(&runtime, output));
+        assert!(!searched::found_name_stands(&runtime, output));
 
         // And a file that really is here is read here, whatever the search
         // found: the second place is only ever a second place.
@@ -1841,7 +1841,7 @@ mod tests {
         let made = BTreeMap::from([("out.c".to_owned(), 3), ("out.o".to_owned(), 4)]);
         let mut stat = |path: &Path| Ok(*made.get(&*path.to_string_lossy()).unwrap_or(&0));
         assert!(!recompute_edge_dirty_with(&graph, &mut runtime, edge, &mut stat).unwrap());
-        assert!(!crate::graph::found_name_stands(&runtime, output));
+        assert!(!searched::found_name_stands(&runtime, output));
     }
 
     /// A whole-second record dates a file a fraction before the thing it was

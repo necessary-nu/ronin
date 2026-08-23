@@ -1,9 +1,0 @@
-KNOWN GAP, owned by `make-a-double-colon-chains-dependent-reads-the-heads-name`.
-
-The rename is one state per target here, latched forward as the chain runs, and
-a dependent reads it after every entry has been reached — so it holds the LAST
-entry's answer where GNU Make gives it the first entry's. The entries
-themselves are right: `one at=out.o` and `two at=src/out.o` are what both tools
-write.
-
-GNU Make 4.4.1 says `all first=out.o`; Ronin says `all first=src/out.o`.

@@ -268,6 +268,15 @@ pub(crate) struct RuntimeState {
     /// absent means unsettled, which is every node of every graph but the few a
     /// directory search answered about.
     pub(crate) searched_names: crate::htab::RapidHashMap<NodeId, SearchedName>,
+    /// The same question answered by the FIRST of the several edges that
+    /// decide one such node's freshness, for the readers that are not among
+    /// them.
+    ///
+    /// Held apart from `searched_names` rather than replacing it, because the
+    /// two are different questions about one name and both are asked. See
+    /// [`crate::graph::searched`]; absent means no group answered about the
+    /// node, and then the one answer above is everybody's.
+    pub(crate) head_names: crate::htab::RapidHashMap<NodeId, SearchedName>,
 }
 
 impl RuntimeState {
@@ -286,6 +295,7 @@ impl RuntimeState {
         self.edges.fill(EdgeRuntime::default());
         self.deferred.clear();
         self.searched_names.clear();
+        self.head_names.clear();
         for edge in graph.edge_ids() {
             if let Some(dyndep) = graph.edge(edge).dyndep {
                 self.node_mut(dyndep).set_dyndep_pending(true);

@@ -15,6 +15,15 @@ pub struct DeferredSpec<'a> {
     /// whose language has a rule of that shape says so here; the scheduler
     /// reads it and asks nothing about why.
     pub dates_do_not_decide: bool,
+    /// Whether this edge is the first of the several that answer about one of
+    /// `outputs`, in the order the front end means them to be answered in.
+    ///
+    /// Where more than one edge decides one output's freshness, the scheduler
+    /// carries two answers about which of that output's names stands: the one
+    /// the edges hand along to each other as each is reached, and this edge's,
+    /// which is what everything outside that group reads. A front end with no
+    /// such grouping says nothing here and gets one answer.
+    pub heads_the_group: bool,
     /// Normal inputs that always enter the late new-input set.
     pub always_new_inputs: &'a [Node],
     /// Inputs that still affect freshness but stay out of the published value.
@@ -72,6 +81,7 @@ impl BuildGraph {
                 outputs: deferred.outputs.iter().map(|node| node.0).collect(),
                 always_dirty_output: deferred.always_dirty_output,
                 dates_do_not_decide: deferred.dates_do_not_decide,
+                heads_the_group: deferred.heads_the_group,
                 always_new_inputs: deferred
                     .always_new_inputs
                     .iter()

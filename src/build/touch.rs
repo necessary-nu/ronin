@@ -86,7 +86,14 @@ impl Builder<'_> {
             // Touching the written name instead would make a second file
             // beside the one the build is standing in for.
             let path = match self.graph.searched_at(output) {
-                Some(found) if crate::graph::found_name_stands(&self.runtime, output) => {
+                Some(found)
+                    if crate::graph::settled_name_stands(
+                        self.graph,
+                        &self.runtime,
+                        edge,
+                        output,
+                    ) =>
+                {
                     found.clone()
                 }
                 _ => self.graph.node_path(output).to_owned(),

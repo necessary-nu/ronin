@@ -1,9 +1,0 @@
-KNOWN GAP, owned by `make-a-double-colon-chains-dependent-reads-the-heads-name`.
-
-The same one-state-per-target reading as
-`a-double-colon-chains-dependent-reads-the-heads-name`, reached through an
-entry with no recipe. Recorded separately because this is the shape the
-recipe-less settlement newly reaches: before that entry answered for the
-chain's name at all, this case agreed by having nothing to say.
-
-GNU Make 4.4.1 says `all first=out.o`; Ronin says `all first=src/out.o`.

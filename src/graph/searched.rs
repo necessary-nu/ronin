@@ -145,9 +145,9 @@ pub(super) fn settle_searched_outputs(
     } else {
         SearchedName::Found
     };
-    let deferred = graph
-        .deferred_freshness(edge)
-        .map_or::<&[NodeId], _>(&[], |freshness| &freshness.outputs);
+    let freshness = graph.deferred_freshness(edge);
+    let deferred = freshness.map_or::<&[NodeId], _>(&[], |freshness| &freshness.outputs);
+    let heads_the_group = freshness.is_some_and(|freshness| freshness.heads_the_group);
     for output in &graph.edge(edge).out {
         if graph.searched_at(*output).is_some() {
             settle(runtime, *output, settled);
@@ -155,7 +155,7 @@ pub(super) fn settle_searched_outputs(
     }
     for output in deferred {
         if graph.searched_at(*output).is_some() {
-            settle_shared(graph, runtime, *output, settled);
+            settle_shared(graph, runtime, *output, settled, heads_the_group);
         }
     }
 }
@@ -178,7 +178,21 @@ pub(super) fn settle_searched_outputs(
 /// than one edge decides. Every other deferred output has one edge behind it,
 /// where a later scan is a better answer about the same question rather than a
 /// different entry's answer to a different one.
-fn settle_shared(graph: &Graph, runtime: &mut RuntimeState, node: NodeId, settled: SearchedName) {
+fn settle_shared(
+    graph: &Graph,
+    runtime: &mut RuntimeState,
+    node: NodeId,
+    settled: SearchedName,
+    heads_the_group: bool,
+) {
+    // The record's own second answer, which the latch above cannot be: the
+    // rename reaches FORWARD, so what a dependent holds is the entry the record
+    // was filed under and no later entry's rename can reach it. Written by the
+    // head entry alone, and read by everything that is not an entry of this
+    // record.
+    if heads_the_group {
+        settle_head(runtime, node, settled);
+    }
     if matches!(settled, SearchedName::Unsettled)
         && graph.is_double_colon_target(node)
         && found_name_stands(runtime, node)
@@ -251,7 +265,70 @@ fn settle(runtime: &mut RuntimeState, node: NodeId, settled: SearchedName) {
     *held = settled;
 }
 
+/// Settle what the FIRST of the edges deciding one node's freshness answered,
+/// under the same terms as [`settle`].
+///
+/// No [`SearchedName::Written`] reaches this one, and it needs none. The other
+/// map has one because a scan after the work reads the file the work wrote and
+/// answers the other way; a scan cannot reach the head that way, because the
+/// rescan a finished edge triggers walks downstream and the head of a record is
+/// the one entry nothing in the record points back at. Measured: a `Written`
+/// clause here fails not one case of the ported corpus.
+fn settle_head(runtime: &mut RuntimeState, node: NodeId, settled: SearchedName) {
+    let held = runtime
+        .head_names
+        .entry(node)
+        .or_insert(SearchedName::Unsettled);
+    if matches!(held, SearchedName::Written) {
+        return;
+    }
+    *held = settled;
+}
+
 /// Whether the build settled on the second place to look for `node`.
 pub(crate) fn found_name_stands(runtime: &RuntimeState, node: NodeId) -> bool {
     matches!(runtime.searched_names.get(&node), Some(SearchedName::Found))
+}
+
+/// Which of a searched-for node's two names one edge reads.
+///
+/// One name, two answers, and which one an edge gets depends on whether it is
+/// among the edges that decided the name. Told apart by whether the node is
+/// one of this edge's own deferred outputs, which is what being an entry of
+/// that record means here: every other edge — a dependent, and any edge with
+/// no deferred outputs at all — is outside the record and takes the head's.
+pub(crate) fn settled_name_stands(
+    graph: &Graph,
+    runtime: &RuntimeState,
+    edge: EdgeId,
+    node: NodeId,
+) -> bool {
+    if graph
+        .deferred_freshness(edge)
+        .is_some_and(|freshness| freshness.outputs.contains(&node))
+    {
+        return found_name_stands(runtime, node);
+    }
+    head_name_stands(runtime, node)
+}
+
+/// The same question as [`found_name_stands`], asked by a reader that is not
+/// one of the edges deciding the node.
+///
+/// A `::` record is one name and many entries, and GNU Make gives the two
+/// kinds of reader two different answers. An entry reads the latch — the
+/// rename reaches forward, so each entry sees whatever the entries before it
+/// settled. A DEPENDENT holds the `struct file` the hash table answers with,
+/// which is the entry the record was filed under, so it reads the head's
+/// verdict alone: a first entry that is remade keeps the name as written for
+/// every dependent, however many entries after it renamed themselves.
+///
+/// Nothing recorded means no group answered about this node — a lone `::`
+/// record, an ordinary deferred rule, a plain searched-for target — and then
+/// the one answer is everybody's.
+pub(crate) fn head_name_stands(runtime: &RuntimeState, node: NodeId) -> bool {
+    runtime.head_names.get(&node).map_or_else(
+        || found_name_stands(runtime, node),
+        |head| matches!(head, SearchedName::Found),
+    )
 }

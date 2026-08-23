@@ -676,7 +676,7 @@ impl Builder<'_> {
                 // completion proxy, and the search answered about the target.
                 let observed = self.graph.observed_file(*input);
                 let found = self.graph.searched_at(observed)?;
-                crate::graph::found_name_stands(&self.runtime, observed)
+                crate::graph::settled_name_stands(self.graph, &self.runtime, edge, observed)
                     .then(|| (self.graph.node_path(observed).to_vec(), found.to_vec()))
             })
             .collect::<Vec<_>>();
