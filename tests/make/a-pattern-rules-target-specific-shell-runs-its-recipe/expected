@@ -1,0 +1,21 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 8
+| # A pattern-specific `SHELL` reaches the target the pattern matched, which is
+| # the same lookup by another route: GNU Make reads `$(SHELL)` through the
+| # file's own variable set and a pattern-specific assignment is in it. A shell
+| # read once for the whole graph answers `/bin/sh` here.
+| %.o: SHELL := ./shell
+| all: x.o
+| x.o:
+| 	@echo pattern > pattern.txt
+file asked.txt touched 1
+| ./shell: <-c> <echo pattern > pattern.txt>
+file pattern.txt touched 1
+| pattern
+file shell kept 5
+| #!/bin/sh
+| printf '%s:' "$0" >> asked.txt
+| for a in "$@"; do printf ' <%s>' "$a" >> asked.txt; done
+| printf '\n' >> asked.txt
+| exec /bin/sh "$@"

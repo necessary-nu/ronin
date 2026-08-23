@@ -1,0 +1,41 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 15
+| # A target-specific variable descends to the prerequisites built for that
+| # target, and `SHELL` is no exception. `dep` is built for `all`, which set one,
+| # and runs under it; `aside` is built for `default`, which set none, and runs
+| # under the global one. Both shells write to the same file, so the recording
+| # holds which was asked for each recipe. A shell read once for the whole graph
+| # writes `./global` on every line.
+| SHELL := ./global
+| default: all aside
+| all: SHELL := ./own
+| all: dep
+| 	@echo one > one.txt
+| dep:
+| 	@echo two > two.txt
+| aside:
+| 	@echo three > three.txt
+file asked-global.txt touched 1
+| ./global: <-c> <echo three > three.txt>
+file asked-own.txt touched 2
+| ./own: <-c> <echo two > two.txt>
+| ./own: <-c> <echo one > one.txt>
+file global kept 5
+| #!/bin/sh
+| printf '%s:' "$0" >> asked-global.txt
+| for a in "$@"; do printf ' <%s>' "$a" >> asked-global.txt; done
+| printf '\n' >> asked-global.txt
+| exec /bin/sh "$@"
+file one.txt touched 1
+| one
+file own kept 5
+| #!/bin/sh
+| printf '%s:' "$0" >> asked-own.txt
+| for a in "$@"; do printf ' <%s>' "$a" >> asked-own.txt; done
+| printf '\n' >> asked-own.txt
+| exec /bin/sh "$@"
+file three.txt touched 1
+| three
+file two.txt touched 1
+| two

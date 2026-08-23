@@ -1,0 +1,8 @@
+cat > shell <<'SH'
+#!/bin/sh
+printf '%s:' "$0" >> asked.txt
+for a in "$@"; do printf ' <%s>' "$a" >> asked.txt; done
+printf '\n' >> asked.txt
+exec /bin/sh "$@"
+SH
+chmod +x shell

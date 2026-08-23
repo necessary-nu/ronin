@@ -1,0 +1,10 @@
+for name in global own; do
+  cat > $name <<SH
+#!/bin/sh
+printf '%s:' "\$0" >> asked-$name.txt
+for a in "\$@"; do printf ' <%s>' "\$a" >> asked-$name.txt; done
+printf '\n' >> asked-$name.txt
+exec /bin/sh "\$@"
+SH
+  chmod +x $name
+done
