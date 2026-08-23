@@ -628,11 +628,15 @@ impl BuildGraph {
         &mut self,
         edge: Edge,
         found: Option<(Node, &[u8])>,
+        written: Option<(Node, &[u8])>,
         directory: &[u8],
         references: Vec<(Vec<u8>, Node, crate::graph::SettledView)>,
     ) {
         if let Some((output, found)) = found {
             self.arenas.set_searched_at(output.0, found.into());
+        }
+        if let Some((output, written)) = written {
+            self.arenas.set_written_as(output.0, written.into());
         }
         self.arenas.set_settled_names(
             edge.0,

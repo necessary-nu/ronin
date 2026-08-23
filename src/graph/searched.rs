@@ -75,6 +75,29 @@ impl Graph {
     pub(crate) fn set_searched_at(&mut self, id: NodeId, found: BString) {
         self.searched_at.insert(id, found);
     }
+
+    /// Say that `node` is where the search moved a target the build file wrote
+    /// as `written`.
+    pub(crate) fn set_written_as(&mut self, id: NodeId, written: BString) {
+        self.written_as.insert(id, written);
+    }
+
+    /// The node the build file wrote as `name`, for a name the search moved.
+    ///
+    /// `None` for every name that is its own node's, which is every name of
+    /// every graph but the few `GPATH` renamed — so the walk is over a table
+    /// that is nearly always empty, and the caller has already failed to find
+    /// the name in the arena.
+    pub(crate) fn moved_from_written(&self, name: &[u8]) -> Option<NodeId> {
+        self.written_as
+            .iter()
+            .find_map(|(node, written)| (written.as_slice() == name).then_some(*node))
+    }
+
+    /// Whether the search moved this node from the name the build file wrote.
+    pub(crate) fn was_moved_by_search(&self, node: NodeId) -> bool {
+        self.written_as.contains_key(&node)
+    }
 }
 
 /// Record which of a searched-for output's two names this scan settles on.

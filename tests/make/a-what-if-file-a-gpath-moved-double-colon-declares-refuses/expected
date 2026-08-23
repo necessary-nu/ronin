@@ -1,0 +1,25 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 14
+| # The refusal reaching a target the search moved. `-W out` names the record as
+| # the Makefile wrote it, and the entry GNU Make appends to the `::` chain is
+| # carried into the GPATH directory with the rest of the chain — so the name the
+| # complaint carries is the one it was moved to. Nothing here can make it: there
+| # is no out.c for a built-in rule to find.
+| VPATH = src
+| GPATH = src
+| all: app
+| app: out
+| 	@echo made > $@
+| out:: a
+| 	@echo remade > $@
+| out:: b
+| 	@echo again >> $@
+file a kept 1
+| a
+file app kept 1
+| oldapp
+file b kept 1
+| b
+file src/out kept 1
+| old

@@ -815,6 +815,14 @@ impl GraphSink {
             .searched_at
             .zip(output)
             .map(|(found, output)| (output, names.symtab().name(found)));
+        // The other half of the same search, for a target `GPATH` moved rather
+        // than left where it was written: the node is the found path, and this
+        // is the name that carries its rule. Said of the output for the same
+        // reason — it is the file that was moved.
+        let written = edge
+            .written_as
+            .zip(output)
+            .map(|(written, output)| (output, names.symtab().name(written)));
         // The variable's spelling is kept as kati wrote it, for the same reason
         // `published_names` keeps its own: a name this side does not use is not
         // a path this side may relocate.
@@ -839,6 +847,9 @@ impl GraphSink {
         self.graph.set_searched_spellings(
             built,
             found.as_ref().map(|(output, found)| (*output, &**found)),
+            written
+                .as_ref()
+                .map(|(output, written)| (*output, &**written)),
             &directory,
             references,
         );

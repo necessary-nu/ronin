@@ -1,0 +1,7 @@
+mkdir -p src
+echo src > src/out.c
+echo old > src/out.o
+echo oldapp > app
+touch -d '2024-01-01 00:00' app
+touch -d '2022-01-01 00:00' src/out.o
+touch -d '2021-01-01 00:00' src/out.c

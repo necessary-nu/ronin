@@ -283,6 +283,21 @@ pub(crate) struct Graph {
     /// it is made when something has. Beside the arena for the reason
     /// `withdrawal` is: no node of a Ninja manifest is ever in it.
     searched_at: crate::htab::RapidHashMap<NodeId, BString>,
+    /// The name the build file wrote for a node the search moved, for the few
+    /// nodes it moved.
+    ///
+    /// `searched_at` with the survivors swapped. GNU Make's `GPATH` says a
+    /// directory the search looks in is also the directory a target found there
+    /// is remade in, so `f_mtime` calls `rename_file` and the one file object
+    /// moves to the found path while the rule the Makefile wrote goes on making
+    /// it. The node here IS the found path, and without this the name that
+    /// carries its rule would be nowhere in the graph at all.
+    ///
+    /// One reader, and it is the invocation rather than the build: a name a
+    /// switch gives is matched against the file database as the makefiles left
+    /// it, which is before any rename. Beside the arena for the reason
+    /// `searched_at` is — no node of a Ninja manifest is ever in it.
+    written_as: crate::htab::RapidHashMap<NodeId, BString>,
     /// The spellings a front end left for the build to fill in, for the edges
     /// whose command it had to read before the build could settle them.
     ///
