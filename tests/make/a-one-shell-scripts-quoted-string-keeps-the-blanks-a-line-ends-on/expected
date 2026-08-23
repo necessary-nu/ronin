@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 15
+| # The blanks a `.ONESHELL` line ends on are script text wherever the shell is
+| # reading text rather than splitting words, and a double-quoted string that
+| # spans lines is the second of the places it is. The quote opened on an EARLIER
+| # line of the same script, so nothing about this line says its trailing blank is
+| # inside one: a translation that reads a line at a time cannot see the quote,
+| # and the only answer that is right whether or not it can is to leave the end of
+| # every line alone.
+| #
+| # GNU Make 4.4.1 writes `a`, `b` with a space after it, and `c`.
+| .ONESHELL:
+| SP = $(subst x, ,x)
+| all:
+| 	@printf '%s' "a
+| 	b$(SP)
+| 	c" > out
+file out touched 4
+| a
+| b 
+| c

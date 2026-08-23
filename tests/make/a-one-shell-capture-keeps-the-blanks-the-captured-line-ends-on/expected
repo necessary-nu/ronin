@@ -1,0 +1,22 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 18
+| # A `.ONESHELL` script can read its own text back into a variable, and a command
+| # substitution takes the trailing NEWLINES off what it captured and nothing
+| # else. So the blanks the captured line ended on are in the value, and a build
+| # that tidied the end of that line answers a different string.
+| #
+| # What the case records is the exit status alone, which is why the comparison is
+| # the last line: `.ONESHELL` arms no `-e`, so a script whose capture came out
+| # short runs to its end all the same and touches the file — and reports the
+| # failure of the test it ended on. GNU Make 4.4.1 reports success.
+| .ONESHELL:
+| SP = $(subst x, ,x)
+| all:
+| 	v=$$(cat <<'E'
+| 	a$(SP)
+| 	E
+| 	)
+| 	touch out
+| 	[ "$$v" = "a$(SP)" ]
+file out touched 0

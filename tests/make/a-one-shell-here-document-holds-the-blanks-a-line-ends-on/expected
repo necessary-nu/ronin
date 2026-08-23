@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 17
+| # `.ONESHELL` makes one script of the whole recipe, and GNU Make takes nothing
+| # off the end of a line of it: `chop_commands` (commands.c) never chopped the
+| # recipe, and the one-shell branch of `construct_command_argv_internal` (job.c)
+| # strips only the blanks and `[@+-]` that stand at the START of an interior
+| # line.
+| #
+| # A here-document is where that stops being invisible, because there the script
+| # is reading its own text: the blanks a line ends on are written into the file.
+| # GNU Make 4.4.1 writes `line one` with the space after it; a build that tidies
+| # the end of the line writes a different file.
+| .ONESHELL:
+| SP = $(subst x, ,x)
+| all:
+| 	@cat <<'BODY' > out
+| 	line one$(SP)
+| 	line two
+| 	BODY
+file out touched 2
+| line one 
+| line two
