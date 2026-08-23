@@ -94,28 +94,31 @@ impl AssertedDates<'_> {
     /// [`Graph::moved_from_written`](crate::graph::Graph::moved_from_written).
     pub(crate) fn mark_on(self, graph: &Graph, runtime: &mut super::RuntimeState) {
         let count = graph.node_ids().len();
+        // A double-colon target is stamped by NEITHER switch. GNU Make's
+        // `enter_file` (file.c) hands one back a file object it has just made
+        // — it returns the entry it found only when that entry is not a
+        // double-colon target — so the date lands on a fresh entry appended to
+        // the chain, nothing that reads the target reads it, and the switch is
+        // inert.
+        //
+        // It is inert rather than absent: the entry `-W` appends has a date
+        // and no recipe, and GNU Make refuses the build over it unless the
+        // implicit rule search can make it. That refusal is
+        // make-a-what-if-file-that-is-double-colon-refuses's and is decided
+        // before this, in the compiler, from the name the switch gave — so
+        // declining the stamp here does not take it away. What it takes away
+        // is the remake that followed the refusal not firing.
+        //
+        // Measured over both shapes a `::` record compiles to and over both
+        // switches, with the dependent newer than the target and with it
+        // older; and against an ordinary single-colon rule, which is the
+        // control and which both switches still reach.
         if !self.new.is_empty() {
             let nodes = names_in(graph, self.new, Moved::Reached).collect::<Vec<_>>();
             runtime.assumed_new.mark(&nodes, count);
         }
         if !self.old.is_empty() {
-            // A double-colon target is stamped by neither switch, because GNU
-            // Make's `enter_file` hands one back a file object it has just
-            // made: it returns the entry it found only when that entry is not
-            // a double-colon target (file.c), so the date goes onto something
-            // no scan consults and the switch is inert. Measured — `-o` over a
-            // `::` target leaves the build exactly as it found it, twice, with
-            // the dependent older than the target and with it newer.
-            //
-            // Only `-o` declines here. `-W` reaches the same fresh entry and
-            // GNU Make then refuses the build over it — `No rule to make
-            // target 'out'`, because the entry it made carries a date and no
-            // recipe — and declining the stamp would replace that refusal with
-            // a quiet success, which hides the gap rather than closing it. It
-            // is owned by make-a-what-if-file-that-is-double-colon-refuses.
-            let nodes = names_in(graph, self.old, Moved::Declined)
-                .filter(|node| !graph.is_written_undeclared(*node))
-                .collect::<Vec<_>>();
+            let nodes = names_in(graph, self.old, Moved::Declined).collect::<Vec<_>>();
             runtime.assumed_old.mark(&nodes, count);
         }
     }
@@ -141,14 +144,24 @@ enum Moved {
     Declined,
 }
 
-/// The nodes these names stand for, dropping any the graph does not hold.
+/// The nodes these names stand for, dropping any the graph does not hold and
+/// any the stamp does not reach.
+///
+/// Whether a name is a double-colon one is decided HERE rather than by the
+/// caller, because it is a question about the name and not about the node.
+/// `main` stamps the switches after the read and before the update, so
+/// `enter_file` sees the file database as the makefiles left it and a `GPATH`
+/// rename has not happened yet: a name spelt as the path the search will find
+/// is not a double-colon target at all, whatever the record calls the file it
+/// ends up being. Which of the two spellings this name is, is exactly what the
+/// arms below tell apart.
 fn names_in<'a>(
     graph: &'a Graph,
     names: &'a [BString],
     moved: Moved,
 ) -> impl Iterator<Item = NodeId> + 'a {
-    names.iter().filter_map(
-        move |name| match crate::graph::nodeget(graph, name.as_slice()) {
+    names.iter().filter_map(move |name| {
+        match crate::graph::nodeget(graph, name.as_slice()) {
             Some(node) if moved == Moved::Declined && graph.was_moved_by_search(node) => None,
             Some(node) => Some(node),
             // The name the Makefile wrote for a target the search moved. The
@@ -156,6 +169,10 @@ fn names_in<'a>(
             // graph, which is why the lookup goes on rather than stopping at
             // the arena.
             None => graph.moved_from_written(name.as_slice()),
-        },
-    )
+        }
+        // And then, of whichever spelling got here, whether a `::` record
+        // declares the node under THAT name — in which case the date lands on
+        // the fresh entry `enter_file` appends and reaches nothing.
+        .filter(|node| !graph.declares_a_double_colon_record(*node, name.as_slice()))
+    })
 }

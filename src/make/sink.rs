@@ -831,6 +831,16 @@ impl GraphSink {
         edge: &SinkEdge<'_>,
         output: Option<Node>,
     ) -> Result<(), anyhow::Error> {
+        // Which name a `::` record filed the target under, said of the same
+        // node and for the same reason — the record declares the name the
+        // Makefile wrote, which for a completion join is not the edge's own
+        // output. Nothing here reads it either.
+        if let Some(declared) = edge.declared_by_double_colon
+            && let Some(target) = output
+        {
+            self.graph
+                .set_double_colon_target(target, &names.symtab().name(declared));
+        }
         let found = edge
             .searched_at
             .zip(output)

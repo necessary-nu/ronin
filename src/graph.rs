@@ -298,6 +298,24 @@ pub(crate) struct Graph {
     /// it, which is before any rename. Beside the arena for the reason
     /// `searched_at` is — no node of a Ninja manifest is ever in it.
     written_as: crate::htab::RapidHashMap<NodeId, BString>,
+    /// The nodes a front end says a `::` record declares.
+    ///
+    /// The compiled shape does not say it. A record of more than one rule
+    /// becomes an action per rule plus a completion join and is recognisable;
+    /// a lone record keeps the single-node shape an ordinary rule has and is
+    /// not. GNU Make treats the two identically, so the front end carries the
+    /// answer and this holds it.
+    ///
+    /// One reader, and it is the invocation rather than the build: `enter_file`
+    /// (file.c) returns the entry it found only when that entry is not a
+    /// double-colon target, so a switch that stamps such a name gets a fresh
+    /// object appended to the chain and the date lands where nothing looks.
+    /// The value is the SPELLING the record was filed under, because that is
+    /// what a switch's name is matched against — the path a `GPATH` rename
+    /// moved the target to reaches this same node and is not it. Beside the
+    /// arena for the reason `searched_at` is — no node of a Ninja manifest is
+    /// ever in it.
+    double_colon_targets: crate::htab::RapidHashMap<NodeId, BString>,
     /// The spellings a front end left for the build to fill in, for the edges
     /// whose command it had to read before the build could settle them.
     ///

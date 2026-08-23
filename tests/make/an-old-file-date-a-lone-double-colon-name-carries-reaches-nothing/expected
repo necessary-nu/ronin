@@ -1,0 +1,20 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 9
+| # `-o` over the same chain of one, and the cell where the switch has something
+| # to lose: `out` is NEWER than `app`, so without the switch `app` is remade, and
+| # with a stamp that reached the target it would not be. The stamp reaches
+| # nothing, so `app` is remade either way.
+| all: app
+| app: out
+| 	@echo made > $@
+| out:: a
+| 	@echo remade > $@
+file a kept 1
+| a
+file app touched 1
+| made
+file out kept 1
+| old
+file out.c kept 1
+| int main(void){return 0;}

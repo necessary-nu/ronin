@@ -101,6 +101,16 @@ impl BuildGraph {
         self.arenas.set_completion_join(edge.0, observed_output.0);
     }
 
+    /// Say that a `::` record is what declares this node.
+    ///
+    /// Carried rather than derived: a `::` record of more than one rule
+    /// compiles to a shape the graph can recognise and a lone one does not,
+    /// and GNU Make makes no distinction between them. Nothing in a Ninja
+    /// manifest says it, so a graph parsed from one never calls this.
+    pub fn set_double_colon_target(&mut self, node: Node, declared: &[u8]) {
+        self.arenas.set_double_colon_target(node.0, declared.into());
+    }
+
     /// Say that a node is a name this front end invented rather than a file,
     /// so the build neither stats it nor creates the directory it appears to
     /// sit in.

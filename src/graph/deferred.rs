@@ -62,22 +62,6 @@ impl Graph {
         self.deferred_freshness.get(&edge)
     }
 
-    /// Whether an edge writes this name without any edge declaring it an
-    /// output.
-    ///
-    /// One shape reaches this: a double-colon record, which compiles to an
-    /// action edge per rule with a private output apiece, so the name the
-    /// Makefile wrote is nobody's output and is instead what those actions'
-    /// freshness is deferred to. A multi-target pattern rule also defers its
-    /// freshness, but to names it does declare, so it is not this.
-    pub(crate) fn is_written_undeclared(&self, node: NodeId) -> bool {
-        self.node(node).generator.is_none()
-            && self
-                .deferred_freshness
-                .values()
-                .any(|freshness| freshness.outputs.contains(&node))
-    }
-
     pub(crate) fn deferred_freshness_mut(
         &mut self,
         edge: EdgeId,

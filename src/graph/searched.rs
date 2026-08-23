@@ -98,6 +98,24 @@ impl Graph {
     pub(crate) fn was_moved_by_search(&self, node: NodeId) -> bool {
         self.written_as.contains_key(&node)
     }
+
+    /// Say that a `::` record filed `node` under `declared`.
+    pub(crate) fn set_double_colon_target(&mut self, node: NodeId, declared: BString) {
+        self.double_colon_targets.insert(node, declared);
+    }
+
+    /// Whether a `::` record declares this node under the name `spelt`.
+    ///
+    /// True for both shapes such a record compiles to, because GNU Make's
+    /// `enter_file` makes no distinction between them: a chain of one takes
+    /// the fresh appended entry as readily as a chain of three. False for the
+    /// path a `GPATH` rename moved the target to, which is the same node under
+    /// a name the record never carried.
+    pub(crate) fn declares_a_double_colon_record(&self, node: NodeId, spelt: &[u8]) -> bool {
+        self.double_colon_targets
+            .get(&node)
+            .is_some_and(|declared| declared.as_slice() == spelt)
+    }
 }
 
 /// Record which of a searched-for output's two names this scan settles on.
