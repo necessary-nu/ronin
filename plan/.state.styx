@@ -831,7 +831,6 @@ assertions (
     {id make-posix-continuation-blanks, kind @complete, author "brendan@necessary.nu", at 2026-08-22T10:31:10.459863171Z}
     {id make-an-intermediate-the-build-found-is-not-swept-up, kind @complete, author "brendan@necessary.nu", at 2026-08-22T11:33:27.725399812Z}
     {id make-an-existing-intermediate-does-not-force-its-dependent, kind @complete, author "brendan@necessary.nu", at 2026-08-22T12:32:00.710102757Z}
-    {id make-a-posix-target-is-read-where-it-is-written, kind @doing, author "brendan@necessary.nu", at 2026-08-22T12:53:41.802927303Z}
     {id make-a-posix-target-is-read-off-text-that-names-none, kind @complete, author "brendan@necessary.nu", at 2026-08-22T13:21:19.608991641Z}
     {id make-an-old-file-is-not-remade, kind @complete, author "brendan@necessary.nu", at 2026-08-22T14:53:53.177148372Z}
     {id make-recursive-invocation-spans-a-continued-line, kind @complete, author "brendan@necessary.nu", at 2026-08-22T15:45:41.623229893Z}
