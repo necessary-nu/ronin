@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-23T00:45:53.287870975Z
+last_sync_at 2026-08-23T01:37:21.695612748Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -97,6 +97,7 @@ derived_priorities (
     {id make-a-conditional-in-an-ignored-branch-is-not-read, priority 2, derived_at 2026-08-20T13:57:37.951529701Z}
     {id make-a-diagnostic-inside-a-define-names-the-call-not-the-define, priority 1, derived_at 2026-08-20T20:57:41.240518327Z}
     {id make-a-double-colon-action-searches-for-its-own-prerequisites, priority 0, derived_at 2026-08-23T00:18:32.020741461Z}
+    {id make-a-double-colon-entry-remakes-the-target-where-an-earlier-one-left-it, priority 1, derived_at 2026-08-23T01:37:21.695612748Z}
     {id make-a-failed-makefile-rule-still-reports-the-unread-include, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-a-forgiven-makefile-is-not-remade-for-the-goals, priority 3, derived_at 2026-08-16T19:30:41.207932258Z}
     {id make-a-function-call-is-checked-where-it-is-read, priority 0, derived_at 2026-08-20T16:18:59.498989423Z}
