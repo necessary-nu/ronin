@@ -2149,3 +2149,142 @@ fn a_marked_goal_line_keeps_them() {
         );
     }
 }
+
+/// A `SHELL` whose own value has to start a shell to expand is a recursion GNU
+/// Make refuses: expanding `SHELL` reaches `$(shell)`, `$(shell)` has to know
+/// what shell to start, asking that expands `SHELL`. GNU Make's guard is
+/// `v->expanding` in `recursively_expand_for_file` (expand.c), set around the
+/// whole expansion wherever it goes, so the second entry is caught however far
+/// around the houses it came.
+///
+/// Here the guard was only on the path a `$(NAME)` in the text takes. Make's
+/// own reads — `SHELL` before it starts a shell, `.SHELLFLAGS` beside it — went
+/// through a second door with no mark on it, so the second entry was a descent
+/// with no floor: `thread 'main' has overflowed its stack`, rc 134, a core
+/// dump, and no diagnostic naming the makefile.
+///
+/// This case is the one that fails by crash without the fix, which is why it
+/// asserts the status rather than only the words.
+#[test]
+fn a_recursive_shell_is_refused() {
+    // Each row: the makefile, and the variable the refusal must name with the
+    // line it must point at. GNU Make 4.4.1 answers every one of these
+    // `Makefile:N: *** Recursive variable 'V' references itself (eventually).
+    // Stop.` with rc 2.
+    let rows: [(&str, &str, u32); 5] = [
+        // The plain shape: expanding SHELL asks what shell to start.
+        (
+            "SHELL = $(shell echo /bin/sh)\nall:\n\techo one\n",
+            "SHELL",
+            1,
+        ),
+        // Around the houses. GNU Make names SHELL rather than the variable
+        // standing between, because SHELL is the one re-entered, and points at
+        // SHELL's own definition rather than at the reference.
+        (
+            "OTHER = $(shell echo /bin/sh)\nSHELL = $(OTHER)\nall:\n\techo one\n",
+            "SHELL",
+            2,
+        ),
+        // One target's own shell, which is read with that target's scope in
+        // front of it and reaches the same guard.
+        (
+            "all: SHELL = $(shell echo /bin/sh)\nall:\n\techo one\n",
+            "SHELL",
+            1,
+        ),
+        // Reached while the makefile is read rather than while a recipe is:
+        // the `$(shell)` on the second line asks what shell to start too.
+        (
+            "SHELL = $(shell echo /bin/sh)\nX := $(shell echo hi)\nall:\n\techo $(X)\n",
+            "SHELL",
+            1,
+        ),
+        // `.SHELLFLAGS` is the other half of what starting a shell needs, and
+        // it is the same shape. GNU Make 4.4.1 does not survive this one --
+        // it recurses until it segmentation faults, rc 139 -- so the row is
+        // Ronin's own answer to a question the oracle cannot be asked.
+        (
+            ".SHELLFLAGS = $(shell echo -c)\nall:\n\techo one\n",
+            ".SHELLFLAGS",
+            1,
+        ),
+    ];
+
+    for (makefile, named, line) in rows {
+        let directory = test_directory("shell-needs-a-shell");
+        fs::write(directory.join("Makefile"), makefile).unwrap();
+        let refused = make_command(&directory).output().unwrap();
+        let said = String::from_utf8_lossy(&refused.stdout).into_owned()
+            + &String::from_utf8_lossy(&refused.stderr);
+        assert_eq!(
+            refused.status.code(),
+            Some(2),
+            "{makefile:?} did not refuse with a status: {said}"
+        );
+        assert!(
+            said.contains(&format!(
+                "Makefile:{line}: Recursive variable \"{named}\" references itself (eventually)."
+            )),
+            "{makefile:?} did not name {named} at line {line}: {said}"
+        );
+        assert!(
+            !directory.join("one.txt").exists(),
+            "{makefile:?} ran a recipe it was refused for"
+        );
+    }
+}
+
+/// The other side of the same read, and the reason it is done when a recipe
+/// asks rather than before the walk starts.
+///
+/// GNU Make expands `$(SHELL)` in `construct_command_argv` (job.c), once per
+/// recipe it is about to start, so a makefile with no recipe to run never asks
+/// what the shell is -- and a `SHELL` that could not be expanded is one it runs
+/// to completion. The boundary is the recipe as written rather than what it
+/// expands to: `chop_commands` (commands.c) drops a blank line before anything
+/// is expanded, while `all: ; $(EMPTY)` is a command line that survives to be
+/// expanded and therefore does ask.
+#[test]
+fn a_shell_nothing_needs_is_unasked() {
+    let unasked: [&str; 4] = [
+        // An empty recipe: a target remade by doing nothing.
+        "SHELL = $(shell echo /bin/sh)\nall: ;\n",
+        // No recipe at all, and phony so the walk reaches it.
+        "SHELL = $(shell echo /bin/sh)\n.PHONY: all\nall:\n",
+        // A prerequisite with an empty recipe of its own.
+        "SHELL = $(shell echo /bin/sh)\nall: dep\ndep: ;\n",
+        // A recipe line of nothing but the prefix.
+        "SHELL = $(shell echo /bin/sh)\nall:\n\t\n",
+    ];
+    for makefile in unasked {
+        let directory = test_directory("shell-unasked");
+        fs::write(directory.join("Makefile"), makefile).unwrap();
+        let ran = make_command(&directory).output().unwrap();
+        let said = String::from_utf8_lossy(&ran.stdout).into_owned()
+            + &String::from_utf8_lossy(&ran.stderr);
+        assert_eq!(
+            ran.status.code(),
+            Some(0),
+            "{makefile:?} was refused for a shell nothing needed: {said}"
+        );
+        assert!(
+            !said.contains("references itself"),
+            "{makefile:?} was refused for a shell nothing needed: {said}"
+        );
+    }
+
+    // The boundary. A recipe line that expands to nothing is still a command
+    // line, so it does ask -- and GNU Make 4.4.1 refuses it.
+    let directory = test_directory("shell-asked");
+    fs::write(
+        directory.join("Makefile"),
+        "SHELL = $(shell echo /bin/sh)\nEMPTY =\nall: ; $(EMPTY)\n",
+    )
+    .unwrap();
+    let refused = make_command(&directory).output().unwrap();
+    let said = String::from_utf8_lossy(&refused.stdout).into_owned()
+        + &String::from_utf8_lossy(&refused.stderr);
+    assert_eq!(refused.status.code(), Some(2), "{said}");
+    assert!(said.contains("references itself"), "{said}");
+}

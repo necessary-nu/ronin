@@ -1,0 +1,12 @@
+# GNU Make expands `$(SHELL)` in `construct_command_argv` (job.c), once per
+# recipe it is about to start, so a target remade by doing nothing never asks
+# what the shell is -- and a SHELL that could not be expanded is a makefile it
+# runs to completion. `later` is the boundary: a recipe line that expands to
+# nothing is still a command line, so building it would ask and be refused.
+SHELL = $(shell echo /bin/sh)
+EMPTY =
+all: blank absent
+blank: ;
+absent:
+	
+later: ; $(EMPTY)

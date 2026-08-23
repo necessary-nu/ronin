@@ -847,6 +847,7 @@ assertions (
     {id make-a-target-specific-shell-is-not-the-one-that-runs, kind @complete, author "brendan@necessary.nu", at 2026-08-23T04:06:35.763237463Z}
     {id make-a-one-shell-shell-is-one-word, kind @complete, author "brendan@necessary.nu", at 2026-08-23T04:06:43.076186233Z}
     {id make-a-what-if-date-a-double-colon-name-carries-reaches-nothing, kind @complete, author "brendan@necessary.nu", at 2026-08-23T04:06:44.630218291Z}
+    {id make-a-shell-that-needs-a-shell-to-name-is-a-recursive-variable, kind @complete, author "brendan@necessary.nu", at 2026-08-23T04:53:05.470548848Z}
 )
 
 impl_evidence (
