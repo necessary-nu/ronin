@@ -856,6 +856,7 @@ assertions (
     {id make-a-recipe-less-double-colon-entry-decides-nothing-about-the-chains-name, kind @complete, author "brendan@necessary.nu", at 2026-08-23T08:18:03.178053696Z}
     {id make-a-dry-run-prints-the-placeholder-it-would-have-filled-in, kind @complete, author "brendan@necessary.nu", at 2026-08-23T09:11:20.912232041Z}
     {id make-a-double-colon-chains-dependent-reads-the-heads-name, kind @complete, author "brendan@necessary.nu", at 2026-08-23T09:52:38.003841363Z}
+    {id make-a-one-shell-recipe-is-one-shell-in-katis-own-executor-too, kind @complete, author "brendan@necessary.nu", at 2026-08-23T10:21:31.990988436Z}
 )
 
 impl_evidence (
