@@ -843,10 +843,10 @@ assertions (
     {id make-a-what-if-file-that-is-double-colon-refuses, kind @complete, author "brendan@necessary.nu", at 2026-08-22T23:40:21.885268195Z}
     {id make-a-switch-names-a-target-gpath-renamed, kind @complete, author "brendan@necessary.nu", at 2026-08-23T00:45:46.255938746Z}
     {id make-a-what-if-double-colon-refusal-reads-the-implicit-search, kind @complete, author "brendan@necessary.nu", at 2026-08-23T00:18:24.369970266Z}
-    {id make-a-double-colon-action-searches-for-its-own-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-23T00:55:30.944920625Z}
-    {id make-a-target-specific-shell-is-not-the-one-that-runs, kind @doing, author "brendan@necessary.nu", at 2026-08-23T01:37:54.880383536Z}
-    {id make-a-one-shell-shell-is-one-word, kind @doing, author "brendan@necessary.nu", at 2026-08-23T02:30:53.000323369Z}
-    {id make-a-what-if-date-a-double-colon-name-carries-reaches-nothing, kind @doing, author "brendan@necessary.nu", at 2026-08-23T03:17:52.032398408Z}
+    {id make-a-double-colon-action-searches-for-its-own-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-23T04:06:34.150695462Z}
+    {id make-a-target-specific-shell-is-not-the-one-that-runs, kind @complete, author "brendan@necessary.nu", at 2026-08-23T04:06:35.763237463Z}
+    {id make-a-one-shell-shell-is-one-word, kind @complete, author "brendan@necessary.nu", at 2026-08-23T04:06:43.076186233Z}
+    {id make-a-what-if-date-a-double-colon-name-carries-reaches-nothing, kind @complete, author "brendan@necessary.nu", at 2026-08-23T04:06:44.630218291Z}
 )
 
 impl_evidence (
