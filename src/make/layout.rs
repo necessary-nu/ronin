@@ -318,9 +318,12 @@ impl CommandLayout {
             // going to be words on a command line either way.
             if step.shell_is_a_path {
                 argv.extend(
-                    kati::simple_command::shell_flag_argv(&step.shell_flags)
-                        .into_iter()
-                        .map(|word| BString::from(word.to_vec())),
+                    kati::simple_command::shell_flag_argv(
+                        &step.shell_flags,
+                        &step.default_shell_flags,
+                    )
+                    .into_iter()
+                    .map(|word| BString::from(word.to_vec())),
                 );
             } else {
                 argv.extend(Self::shell_flag_words(&step.shell_flags));

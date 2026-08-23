@@ -867,6 +867,7 @@ assertions (
     {id make-a-multi-word-shellflags-reaches-katis-executor-as-one-word, kind @complete, author "brendan@necessary.nu", at 2026-08-23T17:26:03.008643868Z}
     {id make-a-recipe-line-that-expands-to-nothing-is-a-blank-line-of-a-one-shell-script, kind @complete, author "brendan@necessary.nu", at 2026-08-23T18:12:56.314981001Z}
     {id make-a-one-shell-scripts-lines-keep-the-blanks-they-end-on, kind @complete, author "brendan@necessary.nu", at 2026-08-23T18:49:28.03441464Z}
+    {id make-one-shell-flags-a-shell-would-split-are-three-words-not-none, kind @complete, author "brendan@necessary.nu", at 2026-08-23T19:38:33.70455866Z}
 )
 
 impl_evidence (

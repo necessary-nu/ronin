@@ -1,0 +1,16 @@
+# GNU Make's one-shell branch parses `.SHELLFLAGS` with
+# `construct_command_argv_internal` itself, and where that tokenizer refuses the
+# flags do NOT go to a command line. `one_shell` is a global, so the recursion
+# lands in the one-shell branch again one level down, with the flags text as its
+# recipe and the default `/bin/sh` as its shell — and it answers the three-word
+# launch `[/bin/sh, -c, <that text>]`, which the branch above copies in ahead of
+# the script.
+#
+# A double quote is a shell character, which is what sends this value that way.
+# `./shell` writes each argument on a line of its own, so the recording holds
+# the three words a build that dropped them would not have.
+.ONESHELL:
+SHELL = ./shell
+.SHELLFLAGS = "-e" -c
+all:
+	echo hello
