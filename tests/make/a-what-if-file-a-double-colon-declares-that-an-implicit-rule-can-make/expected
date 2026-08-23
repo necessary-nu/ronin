@@ -1,0 +1,25 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 12
+| # The entry `-W` appends to a `::` chain has no recipe, so `update_file_1` offers
+| # it the implicit rule search like any other file with none — and here the
+| # built-in `%: %.c` matches, because out.c is lying beside it. The entry has a
+| # rule and prerequisites of its own, so nothing is complained about and the
+| # build runs. The same tree with no out.c is the case beside this one.
+| all: app
+| app: out
+| 	@echo made > $@
+| out:: a
+| 	@echo remade > $@
+| out:: b
+| 	@echo again >> $@
+file a kept 1
+| a
+file app touched 1
+| made
+file b kept 1
+| b
+file out kept 1
+| old
+file out.c kept 1
+| int main(void){return 0;}

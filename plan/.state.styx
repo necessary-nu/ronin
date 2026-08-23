@@ -836,6 +836,8 @@ assertions (
     {id make-kati-option-row-past-the-letters-it-can-honour, kind @complete, author "brendan@necessary.nu", at 2026-08-22T21:14:51.644103896Z}
     {id make-a-one-shell-prefix-survives-a-shell-make-does-not-know, kind @complete, author "brendan@necessary.nu", at 2026-08-22T22:41:59.60655073Z}
     {id make-a-what-if-file-that-is-double-colon-refuses, kind @complete, author "brendan@necessary.nu", at 2026-08-22T23:40:21.885268195Z}
+    {id make-a-switch-names-a-target-gpath-renamed, kind @doing, author "brendan@necessary.nu", at 2026-08-22T23:41:00.659614998Z}
+    {id make-a-what-if-double-colon-refusal-reads-the-implicit-search, kind @doing, author "brendan@necessary.nu", at 2026-08-23T00:17:02.578353554Z}
 )
 
 impl_evidence (

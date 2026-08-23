@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 10
+| # The control for the case beside this one, and it changes nothing about the
+| # tree: out.c is still there. `-r` takes the built-in rules away, so the search
+| # offered the appended entry finds nothing, and the refusal is back.
+| all: app
+| app: out
+| 	@echo made > $@
+| out:: a
+| 	@echo remade > $@
+| out:: b
+| 	@echo again >> $@
+file a kept 1
+| a
+file app kept 1
+| oldapp
+file b kept 1
+| b
+file out kept 1
+| old
+file out.c kept 1
+| int main(void){return 0;}
