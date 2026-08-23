@@ -1,0 +1,4 @@
+mkdir -p src
+echo h > src/oo.h
+echo d > dep
+touch -d '2020-01-01 00:00' src/oo.h dep

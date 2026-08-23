@@ -1,0 +1,5 @@
+mkdir -p src
+echo a > src/a.c
+echo b > src/b.c
+echo c > c.c
+touch -d '2020-01-01 00:00' src/a.c src/b.c c.c

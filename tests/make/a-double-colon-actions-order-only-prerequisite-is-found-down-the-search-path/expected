@@ -1,0 +1,24 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 11
+| # The order-only half of the same search. `oo.h` is only under `src`, and `$|`
+| # names it there; the ordinary prerequisite of the second record is here and is
+| # named as written. Both lists of every action go through the search.
+| VPATH = src
+| all: out.o
+| out.o:: | oo.h
+| 	@echo "one |<$|>" >> log
+| 	@echo o > $@
+| out.o:: dep
+| 	@echo "two <$<>" >> log
+| 	@echo o2 >> $@
+file dep kept 1
+| d
+file log touched 2
+| one |<src/oo.h>
+| two <dep>
+file out.o touched 2
+| o
+| o2
+file src/oo.h kept 1
+| h

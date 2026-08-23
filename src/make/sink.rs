@@ -804,6 +804,26 @@ impl GraphSink {
     /// dependent reads it by — asks about the name. The second is said
     /// relative to the unit's own directory, because the command runs where its
     /// Makefile was read and names its prerequisites the way that Makefile did.
+    /// The node a searched-for target's second place to look is said of.
+    ///
+    /// A completion join's own output is a name the compiler invented to
+    /// sequence a `::` chain, and the file the search answered about is the
+    /// target the Makefile wrote. Every action in the chain observes that node
+    /// rather than the join's proxy — its freshness is deferred to it — so the
+    /// found path has to hang off it or nothing consults the search at all.
+    /// Every other edge is the file it names.
+    const fn searched_target(
+        edge: &SinkEdge<'_>,
+        outputs: &[Node],
+        completion_output: Node,
+    ) -> Option<Node> {
+        if edge.completion_join {
+            Some(completion_output)
+        } else {
+            outputs.first().copied()
+        }
+    }
+
     fn record_searched_spellings(
         &mut self,
         built: Edge,
@@ -1481,7 +1501,8 @@ impl BuildSink for GraphSink {
                 self.graph
                     .set_withdrawal(built, withdrawal.outputs, withdrawal.on_error);
                 self.graph.set_peer_outputs(built, peer_outputs);
-                self.record_searched_spellings(built, names, edge, outputs.first().copied())?;
+                let searched = Self::searched_target(edge, &outputs, completion_output);
+                self.record_searched_spellings(built, names, edge, searched)?;
                 if let Some(deferred) = deferred {
                     self.defer_freshness(built, &deferred);
                 }
