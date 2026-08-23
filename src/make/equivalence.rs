@@ -122,6 +122,7 @@ struct EdgeSemantics {
 struct DeferredSemantics {
     outputs: Vec<Vec<u8>>,
     always_dirty_output: bool,
+    dates_do_not_decide: bool,
     always_new_inputs: Vec<Vec<u8>>,
     excluded_new_inputs: Vec<Vec<u8>>,
     new_input_names: Vec<Vec<u8>>,
@@ -176,6 +177,7 @@ impl BuildSink for Tee<'_> {
                         .map(|output| names.symtab().name(*output).to_vec())
                         .collect(),
                     always_dirty_output: edge.deferred_freshness_always_dirty,
+                    dates_do_not_decide: edge.deferred_freshness_ignores_dates,
                     always_new_inputs: edge
                         .deferred_always_new_inputs
                         .iter()
@@ -327,7 +329,7 @@ fn describe_command_semantics<'a>(
 /// What one side says about a deferred edge, in the words both sides answer in.
 ///
 /// A value rather than the seven-element tuple this used to destructure: the
-/// two sides answer the same seven questions from quite different places, and
+/// two sides answer the same eight questions from quite different places, and
 /// naming them is what lets each answer be read beside its own source. Note
 /// that it is not `DeferredSemantics` above: that one is what the writer's
 /// output was read back as, and this one is either side's answer in the shape
@@ -335,6 +337,7 @@ fn describe_command_semantics<'a>(
 struct DeferredAnswer {
     outputs: Vec<Vec<u8>>,
     always_dirty_output: bool,
+    dates_do_not_decide: bool,
     always_new_inputs: Vec<Vec<u8>>,
     excluded_new_inputs: Vec<Vec<u8>>,
     new_input_names: Vec<Vec<u8>>,
@@ -359,6 +362,7 @@ fn direct_deferred_semantics(graph: &BuildGraph, edge: crate::graph::EdgeId) -> 
             node_path_bytes(arenas, &freshness.outputs)
         }),
         always_dirty_output: freshness.is_some_and(|freshness| freshness.always_dirty_output),
+        dates_do_not_decide: freshness.is_some_and(|freshness| freshness.dates_do_not_decide),
         always_new_inputs: freshness.map_or_else(Vec::new, |freshness| {
             node_path_bytes(arenas, &freshness.always_new_inputs)
         }),
@@ -388,6 +392,7 @@ fn manifest_deferred_semantics(recorded: Option<&DeferredSemantics>) -> Deferred
     DeferredAnswer {
         outputs: recorded.map_or_else(Vec::new, |semantic| semantic.outputs.clone()),
         always_dirty_output: recorded.is_some_and(|semantic| semantic.always_dirty_output),
+        dates_do_not_decide: recorded.is_some_and(|semantic| semantic.dates_do_not_decide),
         always_new_inputs: recorded
             .map_or_else(Vec::new, |semantic| semantic.always_new_inputs.clone()),
         excluded_new_inputs: recorded
@@ -425,6 +430,11 @@ fn describe_deferred_semantics(
         described,
         "  deferred output always dirty: {}",
         answered.always_dirty_output
+    );
+    let _ = writeln!(
+        described,
+        "  deferred freshness ignores dates: {}",
+        answered.dates_do_not_decide
     );
     let _ = writeln!(
         described,

@@ -15964,6 +15964,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-23T08:27:57.552735347Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "A completeness follow-up on the landing above, found by auditing what the equivalence gate compares rather than by a failing run.\n\n`DeferredSemantics` (src/make/equivalence.rs) mirrors every deferred field a `SinkEdge` carries, and that mirror is the whole of what the gate can judge: the direct-graph path reads its answer off `DeferredFreshness`, the manifest path reads it off what the writer emitted, and any property missing from both records is one the two encodings could disagree about in silence. `deferred_freshness_ignores_dates` was the one new field and it was in neither.\n\nIt is now the eighth question the two sides answer, beside `always_dirty_output` and its six neighbours, and the comparison prints it. No row moved: 297 makefiles / 280 graphs / 75 rejected / 0 disagreements / 8 manifest respellings, unchanged — which is the answer expected, and the point is that the gate is now able to say so."
+                        after_done true
+                    }
                 )
             }
 
