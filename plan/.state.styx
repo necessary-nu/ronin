@@ -871,6 +871,7 @@ assertions (
     {id make-a-shell-function-under-one-shell-is-read-by-the-one-shell-branch, kind @complete, author "brendan@necessary.nu", at 2026-08-23T20:27:18.250061996Z}
     {id make-a-shellflags-value-is-expanded-again-where-the-launch-reads-it, kind @complete, author "brendan@necessary.nu", at 2026-08-23T20:55:07.791549757Z}
     {id make-a-shell-holding-shell-syntax-is-escaped-into-the-assembled-line, kind @complete, author "brendan@necessary.nu", at 2026-08-23T21:36:28.823235097Z}
+    {id make-a-default-shell-launch-splits-shellflags-a-shell-would-have-read, kind @doing, author "brendan@necessary.nu", at 2026-08-23T21:45:17.592316283Z}
 )
 
 impl_evidence (

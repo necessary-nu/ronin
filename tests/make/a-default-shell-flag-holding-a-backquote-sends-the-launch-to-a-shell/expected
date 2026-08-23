@@ -1,0 +1,26 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 20
+| # Whether a recipe line is exec'd directly or handed to a shell is
+| # `construct_command_argv_internal`'s question (job.c), and it is about the
+| # whole assembled `$(SHELL) $(.SHELLFLAGS) LINE`, not the SHELL alone. GNU Make
+| # builds that text and re-tokenizes it; where the tokenizer meets shell syntax
+| # it takes the `goto slow` and hands the line to a shell that splits it. A
+| # `.SHELLFLAGS` holding a backquote is exactly that case.
+| #
+| # GNU Make assembles `/bin/sh -c `>pwned` "echo one > out"`. The shell it hands
+| # that to runs the backquote — leaving `pwned` behind — substitutes it to
+| # nothing, drops the empty field, and runs `/bin/sh -c "echo one > out"`.
+| #
+| # THE GATE IS THE FILE `out`. Ronin used to ask only whether the SHELL was the
+| # default and then exec an argv, so the empty backquote word was a real
+| # argument that `-c` took for the command: the recipe became `$0` and never
+| # ran, `out` was never written, and the build exited 0 saying nothing. The
+| # recording holds a build in which `out` was written.
+| SHELL := /bin/sh
+| .SHELLFLAGS := -c `>pwned`
+| all:
+| 	@echo one > out
+file out touched 1
+| one
+file pwned touched 0

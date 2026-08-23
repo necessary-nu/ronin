@@ -1,0 +1,19 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 14
+| # A single quote is not shell syntax the tokenizer refuses — it strips the
+| # quotes and reads what is inside as one word, the way the shell would. So
+| # `'-c'` is the flag `-c`, and the launch stays the direct one GNU Make would
+| # have made: it assembles `/bin/sh '-c' "echo one > out"`, re-tokenizes, and
+| # execs `/bin/sh` `-c` `echo one > out` with no shell in between.
+| #
+| # THE GATE IS THE FILE `out`. Splitting `.SHELLFLAGS` on whitespace alone would
+| # have kept the quote bytes and passed `'-c'` as an argument `/bin/sh` reads as
+| # a file name to open, so the recipe would not run. Tokenizing the flags the
+| # way the assembled line is tokenized keeps the quotes off and the recipe runs.
+| SHELL := /bin/sh
+| .SHELLFLAGS := '-c'
+| all:
+| 	@echo one > out
+file out touched 1
+| one

@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 12
+| # The control the fix must not disturb: a `.SHELLFLAGS` that is plain words a
+| # command line could carry stays the direct launch it always was. `-c` has no
+| # shell syntax, so the tokenizer splits it, the launch execs `/bin/sh` `-c`
+| # `<line>` directly, and the recipe runs — the same before the launch decision
+| # learned to ask about the flags and after.
+| #
+| # THE GATE IS THE FILE `out`, written on the direct argv path a default SHELL
+| # with plain flags takes.
+| SHELL := /bin/sh
+| .SHELLFLAGS := -c
+| all:
+| 	@echo one > out
+file out touched 1
+| one

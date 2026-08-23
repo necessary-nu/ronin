@@ -241,8 +241,18 @@ impl CommandLayout {
         let mut argv = vec![BString::from(shell.to_vec())];
         match script {
             // What the command line spells as `<shell> <flags> "<script>"`.
+            //
+            // Only where the flags are words a command line could carry. Flags
+            // holding shell syntax are GNU Make's `goto slow`, and `None` here
+            // defers to the composed command line, which is exactly that
+            // shell's errand — see
+            // [`kati::simple_command::command_line_flag_argv`].
             Script::Argument(text) => {
-                argv.extend(Self::shell_flag_words(shell_flags));
+                argv.extend(
+                    kati::simple_command::command_line_flag_argv(shell_flags)?
+                        .into_iter()
+                        .map(|word| BString::from(word.to_vec())),
+                );
                 argv.push(BString::from(text.to_vec()));
             }
             // And what it spells as `<shell> <flags> <path>`: a script the
@@ -250,29 +260,20 @@ impl CommandLayout {
             // would have taken it for the command comes off — and every other
             // letter stays, because they are about the shell rather than about
             // how the script reached it. A `.POSIX:` recipe that crossed the
-            // length threshold used to lose its `-e` right here.
+            // length threshold used to lose its `-e` right here. Flags holding
+            // shell syntax defer to the composed command line the same way.
             Script::File(path) => {
-                argv.extend(Self::shell_flag_words(&kati::ninja::script_file_flags(
-                    shell_flags,
-                )));
+                argv.extend(
+                    kati::simple_command::command_line_flag_argv(&kati::ninja::script_file_flags(
+                        shell_flags,
+                    ))?
+                    .into_iter()
+                    .map(|word| BString::from(word.to_vec())),
+                );
                 argv.push(BString::from(path.to_vec()));
             }
         }
         Some(self.direct_launch(argv, scoped))
-    }
-
-    /// `.SHELLFLAGS` as the words a launch passes.
-    ///
-    /// An empty `.SHELLFLAGS` is why they are words rather than one: the
-    /// command line spelled `sh  "script"`, which a shell splits into `sh` and
-    /// a file operand, so an empty word must vanish here too rather than become
-    /// an empty argument. A `.SHELLFLAGS` of several words splits for the same
-    /// reason.
-    fn shell_flag_words(shell_flags: &[u8]) -> impl Iterator<Item = BString> {
-        shell_flags
-            .split(u8::is_ascii_whitespace)
-            .filter(|word| !word.is_empty())
-            .map(|word| BString::from(word.to_vec()))
     }
 
     /// The launch that runs one recipe line.
@@ -300,38 +301,50 @@ impl CommandLayout {
                 scoped,
             );
         }
+        // A `.ONESHELL` step's shell is a path and not a command line — see
+        // [`kati::ninja::RecipeStep::shell_is_a_path`] — so it is named as the
+        // program whatever is in it, and a value of more than one word is a
+        // program of more than one word that nothing can start. Its flags are
+        // read the way GNU Make's one-shell branch reads them, with the shell's
+        // own tokenizer, so a quoted flag with a space in it stays one word.
+        // Asking about a path first is what keeps the builtin substitution for
+        // it: `/bin/sh` under `.ONESHELL` is still `/bin/sh`.
+        if step.shell_is_a_path {
+            let mut argv = vec![BString::from(step.shell.to_vec())];
+            argv.extend(
+                kati::simple_command::shell_flag_argv(&step.shell_flags, &step.default_shell_flags)
+                    .into_iter()
+                    .map(|word| BString::from(word.to_vec())),
+            );
+            argv.push(BString::from(step.text.to_vec()));
+            return self.direct_launch(argv, scoped);
+        }
         // The shell is a program, not a word in a command line, whenever it is
         // the default one — which is exactly when Ronin has a shell of its own
         // to put there. `cd` and `env` in front of a command line say the same
         // thing a launch says with a directory and an environment, and a
         // command line cannot say the one thing that matters here: that the
         // program is this executable while `argv[0]` stays `/bin/sh`.
-        // A `.ONESHELL` step's shell is a path and not a command line — see
-        // [`kati::ninja::RecipeStep::shell_is_a_path`] — so it is named as the
-        // program whatever is in it, and a value of more than one word is a
-        // program of more than one word that nothing can start. That is the
-        // same launch the default shell gets, and asking about the default
-        // first is what keeps the builtin substitution: `/bin/sh` under
-        // `.ONESHELL` is still `/bin/sh`.
-        if step.shell == kati::simple_command::DEFAULT_SHELL || step.shell_is_a_path {
+        //
+        // But only where the flags are words that command line could carry.
+        // GNU Make assembles `$(SHELL) $(.SHELLFLAGS) LINE` and re-tokenizes
+        // all of it, so flags holding shell syntax reach a shell that splits
+        // them — its `goto slow` — and never become argv words.
+        // [`kati::simple_command::command_line_flag_argv`] is that tokenizer,
+        // and its `None` is that `goto slow`: a step whose flags it refuses
+        // falls through to the shell below, where the empty field a `` `>x` ``
+        // expands to is dropped rather than left a real argument that would
+        // take the recipe for the command and never run it.
+        if step.shell == kati::simple_command::DEFAULT_SHELL
+            && let Some(flag_words) =
+                kati::simple_command::command_line_flag_argv(&step.shell_flags)
+        {
             let mut argv = vec![BString::from(step.shell.to_vec())];
-            // A `.ONESHELL` launch reads its flags the way GNU Make's
-            // one-shell branch does, with the shell's own tokenizer, so a
-            // quoted flag with a space in it stays one word. Every other
-            // launch splits on whitespace because the flags it carries were
-            // going to be words on a command line either way.
-            if step.shell_is_a_path {
-                argv.extend(
-                    kati::simple_command::shell_flag_argv(
-                        &step.shell_flags,
-                        &step.default_shell_flags,
-                    )
+            argv.extend(
+                flag_words
                     .into_iter()
                     .map(|word| BString::from(word.to_vec())),
-                );
-            } else {
-                argv.extend(Self::shell_flag_words(&step.shell_flags));
-            }
+            );
             argv.push(BString::from(step.text.to_vec()));
             return self.direct_launch(argv, scoped);
         }
@@ -627,4 +640,87 @@ fn mflags_while_remaking(value: &[u8]) -> Vec<u8> {
     remade.extend_from_slice(&kept);
     remade.extend_from_slice(rest);
     remade
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bstr::ByteSlice;
+    use kati::bytes::Bytes;
+    use kati::ninja::RecipeStep;
+
+    /// A default-`SHELL` recipe step whose only variable is its `.SHELLFLAGS`.
+    fn default_shell_step(shell_flags: &[u8]) -> RecipeStep {
+        RecipeStep {
+            text: Bytes::from_static(b"echo one > out"),
+            shell: Bytes::from_static(kati::simple_command::DEFAULT_SHELL),
+            shell_flags: Bytes::copy_from_slice(shell_flags),
+            default_shell_flags: Bytes::from_static(b"-c"),
+            ignore_error: false,
+            recursive_line: false,
+            direct: None,
+            shell_is_a_path: false,
+        }
+    }
+
+    fn layout() -> CommandLayout {
+        CommandLayout::new(PathBuf::new(), Vec::new(), PathBuf::new(), true)
+    }
+
+    /// Plain flags are words a command line carries, so the launch is the direct
+    /// exec GNU Make would make — `/bin/sh -c <line>` with no shell between it
+    /// and the build.
+    #[test]
+    fn plain_flags_launch_directly() {
+        match layout().launch_step(&default_shell_step(b"-c"), &[]) {
+            crate::subprocess::Launch::Direct(direct) => assert_eq!(
+                direct.argv,
+                vec![
+                    BString::from(b"/bin/sh".to_vec()),
+                    BString::from(b"-c".to_vec()),
+                    BString::from(b"echo one > out".to_vec()),
+                ]
+            ),
+            crate::subprocess::Launch::Shell(command) => {
+                panic!("plain flags launch directly, got a shell errand: {command:?}")
+            }
+        }
+    }
+
+    /// A single quote is not syntax the tokenizer refuses: it strips the quotes
+    /// and reads what is inside as one word, so `'-c'` is still the flag `-c`
+    /// and the launch stays direct. Splitting on whitespace alone would have
+    /// kept the quote bytes and passed `/bin/sh` a `'-c'` it reads as a file.
+    #[test]
+    fn single_quoted_flags_launch_directly() {
+        match layout().launch_step(&default_shell_step(b"'-c'"), &[]) {
+            crate::subprocess::Launch::Direct(direct) => {
+                assert_eq!(direct.argv[1], BString::from(b"-c".to_vec()));
+            }
+            crate::subprocess::Launch::Shell(command) => {
+                panic!("single-quoted flags are words, not a shell errand: {command:?}")
+            }
+        }
+    }
+
+    /// Flags holding shell syntax cannot be a command line's words: GNU Make's
+    /// `goto slow` hands the whole line to a shell that splits them. The launch
+    /// must be that shell's errand, with the flags copied in unescaped, so the
+    /// empty field the backquote expands to is dropped rather than left a real
+    /// argument that takes the recipe for the command and never runs it.
+    #[test]
+    fn syntax_flags_reach_a_shell() {
+        match layout().launch_step(&default_shell_step(b"-c `>pwned`"), &[]) {
+            crate::subprocess::Launch::Shell(command) => {
+                assert!(
+                    command.contains_str("-c `>pwned`"),
+                    "the flags reach the shell unescaped: {command:?}"
+                );
+            }
+            crate::subprocess::Launch::Direct(direct) => panic!(
+                "flags holding shell syntax must not become argv words: {:?}",
+                direct.argv
+            ),
+        }
+    }
 }
