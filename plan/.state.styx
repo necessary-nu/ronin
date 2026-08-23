@@ -877,6 +877,7 @@ assertions (
     {id make-a-shellflags-value-is-expanded-again-where-the-launch-reads-it, kind @complete, author "brendan@necessary.nu", at 2026-08-23T20:55:07.791549757Z}
     {id make-a-shell-holding-shell-syntax-is-escaped-into-the-assembled-line, kind @complete, author "brendan@necessary.nu", at 2026-08-23T21:36:28.823235097Z}
     {id make-a-default-shell-launch-splits-shellflags-a-shell-would-have-read, kind @complete, author "brendan@necessary.nu", at 2026-08-23T22:33:07.826113105Z}
+    {id make-a-regen-replay-reads-a-one-script-shell-as-a-command-line, kind @doing, author "brendan@necessary.nu", at 2026-08-23T22:34:22.086596595Z}
 )
 
 impl_evidence (
