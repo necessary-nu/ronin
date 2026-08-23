@@ -16259,6 +16259,51 @@ children (
                     }
                 )
             }
+
+            {
+                id make-a-shell-function-under-one-shell-is-read-by-the-one-shell-branch
+                title "Read a $(shell) under .ONESHELL: the way GNU's one-shell branch reads it"
+                kind @fix
+                deps (make-one-shell-flags-a-shell-would-split-are-three-words-not-none)
+                log (
+                    {
+                        at 2026-08-23T19:44:00.259451764Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while landing make-one-shell-flags-a-shell-would-split-are-three-words-not-none, and PRE-EXISTING on BOTH sides.\n\nGNU Make's `one_shell` is a GLOBAL, not a parameter — three uses in the whole of job.c, and none of them asks who is calling. `func_shell_base` reaches `construct_command_argv` like everything else, so a `$(shell)` under `.ONESHELL:` is read by the one-shell branch too. Both tools read it as an ordinary command line whatever `.ONESHELL:` says, and `func.rs` says so in a comment that is wrong: \"one_shell is only consulted for a recipe\".\n\nTWO CELLS MEASURED, each one makefile run three ways.\n\nA NEWLINE IS A SEPARATOR. `construct_command_argv_internal` (job.c:3034) has `else if (one_shell && *p == '\\n') goto slow`, so a `$(shell)` whose command text holds a newline goes to a shell under `.ONESHELL:` and is exec'd directly without it:\n\n    define CMD\n    echo a\n    echo b\n    endef\n    .ONESHELL:\n    V := $(shell $(CMD))\n\n      GNU Make 4.4.1   V=[a b]        — two commands, two lines of output\n      Ronin            V=[a echo b]   — one exec, the newline a word separator\n      rkati            V=[a echo b]\n\nand the same makefile WITHOUT `.ONESHELL:` agrees in all three at `V=[a echo b]`, which is the control that says this is the global and nothing else.\n\nTHE INTERIOR PREFIXES COME OFF. The slow path's one-shell branch strips the blanks and `[@+-]` off the front of each line of the text it is about to hand over, for a Bourne-compatible shell. That is the recipe's stripping being applied to a `$(shell)`:\n\n    .ONESHELL:\n    V := $(shell @echo hi > out ; cat out)\n\n      GNU Make 4.4.1   V=[hi], and `out` written\n      Ronin            `/bin/sh: 1: @echo: not found`, V=[], no `out`\n      rkati            the same\n\nagain with the no-`.ONESHELL:` control agreeing in all three. A FILE, not narration.\n\nWHAT IS LIKELY THERE AND NOT MEASURED: the third of the one-shell branch's behaviours, the three-word answer for a `.SHELLFLAGS` the tokenizer refuses, which by the same reasoning should reach a `$(shell)` under `.ONESHELL:` as well. Probe it before assuming — 4.4.1's heap overflow on that path (recorded on `shell_flag_argv`) means the oracle cannot be asked below about five bytes of flags.\n\nWHERE. `crate::fileutil::ShellToReadWith::one_script`, which is `None` at `func.rs:688` and at `regen.rs:428` and carries the flags GNU would default to at `exec.rs`. The fix is presumably that a `$(shell)` under `.ONESHELL:` is a one-script launch too — but `one_script` currently means two things at once (the newline gate AND which flag splitting), so check that GNU really joins them before making them one field's answer. `func_shell_base` passes no line flags, which is what keeps `.POSIX:`'s `-ec` out of it.\n\nNot gated anywhere: no vendored conformance case and no ported case puts a `$(shell)` under `.ONESHELL:`."
+                    }
+                )
+            }
+
+            {
+                id make-a-shellflags-value-is-expanded-again-where-the-launch-reads-it
+                title "Expand the .SHELLFLAGS value a second time where the launch reads it"
+                kind @fix
+                deps (make-one-shell-flags-a-shell-would-split-are-three-words-not-none)
+                log (
+                    {
+                        at 2026-08-23T19:44:24.162768098Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while landing make-one-shell-flags-a-shell-would-split-are-three-words-not-none, and PRE-EXISTING on BOTH sides.\n\nGNU Make expands the `.SHELLFLAGS` value a SECOND time, where the launch reads it. `construct_command_argv` (job.c) looks the variable up and then does\n\n    shellflags = allocated_variable_expand_for_file (var->value, file);\n\non the VALUE — not on the reference. A simply-expanded `.SHELLFLAGS` was already expanded once when it was assigned, so a `$` its assignment left behind is expanded again here, against the target's own scope.\n\nMEASURED, with a shell that prints each argument on its own line:\n\n    X := ZZZ\n    .ONESHELL:\n    SHELL := ./argv.sh\n    .SHELLFLAGS := -e $$X -c\n    all:\n    \\t@echo one\n\n      GNU Make 4.4.1   [-e] [ZZZ] [-c] [echo one]\n      Ronin            [/bin/sh] [-c] [e $X -c] [echo one]\n      rkati            the same as Ronin\n\nBoth tools pass the `$X` through as text, so the value still holds a shell character and goes down the refused-flags path that\nmake-one-shell-flags-a-shell-would-split-are-three-words-not-none just built. GNU never gets there, because by the time it looks the value has no `$` in it at all. The divergence is therefore the expansion and not the splitting, and it would show under any recipe — the `.ONESHELL:` above is only what makes the words easy to read.\n\nWHAT TO PROBE BEFORE FIXING IT. `SHELL` is NOT read this way and must not be given the same treatment: measured on the same shape, `SHELL := ./shell$$X` reaches 4.4.1's exec as the literal path `./shell$X` whether or not `X` is defined. So this is `.SHELLFLAGS` alone, and the asymmetry is the thing to preserve. Probe also which scope the second expansion sees — `allocated_variable_expand_for_file` is handed the FILE, so a target-specific variable should be visible to it — and what a RECURSIVE `.SHELLFLAGS` does, where the value has not been expanded yet and this would be the second expansion of a first-expansion result.\n\nWHERE. `Evaluator::get_shell_flag` (kati/src-rs/eval.rs) ends at `eval_bound_var(Symbol::SHELLFLAGS, var)`, which is the reference's own expansion and not a second one over the result. The `.POSIX:` default branch above it is unaffected: GNU takes that branch before it reaches the expansion at all.\n\nNot gated anywhere: no vendored conformance case and no ported case leaves a `$` in a `.SHELLFLAGS` value."
+                    }
+                )
+            }
+
+            {
+                id make-a-shell-holding-shell-syntax-is-escaped-into-the-assembled-line
+                title "Escape a SHELL holding shell syntax into the assembled command line"
+                kind @fix
+                deps (make-one-shell-flags-a-shell-would-split-are-three-words-not-none)
+                log (
+                    {
+                        at 2026-08-23T19:44:47.317685868Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Found while landing make-one-shell-flags-a-shell-would-split-are-three-words-not-none, and PRE-EXISTING on BOTH sides. This one RUNS A COMMAND GNU Make never runs.\n\nWhere a launch has to go to a shell, GNU Make assembles `$(SHELL) $(.SHELLFLAGS) LINE` as text and escapes the shell into it, one character at a time, with the reason written beside the loop (job.c):\n\n    /* Copy SHELL, escaping any characters special to the shell.  If\n       we don't escape them, construct_command_argv_internal will\n       recursively call itself ad nauseam, or until stack overflow,\n       whichever happens first.  */\n    for (cp = shell; *cp != '\\0'; ++cp)\n      {\n        if (strchr (sh_chars, *cp) != 0)\n          *(ap++) = '\\\\';\n        *(ap++) = *cp;\n      }\n\nBoth tools copy the value in unescaped, so whatever shell syntax the value holds is the shell's to read.\n\nMEASURED, and the effect is a file:\n\n    SHELL := ./sh$$(touch pwned)\n    all:\n    \\t@echo one\n\n      GNU Make 4.4.1   `make: ./sh$(touch: No such file or directory`, Error 127, NO `pwned`\n      Ronin            `pwned` WRITTEN, then `env: './sh': No such file or directory`\n      rkati            `pwned` WRITTEN, then `/bin/sh: 1: ./sh: not found`\n\nGNU escapes the `$` and the `(`, so its own tokenizer hands the assembled line back as the words `./sh$(touch`, `pwned)`, `-c`, `echo one` and execs the first as a path. Both tools hand `./sh$(touch pwned) -c \"echo one\"` to a shell, which runs the substitution. Make's own exit status is 2 in all three, so the gate is the file and not the status.\n\nWHAT ELSE THE SAME MISSING ESCAPE REACHES, measured and NOT an effect: a `SHELL` holding a plain `$X` differs only in the diagnostic — GNU names `./shell$X` and both tools name `./shell`, because the shell expanded the reference to nothing — and both exit 127 through Make's 2. That is narration, and it is recorded here only so the fix is not written to chase it.\n\nWHERE. `run_command`'s assembly in kati/src-rs/fileutil.rs — `cmd_with_shell.put_slice(shell)` with no escaping, where `crate::strutil::escape_shell` is already applied to the command below it — and the same shape in `Layout::launch_step` (src/make/layout.rs), which builds `Launch::Shell` out of the shell, the flags and the escaped text. Note GNU escapes the SHELL and the LINE but copies the FLAGS in as they stand, which is what\nmake-one-shell-flags-a-shell-would-split-are-three-words-not-none's `command_line_flag_argv` already records; the fix here is the shell alone.\n\nPROBE BEFORE FIXING. Which character set: GNU uses `sh_chars`, `#;\"*?[]&|<>(){}$`^~!`, and NOT the backslash or the quotes that `escape_shell` also takes — the escaping the LINE gets is a different, wider loop in the same function. A `SHELL` with a plain space must keep working: measured, 4.4.1 answers `./shell: No such file or directory` for `SHELL := ./shell space.sh`, because a space is not in `sh_chars` and the tokenizer therefore splits it into two words, which is the documented \"SHELL may be a multi-word command\"."
+                    }
+                )
+            }
         )
         log (
             {
