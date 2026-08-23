@@ -15787,6 +15787,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-23T06:24:00.435742307Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "The completion note's measurement note said the `check-release.sh` performance refusal was host noise and gave the evidence as a spread of verdicts. That was an inference. It has since been measured against a control, and the control settles it.\n\n`scripts/check-release.sh` was run six times over the landed tree. Five refused and one passed clean, and the five named FIVE DIFFERENT workloads: `dependency-log-load` at 0.90x and again at 0.95x, `path-canonicalization` at 0.77x, `clean-tree-noop` at 0.81x, `manifest-command-evaluation` at 0.67x, `deep-graph-evaluation` at 0.97x. One run of `scripts/check-performance.sh --warmups 3 --repetitions 15` over the same tree passed clean, so the variance is in the sampling rather than in the code.\n\nTHE CONTROL. A worktree at 52d1e48 — the tree whose recorded baseline this dispatch started from, and whose `check-release.sh` the handover records as EXIT 0 — was built to a release binary and measured through the same harness under the same load. It refused three times out of three, naming `dependency-log-load` at 0.89x, `manifest-command-evaluation` at 0.60x and `path-canonicalization` at 0.82x. The binary was deleted and the worktree removed.\n\nSo the gate refuses on this host for the tree it was recorded on. Foreign silos held the load average between 9 and 17 throughout. Nothing in either node's diff is on the path of any of the six workloads named: they are Ninja-side manifest, graph and log workloads, and the changes are a `::`-specific settlement, a Make-frontend shell read, and the `-t` touch.\n\nEvery other stage of `check-release.sh` passed on every run. The performance stage wants a quiet host and did not get one; re-run it for the number that counts."
+                        after_done true
+                    }
                 )
             }
 
