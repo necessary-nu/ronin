@@ -391,6 +391,42 @@ impl Builder<'_> {
         self.resolve_deferred_new_inputs(edge, command, NewInputsReferenceContext::InlineCommand)
     }
 
+    /// Whether any of this edge's texts can be holding a reference the build
+    /// fills in.
+    ///
+    /// Asked so that narrating an edge that deferred nothing costs nothing,
+    /// which is every Ninja edge and most Make ones.
+    pub(super) fn defers_a_reference(&self, edge: EdgeId) -> bool {
+        self.graph.deferred_freshness(edge).is_some() || self.graph.settled_names(edge).is_some()
+    }
+
+    /// One of an edge's texts as a reader is to be shown it.
+    ///
+    /// `${KATI_NEW_INPUTS}` and a settled-name reference are names the
+    /// COMPILER invented to carry a value across the boundary, in the sense
+    /// `.ronin_grouped_join/N` was: each stands for something the Makefile
+    /// wrote, and a reader shown one is being shown working notes rather than
+    /// the command a run would execute. So the launch's own substitution is
+    /// made here too, over the text that is narrated.
+    ///
+    /// Both spellings are filled in, because the two texts the reporter
+    /// chooses between spell one reference two ways: a command line nests the
+    /// recipe inside a double-quoted `-c` argument and escapes the reference
+    /// along with it, while a description is the recipe's own text and carries
+    /// the reference as kati wrote it. Neither pass can find what the other
+    /// replaces, so the pair of them is the answer for either text.
+    ///
+    /// Not what the build log keeps, deliberately, and that is why this is a
+    /// second substitution rather than a move of the first: the logged command
+    /// is hashed to decide whether the recipe changed since last time, and a
+    /// value that differs from run to run — `$?` is exactly that — would make
+    /// every target carrying one look rebuilt every time.
+    pub(super) fn deferred_narration(&self, edge: EdgeId, text: &BString) -> BString {
+        let inline =
+            self.resolve_deferred_new_inputs(edge, text, NewInputsReferenceContext::InlineCommand);
+        self.resolve_deferred_new_inputs(edge, &inline, NewInputsReferenceContext::ResponseFile)
+    }
+
     /// The same substitution into a launch that names its own program.
     ///
     /// A word of an argument list reaches the program as it stands, so the

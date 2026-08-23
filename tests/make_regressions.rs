@@ -2288,3 +2288,196 @@ fn a_shell_nothing_needs_is_unasked() {
     assert_eq!(refused.status.code(), Some(2), "{said}");
     assert!(said.contains("references itself"), "{said}");
 }
+
+/// What a reader is shown of a recipe holding `$?` is the names, not the name
+/// the compiler carried them under.
+///
+/// `${KATI_NEW_INPUTS}` and its `_D` and `_F` neighbours are what kati writes
+/// where the Makefile wrote `$?`, `$(?D)` and `$(?F)`: the list is not settled
+/// until every prerequisite has been made, which is later than any expansion,
+/// so the recipe carries a name and the build fills it in as the command
+/// launches. A dry run launches nothing, and until this was gated it printed
+/// the name — which is a working note, in the sense `.ronin_grouped_join/N`
+/// was, rather than the command a run would execute.
+///
+/// Recorded from GNU Make 4.4.1, which prints
+/// `echo "new=[p1 sub/p2] d=[. sub] f=[p1 p2]" > log.txt` for this makefile
+/// under `-n`. The values are what is gated; the line around them is Ninja's.
+// [spec:ronin:req:make.narration+1/test]
+#[test]
+fn dry_run_narrates_new_input_names() {
+    let directory = test_directory("dry-run-new-inputs");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: p1 sub/p2\n\t@echo \"new=[$?] d=[$(?D)] f=[$(?F)]\" > log.txt\n",
+    )
+    .unwrap();
+    fs::write(directory.join("p1"), "").unwrap();
+    fs::write(directory.join("sub").join("p2"), "").unwrap();
+
+    let (succeeded, printed) = merged_make(&directory, &["-n"]);
+    assert!(succeeded, "{printed}");
+    assert!(
+        printed.contains("new=[p1 sub/p2] d=[. sub] f=[p1 p2]"),
+        "the dry run did not narrate the names GNU Make prints: {printed}"
+    );
+    assert!(
+        !printed.contains("KATI_NEW_INPUTS"),
+        "the dry run narrated the placeholder: {printed}"
+    );
+    assert!(
+        !directory.join("log.txt").exists(),
+        "the dry run wrote the recipe's target"
+    );
+}
+
+/// The same names, in the line an ordinary build prints for the same recipe.
+///
+/// Not a second spelling of the case above but the other half of it: a build
+/// with no `-n` narrates the recipe's own text where the dry run narrates the
+/// command line, and kati writes the reference into the two differently — bare
+/// in the text, escaped where the text is nested in a double-quoted `-c`
+/// argument. A fix that filled in one spelling would leave the other showing
+/// the placeholder to every reader of an ordinary build.
+// [spec:ronin:req:make.narration+1/test]
+#[test]
+fn a_build_narrates_new_input_names() {
+    let directory = test_directory("build-new-inputs");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: p1 sub/p2\n\t@echo \"new=[$?] d=[$(?D)] f=[$(?F)]\" > log.txt\n",
+    )
+    .unwrap();
+    fs::write(directory.join("p1"), "").unwrap();
+    fs::write(directory.join("sub").join("p2"), "").unwrap();
+
+    let (succeeded, printed) = merged_make(&directory, &[]);
+    assert!(succeeded, "{printed}");
+    assert!(
+        printed.contains("new=[p1 sub/p2] d=[. sub] f=[p1 p2]"),
+        "the build did not narrate the names its recipe ran with: {printed}"
+    );
+    assert!(
+        !printed.contains("KATI_NEW_INPUTS"),
+        "the build narrated the placeholder: {printed}"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.join("log.txt")).unwrap(),
+        "new=[p1 sub/p2] d=[. sub] f=[p1 p2]\n",
+        "the recipe ran with names other than the ones narrated"
+    );
+}
+
+/// A prerequisite the directory search answered about carries a name of its
+/// own until the build decides whether it is remade, and a dry run must show
+/// the spelling the run settled on rather than that name.
+///
+/// `KATI_SETTLED_N` is the second family of reference the same substitution
+/// fills in, and it reaches a reader through the same narration: a recipe read
+/// early — this one is read early because `$?` made the edge deferred — holds
+/// one for every prerequisite `VPATH` found.
+///
+/// Recorded from GNU Make 4.4.1, which prints `echo one >> out.o` and then
+/// `echo "first=out.o all=out.o new=out.o" > log.txt` for this makefile under
+/// `-n`: `keep` is newer than `src/out.o`, so the chain's target is remade and
+/// every reference to it is the name as written.
+// [spec:ronin:req:make.narration+1/test]
+#[test]
+fn dry_run_narrates_a_settled_name() {
+    let directory = test_directory("dry-run-settled-name");
+    fs::create_dir_all(directory.join("src")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "VPATH = src\nall: out.o\n\t@echo \"first=$< all=$^ new=$?\" > log.txt\nout.o: keep\n\t@echo one >> $@\n",
+    )
+    .unwrap();
+    write_at(&directory.join("src"), "out.o", "", 100);
+    write_at(&directory, "keep", "", 200);
+
+    let (succeeded, printed) = merged_make(&directory, &["-n"]);
+    assert!(succeeded, "{printed}");
+    assert!(
+        printed.contains("first=out.o all=out.o new=out.o"),
+        "the dry run did not narrate the settled name: {printed}"
+    );
+    assert!(
+        !printed.contains("KATI_SETTLED_"),
+        "the dry run narrated the settled-name placeholder: {printed}"
+    );
+}
+
+/// An archive member reaches `$?` under the name the archive publishes it by,
+/// and that name is the one a dry run shows.
+///
+/// The member's arm of the value is the one that answers off the front end's
+/// published spelling rather than off the graph's node, so it is a third path
+/// into the same substitution — and GNU Make's own SV 61436 shape, where the
+/// recipe handed `$?` to `ar`, is where the placeholder reaching a shell was
+/// first seen.
+///
+/// Recorded from GNU Make 4.4.1, which prints `echo "AR=ar Q=a.o b.o"` for
+/// this makefile under `-n`.
+// [spec:ronin:req:make.narration+1/test]
+#[test]
+fn dry_run_narrates_archive_member_names() {
+    let directory = test_directory("dry-run-archive-new-inputs");
+    fs::write(
+        directory.join("Makefile"),
+        "mylib.a: mylib.a(a.o) mylib.a(b.o)\n\t@echo \"AR=$(AR) Q=$?\"\n(%): %\n\t$(AR) $(ARFLAGS) $@ $%\n%.o : %.c\n\t@echo Compile $<\n\t@touch $@\n",
+    )
+    .unwrap();
+    fs::write(directory.join("a.c"), "int a;\n").unwrap();
+    fs::write(directory.join("b.c"), "int b;\n").unwrap();
+
+    let (succeeded, printed) = merged_make(&directory, &["-n"]);
+    assert!(succeeded, "{printed}");
+    assert!(
+        printed.contains("AR=ar Q=a.o b.o"),
+        "the dry run did not narrate the members' published names: {printed}"
+    );
+    assert!(
+        !printed.contains("KATI_NEW_INPUTS"),
+        "the dry run narrated the placeholder: {printed}"
+    );
+    assert!(
+        !directory.join("mylib.a").exists(),
+        "the dry run filed the archive"
+    );
+}
+
+/// A composed child's recipe names its prerequisites the way the child's own
+/// Makefile did, and the dry run that prints it says the same.
+///
+/// The value is spelt against the unit the recipe was read in, so this is the
+/// cell that would catch a narration filled in from the parent's directory —
+/// `sub/p1 sub/p2` where the recipe runs in `sub` and would find neither.
+///
+/// Recorded from GNU Make 4.4.1, which starts the child under `-n` and lets it
+/// print `echo "new=[p1 p2]" > log.txt`.
+// [spec:ronin:req:make.narration+1/test]
+#[test]
+fn a_child_narrates_its_own_spelling() {
+    let directory = test_directory("dry-run-child-new-inputs");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(directory.join("Makefile"), "all:\n\t@$(MAKE) -C sub\n").unwrap();
+    fs::write(
+        directory.join("sub").join("Makefile"),
+        "all: p1 p2\n\t@echo \"new=[$?]\" > log.txt\n",
+    )
+    .unwrap();
+    fs::write(directory.join("sub").join("p1"), "").unwrap();
+    fs::write(directory.join("sub").join("p2"), "").unwrap();
+
+    let (succeeded, printed) = merged_make(&directory, &["-n"]);
+    assert!(succeeded, "{printed}");
+    assert!(
+        printed.contains("new=[p1 p2]"),
+        "the dry run did not narrate the child's own spelling: {printed}"
+    );
+    assert!(
+        !printed.contains("KATI_NEW_INPUTS"),
+        "the dry run narrated the placeholder: {printed}"
+    );
+}

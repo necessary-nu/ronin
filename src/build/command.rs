@@ -1,4 +1,4 @@
-use super::reporter::Rendering;
+use super::reporter::{Narrated, Rendering};
 use super::{Builder, status};
 use crate::error::{BuildError, BuildOperation, ProcessError};
 use crate::graph::{EdgeId, Graph, PathStyle, edgehash};
@@ -60,6 +60,17 @@ impl DepsType {
 }
 
 impl CommandSpec {
+    /// The two texts this command would be narrated by, as it holds them.
+    ///
+    /// The answer for every edge that deferred nothing; see [`Narration`] for
+    /// the one that did.
+    pub(super) fn narrated(&self) -> Narrated<'_> {
+        Narrated {
+            command: self.command.as_bytes(),
+            description: self.description.as_bytes(),
+        }
+    }
+
     /// Evaluate an edge's control bindings in one pass.
     ///
     /// Only four of these are kept; the rest are inspected and discarded, so
@@ -319,6 +330,38 @@ impl Pretending {
             Self::Nothing => false,
             Self::EveryStep => true,
             Self::AllButRunning => !runs_while_pretending,
+        }
+    }
+}
+
+/// What one edge is narrated by, once the values the build fills in at launch
+/// have been filled into the text a reader is shown.
+///
+/// Two cases rather than one owned pair, so that an edge which deferred
+/// nothing is narrated straight out of its [`CommandSpec`] and costs no
+/// allocation at all.
+pub(super) enum Narration<'a> {
+    /// Nothing was deferred: the spec's own texts are what is shown.
+    AsGiven(&'a CommandSpec),
+    /// A reference the build fills in stood in the text, and this is the text
+    /// with the value in its place.
+    Filled {
+        command: BString,
+        description: BString,
+    },
+}
+
+impl Narration<'_> {
+    pub(super) fn narrated(&self) -> Narrated<'_> {
+        match self {
+            Self::AsGiven(spec) => spec.narrated(),
+            Self::Filled {
+                command,
+                description,
+            } => Narrated {
+                command: command.as_bytes(),
+                description: description.as_bytes(),
+            },
         }
     }
 }
@@ -803,7 +846,24 @@ impl Builder<'_> {
         result.map(|()| painted)
     }
 
-    fn emit_status(&mut self, edge: EdgeId, command: &CommandSpec) -> BuildResult<()> {
+    /// What this edge is narrated by, which is not always what it is hashed by.
+    ///
+    /// A front end may leave a reference in the command for the build to fill
+    /// in as it launches — `$?`, or a prerequisite whose name the directory
+    /// search had not settled when the recipe was read. The value is known by
+    /// the time there is anything to say about the edge, so the reader is
+    /// shown it rather than the name that carried it.
+    fn narration<'a>(&self, edge: EdgeId, command: &'a CommandSpec) -> Narration<'a> {
+        if !self.defers_a_reference(edge) {
+            return Narration::AsGiven(command);
+        }
+        Narration::Filled {
+            command: self.deferred_narration(edge, &command.command),
+            description: self.deferred_narration(edge, &command.description),
+        }
+    }
+
+    fn emit_status(&mut self, edge: EdgeId, command: Narrated<'_>) -> BuildResult<()> {
         self.emit_explanations(edge)?;
         if self.options.quiet {
             return Ok(());
@@ -817,9 +877,10 @@ impl Builder<'_> {
         command: &CommandSpec,
     ) -> BuildResult<()> {
         self.progress.started += 1;
-        self.reporter.started(&self.options, command);
+        let narration = self.narration(edge, command);
+        self.reporter.started(&self.options, narration.narrated());
         if command.use_console {
-            self.emit_status(edge, command)?;
+            self.emit_status(edge, narration.narrated())?;
             self.flush_sinks()?;
             return Ok(());
         }
@@ -841,11 +902,12 @@ impl Builder<'_> {
         status::recalculate_prediction(&mut self.progress);
         self.reporter.ended();
         let wrote_batch = !command.use_console || failure_code.is_some() || !output.is_empty();
+        let narration = self.narration(edge, command);
         if !command.use_console {
-            self.emit_status(edge, command)?;
+            self.emit_status(edge, narration.narrated())?;
         }
         if let Some(exit_code) = failure_code {
-            self.emit_failure(edge, exit_code, command)?;
+            self.emit_failure(edge, exit_code, narration.narrated())?;
         }
         if !output.is_empty() {
             self.emit_below_bar(output)?;
@@ -861,7 +923,7 @@ impl Builder<'_> {
         &mut self,
         edge: EdgeId,
         exit_code: i32,
-        command: &CommandSpec,
+        command: Narrated<'_>,
     ) -> BuildResult<()> {
         self.emit_rendered(Rendering::Failure {
             edge,

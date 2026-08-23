@@ -28,9 +28,9 @@ case	features/archives.diff	narration	ninja-progress+recipe-echo
 case	features/archives.diff.1	narration	ninja-progress+recipe-echo
 case	features/archives.diff.10	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	features/archives.diff.11	narration	no-work-line
-case	features/archives.diff.12	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/archives.diff.12	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	features/archives.diff.13	narration	no-work-line+up-to-date-line
-case	features/archives.diff.14	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/archives.diff.14	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	features/archives.diff.15	narration	no-work-line+up-to-date-line
 case	features/archives.diff.2	narration	ninja-progress+recipe-echo
 case	features/archives.diff.3	narration	no-work-line

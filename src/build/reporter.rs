@@ -14,7 +14,6 @@
 //! An enum gives the same direct, inlinable call for a branch on a value that
 //! is fixed before the first command starts.
 
-use super::command::CommandSpec;
 use super::{BuildOptions, BuildState, status};
 use crate::graph::{EdgeId, Graph};
 use crate::util::ByteSlice;
@@ -154,13 +153,26 @@ impl Palette {
 #[derive(Clone, Copy)]
 pub(super) enum Rendering<'a> {
     /// A command has started (console pool) or finished (everything else).
-    Status(&'a CommandSpec),
+    Status(Narrated<'a>),
     /// A command exited non-zero.
     Failure {
         edge: EdgeId,
         exit_code: i32,
-        command: &'a CommandSpec,
+        command: Narrated<'a>,
     },
+}
+
+/// The two texts a command can be narrated by.
+///
+/// Held apart from the [`super::command::CommandSpec`] they are usually taken
+/// from, because they are not always what it holds: a reference the front end
+/// left for the build to fill in as the command launches is filled into these
+/// as well, so that a reader is shown the command a run would execute rather
+/// than the name that carried the value. See [`super::command::Narration`].
+#[derive(Clone, Copy)]
+pub(super) struct Narrated<'a> {
+    pub(super) command: &'a [u8],
+    pub(super) description: &'a [u8],
 }
 
 /// A line held at the bottom of the terminal while the build scrolls above it.
@@ -247,7 +259,7 @@ impl Reporter {
     }
 
     /// Note that a command has begun, so the bar can name it.
-    pub(super) fn started(&mut self, options: &BuildOptions, command: &CommandSpec) {
+    pub(super) fn started(&mut self, options: &BuildOptions, command: Narrated<'_>) {
         if let Self::Cargo(style) = self
             && let Some(bar) = style.bar.as_mut()
         {
@@ -304,7 +316,7 @@ impl Reporter {
         out: &mut Vec<u8>,
         progress: &BuildState,
         options: &BuildOptions,
-        command: &CommandSpec,
+        command: Narrated<'_>,
     ) {
         match self {
             Self::Ninja => ninja_status(out, progress, options, command),
@@ -319,7 +331,7 @@ impl Reporter {
         graph: &Graph,
         edge: EdgeId,
         exit_code: i32,
-        command: &CommandSpec,
+        command: Narrated<'_>,
     ) {
         match self {
             Self::Ninja => ninja_failure(out, graph, edge, exit_code, command),
@@ -428,7 +440,7 @@ fn ninja_status(
     out: &mut Vec<u8>,
     progress: &BuildState,
     options: &BuildOptions,
-    command: &CommandSpec,
+    command: Narrated<'_>,
 ) {
     let description = describe(options, command).text();
     let line = status::format_progress_status(progress, &options.statusfmt);
@@ -453,7 +465,7 @@ fn ninja_failure(
     graph: &Graph,
     edge: EdgeId,
     exit_code: i32,
-    command: &CommandSpec,
+    command: Narrated<'_>,
 ) {
     let _ = write!(out, "FAILED: [code={exit_code}] ");
     for output in &graph.edge(edge).out {
@@ -461,7 +473,7 @@ fn ninja_failure(
         out.push(b' ');
     }
     out.push(b'\n');
-    out.extend_from_slice(command.command.as_bytes());
+    out.extend_from_slice(command.command);
     out.push(b'\n');
 }
 
@@ -486,7 +498,7 @@ fn cargo_status(
     palette: Palette,
     progress: &BuildState,
     options: &BuildOptions,
-    command: &CommandSpec,
+    command: Narrated<'_>,
 ) {
     match describe(options, command) {
         Subject::Described(text) => {
@@ -518,7 +530,7 @@ fn cargo_failure(
     graph: &Graph,
     edge: EdgeId,
     exit_code: i32,
-    command: &CommandSpec,
+    command: Narrated<'_>,
 ) {
     write_verb(out, b"Failed", palette.failure, palette.reset);
     for output in &graph.edge(edge).out {
@@ -527,7 +539,7 @@ fn cargo_failure(
     }
     let _ = writeln!(out, " (exit {exit_code})");
     out.extend_from_slice(&CONTINUATION);
-    out.extend_from_slice(command.command.as_bytes());
+    out.extend_from_slice(command.command);
     out.push(b'\n');
 }
 
@@ -600,16 +612,17 @@ impl<'a> Subject<'a> {
 
 /// A command's description, or the command itself when there is no
 /// description or the operator asked to see command lines.
-fn describe<'a>(options: &BuildOptions, command: &'a CommandSpec) -> Subject<'a> {
+const fn describe<'a>(options: &BuildOptions, command: Narrated<'a>) -> Subject<'a> {
     if options.verbose || command.description.is_empty() {
-        Subject::Command(command.command.as_bytes())
+        Subject::Command(command.command)
     } else {
-        Subject::Described(command.description.as_bytes())
+        Subject::Described(command.description)
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::command::CommandSpec;
     use super::*;
 
     fn spec(command: &str, description: &str) -> CommandSpec {
@@ -633,7 +646,7 @@ mod tests {
         progress.finished = 3;
         progress.total = 7;
         let mut out = Vec::new();
-        Reporter::new(style, false).status(&mut out, &progress, options, command);
+        Reporter::new(style, false).status(&mut out, &progress, options, command.narrated());
         String::from_utf8(out).expect("the fixture renders as text")
     }
 
@@ -736,7 +749,12 @@ mod tests {
         let command = spec("c++ -c a.cc", "Building a.cc.o");
         let progress = BuildState::new(options.clone());
         let mut out = Vec::new();
-        Reporter::new(OutputStyle::Cargo, true).status(&mut out, &progress, &options, &command);
+        Reporter::new(OutputStyle::Cargo, true).status(
+            &mut out,
+            &progress,
+            &options,
+            command.narrated(),
+        );
         assert_eq!(
             String::from_utf8(out).expect("the fixture renders as text"),
             "    \u{1b}[1;32mBuilding\u{1b}[0m a.cc.o\u{1b}[2m (0/0)\u{1b}[0m\n"
