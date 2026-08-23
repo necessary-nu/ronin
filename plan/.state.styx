@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-23T04:07:04.109065388Z
+last_sync_at 2026-08-23T04:54:22.243317349Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -116,6 +116,7 @@ derived_priorities (
     {id make-a-shell-that-needs-a-shell-to-name-is-a-recursive-variable, priority 0, derived_at 2026-08-23T02:30:23.301224505Z}
     {id make-a-staging-pass-reads-text-the-first-read-never-saw, priority 3, derived_at 2026-08-20T01:26:46.942098006Z}
     {id make-a-switch-names-a-target-gpath-renamed, priority 2, derived_at 2026-08-22T14:57:14.354837333Z}
+    {id make-a-target-specific-shell-does-not-reach-katis-own-executor, priority 1, derived_at 2026-08-23T04:54:22.243317349Z}
     {id make-a-target-specific-shell-is-not-the-one-that-runs, priority 0, derived_at 2026-08-22T22:42:04.685093825Z}
     {id make-a-what-if-date-a-double-colon-name-carries-reaches-nothing, priority 3, derived_at 2026-08-23T00:18:32.020741461Z}
     {id make-a-what-if-double-colon-refusal-reads-the-implicit-search, priority 3, derived_at 2026-08-23T00:18:32.020741461Z}
