@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-24T13:52:19.893816416Z
+last_sync_at 2026-08-24T15:20:25.263515419Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -397,6 +397,7 @@ derived_priorities (
     {id more-suites-leave-their-scratch-behind, priority 2, derived_at 2026-08-21T03:54:45.587795516Z}
     {id pretending-over-an-assembled-recipe, priority 3, derived_at 2026-08-21T01:25:26.204987864Z}
     {id question-mode-answers-up-to-date-after-an-interrupt, priority 3, derived_at 2026-08-22T00:58:32.477457695Z}
+    {id remove-the-kati-extensions-from-the-product, priority 0, derived_at 2026-08-24T15:20:25.263515419Z}
     {id ronin-alloc-metrics, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-allocator-revisit, priority 3, derived_at 2026-07-30T09:13:15.704782991Z}
     {id ronin-arena-slot-access, priority 0, derived_at 2026-07-31T14:10:28.410346265Z}
