@@ -63,7 +63,7 @@ struct Family {
     reason: &'static str,
 }
 
-const FAMILIES: [Family; 25] = [
+const FAMILIES: [Family; 28] = [
     Family {
         name: "fatal-decoration",
         class: Class::Narration,
@@ -183,6 +183,21 @@ const FAMILIES: [Family; 25] = [
         name: "parse-failure",
         class: Class::Compiler,
         reason: "compiler candidate: Ronin could not parse a Makefile GNU Make read.",
+    },
+    Family {
+        name: "pattern-peer-warning",
+        class: Class::Narration,
+        reason: "GNU Make's success-path `pattern recipe did not update peer target 'X'` warning, which make-narration-contract-audit retired as silent by operator decision (2026-08-17): emitting it would emulate Make rather than compile to a Ninja graph. The build the two tools agree on is gated separately.",
+    },
+    Family {
+        name: "delete-announce",
+        class: Class::Narration,
+        reason: "GNU Make's `*** Deleting file 'X'` announcement on the .DELETE_ON_ERROR path. make-delete-on-error-cleanup decided the announcement is not owed: Ronin withdraws the failed output silently, which is the same act the interrupt path already performs without a word.",
+    },
+    Family {
+        name: "jobserver-narration",
+        class: Class::Narration,
+        reason: "GNU Make's jobserver-mode runner messages — `-jN forced in submake: resetting jobserver mode`, `jobserver unavailable: using -j1`, `cannot open jobserver` — which a single-scheduler Ronin (make-single-ninja-scheduler) never emits, because recursive Make invocations compile into one graph with one scheduler and there is no jobserver transport between separate processes.",
     },
     Family {
         name: "evaluation",
@@ -371,6 +386,27 @@ fn normalise(line: &str, side: Side, source: &Source) -> Contribution {
         // line is its counterpart and is already narration.
         if body.starts_with("Target '") && body.ends_with("not remade because of errors.") {
             return Contribution::narration("not-remade-line");
+        }
+        // GNU Make's `*** Deleting file 'X'` on the .DELETE_ON_ERROR path. Ronin
+        // withdraws the failed output silently, which make-delete-on-error-cleanup
+        // decided is not owed. The fatal wrapper above does not catch it because
+        // it carries no `  Stop.`.
+        if body.contains("*** Deleting file '") {
+            return Contribution::narration("delete-announce");
+        }
+        // GNU Make's success-path pattern-peer warning, retired as silent by the
+        // 2026-08-17 operator ruling recorded on make-narration-contract-audit.
+        if body.contains("pattern recipe did not update peer target '") {
+            return Contribution::narration("pattern-peer-warning");
+        }
+        // GNU Make's jobserver-mode runner messages. A single-scheduler Ronin
+        // (make-single-ninja-scheduler) composes recursive Make into one graph
+        // and has no jobserver transport, so none of these has a counterpart.
+        if body.contains("forced in submake: resetting jobserver mode.")
+            || body.contains("jobserver unavailable: using -j1")
+            || body.contains("cannot open jobserver ")
+        {
+            return Contribution::narration("jobserver-narration");
         }
         // GNU Make's debug trace. The suite writes these expectations as bare
         // regexes, which is too weak a shape to read on its own — `/Updating

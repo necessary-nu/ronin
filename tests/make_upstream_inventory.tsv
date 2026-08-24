@@ -23,6 +23,9 @@ family	command-not-found-text	narration	both tools failed to run the same missin
 family	io-error-text	narration	both tools refused for the same reason and worded it differently; ours carries Rust's "(os error N)" suffix.
 family	makeflags-content	interface	interface observation: a Makefile read MAKEFLAGS and saw different switches; runner-only flags may deliberately be absent.
 family	parse-failure	compiler	compiler candidate: Ronin could not parse a Makefile GNU Make read.
+family	pattern-peer-warning	narration	GNU Make's success-path `pattern recipe did not update peer target 'X'` warning, which make-narration-contract-audit retired as silent by operator decision (2026-08-17): emitting it would emulate Make rather than compile to a Ninja graph. The build the two tools agree on is gated separately.
+family	delete-announce	narration	GNU Make's `*** Deleting file 'X'` announcement on the .DELETE_ON_ERROR path. make-delete-on-error-cleanup decided the announcement is not owed: Ronin withdraws the failed output silently, which is the same act the interrupt path already performs without a word.
+family	jobserver-narration	narration	GNU Make's jobserver-mode runner messages — `-jN forced in submake: resetting jobserver mode`, `jobserver unavailable: using -j1`, `cannot open jobserver` — which a single-scheduler Ronin (make-single-ninja-scheduler) never emits, because recursive Make invocations compile into one graph with one scheduler and there is no jobserver transport between separate processes.
 family	evaluation	unclassified	unclassified residue: exact output cannot distinguish graph intent from runner behavior; reproduce it through the build-intent gate.
 case	features/archives.diff	narration	ninja-progress+recipe-echo
 case	features/archives.diff.1	narration	ninja-progress+recipe-echo
@@ -274,13 +277,13 @@ case	features/jobserver.diff.12	narration	ninja-progress+recipe-echo
 case	features/jobserver.diff.13	unclassified	no-work-line+evaluation
 case	features/jobserver.diff.14	narration	no-work-line
 case	features/jobserver.diff.15	interface	ninja-progress+makeflags-content
-case	features/jobserver.diff.16	unclassified	ninja-progress+product-name+evaluation
-case	features/jobserver.diff.2	unclassified	ninja-progress+product-name+evaluation
-case	features/jobserver.diff.3	unclassified	ninja-progress+product-name+recipe-echo+evaluation
-case	features/jobserver.diff.4	unclassified	ninja-progress+product-name+evaluation
-case	features/jobserver.diff.5	unclassified	ninja-progress+no-work-line+product-name+evaluation
+case	features/jobserver.diff.16	narration	ninja-progress+jobserver-narration
+case	features/jobserver.diff.2	unclassified	ninja-progress+jobserver-narration+evaluation
+case	features/jobserver.diff.3	unclassified	ninja-progress+jobserver-narration+recipe-echo+evaluation
+case	features/jobserver.diff.4	narration	ninja-progress+jobserver-narration
+case	features/jobserver.diff.5	narration	ninja-progress+no-work-line+jobserver-narration
 case	features/jobserver.diff.6	narration	ninja-progress+no-work-line
-case	features/jobserver.diff.7	unclassified	ninja-progress+directory-announce+product-name+evaluation
+case	features/jobserver.diff.7	narration	ninja-progress+directory-announce+jobserver-narration
 case	features/jobserver.diff.8	narration	product-name+fatal-decoration+shared-refusal
 case	features/jobserver.diff.9	narration	ninja-progress
 case	features/mult_rules.diff	narration	product-name+fatal-decoration+shared-refusal
@@ -367,11 +370,11 @@ case	features/patternrules.diff.28	narration	ninja-progress+recipe-echo
 case	features/patternrules.diff.29	narration	ninja-progress+recipe-echo
 case	features/patternrules.diff.3	narration	ninja-progress+ninja-failure-block+recipe-error-line
 case	features/patternrules.diff.30	narration	ninja-progress+recipe-echo
-case	features/patternrules.diff.31	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/patternrules.diff.31	narration	ninja-progress+recipe-echo+pattern-peer-warning
 case	features/patternrules.diff.32	narration	no-work-line+up-to-date-line
 case	features/patternrules.diff.33	narration	ninja-progress
-case	features/patternrules.diff.34	unclassified	ninja-progress+no-work-line+recipe-echo+up-to-date-line+evaluation
-case	features/patternrules.diff.35	unclassified	ninja-progress+recipe-echo+intermediate-sweep+evaluation
+case	features/patternrules.diff.34	narration	ninja-progress+no-work-line+recipe-echo+pattern-peer-warning+up-to-date-line
+case	features/patternrules.diff.35	narration	ninja-progress+recipe-echo+pattern-peer-warning+intermediate-sweep
 case	features/patternrules.diff.36	narration	no-work-line
 case	features/patternrules.diff.37	narration	no-work-line
 case	features/patternrules.diff.38	narration	no-work-line
@@ -750,7 +753,7 @@ case	functions/shell.diff.14	narration	product-name+ninja-progress
 case	functions/shell.diff.15	narration	product-name+ninja-progress
 case	functions/shell.diff.16	narration	ninja-progress
 case	functions/shell.diff.17	narration	ninja-progress
-case	functions/shell.diff.18	unclassified	ninja-progress+product-name+recipe-echo+evaluation
+case	functions/shell.diff.18	narration	ninja-progress+jobserver-narration+recipe-echo
 case	functions/shell.diff.19	narration	ninja-progress+recipe-echo
 case	functions/shell.diff.2	narration	ninja-progress
 case	functions/shell.diff.20	narration	ninja-progress+recipe-echo
@@ -983,8 +986,8 @@ case	options/warn-undefined-variables.diff.1	narration	ninja-progress
 case	options/warn-undefined-variables.diff.2	unclassified	ninja-progress+evaluation
 case	options/warn-undefined-variables.diff.3	unclassified	no-work-line+up-to-date-line+evaluation
 case	targets/DEFAULT.diff	unclassified	no-work-line+directory-announce+evaluation
-case	targets/DELETE_ON_ERROR.diff	unclassified	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+product-name+evaluation
-case	targets/DELETE_ON_ERROR.diff.1	unclassified	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+product-name+evaluation
+case	targets/DELETE_ON_ERROR.diff	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+delete-announce
+case	targets/DELETE_ON_ERROR.diff.1	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+delete-announce
 case	targets/FORCE.diff	narration	ninja-progress+recipe-echo
 case	targets/INTERMEDIATE.diff	narration	ninja-progress+recipe-echo+intermediate-sweep
 case	targets/INTERMEDIATE.diff.1	narration	no-work-line+up-to-date-line
