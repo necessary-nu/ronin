@@ -933,6 +933,7 @@ assertions (
     {id make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest, kind @complete, author "brendan@necessary.nu", at 2026-08-24T13:50:50.355670116Z}
     {id remove-the-kati-extensions-from-the-product, kind @complete, author "brendan@necessary.nu", at 2026-08-24T15:20:00.673750394Z}
     {id make-a-define-directive-whose-name-reads-as-an-assignment-panics, kind @doing, author "brendan@necessary.nu", at 2026-08-24T21:19:42.738522504Z}
+    {id make-an-empty-static-pattern-prerequisite-is-not-an-empty-path, kind @doing, author "brendan@necessary.nu", at 2026-08-24T21:42:06.200358354Z}
 )
 
 impl_evidence (

@@ -1,0 +1,18 @@
+# `foo` matches the target pattern `foo%` with an EMPTY stem, so each
+# prerequisite pattern has its `%` taken out rather than filled in: `a%b` is
+# `ab`, `%c` is `c`, `d%` is `d`, and a prerequisite written `%` alone loses
+# its only character and is left with no name.
+#
+# A name that comes out empty is no prerequisite at all. GNU Make's
+# `enter_prereqs` (file.c) drops it from the chain outright — "If the name
+# expanded to the empty string, ignore it" — so `$^` names the three real
+# files and the build asks for nothing else. Carrying the empty name on asks
+# the build for a file with no name, which is not a file the run can have.
+#
+# The two `%` prerequisites are written on either side of the real ones so the
+# recorded order shows they were dropped rather than emptied in place.
+foo: foo%: % a%b %c d% % ; @printf '%s\n' 'target=$@' 'prereqs=[$^]' 'stem=[$*]' > out
+
+# One file each, so what is recorded is which prerequisites were asked for
+# rather than the order a scheduler happened to reach them in.
+ab c d: ; @printf 'made %s\n' '$@' > made.$@
