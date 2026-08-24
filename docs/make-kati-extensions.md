@@ -316,10 +316,15 @@ are the interesting ones: their subject is a kati *warning switch*, but they
 build the shape it complains about out of `.KATI_IMPLICIT_OUTPUTS` and cannot be
 written without it.
 
-**Conformance movement.** 356 runs → 349; normalised 326 identical / 30 differing
-→ 326 / 28; raw 276 identical, unmoved. The two rows that left are exactly
-`phony_looks_real.sh#script` and `real_no_cmds.sh#script`; the other five were
-`ninja_*` scripts the make oracle never enumerates.
+**Conformance movement.** 356 runs → **354**; normalised 326 identical / 30
+differing → 326 / 28; raw 276 identical, unmoved. Seven cases were deleted and
+the run count falls by two, because five of the seven are `ninja_*` scripts the
+make oracle never enumerates. The two rows that left are exactly
+`phony_looks_real.sh#script` and `real_no_cmds.sh#script`.
+
+*(The commit that landed this family said 349 rather than 354 in its message. The
+count above is the measured one; the error was arithmetic, subtracting all seven
+deleted cases from the run total when five of them were never in it.)*
 
 ## What was NOT removed, and why
 
@@ -340,3 +345,26 @@ down here so it can be overruled.
 surface. `tests/make_regressions.rs` asserts in six cases that they never reach a
 reader. They keep the prefix because renaming them would be churn with no
 behaviour behind it.
+
+## The movement in one place
+
+| | runs | normalised identical | normalised differing | raw identical | `kati-extension` rows |
+| --- | --- | --- | --- | --- | --- |
+| before | 387 | 336 | 51 | 286 | 31 |
+| after the twelve functions | 365 | 324 | 41 | 275 | 20 |
+| after the readonly family | 356 | 324 | 32 | 275 | 11 |
+| after the `KATI` variable | 356 | 326 | 30 | 275 | 11 |
+| after the six edge variables | **354** | **326** | **28** | **276** | **8** |
+
+Forty-three corpus cases were deleted and every one is named above. Twenty-three
+inventory rows left, and every one was class `extension` except
+`file_func.sh#script` — the last `artefact` case, which left because the two
+tools started **agreeing**. Nothing that was byte-identical stopped being so.
+
+The eight rows still in the `kati-extension` family name no makefile syntax at
+all: `empty_ninja_file.sh`, `implicit_pattern_rule_warn.sh`,
+`real_no_cmds_or_deps.sh`, `real_to_phony.sh`, `suffix_rule_warn.sh`,
+`top_level_phony.sh`, `werror_overriding_commands.sh` and `writable.sh` each
+drive a kati-only **switch**, which is the surface this removal deliberately left
+alone. `werror_find_emulator.sh` is a ninth `extension`-class case under the
+`find-emulator` family for the same reason.

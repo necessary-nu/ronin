@@ -17278,6 +17278,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-24T15:21:43.334420343Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "ARITHMETIC CORRECTION to the delivery note above and to ronin 0ce81c1's commit message. The vendored corpus ends at 354 RUNS, not 349.\n\nMeasured: raw 276 identical byte for byte / 78 differing; normalised 326 identical / 28 differing, so 354 runs. The last family deleted SEVEN cases but the run count falls by only TWO, because five of the seven are `ninja_*` scripts the make oracle never enumerates. The error was subtracting all seven from the run total.\n\nEvery other number in the delivery note is measured and stands. The whole movement, corrected, is now a table in docs/make-kati-extensions.md:\n\n  before                          387 runs  336 identical  51 differing  286 raw  31 kati-extension rows\n  after the twelve functions      365       324            41            275      20\n  after the readonly family       356       324            32            275      11\n  after the KATI variable         356       326            30            275      11\n  after the six edge variables    354       326            28            276       8\n\nForty-three cases deleted, all named; twenty-three inventory rows left, all class `extension` except file_func.sh#script, which was the last `artefact` case and left because the two tools started AGREEING."
+                        after_done true
+                    }
                 )
             }
         )
