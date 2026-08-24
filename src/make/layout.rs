@@ -403,6 +403,39 @@ impl CommandLayout {
                 .iter()
                 .all(|step| step.text.len() <= RESPONSE_FILE_THRESHOLD)
     }
+
+    /// The launches a recipe read while compiling becomes, in the shapes the two
+    /// phases need.
+    ///
+    /// Every line its own launch, with the marker the front end reads under
+    /// `-t` and `-q` carried per line — `runs_while_pretending`, which is GNU
+    /// Make's `COMMANDS_RECURSE`. Built for both the ordinary environment and
+    /// the makefile update's, because a `$(MAKE)` a recipe line holds is handed
+    /// a `MAKEFLAGS` the two phases spell differently; see [`SettledSteps`].
+    pub(crate) fn settled_steps(
+        &self,
+        steps: &[kati::ninja::RecipeStep],
+        environment: &[kati::export::EnvironmentChange],
+    ) -> SettledSteps {
+        let launched = |scoped: &[kati::export::EnvironmentChange]| {
+            steps
+                .iter()
+                .map(|step| crate::build::LateStep {
+                    launch: self.launch_step(step, scoped),
+                    ignore_errors: step.ignore_error,
+                    runs_while_pretending: step.recursive_line,
+                })
+                .collect::<Vec<_>>()
+        };
+        let remaking = self.while_remaking_makefiles(environment);
+        if remaking.is_empty() {
+            SettledSteps::same(launched(environment))
+        } else {
+            let mut scoped = environment.to_vec();
+            scoped.extend(remaking);
+            SettledSteps::split(launched(environment), launched(&scoped))
+        }
+    }
 }
 
 /// A whole assembled script one rule runs, waiting for the edge that runs it.
@@ -499,6 +532,61 @@ impl SettledScript {
                 // program says nothing new about it.
                 runs_while_pretending: false,
             })
+    }
+}
+
+/// One segment of a composed recipe, held until there is an edge to run it for.
+///
+/// A recipe whose `$(MAKE)` composes is cut into segments — the lines ahead of
+/// each invocation, and the recipe's own trailing lines — and each segment is
+/// an ordinary recipe: GNU Make runs its lines one process each, so a
+/// `+`-marked line inside it runs under `-t` and answers under `-q` the way it
+/// would in any recipe. A segment therefore carries its per-line launches, the
+/// same as an uncomposed recipe the compiler read for itself.
+///
+/// The exception is the exception everywhere else: a line too long to be an
+/// argument needs a response file named after the edge, so a segment holding
+/// one keeps the whole assembled script and its single launch. That fallback is
+/// a [`SettledScript`], which is why the two live behind one type.
+pub(crate) enum SettledSegment {
+    /// Every line launched on its own. Ready before the edge exists, because a
+    /// line short enough to be an argument needs nothing the edge names — so
+    /// [`Self::launch`] hands these back whatever it is told the output is.
+    Lines(SettledSteps),
+    /// The whole segment as one assembled script, waiting for the edge whose
+    /// output names the response file it may be read from.
+    Whole(SettledScript),
+}
+
+impl SettledSegment {
+    /// One segment's launches, held until there is an edge to run them for.
+    ///
+    /// Line by line where every line can be an argument, and the assembled
+    /// script otherwise — the same rule [`CommandLayout::launches_line_by_line`]
+    /// applies to a recipe the compiler read whole.
+    pub(crate) fn held(
+        layout: CommandLayout,
+        rule: &kati::build_sink::SinkRule<'_>,
+        command: kati::build_sink::SinkCommand<'_>,
+        steps: &[kati::ninja::RecipeStep],
+        ignore_errors: bool,
+    ) -> Self {
+        if CommandLayout::launches_line_by_line(steps) {
+            Self::Lines(layout.settled_steps(steps, rule.recipe_environment))
+        } else {
+            Self::Whole(SettledScript::held(layout, rule, command, ignore_errors))
+        }
+    }
+
+    /// The launches, once `output` says what the edge's response file is called.
+    ///
+    /// The output matters only to the whole-script fallback; a line-by-line
+    /// segment settled its launches when the rule was declared.
+    pub(crate) fn launch(&self, output: &[u8]) -> Option<SettledSteps> {
+        match self {
+            Self::Lines(steps) => Some(steps.clone()),
+            Self::Whole(script) => script.launch(output),
+        }
     }
 }
 

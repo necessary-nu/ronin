@@ -66,7 +66,7 @@ impl Bindings {
     }
 }
 
-pub(crate) use super::layout::{CommandLayout, SettledScript, SettledSteps};
+pub(crate) use super::layout::{CommandLayout, SettledScript, SettledSegment, SettledSteps};
 
 /// One static recursive invocation within a held recipe.
 pub(crate) struct SubninjaInvocation {
@@ -78,8 +78,9 @@ pub(crate) struct SubninjaInvocation {
     /// runs them. `None` when the invocation is the first thing the recipe
     /// does after the one before it.
     pub(crate) preceding_rule: Option<Rule>,
-    /// How that rule's script is launched, once its edge exists.
-    preceding_script: Option<SettledScript>,
+    /// How that segment is launched, once its edge exists: line by line where
+    /// its lines can be, and as the assembled script where one cannot.
+    preceding_script: Option<SettledSegment>,
     /// The Makefile and line the recipe line was written on, for a report that
     /// has to point at the invocation it is about. `None` for a build, which
     /// has nothing to say about it.
@@ -105,8 +106,9 @@ pub(crate) struct PendingSubninja {
     pub(crate) invocations: Vec<SubninjaInvocation>,
     pub(crate) scope: Scope,
     residual_rule: Option<Rule>,
-    /// How the residual rule's script is launched, once its edge exists.
-    residual_script: Option<SettledScript>,
+    /// How the residual segment is launched, once its edge exists: line by line
+    /// where its lines can be, and as the assembled script where one cannot.
+    residual_script: Option<SettledSegment>,
     diagnostic_command: Vec<u8>,
     explicit_outputs: Vec<Node>,
     implicit_outputs: Vec<Node>,
@@ -161,7 +163,7 @@ struct PendingDeferred {
 struct SubninjaRule {
     invocations: Vec<SubninjaInvocation>,
     residual_rule: Option<Rule>,
-    residual_script: Option<SettledScript>,
+    residual_script: Option<SettledSegment>,
     diagnostic_command: Vec<u8>,
 }
 
@@ -1311,12 +1313,21 @@ impl BuildSink for GraphSink {
                     self.define_executor_rule(name.as_bytes(), bindings)
                 })
                 .transpose()?;
-            // A segment of a recipe is a script like any other, and reaches one
-            // shell like any other: the lines it holds were never the ones the
-            // split would have launched separately, because the invocation
-            // lifted out from between them is not among them.
+            // A segment of a recipe is a recipe: GNU Make runs its lines one
+            // process each, so a `+`-marked line inside it runs under `-t` and
+            // answers under `-q` the way it would in any recipe. The invocation
+            // lifted out from between the lines is not among them, so the split
+            // is over exactly the lines the segment kept — line by line where
+            // each can be an argument, and the assembled script where one is
+            // too long to be one.
             let residual_script = rule.residual_command.map(|command| {
-                SettledScript::held(self.layout(), rule, command, rule.residual_ignore_errors)
+                SettledSegment::held(
+                    self.layout(),
+                    rule,
+                    command,
+                    rule.residual_steps,
+                    rule.residual_ignore_errors,
+                )
             });
             let mut invocations = Vec::with_capacity(rule.subninjas.len());
             for (index, subninja) in rule.subninjas.iter().enumerate() {
@@ -1333,10 +1344,11 @@ impl BuildSink for GraphSink {
                     None => None,
                 };
                 let preceding_script = subninja.preceding.map(|command| {
-                    SettledScript::held(
+                    SettledSegment::held(
                         self.layout(),
                         rule,
                         command,
+                        subninja.preceding_steps,
                         subninja.preceding_ignore_errors,
                     )
                 });
@@ -1381,30 +1393,13 @@ impl BuildSink for GraphSink {
         // whether the split is possible at all: a line too long to be an
         // argument needs a response file, and the file is named per edge.
         if CommandLayout::launches_line_by_line(rule.steps) {
-            let layout = self.layout();
-            let launched = |environment: &[kati::export::EnvironmentChange]| {
-                rule.steps
-                    .iter()
-                    .map(|step| crate::build::LateStep {
-                        launch: layout.launch_step(step, environment),
-                        ignore_errors: step.ignore_error,
-                        runs_while_pretending: step.recursive_line,
-                    })
-                    .collect::<Vec<_>>()
-            };
             // Both phases' launches, because the makefile update hands a
             // `$(MAKE)` on one of these lines a `MAKEFLAGS` the goals do not.
             // See [`SettledSteps`].
-            let remaking = layout.while_remaking_makefiles(rule.recipe_environment);
             self.settled_rules.insert(
                 rule.id,
-                if remaking.is_empty() {
-                    SettledSteps::same(launched(rule.recipe_environment))
-                } else {
-                    let mut environment = rule.recipe_environment.to_vec();
-                    environment.extend(remaking);
-                    SettledSteps::split(launched(rule.recipe_environment), launched(&environment))
-                },
+                self.layout()
+                    .settled_steps(rule.steps, rule.recipe_environment),
             );
         } else if rule.deferred_recipe.is_none() {
             // A recipe whose lines are not the launches — one whose script a

@@ -1,13 +1,13 @@
 oracle GNU Make 4.4.1
 outcome failure
 file Makefile kept 12
-| # A `+` line runs even where the build is standing in for its recipe: GNU Make
-| # touches the target and runs the marked lines. This recipe composes a `$(MAKE)`,
-| # so it is cut into segments and each segment reaches one shell as an assembled
-| # script — one launch, with one answer to "does this run anyway", and the answer
-| # it was given is no. So the marked lines do not run.
-| #
-| # RECORDED DIVERGENCE. See the `divergence` file beside this one.
+| # Under `-q` GNU Make runs the marked lines it meets before the first unmarked
+| # one and reads their status. This recipe composes a `$(MAKE)`, so it is cut
+| # into segments; each segment carries its per-line launches, so the marked line
+| # ahead of the invocation runs while the question is asked and writes its file.
+| # The child is then questioned, is not up to date, and the answer is 1 — the
+| # recipe's own trailing lines are never reached, exactly as GNU Make stops at
+| # the first line it cannot stand in for.
 | goal:
 | 	+@echo marked-before > before.out
 | 	@$(MAKE) --no-print-directory -C sub child

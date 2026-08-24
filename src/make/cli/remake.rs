@@ -263,14 +263,30 @@ impl Passes<'_, '_, '_> {
     }
 
     /// Answer `-q` about one subset instead of building it.
+    ///
+    /// Not a look at the plan: GNU Make's `-q` runs a recipe's `+`-marked lines
+    /// while it asks — `start_job_command` answers only on a line the makefile
+    /// did not mark (job.c) — and reads their status, so a segment whose lines
+    /// are marked answers only once an unmarked one is reached. That is
+    /// [`Builder::interrogate`], which is why the front end and the output it
+    /// writes have to be in hand the way they are for a build. A segment handed
+    /// over whole is one step nothing marked, so it answers at once exactly as a
+    /// plan-is-not-empty check would have — the two differ only over the marked
+    /// line this exists to run.
     fn ask(&mut self, targets: &[Node], options: BuildOptions) -> Pass {
         let mut build = Build::with_options(self.graph, self.persistence, options);
+        if let Some(recipes) = self.recipes.as_deref_mut() {
+            build = build.late_commands(recipes);
+        }
+        if let Some(sink) = self.output.as_deref_mut() {
+            build = build.output(sink);
+        }
         if let Some(sink) = self.diagnostics.as_deref_mut() {
             build = build.diagnostics(sink);
         }
         let question = build
             .plan(targets)
-            .map(|planned| planned.already_up_to_date());
+            .and_then(|mut planned| planned.interrogate());
         if matches!(question, Ok(true)) {
             return Pass::Current;
         }

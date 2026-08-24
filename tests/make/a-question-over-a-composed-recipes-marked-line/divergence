@@ -1,9 +1,0 @@
-KNOWN GAP, owned by `a-composed-recipe-segment-arrives-without-its-lines`.
-
-The same shape as `a-touch-over-a-composed-recipes-marked-line` under `-q`,
-where the answer rather than the disk is what moves. GNU Make runs the marked
-lines it meets before the first unmarked one and reads their status; Ronin's
-segment is one launch that never runs, so it answers without running anything.
-
-GNU Make 4.4.1 writes `before.out` and exits 1. Ronin exits 1 having written
-nothing. Decided on `pretending-over-an-assembled-recipe`.
