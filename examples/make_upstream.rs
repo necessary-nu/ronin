@@ -63,7 +63,7 @@ struct Family {
     reason: &'static str,
 }
 
-const FAMILIES: [Family; 28] = [
+const FAMILIES: [Family; 34] = [
     Family {
         name: "fatal-decoration",
         class: Class::Narration,
@@ -198,6 +198,36 @@ const FAMILIES: [Family; 28] = [
         name: "jobserver-narration",
         class: Class::Narration,
         reason: "GNU Make's jobserver-mode runner messages — `-jN forced in submake: resetting jobserver mode`, `jobserver unavailable: using -j1`, `cannot open jobserver` — which a single-scheduler Ronin (make-single-ninja-scheduler) never emits, because recursive Make invocations compile into one graph with one scheduler and there is no jobserver transport between separate processes.",
+    },
+    Family {
+        name: "recursive-invocation-echo",
+        class: Class::Narration,
+        reason: "GNU Make echoed a recipe line that runs Make again; Ronin composes a recursive $(MAKE) into the same graph (make-subninja-recursion, make-single-ninja-scheduler), so no such command is ever launched and there is nothing to echo. The sub-build's own output still appears on both sides. Recognised from the make program the driver actually invoked, read off the case's own `.run` file, and never under `-n`, where an echoed line is the dry run's report of intent rather than narration.",
+    },
+    Family {
+        name: "waiting-for-jobs",
+        class: Class::Narration,
+        reason: "GNU Make's `*** Waiting for unfinished jobs....`, said once a parallel run has had a failure and is letting its in-flight recipes finish. Ronin waits for the same recipes — measured on features/parallelism, where every remaining job's output appears on both sides — and says nothing while it does.",
+    },
+    Family {
+        name: "jobserver-auth",
+        class: Class::Interface,
+        reason: "interface observation: a Makefile read MAKEFLAGS and GNU's value carried `--jobserver-auth=`, which a single-scheduler Ronin (make-single-ninja-scheduler) has no transport for and therefore never writes. Recognised by deleting only that switch from GNU's line: if what is left is not what Ronin printed, the case is still unexplained.",
+    },
+    Family {
+        name: "trace-line",
+        class: Class::Narration,
+        reason: "GNU Make's `--trace` line — `makefile:N: update target 'X' due to: ...` — naming each target it is about to remake and why. Ronin's counterpart is Ninja's progress counter, which names the target without the reason. Recognised only when the run asked for `--trace`.",
+    },
+    Family {
+        name: "touch-announce",
+        class: Class::Narration,
+        reason: "GNU Make's `touch <file>` line under `-t`. The 2026-08-17 operator ruling on make-archive-member-touch scoped `-t` to behaviour: \"the BEHAVIOUR lands as specified, the NARRATION does not\" — a touched edge is reported by the ordinary [N/M] progress line. Measured on options/dash-t: both tools leave the same files at the same size. Recognised only when the run asked for `-t` and did NOT ask for `-n`, because under `-n` nothing is touched and the line is the dry run's report of intent rather than narration.",
+    },
+    Family {
+        name: "include-remake-refusal",
+        class: Class::Narration,
+        reason: "both tools refused a run whose `include` could not be satisfied, and each named the same unremakeable makefile in its own words: GNU adds `Failed to remake makefile 'X'.`, Ronin adds `No rule to make target 'X'.` or the include's own `X: No such file or directory`. Measured on features/include 19, 20, 31 and 32: both exit 2 with nothing built. Recognised only for a name this makefile actually includes.",
     },
     Family {
         name: "evaluation",
@@ -408,11 +438,49 @@ fn normalise(line: &str, side: Side, source: &Source) -> Contribution {
         {
             return Contribution::narration("jobserver-narration");
         }
+        // What Make says once a parallel run has failed and is letting the
+        // recipes already running finish. Ronin waits for the same recipes and
+        // says nothing; measured on features/parallelism, where every job's
+        // own output is on both sides of the diff.
+        if body.contains("*** Waiting for unfinished jobs....") {
+            return Contribution::narration("waiting-for-jobs");
+        }
+        // GNU Make's `--trace`, naming each target it is about to remake and
+        // why. Recognised only when the run asked for it, so a recipe printing
+        // the word `update` is not mistaken for the trace.
+        if source.asked("--trace")
+            && body.contains(": update target '")
+            && body.contains(" due to: ")
+        {
+            return Contribution::narration("trace-line");
+        }
+        // GNU Make's `touch <file>` under `-t`, which the 2026-08-17 ruling put
+        // outside the contract while keeping the effect inside it. Not under
+        // `-n`: nothing is touched then, and the line is the dry run's report
+        // of what would happen rather than a runner narrating what did.
+        if source.asked("-t")
+            && !source.asked("-n")
+            && let Some(touched) = body.strip_prefix("touch ")
+            && !touched.is_empty()
+            && !touched.contains(char::is_whitespace)
+        {
+            return Contribution::narration("touch-announce");
+        }
+        // GNU Make's summary of an `include` it could not remake. Ronin refuses
+        // the same run and names the same makefile in its own words; both exit
+        // 2 with nothing built.
+        if let Some(named) = quoted(body)
+            && body.contains("Failed to remake makefile '")
+            && source.includes.iter().any(|include| include == named)
+        {
+            return Contribution::narration("include-remake-refusal");
+        }
         // GNU Make's debug trace. The suite writes these expectations as bare
         // regexes, which is too weak a shape to read on its own — `/Updating
         // makefiles/` is also something a recipe could print — so it counts
         // only when the run asked for debug output in the first place.
-        if source.debug && body.len() > 2 && body.starts_with('/') && body.ends_with('/') {
+        if source.asked("--debug") && body.len() > 2 && body.starts_with('/') && body.ends_with('/')
+        {
             return Contribution::narration("debug-trace");
         }
         // Make's other way of saying it did nothing, for a goal that already
@@ -441,6 +509,25 @@ fn normalise(line: &str, side: Side, source: &Source) -> Contribution {
         residue: Some(body.to_owned()),
         payload: None,
     }
+}
+
+/// Whether a line is Ronin's rule search having failed over one of the
+/// makefiles this one `include`s.
+///
+/// Only that shape, and only for a name the makefile actually includes: a
+/// refusal over anything else is a refusal about the build, and a refusal GNU
+/// also worded is already cancelled against GNU's own by the time this is
+/// asked.
+fn names_an_include(body: &str, includes: &[String], remade: &[String]) -> bool {
+    if body.starts_with("No rule to make target '") {
+        return quoted(body).is_some_and(|named| includes.iter().any(|include| include == named));
+    }
+    // The include's own missing-file line. Weaker on its own — Ronin says it
+    // for an include GNU read perfectly well, which is a defect and not this —
+    // so it only counts for a makefile GNU itself reported failing to remake.
+    body.strip_suffix(": No such file or directory")
+        .and_then(|rest| rest.rsplit(' ').next())
+        .is_some_and(|named| remade.iter().any(|makefile| makefile == named))
 }
 
 /// Make's fatal wrapper taken off a diagnostic, if it wore one.
@@ -491,6 +578,48 @@ fn is_shell_invocation(line: &str) -> bool {
         }
     }
     rest.starts_with("/bin/sh -c \"")
+}
+
+/// Whether a line is the command line Ninja's failure block echoes back,
+/// whatever the makefile chose to launch a recipe with.
+///
+/// `is_shell_invocation` above knows the one spelling `/bin/sh -c "…"`, and
+/// every makefile that sets `SHELL`, `.SHELLFLAGS` or runs a recursive `$(MAKE)`
+/// writes a different one: `/usr/bin/perl -c "…"`, `/bin/sh -ec "…"`,
+/// `cd 'dir' && exec … `. Each of those took its case out of the family until
+/// the shape was widened, so the shape is widened once, here, to "the launcher
+/// prefixes, then an absolute path": the program a recipe is handed to is
+/// always one. The caller only offers this a line from a case whose output
+/// held a `FAILED:` in the first place, which is the evidence that there is a
+/// block for this to be part of.
+fn is_launcher(line: &str) -> bool {
+    let mut rest = line;
+    // A recursive invocation's working directory, written in front of the
+    // launcher rather than as an option to it.
+    if let Some(after) = rest.strip_prefix("cd '")
+        && let Some((_, tail)) = after.split_once("' && ")
+    {
+        rest = tail;
+    }
+    rest = rest.strip_prefix("exec ").unwrap_or(rest);
+    if let Some(after) = rest.strip_prefix("env ") {
+        rest = after;
+        while let Some(assignment) = rest.strip_prefix('\'') {
+            let Some((binding, tail)) = assignment.split_once('\'') else {
+                return false;
+            };
+            if !binding.contains('=') {
+                return false;
+            }
+            rest = tail.trim_start_matches(' ');
+        }
+    }
+    // Something has to have been stripped, or every absolute path a recipe
+    // printed would read as a launcher.
+    if rest.len() == line.len() {
+        return false;
+    }
+    rest.starts_with('/') && !rest.starts_with("/ ")
 }
 
 /// The files a sweep line named, if the line is one.
@@ -703,15 +832,38 @@ struct Source {
     /// option-shaped words be read as that variable's value rather than as
     /// something a recipe printed.
     reads_makeflags: bool,
-    /// Whether the run asked for GNU Make's debug trace, from the command line
-    /// or from a `MAKEFLAGS` the makefile sets. Without it a bare regex in the
-    /// expected output is not evidence of anything.
-    debug: bool,
-    /// Whether the run asked for several recipes at once, from the command
-    /// line or from a `MAKEFLAGS` the makefile sets. When it did, the order
-    /// two lines came out in is the scheduler's answer rather than either
-    /// tool's, so it cannot be read as evidence about them.
-    concurrent: bool,
+    /// The switches this run asked for, out of the handful that decide how its
+    /// output may be read at all:
+    ///
+    /// * `--debug` — without it a bare regex in the expected output is not
+    ///   evidence of anything. Read from the command line or from a
+    ///   `MAKEFLAGS` the makefile sets.
+    /// * `-j` — several recipes at once, so the order two lines came out in is
+    ///   the scheduler's answer rather than either tool's. Same two sources.
+    /// * `--trace` — GNU narrating each target it is about to remake.
+    /// * `-t` — the run touches rather than builds.
+    /// * `-n` — nothing is written at all, so a line either tool prints is its
+    ///   report of what it *would* do: build intent rather than narration, and
+    ///   the families that read a runner's chatter are switched off.
+    ///
+    /// Kept as the switch names themselves rather than as a field each,
+    /// because the list is exactly "what the command line said" and a row of
+    /// booleans says nothing about which of them belong together.
+    switches: Vec<&'static str>,
+    /// The program the driver invoked, which is how a recipe line that runs
+    /// Make again is recognised without guessing at the word `make`.
+    make_program: Option<String>,
+    /// The makefiles this one `include`s, which is what lets a diagnostic
+    /// about one of them be read as an include's refusal rather than as
+    /// something a recipe said.
+    includes: Vec<String>,
+}
+
+impl Source {
+    /// Whether the run asked for one of the switches above.
+    fn asked(&self, switch: &str) -> bool {
+        self.switches.contains(&switch)
+    }
 }
 
 /// Whether a word is a `-j` spelling that asks for more than one recipe at a
@@ -746,6 +898,45 @@ impl Source {
             .split_ascii_whitespace()
             .any(|word| word == "-d" || word == "--debug" || word.starts_with("--debug="));
         let invoked_concurrently = command.split_ascii_whitespace().any(runs_concurrently);
+        // The driver writes the script and line it came from as a `#` comment
+        // ahead of the command, so the switches below are read off the command
+        // itself. The two scans above deliberately stay over the whole file:
+        // they are what the recorded inventory was classified with.
+        let invocation = command
+            .lines()
+            .find(|line| !line.trim_start().starts_with('#'))
+            .unwrap_or_default();
+        let switch = |names: [&str; 2]| {
+            invocation
+                .split_ascii_whitespace()
+                .any(|word| names.contains(&word))
+        };
+        let mut switches = Vec::new();
+        if switch(["--trace", "--trace=print"]) {
+            switches.push("--trace");
+        }
+        if switch(["-t", "--touch"]) {
+            switches.push("-t");
+        }
+        // `-tn`, `-nt`: the driver writes clustered short switches, and a
+        // cluster that holds `n` is as much a dry run as a word of its own.
+        let clustered_dry = invocation.split_ascii_whitespace().any(|word| {
+            word.len() > 1
+                && word.starts_with('-')
+                && !word.starts_with("--")
+                && word.contains('n')
+                && word[1..]
+                    .bytes()
+                    .all(|byte| CLUSTER_SWITCHES.contains(byte as char))
+        });
+        if switch(["-n", "--just-print"]) || switch(["--dry-run", "--recon"]) || clustered_dry {
+            switches.push("-n");
+        }
+        let make_program = invocation
+            .split_ascii_whitespace()
+            .next()
+            .filter(|word| word.starts_with('/'))
+            .map(str::to_owned);
         let mut words = command.split_ascii_whitespace();
         let mut makefile = None;
         while let Some(word) = words.next() {
@@ -754,33 +945,58 @@ impl Source {
                 break;
             }
         }
+        let asked = |debug: bool, concurrent: bool| {
+            let mut switches = switches.clone();
+            if debug {
+                switches.push("--debug");
+            }
+            if concurrent {
+                switches.push("-j");
+            }
+            switches
+        };
+        let bare = |debug: bool, concurrent: bool| Self {
+            switches: asked(debug, concurrent),
+            make_program: make_program.clone(),
+            ..Self::default()
+        };
         let Some(makefile) = makefile else {
-            return Self {
-                debug: invoked_with_debug,
-                concurrent: invoked_concurrently,
-                ..Self::default()
-            };
+            return bare(invoked_with_debug, invoked_concurrently);
         };
         let Ok(text) = fs::read_to_string(tests.join(makefile)) else {
-            return Self {
-                debug: invoked_with_debug,
-                concurrent: invoked_concurrently,
-                ..Self::default()
-            };
+            return bare(invoked_with_debug, invoked_concurrently);
         };
         Self {
-            debug: invoked_with_debug || text.contains("--debug"),
-            // A makefile can ask for the jobs itself — `MAKEFLAGS += -j4` is
-            // the shape the suite uses to check that it can — and a case that
-            // does gets its concurrency from nowhere else. Read off a line
-            // that names the variable rather than off the whole text, so a
-            // recipe that happens to pass `-j` to something else is not
-            // mistaken for the run's own job count.
-            concurrent: invoked_concurrently
-                || text.lines().any(|line| {
-                    line.contains("MAKEFLAGS")
-                        && line.split_ascii_whitespace().any(runs_concurrently)
-                }),
+            make_program,
+            // Only the unconditional directive. `include X` of a makefile that
+            // cannot be made is fatal in GNU Make, which is what makes "both
+            // tools refused" a claim about the case rather than a guess;
+            // `-include` and `sinclude` are silent and carry no such claim.
+            includes: text
+                .lines()
+                .map(str::trim_start)
+                .filter_map(|line| line.strip_prefix("include "))
+                .flat_map(|names| {
+                    names
+                        .split_ascii_whitespace()
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .collect(),
+            switches: asked(
+                invoked_with_debug || text.contains("--debug"),
+                // A makefile can ask for the jobs itself — `MAKEFLAGS += -j4`
+                // is the shape the suite uses to check that it can — and a
+                // case that does gets its concurrency from nowhere else. Read
+                // off a line that names the variable rather than off the whole
+                // text, so a recipe that happens to pass `-j` to something
+                // else is not mistaken for the run's own job count.
+                invoked_concurrently
+                    || text.lines().any(|line| {
+                        line.contains("MAKEFLAGS")
+                            && line.split_ascii_whitespace().any(runs_concurrently)
+                    }),
+            ),
             recipe: text
                 .lines()
                 .filter_map(|line| line.strip_prefix('\t'))
@@ -850,12 +1066,25 @@ fn read_our_side(lines: &[String], source: &Source) -> OurSide {
         commands: Vec::new(),
         refused_an_option: false,
     };
+    // Ninja's failure block echoes back the command line it launched, and what
+    // that line looks like is decided by the makefile: `SHELL`, `.SHELLFLAGS`
+    // and a recursive invocation's `cd` all rewrite it. Rather than teach the
+    // shape every spelling, the block is read as "the line after a FAILED:",
+    // which is what it is — so the recognition is only available at all when
+    // this case's output holds a failure block.
+    let failed = lines
+        .iter()
+        .any(|line| line.trim_start().starts_with("FAILED:"));
     for line in lines {
         if line.contains("invalid option")
             || line.contains("unrecognized option")
             || line.starts_with("usage: ronin")
         {
             side.refused_an_option = true;
+            continue;
+        }
+        if failed && is_launcher(line.trim_start()) {
+            note(&mut side.families, "ninja-failure-block");
             continue;
         }
         let contribution = normalise(line, Side::Ours, source);
@@ -881,6 +1110,8 @@ struct TheirSide {
     /// Whether any of its diagnostics wore Make's fatal wrapper, which is how
     /// a refusal is told from a complaint it carried on past.
     refused_fatally: bool,
+    /// The makefiles it said outright it had failed to remake.
+    remade: Vec<String>,
 }
 
 fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSide {
@@ -888,6 +1119,7 @@ fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSi
         families: Vec::new(),
         residue: Leftovers::default(),
         refused_fatally: false,
+        remade: Vec::new(),
     };
     let note = |family: &'static str, families: &mut Vec<&'static str>| {
         if !families.contains(&family) {
@@ -895,9 +1127,23 @@ fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSi
         }
     };
     for line in lines {
-        let contribution = normalise(line, Side::Theirs, source);
+        // The one switch GNU writes into MAKEFLAGS that a single-scheduler
+        // Ronin has nothing to put there: the jobserver's own handle. Taken
+        // off before the line is read rather than used to delete it, for the
+        // same reason the fatal wrapper is — what remains has to match what
+        // Ronin printed, or the case is still unexplained.
+        let (line, jobserver) = without_jobserver_auth(line);
+        if jobserver {
+            note("jobserver-auth", &mut side.families);
+        }
+        let contribution = normalise(&line, Side::Theirs, source);
         if let Some(family) = contribution.family {
             side.refused_fatally |= family == "fatal-decoration";
+            if family == "include-remake-refusal"
+                && let Some(makefile) = quoted(&line)
+            {
+                side.remade.push(makefile.to_owned());
+            }
             note(family, &mut side.families);
         }
         let Some(kept) = contribution.residue else {
@@ -933,9 +1179,39 @@ fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSi
             note("intermediate-sweep", &mut side.families);
             continue;
         }
+        // The recipe line that runs Make again. Ronin composes the recursive
+        // invocation into the same graph, so it never launches a make process
+        // and has no such command to name. Read after `recipe-echo` above, so
+        // a line Ronin did name still cancels against what Ronin said; and not
+        // under `-n`, where an echoed line is the dry run's report of intent.
+        if !source.asked("-n")
+            && let Some(program) = &source.make_program
+            && kept.split_ascii_whitespace().next() == Some(program.as_str())
+        {
+            note("recursive-invocation-echo", &mut side.families);
+            continue;
+        }
         side.residue.push(kept, contribution.diagnostic);
     }
     side
+}
+
+/// A line with GNU's jobserver handle taken out of it, and whether one was
+/// there.
+///
+/// `--jobserver-auth=fifo:/tmp/GMfifo123` is one word wherever it appears, and
+/// the space in front of it goes with it so `-j2 --jobserver-auth=x -w` reads
+/// back as `-j2 -w` rather than growing a double space.
+fn without_jobserver_auth(line: &str) -> (String, bool) {
+    if !line.contains("--jobserver-auth=") {
+        return (line.to_owned(), false);
+    }
+    let kept = line
+        .split(' ')
+        .filter(|word| !word.starts_with("--jobserver-auth="))
+        .collect::<Vec<_>>()
+        .join(" ");
+    (kept, true)
 }
 
 /// Add a family to the list once, whoever noticed it.
@@ -1056,12 +1332,33 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
     }
     let theirs = read_their_side(&divergence.expected, source, &ours);
 
+    let remade = theirs.remade;
     let mut families = ours.families;
     for family in theirs.families {
         note(&mut families, family);
     }
     let mut residual_actual = ours.residue;
     let mut residual_expected = theirs.residue;
+
+    // Ronin named the rule search that failed for an included makefile, and
+    // GNU left nothing unaccounted for at all — it reported the missing file
+    // and stopped, which Ronin reported too. An unconditional `include` of a
+    // makefile that cannot be made is fatal in GNU Make, so both tools refused
+    // the run; the extra sentence is the whole of the difference. Read as a
+    // property of the case rather than of the line, because the same sentence
+    // where GNU *did* have something to say is a refusal to cancel against
+    // GNU's own, which `shared-refusal` already does.
+    if residual_expected.lines.is_empty()
+        && !residual_actual.lines.is_empty()
+        && residual_actual
+            .lines
+            .iter()
+            .all(|line| names_an_include(line, &source.includes, &remade))
+    {
+        note(&mut families, "include-remake-refusal");
+        residual_actual.lines.clear();
+        residual_actual.diagnostics.clear();
+    }
 
     // Both tools refused, and every line either of them left is a diagnostic
     // rather than a build. A refusal is a refusal whatever it is worded like:
@@ -1110,7 +1407,7 @@ fn classify(divergence: &Divergence, source: &Source) -> Verdict {
     if named_residue {
         // Already explained. Adding `evaluation` on top would put the case back
         // in the bucket that means "not recognised" and undo the naming.
-    } else if same_lines || (permuted && source.concurrent) {
+    } else if same_lines || (permuted && source.asked("-j")) {
         // Nothing left once both narrations are accounted for. A concurrent
         // run reaches this by the second route as well: the same lines in a
         // different order is Make interleaving each recipe line with what
@@ -1450,7 +1747,7 @@ mod tests {
     /// came out in is the scheduler's answer rather than either tool's.
     fn concurrent() -> Source {
         Source {
-            concurrent: true,
+            switches: vec!["-j"],
             ..Source::default()
         }
     }
@@ -1953,6 +2250,180 @@ mod tests {
         let verdict = classify(&cluster, &reads_makeflags());
         assert_eq!(verdict.class, Class::Interface);
         assert!(verdict.families.contains(&"makeflags-content"));
+    }
+
+    /// A case that ran `-t`, `--trace` or `-n`, and the make program the
+    /// driver invoked.
+    fn invoked(touch: bool, trace: bool, dry_run: bool) -> Source {
+        let mut switches = Vec::new();
+        for (asked, switch) in [(touch, "-t"), (trace, "--trace"), (dry_run, "-n")] {
+            if asked {
+                switches.push(switch);
+            }
+        }
+        Source {
+            switches,
+            make_program: Some("/tmp/bin/make".to_owned()),
+            ..Source::default()
+        }
+    }
+
+    /// The recursive `$(MAKE)` line Make echoes and Ronin never launches,
+    /// recognised from the program the driver invoked rather than from the
+    /// word `make`. Not under `-n`, where an echoed line is the dry run saying
+    /// what it would do.
+    #[test]
+    fn a_recursive_invocation_has_no_command_to_echo() {
+        let recursed = || Divergence {
+            expected: lines(&["/tmp/bin/make -C foo", "foo: start"]),
+            actual: lines(&["foo: start"]),
+        };
+        let verdict = classify(&recursed(), &invoked(false, false, false));
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(
+            verdict.families.contains(&"recursive-invocation-echo"),
+            "{:?}",
+            verdict.families
+        );
+
+        assert_eq!(
+            classify(&recursed(), &invoked(false, false, true)).class,
+            Class::Unclassified
+        );
+        // Some other absolute path is a command a recipe ran, not this.
+        let unrelated = Divergence {
+            expected: lines(&["/usr/bin/perl helper.pl"]),
+            actual: Vec::new(),
+        };
+        assert_eq!(
+            classify(&unrelated, &invoked(false, false, false)).class,
+            Class::Unclassified
+        );
+    }
+
+    /// `-t`'s announcement is outside the contract and its effect is inside it,
+    /// per the 2026-08-17 ruling — but only where `-t` is what actually ran.
+    #[test]
+    fn a_touch_announcement_is_narration_where_touching_happened() {
+        let touched = || Divergence {
+            expected: lines(&["touch xxx"]),
+            actual: Vec::new(),
+        };
+        let verdict = classify(&touched(), &invoked(true, false, false));
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(verdict.families.contains(&"touch-announce"));
+
+        // Under `-n` nothing is touched, so the line is the dry run's report
+        // of intent rather than a runner narrating what it did.
+        assert_eq!(
+            classify(&touched(), &invoked(true, false, true)).class,
+            Class::Unclassified
+        );
+        // And a run that never asked for `-t` is a recipe printing `touch`.
+        assert_eq!(classify(&touched(), &unread()).class, Class::Unclassified);
+    }
+
+    /// GNU's `--trace`, and its parallel-failure wait, are runner narration.
+    #[test]
+    fn a_trace_and_a_wait_are_narration() {
+        let traced = Divergence {
+            expected: lines(&["f.mk:2: update target 'all' due to: target does not exist"]),
+            actual: Vec::new(),
+        };
+        let verdict = classify(&traced, &invoked(false, true, false));
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(verdict.families.contains(&"trace-line"));
+        assert_eq!(classify(&traced, &unread()).class, Class::Unclassified);
+
+        let waited = Divergence {
+            expected: lines(&["make: *** Waiting for unfinished jobs...."]),
+            actual: Vec::new(),
+        };
+        let verdict = classify(&waited, &unread());
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(verdict.families.contains(&"waiting-for-jobs"));
+    }
+
+    /// The jobserver handle comes out of GNU's MAKEFLAGS and what is left has
+    /// to be what Ronin printed; a value that differs by anything else is
+    /// still unexplained.
+    #[test]
+    fn a_jobserver_handle_explains_only_itself() {
+        let handed = Divergence {
+            expected: lines(&["all: /-j2 --jobserver-auth=fifo:/tmp/x --no-print-directory/"]),
+            actual: lines(&["all: /-j2 --no-print-directory/"]),
+        };
+        let verdict = classify(&handed, &unread());
+        assert_eq!(verdict.class, Class::Interface);
+        assert!(verdict.families.contains(&"jobserver-auth"));
+
+        let also_differs = Divergence {
+            expected: lines(&["all: /-j2 --jobserver-auth=fifo:/tmp/x -w/"]),
+            actual: lines(&["all: /-j2 --no-print-directory/"]),
+        };
+        assert_eq!(
+            classify(&also_differs, &unread()).class,
+            Class::Unclassified
+        );
+    }
+
+    /// Ninja's failure block echoes back whatever launcher the makefile chose,
+    /// and the block is only readable at all when there is a `FAILED:` for it
+    /// to belong to.
+    #[test]
+    fn the_block_reads_through_any_launcher() {
+        let failed = |launched: &str| Divergence {
+            expected: lines(&["make: *** [f.mk:3: all] Error 1"]),
+            actual: lines(&["FAILED: [code=1] all ", launched, "ronin: build stopped: x"]),
+        };
+        for launched in [
+            r#"exec env 'MAKEFLAGS=' /usr/bin/perl -c "print 1""#,
+            r#"exec env 'MAKEFLAGS=' /bin/sh -ec "false""#,
+            r#"cd '/tmp/foo' && exec env 'MAKELEVEL=2' /bin/sh -c "false""#,
+        ] {
+            let verdict = classify(&failed(launched), &unread());
+            assert_eq!(verdict.class, Class::Narration, "{launched}");
+        }
+        // No failure block, so an absolute path is something a recipe printed.
+        let printed = Divergence {
+            expected: Vec::new(),
+            actual: lines(&[r#"exec env 'X=1' /usr/bin/perl -c "print 1""#]),
+        };
+        assert_eq!(classify(&printed, &unread()).class, Class::Unclassified);
+    }
+
+    /// Both tools refused a run whose `include` could not be made, and Ronin
+    /// added the rule search that failed. Read as a property of the case: the
+    /// same sentence where GNU also refused out loud is cancelled against
+    /// GNU's own by `shared-refusal`, and must keep being.
+    #[test]
+    fn an_unmakeable_include_is_one_refusal_worded_twice() {
+        let included = Source {
+            includes: vec!["hello.mk".to_owned()],
+            ..Source::default()
+        };
+        let ours_alone = Divergence {
+            expected: Vec::new(),
+            actual: lines(&["ronin: No rule to make target 'hello.mk'."]),
+        };
+        let verdict = classify(&ours_alone, &included);
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(verdict.families.contains(&"include-remake-refusal"));
+
+        // GNU said it too, so the two cancel against each other and the case
+        // is a shared refusal rather than this.
+        let both = Divergence {
+            expected: lines(&["make: *** No rule to make target 'hello.mk'.  Stop."]),
+            actual: lines(&["ronin: No rule to make target 'hello.mk'."]),
+        };
+        assert_eq!(classify(&both, &included).class, Class::Narration);
+
+        // A name the makefile does not include is a refusal about the build.
+        let other = Divergence {
+            expected: Vec::new(),
+            actual: lines(&["ronin: No rule to make target 'hello.o'."]),
+        };
+        assert_eq!(classify(&other, &included).class, Class::Unclassified);
     }
 
     /// Make's other way of saying it did nothing. Measured on GNU Make 4.4.1: a
