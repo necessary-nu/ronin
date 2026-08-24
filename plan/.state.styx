@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-24T15:20:25.263515419Z
+last_sync_at 2026-08-24T21:20:47.976319495Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -72,6 +72,7 @@ derived_priorities (
     {id builtin-shell-oversized-recipe-line, priority 3, derived_at 2026-08-20T20:57:41.240518327Z}
     {id builtin-shell-personality, priority 1, derived_at 2026-08-20T20:57:41.240518327Z}
     {id carry-process-integrations-evidence-to-the-bumped-rule, priority 2, derived_at 2026-08-22T00:58:32.477457695Z}
+    {id drop-the-proc-macro-escape-hatch, priority 0, derived_at 2026-08-24T21:20:47.976319495Z}
     {id kati-build-sink, priority 1, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-caches-session, priority 2, derived_at 2026-08-04T14:40:50.111539567Z}
     {id kati-command-escapes, priority 2, derived_at 2026-08-08T21:00:59.885791732Z}
