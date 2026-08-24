@@ -868,7 +868,7 @@ case	misc/general4.diff	narration	ninja-progress
 case	misc/general4.diff.1	unclassified	ninja-progress+evaluation
 case	misc/general4.diff.2	narration	ninja-progress
 case	misc/general4.diff.3	narration	ninja-progress
-case	misc/general4.diff.4	unclassified	ninja-progress+evaluation
+case	misc/general4.diff.4	narration	ninja-progress
 case	misc/general4.diff.5	narration	ninja-progress
 case	misc/general4.diff.6	narration	ninja-progress+recipe-echo
 case	misc/general4.diff.7	narration	ninja-progress+ninja-failure-block+product-name+recipe-echo+recipe-error-line

@@ -110,7 +110,7 @@ mod tests {
     }
 
     // [spec:ronin:req:compat.command-runtime/test]
-    // [spec:ronin:req:product.build-outcome/test]
+    // [spec:ronin:req:product.build-outcome+1/test]
     #[test]
     fn stopped_build_reports_reason_and_status() {
         // Exhausting the allowance says the build was cut off; having allowance

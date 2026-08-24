@@ -1615,7 +1615,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::Path;
 
-    // [spec:ronin:req:product.build-outcome/test]
+    // [spec:ronin:req:product.build-outcome+1/test]
     #[test]
     fn recorded_status_accepts_the_measured_code() {
         assert!(recorded_status("a case", 130, Some(130)).is_ok());
@@ -1627,7 +1627,7 @@ mod tests {
     /// they ran `kill -KILL $` — a usage error exiting 2 that both tools
     /// agreed on. Comparing the tools to each other could never see it;
     /// a recorded 137 does.
-    // [spec:ronin:req:product.build-outcome/test]
+    // [spec:ronin:req:product.build-outcome+1/test]
     #[test]
     fn recorded_status_rejects_a_drifted_shape() {
         let error = recorded_status("a killed command", 137, Some(2))
@@ -1639,7 +1639,7 @@ mod tests {
 
     /// No shape here asks either tool to die by a signal, so a status of
     /// `None` is a tool that crashed rather than a case that passed.
-    // [spec:ronin:req:product.build-outcome/test]
+    // [spec:ronin:req:product.build-outcome+1/test]
     #[test]
     fn recorded_status_rejects_a_signalled_tool() {
         assert!(recorded_status("a case", 1, None).is_err());

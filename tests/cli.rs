@@ -491,7 +491,7 @@ fn a_missing_program_still_gets_the_shells_diagnostic() {
 }
 
 // [spec:ronin:req:compat.cli-and-tools/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[test]
 fn a_failing_command_carries_its_own_status_out_of_the_process() {
     // The number a CI reads: it distinguishes a compile error from an OOM kill,

@@ -1,0 +1,17 @@
+INTENTIONAL, and ruled by the operator rather than by a dispatch. Under `-k`
+with a prerequisite nothing can make, GNU Make 4.4.1 builds the three objects it
+can and only then abandons the goal; Ronin refuses at graph-load time, because
+the goal provably cannot complete, and builds none of them. Same exit status,
+three fewer files, and none of the three was going to be used.
+
+Operator decision, Brendan, 2026-08-24, on
+docs/make-oracle-divergences.md section 10: "Ronin superior. Accepted
+divergence." Asked whether to keep it, he answered KEEP — fail fast is right,
+and refusing at graph-load when the goal provably cannot complete beats doing
+work that gets thrown away.
+
+Not a defect to be repaired. This case is here so that a change which starts
+building the three objects reopens that decision instead of passing quietly:
+`make_port` fails a recorded divergence that has been "fixed" as loudly as it
+fails an unrecorded one. Owner:
+make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite.

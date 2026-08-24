@@ -94,6 +94,31 @@ pub(crate) struct BuildOptions {
     /// and the question becomes whether this process was signalled too.
     pub(crate) recipe_signal_fails: bool,
     pub(crate) working_directory: crate::os::WorkingDirectory,
+    /// Whether the directory an output sits in is created before the command
+    /// that writes it is launched.
+    ///
+    /// Ninja does it, because a manifest is generated and its generator is
+    /// entitled to assume the directory is there. GNU Make does not: `$@`'s
+    /// directory is the recipe's problem, which is why makefiles write
+    /// `@mkdir -p $(@D)` and why automake generates it. Where the name is free
+    /// the two are indistinguishable; where it is taken by something that is
+    /// not a directory they part, and a recipe whose own first job is to clear
+    /// the way — replacing a file with a directory of the same name — builds
+    /// under GNU Make and stops under a launcher that got there first.
+    ///
+    /// A run-level setting rather than a per-edge property, and that is the
+    /// whole of why it can exist: what creates the directory is the launcher,
+    /// so which launcher behaviour a run wants is the front end's to say once,
+    /// beside the other answers it gives here. Nothing is written into the
+    /// graph, so a Ninja manifest Make mode emits still describes a Ninja build
+    /// and a graph loaded from a manifest still gets Ninja's launcher.
+    ///
+    /// A name the graph invented for itself is not covered either way: it
+    /// stands for work rather than for a file, and the directory its response
+    /// file needs is made by [`Builder::prepare_response_file`], which is the
+    /// tool placing a path the tool chose.
+    // [spec:ronin:req:make.semantics+1]
+    pub(crate) create_output_directories: bool,
     /// Whether a target written `lib.a(member.o)` names a member of an
     /// archive rather than a file. Make mode only — see [`crate::os`].
     pub(crate) archive_members: bool,
@@ -173,6 +198,7 @@ impl Default for BuildOptions {
             command_status_interrupts: true,
             recipe_signal_fails: false,
             working_directory: crate::os::WorkingDirectory::default(),
+            create_output_directories: true,
             archive_members: false,
             touch: false,
             always_make: false,
@@ -1290,6 +1316,7 @@ impl<'a> Builder<'a> {
         // `-n` as well, where nothing at all may reach the disk.
         for output in completion_outputs
             .iter()
+            .filter(|_| self.options.create_output_directories)
             .filter(|output| !self.graph.is_virtual_output(**output))
         {
             let path = self.graph.node_path(*output).to_owned();
@@ -1401,7 +1428,7 @@ impl<'a> Builder<'a> {
     /// accord takes the same branch, with no way for Ninja to tell the two
     /// apart and no attempt to. That is the contract, oddity included.
     // [spec:ronin:req:compat.process-integration+2]
-    // [spec:ronin:req:product.build-outcome]
+    // [spec:ronin:req:product.build-outcome+1]
     fn command_interrupted(&self, status: std::process::ExitStatus) -> bool {
         if status_interrupted(status) {
             // A recipe of GNU Make's dies of a signal for two quite different
@@ -2332,7 +2359,7 @@ impl<'a> Builder<'a> {
         // Ninja carries the last failing command's status out of the build, and
         // records the last failure as it goes; those are the same thing, so the
         // status is read back off the error rather than tracked beside it.
-        // [spec:ronin:req:product.build-outcome]
+        // [spec:ronin:req:product.build-outcome+1]
         let outcome = if let Some(error) = last_error {
             Err(BuildError::Stopped {
                 status: error.exit_code(),

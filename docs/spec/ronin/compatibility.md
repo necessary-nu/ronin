@@ -89,20 +89,34 @@ the supported CLI surface.
 > `SHELL`, a command-line `SHELL=`, or `--shell` — is spawned as named, so
 > choosing a shell still chooses one.
 
-> [spec:ronin:req:product.build-outcome]
+> [spec:ronin:req:product.build-outcome+1]
 > A build that does not finish reports why on stdout, after the build's own
 > output, and leaves with the exit status of the last command that failed — the
 > command's own status, not a generic failure, so a caller can tell a compile
-> error from a kill. An interrupt leaves with Ninja's 130 rather than re-raising
-> the signal, so the status does not depend on how far the build had got; C
-> samurai re-raised here, and Ninja is the contract. Two departures from Ninja
-> are deliberate. A plan that can make no progress without having recorded a
-> failure — which Ninja calls a bug in itself — leaves with a failure rather
-> than Ninja's success, because a build that did not finish must not report that
-> it did. Ninja's arithmetic for a child killed by a signal it does not treat as
-> an interrupt adds 128 to the raw wait status rather than to the signal number,
-> which is reproduced, including the resulting `FAILED: [code=259]` for a
-> dumping `SIGQUIT`, because that line is part of the observable output.
+> error from a kill.
+>
+> A run cut short by a signal delivered to Ronin itself ends differently, and
+> the ending is the signal. The running commands are stopped, what they were
+> making is withdrawn, and the process then dies of the signal it caught, so a
+> shell reads 128 + the signal number: 130 for `SIGINT`, 143 for `SIGTERM`, 129
+> for `SIGHUP`. `SIGQUIT` is the one exception and leaves 1 without re-raising,
+> because its default action writes a core file and a build the user quit is not
+> a fault. This is GNU Make's disposition exactly, it governs BOTH front ends,
+> and in the manifest front end it is a deliberate departure from upstream
+> Ninja, which returns a fixed `ExitInterrupted` of 130 for every signal it
+> treats as an interrupt and never re-raises. The 130 itself is kept wherever a
+> status is a value rather than an ending — what a library caller's outcome
+> carries, and what tells a stopped build from a failed one — and only the
+> ending moved.
+>
+> Two further departures from Ninja are deliberate. A plan that can make no
+> progress without having recorded a failure — which Ninja calls a bug in
+> itself — leaves with a failure rather than Ninja's success, because a build
+> that did not finish must not report that it did. Ninja's arithmetic for a
+> CHILD killed by a signal it does not treat as an interrupt adds 128 to the raw
+> wait status rather than to the signal number, which is reproduced, including
+> the resulting `FAILED: [code=259]` for a dumping `SIGQUIT`, because that line
+> is part of the observable output.
 
 > [spec:ronin:req:compat.version-reporting]
 > `ronin --version` emits one Ninja-compatible version token beginning with

@@ -1,0 +1,4 @@
+mkdir -p work
+for f in main.c defs.h command.h commands.c display.c buffer.h command.c; do
+    echo source > "work/$f"
+done

@@ -922,6 +922,9 @@ assertions (
     {id make-an-environment-option-stream-is-expanded-before-it-is-split, kind @complete, author "brendan@necessary.nu", at 2026-08-24T08:32:04.195843423Z}
     {id make-upstream-residue-triage, kind @complete, author "brendan@necessary.nu", at 2026-08-24T09:15:35.189116612Z}
     {id make-consolidated-oracle-divergence-survey, kind @complete, author "brendan@necessary.nu", at 2026-08-24T09:22:34.0166559Z}
+    {id an-interrupt-leaves-with-the-signal-that-caused-it, kind @complete, author "brendan@necessary.nu", at 2026-08-24T12:42:07.982849256Z}
+    {id an-outputs-directory-is-left-to-the-recipe-in-make-mode, kind @complete, author "brendan@necessary.nu", at 2026-08-24T12:42:17.748549276Z}
+    {id make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite, kind @complete, author "brendan@necessary.nu", at 2026-08-24T12:42:28.681097696Z}
 )
 
 impl_evidence (

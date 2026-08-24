@@ -1379,6 +1379,11 @@ fn session_for(
         // the build: what the makefile starts with, what outranks it, and
         // whether a recipe line's status is worth stopping for.
         no_builtin_rules: invocation.given(Switch::NoBuiltinRules),
+        // Nothing creates `$@`'s directory before the recipe runs — see
+        // `BuildOptions::create_output_directories` — so a leading
+        // `mkdir -p $(@D)` is the line that makes the recipe work rather than
+        // one already paid for, and the compiler must keep it.
+        recipes_own_output_directories: true,
         no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
         environment_overrides: invocation.given(Switch::EnvironmentOverrides),
         ignore_errors: invocation.given(Switch::IgnoreErrors),
@@ -1534,6 +1539,11 @@ fn build_options(
     // other failure — `*** [Makefile:2: out] Terminated`, and on under -k. Only
     // a signal delivered to Make itself ends the build.
     options.recipe_signal_fails = true;
+    // GNU Make leaves `$@`'s directory to the recipe, which is why makefiles
+    // write `@mkdir -p $(@D)`. A launcher that gets there first is invisible
+    // while the name is free and stops the build where the name is taken by a
+    // file the recipe was about to replace with a directory.
+    options.create_output_directories = false;
     // `lib.a(member.o)` is a target GNU Make reads as a member of an archive,
     // and its timestamp comes out of the archive's index rather than off a
     // file of that name. A manifest build has no such shape and must keep

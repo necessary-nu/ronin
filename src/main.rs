@@ -76,6 +76,18 @@ fn main() {
                 let _ = write_diagnostic(format_args!("writing terminal output: {error}"));
                 std::process::exit(1);
             }
+            // [spec:ronin:req:product.build-outcome+1]
+            // A run cut short by a signal delivered to this process leaves the
+            // way the signal says, whichever front end ran. The status Ronin
+            // reached is read first so that only an interrupt is answered this
+            // way: a recipe that exited 130 of its own accord, and a build that
+            // finished before a stray signal arrived, both keep the status they
+            // earned.
+            if result.exit_code == ronin::INTERRUPTED_EXIT_CODE
+                && let Some(signal) = signal_handlers.interrupted()
+            {
+                signal.die_of();
+            }
             if result.exit_code != 0 {
                 std::process::exit(result.exit_code);
             }
@@ -91,13 +103,11 @@ fn main() {
             {
                 std::process::exit(1);
             }
-            // [spec:ronin:req:product.build-outcome]
-            // Ninja leaves with 130 rather than dying by the signal it caught,
-            // so an interrupt reports the same status whether it arrived while
-            // the build was running or before it started. C samurai re-raised
-            // here; Ninja is the contract.
-            if signal_handlers.interrupted().is_some() {
-                std::process::exit(ronin::INTERRUPTED_EXIT_CODE);
+            // [spec:ronin:req:product.build-outcome+1]
+            // The same ending as the one above, reached from a build that
+            // reported its interrupt as an error rather than as a status.
+            if let Some(signal) = signal_handlers.interrupted() {
+                signal.die_of();
             }
             std::process::exit(1);
         }

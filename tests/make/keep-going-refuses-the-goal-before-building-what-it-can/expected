@@ -1,0 +1,38 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 15
+| # Under `-k`, `kbd.o` has no way to be made: `kbd.c` is not in `work/` and no
+| # rule makes it. GNU Make walks the goal's prerequisites anyway, builds the
+| # three it can, and abandons `edit` afterwards. Ronin refuses at graph load,
+| # because the goal provably cannot complete, and builds nothing.
+| VPATH = work
+| edit:  main.o kbd.o commands.o display.o
+| 	@echo linked > edit
+| main.o : main.c defs.h
+| 	@echo compiled > main.o
+| kbd.o : kbd.c defs.h command.h
+| 	@echo compiled > kbd.o
+| commands.o : command.c defs.h command.h
+| 	@echo compiled > commands.o
+| display.o : display.c defs.h buffer.h
+| 	@echo compiled > display.o
+file commands.o touched 1
+| compiled
+file display.o touched 1
+| compiled
+file main.o touched 1
+| compiled
+file work/buffer.h kept 1
+| source
+file work/command.c kept 1
+| source
+file work/command.h kept 1
+| source
+file work/commands.c kept 1
+| source
+file work/defs.h kept 1
+| source
+file work/display.c kept 1
+| source
+file work/main.c kept 1
+| source

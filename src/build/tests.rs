@@ -1569,7 +1569,7 @@ fn ninja_build_swallow_failures_limit() {
 /// Ninja's `ExitStatus` enum spends 130 on `ExitInterrupted` and then reads
 /// every finished command's status back through it, so a command that exits 130
 /// under its own power is an interrupt and cannot be told apart from one.
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[test]
 fn ninja_build_exit_130_interrupts() {
     let (mut graph, directory) = build_fixture(
@@ -1592,7 +1592,7 @@ fn ninja_build_exit_130_interrupts() {
 
 /// 130 means nothing to Make, which reports `Error 130` and goes on under `-k`
 /// exactly as it would for any other status.
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[test]
 fn make_build_exit_130_fails() {
     let (mut graph, directory) = build_fixture(
@@ -1625,7 +1625,7 @@ fn make_build_exit_130_fails() {
 /// Ninja checks for an interrupt before it counts the completion as a failure,
 /// so no `-k` allowance keeps the build going and no later command's status
 /// replaces the one that says why it stopped.
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[test]
 fn ninja_build_interrupt_outranks_keep_going() {
     let (mut graph, directory) = build_fixture(

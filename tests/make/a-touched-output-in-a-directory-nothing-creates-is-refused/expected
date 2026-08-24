@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 7
+| # `-t` brings a goal up to date by giving it a fresh date, and GNU Make's touch
+| # opens the name rather than creating the path to it — so a target in a
+| # directory that is not there is refused under `-t` exactly as it is refused
+| # under an ordinary build. The recipe would have made the directory, and `-t`
+| # never runs it.
+| all: sub/out
+| sub/out: ; @mkdir -p $(@D); echo made > $@

@@ -106,7 +106,7 @@ pub(super) fn abandoned(reported: String, failure: Error) -> RunResult {
 /// than signal it, as GNU Make does — is `[spec:ronin:req:make.read-interrupt]`
 /// and not this rule's, and it is not `compat.process-integration`'s either:
 /// that one says what an interrupt does to a BUILD, and a read has no edges.
-// [spec:ronin:req:product.build-outcome]
+// [spec:ronin:req:product.build-outcome+1]
 pub(super) fn cut_short(reported: String) -> RunResult {
     RunResult {
         stdout: terminated(reported),
@@ -292,21 +292,23 @@ pub(super) fn complained_of(
 /// makefile to read, a makefile that will not evaluate, a target with no rule,
 /// a recipe that failed — and each of them is a build that would not or could
 /// not go on. An interrupt is the user stopping a build that was going fine,
-/// and both references say so with the same number: GNU Make 4.4.1 exits 130 by
-/// dying of the signal it caught, upstream Ninja exits 130 without re-raising,
-/// and `[spec:ronin:req:product.build-outcome]` — which
+/// and it is answered with 130 — which
 /// `[spec:ronin:req:make.question-status+1]` names as governing every Make
-/// invocation's status but `-q`'s THREE ANSWERS — takes Ninja's spelling of it.
-/// An interrupted `-q` is not one of those three, and leaves the same 130 as
-/// this.
+/// invocation's status but `-q`'s THREE ANSWERS. An interrupted `-q` is not one
+/// of those three, and leaves the same 130 as this.
+///
+/// This number is not what the process leaves with, and cannot be: it says the
+/// run was cut short, and `main` reads the signal that cut it short and dies of
+/// it, so a shell sees 143 for `SIGTERM` and 129 for `SIGHUP`. That is GNU
+/// Make's own disposition and it governs the manifest front end equally. What a
+/// status value can carry and what an ending can carry are different widths,
+/// and this is the narrower one.
 ///
 /// The reason is read rather than the number: a recipe that exits 130 of its
 /// own accord is a failed recipe, and Make mode reports it as the 2 that every
-/// other failed recipe gets. That is also why the signal is not re-raised for
-/// `SIGTERM`, where GNU Make leaves 143 — Ronin leaves 130 for every signal it
-/// treats as an interrupt, as its own Ninja front end does, so the status says
-/// the build was cut short rather than how far it had got.
-// [spec:ronin:req:product.build-outcome]
+/// other failed recipe gets. Nothing turns that 2 into a signal afterwards,
+/// because no signal reached this process to be raised again.
+// [spec:ronin:req:product.build-outcome+1]
 fn stopped_status(outcome: &Outcome) -> i32 {
     if outcome.exit_code() == 0 {
         return 0;

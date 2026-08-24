@@ -16,6 +16,14 @@ pub enum Signal {
     Terminate,
 }
 
+/// What a tool that caught `SIGQUIT` leaves with, rather than dying of a signal
+/// whose default action writes a core file.
+///
+/// GNU Make's `MAKE_TROUBLE`, and the same number Ninja spends on
+/// `ExitFailure`: the two agree that this is trouble without agreeing on why,
+/// which is all a status can say once the signal has been declined.
+pub const QUIT_EXIT_CODE: i32 = 1;
+
 impl std::fmt::Display for Signal {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(match self {
@@ -54,12 +62,33 @@ impl Signal {
             .find(|signal| signal.atomic_value() == raw)
     }
 
-    /// Re-raises this signal with its default operating-system disposition.
+    /// Leaves the way a build tool that caught this signal leaves.
     ///
-    /// This preserves shell-visible signal termination and does not return.
-    pub fn reraise(self) -> ! {
+    /// The disposition is restored and the signal raised again, so the process
+    /// dies of the signal it was sent and a shell reads 128 + the signal
+    /// number: 130 for `SIGINT`, 143 for `SIGTERM`, 129 for `SIGHUP`. The
+    /// status then says which signal stopped the build rather than only that
+    /// something did, and a caller that distinguishes a Ctrl-C from a
+    /// supervisor's termination can. The `exit` below is unreachable while the
+    /// disposition can be restored, and carries the same number for a platform
+    /// where it cannot.
+    ///
+    /// `SIGQUIT` is the exception, and it is the one GNU Make writes out in as
+    /// many words (`commands.c`): "We don't want to send ourselves SIGQUIT,
+    /// because it will cause a core dump. Just exit instead." A build tool that
+    /// dumped core because the user quit it would write a core file the size of
+    /// its address space for something that is not a fault, so the signal is
+    /// not re-raised and the status is the plain trouble status GNU Make leaves
+    /// there — `MAKE_TROUBLE`, which is 1. Measured against GNU Make 4.4.1 on
+    /// 2026-08-24: `SIGQUIT` mid-recipe, during the read, and under `-q` all
+    /// leave 1, with no core file and no signal in the wait status.
+    // [spec:ronin:req:product.build-outcome+1]
+    pub fn die_of(self) -> ! {
         #[cfg(unix)]
         {
+            if self == Self::Quit {
+                std::process::exit(QUIT_EXIT_CODE);
+            }
             let raw = self.os_signal().as_raw();
             let _ = signal_hook::low_level::emulate_default_handler(raw);
             std::process::exit(128 + raw);

@@ -14,8 +14,9 @@ released source.
 [`[spec:ronin:req:make.oracle-provenance]`](spec/ronin/make.md).
 
 The last section is about a fifth kind of disagreement — Ronin against all four
-builds of GNU Make — and it is a survey for the operator to rule on rather than
-a record of decisions already taken:
+builds of GNU Make. It began as a survey for the operator to rule on. On
+2026-08-24 he ruled on seven of its ten numbered sections — two of them ruled
+closed and fixed — and three carry no ruling from him at all:
 [where Ronin diverges from the oracle](#where-ronin-diverges-from-the-oracle).
 
 ## The oracle
@@ -241,18 +242,24 @@ two was GNU's.
 Everything above is one build of GNU Make against another. This section is Ronin
 against all four of them: every place a Ronin `make` build observably differs
 from GNU Make 4.4.1, gathered so the operator can read one document and rule on
-each.
+each — which, for seven of the ten, he has.
 
-It is a survey, not a record of settled decisions. The operator's instruction of
-2026-08-24, verbatim: *"I do not think we have any accepted divergences. You will
-need to explain all the divergences now."* So nothing below should be read as
-approved. Where a divergence names an **Authority**, that line says exactly who
-recorded it and on what basis — and for most of them the honest answer is that
-the delivering dispatch recorded it (authored under the operator's git identity,
-but written by the agent), grounded in a spec rule or an architecture decision,
-with **no standalone operator ruling**. Two genuine operator rulings do exist and
-are cited verbatim where they bear: the narration line and the `-t`/`-B`/`-W`
-implementation, both 2026-08-17.
+It began as a survey. The operator's instruction of 2026-08-24, verbatim: *"I do
+not think we have any accepted divergences. You will need to explain all the
+divergences now."* The survey was then explained to him, and **he ruled on seven
+of the ten numbered sections**: #2, #3, #5, #7, #8, #9 and #10. Those seven carry
+his words verbatim with the date on their **Authority** line.
+
+Two of the seven are no longer divergences at all — **#5 and #7** — because he
+ruled them closed and the code was changed to match GNU Make. One of the seven,
+**#8**, is not ratified either: his ruling on it was *conditional*, the condition
+was measured, and it failed, so #8 is filed as a defect.
+
+**#1, #4 and #6 carry no ruling from him** and must not be read as approved. #1
+and #6 were explained to him and he did not rule on them; #4 he did not address.
+Where an Authority line still says *dispatch*, that means the delivering dispatch
+recorded it — authored under the operator's git identity, but written by the
+agent — with no standalone operator ruling.
 
 Every measured cell below was re-measured against `reference/make-oracle/make-4.4.1/make`
 on 2026-08-24.
@@ -261,18 +268,25 @@ on 2026-08-24.
 
 | # | Divergence | Reachable in a real build? | Gated by | Authority |
 | --- | --- | --- | --- | --- |
-| 1 | A shuffled order-only prerequisite is permuted apart from the rest | No — only under `--shuffle`, plus one `$|` cell needing a cycle | nothing (open node) | **none** — open, awaiting a ruling |
-| 2 | `$(MAKEFLAGS)` hands back the text it stores | Only where a switch value holds a literal `$` | 2 `divergence` sidecars + this doc | dispatch (no operator ruling) |
-| 3 | An oversized recipe's marked lines do not run under `-t`/`-q` | No — needs a recipe line over 100 kB | `tests/shell.rs::oversized_marks_are_not_split_out` | dispatch (no operator ruling) |
+| 1 | A shuffled order-only prerequisite is permuted apart from the rest | No — only under `--shuffle`, plus one `$|` cell needing a cycle | nothing (open node) | **none** — explained to the operator 2026-08-24; awaiting his ruling |
+| 2 | `$(MAKEFLAGS)` hands back the text it stores | Only where a switch value holds a literal `$` | 2 `divergence` sidecars + this doc | **operator, 2026-08-24**: *"We keep our behaviour."* |
+| 3 | An oversized recipe's marked lines do not run under `-t`/`-q` | No — needs a recipe line over 100 kB | `tests/shell.rs::oversized_marks_are_not_split_out` | **operator, 2026-08-24**: *"lol not a real problem."* |
 | 4 | A `.KATI_DEPFILE` recipe's `$(file …)` runs where it is built | No — `.KATI_DEPFILE` is a kati extension no GNU makefile names | `tests/shell.rs::a_depfile_recipe_is_read_where_it_is_built` | dispatch (no operator ruling) |
-| 5 | An interrupt leaves Ninja's 130, not GNU's 128+signum | **Yes** — any build killed by SIGTERM/SIGHUP/SIGQUIT | `tests/interrupts.rs`; `product.build-outcome` | spec `product.build-outcome` (no direct operator ruling) |
-| 6 | `-n` does not run a `+`-marked or `$(MAKE)`-referencing line | Only under `-n` with such a line | `DISCOVERY_ONLY_CASES` in `make_port` | dispatch decision on `make-recipe-dry-run` |
-| 7 | An output's directory is created where GNU leaves it to the recipe | **Yes** — a recipe that replaces a file with a same-named dir | nothing (retired node) | dispatch, citing the boundary + the narration ruling |
-| 8 | Recursive keep-going choreography differs | **Yes** — recursive `$(MAKE)` with per-child `-k`/`-S` | `DISCOVERY_ONLY_CASES` in `make_port` | architecture (compile recursive Make to one graph) |
-| 9 | `-W` over a `::` chain refuses before the chain's work runs | Only under `-W`/`-t`-family over a double-colon chain | `DISCOVERY_ONLY_CASES` in `make_port` | architecture (whole graph planned before it runs) |
-| 10 | Two defects found by this survey | **Yes** (a crash, a refused build) | filed as nodes | **none** — defects, not divergences to accept |
+| 5 | ~~An interrupt leaves Ninja's 130, not GNU's 128+signum~~ **FIXED** | was **Yes** | `tests/interrupts.rs`; `product.build-outcome+1` | **operator, 2026-08-24**: *"I think ronin should actually follow the GNU case even for ninja."* |
+| 6 | `-n` does not run a `+`-marked or `$(MAKE)`-referencing line | Only under `-n` with such a line | `DISCOVERY_ONLY_CASES` in `make_port` | **none** — explained to the operator 2026-08-24; awaiting his ruling |
+| 7 | ~~An output's directory is created where GNU leaves it to the recipe~~ **FIXED** | was **Yes** | 4 corpus fixtures + a kati unit pair | **operator, 2026-08-24**: *"Make's rule applies when run as make."* |
+| 8 | Recursive keep-going choreography differs | **Yes** — recursive `$(MAKE)` with per-child `-k`/`-S` | `DISCOVERY_ONLY_CASES` in `make_port`; node `make-recursive-keep-going-choreography-writes-different-files` | **DEFECT** — his ruling was conditional and the condition FAILED (measured) |
+| 9 | `-W` over a `::` chain refuses before the chain's work runs | Only under `-W`/`-t`-family over a double-colon chain | `DISCOVERY_ONLY_CASES` in `make_port` | **operator, 2026-08-24**: *"fine."* |
+| 10 | `-k` builds nothing past an unmakeable prerequisite | **Yes** — `-k` with a prerequisite that has no rule | `make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite` (retired) | **operator, 2026-08-24**: *"Ronin superior. Accepted divergence."* |
+| — | Two defects this survey found | **Yes** (a crash, a refused build) | filed as nodes | **none** — defects, not divergences to accept |
 
-A tenth line worth stating plainly: beyond #10's two, the upstream residue held
+**On the numbering.** The operator ruled on the `-k`-past-an-unmakeable-prerequisite
+divergence as **#10**, which is how it is numbered above and below. It arrived in
+this document as unnumbered prose beneath a row that held two defects; the defects
+were never a divergence to rule on, so they moved to the unnumbered row and the
+divergence took the number he used.
+
+A line worth stating plainly: beyond those two defects, the upstream residue held
 **85 more genuinely unclassified rows**. As of 2026-08-24 all 85 have been worked
 against the oracle case by case, and each one's measurement, outcome and owner is
 written out in **[`make-upstream-residue.md`](make-upstream-residue.md)**. In
@@ -283,17 +297,15 @@ to be Ronin divergences at all (state the suite's shared `tests/` directory
 carries between scripts — GNU produces Ronin's output exactly when given the same
 state), 5 assert GNU's own implementation rather than Make semantics, and 3
 duplicate entries already owned here or by a node. **None is undiagnosed, and
-none was accepted.** The inventory now records 58 unclassified rows: the 36
-defects until they are fixed, plus the 22 that have no honest family to move
-into.
+none was accepted.** The inventory records 57 unclassified rows as of the #7
+delivery of 2026-08-24 — the 36 defects until they are fixed, plus the 21 that
+have no honest family to move into. It held 58 until `misc/general4.diff.4`
+became pure narration when Make mode stopped creating output directories; see §7.
 
 A **twenty-third node** was filed from that work and belongs in this survey's own
 list rather than in the residue document, because it is reachable from a real
-build: `make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite`.
-Under `-k`, with one prerequisite that has no rule, GNU builds the three objects
-it can and only then abandons the goal; Ronin refuses at graph-load time and
-builds nothing. Same exit status, three fewer files. It is adjacent to #8 but has
-no recursion in it.
+build: `make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite`. It
+is **§10** below, and the operator ruled it a deliberate divergence.
 
 ---
 
@@ -336,8 +348,9 @@ combined walk gated on a live shuffle — contains the blast radius to shuffled
 runs at the price of two representations of one chain. The `.WAIT` barrier
 (synthesised order-only edges) has to be excluded from the shuffle either way.
 
-**Authority: none.** Open node, no ruling. This survey's line #1 is exactly what
-it asks the operator to rule on.
+**Authority: none — explained to the operator 2026-08-24; awaiting his ruling.**
+He read this section on that date and did not rule on it. The node stays open and
+nothing here is approved.
 
 ### 2. `$(MAKEFLAGS)` hands back the text it stores
 
@@ -371,9 +384,10 @@ suite, or the Makefiles of vim 9.2, zsh 5.9.2, abseil or Ninja.
 double-expansion, i.e. reproducing the data loss in the child — which the
 dispatch judged is not compatibility of build intent.
 
-**Authority: no operator ruling.** Recorded by the delivering dispatch on
-`make-makeflags-holds-its-switches-as-literal-text`, grounded in the argument
-that "reproducing a data loss is not compatibility of build intent."
+**Authority: operator decision, Brendan, 2026-08-24, on this section:**
+*"We keep our behaviour."* This ratifies what the delivering dispatch had
+recorded on `make-makeflags-holds-its-switches-as-literal-text`, grounded in the
+argument that "reproducing a data loss is not compatibility of build intent."
 
 ### 3. An oversized recipe's marked lines do not run under `-t` or `-q`
 
@@ -407,8 +421,10 @@ change to the build engine's response-file lifetime and to `take_step`, which
 has to leave every Ninja edge untouched. The `-t`/`-q`-only shortcut would make
 an edge's steps depend on the switch the run started with.
 
-**Authority: no operator ruling.** Recorded by the delivering dispatch, grounded
-in the reachability evidence above.
+**Authority: operator decision, Brendan, 2026-08-24, on this section:**
+*"lol not a real problem."* The reachability evidence above is what he was
+reading: a recipe line over 100 kB that also carries a `+`/`$(MAKE)` line does
+not exist in any corpus, and the longest line measured anywhere is 876 bytes.
 
 ### 4. A `.KATI_DEPFILE` recipe's `$(file …)` is performed where it is built
 
@@ -444,43 +460,81 @@ dependency (touching a listed header stopped rebuilding the target).
 
 **Authority: no operator ruling.** Recorded by the delivering dispatch.
 
-### 5. An interrupt leaves Ninja's 130, not GNU's 128 + signal number
+### 5. An interrupt leaves Ninja's 130, not GNU's 128 + signal number — **FIXED 2026-08-24**
+
+**Ruled closed.** Operator decision, Brendan, 2026-08-24, verbatim: *"I think
+ronin should actually follow the GNU case even for ninja. It seems semantically
+smarter."* Asked whether that meant re-raising in BOTH modes, accepting that it
+diverges from upstream Ninja, he answered yes. It is no longer a divergence from
+GNU Make; it is now a **deliberate, operator-ruled divergence from upstream
+Ninja**, and that is what this section records.
 
 **Owner:** `make-mode-leaves-an-interrupt-with-2-where-both-references-say-130`
-(Done), with `question-mode-answers-up-to-date-after-an-interrupt` for the `-q`
-face. **Gated by:** `tests/interrupts.rs` (e.g. `make_termination_leaves_ninjas_status`).
+(Done) and `question-mode-answers-up-to-date-after-an-interrupt` (Done) are the
+history; `an-interrupt-leaves-with-the-signal-that-caused-it` is the delivery.
+**Gated by:** `tests/interrupts.rs` — `make_termination_dies_of_the_signal`,
+`a_manifest_build_dies_of_the_signal_too`, `make_hangup_dies_of_the_signal`,
+`make_quit_leaves_the_trouble_status_without_dumping`, and the nine cases that
+already read an interrupt's status — twelve of them through the shared `died_of`
+helper, which reads the wait status as a signal because `code()` is `None` for a
+process a signal killed.
 
-**What GNU does / what Ronin does.** GNU catches a fatal signal, kills its
-children, withdraws the target, and then dies of the signal — so its exit is
-128 + the signal number. Ronin leaves Ninja's fixed interrupt code, 130, for
-every interrupt, without re-raising. Measured, each tool signalled on itself
-mid-recipe, through `scripts/sandboxed`:
+**What GNU does.** It catches a fatal signal, kills its children, withdraws the
+target it was making, restores the disposition and raises the signal again — so
+the process dies of what it was sent and a shell reads 128 + the signal number.
+`SIGQUIT` is the one exception, and `commands.c` writes out why: *"We don't want
+to send ourselves SIGQUIT, because it will cause a core dump. Just exit
+instead."* It exits `MAKE_TROUBLE`, which is 1.
 
-| signal | GNU Make 4.4.1 | Ronin | target |
+**What Ronin does now.** The same, in both front ends. Measured on 2026-08-24
+through `scripts/sandboxed`, the signal sent to the tool's own pid, every tool
+exec'd through `perl -e '$SIG{$_}="DEFAULT" for qw(INT QUIT HUP TERM); exec
+@ARGV'` — without that reset an inherited `SIG_IGN` for `SIGINT`/`SIGQUIT` makes
+GNU Make ignore the signal and the cell measures nothing:
+
+| signal | GNU Make 4.4.1 | Ronin **before** | Ronin **after** |
 | --- | --- | --- | --- |
-| SIGINT | 130 | 130 | deleted, in both |
-| SIGTERM | **143** | **130** | deleted, in both |
-| SIGHUP | **129** | **130** | deleted, in both |
+| SIGINT | dies of signal 2 → 130 | exit 130 | **dies of signal 2 → 130** |
+| SIGTERM | dies of signal 15 → **143** | exit 130 | **dies of signal 15 → 143** |
+| SIGHUP | dies of signal 1 → **129** | exit 130 | **dies of signal 1 → 129** |
+| SIGQUIT | exit **1**, no core | exit 130 | **exit 1, no core** |
 
-SIGINT happens to agree on the number; SIGTERM and SIGHUP diverge. The files
-agree in every case. (The number also agrees on SIGINT while the *mechanism*
-differs — GNU re-raises, Ronin does not — which is the same trade one level up.)
+Twelve Make-mode cells were measured — the four signals × mid-recipe, during the
+read phase (a `$(shell)` running), and under `-q` with a `+`-marked line — and
+all twelve now agree with GNU exactly. Four Ninja-mode cells (mid-recipe) follow
+the same rule, which is the ruled divergence from upstream Ninja.
 
-**Reachability.** **Yes** — any real build killed by SIGTERM (or SIGHUP/SIGQUIT)
-leaves a different exit code than GNU. This is the one divergence in this survey
-that an ordinary, un-fringe build reaches.
+Note the SIGQUIT row, which the survey had not measured before: **GNU's rule is
+not "128 + signum"**. It is "die of the signal, except the one whose default
+action dumps core". Following the GNU case means following it there too, so
+Ronin leaves 1 for `SIGQUIT` rather than 131 — and writes no core file.
 
-**Cost to match.** Re-raising the signal in Make mode and not in Ninja mode —
-runtime emulation in the one front end that exists to avoid it. The two modes
-share one interrupt path.
+**What did not change.** Everything the interrupt work established is intact and
+still gated: the cut-short edge is not recorded in the build log, partial outputs
+are removed, the target is withdrawn, `.PRECIOUS` is spared, an interrupted read
+abandons its `$(shell)` child rather than waiting for it, and `-q` still refuses
+to answer the affirmative zero. A recipe that exits 130 of its own accord is
+still an ordinary failure reported as 2, and a recipe killed by a signal nobody
+sent the build is still an ordinary failure — neither turns into a signal death,
+because the ending is chosen from the signal this process actually caught rather
+than from the number the build reported.
 
-**Authority: a spec rule, not a direct operator ruling.**
-`[spec:ronin:req:product.build-outcome]` states it verbatim: *"an interrupt
-leaves with Ninja's 130 rather than re-raising the signal, so the status does
-not depend on how far the build had got; C samurai re-raised here, and Ninja is
-the contract."* The Make-mode delivery (2026-08-22) applied that rule; the
-divergence from GNU's 143 is stated by the gate `make_termination_leaves_ninjas_status`.
-No operator ruling names SIGTERM specifically.
+**Upstream Ninja, for the record.** `ExitInterrupted` is hard-coded 130
+(`reference/ninja/src/exit_status.h:30`) and returned at
+`reference/ninja/src/ninja.cc:1679`; `subprocess-posix.cc` installs handlers for
+`SIGINT`, `SIGTERM` and `SIGHUP` only and never re-raises any of them. Ronin's
+manifest front end now leaves 143 where upstream leaves 130, and handles
+`SIGQUIT` where upstream does not handle it at all. That is the divergence the
+operator ruled for.
+
+**Where it is written down.** `[spec:ronin:req:product.build-outcome]` said the
+opposite verbatim — *"an interrupt leaves with Ninja's 130 rather than
+re-raising the signal, so the status does not depend on how far the build had
+got; C samurai re-raised here, and Ninja is the contract."* The rule is now
+**`+1`** and states the ruling, with all 30 source references re-read and
+re-pinned.
+
+**Authority: operator decision, Brendan, 2026-08-24**, quoted in full above.
 
 ### 6. `-n` does not run a `+`-marked or `$(MAKE)`-referencing recipe line
 
@@ -510,7 +564,9 @@ without `-n` runs everything in both tools.
 child during `-n` — which is exactly the `DRY_RUN_COMMAND` the compiler-boundary
 removal deleted.
 
-**Authority: a dispatch decision, no operator ruling.** `make-recipe-dry-run`,
+**Authority: none — explained to the operator 2026-08-24; awaiting his ruling.**
+He read this section on that date and did not rule on it, so what stands is still
+a dispatch decision and not an accepted divergence. `make-recipe-dry-run`,
 2026-08-08: *"Dry-run spellings are interface controls mapped onto the ordinary
 Ninja dry-run path. Plus-prefixed recursive Make lines are compiler inputs for
 subninja composition, not an exception that launches a child Make during
@@ -518,17 +574,42 @@ dry-run."* The completion note (2026-08-09) adds: *"The `+` prefix on a line
 that is not Make loses its GNU effect, and that is the decision rather than an
 oversight."*
 
-### 7. An output's directory is created where GNU Make would leave it to the recipe
+### 7. An output's directory is created where GNU Make would leave it to the recipe — **FIXED 2026-08-24**
 
-**Owner:** `make-an-output-directory-is-created-where-gnu-make-would-refuse`
-(retired as a recorded intentional divergence — no code, no gate, and until now
-not in this doc). **Gated by:** nothing.
+**Ruled closed.** Operator decision, Brendan, 2026-08-24, verbatim: *"Make's rule
+applies when run as make."* That reverses the 2026-08-19 retirement, which had
+recorded the divergence as intentional on the dispatch's own authority. **Make
+mode no longer creates an output's directory; Ninja mode still does, unchanged.**
 
-**What GNU does / what Ronin does.** Ninja creates an edge's output directory
-before launching the command, and Ronin runs Make's recipes through Ninja's
-launcher, so it does too. GNU leaves `$@`'s directory to the recipe. Where the
-name is free the two agree; where the name is taken by a non-directory, they
-part. Measured, with `afile` an ordinary file:
+**Owner:** `make-an-output-directory-is-created-where-gnu-make-would-refuse` was
+retired (Done, 2026-08-19) as a recorded intentional divergence and is superseded
+by `an-outputs-directory-is-left-to-the-recipe-in-make-mode`, which carries the
+ruling and the delivery. **Gated by:** four oracle-recorded corpus fixtures —
+`an-outputs-directory-is-the-recipes-to-arrange`,
+`an-output-in-a-directory-nothing-creates-is-refused`,
+`a-touched-output-in-a-directory-nothing-creates-is-refused`,
+`a-recipes-own-mkdir-of-its-output-directory-runs` — plus the kati unit pair
+`a_redundant_output_mkdir_is_absorbed_for_ninja` /
+`a_recipes_own_output_mkdir_is_kept_where_it_owns_the_directory`.
+
+**What GNU does.** `$@`'s directory is the recipe's problem, which is why every
+makefile in the world writes `@mkdir -p $(@D)` and why automake generates it.
+Ninja creates it, because a manifest is generated and its generator is entitled
+to assume the directory is there.
+
+**Measured, before and after.** Four shapes, all through `scripts/sandboxed`
+against `reference/make-oracle/make-4.4.1/make` on 2026-08-24. The survey had
+recorded only the first; three of the four diverged, and two of those diverged
+*silently*, with Ronin succeeding where GNU fails.
+
+| shape | GNU Make 4.4.1 | Ronin **before** | Ronin **after** |
+| --- | --- | --- | --- |
+| a recipe replaces a file with a directory of the same name | `GEN`, `X=1`, exit 0 | `build stopped: File exists.` + `Not a directory`, **exit 2** | `GEN`, `X=1`, **exit 0** |
+| output in a directory nothing creates | exit 2, `sub/out` absent | **exit 0, `sub/out` written** | exit 2, `sub/out` absent |
+| recipe makes its own directory | exit 0, `sub/out` written | exit 0, `sub/out` written | exit 0, `sub/out` written |
+| `-t` over an output in a directory nothing creates | exit 2, `sub/out` absent | **exit 0, `sub/out` written** | exit 2, `sub/out` absent |
+
+The first shape is the survey's reproducer, unchanged:
 
 ```
 all: ; @echo "all X=$(X)"
@@ -536,36 +617,63 @@ afile/one.mk: ; @echo GEN; rm -f afile; mkdir afile; echo X=1 > afile/one.mk
 include afile/one.mk
 ```
 
-| | GNU Make 4.4.1 | Ronin |
-| --- | --- | --- |
-| result | `GEN`, `all X=1`, exit 0 (the recipe cleared the file, made the dir, read the fragment) | `ronin: build stopped: File exists.` + `Makefile:3: afile/one.mk: Not a directory`, exit 2 |
+**How, without Make provenance in the graph.** The 2026-08-19 retirement was
+right that a per-edge property is forbidden — `plan/decisions/make-compiles-to-ninja.md`
+and `docs/make-compiler-boundary-audit.md` rule out an edge property that exists
+only to make the executor behave differently because the graph came from a
+Makefile. Nothing was written into the graph. `BuildOptions::create_output_directories`
+is a **run-level** setting beside the ones the Make front end already answers
+(`command_status_interrupts`, `recipe_signal_fails`, `archive_members`, `touch`,
+`always_make`): what creates the directory is the launcher, so which launcher
+behaviour a run wants is the front end's to say once. A graph loaded from a
+manifest still gets Ninja's launcher, and a manifest Make mode emits still
+describes a Ninja build.
 
-**Reachability.** **Yes** in principle — any recipe whose first job is to arrange
-its own output directory (replacing a file with a directory of the same name is
-the shape that reaches it). Nothing in any corpus depends on either answer,
-which is why it surfaced from a hand probe rather than a gate.
+**The half that had to move with it.** kati absorbs a leading, silent
+`mkdir -p $(@D)` from a recipe — sound while Ninja is going to make that
+directory anyway, and a deleted build step once nothing does.
+`Flags::recipes_own_output_directories` turns the absorption off, and Ronin's
+Make front end sets it. This was caught by two `tests/cli.rs` cases
+(`recursive_evaluation_waits_for_parent_inputs`,
+`nested_recursive_evaluation_boundary`) whose makefiles write `@mkdir -p installed`
+and whose recipes had been running without it all along, invisibly, because the
+launcher got there first.
 
-**Cost to match.** A per-edge property the Make sink sets and the manifest parser
-leaves off — which
-`plan/decisions/make-compiles-to-ninja.md` and `docs/make-compiler-boundary-audit.md`
-forbid: "do not create my output's directory" is not a Ninja graph idiom, and an
-edge property that exists only to make the executor behave differently because
-the graph came from a Makefile is Make provenance in the graph.
+**The other thing it was masking.** Exactly one row of
+`tests/make_upstream_inventory.tsv` moved, from `unclassified` to `narration`:
+`misc/general4.diff.4`, the GNU-suite case named "Make sure that subdirectories
+built as prerequisites are actually handled properly... this time with `$`". The
+driver runs every test in a script in ONE work directory, and the first test in
+that script names the same `dir/subdir`; under the old behaviour Ronin's launcher
+created it while running that first test, so by the time the fifth test ran the
+directory existed, its `@echo mkdir -p` target was up to date, and one of the
+three expected lines never ran. Nothing creates it now, and the case's remaining
+difference is the `[N/M]` progress lines alone. Counts: 1285 cases before and
+after, unclassified 58 → 57, **compiler 0 → 0**, interface 28 → 28, narration
+1199 → 1200. Run that makefile on its own with `dir/` cleared first and both
+tools agree either way, which is why it needed the suite's own carried state to
+reproduce.
 
-**Authority: a dispatch decision, citing the boundary and an operator ruling by
-analogy.** Recorded by the dispatch that retired the node (2026-08-19), grounded
-in the compiler-boundary audit and pointing at the narration operator ruling
-(below) — but there is **no operator ruling on directory creation itself**. If
-reopened it should be a `plan/decisions`-level question about who owns an
-output's directory for *every* front end, not a Make special case.
+**What Ronin's own staging still does.** A name the compiler invented for itself
+— the `.ronin_recipe_stage/N` proxy of a composed recipe's preceding segment —
+is not a Make output and never was. Its directory is still made, in
+`Builder::prepare_response_file`, because the tool that chose the path is the one
+that can place it. `is_virtual_output` keeps the two apart exactly as it did.
+
+**Authority: operator decision, Brendan, 2026-08-24**, quoted in full above. It
+is the ruling on directory creation itself that the 2026-08-19 record said did
+not exist.
 
 ### 8. Recursive keep-going choreography differs (recursive Make is one graph)
 
 **Surfaced by:** `tests/make/makeflags-keep-going-precedence` (in
-`DISCOVERY_ONLY_CASES`). **Owner:** the architecture of
+`DISCOVERY_ONLY_CASES`). **Owner:**
+`make-recursive-keep-going-choreography-writes-different-files` (open, filed
+2026-08-24). The architecture it runs into is
 `make-single-ninja-scheduler` / `make-subninja-recursion` — recursive `$(MAKE)`
 invocations compile into one graph with one scheduler, so there is no child Make
-runner in which GNU's per-child keep-going choreography could occur.
+runner in which GNU's per-child keep-going choreography could occur. That
+explains the divergence; it does not accept it.
 
 **What GNU does / what Ronin does.** A parent whose recipe is
 `-@$(MAKE) -S -f stop.mk` then `-@$(MAKE) -k -f go.mk` reaches two separate GNU
@@ -589,10 +697,34 @@ across composition — i.e. to schedule composed sub-makes as if they were
 separate runners, which is the recursive-jobserver model
 `make-single-ninja-scheduler` replaced with one scheduler.
 
-**Authority: architecture, no operator ruling.** This is a documented consequence
-of compiling recursive Make into one graph. The `make_port` harness records it as
-discovery-only precisely because "recursive Make invocations compile into one
-graph, so there is no child Make runner in which that choreography could occur."
+**Authority: NOT ratified — the operator's ruling was conditional and the
+condition FAILED.** Operator decision, Brendan, 2026-08-24, verbatim: *"if it's
+behaviourally equivalent I don't care."* It is not behaviourally equivalent, so
+his ruling does not cover it and nothing here is accepted.
+
+**The measurement his condition asked for.** All eight `DISCOVERY_ONLY_CASES`
+were run through both tools on 2026-08-24 under `scripts/sandboxed`, mirroring
+the `make_port` harness (scratch copy, the case's `setup`, the case's `args`,
+then the exit status and every file the run left, by relative path and content):
+
+| case | exit | files | verdict |
+| --- | --- | --- | --- |
+| `makeflags-keep-going-precedence` | GNU 0 / Ronin **2** | GNU wrote `went`; Ronin wrote `stopped` | **DIFFERS** |
+| `makeflags-outranked-by-command-line` | 0 / 0 | identical (8) | same |
+| `makeflags-value-switch-precedence` | 0 / 0 | identical (7) | same |
+| `makeflags-withdrawal-outranked-by-command-line` | 0 / 0 | identical (6) | same |
+| `phony-runs-though-the-file-is-current` | 0 / 0 | identical (4) | same |
+| `a-what-if-file-that-is-double-colon-refuses-after-the-chain-ran` | 2 / 2 | identical by content (5) | see §9 — the difference is *when* the file was written, which this probe reads by content and the harness reads by mtime |
+| `dry-run-skips-a-plus-line` | 0 / 0 | GNU wrote `plus` | **DIFFERS** — that is §6, open |
+| `dry-run-skips-a-make-reference-line` | 0 / 0 | GNU wrote `named` | **DIFFERS** — that is §6, open |
+
+So the keep-going cell differs in **both** halves of the condition: a different
+file on disk and a different exit status. The four other `makeflags-*` and
+`phony-*` cases are behaviourally identical and differ only in narration, which
+is what makes the failing cell a finding rather than a category.
+
+**Filed as a defect:** `make-recursive-keep-going-choreography-writes-different-files`,
+with the reproducer above. Do not read the operator's sentence as accepting this.
 
 ### 9. `-W` over a double-colon chain refuses before the chain's work runs
 
@@ -621,10 +753,62 @@ refusal falls after work — a fringe shape.
 complete — against Ronin's plan-then-run model, which hands a finished plan to a
 frontend and must not hand it a partial one.
 
-**Authority: architecture, no operator ruling.** A consequence of planning the
-whole graph before running it.
+**Authority: operator decision, Brendan, 2026-08-24, on this section:** *"fine."*
+The architecture it consents to is the plan-then-run model: the whole graph is
+planned before any of it runs, so a refusal that GNU Make reaches part-way
+through a `::` walk is reached here before the walk starts.
 
-### 10. Two defects this survey found (filed as nodes, not accepted)
+### 10. `-k` builds nothing past an unmakeable prerequisite — **ACCEPTED DIVERGENCE**
+
+**Owner:** `make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite`,
+filed as a defect on 2026-08-24 and **retired the same day as a recorded,
+operator-ruled divergence**. Gated by
+`tests/make/keep-going-refuses-the-goal-before-building-what-it-can`, so a change
+that starts building the three objects reopens the decision rather than passing
+silently.
+
+**What GNU does / what Ronin does.** Under `-k`, with one prerequisite that has
+no rule at all, GNU Make walks the goal's prerequisites, builds the three it can,
+and only then abandons the goal. Ronin refuses at graph-load time — the goal
+provably cannot complete, and it says so before running anything.
+
+**Reproducer / measured** (a `work/` directory holding `main.c`, `defs.h`,
+`command.h`, `commands.c`, `display.c`, `buffer.h`, `command.c`, and deliberately
+no `kbd.c`):
+
+```
+VPATH = work
+edit:  main.o kbd.o commands.o display.o
+	@echo cc -o edit main.o kbd.o commands.o display.o
+main.o : main.c defs.h
+	@echo cc -c main.c
+kbd.o : kbd.c defs.h command.h
+	@echo cc -c kbd.c
+commands.o : command.c defs.h command.h
+	@echo cc -c commands.c
+display.o : display.c defs.h buffer.h
+	@echo cc -c display.c
+```
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| under `-k` | builds `main.o`, `commands.o`, `display.o`, then abandons `edit` | refuses `kbd.c`, builds nothing |
+| exit | 2 | 2 |
+
+Same exit status, three fewer files — and none of the three was going to be used,
+because the goal that wanted them cannot be made.
+
+**Authority: operator decision, Brendan, 2026-08-24**, verbatim: *"Ronin
+superior. Accepted divergence."* Asked whether the node should be kept as a
+defect or retired, he answered KEEP the behaviour: fail fast is right, and
+refusing at graph-load when the goal provably cannot complete beats doing work
+that gets thrown away. So this is the one place in this document where Ronin
+deliberately does *less* than GNU Make and the operator ruled that the less is
+better.
+
+---
+
+### Two defects this survey found (filed as nodes, not accepted)
 
 These are not deliberate divergences; they are bugs, found while surveying the
 upstream residue for `make-upstream-residue-triage`, and filed as nodes.
@@ -646,9 +830,10 @@ reads the command-line assignment's value eagerly.
 
 ### What was ruled to be implemented rather than diverge
 
-Two genuine operator rulings exist, both 2026-08-17, and both point the *other*
-way — toward conformance — so they are recorded here for completeness, to show
-where the line has actually been drawn by the operator rather than by a dispatch.
+Two earlier operator rulings, both 2026-08-17, point the *other* way — toward
+conformance — and are recorded here for completeness. They predate the rulings of
+2026-08-24 that this document now carries on its numbered sections, and neither
+was overtaken by them, except where §7 says so below.
 
 **`-t`, `-B`, `-W` are implemented, not accepted no-ops.** Operator decision,
 Brendan, 2026-08-17, explicit (on `make-archive-member-touch`): *"implement `-t`
@@ -672,6 +857,13 @@ chatter — `pattern recipe did not update peer target`, `*** Deleting file`,
 jobserver-mode warnings, `touch <file>`, `Entering/Leaving directory`,
 up-to-date announcements — as narration Ronin declines rather than as
 divergences of build intent. It is why those lines are recognised families in
-`tests/make_upstream_inventory.tsv` rather than open divergences, and it governs
-divergence #7 above by analogy (the same boundary decides output-directory
-creation), though it does not name that case.
+`tests/make_upstream_inventory.tsv` rather than open divergences.
+
+It was also cited, by analogy, as governing §7 — output-directory creation — on
+the grounds that the same boundary decides both. **That analogy no longer
+holds**, and it never named the case: on 2026-08-24 the operator ruled directly
+on §7 (*"Make's rule applies when run as make."*) and Make mode now leaves the
+directory to the recipe. The narration ruling is about what a build SAYS; §7 was
+about what it DOES, which is why the two came apart. The boundary itself is
+intact — nothing was written into the graph, and the answer is a run-level
+setting the front end gives at the launcher.

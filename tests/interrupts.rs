@@ -102,17 +102,38 @@ fn wait_for_the_recipes_marker(child: &mut std::process::Child, marker: &std::pa
     }
 }
 
+/// Assert that a run the signal reached left the way GNU Make leaves: by dying
+/// of that signal.
+///
+/// GNU Make catches a fatal signal, kills its children, withdraws the target it
+/// was making, restores the disposition and raises the signal again, so the
+/// process dies of what it was sent and a shell reads 128 + the number — 130
+/// for `SIGINT`, 143 for `SIGTERM`, 129 for `SIGHUP`. Ronin does the same in
+/// BOTH front ends, which is where it parts from upstream Ninja: Ninja returns
+/// a fixed `ExitInterrupted` of 130 for every signal it treats as an interrupt
+/// (`exit_status.h`, returned from `ninja.cc`) and never re-raises.
+///
+/// Read as a signal rather than as a number, because that is what the wait
+/// status now carries: `code()` is `None` for a process a signal killed, so
+/// only `signal()` tells 130-by-dying-of-`SIGINT` from 130-by-exiting — which
+/// is the distinction a caller inspecting `$?` cannot make and a caller
+/// inspecting the wait status can.
+fn died_of(status: std::process::ExitStatus, signal: rustix::process::Signal, context: &str) {
+    use std::os::unix::process::ExitStatusExt;
+
+    assert_eq!(status.signal(), Some(signal.as_raw()), "{context}");
+    assert_eq!(status.code(), None, "{context}");
+}
+
 /// Spelled `forwards_interrupts_and_removes_partial_outputs` until this suite
 /// was split off, where the file-size gate's move brought the name under the
 /// function-name gate for the first time. Three plan notes quote the old
 /// spelling; the case and its assertions are unchanged.
 // [spec:ronin:req:compat.process-integration+2/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[test]
 // [spec:ronin:req:runtime.process-supervisor-scalability/test]
 fn forwards_an_interrupt_and_withdraws_output() {
-    use std::os::unix::process::ExitStatusExt;
-
     let directory = test_directory("interrupt-forwarding");
     fs::write(
         directory.join("build.ninja"),
@@ -127,11 +148,7 @@ fn forwards_an_interrupt_and_withdraws_output() {
     let child_id = rustix::process::Pid::from_child(&child);
     rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
     let status = child.wait().unwrap();
-    // Ninja exits with 130 rather than dying by the signal it caught. C samurai
-    // re-raised, and Ronin followed it here until the exit-status surface was
-    // measured against Ninja; the contract is Ninja's.
-    assert_eq!(status.signal(), None);
-    assert_eq!(status.code(), Some(ronin::INTERRUPTED_EXIT_CODE));
+    died_of(status, rustix::process::Signal::INT, "manifest build");
     assert!(!directory.join("output").exists());
 }
 
@@ -148,11 +165,9 @@ fn forwards_an_interrupt_and_withdraws_output() {
 /// the recipe cannot be killed by the signal it was sent, so what stops it is
 /// the build or nothing.
 // [spec:ronin:req:compat.process-integration+2/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[test]
 fn an_interrupt_stops_an_outliving_recipe() {
-    use std::os::unix::process::ExitStatusExt;
-
     let directory = test_directory("interrupt-declined");
     fs::write(
         directory.join("build.ninja"),
@@ -171,12 +186,10 @@ fn an_interrupt_stops_an_outliving_recipe() {
     rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
     let finished = child.wait_with_output().unwrap();
 
-    assert_eq!(finished.status.signal(), None);
-    assert_eq!(
-        finished.status.code(),
-        Some(ronin::INTERRUPTED_EXIT_CODE),
-        "{}",
-        String::from_utf8_lossy(&finished.stdout)
+    died_of(
+        finished.status,
+        rustix::process::Signal::INT,
+        &String::from_utf8_lossy(&finished.stdout),
     );
     // Nothing of the command line past the signal ran, so the build stopped the
     // recipe rather than being held by it.
@@ -233,13 +246,11 @@ fn a_finished_edge_is_recorded() {
 /// the build rather than about the shell: with nothing to kill them, a build
 /// that waits for them records two successful edges and leaves `gone` standing.
 // [spec:ronin:req:compat.process-integration+2/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 // [spec:ronin:req:make.semantics+1/test]
 #[cfg(feature = "make")]
 #[test]
 fn make_interrupt_spares_precious_targets() {
-    use std::os::unix::process::ExitStatusExt;
-
     let directory = make_case(
         "make-interrupt-precious",
         ".PRECIOUS: kept\n\
@@ -263,15 +274,10 @@ fn make_interrupt_spares_precious_targets() {
     rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
     let finished = child.wait_with_output().unwrap();
 
-    // Measured against GNU Make 4.4.1, which exits 130 by dying of the signal,
-    // and against upstream Ninja, which exits 130 without re-raising it. Ronin
-    // takes Ninja's spelling for both front ends.
-    assert_eq!(finished.status.signal(), None);
-    assert_eq!(
-        finished.status.code(),
-        Some(ronin::INTERRUPTED_EXIT_CODE),
-        "{}",
-        String::from_utf8_lossy(&finished.stdout)
+    died_of(
+        finished.status,
+        rustix::process::Signal::INT,
+        &String::from_utf8_lossy(&finished.stdout),
     );
     assert!(!directory.join("gone").exists());
     assert!(directory.join("kept").exists());
@@ -287,12 +293,10 @@ fn make_interrupt_spares_precious_targets() {
 /// stood, which killed it before it could leave a mark, so the files look the
 /// same either way. What changed is that there is now nothing to kill.
 // [spec:ronin:req:compat.process-integration+2/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[cfg(feature = "make")]
 #[test]
 fn make_interrupt_launches_no_further_line() {
-    use std::os::unix::process::ExitStatusExt;
-
     let directory = make_case(
         "make-interrupt-next-line",
         "out:\n\
@@ -308,35 +312,31 @@ fn make_interrupt_launches_no_further_line() {
     rustix::process::kill_process(child_id, rustix::process::Signal::INT).unwrap();
     let finished = child.wait_with_output().unwrap();
 
-    assert_eq!(finished.status.signal(), None);
-    assert_eq!(
-        finished.status.code(),
-        Some(ronin::INTERRUPTED_EXIT_CODE),
-        "{}",
-        String::from_utf8_lossy(&finished.stdout)
+    died_of(
+        finished.status,
+        rustix::process::Signal::INT,
+        &String::from_utf8_lossy(&finished.stdout),
     );
     assert!(!directory.join("second-line-ran").exists());
     assert!(!directory.join("out").exists());
 }
 
-/// `SIGTERM` is where the two references part, and Ronin follows Ninja.
+/// `SIGTERM` is where the two references part, and Ronin follows GNU Make.
 ///
-/// GNU Make 4.4.1 kills its children, deletes the target it was making, and
-/// then dies of the signal it caught, so a shell reads 143. Upstream Ninja
-/// exits 130 for every signal it treats as an interrupt, and
-/// `[spec:ronin:req:product.build-outcome]` takes that as the contract in so
-/// many words — an interrupt leaves with Ninja's 130 rather than re-raising the
-/// signal, so the status says the build was cut short rather than how far it
-/// had got. Measured: 143 from GNU, 130 from upstream Ninja, 130 from Ronin's
-/// own manifest front end, and this case holds Make mode to the same 130 rather
-/// than to GNU's number.
+/// Spelled `make_termination_leaves_ninjas_status` while it held the other
+/// answer; the case is the same build and the same signal, and only what it
+/// asserts moved. GNU Make 4.4.1 kills its children, deletes the target it was
+/// making, and then dies of the signal it caught, so a shell reads 143.
+/// Upstream Ninja exits 130 for every signal it treats as an interrupt and
+/// never re-raises. Both were measured on 2026-08-24, and the operator ruled:
+/// *"I think ronin should actually follow the GNU case even for ninja. It seems
+/// semantically smarter."* — so 143 here, and 143 in the manifest front end
+/// beside it.
 // [spec:ronin:req:compat.process-integration+2/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[cfg(feature = "make")]
 #[test]
-fn make_termination_leaves_ninjas_status() {
-    use std::os::unix::process::ExitStatusExt;
-
+fn make_termination_dies_of_the_signal() {
     let directory = make_case(
         "make-terminate-status",
         "out:\n\t@touch $@; touch started; sleep 30\n",
@@ -350,10 +350,115 @@ fn make_termination_leaves_ninjas_status() {
     rustix::process::kill_process(child_id, rustix::process::Signal::TERM).unwrap();
     let finished = child.wait_with_output().unwrap();
 
+    died_of(
+        finished.status,
+        rustix::process::Signal::TERM,
+        &String::from_utf8_lossy(&finished.stdout),
+    );
+    assert!(!directory.join("out").exists());
+}
+
+/// And the manifest front end says the same, which is the deliberate part.
+///
+/// The number a manifest build leaves for a `SIGTERM` is the one place Ronin
+/// is knowingly not upstream Ninja on this surface: Ninja's `ExitInterrupted`
+/// is 130 whatever signal arrived, this leaves 143, and the operator ruled that
+/// GNU's answer is the better one for both front ends. Without this case the
+/// divergence would live only in Make mode, where a reader could mistake it for
+/// Make emulation rather than for the product's rule.
+// [spec:ronin:req:product.build-outcome+1/test]
+#[test]
+fn a_manifest_build_dies_of_the_signal_too() {
+    let directory = test_directory("manifest-terminate-status");
+    fs::write(
+        directory.join("build.ninja"),
+        "rule slow\n  command = touch $out; touch started; sleep 30\n\
+         build output: slow\ndefault output\n",
+    )
+    .unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ronin"))
+        .current_dir(&directory)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
+    let child_id = rustix::process::Pid::from_child(&child);
+    rustix::process::kill_process(child_id, rustix::process::Signal::TERM).unwrap();
+    let finished = child.wait_with_output().unwrap();
+
+    died_of(
+        finished.status,
+        rustix::process::Signal::TERM,
+        &String::from_utf8_lossy(&finished.stdout),
+    );
+    assert!(!directory.join("output").exists());
+}
+
+/// A hangup is the third number and the plainest reading of the rule.
+///
+/// 129 rather than 130, measured from GNU Make 4.4.1 on 2026-08-24. It is here
+/// because `SIGINT` alone cannot tell the two contracts apart — Ninja's fixed
+/// 130 and GNU's 128 + 2 are the same number — so a suite holding only `SIGINT`
+/// and `SIGTERM` would leave the arithmetic asserted at one point rather than
+/// stated.
+// [spec:ronin:req:product.build-outcome+1/test]
+#[cfg(feature = "make")]
+#[test]
+fn make_hangup_dies_of_the_signal() {
+    let directory = make_case(
+        "make-hangup-status",
+        "out:\n\t@touch $@; touch started; sleep 30\n",
+    );
+    let mut child = make_command(&invoked_as(&directory, "make"), &directory)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
+    let child_id = rustix::process::Pid::from_child(&child);
+    rustix::process::kill_process(child_id, rustix::process::Signal::HUP).unwrap();
+    let finished = child.wait_with_output().unwrap();
+
+    died_of(
+        finished.status,
+        rustix::process::Signal::HUP,
+        &String::from_utf8_lossy(&finished.stdout),
+    );
+    assert!(!directory.join("out").exists());
+}
+
+/// `SIGQUIT` is the one signal that is NOT re-raised, and GNU Make says why.
+///
+/// `commands.c`: *"We don't want to send ourselves SIGQUIT, because it will
+/// cause a core dump. Just exit instead."* — and it exits `MAKE_TROUBLE`, which
+/// is 1. A build tool that dumped core because the user quit it would write a
+/// core file the size of its address space for something that is not a fault.
+/// Measured against GNU Make 4.4.1 on 2026-08-24: exit 1, no signal in the wait
+/// status, no core file, mid-recipe and during the read and under `-q`. Ronin
+/// answers the same in both front ends, so "follow the GNU case" is followed
+/// where GNU declines the arithmetic as well as where it applies it.
+// [spec:ronin:req:product.build-outcome+1/test]
+#[cfg(feature = "make")]
+#[test]
+fn make_quit_leaves_the_trouble_status_without_dumping() {
+    use std::os::unix::process::ExitStatusExt;
+
+    let directory = make_case(
+        "make-quit-status",
+        "out:\n\t@touch $@; touch started; sleep 30\n",
+    );
+    let mut child = make_command(&invoked_as(&directory, "make"), &directory)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for_the_recipes_marker(&mut child, &directory.join("started"));
+    let child_id = rustix::process::Pid::from_child(&child);
+    rustix::process::kill_process(child_id, rustix::process::Signal::QUIT).unwrap();
+    let finished = child.wait_with_output().unwrap();
+
     assert_eq!(finished.status.signal(), None);
     assert_eq!(
         finished.status.code(),
-        Some(ronin::INTERRUPTED_EXIT_CODE),
+        Some(ronin::QUIT_EXIT_CODE),
         "{}",
         String::from_utf8_lossy(&finished.stdout)
     );
@@ -368,7 +473,7 @@ fn make_termination_leaves_ninjas_status() {
 /// This is the case that would catch an interrupt status inferred from the
 /// build's exit code rather than from why the build stopped, and it needs no
 /// signal to say so.
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[cfg(feature = "make")]
 #[test]
 fn a_recipes_own_130_stays_two() {
@@ -393,7 +498,7 @@ fn a_recipes_own_130_stays_two() {
 /// pins the boundary from the other side: the recipe's death carries the same
 /// signal number as the interrupt above and must not be read as one.
 // [spec:ronin:req:compat.process-integration+2/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[cfg(feature = "make")]
 #[test]
 fn a_signalled_recipe_abandons_with_two() {
@@ -449,12 +554,10 @@ fn a_signalled_recipe_abandons_with_two() {
 /// orphan for the whole thirty seconds and report the wait it was written to
 /// catch as a pass.
 // [spec:ronin:req:make.read-interrupt/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[cfg(feature = "make")]
 #[test]
 fn a_read_interrupt_abandons_its_command() {
-    use std::os::unix::process::ExitStatusExt;
-
     let directory = make_case(
         "make-read-phase-interrupt",
         "X := $(shell trap '' INT; touch started; sleep 30; touch survived)\n\
@@ -470,8 +573,7 @@ fn a_read_interrupt_abandons_its_command() {
     let status = child.wait().unwrap();
     let waited = signalled.elapsed();
 
-    assert_eq!(status.signal(), None);
-    assert_eq!(status.code(), Some(ronin::INTERRUPTED_EXIT_CODE));
+    died_of(status, rustix::process::Signal::INT, "interrupted read");
     // The child is still sleeping, so the read did not wait for it. Read before
     // any assertion that could leave the check unrun.
     assert!(
@@ -505,7 +607,7 @@ fn a_read_interrupt_abandons_its_command() {
 /// completes normally, and the interrupt is there to be found between one
 /// statement and the next.
 ///
-/// Measured against GNU Make 4.4.1 for this exact makefile: exit 130,
+/// Measured against GNU Make 4.4.1 for this exact makefile: dead of SIGINT,
 /// `second-shell-ran` absent, `out` absent, and nothing written to either
 /// stream. Before the fix Ronin left the same 130 — the parent node had settled
 /// that — with `second-shell-ran` PRESENT, because the read carried on to the
@@ -513,12 +615,10 @@ fn a_read_interrupt_abandons_its_command() {
 /// then narrated `ronin: build stopped: interrupted by user.`, which GNU does
 /// not say here because GNU never reached a build.
 // [spec:ronin:req:make.read-interrupt/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[cfg(feature = "make")]
 #[test]
 fn an_interrupted_read_launches_nothing_further() {
-    use std::os::unix::process::ExitStatusExt;
-
     let directory = make_case(
         "make-read-phase-next-shell",
         // `$$PPID` reaches the shell as `$PPID`, and the shell a `$(shell)`
@@ -531,12 +631,10 @@ fn an_interrupted_read_launches_nothing_further() {
         .output()
         .unwrap();
 
-    assert_eq!(finished.status.signal(), None);
-    assert_eq!(
-        finished.status.code(),
-        Some(ronin::INTERRUPTED_EXIT_CODE),
-        "{}",
-        String::from_utf8_lossy(&finished.stdout)
+    died_of(
+        finished.status,
+        rustix::process::Signal::INT,
+        &String::from_utf8_lossy(&finished.stdout),
     );
     assert!(
         !directory.join("second-shell-ran").exists(),
@@ -569,12 +667,10 @@ fn an_interrupted_read_launches_nothing_further() {
 /// makes the two spellings different, and it is a Makefile-visible choice rather
 /// than a trick.
 // [spec:ronin:req:make.read-interrupt/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[cfg(feature = "make")]
 #[test]
 fn an_interrupt_ends_the_second_wait() {
-    use std::os::unix::process::ExitStatusExt;
-
     let directory = test_directory("make-read-phase-wait");
     let shell = directory.join("realsh");
     std::os::unix::fs::symlink("/bin/sh", &shell).unwrap();
@@ -598,8 +694,7 @@ fn an_interrupt_ends_the_second_wait() {
     let status = child.wait().unwrap();
     let waited = signalled.elapsed();
 
-    assert_eq!(status.signal(), None);
-    assert_eq!(status.code(), Some(ronin::INTERRUPTED_EXIT_CODE));
+    died_of(status, rustix::process::Signal::INT, "interrupted wait");
     assert!(
         !directory.join("survived").exists(),
         "the read waited for a shell function that had closed its output"
@@ -629,14 +724,13 @@ fn an_interrupt_ends_the_second_wait() {
 /// Measured across the whole `-q` matrix, three rounds a cell: GNU Make 4.4.1
 /// leaves 130 for an interrupt during a `+` line trapping or not, under `-k`,
 /// with work behind it, and through a recursive child, and never leaves 2 for a
-/// signal. Ronin leaves the same 130 without re-raising, as everywhere else.
+/// signal. Ronin dies of the signal here as everywhere else, so it leaves the
+/// same 130 by the same mechanism GNU Make leaves it by.
 // [spec:ronin:req:make.question-status+1/test]
-// [spec:ronin:req:product.build-outcome/test]
+// [spec:ronin:req:product.build-outcome+1/test]
 #[cfg(feature = "make")]
 #[test]
 fn a_stopped_question_answers_neither() {
-    use std::os::unix::process::ExitStatusExt;
-
     let directory = make_case(
         "make-question-interrupted",
         "out:\n\t+@kill -INT $$PPID; touch $@\n",
@@ -646,12 +740,10 @@ fn a_stopped_question_answers_neither() {
         .output()
         .unwrap();
 
-    assert_eq!(finished.status.signal(), None);
-    assert_eq!(
-        finished.status.code(),
-        Some(ronin::INTERRUPTED_EXIT_CODE),
-        "{}",
-        String::from_utf8_lossy(&finished.stdout)
+    died_of(
+        finished.status,
+        rustix::process::Signal::INT,
+        &String::from_utf8_lossy(&finished.stdout),
     );
     // `-q` answers in the status alone, interrupted or not.
     assert_eq!(String::from_utf8_lossy(&finished.stdout), "");
@@ -679,11 +771,10 @@ fn an_interrupt_outranks_the_answer() {
         .output()
         .unwrap();
 
-    assert_eq!(
-        finished.status.code(),
-        Some(ronin::INTERRUPTED_EXIT_CODE),
-        "{}",
-        String::from_utf8_lossy(&finished.stdout)
+    died_of(
+        finished.status,
+        rustix::process::Signal::INT,
+        &String::from_utf8_lossy(&finished.stdout),
     );
 }
 

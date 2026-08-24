@@ -1636,7 +1636,7 @@ mod tests {
 
     #[cfg(unix)]
     // [spec:ronin:req:compat.process-integration+2/test]
-    // [spec:ronin:req:product.build-outcome/test]
+    // [spec:ronin:req:product.build-outcome+1/test]
     #[test]
     fn a_finished_child_is_read_the_way_ninja_reads_it() {
         use std::os::unix::process::ExitStatusExt as _;
