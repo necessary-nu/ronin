@@ -559,14 +559,6 @@ fn an_assembled_script_reads_here() {
     ));
     assert_eq!(who("out"), this_executable());
 
-    // A depfile makes the script the edge's own program: kati withholds the
-    // lines because the extraction rewrote what they said.
-    built(&format!(
-        "out: .KATI_DEPFILE := out.d\nout:\n\t@echo 'out:' > out.d; {}\n",
-        which_shell_recipe("out")
-    ));
-    assert_eq!(who("out"), this_executable());
-
     // A composed `$(MAKE)` cuts the recipe into the lines written ahead of the
     // invocation and the lines written after it. Both are scripts of their own,
     // and the child's own recipe is a whole recipe again.
@@ -680,4 +672,51 @@ fn oversized_marks_are_not_split_out() {
         wrote("marked.out") && wrote("after.out"),
         "the whole recipe runs when the build is real"
     );
+}
+
+/// A `.KATI_DEPFILE` names the dependency file in a variable and leaves the
+/// recipe's text untouched, so the recipe is launched one process per line like
+/// any other — where a `--detect_depfiles` run, which rewrites the assembled
+/// script, keeps the whole of it as one launch. So a line whose shell syntax is
+/// left open dies where it stands under a `.KATI_DEPFILE` recipe, as GNU Make's
+/// per-line launch makes it, rather than being closed by the line after it. The
+/// depfile shape of `make-a-composed-recipe-is-still-one-shell`, which an
+/// earlier probe had reported already right and which was not.
+#[cfg(feature = "make")]
+#[test]
+fn a_depfile_recipe_launches_per_line() {
+    let directory = tempfile::tempdir().unwrap();
+    let link = shell_named(directory.path(), "make");
+    let run = |makefile: &str| {
+        std::fs::write(directory.path().join("Makefile"), makefile).unwrap();
+        Command::new(&link)
+            .current_dir(directory.path())
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("CARGO_MAKEFLAGS")
+            .env_remove("MAKELEVEL")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let out = directory.path().join("out");
+    let clean = || {
+        let _ = std::fs::remove_file(&out);
+    };
+
+    // Line 1 opens a single quote that line 2 closes. Launched per line, line 1
+    // is a shell syntax error and the recipe dies before `out` is written;
+    // joined into one script the quote would close and `out` would be `x\ny`.
+    let opened = run("out: .KATI_DEPFILE := out.d\nout:\n\t@printf %s 'x\n\ty' > out\n");
+    assert_eq!(opened.status.code(), Some(2), "{}", stderr(&opened));
+    assert!(!out.exists(), "the open-quote line dies where it stands");
+    clean();
+
+    // The whole recipe still runs when there is nothing to die on: both lines
+    // launch, the depfile the first writes is read, and the target is built.
+    let built = run(
+        "out: .KATI_DEPFILE := out.d\nout:\n\t@printf 'out: dep.h\\n' > out.d\n\t@echo built > out\n",
+    );
+    assert!(built.status.success(), "{}", stderr(&built));
+    assert_eq!(std::fs::read_to_string(&out).unwrap(), "built\n");
 }

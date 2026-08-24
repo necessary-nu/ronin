@@ -885,6 +885,7 @@ assertions (
     {id make-target-specific-append-expands-its-tail-where-it-is-read, kind @complete, author "brendan@necessary.nu", at 2026-08-24T00:47:17.707684832Z}
     {id a-composed-recipe-segment-arrives-without-its-lines, kind @complete, author "brendan@necessary.nu", at 2026-08-24T02:12:06.344883561Z}
     {id an-oversized-recipes-marked-lines-cannot-be-split-out, kind @complete, author "brendan@necessary.nu", at 2026-08-24T02:28:38.817759313Z}
+    {id make-a-composed-recipe-is-still-one-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-24T02:52:12.076380058Z}
 )
 
 impl_evidence (
