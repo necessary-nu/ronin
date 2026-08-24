@@ -887,6 +887,7 @@ assertions (
     {id an-oversized-recipes-marked-lines-cannot-be-split-out, kind @complete, author "brendan@necessary.nu", at 2026-08-24T02:28:38.817759313Z}
     {id make-a-composed-recipe-is-still-one-shell, kind @complete, author "brendan@necessary.nu", at 2026-08-24T02:52:12.076380058Z}
     {id an-oversized-composed-segment-cannot-write-its-response-file, kind @complete, author "brendan@necessary.nu", at 2026-08-24T03:27:02.36684404Z}
+    {id make-recipe-file-operation-at-launch-only, kind @complete, author "brendan@necessary.nu", at 2026-08-24T04:16:19.495964811Z}
 )
 
 impl_evidence (

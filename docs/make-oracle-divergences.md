@@ -364,3 +364,48 @@ unmarked one, and an assembled script has no "before". A composed recipe's
 short segments are a separate matter and do carry their per-line launches —
 `a-composed-recipe-segment-arrives-without-its-lines` delivered that; this is
 only the recipe held together by a single oversized line.
+
+### A `.KATI_DEPFILE` recipe's `$(file ...)` is performed where it is built
+
+Owner: `make-recipe-file-operation-at-launch-only`.
+Gate: `tests/shell.rs::a_depfile_recipe_is_read_where_built` (no corpus
+case — `.KATI_DEPFILE` is a kati extension, so GNU Make has no answer to record
+a build-intent case against).
+
+GNU Make expands a recipe only when it is about to run it, so a `$(file >)`
+inside the recipe of an up-to-date target never happens. Ronin holds such a
+recipe unexpanded and expands it at launch, which puts the write where GNU Make
+puts it — for an ordinary recipe, for a `$?` recipe, and now for a grouped
+`&::` recipe. A recipe naming a depfile is the exception: it is read where it
+is built, so its `$(file ...)` is performed there even for a target that is up
+to date. Measured, with a `.KATI_DEPFILE` recipe whose target is current and
+whose recipe holds `$(file > written,made)` (GNU Make, which does not know
+`.KATI_DEPFILE`, treats it as an inert target-specific variable and runs
+nothing):
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| `written` after the build | absent | holds `made` |
+
+**Why the disagreement is kept.** A depfile is a dependency read at runtime:
+`.KATI_DEPFILE` names it in a variable and `--detect_depfiles` finds it by
+rewriting the assembled script, but either way the edge it is read for has to
+declare it, and a deferred rule has no path to. Deferring the recipe the way
+`$?` and grouped `&::` are deferred drops that declaration, so the depfile's
+dependency is lost — a target stops rebuilding when a header the depfile lists
+changes. Making it work needs the runtime depfile machinery wired onto the
+deferred edge, which is out of proportion to a `$(file ...)` in a depfile
+recipe. So the recipe is read where it is built, and the write goes with it.
+
+**What was checked before choosing.** `.KATI_DEPFILE` and `--detect_depfiles`
+are kati extensions; no GNU makefile names either, and the build-intent corpus,
+the vendored kati corpus, and the Makefiles of vim 9.2 and zsh 5.9.2 hold no
+`$(file ...)` in a depfile recipe. `--detect_depfiles` is not even a switch
+Ronin's Make front end accepts, so only `.KATI_DEPFILE` reaches the shape at
+all.
+
+**What is not part of the decision.** The depfile's *dependency* is not given
+up: a `.KATI_DEPFILE` recipe that runs still writes its depfile, whose contents
+are read and make the target rebuild when a listed prerequisite changes. That
+is the behaviour the gate pins, and it is what deferring the recipe would break
+— which is the tooth on this decision, not a side effect of it.
