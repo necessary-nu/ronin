@@ -272,14 +272,28 @@ on 2026-08-24.
 | 9 | `-W` over a `::` chain refuses before the chain's work runs | Only under `-W`/`-t`-family over a double-colon chain | `DISCOVERY_ONLY_CASES` in `make_port` | architecture (whole graph planned before it runs) |
 | 10 | Two defects found by this survey | **Yes** (a crash, a refused build) | filed as nodes | **none** — defects, not divergences to accept |
 
-A tenth line worth stating plainly: beyond #10's two, the upstream residue holds
-**85 more genuinely unclassified rows** (see `tests/make_upstream_inventory.tsv`
-and `make-upstream-residue-triage`) — real build-intent differences left
-unclassified on purpose rather than forced into narration. They are a long tail
-of individually small divergences (target/pattern-specific variable values,
-second-expansion prerequisite order, backslash-newline continuation, include
-remaking, `\#` escaping, static-pattern and vpath cases), most already tracked by
-open compiler nodes.
+A tenth line worth stating plainly: beyond #10's two, the upstream residue held
+**85 more genuinely unclassified rows**. As of 2026-08-24 all 85 have been worked
+against the oracle case by case, and each one's measurement, outcome and owner is
+written out in **[`make-upstream-residue.md`](make-upstream-residue.md)**. In
+summary: **36 are defects** (22 nodes filed, none accepted), 23 are narration
+whose reason is now a named classifier family, 7 are narration explained but not
+mechanised, 4 are the jobserver handle missing from `MAKEFLAGS`, 7 turned out not
+to be Ronin divergences at all (state the suite's shared `tests/` directory
+carries between scripts — GNU produces Ronin's output exactly when given the same
+state), 5 assert GNU's own implementation rather than Make semantics, and 3
+duplicate entries already owned here or by a node. **None is undiagnosed, and
+none was accepted.** The inventory now records 58 unclassified rows: the 36
+defects until they are fixed, plus the 22 that have no honest family to move
+into.
+
+A **twenty-third node** was filed from that work and belongs in this survey's own
+list rather than in the residue document, because it is reachable from a real
+build: `make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite`.
+Under `-k`, with one prerequisite that has no rule, GNU builds the three objects
+it can and only then abandons the goal; Ronin refuses at graph-load time and
+builds nothing. Same exit status, three fewer files. It is adjacent to #8 but has
+no recursion in it.
 
 ---
 

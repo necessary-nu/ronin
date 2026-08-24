@@ -5032,6 +5032,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-24T10:42:21.750629641Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Row attribution for traceability, 2026-08-24 upstream residue dispatch: upstream inventory row `options/dash-n.diff.5` (suite script options/dash-n:94) is this node's decision seen from the suite, and is counted as a DUPLICATE in docs/make-upstream-residue.md rather than as a new finding.\n\nThe case is `foo: ; @$(MAKE) -f \"work/options/dash-n.mk.3\" bar` run under `-n --no-print-directory`. GNU echoes the `$(MAKE)` line AND runs it — a `$(MAKE)`-referencing recipe line runs under `-n` — so the child prints `touch inc` and `echo n --no-print-directory`. Ronin prints only `touch inc`. This is divergence #6 of docs/make-oracle-divergences.md, `-n does not run a +-marked or $(MAKE)-referencing recipe line`, whose authority that document records as this node's dispatch decision with no operator ruling. The row is left `unclassified` on purpose: the `recursive-invocation-echo` family is deliberately switched off under `-n`, because there an echoed line is the dry run's report of intent rather than a runner's narration."
+                        after_done true
+                    }
                 )
             }
 
@@ -16683,6 +16691,13 @@ children (
                         kind @note
                         text "Found by make-upstream-residue-triage while surveying the 95 unclassified upstream rows: variables/define.diff.16 (the suite's variables/define script, `make -f define.mk.12`) has Ronin PANIC where GNU Make 4.4.1 builds cleanly. This is a crash on valid input, not a narration difference, so the row stays unclassified and this owns it.\n\nMEASURED against reference/make-oracle/make-4.4.1/make, 2026-08-24. The suite makefile define.mk.12 is:\n\n    define = define\n    $(define) : ;@echo $@\n    %:define\n    all: define foo\n    %.x : define\n    foo:;\n\n  GNU 4.4.1  prints `define`, exit 0.\n  Ronin      thread 'main' panicked at kati/src-rs/parser.rs:1125:5: assertion failed: sep != 0\n             exit 101 (a Rust panic, no graph produced).\n\nMINIMISED to two lines — the trigger is a `define` DIRECTIVE whose remainder reads as an assignment:\n\n    define = x\n    all:;\n\n  GNU 4.4.1  `all` is up to date, exit 0.\n  Ronin      same panic, exit 101.\n\n`define = x` alone (no `all:`) panics too; `V = x` / `%:V` / an ordinary assignment do not — the trigger is the `define` keyword followed by ` = value` on the same line, which GNU reads as a define directive (the variable name being `=`, or the assignment operator being read as the name) without complaint. kati's parser hits `assertion failed: sep != 0` at kati/src-rs/parser.rs:1125 while splitting the directive line.\n\nWHERE: kati/src-rs/parser.rs:1125 (our code). Whoever takes this should probe GNU's read.c handling of a `define` line carrying an `=` to settle what the correct parse is (GNU tolerates it; Ronin must at minimum not crash), then replace the assertion with the tolerant read. A panic reachable from a plain makefile line is the sharpest kind of defect this triage found."
                     }
+
+                    {
+                        at 2026-08-24T10:42:13.538451193Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Row attribution for traceability, 2026-08-24 upstream residue dispatch: this node owns upstream inventory row `variables/define.diff.16`, which is still recorded `unclassified` and is counted as a DUPLICATE (already-filed defect) in docs/make-upstream-residue.md rather than as a new finding. Re-measured on 2026-08-24 against reference/make-oracle/make-4.4.1/make: unchanged — GNU prints `define` and exits 0, Ronin panics at kati/src-rs/parser.rs:1125 with `assertion failed: sep != 0`."
+                    }
                 )
             }
 
@@ -16696,6 +16711,13 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found by make-upstream-residue-triage while surveying the 95 unclassified upstream rows: variables/MAKEFLAGS.diff.119 has Ronin REFUSE a command line GNU Make 4.4.1 builds. The residue is Ronin's own diagnostic, a genuine build-intent divergence rather than narration, so the row stays unclassified and this owns it.\n\nMEASURED against reference/make-oracle/make-4.4.1/make, 2026-08-24. Makefile:\n\n    all:; $(info good)\n\ninvoked as `make 'hello=$(world'` — a command-line variable assignment whose VALUE holds an unterminated `$(` reference:\n\n  GNU 4.4.1  prints `good`, `make: 'all' is up to date.`, exit 0. The value `$(world` is stored and never expanded, so its unterminated reference is never an error.\n  Ronin      `ronin: Makefile:1: unterminated variable reference.` and does not build — it parses/validates the command-line assignment's value eagerly and refuses the unterminated reference.\n\nWithout the `hello=$(world` argument the makefile builds identically in both tools, so the divergence is entirely in how a command-line assignment's value is handled: GNU defers expansion of a command-line assignment (a lazily-expanded, recursively-assigned variable) and so never reads the `$(` unless something uses `$(hello)`; Ronin reads it at the point of assignment. The fix is to hold a command-line assignment's value unexpanded the way GNU does, so an unused value with an unterminated reference is not an error. GNU only complains about `$(world` if the variable is actually expanded."
+                    }
+
+                    {
+                        at 2026-08-24T10:42:16.410465346Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Row attribution for traceability, 2026-08-24 upstream residue dispatch: this node owns upstream inventory row `variables/MAKEFLAGS.diff.119`, which is still recorded `unclassified` and is counted as a DUPLICATE (already-filed defect) in docs/make-upstream-residue.md rather than as a new finding. Re-measured on 2026-08-24 against reference/make-oracle/make-4.4.1/make: unchanged — `make -f Makefile 'hello=$(world'` over `all:; $(info good)` has GNU print `good` and exit 0, Ronin refuse with `unterminated variable reference.`"
                     }
                 )
             }
@@ -16725,6 +16747,328 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
+
+            {
+                id make-an-escaped-hash-in-a-function-argument-keeps-its-backslash
+                title "Keep a backslash-escaped hash as written inside a function call argument"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:39:09.334677154Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/escape.diff.8 (suite script features/escape:85). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    self = $1\n    foo := $(call self,#foo#)#foo\n    bar := $(call self,\\#bar\\#)#bar\n    all:;@echo \"$(foo) $(bar)\"\n\n  GNU 4.4.1  #foo# \\#bar\\#\n  Ronin      #foo# #bar#\n\nBoth agree on the unescaped `#foo#`: inside a function-call argument a bare `#` is not a comment, so it survives on both sides. They disagree on the ESCAPED one. GNU removes a `\\#` escape only where the `#` would otherwise open a comment; inside a function argument it would not, so the backslash is left standing and the value keeps both characters. Ronin removes the backslash unconditionally, so `\\#bar\\#` collapses to `#bar#`.\n\nThe difference reaches a recipe's command line — the echoed text differs — so it is build intent, not narration."
+                    }
+                )
+            }
+
+            {
+                id make-a-normal-prerequisite-outranks-the-same-name-as-order-only
+                title "Drop a name from the order-only list once it is also an ordinary prerequisite"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:39:16.414649997Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/order_only.diff.3 and .4 (suite script features/order_only:40 and :57). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    foo: bar | baz\n    \t@echo \"pipe=$|\"\n    \t@echo \"hat=$^\"\n    foo: baz\n    .PHONY: baz bar foo\n    bar baz: ; @:\n\n  GNU 4.4.1  pipe=          hat=bar baz\n  Ronin      pipe=baz       hat=bar baz\n\nGNU's manual is explicit: a file declared as both a normal and an order-only prerequisite is a normal prerequisite, and the normal declaration takes precedence. GNU carries one `->next` chain with an `ignore_mtime` bit per entry, so the second, ordinary mention clears the bit on the entry that is already there. Ronin keeps two lists (`deps`, `order_onlys`) and adds `baz` to both, so `$|` still names it.\n\n`$^` already agrees, so the graph edges agree; what differs is the text `$|` puts on the command line, which is build intent. Related but not the same as make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest, which is about the same two-list representation seen from the shuffle end."
+                    }
+                )
+            }
+
+            {
+                id make-a-foreach-variable-name-is-trimmed-of-whitespace
+                title "Trim whitespace from the variable name a foreach binds"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:39:23.866915754Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch. Seven suite rows, one cause: functions/foreach.diff.2 (functions/foreach:55) and misc/bs-nl.diff.20 through .25 (misc/bs-nl:144, 150, 155, 166, 176, 190). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — the variable-name argument reaches `foreach` with whitespace around it, here from a backslash-newline continuation:\n\n    $(foreach \\\n      a \\\n    , b c d \\\n    , $(info [$a]))\n    all:;@:\n\n  GNU 4.4.1  [b] [c] [d]\n  Ronin      [] [] []\n\nThe list argument is split identically on both sides — Ronin runs the body three times — so the fault is only in the NAME. GNU strips whitespace from the variable name before binding it (`func_foreach` in function.c), so the name is `a` and `$a` finds it. Ronin binds a name that still carries the surrounding spaces and newline-derived whitespace, so `$a` expands to nothing.\n\nmisc/bs-nl 20-25 are the same shape written five more ways — continuations, carriage returns, tabs, a `define` body, and the whole thing inside a recipe — and all five differ from GNU in exactly this one way. Fixing the trim should move all seven rows."
+                    }
+                )
+            }
+
+            {
+                id make-a-shell-assignment-keeps-a-hash-its-command-printed
+                title "Keep a hash a shell assignment's command printed out of comment stripping"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:39:28.286542058Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/shell_assignment.diff.1 (suite script features/shell_assignment:27). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    foo1!=echo bar#baz\n    hash != printf '\\043'\n    foo2!= echo \"bar$(hash)baz\"\n    all: ; @echo \"<$(foo1)> <$(hash)> <$(foo2)>\"\n\n  GNU 4.4.1  <bar> <#> <bar#baz>\n  Ronin      <bar> <> <barbaz>\n\nBoth agree on `foo1`: the `#baz` there is a makefile comment on the assignment line and is stripped before the command runs. They disagree on what the COMMAND'S OUTPUT may contain. `printf '\\043'` prints a `#`, and GNU stores that `#` verbatim: a `!=` assignment's value is the command's output with newlines turned into spaces and nothing else. Ronin puts the captured output back through comment stripping, so the `#` and everything after it on the line disappear — which then also empties `$(hash)` out of `foo2`.\n\nThe value reaches a recipe's command line, so this is build intent."
+                    }
+                )
+            }
+
+            {
+                id make-second-expansion-sees-target-and-pattern-specific-variables
+                title "Expand a second-expanded prerequisite with the target's own variables in scope"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:39:41.998394301Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch. Three suite rows, one cause: features/se_explicit.diff.3 (se_explicit:66), features/se_implicit.diff.1 (se_implicit:61), features/se_statpat.diff.1 (se_statpat:41). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nExplicit-rule reproducer:\n\n    .SECONDEXPANSION:\n    .DEFAULT: ; @echo 'default $@'\n    foo.x: $$a $$b\n    foo.x: a := bar\n    %.x: b := baz\n\n  GNU 4.4.1  default bar / default baz\n  Ronin      ronin: no work to do.\n\nImplicit-rule reproducer (features/se_implicit.diff.1) — Ronin gets HALF of it:\n\n    .SECONDEXPANSION:\n    foo.x:\n    foo.%: $$(%_a) $$(%_b) bar ; @:\n    foo.x: x_a := bar\n    %.x: x_b := baz\n    bar baz: ; @echo '$@'\n\n  GNU 4.4.1  bar / baz\n  Ronin      bar          (the pattern-specific `%.x: x_b := baz` half is missing)\n\nStatic-pattern reproducer (features/se_statpat.diff.1) behaves like the first: GNU `bar` and `baz`, Ronin nothing.\n\nGNU expands the deferred prerequisite text with the target's variable set installed — target-specific and pattern-specific bindings included — which is the point of the feature. Ronin's second expansion runs with only the global set in scope, so `$$a` and `$$(%_b)` come back empty and the prerequisites vanish from the graph. This is a graph-shape difference: GNU builds two targets, Ronin builds none.\n\nmake-second-expansion and make-second-expansion-patterns are complete and are not this: they made the deferred expansion happen at all. What is missing is the SCOPE it happens in."
+                    }
+                )
+            }
+
+            {
+                id make-second-expanded-prerequisites-keep-their-rule-line-order
+                title "Order second-expanded prerequisites the way GNU orders its rule lines"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:39:47.048944521Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/se_explicit.diff.20 (suite script features/se_explicit:324). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    .SECONDEXPANSION:\n    all: hello.tsk\n    dep1:=hello.o\n    dep2:=hello.h\n    hello.tsk: $$(dep1)\n    hello.tsk: $$(dep2); $(info $@ from $^)\n    hello.o:; $(info $@)\n    hello.h:; $(info $@)\n\n  GNU 4.4.1  hello.h / hello.o / hello.tsk from hello.h hello.o\n  Ronin      hello.o / hello.h / hello.tsk from hello.o hello.h\n\nThe same two prerequisites in the opposite order, so the build order and `$^` both differ. GNU puts the prerequisites of the rule line that CARRIES THE RECIPE ahead of the ones accumulated from the recipe-less lines; Ronin appends in source order. `$^` reaches the command line, so this is build intent rather than a scheduling detail.\n\nThe `is up to date` / `no work to do` half of the same suite row is narration (up-to-date-line) and is not this."
+                    }
+                )
+            }
+
+            {
+                id make-an-existing-target-is-not-rebuilt-through-a-declined-implicit-chain
+                title "Leave an existing target alone where GNU declines the implicit chain under it"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:39:54.090502765Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/se_implicit.diff.13 and .18 (suite script features/se_implicit:275 and :343). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24. Both rows need the state the suite leaves behind, which is why they are written here with it.\n\nReproducer 1 — `hello.z` exists on disk, `hello.x` does not:\n\n    .SECONDEXPANSION:\n    dep:=.x\n    all: hello.z\n    %.z: %$$(dep) ; @echo $@\n    %.x: ;\n\n  GNU 4.4.1  make: Nothing to be done for 'all'.\n  Ronin      [1/1] echo hello.z   (rebuilds it)\n\nReproducer 2 — `hello.tsk` and `hello.x` exist, `hello.z` does not:\n\n    .SECONDEXPANSION:\n    dep:=.z\n    all: hello.tsk\n    %.tsk: %$$(dep) ; @echo $@\n    %.z : %.x ; @echo $@\n\n  GNU 4.4.1  make: Nothing to be done for 'all'.\n  Ronin      builds hello.z, then hello.tsk\n\nWith every file present, or with none, the two tools agree; the disagreement is exactly the case where the chain's intermediate is missing and the goal is not. GNU declines to build a chain of implicit rules to remake a target that already exists — the missing intermediate does not make the existing goal out of date — and Ronin takes the chain. Ronin builds work GNU does not, which is a graph difference in the direction that costs a build rather than fails one."
+                    }
+                )
+            }
+
+            {
+                id make-a-library-prerequisite-is-the-file-libpatterns-names
+                title "Read a -lNAME prerequisite as the file LIBPATTERNS resolves it to"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:00.494966197Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/se_explicit.diff.10 (suite script features/se_explicit:168). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24, with the suite's own makefile (work/features/se_explicit.mk.9) and goal `foo`.\n\n  GNU 4.4.1  Makefile:16: Recipe was specified for file '-lcat' at Makefile:16,\n             Makefile:16: but '-lcat' is now considered the same file as 'libcat.a'.\n             Makefile:16: Recipe for '-lcat' will be ignored in favor of the one for 'libcat.a'.\n             exit 0, leaves libcat.a\n  Ronin      [1/3] touch libcat.a / [2/3] true / [3/3] true\n             exit 0, leaves libcat.a\n\nThe filesystem effect is the same file. What differs is the GRAPH: GNU resolves the `-lcat` prerequisite through `.LIBPATTERNS` to `libcat.a` and then treats the two names as ONE file node — which is what the warning is about, and which is why GNU runs one recipe where Ronin runs three. Ronin keeps `-lcat` as a node of its own, satisfies it through the makefile's `-l%: lib%.a` rule, and so carries two extra no-op edges.\n\nTwo things to settle when this is taken: whether `.LIBPATTERNS` resolution is implemented at all, and whether GNU's three-line duplicate-recipe warning is owed (see make-a-warning-gnu-emits-about-a-makefile-is-emitted for the wider question). The edge count is the part that is build intent."
+                    }
+                )
+            }
+
+            {
+                id make-an-empty-static-pattern-prerequisite-is-not-an-empty-path
+                title "Build a static pattern rule whose stem leaves an empty prerequisite name"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:11.758516957Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/statipattrules.diff.3 (suite script features/statipattrules:46). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — two lines, and the whole run is refused:\n\n    .DEFAULT: ; @echo 'D:$@'\n    foo: foo%: % %.x % % % y.% % ; @echo $@\n\n  GNU 4.4.1  D:.x / D:y. / foo          exit 0\n  Ronin      ronin: empty path          exit 2\n\n`foo` matched against `foo%` has an EMPTY stem, so five of the seven prerequisites expand to the empty string and two to `.x` and `y.`. GNU drops the empty ones and keeps the two real names, building both through `.DEFAULT`. Ronin refuses the whole run with `empty path`, so nothing is built at all: a refusal where GNU builds, which is the sharpest class of divergence after a crash."
+                    }
+                )
+            }
+
+            {
+                id make-a-grouped-pattern-target-keeps-its-own-explicit-prerequisites
+                title "Keep the explicit prerequisites of one target of a multi-target pattern rule"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:16.697564299Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/patternrules.diff.7 (suite script features/patternrules:161). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    final: x ; @echo $@\n    x: x.t1 x.t2 ; @echo $@\n    x.t2: dep\n    dep: ; @echo $@\n    %.t1 %.t2: ; @echo $*.t1 ; echo $*.t2\n\n  GNU 4.4.1  dep / x.t1 / x.t2 / x / final\n  Ronin      x.t1 / x.t2 / x / final          (dep is never built)\n\n`x.t2: dep` is a recipe-less rule adding a prerequisite to `x.t2`. `x.t2` is then produced by the multi-target pattern rule `%.t1 %.t2:`. GNU keeps the explicit prerequisite and orders `dep` ahead of the pattern rule's recipe; Ronin drops it when the pattern rule takes over the target, so `dep` is not in the graph at all.\n\nA prerequisite missing from the graph is build intent, and this one loses a whole edge."
+                    }
+                )
+            }
+
+            {
+                id make-every-matching-pattern-specific-assignment-composes-in-order
+                title "Compose every matching pattern-specific assignment in the order GNU applies them"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:22.906544033Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/patspecific_vars.diff.3 (suite script features/patspecific_vars:60, its TEST #4 \"multiple patterns matching the same target\"). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    a%: AAA = aaa\n    %b: BBB = ccc\n    a%: BBB += ddd\n    %b: AAA ?= xxx\n    %b: AAA += bbb\n    .PHONY: ab\n    ab: ; @echo $(AAA); echo $(BBB)\n\n  GNU 4.4.1  aaa bbb / ccc ddd\n  Ronin      xxx bbb / ccc\n\nTwo independent losses in one target. For `AAA`, GNU applies `a%: AAA = aaa` first, so the later `%b: AAA ?= xxx` finds it already set and does nothing, and `%b: AAA += bbb` appends: `aaa bbb`. Ronin lets the `?=` win, so it starts from `xxx`. For `BBB`, GNU appends `a%: BBB += ddd` onto `%b: BBB = ccc`: `ccc ddd`. Ronin drops the append entirely.\n\nBoth values reach the recipe's command line, so this is build intent. It is the sibling of make-pattern-specific-variable-application (done, every matching pattern applies) — what is missing is the ORDER they compose in and the interaction of `?=` and `+=` across two patterns."
+                    }
+                )
+            }
+
+            {
+                id make-a-command-line-variable-outranks-a-target-specific-assignment
+                title "Let a command-line variable outrank a plain target-specific assignment"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:27.016924075Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/targetvars.diff.1 (suite script features/targetvars:60). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer, invoked as `make one two FOO=1 BAR=2`:\n\n    export FOO = foo\n    export BAR = bar\n    one: override FOO = one\n    one two: ; @echo $(FOO) $(BAR)\n    two: BAR = two\n    .PHONY: one two\n\n  GNU 4.4.1  one 2 / 1 2\n  Ronin      one 2 / 1 two\n\nBoth agree on `one`, where the target-specific assignment says `override` and so does beat the command line. They disagree on `two`, where `two: BAR = two` is a PLAIN target-specific assignment: GNU's command-line origin outranks it and `$(BAR)` stays `2`; Ronin lets the target-specific value win.\n\nThe value reaches the recipe's command line, so this is build intent. The rule is the ordinary origin ladder — command line beats a makefile assignment unless the assignment says `override` — applied to the target-specific scope."
+                    }
+                )
+            }
+
+            {
+                id make-a-target-specific-export-flag-reaches-the-prerequisites
+                title "Inherit a target-specific export or unexport down the prerequisite chain"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:39.750811824Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/targetvars.diff.39 and .43 (suite script features/targetvars:396 and :411). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24. Both need the environment stated, so it is stated here.\n\nReproducer A (row .43) — `mid` EXPORTS, run with `hello` unset in the environment:\n\n    all: mid\n    mid: base\n    mid: export hello=mid\n    base: hello=base\n    all mid base:; @echo $@ make=$(hello) shell=$$hello\n\n  GNU 4.4.1  base make=base shell=base / mid make=mid shell=mid / all make= shell=\n  Ronin      base make=base shell=      / mid make=mid shell=mid / all make= shell=\n\nReproducer B (row .39) — `mid` UNEXPORTS, run with `hello=environ` in the environment:\n\n    all: mid\n    mid: base\n    mid: unexport hello=mid\n    base: hello=base\n    all mid base:; @echo $@ make=$(hello) shell=$$hello\n\n  GNU 4.4.1  base make=base shell=       / mid make=mid shell= / all make=environ shell=environ\n  Ronin      base make=base shell=base   / mid make=mid shell= / all make=environ shell=environ\n\nIn both, the two tools agree about `mid` itself and about `all`, and disagree about `base` — the PREREQUISITE. GNU inherits the export/unexport decision down the prerequisite chain along with the value: `mid: export hello` makes `base`'s own `hello=base` exported too, and `mid: unexport hello` keeps `base`'s out of the environment. Ronin inherits the value (both tools print `make=base`) but not the flag, so it gets the export decision backwards in both directions.\n\nThe recipe's environment is a filesystem-visible effect of the build, so this is build intent. Neighbouring node: make-inherited-export-reassignment (done) covers the value; this is the flag."
+                    }
+                )
+            }
+
+            {
+                id make-a-vpath-resolved-name-keeps-its-explicit-rule
+                title "Prefer the explicit rule for a VPATH-resolved name over a pattern rule"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:45.719279921Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/vpath.diff.4 (suite script features/vpath:105). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — a `vpa/` directory exists and is empty; goal is `foo.x`:\n\n    VPATH = vpa\n    %.x: ; @echo pattern $@\n    vpa/foo.x: ; @echo vpath $@\n\n  GNU 4.4.1  vpath vpa/foo.x\n  Ronin      pattern foo.x\n\nGNU searches VPATH for the goal, finds that `vpa/foo.x` is a target with an EXPLICIT rule, and uses that rule — an explicit rule for the vpath-resolved name outranks a pattern rule for the bare name. Ronin does not consider the vpath-resolved name a candidate at all and falls to the pattern rule.\n\nDifferent rule, different command, different work: build intent. Owner adjacent to make-vpath-search (done) and make-vpath-gpath-output-location (done); this is the rule-search precedence those did not cover."
+                    }
+                )
+            }
+
+            {
+                id make-a-byte-order-mark-is-not-part-of-the-first-target
+                title "Skip a UTF-8 byte order mark at the head of a makefile"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:48.982598478Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/utf8.diff (suite script features/utf8:8). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — a makefile whose first three bytes are the UTF-8 BOM (EF BB BF), then `all: ; @echo $@`:\n\n  GNU 4.4.1  all\n  Ronin      ﻿all\n\nGNU skips a UTF-8 byte order mark at the head of a makefile, so the first target is named `all`. Ronin reads the BOM as part of the target's name, so the default goal is a three-byte-prefixed name and `$@` echoes it.\n\nSmall, but it is a target NAME: a makefile saved by an editor that writes a BOM would have every reference to its first target miss. Build intent."
+                    }
+                )
+            }
+
+            {
+                id make-a-makefile-written-during-evaluation-is-there-to-include
+                title "Include a makefile an earlier line of the same makefile wrote"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:40:53.833886261Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/include.diff.27 (suite script features/include:362). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer, in a directory with no `hello.mk`:\n\n    default:; @echo $(hello)\n    -include hello.mk\n    $(shell echo hello=world >hello.mk)\n    include hello.mk\n\n  GNU 4.4.1  world                                    exit 0\n  Ronin      Makefile:2: hello.mk: No such file or directory\n             ronin: No rule to make target 'hello.mk'.  exit 2\n\nRonin DOES run the `$(shell)` — `hello.mk` is on disk after both runs — but the `include` on the following line still fails, and the failure is reported against line 2, the `-include`, which GNU keeps silent. So there are two things wrong in one case: an `-include` that is not silent, and an `include` that does not see a file an earlier line of the same makefile created.\n\nA refusal (exit 2, nothing built) where GNU builds. Neighbouring node: make-include-semantics (done)."
+                    }
+                )
+            }
+
+            {
+                id make-an-eval-only-invocation-needs-no-makefile-on-disk
+                title "Treat --eval text as makefile content when no makefile is on disk"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:41:05.344715129Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/include.diff.36 (suite script features/include:461). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nMinimal reproducer, in an EMPTY directory:\n\n    make -E 'all:;@echo hi'\n\n  GNU 4.4.1  hi                                              exit 0\n  Ronin      ronin: no targets specified and no makefile found  exit 2\n\nThe same `-E` text WITH a makefile present works on both:\n\n    (directory holds `other:;@echo other`)\n    make -E 'all:;@echo hi' all   ->  both print `hi`\n\nSo `--eval` is read and its rules do take effect; what is missing is that the eval'd text does not satisfy the \"a makefile must exist\" requirement. GNU treats `-E` text as makefile content in its own right.\n\nThe suite's own case goes further, and is the second half of this: with `MAKEFILES='foobar barfoo'` set and `-E '%:;@echo $@' -E 'all:;' -E '-include bizbaz' -E '-include bazbiz'`, GNU echoes bizbaz, bazbiz, foobar, barfoo, GNUmakefile, makefile, Makefile — the eval'd pattern rule participates in remaking every makefile GNU looks for, including the default names. Ronin builds none of it.\n\nA refusal where GNU builds: build intent."
+                    }
+                )
+            }
+
+            {
+                id make-makeoverrides-reaches-a-recursive-invocation
+                title "Carry an appended MAKEOVERRIDES into a recursive invocation"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:41:11.443163762Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from features/recursion.diff.2 (suite script features/recursion:57). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    ifeq ($(MAKELEVEL),0)\n    MAKEOVERRIDES += FOO+=bar\n    endif\n    .PHONY: M R\n    M: ; @$(MAKE) --no-print-directory -f Makefile R\n    R: ; @echo '[$(FOO)]'\n\n  GNU 4.4.1  [bar]\n  Ronin      []\n\n`MAKEOVERRIDES` is how a makefile adds its own definitions to what a recursive invocation inherits: GNU writes it into the `-- ` half of MAKEFLAGS, the child reads `FOO+=bar` as a command-line definition, and `R` sees it. Ronin composes the recursive invocation into the same graph and does not carry the appended override across the boundary, so `$(FOO)` is empty in the composed sub-unit.\n\nThe value reaches the recipe's command line, so this is build intent, not choreography. Neighbouring nodes: make-subninja-recursion, make-makefile-set-makeflags (both done)."
+                    }
+                )
+            }
+
+            {
+                id make-a-command-line-variable-reaches-a-shell-functions-recursive-make
+                title "Carry a command-line variable into a recursive Make run from a shell function"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:41:17.248406399Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from variables/MAKEFLAGS.diff.116 and .117 (suite script variables/MAKEFLAGS:349 and :355, GNU's own sv 63347 regression). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — a `bye/makefile` holding `hello=moon` and `all:; $(info $(hello))`, and:\n\n    v:=$(shell $(MAKE) -C bye --no-print-directory)\n    all: ; $(info $(v))\n\ninvoked as `make hello=world`:\n\n  GNU 4.4.1  world make[1]: 'all' is up to date.\n  Ronin      moon ronin: no work to do.\n\nRow .117 is the same case written with the shell-assignment operator (`v != $(MAKE) -C bye --no-print-directory`) and behaves identically.\n\nThe command-line definition `hello=world` must outrank the sub-makefile's own `hello=moon`, and it reaches the child through MAKEFLAGS. Ronin's `$(shell $(MAKE) …)` launches a real child process at evaluation time — this one is NOT composed into the graph, since its output is captured as a variable's value — and that child is not given the parent's command-line definitions.\n\nThe captured value reaches `$(info)` and could as easily reach a recipe, so this is build intent."
+                    }
+                )
+            }
+
+            {
+                id make-a-link-rule-does-not-inherit-the-compile-rules-source
+                title "Keep a chained implicit rule's source out of the link rule's prerequisites"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:41:21.618330816Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from misc/general4.diff.1 (suite script misc/general4:24). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — an empty `foo.c` exists, the makefile is one line `foo: foo.o`, invoked as `make CC=\"@echo cc\" OUTPUT_OPTION=`:\n\n  GNU 4.4.1  cc -c foo.c\n             cc foo.o -o foo\n  Ronin      cc -c foo.c\n             cc foo.c foo.o -o foo\n\nThe compile step agrees. The LINK step does not: GNU's built-in `%: %.o` rule gives `$^` as `foo.o` alone, and Ronin's gives `foo.c foo.o` — the source of the chained compile rule has leaked into the link rule's prerequisite list.\n\n`$^` is on the command line, so the linker would be handed a `.c` file it was never meant to see. Build intent, and the kind that breaks a real makefile rather than a test."
+                    }
+                )
+            }
+
+            {
+                id make-touch-touches-a-target-whose-recipe-expands-to-nothing
+                title "Touch a target under -t whose recipe expands to no command"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:41:35.398450464Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch, from options/dash-n.diff.4 (suite script options/dash-n:59). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — `c` exists, `a` and `b` do not:\n\n    .SUFFIXES:\n    BAR =     # nothing\n    FOO = +$(BAR)\n    a: b; echo > $@\n    b: c; $(FOO)\n\nUnder `-t` alone, which is the filesystem-effect half:\n\n  GNU 4.4.1  touch b / touch a        leaves a AND b\n  Ronin      [1/1] echo > a           leaves a only — b is never touched\n\nUnder the suite's own `-t -n`, which is what the row records:\n\n  GNU 4.4.1  touch b / touch a        writes nothing\n  Ronin      [1/1] exec env ... /bin/sh -c \"echo > a\"   writes nothing\n\n`b`'s recipe is `$(FOO)`, which expands to a lone `+` — a recipe-line modifier with no command behind it. GNU still counts `b` as a target with a recipe and touches it. Ronin makes no edge for a recipe that expands to nothing, so there is nothing to touch, and `b` is left absent.\n\nA control probe pins the cause: with `b: c; @:` instead, Ronin touches both files and agrees with GNU.\n\nTwo claims here, and the first is the one that matters: `-t` leaves a file GNU creates, which is a filesystem effect and so inside the contract under [spec:ronin:req:make.semantics+1] and the 2026-08-17 `-t` ruling. The second is that under `-t -n` Ronin's dry-run report names the recipe it would run rather than the touch it would perform; nothing is written either way, but the two tools report different intended work, which is why this row is NOT covered by the `touch-announce` narration family (that family is deliberately switched off under `-n`)."
+                    }
+                )
+            }
+
+            {
+                id make-a-warning-gnu-emits-about-a-makefile-is-emitted
+                title "Emit the makefile warnings GNU emits, or record why they are declined"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:41:47.416453263Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch. Three suite rows, one question: options/warn-undefined-variables.diff.2 and .3 (options/warn-undefined-variables:33 and :40) and variables/define.diff.7 (variables/define:161). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\n`--warn-undefined-variables` is accepted and does nothing:\n\n    EMPTY =\n    EREF = $(EMPTY)\n    UREF = $(UNDEFINED)\n    SEREF := $(EREF)\n    SUREF := $(UREF)\n    all: ; @echo ref $(EREF) $(UREF)\n\n  make --warn-undefined-variables\n  GNU 4.4.1  Makefile:5: warning: undefined variable 'UNDEFINED'\n             Makefile:6: warning: undefined variable 'UNDEFINED'\n             ref\n  Ronin      ref\n\nA malformed `define` draws no complaint:\n\n    NAME =\n    define NAME = $(NAME)\n    ouch\n    endef\n    all: ; @echo ok\n\n  GNU 4.4.1  Makefile:2: extraneous text after 'define' directive / ok\n  Ronin      ok\n\nIn every one of the three the BUILD is identical — same work, same effects, same exit status — and the whole of the difference is a diagnostic GNU emits and Ronin does not. That is why this is one node rather than three: the question is a single one, and it is for the operator rather than for a dispatch.\n\nNot filed as narration on this dispatch's own authority, and deliberately so. The 2026-08-17 narration ruling covers Make-voiced RUNTIME chatter — progress, up-to-date announcements, `Entering directory`. These are static diagnostics about the makefile's own text, which the same ruling keeps inside the contract (\"legitimate ONLY where a failure must be reported at all\"), and `--warn-undefined-variables` in particular is a switch Ronin ACCEPTS whose entire purpose is the warning: accepting it and doing nothing is an interface claim Ronin does not honour. features/se_explicit.diff.10's three-line duplicate-recipe warning is a fourth instance of the same question and is noted on make-a-library-prerequisite-is-the-file-libpatterns-names.\n\nEither outcome is defensible and both need a ruling: implement the warnings, or record a decision that makefile-text diagnostics are declined and add the family that says so."
+                    }
+                )
+            }
+
+            {
+                id make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite
+                title "Build the reachable work under -k when one prerequisite has no rule"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-24T10:41:56.537819393Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-24 upstream residue dispatch. Found IN PASSING while diagnosing options/dash-k.diff — that row itself turned out to be a suite artifact (see docs/make-upstream-residue.md), but the reproducer built to check it exposed this. MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — a `work/` directory holding main.c, defs.h, command.h, commands.c, display.c, buffer.h, command.c, and deliberately NO kbd.c:\n\n    VPATH = work\n    edit:  main.o kbd.o commands.o display.o\n    \t@echo cc -o edit main.o kbd.o commands.o display.o\n    main.o : main.c defs.h\n    \t@echo cc -c main.c\n    kbd.o : kbd.c defs.h command.h\n    \t@echo cc -c kbd.c\n    commands.o : command.c defs.h command.h\n    \t@echo cc -c commands.c\n    display.o : display.c defs.h buffer.h\n    \t@echo cc -c display.c\n\n  make -k\n  GNU 4.4.1  cc -c main.c\n             make: *** No rule to make target 'kbd.c', needed by 'kbd.o'.\n             cc -c commands.c\n             cc -c display.c\n             make: Target 'edit' not remade because of errors.\n             exit 2\n  Ronin      ronin: 'kbd.c', needed by 'kbd.o', missing and no known rule to make it\n             exit 2\n\nThe exit status agrees and the refusal agrees. What differs is that GNU under `-k` builds the three objects it CAN build and only then gives up on `edit`, while Ronin refuses at graph-load time and builds nothing. That is the point of `-k`, and it is the whole of what the suite's dash-k script is for: \"make builds the rest of the dependencies even though it knows that at the end it will fail\".\n\nThis is a filesystem-effect difference — three files GNU writes and Ronin does not — so it is inside the contract. It is adjacent to, but not the same as, divergence #8 of docs/make-oracle-divergences.md (recursive keep-going choreography): there is no recursion here, only a missing prerequisite in one graph. The likely cause is that an unresolvable prerequisite is a load-time refusal rather than a per-edge failure the scheduler can route around under keep-going."
                     }
                 )
             }
