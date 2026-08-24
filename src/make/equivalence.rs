@@ -1715,9 +1715,9 @@ fn compare_corpus_graphs() {
                 argv.push(OsString::from("-s"));
             }
             argv.push(OsString::from("SHELL=/bin/bash"));
-            // Named relatively, because a testcase can observe the name it was
-            // given: `KATI_visibility_prefix` matches against it, and an
-            // absolute path fails a match Make's own invocation would pass.
+            // Named relatively, because a testcase can observe the name it
+            // was given, and an absolute path fails a match Make's own
+            // invocation would pass.
             argv.push(OsString::from("-f"));
             argv.push(OsString::from("Makefile"));
             if let Some(target) = &target {

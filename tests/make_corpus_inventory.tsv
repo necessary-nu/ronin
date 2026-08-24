@@ -37,8 +37,6 @@ family	stop-suffix	GNU Make appends "  Stop." to the fatal diagnostic it dies on
 case	allow_rules.sh#script	extension	kati-extension	62b40b7a4d65360d
 case	blank_line_before_command.mk#test	recorded	recipe-stream+corpus-todo+exit-status	1c0003fa1be5e1da
 case	delete_on_error.mk#test	recorded	evaluation+corpus-todo+exit-status	92054fe56b1cc1e0
-case	deprecated_export.mk#test	extension	kati-extension	6f76de783020faaf
-case	deprecated_var.mk#test	extension	kati-extension	4de2b58e33257f25
 case	empty_ninja_file.sh#script	extension	kati-extension	84fb5a3b281e691c
 case	err_no_target_commands.mk#default	defect	exit-status+stop-suffix+recipe-wording	006f534f449f9a6e
 case	err_no_target_commands2.mk#default	defect	exit-status+stop-suffix+recipe-wording	17f41a14adad7ffe
@@ -74,14 +72,6 @@ case	shellstatus_readonly.mk#test	extension	kati-extension	200d465c3d68cce1
 case	silent_ignore_error.mk#test	defect	identity-prefix+error-location	ca3a2f47b2c7169c
 case	suffix_rule_warn.sh#script	extension	kati-extension	49f6c8102c13451f
 case	top_level_phony.sh#script	extension	kati-extension	1c3662df94de401b
-case	var_visibility_prefix_conflict.mk#test	extension	kati-extension	edfa6fd7930aa88b
-case	var_visibility_prefix_invalid_file_four.mk#test	extension	kati-extension	3d8a5e6ee7c085a7
-case	var_visibility_prefix_invalid_file_one.mk#test	extension	kati-extension	aad7f652f0b6e7bd
-case	var_visibility_prefix_invalid_file_two.mk#test	extension	kati-extension	3d8a5e6ee7c085a7
-case	var_visibility_prefix_invalid_prefix_four.mk#test	extension	kati-extension	79c1d56a7790ae87
-case	var_visibility_prefix_invalid_prefix_one.mk#test	extension	kati-extension	3fac32a95ecde20b
-case	var_visibility_prefix_invalid_prefix_three.mk#test	extension	kati-extension	be1a67d2d373cbbb
-case	var_visibility_prefix_invalid_prefix_two.mk#test	extension	kati-extension	23190c850bfe18d7
 case	werror_find_emulator.sh#script	extension	find-emulator	50eacb35e0e5d07b
 case	werror_overriding_commands.sh#script	extension	kati-extension	b49d0d538ec9c115
 case	writable.sh#script	extension	kati-extension	6063eaf7c8245121

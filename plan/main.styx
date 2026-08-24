@@ -17236,6 +17236,27 @@ children (
                     }
                 )
             }
+
+            {
+                id remove-the-kati-extensions-from-the-product
+                title "Remove the kati-only extensions from the product"
+                kind @refactor
+                log (
+                    {
+                        at 2026-08-24T13:55:00.037009748Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "OPERATOR RULING, Brendan, 2026-08-24, verbatim:\n\n    \"fuck kati extensions\"\n\nClarified in a follow-up as: REMOVE the kati-only extensions from the product. Ronin implements GNU Make; the kati extensions are inherited surface nobody asked for.\n\nTHIS REVERSES A STANDING CAMPAIGN RULE. Until today the rule was \"kati extensions are deliberate product surface — never delete one under cover of a compatibility fix\". That rule was an AGENT-ERA CONVENTION, not his ruling: no operator ever said the extensions were product, and the convention existed to stop a dispatch quietly deleting surface while claiming to fix conformance. His ruling supersedes it. The convention's purpose survives in a narrower form and is worth stating, because it is what makes the reversal safe rather than a licence: an extension still may not be deleted as a SIDE EFFECT of a conformance fix. It is deleted deliberately, by name, with its corpus cases audited, under this node.\n\nWHAT IS AN EXTENSION HERE. Makefile text — or a switch — that reaches kati-only behaviour that GNU Make 4.4.1 does not have. Not: implementation markers a makefile cannot name (KATI_NEW_INPUTS and friends are compiler-invented shell variable names, and tests/make_regressions.rs already asserts they never reach a reader). Not: gaps where kati lacks something GNU has ($(guile ...), load/-load) — those are the opposite of extensions.\n\nREACHABILITY, established once. Ronin's Make front end drives kati's SHARED evaluator (src/make.rs:57, :810), so everything implemented in eval.rs / func.rs / dep.rs / var.rs / parser.rs is reachable from `ronin make`. What is NOT reachable is anything gated on a Flags field only kati::flags::Flags::from_args sets: Ronin builds Flags by hand and closes with ..Flags::default() (src/make/cli.rs:1365-1454), and refuses unknown long options outright (src/make/cli.rs:1139-1145, :1169-1186). So no --kati_* switch is product surface for Ronin's make.\n\nTHE SURVEY. docs/make-kati-extensions.md holds the full inventory, its dependents in this tree, and what each removal costs. It is the plan; this node is where the removals land."
+                    }
+
+                    {
+                        at 2026-08-24T14:17:04.468395301Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+                )
+            }
         )
         log (
             {

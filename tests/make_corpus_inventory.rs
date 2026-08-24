@@ -58,6 +58,19 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 51 when the twelve `KATI_*` builtin functions were removed from the
+    // product on the operator's ruling — see docs/make-kati-extensions.md.
+    // Twenty-seven corpus cases went with them, because a case that only tests
+    // a removed extension is not a case about Make. Ten of the twenty-seven
+    // carried inventory rows, all of class `extension` and family
+    // `kati-extension`: `deprecated_export.mk#test`, `deprecated_var.mk#test`,
+    // and the eight `var_visibility_prefix_*` cases. The other seventeen —
+    // the `err_deprecated_var_*` and `err_obsolete_*` makefiles,
+    // `variable_location.mk`, and the five `ninja_*` scripts the make oracle
+    // never enumerates — had no rows to lose, because their `ifdef KATI`
+    // fallback made GNU Make's side agree by construction.
+    //
+    // Before that it moved
     // from 52 when an `ifeq`'s close started being found by counting parens
     // forward rather than by reading the line's last byte:
     // `err_invalid_ifeq5.mk#test` — `ifeq (foo, bar) XXX`, headed by the
@@ -169,9 +182,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 51);
+    assert_eq!(cases.len(), 41);
     assert_eq!(by_class["defect"], 17);
     assert_eq!(by_class["recorded"], 2);
-    assert_eq!(by_class["extension"], 31);
+    assert_eq!(by_class["extension"], 21);
     assert_eq!(by_class["artefact"], 1);
 }
