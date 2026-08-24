@@ -1172,6 +1172,64 @@ const BUILD_CASES: &[BuildCase] = &[
         stale_manifest: true,
         status: 0,
     },
+    BuildCase {
+        // A dyndep file is read by the same lexer as a manifest and reported
+        // through the same located printer, so a parse error in one carries the
+        // quoted source line and the caret. Ronin printed the header and stopped.
+        name: "a dyndep parse error carries its source line and caret",
+        manifest: "rule r\n  command = touch $out\n\
+                   build out: r source || dd\n  dyndep = dd\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[("dd", "ninja_dyndep_version = 1\nbuild out: dyndep\n  # c")],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // The same printer's other half: an error whose column is the start of
+        // the line shows no caret and ends with a blank line, which Ronin omitted.
+        name: "a dyndep error at the line start ends with a blank line",
+        manifest: "rule r\n  command = touch $out\n\
+                   build out: r source || dd\n  dyndep = dd\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[("dd", "  ninja_dyndep_version = 1\n")],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // A dyndep semantic error — order-only inputs are not allowed — is one
+        // Ronin raised with the column thrown away, so Ninja drew a caret and
+        // Ronin drew none. It now reports against the token, as Ninja does.
+        name: "a dyndep semantic error carries the caret Ninja shows",
+        manifest: "rule r\n  command = touch $out\n\
+                   build out: r source || dd\n  dyndep = dd\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[("dd", "ninja_dyndep_version = 1\nbuild out: dyndep || x\n")],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // A wrong version name is diagnosed only after the whole binding is read,
+        // as Ninja's ParseLet does, so the caret lands past the value rather than
+        // under the name — and `notversion` with no `=` is `expected '='` first.
+        name: "a wrong dyndep version binding is caught after its value",
+        manifest: "rule r\n  command = touch $out\n\
+                   build out: r source || dd\n  dyndep = dd\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[("dd", "notversion = 1\n")],
+        stale_manifest: false,
+        status: 1,
+    },
+    BuildCase {
+        // A stray `=` is reported against its own line, not the binding read
+        // before it: the raw-byte peek now marks the token the way Ninja's does.
+        name: "a stray equals in a dyndep file names its own line",
+        manifest: "rule r\n  command = touch $out\n\
+                   build out: r source || dd\n  dyndep = dd\n",
+        arguments: &["-C", "@DIR@"],
+        extra: &[("dd", "ninja_dyndep_version = 1\n= 1\n")],
+        stale_manifest: false,
+        status: 1,
+    },
 ];
 
 const COPY_ONE: &str = "rule cp\n  command = cp $in $out\nbuild a: cp source\n";

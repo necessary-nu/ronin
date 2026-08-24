@@ -167,10 +167,6 @@ impl<'source> Scanner<'source> {
         });
     }
 
-    pub(crate) const fn line(&self) -> usize {
-        self.line
-    }
-
     pub(crate) const fn set_manifest_version(&mut self, major: i32, minor: i32) {
         self.manifest_version_major = major;
         self.manifest_version_minor = minor;

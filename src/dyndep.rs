@@ -173,13 +173,21 @@ pub(crate) struct DyndepError {
 
 impl fmt::Display for DyndepError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Ninja reads a dyndep file with the same lexer as a manifest and
+        // reports through the same `Lexer::Error`, so a dyndep diagnostic owes
+        // the same source context: the quoted line and caret when the column is
+        // known, the terminating blank line when it is not. The `error:` header
+        // is not written here — a dyndep error surfaces while a target is being
+        // added, so the target context that wraps it supplies that word, the way
+        // it does for every other error raised there.
         write!(
             formatter,
             "{}:{}: {}",
             self.span.path().display(),
             self.span.line,
             self.kind
-        )
+        )?;
+        crate::error::write_source_context(formatter, &self.span)
     }
 }
 
@@ -192,12 +200,13 @@ impl std::error::Error for DyndepError {
     }
 }
 
-fn error(scanner: &Scanner<'_>, line: usize, kind: DyndepErrorKind) -> DyndepError {
-    let mut span = scanner.position();
-    span.line = line;
-    span.column = 0;
+/// Build a dyndep diagnostic against the last token the scanner read, which is
+/// where Ninja's `Lexer::Error` reports every one of these — the quoted line and
+/// caret follow from its column. A caller that has peeked past the token it
+/// means to name marks it with `begin_token` first, as Ninja's `PeekToken` does.
+fn error(scanner: &Scanner<'_>, kind: DyndepErrorKind) -> DyndepError {
     DyndepError {
-        span: scanner.source_span(span),
+        span: scanner.source_span(scanner.last_token()),
         kind,
     }
 }
@@ -240,13 +249,16 @@ fn evaluate_empty(value: ScannedEvalString<'_>) -> BString {
 }
 
 fn parse_version(scanner: &mut Scanner<'_>, name: &BStr) -> Result<(), DyndepError> {
-    let line = scanner.line();
-    if name != "ninja_dyndep_version" {
-        return Err(error(scanner, line, DyndepErrorKind::ExpectedVersion));
-    }
+    // Read the whole `name = value` binding before judging the name, as Ninja's
+    // ParseLet does: a wrong name is not diagnosed until the value has been
+    // read, so `notversion` alone is `expected '='` and a wrong name carries the
+    // caret to where reading the value left off, not to the name itself.
     scan!(scanner, scanchar(scanner, '='));
     let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
     scan!(scanner, scannewline(scanner));
+    if name != "ninja_dyndep_version" {
+        return Err(error(scanner, DyndepErrorKind::ExpectedVersion));
+    }
     let value = evaluate_empty(value);
     let text = value.to_str_lossy();
     let numeric = text.split('-').next().unwrap_or_default();
@@ -256,11 +268,7 @@ fn parse_version(scanner: &mut Scanner<'_>, name: &BStr) -> Result<(), DyndepErr
         .next()
         .map_or(Some(0), |part| part.parse::<u32>().ok());
     if major != Some(1) || minor != Some(0) {
-        return Err(error(
-            scanner,
-            line,
-            DyndepErrorKind::UnsupportedVersion(value),
-        ));
+        return Err(error(scanner, DyndepErrorKind::UnsupportedVersion(value)));
     }
     Ok(())
 }
@@ -272,7 +280,7 @@ fn staged_path(
 ) -> Result<StagedPath, DyndepError> {
     let mut path = evaluate_empty(path);
     if path.is_empty() {
-        return Err(error(scanner, span.line, DyndepErrorKind::EmptyPath));
+        return Err(error(scanner, DyndepErrorKind::EmptyPath));
     }
     canonpath(&mut path);
     span.byte_end = scanner.position().byte_start;
@@ -282,10 +290,7 @@ fn staged_path(
     })
 }
 
-fn parse_implicit_inputs(
-    scanner: &mut Scanner<'_>,
-    line: usize,
-) -> Result<Vec<StagedPath>, DyndepError> {
+fn parse_implicit_inputs(scanner: &mut Scanner<'_>) -> Result<Vec<StagedPath>, DyndepError> {
     let mut inputs = Vec::new();
     match scan!(scanner, scanpipe(scanner, AllowedSeparators::INPUTS)) {
         Some(Separator::Implicit) => {
@@ -301,35 +306,19 @@ fn parse_implicit_inputs(
                 scanpipe(scanner, AllowedSeparators::AFTER_IMPLICIT)
             ) {
                 Some(Separator::OrderOnly) => {
-                    return Err(error(
-                        scanner,
-                        line,
-                        DyndepErrorKind::OrderOnlyInputsUnsupported,
-                    ));
+                    return Err(error(scanner, DyndepErrorKind::OrderOnlyInputsUnsupported));
                 }
                 Some(Separator::Validation) => {
-                    return Err(error(
-                        scanner,
-                        line,
-                        DyndepErrorKind::ValidationExpectedNewline,
-                    ));
+                    return Err(error(scanner, DyndepErrorKind::ValidationExpectedNewline));
                 }
                 Some(Separator::Implicit) | None => {}
             }
         }
         Some(Separator::OrderOnly) => {
-            return Err(error(
-                scanner,
-                line,
-                DyndepErrorKind::OrderOnlyInputsUnsupported,
-            ));
+            return Err(error(scanner, DyndepErrorKind::OrderOnlyInputsUnsupported));
         }
         Some(Separator::Validation) => {
-            return Err(error(
-                scanner,
-                line,
-                DyndepErrorKind::ValidationExpectedNewline,
-            ));
+            return Err(error(scanner, DyndepErrorKind::ValidationExpectedNewline));
         }
         None => {}
     }
@@ -341,12 +330,10 @@ fn parse_build(
     file: &mut DyndepFile,
     scanner: &mut Scanner<'_>,
 ) -> Result<(), DyndepError> {
-    let line = scanner.line();
     let output_start = scanner.position();
     let Some(output) = scan!(scanner, scanstring(scanner, true)) else {
         return Err(error(
             scanner,
-            line,
             if scanner.current().is_none() {
                 DyndepErrorKind::UnexpectedEof
             } else {
@@ -358,31 +345,24 @@ fn parse_build(
     let Some(node) = nodeget(graph, output.value.as_bytes()) else {
         return Err(error(
             scanner,
-            line,
             DyndepErrorKind::NoBuildStatement(output.value),
         ));
     };
     let Some(edge) = graph.node(node).generator else {
         return Err(error(
             scanner,
-            line,
             DyndepErrorKind::NoBuildStatement(output.value),
         ));
     };
     if file.get(edge).is_some() {
         return Err(error(
             scanner,
-            line,
             DyndepErrorKind::MultipleStatements(output.value),
         ));
     }
 
     if scan!(scanner, scanstring(scanner, true)).is_some() {
-        return Err(error(
-            scanner,
-            line,
-            DyndepErrorKind::ExplicitOutputsUnsupported,
-        ));
+        return Err(error(scanner, DyndepErrorKind::ExplicitOutputsUnsupported));
     }
     let mut implicit_outputs = Vec::new();
     if scan!(scanner, scanpipe(scanner, AllowedSeparators::IMPLICIT)).is_some() {
@@ -395,24 +375,20 @@ fn parse_build(
         }
     }
     if scanner.current().is_none() {
-        return Err(error(scanner, line, DyndepErrorKind::UnexpectedEof));
+        return Err(error(scanner, DyndepErrorKind::UnexpectedEof));
     }
     scan!(scanner, scanchar(scanner, ':'));
     let rule = scanname(scanner, NameKind::Rule)
-        .map_err(|_| error(scanner, line, DyndepErrorKind::ExpectedDyndepCommand))?
+        .map_err(|_| error(scanner, DyndepErrorKind::ExpectedDyndepCommand))?
         .text;
     if rule != "dyndep" {
-        return Err(error(scanner, line, DyndepErrorKind::ExpectedDyndepCommand));
+        return Err(error(scanner, DyndepErrorKind::ExpectedDyndepCommand));
     }
 
     if scan!(scanner, scanstring(scanner, true)).is_some() {
-        return Err(error(
-            scanner,
-            line,
-            DyndepErrorKind::ExplicitInputsUnsupported,
-        ));
+        return Err(error(scanner, DyndepErrorKind::ExplicitInputsUnsupported));
     }
-    let implicit_inputs = parse_implicit_inputs(scanner, line)?;
+    let implicit_inputs = parse_implicit_inputs(scanner)?;
     scan!(scanner, scannewline(scanner));
 
     let mut dyndeps = Dyndeps {
@@ -421,17 +397,12 @@ fn parse_build(
         implicit_outputs,
     };
     if scan!(scanner, scanindent(scanner)) {
-        let binding_line = scanner.line();
         let name = scan!(scanner, scanname(scanner, NameKind::Variable)).text;
         scan!(scanner, scanchar(scanner, '='));
         let value = scan!(scanner, scanstring(scanner, false)).unwrap_or_default();
         scan!(scanner, scannewline(scanner));
         if name != "restat" {
-            return Err(error(
-                scanner,
-                binding_line,
-                DyndepErrorKind::BindingNotRestat,
-            ));
+            return Err(error(scanner, DyndepErrorKind::BindingNotRestat));
         }
         dyndeps.restat = !evaluate_empty(value).is_empty();
     }
@@ -439,7 +410,6 @@ fn parse_build(
     file.insert(edge, output, dyndeps).map_err(|_| {
         error(
             scanner,
-            line,
             DyndepErrorKind::MultipleStatements(duplicate_output),
         )
     })
@@ -454,22 +424,19 @@ pub(crate) fn parse_dyndep_source(
     let mut file = DyndepFile::default();
     loop {
         if scanner.current() == Some(b'=') {
-            return Err(error(
-                &scanner,
-                scanner.line(),
-                DyndepErrorKind::UnexpectedEquals,
-            ));
+            // Ninja peeks this '=' as a token, which marks it as the one a
+            // diagnostic points at; the raw-byte peek here does not, so mark it
+            // by hand or the error would name whatever token was read last —
+            // the version binding on the line before.
+            scanner.begin_token();
+            return Err(error(&scanner, DyndepErrorKind::UnexpectedEquals));
         }
         match scan!(&scanner, scankeyword(&mut scanner)) {
             Some(token) if token.kind == TokenKind::Build && have_version => {
                 parse_build(graph, &mut file, &mut scanner)?;
             }
             Some(token) if token.kind == TokenKind::Build => {
-                return Err(error(
-                    &scanner,
-                    scanner.line(),
-                    DyndepErrorKind::ExpectedVersion,
-                ));
+                return Err(error(&scanner, DyndepErrorKind::ExpectedVersion));
             }
             Some(token) if token.kind == TokenKind::Variable && !have_version => {
                 parse_version(&mut scanner, token.lexeme.text)?;
@@ -481,15 +448,11 @@ pub(crate) fn parse_dyndep_source(
                 } else {
                     DyndepErrorKind::ExpectedVersion
                 };
-                return Err(error(&scanner, scanner.line(), kind));
+                return Err(error(&scanner, kind));
             }
             None if have_version => return Ok(file),
             None => {
-                return Err(error(
-                    &scanner,
-                    scanner.line(),
-                    DyndepErrorKind::ExpectedVersion,
-                ));
+                return Err(error(&scanner, DyndepErrorKind::ExpectedVersion));
             }
         }
     }

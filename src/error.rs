@@ -590,13 +590,29 @@ fn write_located(
     span: &SourceSpan,
     message: &dyn fmt::Display,
 ) -> fmt::Result {
-    const TRUNCATE_COLUMN: usize = 72;
     write!(
         formatter,
         "error: {}:{}: {message}",
         span.path().display(),
         span.line
     )?;
+    write_source_context(formatter, span)
+}
+
+/// The source line and caret Ninja prints under a located diagnostic, after the
+/// `path:line: message` header the caller has already written.
+///
+/// Split out from [`write_located`] because a dyndep diagnostic writes its own
+/// header — its `error:` comes from the target context that wraps it, not from
+/// this printer — but reaches the same lexer and so owes the same context. The
+/// rules are Ninja's own: the context is dropped when the column is at the start
+/// of the line or past the truncation point, and a line longer than that point
+/// is cut with an ellipsis.
+pub(crate) fn write_source_context(
+    formatter: &mut fmt::Formatter<'_>,
+    span: &SourceSpan,
+) -> fmt::Result {
+    const TRUNCATE_COLUMN: usize = 72;
     // Ninja counts this column from zero, and from the start of the line.
     let column = span.column.saturating_sub(1);
     if column == 0 || column >= TRUNCATE_COLUMN {
