@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-24T09:22:54.049053197Z
+last_sync_at 2026-08-24T10:37:37.214180402Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
