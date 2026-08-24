@@ -1,0 +1,17 @@
+INTENTIONAL, and ruled by the operator rather than by a dispatch. The same
+two-list shuffle as
+`shuffled-order-only-prerequisites-permute-with-the-rest`, seen from the one
+cell where it reaches a value a makefile can read. `t: a | b t c` under
+`--shuffle=reverse` leaves GNU Make 4.4.1 with `$|` = `t c` and Ronin with
+`$|` = `b c`: GNU's circular drop takes the position its one chain stands on,
+which can be across the `|`, and Ronin's stays inside the order-only list
+because it has a boundary there GNU does not have. Both drop the circular
+`t <- t`, both exit 0, both build the same files.
+
+Operator decision, Brendan, 2026-08-24, on
+docs/make-oracle-divergences.md section 1: "leave it."
+
+Not a defect to be repaired. This case is here so that a change which starts
+permuting the two groups together reopens that decision instead of passing
+quietly. Owner:
+make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest.

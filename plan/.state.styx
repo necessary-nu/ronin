@@ -925,6 +925,7 @@ assertions (
     {id an-interrupt-leaves-with-the-signal-that-caused-it, kind @complete, author "brendan@necessary.nu", at 2026-08-24T12:42:07.982849256Z}
     {id an-outputs-directory-is-left-to-the-recipe-in-make-mode, kind @complete, author "brendan@necessary.nu", at 2026-08-24T12:42:17.748549276Z}
     {id make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite, kind @complete, author "brendan@necessary.nu", at 2026-08-24T12:42:28.681097696Z}
+    {id make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest, kind @complete, author "brendan@necessary.nu", at 2026-08-24T13:50:50.355670116Z}
 )
 
 impl_evidence (

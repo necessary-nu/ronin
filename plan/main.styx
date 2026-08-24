@@ -5048,6 +5048,14 @@ children (
                         text "EXPLAINED TO THE OPERATOR ON 2026-08-24; NO RULING YET. The `-n` divergence this node decided — a `+`-marked or $(MAKE)-referencing recipe line does not run under `-n`, where GNU Make runs it — is section 6 of docs/make-oracle-divergences.md. He read that section on that date and ruled on seven of the nine numbered divergences; this was not one of them.\n\nNothing here has changed. What stands is still this node's own decision of 2026-08-08 (\"Dry-run spellings are interface controls mapped onto the ordinary Ninja dry-run path...\") and its completion note of 2026-08-09 (\"The `+` prefix on a line that is not Make loses its GNU effect, and that is the decision rather than an oversight\") — a dispatch decision, not an accepted divergence. The survey's Authority line for section 6 now says so, and says he has not ruled.\n\nRe-measured on 2026-08-24 while measuring section 8's DISCOVERY_ONLY_CASES: `dry-run-skips-a-plus-line` and `dry-run-skips-a-make-reference-line` both still differ, GNU writing the file and Ronin writing nothing, with both tools exiting 0.\n\nRecorded by the dispatch delivering his rulings, which was instructed to leave sections 1 and 6 exactly as they were."
                         after_done true
                     }
+
+                    {
+                        at 2026-08-24T13:50:35.69008067Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "RATIFIED BY THE OPERATOR. The dry-run disposition this node delivered on 2026-08-09 stood on a dispatch decision alone until today.\n\nOPERATOR DECISION, Brendan, 2026-08-24, on docs/make-oracle-divergences.md section 6 (\"-n does not run a +-marked or $(MAKE)-referencing recipe line\"), verbatim:\n\n    \"sounds like a bug in GNU, fuck GNU.\"\n\nKEEP RONIN'S BEHAVIOUR. Under -n nothing runs, + and $(MAKE) included.\n\nThe 2026-08-08 dispatch decision on this node is NOT overtaken and is not deleted: it is the mechanism's rationale — \"Dry-run spellings are interface controls mapped onto the ordinary Ninja dry-run path. Plus-prefixed recursive Make lines are compiler inputs for subninja composition, not an exception that launches a child Make during dry-run.\" — and the 2026-08-09 completion note's \"the + prefix on a line that is not Make loses its GNU effect, and that is the decision rather than an oversight\" still describes what the code does. What changes is which of the two is the AUTHORITY. It is now his ruling. What his ruling adds is the judgement a dispatch could not make: running a command under the switch that means run nothing is GNU's bug, not Ronin's gap.\n\nMEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24, unchanged from the survey:\n\n    all: ; +echo plus > plus        -n    GNU writes `plus`      Ronin writes nothing\n    a line running $(MAKE)-named text -n  GNU writes its file    Ronin writes nothing\n\nThe recursive-$(MAKE) case where the child is a real sub-make agrees, because Ronin walks the composed child's edges.\n\nGATES UNCHANGED. tests/make/dry-run-skips-a-plus-line and tests/make/dry-run-skips-a-make-reference-line stay in DISCOVERY_ONLY_CASES in tests/make_port.rs. They hold what GNU Make 4.4.1 does, recorded from the oracle, so the difference stays on the record rather than being forgotten; they are excluded from the build-intent assertion because their asserted result belongs to GNU's executor. recursive-dry-run-writes-nothing is the same question where the two tools agree, and it gates."
+                        after_done true
+                    }
                 )
             }
 
@@ -12651,6 +12659,7 @@ children (
                 id make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest
                 title "Shuffle a target's order-only prerequisites in the same chain as the rest"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-16T22:13:03.159371574Z
@@ -12685,6 +12694,27 @@ children (
                         author "brendan@necessary.nu"
                         kind @note
                         text "EXPLAINED TO THE OPERATOR ON 2026-08-24; NO RULING YET. This node is section 1 of docs/make-oracle-divergences.md. He read that section on that date and ruled on seven of the nine numbered divergences; this was not one of them.\n\nNothing here has changed and nothing has been decided. The node stays open, the two candidate fix shapes on it stand, and the survey's Authority line for section 1 now reads \"none — explained to the operator 2026-08-24; awaiting his ruling\" so that a later reader does not mistake the survey's completeness for approval of this cell.\n\nRecorded by the dispatch delivering his rulings, which was instructed to leave sections 1 and 6 exactly as they were."
+                    }
+
+                    {
+                        at 2026-08-24T13:50:21.395291593Z
+                        author "brendan@necessary.nu"
+                        kind @decision
+                        text "RETIRED AS A RECORDED, OPERATOR-RULED DIVERGENCE. Filed as a defect while probing the shuffled circular drop; ruled on 2026-08-24, by the operator, to be Ronin's behaviour rather than a bug.\n\nOPERATOR DECISION, Brendan, 2026-08-24, on docs/make-oracle-divergences.md section 1, verbatim:\n\n    \"leave it.\"\n\nHe had read the section once that day and left it unruled; asked again the same day, that is his answer. What he was reading is the cost paragraph: both candidate fix shapes reorder edge-minting for every Makefile the compiler touches — (A) one prerequisite list with a per-entry order-only flag, GNU's shape, which the equivalence gate and the inventory's compiler rows are pinned against; or (B) a combined walk gated on a live shuffle, two representations of one chain — and the reachability is a switch nothing in any corpus passes.\n\nRE-MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24 before this entry was written, both cells, through scripts/sandboxed.\n\n    t: a b | c d          --shuffle=reverse -j1\n      GNU 4.4.1   builds d c b a   hat=a b   pipe=c d\n      Ronin       builds b a d c   hat=a b   pipe=c d\n\n    t: a | b t c          --shuffle=reverse -j1\n      GNU 4.4.1   pipe=t c   builds c b a\n      Ronin       pipe=b c   builds a c b\n\nBoth drop the circular t <- t, both exit 0, both build the same files. The automatic variables agree in the first cell; the second is the one cell where the two-list representation reaches a value a makefile can read, and it needs a circular order-only prerequisite to get there.\n\nGATED, so a later change reopens the decision rather than passing quietly. Two make_port cases recorded from the oracle, each carrying a `divergence` sidecar naming this ruling: tests/make/shuffled-order-only-prerequisites-permute-with-the-rest (the build order, read through an order log) and tests/make/a-shuffled-circular-drop-crosses-the-order-only-boundary (the $| cell). make_port fails a recorded divergence that has been \"repaired\" as loudly as it fails an unrecorded one, so a change that starts permuting the two groups together lands as a test failure pointing here. That takes the build-intent corpus from three divergence markers to five, which is the intended and reported movement.\n\nWHAT THIS DOES NOT COVER. make-order-only-and-normal-prerequisite-of-the-same-name is the same two-list representation seen from the other end — a file declared BOTH ways, where GNU's one chain clears the ignore_mtime bit on the entry already there and Ronin leaves the name in $| as well. That one is reachable without any switch at all and is NOT ruled by this; it stays where it is."
+                    }
+
+                    {
+                        at 2026-08-24T13:50:45.540924212Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-24T13:50:50.355670116Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

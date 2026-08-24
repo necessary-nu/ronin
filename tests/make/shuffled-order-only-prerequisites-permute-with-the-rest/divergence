@@ -1,0 +1,15 @@
+INTENTIONAL, and ruled by the operator rather than by a dispatch. Under
+`--shuffle`, GNU Make 4.4.1 permutes a target's order-only prerequisites among
+its normal ones — one `->next` chain, one shuffle, `ignore_mtime` per entry.
+Ronin keeps two lists and shuffles each within itself, so `t: a b | c d` under
+`--shuffle=reverse` builds `d c b a` there and `b a d c` here. `$^` and `$|`
+agree in both.
+
+Operator decision, Brendan, 2026-08-24, on
+docs/make-oracle-divergences.md section 1: "leave it."
+
+Not a defect to be repaired. This case is here so that a change which starts
+permuting the two groups together reopens that decision instead of passing
+quietly: `make_port` fails a recorded divergence that has been "fixed" as
+loudly as it fails an unrecorded one. Owner:
+make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest.

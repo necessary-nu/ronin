@@ -15,8 +15,9 @@ released source.
 
 The last section is about a fifth kind of disagreement — Ronin against all four
 builds of GNU Make. It began as a survey for the operator to rule on. On
-2026-08-24 he ruled on seven of its ten numbered sections — two of them ruled
-closed and fixed — and three carry no ruling from him at all:
+2026-08-24 he ruled on **every one of its ten numbered sections** — two of them
+ruled closed and fixed, one whose conditional ruling failed its condition and is
+therefore filed as a defect rather than accepted:
 [where Ronin diverges from the oracle](#where-ronin-diverges-from-the-oracle).
 
 ## The oracle
@@ -242,24 +243,35 @@ two was GNU's.
 Everything above is one build of GNU Make against another. This section is Ronin
 against all four of them: every place a Ronin `make` build observably differs
 from GNU Make 4.4.1, gathered so the operator can read one document and rule on
-each — which, for seven of the ten, he has.
+each — which, for all ten, he now has.
 
 It began as a survey. The operator's instruction of 2026-08-24, verbatim: *"I do
 not think we have any accepted divergences. You will need to explain all the
-divergences now."* The survey was then explained to him, and **he ruled on seven
-of the ten numbered sections**: #2, #3, #5, #7, #8, #9 and #10. Those seven carry
-his words verbatim with the date on their **Authority** line.
+divergences now."* The survey was then explained to him, and on that date he
+ruled on seven of the ten numbered sections — #2, #3, #5, #7, #8, #9 and #10.
+Later the same day he ruled on the two he had left — **#1** (*"leave it."*) and
+**#6** (*"sounds like a bug in GNU, fuck GNU."*) — and confirmed the SIGQUIT
+carve-out inside #5 with the word *"exit 1"*. **#4** is the tenth, and his ruling
+on it is not a sentence about it: its only trigger is `.KATI_DEPFILE`, and on the
+same day he ruled *"fuck kati extensions"* — remove them from the product. A
+divergence whose entry point no makefile can name is not one to accept or to
+repair; it is one that goes with the surface.
 
-Two of the seven are no longer divergences at all — **#5 and #7** — because he
-ruled them closed and the code was changed to match GNU Make. One of the seven,
-**#8**, is not ratified either: his ruling on it was *conditional*, the condition
-was measured, and it failed, so #8 is filed as a defect.
+So **every numbered section below carries an operator ruling**, each quoted
+verbatim with its date on the section's **Authority** line. That is a statement
+about authorship, not about approval: two of the ten (**#5**, **#7**) were ruled
+*closed* and the code was changed to match GNU Make, so they are no longer
+divergences at all, and one (**#8**) is not accepted either — his ruling on it
+was *conditional*, the condition was measured, and it failed, so #8 is filed as
+a defect to fix.
 
-**#1, #4 and #6 carry no ruling from him** and must not be read as approved. #1
-and #6 were explained to him and he did not rule on them; #4 he did not address.
-Where an Authority line still says *dispatch*, that means the delivering dispatch
-recorded it — authored under the operator's git identity, but written by the
-agent — with no standalone operator ruling.
+How it got here is worth keeping, because it is the reason the document exists.
+Until 2026-08-24 this section carried the sentence *"nothing below should be read
+as approved"*, and it was true: every disposition here had been recorded by the
+delivering dispatch — authored under the operator's git identity, but written by
+the agent — with no standalone operator ruling behind any of it. That sentence is
+retired because it stopped being true, one ruling at a time, and not because the
+standard for it moved.
 
 Every measured cell below was re-measured against `reference/make-oracle/make-4.4.1/make`
 on 2026-08-24.
@@ -268,12 +280,12 @@ on 2026-08-24.
 
 | # | Divergence | Reachable in a real build? | Gated by | Authority |
 | --- | --- | --- | --- | --- |
-| 1 | A shuffled order-only prerequisite is permuted apart from the rest | No — only under `--shuffle`, plus one `$|` cell needing a cycle | nothing (open node) | **none** — explained to the operator 2026-08-24; awaiting his ruling |
+| 1 | A shuffled order-only prerequisite is permuted apart from the rest | No — only under `--shuffle`, plus one `$|` cell needing a cycle | 2 `divergence` sidecars in `make_port` | **operator, 2026-08-24**: *"leave it."* |
 | 2 | `$(MAKEFLAGS)` hands back the text it stores | Only where a switch value holds a literal `$` | 2 `divergence` sidecars + this doc | **operator, 2026-08-24**: *"We keep our behaviour."* |
 | 3 | An oversized recipe's marked lines do not run under `-t`/`-q` | No — needs a recipe line over 100 kB | `tests/shell.rs::oversized_marks_are_not_split_out` | **operator, 2026-08-24**: *"lol not a real problem."* |
-| 4 | A `.KATI_DEPFILE` recipe's `$(file …)` runs where it is built | No — `.KATI_DEPFILE` is a kati extension no GNU makefile names | `tests/shell.rs::a_depfile_recipe_is_read_where_it_is_built` | dispatch (no operator ruling) |
+| 4 | A `.KATI_DEPFILE` recipe's `$(file …)` runs where it is built | No — `.KATI_DEPFILE` is a kati extension no GNU makefile names | `tests/shell.rs::a_depfile_recipe_is_read_where_it_is_built` | **operator, 2026-08-24**: *"fuck kati extensions"* — the trigger goes, so the divergence goes with it |
 | 5 | ~~An interrupt leaves Ninja's 130, not GNU's 128+signum~~ **FIXED** | was **Yes** | `tests/interrupts.rs`; `product.build-outcome+1` | **operator, 2026-08-24**: *"I think ronin should actually follow the GNU case even for ninja."* |
-| 6 | `-n` does not run a `+`-marked or `$(MAKE)`-referencing line | Only under `-n` with such a line | `DISCOVERY_ONLY_CASES` in `make_port` | **none** — explained to the operator 2026-08-24; awaiting his ruling |
+| 6 | `-n` does not run a `+`-marked or `$(MAKE)`-referencing line | Only under `-n` with such a line | `DISCOVERY_ONLY_CASES` in `make_port` | **operator, 2026-08-24**: *"sounds like a bug in GNU, fuck GNU."* |
 | 7 | ~~An output's directory is created where GNU leaves it to the recipe~~ **FIXED** | was **Yes** | 4 corpus fixtures + a kati unit pair | **operator, 2026-08-24**: *"Make's rule applies when run as make."* |
 | 8 | Recursive keep-going choreography differs | **Yes** — recursive `$(MAKE)` with per-child `-k`/`-S` | `DISCOVERY_ONLY_CASES` in `make_port`; node `make-recursive-keep-going-choreography-writes-different-files` | **DEFECT** — his ruling was conditional and the condition FAILED (measured) |
 | 9 | `-W` over a `::` chain refuses before the chain's work runs | Only under `-W`/`-t`-family over a double-colon chain | `DISCOVERY_ONLY_CASES` in `make_port` | **operator, 2026-08-24**: *"fine."* |
@@ -309,10 +321,16 @@ is **§10** below, and the operator ruled it a deliberate divergence.
 
 ---
 
-### 1. A shuffled order-only prerequisite is permuted apart from the rest
+### 1. A shuffled order-only prerequisite is permuted apart from the rest — **ACCEPTED DIVERGENCE**
 
-**Owner:** `make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest`
-(open). Full evidence and the two candidate fix shapes are on that node.
+**Owner:** `make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest`,
+filed as a defect on 2026-08-24 and **retired the same day as a recorded,
+operator-ruled divergence**. Full evidence and the two candidate fix shapes are
+on that node. **Gated by** two `make_port` cases carrying `divergence` sidecars —
+`tests/make/shuffled-order-only-prerequisites-permute-with-the-rest` and
+`tests/make/a-shuffled-circular-drop-crosses-the-order-only-boundary` — so a
+change that starts permuting the two groups together reopens the decision rather
+than passing silently.
 
 **What GNU does / what Ronin does.** GNU carries a target's normal and order-only
 prerequisites in ONE `->next` chain (told apart per entry by `ignore_mtime`) and
@@ -348,9 +366,18 @@ combined walk gated on a live shuffle — contains the blast radius to shuffled
 runs at the price of two representations of one chain. The `.WAIT` barrier
 (synthesised order-only edges) has to be excluded from the shuffle either way.
 
-**Authority: none — explained to the operator 2026-08-24; awaiting his ruling.**
-He read this section on that date and did not rule on it. The node stays open and
-nothing here is approved.
+**Authority: operator decision, Brendan, 2026-08-24, on this section:**
+*"leave it."* He read this section on that date and left it unruled; asked again
+the same day, that is his answer. It is an accepted divergence rather than an
+open defect, and the cost paragraph above is what he was reading when he said so:
+both fix shapes reorder edge-minting, and the reachability is a switch nothing in
+any corpus passes.
+
+Both fixtures record GNU's answer from the oracle — `d c b a` for the build
+order, `$| = t c` for the circular cell — so what is pinned is the difference
+itself. `make_port` fails a recorded divergence that has been "repaired" as
+loudly as it fails an unrecorded one. That takes the build-intent corpus from
+three divergence markers to five.
 
 ### 2. `$(MAKEFLAGS)` hands back the text it stores
 
@@ -458,7 +485,14 @@ which the dispatch judged out of proportion to a `$(file …)` in a depfile
 recipe. Deferring the recipe naively was measured to break the depfile's own
 dependency (touching a listed header stopped rebuilding the target).
 
-**Authority: no operator ruling.** Recorded by the delivering dispatch.
+**Authority: operator decision, Brendan, 2026-08-24**, verbatim: *"fuck kati
+extensions"* — clarified in a follow-up as: remove the kati-only extensions from
+the product. That is a ruling on this section even though it never mentions it,
+because `.KATI_DEPFILE` is the only text that reaches this divergence. A
+divergence with no reachable trigger is not one to accept and not one to repair;
+it goes when the surface goes, and the cost paragraph above stops being a cost at
+all. What the delivering dispatch had recorded here — the wiring judgement — is
+kept below as the mechanism's rationale, not as authority.
 
 ### 5. An interrupt leaves Ninja's 130, not GNU's 128 + signal number — **FIXED 2026-08-24**
 
@@ -508,6 +542,13 @@ Note the SIGQUIT row, which the survey had not measured before: **GNU's rule is
 not "128 + signum"**. It is "die of the signal, except the one whose default
 action dumps core". Following the GNU case means following it there too, so
 Ronin leaves 1 for `SIGQUIT` rather than 131 — and writes no core file.
+
+**The SIGQUIT carve-out is confirmed, not inferred.** It was the one fact in the
+delivery the operator's stated facts did not include, so it was put back to him
+in as many words: does following the GNU case mean 1 for `SIGQUIT` as well?
+Operator decision, Brendan, 2026-08-24, verbatim: *"exit 1."* What shipped is
+what he confirmed; no code changed on the strength of the confirmation, and this
+paragraph is the record of it.
 
 **What did not change.** Everything the interrupt work established is intact and
 still gated: the cut-short edge is not recorded in the build log, partial outputs
@@ -564,15 +605,22 @@ without `-n` runs everything in both tools.
 child during `-n` — which is exactly the `DRY_RUN_COMMAND` the compiler-boundary
 removal deleted.
 
-**Authority: none — explained to the operator 2026-08-24; awaiting his ruling.**
-He read this section on that date and did not rule on it, so what stands is still
-a dispatch decision and not an accepted divergence. `make-recipe-dry-run`,
-2026-08-08: *"Dry-run spellings are interface controls mapped onto the ordinary
-Ninja dry-run path. Plus-prefixed recursive Make lines are compiler inputs for
-subninja composition, not an exception that launches a child Make during
-dry-run."* The completion note (2026-08-09) adds: *"The `+` prefix on a line
-that is not Make loses its GNU effect, and that is the decision rather than an
-oversight."*
+**Authority: operator decision, Brendan, 2026-08-24, on this section:**
+*"sounds like a bug in GNU, fuck GNU."* Ronin's behaviour is **ratified** and
+kept: under `-n` nothing runs, `+` and `$(MAKE)` included. The two
+`DISCOVERY_ONLY_CASES` recordings stay where they are — they hold what GNU does,
+so the difference is on the record rather than forgotten.
+
+The dispatch decision that preceded him is not overtaken, because it is the
+mechanism's rationale rather than the authority; his ruling is now the authority.
+`make-recipe-dry-run`, 2026-08-08: *"Dry-run spellings are interface controls
+mapped onto the ordinary Ninja dry-run path. Plus-prefixed recursive Make lines
+are compiler inputs for subninja composition, not an exception that launches a
+child Make during dry-run."* The completion note (2026-08-09) adds: *"The `+`
+prefix on a line that is not Make loses its GNU effect, and that is the decision
+rather than an oversight."* What his ruling adds is the judgement the dispatch
+could not make: running a command under the switch that means *run nothing* is
+GNU's bug, not Ronin's gap.
 
 ### 7. An output's directory is created where GNU Make would leave it to the recipe — **FIXED 2026-08-24**
 
