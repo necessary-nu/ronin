@@ -12321,12 +12321,34 @@ children (
                 id make-deferred-freshness-binds-at-before-the-timestamps-are-known
                 title "Bind a deferred recipe's $@ to the name that was out of date"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-16T13:42:34.673071186Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "The last cell of make-multi-target-pattern-trigger-identity, reachable only now that make-deferred-freshness-hides-a-multi-target-peer has made the edge run at all. Filed from that node rather than folded into it: making the edge run is a question about which outputs decide its freshness, and this is a question about when `$@` can be chosen.\n\nReproducer, with `a.in` old, `a.c` current and `a.h` absent:\n\n    all: a.c a.h\n    %.c %.h: %.in ; echo \"at=$@ q=$?\" >> log ; cat $< > $*.c ; cat $< > $*.h\n\nGNU: `at=a.h q=a.in`. Ronin now runs the recipe and writes both files, with `q=a.in` right, and `at=a.c`. Take `$?` out of the recipe and Ronin says `at=a.h` too — that case is tests/make/multi-target-pattern-trigger-is-the-name-that-was-out-of-date and it gates.\n\nWhy the two part company. `$@` for a pattern group is the member whose own state sent the recipe to the shell, which no compile-time reading can know: `trigger_output` (src/graph/peer.rs) is a stat-time answer, and `bind_late_command` asks for it as the edge launches. A recipe naming `$?` cannot be held for launch — `references_new_inputs` refuses it in `defers_recipe` — so its text is expanded while the graph is compiled and `AutoCommand::At` writes `node.recipe_output`, the first name, before any timestamp exists.\n\nThe route is the one `$?` itself already takes. `DEFERRED_NEW_INPUTS_REFERENCE` puts `${KATI_NEW_INPUTS}` in the command text and `resolve_deferred_new_inputs` (src/build/deferred.rs) substitutes the value as the edge launches, in the inline and response-file forms alike. `$@` would need the same: a second reference kati emits when it is expanding for a destination that cannot hold the recipe AND the node is a `pattern_group`, and a second substitution the executor makes from `trigger_output`. Both halves are small; what makes it a node is what moves with them — the command text carries a reference rather than a name, so the edge hash, `-n` output, the narration and the equivalence check all read the new text, and `escape_double_quoted_shell` has to be right for a path.\n\nScope note: only a pattern group is affected. An explicit `&:` group binds `$@` to the member that was reached, which is one decision over all its targets and is settled at plan time — make-grouped-pattern-targets recorded that and it is unaffected here."
+                    }
+
+                    {
+                        at 2026-08-24T00:19:05.876342755Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-24T00:21:29.736125263Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Re-verified and delivered, with the filing's central design OVERTURNED — the cleaner fix was already in reach. Filing's claim reproduced first at ffcbfe6's parent: `%.c %.h: %.in ; @echo \"at=$@ q=$?\"` with a.c current and a.h absent gave Ronin `at=a.c` where GNU gives `at=a.h`, and taking `$?` out made it agree — so the `$?` reference was the whole reason `$@` was bound early.\n\nThe filing proposed emitting a `$@` placeholder kati fills at launch from trigger_output, the way `${KATI_NEW_INPUTS}` carries `$?`. That is unnecessary. make-a-scheduler-bound-recipe-is-expanded-though-its-target-is-current taught defers_recipe to hold a `$?` recipe unexpanded, and a deferred pattern group's `$@` was ALREADY a launch-time value: DeferredRecipes::expand binds recipe_output to the trigger when node.pattern_group && implicit_outputs.contains(trigger) (kati src-rs/ninja.rs). That code existed for the non-`$?` case (make-multi-target-pattern-trigger-identity) and simply could not be reached by a `$?` recipe until the recipe deferred. So no new code: this node is a consequence of node 3's deferral, gated by its own fixture.\n\nProbed against the 4.4.1 oracle, GNU on the left, all matching after the fix:\n  a.c current, a.h absent   at=a.h   (the out-of-date member)\n  both absent               at=a.c   (the first name reached, both out of date)\n  a.h current, a.c absent   at=a.c   (the out-of-date member)\n`$?` in the same recipe is `a.in` throughout and correct. Teeth measured on a reverted binary: `at=a.c` where GNU says `at=a.h`.\n\nFIXTURE: tests/make/a-scheduler-bound-pattern-group-binds-at-to-the-name-that-was-out-of-date, oracle-recorded, gating `at=a.h q=a.in` — the `$?` sibling of multi-target-pattern-trigger-is-the-name-that-was-out-of-date (which is the non-`$?` version and was already green). Scope note in the filing holds: only a pattern group is affected; an explicit `&:`/`&::` group settles `$@` at plan time.\n\nGATES (shared with node 3's landing at ffcbfe6, re-run for this fixture): make_port green over the corpus with the new fixture; workspace tests 0 failed; conformance 336/51 normalised, 286 raw; equivalence 297/280/75/0 respellings 8; upstream inventory 1285 @ 95/0/24/1166 compiler ZERO — all unmoved."
+                    }
+
+                    {
+                        at 2026-08-24T00:21:45.341007653Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

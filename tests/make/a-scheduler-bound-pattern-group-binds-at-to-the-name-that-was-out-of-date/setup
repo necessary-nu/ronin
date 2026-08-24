@@ -1,0 +1,5 @@
+echo in > a.in
+touch -d '2020-01-01 00:00:00Z' a.in
+echo cur > a.c
+touch -d '2021-01-01 00:00:00Z' a.c
+rm -f a.h log
