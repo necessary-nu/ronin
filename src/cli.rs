@@ -3,7 +3,7 @@
 mod runtime_options;
 
 use crate::Error;
-use crate::build::{BuildOptions, ColorChoice, JobLimit, OutputStyle};
+use crate::build::{BuildOptions, ColorChoice, JobLimit, OutputStyle, ProgressCarry};
 use crate::error::{
     BuildError, BuildStop, CliError, EncodingContext, PersistenceError, PersistenceOperation,
     ToolAvailability, ToolError,
@@ -1518,6 +1518,7 @@ fn rebuild_manifest<'a>(
     io: BuildIo<'a, '_>,
     manifest: &BString,
     output: &mut String,
+    progress_carry: &mut ProgressCarry,
 ) -> CliResult<bool> {
     let Some(target) = graph
         .lookup(manifest.as_bytes())
@@ -1525,11 +1526,17 @@ fn rebuild_manifest<'a>(
     else {
         return Ok(false);
     };
-    let planned = io.build(graph, persistence, options).plan(&[target])?;
+    let planned = io
+        .build(graph, persistence, options)
+        .carrying(*progress_carry)
+        .plan(&[target])?;
     if planned.already_up_to_date() {
         return Ok(false);
     }
     let outcome = planned.run()?;
+    // Keep this regeneration's edges in the count so the build the invocation
+    // asked for opens its progress where Ninja's shared Status leaves it.
+    *progress_carry = outcome.progress_carry();
     append_output(output, &String::from_utf8_lossy(outcome.output()));
     // Failing to regenerate the manifest is not a build outcome: Ninja names
     // the manifest, reports it as an error, and leaves with a plain failure
@@ -1568,6 +1575,7 @@ fn build_targets<'a>(
     io: BuildIo<'a, '_>,
     names: &[BString],
     output: &mut String,
+    progress_carry: ProgressCarry,
 ) -> CliResult<BuildOutcome> {
     // A name nothing in the graph interned is the invocation's mistake rather
     // than the build's, and Ninja reports it the same way it reports the rest of
@@ -1585,7 +1593,9 @@ fn build_targets<'a>(
             })
             .collect::<CliResult<Vec<Node>>>()?
     };
-    let mut build = io.build(graph, persistence, options);
+    let mut build = io
+        .build(graph, persistence, options)
+        .carrying(progress_carry);
     // The targets came from a command line, so a failure to start reads as an
     // error against the invocation rather than as the engine's own report.
     build.invocation_errors = true;
@@ -1697,6 +1707,11 @@ pub(crate) fn run_bytes<'sink>(
     )?;
     let mut parse_count = 0;
     let mut parse_elapsed = std::time::Duration::ZERO;
+    // Ninja builds a regenerated manifest and then the requested targets on one
+    // shared Status, so the regeneration edges stay in the following build's
+    // `[N/M]` denominator. Ronin re-parses with a fresh Builder each cycle, so
+    // it carries those counters across the loop by hand instead.
+    let mut progress_carry = ProgressCarry::default();
     for _ in 0..100 {
         let parse_started = std::time::Instant::now();
         let mut manifest_warnings = Vec::new();
@@ -1772,6 +1787,7 @@ pub(crate) fn run_bytes<'sink>(
             },
             &invocation.manifest,
             &mut output,
+            &mut progress_carry,
         );
         let manifest_rebuilt = match manifest_result {
             Ok(rebuilt) => rebuilt,
@@ -1798,6 +1814,7 @@ pub(crate) fn run_bytes<'sink>(
             },
             &invocation.targets,
             &mut output,
+            progress_carry,
         );
         let persistence_result = persistence.finish();
         let outcome = outcome?;

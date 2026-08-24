@@ -1,4 +1,4 @@
-use super::{BuildOptions, Plan};
+use super::{BuildOptions, Builder, Plan};
 use crate::graph::{EdgeId, Graph};
 use crate::log::BuildLog;
 use std::fmt::Write as _;
@@ -63,6 +63,31 @@ pub(crate) struct BuildState {
     pub(crate) predicted_fraction: f64,
 }
 
+/// The progress counters one build hands the next when a manifest regeneration
+/// runs before the build the invocation asked for.
+///
+/// Ninja builds both on one `Status` object (ninja.cc:1844 makes it once, before
+/// the rebuild loop, and passes it to `RebuildManifest` and `RunBuild` alike),
+/// and `StatusPrinter::BuildStarted` (`status_printer.cc`:285) resets only
+/// `started_edges_`, `finished_edges_` and `running_edges_` — never
+/// `total_edges_` or the ETA weighting. So the regeneration edge stays in the
+/// denominator of the build that follows: a plain regeneration then two commands
+/// prints `[1/1]` and then `[1/3] [2/3]`. Ronin builds each phase with a fresh
+/// `Builder`, so these are the fields it must carry by hand to say the same.
+///
+/// Everything here is what `EdgeAddedToPlan` / `EdgeRemovedFromPlan`
+/// (`status_printer.cc`:89, 103) move and what finishing an edge leaves alone,
+/// which is exactly what survives a `BuildStarted`.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ProgressCarry {
+    pub(crate) total: usize,
+    pub(crate) predictable_total: usize,
+    pub(crate) predictable_remaining: usize,
+    pub(crate) predictable_millis_total: i64,
+    pub(crate) predictable_millis_remaining: i64,
+    pub(crate) unpredictable_remaining: usize,
+}
+
 impl BuildState {
     pub(crate) fn new(_options: BuildOptions) -> Self {
         Self {
@@ -78,6 +103,33 @@ impl BuildState {
             unpredictable_remaining: 0,
             predicted_fraction: 0.0,
         }
+    }
+
+    /// The counters this build would hand a build that ran after it, as Ninja's
+    /// shared `Status` hands them on: the total and the ETA weighting, taken
+    /// where the build left them so that pruning and finishing are already in.
+    pub(crate) const fn carry(&self) -> ProgressCarry {
+        ProgressCarry {
+            total: self.total,
+            predictable_total: self.predictable_total,
+            predictable_remaining: self.predictable_remaining,
+            predictable_millis_total: self.predictable_millis_total,
+            predictable_millis_remaining: self.predictable_millis_remaining,
+            unpredictable_remaining: self.unpredictable_remaining,
+        }
+    }
+
+    /// Seed this build's counters from a preceding one, so its own edges add to
+    /// the carried base rather than replacing it. The mirror of `carry`, applied
+    /// where Ninja does nothing at all because the one `Status` already holds
+    /// these — `BuildStarted` clears the numerator and leaves these standing.
+    pub(crate) const fn adopt_carry(&mut self, carry: ProgressCarry) {
+        self.total = carry.total;
+        self.predictable_total = carry.predictable_total;
+        self.predictable_remaining = carry.predictable_remaining;
+        self.predictable_millis_total = carry.predictable_millis_total;
+        self.predictable_millis_remaining = carry.predictable_millis_remaining;
+        self.unpredictable_remaining = carry.unpredictable_remaining;
     }
 
     /// Milliseconds since the build began, as `.ninja_log` records them.
@@ -127,6 +179,21 @@ impl BuildState {
         } else {
             self.unpredictable_remaining = self.unpredictable_remaining.saturating_sub(1);
         }
+    }
+}
+
+impl Builder<'_> {
+    /// Start this build's progress count from where a preceding build left it,
+    /// so a manifest regeneration's edges stay in the denominator of the build
+    /// that follows. Zero unless the front end sets it.
+    pub(crate) const fn carry_progress(&mut self, carry: ProgressCarry) {
+        self.progress_carry = carry;
+    }
+
+    /// The progress counters this build would hand the next, taken after it ran
+    /// so pruning and finishing are already accounted for.
+    pub(crate) const fn progress_carried(&self) -> ProgressCarry {
+        self.progress.carry()
     }
 }
 

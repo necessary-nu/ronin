@@ -11,7 +11,7 @@
 //! rule prunes — are the engine's rather than negotiable options.
 
 use super::{BuildGraph, Node};
-use crate::build::{BuildOptions, Builder, JobLimit};
+use crate::build::{BuildOptions, Builder, JobLimit, ProgressCarry};
 use crate::error::{BuildError, BuildStop, Error, PersistenceError, PersistenceOperation};
 use std::io::Write;
 use std::num::NonZeroUsize;
@@ -149,6 +149,10 @@ pub struct Build<'graph, 'sink> {
     /// manifest, reported as themselves. A front end phrases its own
     /// diagnostics, so nothing outside this crate sets this.
     pub(crate) invocation_errors: bool,
+    /// Progress counters carried from a build that ran before this one, so a
+    /// manifest regeneration's edges stay in the denominator of the build the
+    /// invocation asked for. Zero for a build that stands alone.
+    progress_carry: ProgressCarry,
 }
 
 impl<'graph, 'sink> Build<'graph, 'sink> {
@@ -163,7 +167,20 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
             diagnostics: None,
             late_commands: None,
             invocation_errors: false,
+            progress_carry: ProgressCarry::default(),
         }
+    }
+
+    /// Start this build's progress count from where a preceding one left it.
+    ///
+    /// A manifest regeneration runs its own commands before the build the
+    /// invocation asked for, and Ninja keeps both on one `Status` so the
+    /// regeneration's edges stay in the following build's `[N/M]` denominator.
+    /// A front end that ran a regeneration hands its counters on through here.
+    #[must_use]
+    pub(crate) const fn carrying(mut self, carry: ProgressCarry) -> Self {
+        self.progress_carry = carry;
+        self
     }
 
     /// A build carrying the Ninja front end's whole command line, which reaches
@@ -264,6 +281,7 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
             diagnostics,
             late_commands,
             invocation_errors,
+            progress_carry,
         } = self;
         // Every frontend reaches the same Ninja dirtiness and persistence
         // semantics once its graph crosses this boundary.
@@ -275,6 +293,7 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
             output.map(|sink| sink as &mut dyn Write),
             diagnostics.map(|sink| sink as &mut dyn Write),
         );
+        builder.carry_progress(progress_carry);
         if let Some(recipes) = late_commands {
             builder.late_commands(recipes);
         }
@@ -364,6 +383,9 @@ impl Planned<'_> {
             }
         }
         let output = std::mem::take(&mut self.builder.build_output);
+        // Snapshot after the build so pruning and finishing are already in the
+        // counters, then hand them to the build the invocation runs next.
+        let progress_carry = self.builder.progress_carried();
         let stopped = match result {
             Err(BuildError::Stopped { reason, status }) => Some((reason, status)),
             other => {
@@ -378,6 +400,7 @@ impl Planned<'_> {
             unmade,
             output,
             ran_a_command,
+            progress_carry,
         })
     }
 }
@@ -389,6 +412,7 @@ pub struct Outcome {
     unmade: Vec<Node>,
     output: Vec<u8>,
     ran_a_command: bool,
+    progress_carry: ProgressCarry,
 }
 
 impl Outcome {
@@ -452,6 +476,13 @@ impl Outcome {
     #[must_use]
     pub fn regenerated(&self) -> &[Node] {
         &self.regenerated
+    }
+
+    /// The progress counters to carry into the build the invocation runs next,
+    /// so a manifest regeneration's edges stay in that build's `[N/M]`
+    /// denominator the way Ninja's shared `Status` keeps them.
+    pub(crate) const fn progress_carry(&self) -> ProgressCarry {
+        self.progress_carry
     }
 
     /// Which of the targets asked for the build tried to make and did not.

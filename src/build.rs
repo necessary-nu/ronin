@@ -20,7 +20,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use self::command::{Advance, CommandSpec, DepsType, PreparedEdge, RunningStep};
 use self::reporter::Reporter;
 pub(crate) use self::reporter::{ColorChoice, OutputStyle, TerminalContext};
-pub(crate) use self::status::BuildState;
+pub(crate) use self::status::{BuildState, ProgressCarry};
 
 type BuildResult<T> = Result<T, BuildError>;
 
@@ -661,6 +661,12 @@ pub(crate) struct Builder<'a> {
     command_cache: Vec<Option<CommandSpec>>,
     command_scratch: Vec<u8>,
     progress: BuildState,
+    /// Counters carried in from a build that ran before this one — a manifest
+    /// regeneration that ran commands ahead of the build the invocation asked
+    /// for. Zero for a build that stands alone, which is every build but the one
+    /// the front end runs after a regeneration. Ninja keeps these on one shared
+    /// `Status`; Ronin's per-phase `Builder` seeds them here instead.
+    progress_carry: ProgressCarry,
     reporter: Reporter,
     /// Buffer every rendered line is built in, reused for the whole build.
     ///
@@ -735,6 +741,7 @@ impl<'a> Builder<'a> {
             command_cache: Vec::new(),
             command_scratch: Vec::new(),
             progress,
+            progress_carry: ProgressCarry::default(),
             reporter: Reporter::new(options_style, options_color),
             status_scratch: Vec::new(),
             output_sink,
@@ -2028,8 +2035,13 @@ impl<'a> Builder<'a> {
         self.plan.prepare_queue(self.graph);
         self.progress.started = 0;
         self.progress.finished = 0;
-        self.progress.total = self.plan.command_edge_count(self.graph);
         self.progress.start = Instant::now();
+        // Seed the carried base before this build's own edges join it, the way
+        // Ninja's shared Status arrives at RunBuild already holding the
+        // regeneration edge: BuildStarted cleared the numerator and left the
+        // total and the ETA weighting standing (status_printer.cc:285).
+        self.progress.adopt_carry(self.progress_carry);
+        self.progress.total = self.progress_carry.total + self.plan.command_edge_count(self.graph);
         status::seed_prediction(
             &mut self.progress,
             &self.plan,

@@ -1155,6 +1155,23 @@ const BUILD_CASES: &[BuildCase] = &[
         stale_manifest: true,
         status: 1,
     },
+    BuildCase {
+        // A successful regeneration keeps its edge in the progress total of the
+        // build that follows. Ninja runs the regeneration and the requested
+        // targets on one Status, and BuildStarted resets only the numerator, so
+        // the regeneration edge stays in the denominator: one regeneration then
+        // two commands prints `[1/1]` and then `[1/3] [2/3]`, never `[1/2]`.
+        // `-j1` so the two commands finish in a fixed order for the byte compare.
+        name: "a regeneration edge stays in the following build's progress total",
+        manifest: "rule regen\n  command = touch $out\n  generator = 1\n\
+                   rule cp\n  command = cp $in $out\n\
+                   build build.ninja: regen conf\n\
+                   build a: cp source\nbuild b: cp source\ndefault a b\n",
+        arguments: &["-C", "@DIR@", "-j1"],
+        extra: &[("conf", "conf\n")],
+        stale_manifest: true,
+        status: 0,
+    },
 ];
 
 const COPY_ONE: &str = "rule cp\n  command = cp $in $out\nbuild a: cp source\n";

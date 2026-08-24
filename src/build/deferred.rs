@@ -586,7 +586,8 @@ impl Builder<'_> {
                         self.add_target_node(root)?;
                     }
                     self.plan.refresh_dependencies(self.graph, &self.runtime)?;
-                    self.progress.total = self.plan.command_edge_count(self.graph);
+                    self.progress.total =
+                        self.progress_carry.total + self.plan.command_edge_count(self.graph);
                     Ok(())
                 })();
                 if let Err(error) = activated {
