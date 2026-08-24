@@ -35,11 +35,9 @@ struct Bindings {
     depfile: Binding,
     deps: Binding,
     generator: Binding,
-    restat: Binding,
     rspfile: Binding,
     rspfile_content: Binding,
     pool: Binding,
-    tags: Binding,
     ignore_errors: Binding,
     /// `$out`, used to name a response file per edge rather than per rule.
     /// kati mints one rule per edge, so this expands to that edge's own single
@@ -55,11 +53,9 @@ impl Bindings {
             depfile: graph.binding(b"depfile"),
             deps: graph.binding(b"deps"),
             generator: graph.binding(b"generator"),
-            restat: graph.binding(b"restat"),
             rspfile: graph.binding(b"rspfile"),
             rspfile_content: graph.binding(b"rspfile_content"),
             pool: graph.binding(b"pool"),
-            tags: graph.binding(b"tags"),
             ignore_errors: graph.binding(crate::build::IGNORE_ERRORS),
             out: graph.binding(b"out"),
         }
@@ -116,7 +112,6 @@ pub(crate) struct PendingSubninja {
     order_only_inputs: Vec<Node>,
     /// The subset of `order_only_inputs` this wrapper outlives a failure of.
     forgiven_order_inputs: Vec<Node>,
-    validations: Vec<Node>,
     always_dirty: bool,
     deferred: Option<PendingDeferred>,
     completion_output: Option<Node>,
@@ -208,10 +203,6 @@ struct Unit {
 /// outside its sandbox. Ronin has no sandbox, and the binding is not one Ninja
 /// itself accepts on a rule, so carrying it would put a value in the graph that
 /// nothing could ever read.
-///
-/// `.KATI_TAGS` is carried rather than dropped: it is opaque metadata for
-/// whoever consumes the graph rather than an instruction to the build, so it
-/// crosses as an edge binding under its own name and is left alone.
 // [spec:ronin:req:make.graph-direct]
 pub struct GraphSink {
     graph: BuildGraph,
@@ -555,7 +546,7 @@ impl GraphSink {
             explicit_inputs: &pending.inputs,
             implicit_inputs: &[],
             order_only_inputs: &pending.order_only_inputs,
-            validations: &pending.validations,
+            validations: &[],
             always_dirty: pending.always_dirty,
             intermediate: pending.intermediate,
             disposable: pending.disposable,
@@ -1065,9 +1056,6 @@ impl GraphSink {
             // kati emits no other depfile format, and says so.
             bindings.push((self.bindings.deps, Template::literal(b"gcc")));
         }
-        if rule.restat {
-            bindings.push((self.bindings.restat, Template::literal(b"1")));
-        }
         // Carried rather than answered for here. kati left the recipe's status
         // in place instead of throwing it away, so that whatever runs the
         // recipe can say what it was and go on, and only the thing running it
@@ -1084,15 +1072,11 @@ impl GraphSink {
     /// because the edge that names it binds its real command as it is
     /// launched, and a placeholder that quietly succeeded would turn a missing
     /// binding into a build that claimed to have done the work.
-    fn deferred_rule_bindings(&self, rule: &SinkRule<'_>) -> Vec<(Binding, Template)> {
-        let mut bindings = vec![
+    fn deferred_rule_bindings(&self) -> Vec<(Binding, Template)> {
+        vec![
             (self.bindings.command, Template::literal(b"false")),
             (self.bindings.generator, Template::literal(b"1")),
-        ];
-        if rule.restat {
-            bindings.push((self.bindings.restat, Template::literal(b"1")));
-        }
-        bindings
+        ]
     }
 
     /// The per-edge bindings kati names, and the serialising pool this unit
@@ -1101,9 +1085,6 @@ impl GraphSink {
         let mut bindings = Vec::new();
         if let Some(pool) = edge.pool {
             bindings.push((self.bindings.pool, pool.to_vec()));
-        }
-        if let Some(tags) = edge.tags {
-            bindings.push((self.bindings.tags, tags.to_vec()));
         }
         let subninja_rule = edge.rule.and_then(|id| self.subninja_rules.get(&id));
         let is_subninja = subninja_rule.is_some();
@@ -1375,7 +1356,7 @@ impl BuildSink for GraphSink {
         }
 
         let bindings = if rule.deferred_recipe.is_some() {
-            self.deferred_rule_bindings(rule)
+            self.deferred_rule_bindings()
         } else {
             self.executor_rule_bindings(rule, rule.command, rule.ignore_errors)
         };
@@ -1423,7 +1404,6 @@ impl BuildSink for GraphSink {
         let inputs = self.node_list(names, edge.inputs)?;
         let order_only_inputs = self.node_list(names, edge.order_only_inputs)?;
         let forgiven_order_inputs = self.node_list(names, edge.forgiven_order_only_inputs)?;
-        let validations = self.node_list(names, edge.validations)?;
         let withdrawal = PendingWithdrawal {
             outputs: self.node_list(names, edge.withdrawable_outputs)?,
             on_error: edge.delete_on_error,
@@ -1462,7 +1442,6 @@ impl BuildSink for GraphSink {
                 inputs,
                 order_only_inputs,
                 forgiven_order_inputs,
-                validations,
                 always_dirty: edge.always_dirty,
                 deferred,
                 completion_output: edge.completion_join.then_some(completion_output),
@@ -1494,7 +1473,7 @@ impl BuildSink for GraphSink {
             // a Makefile produces the third partition, so nothing fills it.
             implicit_inputs: &[],
             order_only_inputs: &order_only_inputs,
-            validations: &validations,
+            validations: &[],
             always_dirty: edge.always_dirty,
             intermediate: edge.intermediate,
             disposable: edge.disposable,
@@ -1514,8 +1493,7 @@ impl BuildSink for GraphSink {
                 // Every Make target is one GNU Make decides from the disk, and
                 // looks at again once its recipe has run whatever the recipe
                 // did, so this is what Make is here rather than something a
-                // Makefile asks for. `.KATI_RESTAT` is a separate and narrower
-                // request that still emits its own `restat` binding.
+                // Makefile asks for.
                 self.graph.set_make_target_freshness(built);
                 self.graph
                     .forgive_order_inputs(built, &forgiven_order_inputs);

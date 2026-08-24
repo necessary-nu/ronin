@@ -109,16 +109,16 @@ the makefile's ability to ask for the other side of it.
 | `.KATI_READONLY` | global and target-specific variable | **removed** |
 | `.KATI_ALLOW_RULES` | global variable | **removed** |
 | `.KATI_SYMBOLS` | readable variable, a filtered `.VARIABLES` | **removed** |
-| `.KATI_RESTAT` | special target | *pending* |
-| `.KATI_DEPFILE` | target-specific variable → Ninja `depfile` | *pending* |
-| `.KATI_IMPLICIT_OUTPUTS` | target-specific variable → Ninja implicit outputs | *pending* |
-| `.KATI_NINJA_POOL` | target-specific variable → Ninja `pool` | *pending* |
-| `.KATI_TAGS` | target-specific variable, opaque metadata | *pending* |
-| `.KATI_VALIDATIONS` | target-specific variable → Ninja validations | *pending* |
+| `.KATI_RESTAT` | special target | **removed** |
+| `.KATI_DEPFILE` | target-specific variable → Ninja `depfile` | **removed** |
+| `.KATI_IMPLICIT_OUTPUTS` | target-specific variable → Ninja implicit outputs | **removed** |
+| `.KATI_NINJA_POOL` | target-specific variable → Ninja `pool` | **removed** |
+| `.KATI_TAGS` | target-specific variable, opaque metadata | **removed** |
+| `.KATI_VALIDATIONS` | target-specific variable → Ninja validations | **removed** |
 
-`.KATI_VALIDATIONS` is the one that is already unreachable from `ronin make`
-without being removed: it is gated on `--use_ninja_validations`, which Ronin's
-front end never sets, so a makefile that names it is refused rather than obeyed.
+`.KATI_VALIDATIONS` was already unreachable from `ronin make` before it was
+removed: it was gated on `--use_ninja_validations`, which Ronin's front end never
+sets, so a makefile that named it was refused rather than obeyed.
 
 ### Assignment operator — `$=`
 
@@ -251,3 +251,92 @@ because the two tools now agree: `file_func.sh#script`, which was the last case
 of class `artefact` and took the `corpus-version-gate` family with it, and
 `shellstatus_in_rule.mk#test`. Two cases that tested a version gate and a
 self-report are now two cases that test Make.
+
+### The six Ninja-edge target variables (2026-08-24)
+
+`.KATI_DEPFILE`, `.KATI_RESTAT`, `.KATI_IMPLICIT_OUTPUTS`, `.KATI_NINJA_POOL`,
+`.KATI_TAGS` and `.KATI_VALIDATIONS`. Each named a property of the Ninja edge a
+target compiles to, and GNU Make has a spelling for none of them.
+
+**What was removed, and what was kept, differ per name — this is the family where
+the distinction matters.**
+
+- **Removed outright, mechanism and all**: `.KATI_TAGS` (opaque metadata nothing
+  in the build reads), `.KATI_VALIDATIONS` (nothing else in Make mode produces a
+  validation, so the `--use_ninja_validations` flag went with it), and
+  `.KATI_RESTAT` (Make-target freshness is what Make *is* — every Make edge is
+  re-observed after its recipe runs — so a narrower per-target request was
+  surface on top of a property the graph already had).
+- **Spelling removed, mechanism kept because a GNU feature needs it**:
+  `.KATI_IMPLICIT_OUTPUTS`. A grouped target (`out out.stamp &: in`) is GNU's own
+  way to say one recipe makes several files, and it fills the same
+  `implicit_outputs` list. What went is the `.KATI_IMPLICIT_OUTPUTS` variable and
+  the `RuleMerger` bookkeeping that existed only for it — including a
+  parent-merger chain that let an implicit output redirect which rule a target
+  picked, which grouped targets do not use.
+- **Spelling removed, mechanism kept because a switch still reaches it**:
+  `.KATI_DEPFILE` and `.KATI_NINJA_POOL`. `--detect_depfiles` still finds a
+  depfile by reading the assembled script, and `--default_pool` /
+  `--remote_num_jobs` still name a pool; both are `rkati` switches, not product
+  surface (see *Reachability*). `.NOTPARALLEL`'s serialising pool is GNU's and is
+  untouched.
+
+**What `.KATI_DEPFILE` cost to remove, said plainly.** It was the only makefile
+text in Make mode that declared a depfile, so a Make-compiled graph now reaches
+Ninja's dependency log by no route a Makefile can ask for. A GNU makefile says
+this with `-include`, which Ronin compiles: the recipe writes `main.o.d`, the
+next run reads it as ordinary makefile text, and editing a discovered header
+rebuilds the object one run later than a runtime depfile would — **which is
+exactly what GNU Make does**. `tests/make_state.rs` was rewritten to that idiom
+and its `state_preserves_discovered_dependencies` case is now
+`a_discovered_dependency_reaches_the_next_build`, asserting the same user-visible
+property by the route GNU takes. Both logs are still placed, named and formatted
+as Ninja's, which is what `[spec:ronin:req:make.state-outside-the-tree+2]` asks.
+
+**It also dissolves divergence #4** of `make-oracle-divergences.md`: a
+`.KATI_DEPFILE` recipe's `$(file …)` was performed where the recipe was read
+rather than where it ran, because the edge had to declare the depfile it would
+read and a deferred rule had no path to. With no makefile-reachable depfile there
+is no such recipe, and Make mode now defers every recipe kind it ever deferred.
+
+**Gates deleted because they tested the extension rather than the product**:
+`tests/shell.rs::a_depfile_recipe_launches_per_line` and
+`::a_depfile_recipe_is_read_where_built` (the latter was divergence #4's own
+gate), and the `make_port` fixture
+`feature-vpath-a-depfile-recipe-spells-the-found-name`.
+`src/make/equivalence.rs::a_validation_agrees` went with `.KATI_VALIDATIONS`;
+`::the_per_edge_bindings_agree` was rewritten around a grouped target, and a new
+`::a_detected_depfile_agrees` keeps the `depfile` binding under gate by the route
+that still reaches it.
+
+**Corpus.** Seven cases deleted: `ninja_implicit_outputs.sh`,
+`ninja_implicit_output_var.sh`, `ninja_implicit_dependent.sh`, `ninja_pool.sh`,
+`ninja_validations.sh`, `phony_looks_real.sh` and `real_no_cmds.sh`. The last two
+are the interesting ones: their subject is a kati *warning switch*, but they
+build the shape it complains about out of `.KATI_IMPLICIT_OUTPUTS` and cannot be
+written without it.
+
+**Conformance movement.** 356 runs → 349; normalised 326 identical / 30 differing
+→ 326 / 28; raw 276 identical, unmoved. The two rows that left are exactly
+`phony_looks_real.sh#script` and `real_no_cmds.sh#script`; the other five were
+`ninja_*` scripts the make oracle never enumerates.
+
+## What was NOT removed, and why
+
+**kati-only command-line switches.** `--detect_depfiles`, `--regen` and the
+regeneration stamp, `--use_find_emulator`, `--gen_all_targets`,
+`--empty_ninja_file`, `--warn_*`/`--werror_*`, `--writable`, `--top_level_phony`,
+`--default_pool`, `--ninja_dir`, `--kati_stats` and the rest. **Ronin's `make`
+accepts none of them** — it builds its `Flags` by hand and refuses any long
+option it does not know — so they are not product surface. They reach only
+`rkati`, which is the evaluator with nothing else on top and exists so the
+conformance gate can measure evaluation against GNU Make. Removing them would be
+removing the measurement apparatus, not the product's surface. This is a
+judgement about the boundary rather than about the switches, and it is written
+down here so it can be overruled.
+
+**`KATI_NEW_INPUTS`, `KATI_NEW_INPUTS_D`, `KATI_NEW_INPUTS_F`,
+`KATI_SETTLED_<n>`.** Compiler-invented shell variable names, not makefile
+surface. `tests/make_regressions.rs` asserts in six cases that they never reach a
+reader. They keep the prefix because renaming them would be churn with no
+behaviour behind it.

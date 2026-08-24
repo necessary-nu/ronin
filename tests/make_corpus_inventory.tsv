@@ -51,8 +51,6 @@ case	ninja_normalized_path.mk#test2	defect	recipe-stream+exit-status	3e7af572b01
 case	order_only.mk#test2	defect	dependent-attribution+exit-status	acea0f9d65049abb
 case	override.mk#test	defect	recipe-wording	071b5292b4562aad
 case	override_export.mk#test	defect	exit-status+identity-prefix+error-location	d9383b7d59c1efc9
-case	phony_looks_real.sh#script	extension	kati-extension	ece3130b7320fa89
-case	real_no_cmds.sh#script	extension	kati-extension	dccb923695a7ac7f
 case	real_no_cmds_or_deps.sh#script	extension	kati-extension	52adfb2961ded527
 case	real_to_phony.sh#script	extension	kati-extension	a95e71a768400f2d
 case	recursive_self_reference.mk#default	defect	exit-status+stop-suffix	6999fe4ee4b0a2c7

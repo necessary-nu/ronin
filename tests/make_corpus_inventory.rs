@@ -58,6 +58,18 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 30 when the six `.KATI_*` target variables that name Ninja edge
+    // properties were removed from the product on the same ruling:
+    // `.KATI_DEPFILE`, `.KATI_RESTAT`, `.KATI_IMPLICIT_OUTPUTS`,
+    // `.KATI_NINJA_POOL`, `.KATI_TAGS` and `.KATI_VALIDATIONS`. Seven cases went
+    // with them and TWO rows left, both class `extension`, family
+    // `kati-extension`: `phony_looks_real.sh#script` and `real_no_cmds.sh#script`,
+    // which built the shape their warning switches complain about out of
+    // `.KATI_IMPLICIT_OUTPUTS` and cannot be written without it. The other five
+    // are `ninja_*` scripts the make oracle never enumerates and that carried no
+    // rows.
+    //
+    // Before that it moved
     // from 32 when the `KATI` variable was removed from the product on the same
     // ruling. kati's bootstrap set `KATI?=ckati`, and `ifdef KATI` was how the
     // vendored corpus asked which tool was reading it. Three cases used it and
@@ -210,9 +222,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 30);
+    assert_eq!(cases.len(), 28);
     assert_eq!(by_class["defect"], 17);
     assert_eq!(by_class["recorded"], 2);
-    assert_eq!(by_class["extension"], 11);
+    assert_eq!(by_class["extension"], 9);
     assert_eq!(by_class.get("artefact"), None);
 }

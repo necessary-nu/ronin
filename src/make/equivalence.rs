@@ -1394,11 +1394,11 @@ vpath-equivalence.c:
     );
 }
 
-/// The manifest keeps saying `restat` for `.KATI_RESTAT` and for nothing else,
-/// because that binding is what the Makefile asked for and the property here
-/// is what Make is. The comparison is deliberately silent about the property,
-/// as it is about peers and `.DELETE_ON_ERROR`: a manifest has no way to state
-/// it, so a graph read back from one must not appear to have lost it.
+/// Every Make edge is one whose outputs the build looks at again once its
+/// command has run, and only the direct graph says so. The comparison is
+/// deliberately silent about the property, as it is about peers and
+/// `.DELETE_ON_ERROR`: a manifest has no way to state it, so a graph read back
+/// from one must not appear to have lost it.
 // [spec:ronin:req:make.graph-direct/test]
 // [spec:ronin:req:make.manifest-equivalence+1/test]
 // [spec:ronin:req:make.remade-target-re-observed/test]
@@ -1413,7 +1413,6 @@ asked: in
 \t@cat in > asked
 in:
 \t@touch in
-asked: .KATI_RESTAT := 1
 ",
         &[],
     );
@@ -1426,7 +1425,7 @@ asked: .KATI_RESTAT := 1
             "in".to_owned(),
             "out".to_owned()
         ],
-        "every Make edge carries it, whether or not the Makefile asked for restat"
+        "every Make edge carries it"
     );
     assert!(
         reobserved(&both.parsed).is_empty(),
@@ -1536,11 +1535,19 @@ out$$dollar:
     );
 }
 
-/// One edge carrying the whole binding repertoire the equivalence rule
-/// enumerates: pool, depfile and restat as the Makefile states them, and the
-/// generator control every recipe rule acquires. The corpus pass reaches the
-/// same property over every testcase and is ignored by default, so this is
-/// where a binding that stops crossing the sink is caught on an ordinary run.
+/// One edge carrying the binding repertoire a Makefile can still state: the
+/// implicit outputs a grouped target declares, the description a quiet recipe
+/// line becomes, and the generator control every recipe rule acquires. The
+/// corpus pass reaches the same property over every testcase and is ignored by
+/// default, so this is where a binding that stops crossing the sink is caught
+/// on an ordinary run.
+///
+/// It used to state five more, all of them named by kati extensions —
+/// `.KATI_DEPFILE`, `.KATI_RESTAT`, `.KATI_NINJA_POOL`, `.KATI_TAGS`,
+/// `.KATI_IMPLICIT_OUTPUTS` — which were removed from the product on the
+/// operator's ruling of 2026-08-24. `depfile` still crosses the sink, reached
+/// by `--detect_depfiles` rather than by makefile text; the pool bindings have
+/// their own cases below.
 // [spec:ronin:req:make.graph-direct/test]
 // [spec:ronin:req:make.manifest-equivalence+1/test]
 #[test]
@@ -1548,35 +1555,32 @@ fn the_per_edge_bindings_agree() {
     agrees(
         "\
 all: out
-out: in
+out out.stamp &: in
 \t@cp in out
 \tls
 in:
 \t@touch in
-out: .KATI_DEPFILE := out.d
-out: .KATI_RESTAT := 1
-out: .KATI_NINJA_POOL := console
-out: .KATI_TAGS := one two
-out: .KATI_IMPLICIT_OUTPUTS := out.stamp
-all: .KATI_NINJA_POOL := local_pool
 ",
-        &["--use_ninja_validations"],
+        &[],
     );
 }
 
+/// A depfile crosses the sink where `--detect_depfiles` finds one in the
+/// assembled script, which is the only way a depfile is reached now that
+/// `.KATI_DEPFILE` is gone.
 // [spec:ronin:req:make.graph-direct/test]
+// [spec:ronin:req:make.manifest-equivalence+1/test]
 #[test]
-fn a_validation_agrees() {
+fn a_detected_depfile_agrees() {
     agrees(
         "\
 all: out
 out: in
-\t@cp in out
-in checked:
-\t@touch $@
-out: .KATI_VALIDATIONS := checked
+\t@cc -MD -MF out.d -c in -o out
+in:
+\t@touch in
 ",
-        &["--use_ninja_validations"],
+        &["--detect_depfiles"],
     );
 }
 

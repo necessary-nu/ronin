@@ -4,6 +4,15 @@
 //! Each test runs the real executable under the name `make`, which selects the
 //! Make compiler, then inspects the same `.ninja_log` and `.ninja_deps` that a
 //! manifest graph would use in the build directory.
+//!
+//! What no longer PUTS anything in `.ninja_deps` is makefile text. The only
+//! spelling that ever declared a depfile in Make mode was `.KATI_DEPFILE`, a
+//! kati extension removed from the product on the operator's ruling of
+//! 2026-08-24 — see docs/make-kati-extensions.md. The fixture makefile now says
+//! what a GNU makefile says: `-include` the dependency file its own recipe
+//! writes, which the next run reads as ordinary makefile text. Both logs are
+//! still placed, named and formatted as Ninja's, which is what
+//! `[spec:ronin:req:make.state-outside-the-tree+2]` asks.
 
 #![cfg(all(unix, feature = "make"))]
 
@@ -12,15 +21,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// A Makefile whose compiler-discovered header can only survive through the
-/// Ninja dependency log.
+/// A Makefile in the GNU idiom: the recipe writes a dependency file, and the
+/// makefile reads back whatever the last run wrote.
 const MAKEFILE: &str = "\
 all: app\n\
 app: main.o\n\
 \tcc -o app main.o\n\
 main.o: main.c\n\
 \tcc -MMD -MF main.o.d -c main.c -o main.o\n\
-main.o: .KATI_DEPFILE := main.o.d\n\
+-include main.o.d\n\
 .PHONY: all\n";
 
 struct Fixture {
@@ -92,13 +101,29 @@ fn make_build_uses_ninja_state() {
     fixture.build_in(&tree, &[]);
 
     let mut built = sources;
-    built.extend(named(&[".ninja_deps", ".ninja_log", "app", "main.o"]));
+    built.extend(named(&[
+        ".ninja_deps",
+        ".ninja_log",
+        "app",
+        "main.o",
+        "main.o.d",
+    ]));
     assert_eq!(listing(&tree), built);
 }
 
+/// The dependency a recipe discovered reaches the next build through the
+/// makefile, which is where GNU Make reads it from.
+///
+/// This used to be `state_preserves_discovered_dependencies`, and the route was
+/// Ninja's dependency log, reached by the `.KATI_DEPFILE` extension. The route
+/// is now `-include`, so the first build cannot know about `hdr.h` — GNU Make's
+/// read had already finished when the recipe wrote the file — and the build
+/// after it can. That one-run lag IS GNU Make's behaviour, and the property a
+/// user cares about is unchanged: editing a header the compiler discovered
+/// rebuilds the object.
 // [spec:ronin:req:make.state-outside-the-tree+2/test]
 #[test]
-fn state_preserves_discovered_dependencies() {
+fn a_discovered_dependency_reaches_the_next_build() {
     let fixture = Fixture::new();
     let tree = fixture.tree("project");
     assert!(fixture.build_in(&tree, &[]).contains("main.o"));
@@ -147,7 +172,14 @@ fn state_follows_working_directory() {
 
     assert_eq!(
         listing(&work),
-        named(&[".ninja_deps", ".ninja_log", "main.c", "app", "main.o"])
+        named(&[
+            ".ninja_deps",
+            ".ninja_log",
+            "main.c",
+            "app",
+            "main.o",
+            "main.o.d"
+        ])
     );
     assert_eq!(listing(&elsewhere), named(&["Makefile", "main.c", "hdr.h"]));
     assert!(
