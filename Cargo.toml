@@ -58,19 +58,35 @@ kati = { path = "kati", version = "0.1.0", optional = true }
 # The shell Ronin runs commands under, rather than the one the machine
 # happens to have. A git dependency because nsh is upstream with its own plan
 # discipline — a fix there arrives here as a lock bump, not as a commit from
-# this repository — and pinned by `Cargo.lock`'s rev like any other. Note the
-# registry crate of the same name is an unrelated project; the git source is
-# what the lock records, so nothing can fall back to it.
+# this repository.
+#
+# NO `rev` HERE, DELIBERATELY, and it is a standing rule rather than an
+# oversight: the manifest names a branch and nothing narrower, so
+# `cargo update` is the whole of taking a fix. `Cargo.lock` still records the
+# resolved rev, which is what makes a build reproducible and is the right place
+# for it — a rev in the manifest would make every upstream fix a manifest edit
+# and a review, which is exactly the friction that let a proc-macro sit in this
+# closure for four days.
+#
+# The branch is `master`, which is what the repository actually calls it:
+# `git ls-remote --symref` answers `ref: refs/heads/master HEAD`, and there is
+# no `main`. Spelled out rather than left implicit so that the day it is
+# renamed, the build says so instead of quietly following.
+#
+# It cannot be a registry dependency, which was checked rather than assumed:
+# `nsh` on crates.io is github.com/nuta/nsh, an unrelated shell last published
+# in 2021, and `nsh-platform` is not published there at all. The git source is
+# what the lock records, so nothing can fall back to the other project.
 #
 # Not behind the `make` feature: a Ninja-only build wants its own shell too.
 # Unix-only because Windows has no shell in this position at all — Ninja hands
 # the whole command line to `CreateProcess` — so there is nothing there to
 # stand in for. See `plan/decisions/builtin-shell.md`.
-nsh = { git = "https://github.com/necessary-nu/nsh" }
+nsh = { git = "https://github.com/necessary-nu/nsh", branch = "master" }
 # The host-process half of the shell: it keeps a non-UTF-8 argument intact
 # where `std::env::args` would panic, and undoes the three things Rust's
 # runtime does before `main` that dash does not.
-nsh-platform = { git = "https://github.com/necessary-nu/nsh" }
+nsh-platform = { git = "https://github.com/necessary-nu/nsh", branch = "master" }
 polling = "3.11.0"
 rustix = { version = "1.1.4", features = ["fs", "process", "termios"] }
 signal-hook = { version = "0.3.18", default-features = false }

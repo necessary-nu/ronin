@@ -41,11 +41,6 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
-# `.cargo/config.toml` names the host as an explicit target, so cargo's
-# artifacts sit under the triple rather than directly under `target/`. Ask
-# rustc for it rather than spelling it a second time.
-release=target/$(rustc -vV | sed -n 's/^host: //p')/release
-
 source_suite=$repo_root/reference/gnumake
 expected_suite=d66a65ad5a0e31b287f53930b0f09e31801f1613
 if [ ! -d "$source_suite/tests/scripts" ]; then
@@ -101,7 +96,7 @@ git -C "$source_suite" worktree add --detach "$suite" "$expected_suite"
 # runs must not replace one another's make-named link.
 bin=$scratch/bin
 mkdir -p "$bin"
-ln -s "$repo_root/$release/ronin" "$bin/make"
+ln -s "$repo_root/target/release/ronin" "$bin/make"
 
 cat > "$suite/tests/config-flags.pm" <<'PM'
 # Written by check-make-upstream.sh: GNU Make's configure generates this and a
@@ -139,7 +134,7 @@ fi
 # Inventory drift fails for review; none of these exact runner-output classes is
 # itself the build-intent conformance gate.
 classifier_status=0
-"$repo_root/$release/examples/make_upstream" \
+"$repo_root/target/release/examples/make_upstream" \
     --work "$suite/tests/work" \
     --inventory "$repo_root/tests/make_upstream_inventory.tsv" \
     $update || classifier_status=$?

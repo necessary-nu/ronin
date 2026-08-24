@@ -32,6 +32,11 @@ use crate::util::{BString, ByteSlice};
 use std::ffi::OsString;
 use std::path::Path;
 
+/// The shell's own command line, which nsh's closed surface leaves to a
+/// frontend. Unix-only because the shell is.
+#[cfg(unix)]
+mod shell_invocation;
+
 /// The build language one invocation speaks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FrontEnd {
@@ -111,10 +116,18 @@ pub(crate) fn select(arguments: &[BString]) -> FrontEnd {
 /// it runs in, which a scheduler holding its own children cannot allow; this
 /// way it reaps its own and nobody else's. See
 /// `plan/decisions/builtin-shell.md`.
+///
+/// This is the frontend nsh's own `nsh-cli` is, and it is a frontend's worth of
+/// code rather than one call because nsh's surface is closed around a *typed*
+/// request: the library never parses an argument vector and never ends a
+/// process, so the invocation parse in [`shell_invocation`] and the
+/// `std::process::exit` the caller makes of this return value are both a
+/// frontend's to own. See that module for what is ported and what is declined.
 // [spec:ronin:req:product.shell-identity]
 #[must_use]
 #[cfg(unix)]
 pub fn run_as_shell(arguments: &[OsString]) -> Option<i32> {
+    use std::io::{IsTerminal as _, Write as _};
     use std::os::unix::ffi::OsStrExt;
 
     if !is_shell_name(&invoked_name(arguments.first()?)) {
@@ -126,6 +139,12 @@ pub fn run_as_shell(arguments: &[OsString]) -> Option<i32> {
     // descriptor, a SIGSEGV handler on an alternate stack. Every one of them
     // is inherited or observable — a recipe's `cmd | head` wants SIGPIPE's
     // default disposition — so every one of them is undone here.
+    //
+    // Before the terminal questions below, and that ordering is load-bearing:
+    // one of the three arrangements this undoes opens `/dev/null` over a closed
+    // standard descriptor, and `/dev/null` is not a terminal but a closed
+    // descriptor is not one either — asking first would answer about the
+    // runtime's stand-in rather than about the process the shell inherited.
     nsh_platform::restore_shell_process_runtime_state();
     // The operating system's representation, kept intact: an argument need not
     // be valid UTF-8, and dash passes such bytes through untouched.
@@ -133,11 +152,63 @@ pub fn run_as_shell(arguments: &[OsString]) -> Option<i32> {
         .iter()
         .map(|argument| argument.as_bytes().to_vec())
         .collect::<Vec<_>>();
-    Some(
-        nsh::shellmain::main_fn(argv, nsh::streams::Streams::INHERIT)
-            .code()
-            .into(),
-    )
+
+    let stdin_is_terminal = std::io::stdin().is_terminal();
+    let stderr_is_terminal = std::io::stderr().is_terminal();
+    let parsed = {
+        let mut stdout = std::io::stdout().lock();
+        shell_invocation::CommandLine::parse(
+            &argv,
+            stdin_is_terminal,
+            stderr_is_terminal,
+            |bytes| stdout.write_all(bytes),
+        )
+    };
+    let invocation = match parsed {
+        Ok(invocation) => invocation,
+        // dash blames line 0 for a command line, there being no script line to
+        // blame, and prefixes the spelling it was reached under. `sh: 0:
+        // Illegal option -Q`, and 2, which is the shell's own error status.
+        Err(shell_invocation::ParseError::Invocation(message)) => {
+            let mut stderr = std::io::stderr().lock();
+            let _ = stderr.write_all(argv.first().map_or(b"sh".as_slice(), Vec::as_slice));
+            let _ = stderr.write_all(b": 0: ");
+            let _ = stderr.write_all(&message);
+            let _ = stderr.write_all(b"\n");
+            return Some(2);
+        }
+        Err(shell_invocation::ParseError::Output) => return Some(1),
+    };
+
+    let parameters = invocation
+        .parameters
+        .iter()
+        .map(std::convert::AsRef::as_ref)
+        .collect::<Vec<&crate::util::BStr>>();
+    let mut builder = nsh::Shell::builder()
+        .invocation_name(invocation.invocation_name.as_ref())
+        .argument_zero(invocation.argument_zero.as_ref())
+        .args(&parameters)
+        .inherit_env()
+        // The frontend is the thing entitled to the process's standard
+        // descriptors, so it hands them over rather than letting the shell
+        // assume them; and it is the process's own shell, so it gets the host
+        // that says so. A library shell defaults to refusing `exec` and
+        // installing no signal handler, which is right for a library and wrong
+        // for this.
+        .streams(nsh::Streams::INHERIT)
+        .host(nsh::ProcessHost);
+    for option in nsh::ShellOption::ALL {
+        builder = builder.shell_option(option, invocation.options.enabled(option));
+    }
+    let startup = invocation.startup();
+    let mut shell = match builder.build() {
+        Ok(shell) => shell,
+        // A shell that could not be built has nothing to recover to, and the
+        // status it refused with is the one to leave with.
+        Err(error) => return Some(error.status().code().into()),
+    };
+    Some(shell.run_to_completion(startup).code().into())
 }
 
 /// Runs Ronin as the shell, which no build on this platform has.

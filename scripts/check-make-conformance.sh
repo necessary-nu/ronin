@@ -4,11 +4,6 @@ set -eu
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$repo_root"
 
-# `.cargo/config.toml` names the host as an explicit target, so cargo's
-# artifacts sit under the triple rather than directly under `target/`. Ask
-# rustc for it rather than spelling it a second time.
-release=target/$(rustc -vV | sed -n 's/^host: //p')/release
-
 # The gate measures the Make evaluator against GNU Make, so it runs the fork's
 # own binary: what a Makefile evaluates to is decided before any front end
 # builds it, and rkati is that evaluation with nothing else on top.
@@ -17,7 +12,7 @@ release=target/$(rustc -vV | sed -n 's/^host: //p')/release
 # the corpus can be pointed at it. Make mode is reached by the invoked name and
 # by nothing else, so that means a make-named link rather than a flag:
 #
-#   ln -sf "$PWD/$release/ronin" /tmp/ronin-make/make
+#   ln -sf "$PWD/target/release/ronin" /tmp/ronin-make/make
 #   scripts/check-make-conformance.sh --front-end /tmp/ronin-make/make
 #
 # That is not the gate, and the run says why: Ronin prints its own progress
@@ -40,6 +35,4 @@ cargo build --release -p kati --bin rkati
 cargo build --release --bin ronin
 cargo build --release --example make_conformance
 
-# The example defaults to a profile path that naming the target moved, so
-# the script that knows where the build put things says so.
-exec $release/examples/make_conformance --front-end "$repo_root/$release/rkati" "$@"
+exec target/release/examples/make_conformance "$@"

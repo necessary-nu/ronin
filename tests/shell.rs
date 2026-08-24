@@ -333,11 +333,31 @@ fn the_differences_from_dash_are_filed() {
                 2,
             ),
         ),
-        // A command file that cannot be opened. This one is sanctioned
-        // upstream as `missing_command_file_status`: POSIX gives the failure
-        // 127 and dash routes it through its generic shell-error 2. Ronin
-        // writes the response file it hands over, so nothing a build does
-        // reaches it.
+        // A command file that cannot be opened, which now differs in two ways
+        // rather than one.
+        //
+        // The STATUS is sanctioned upstream as `missing_command_file_status`:
+        // POSIX gives the failure 127 and dash routes it through its generic
+        // shell-error 2.
+        //
+        // The PREFIX is new, and it is a regression to file rather than a
+        // sanctioned difference. dash opens the command file and adopts `$0`
+        // afterwards — `setinputfile(name, 0)` sits above `arg0 = name` in
+        // `main`, deliberately — so a failure to open is reported against the
+        // interpreter, `/bin/sh`. nsh 0265725 ("Make Shell the runtime
+        // entrypoint") moved startup behind a typed `Startup` that the
+        // frontend builds with `$0` already set, so the open fails with `$0`
+        // already the script's name and the diagnostic carries that instead.
+        // Upstream has the right concept and this diagnostic reaches for the
+        // wrong one: `Builder::invocation_name` is documented as "the process
+        // invocation name used by diagnostics that identify the interpreter
+        // rather than the current script or command name", and Ronin sets it
+        // to the spelling it was reached under. `$0` inside a script that does
+        // open is correct, which is what makes this the diagnostic's bug and
+        // not the wiring's.
+        //
+        // Neither half is a build's business: Ronin writes the response file
+        // it hands over, so nothing a build does reaches this at all.
         (
             "",
             (
@@ -345,7 +365,7 @@ fn the_differences_from_dash_are_filed() {
                 2,
             ),
             (
-                "/bin/sh: 0: cannot open /nonexistent/script.sh: No such file\n",
+                "/nonexistent/script.sh: 0: cannot open /nonexistent/script.sh: No such file\n",
                 127,
             ),
         ),

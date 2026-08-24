@@ -27,6 +27,26 @@
 #
 # Note this lives outside the published crate: `cargo install ronin` builds
 # without it and gets the dynamic startup cost back.
+#
+# WHAT THIS COSTS THE DEPENDENCY LIST, because it is the one standing constraint
+# on the tree and nothing else states it: with target and host the same triple
+# this cfg matches every unit, including a proc-macro — which must be a dylib,
+# and which a statically linked target cannot produce. So there may be NO
+# proc-macro anywhere in the closure, in normal, build or dev dependencies;
+# `cargo test --workspace --all-targets` builds every member's dev
+# dependencies, so dev is not a safe harbour. A breach reads "cannot produce
+# proc-macro for <crate> as the target <triple> does not support these crate
+# types".
+#
+# There is an escape hatch — `[build] target = "<host triple>"`, which makes
+# cargo separate host tooling from the target's flags — and it was taken for
+# four days when the shell reached a line editor that reached postcard that
+# required serde's derive. It cost every artifact its path: the whole tree moved
+# under `target/<triple>/`, six gate scripts had to compute a profile directory
+# instead of naming one, and an in-repo build on another host needed its own
+# `--target`. nsh made the line editor optional (upstream d07dd1e), the closure
+# went clean, and the hatch came back out. Prefer declining the dependency to
+# opening it again.
 [target.'cfg(all(target_os = "linux", target_env = "gnu"))']
 rustflags = ["-C", "target-feature=+crt-static"]
 
@@ -40,22 +60,3 @@ rustflags = ["-C", "target-feature=+crt-static"]
 # anonymously either way.
 [net]
 git-fetch-with-cli = true
-
-# Build for the host as an explicit target, so cargo keeps host tooling out of
-# the target's flags.
-#
-# This is the escape hatch the workspace note predicted and it is here for the
-# reason it predicted. `crt-static` above matches every unit when target and
-# host are the same triple, including a proc-macro — which must be a dylib, and
-# which a statically linked target cannot produce. The standing constraint was
-# therefore "no proc-macro dependencies at all", and the shell breaks it: nsh
-# reaches a line editor, which reaches postcard, which requires serde's derive.
-# Naming the target explicitly is what makes cargo compile that proc-macro for
-# the host without the target's flags, and it is the only stable way to say so.
-#
-# What it costs, so that nobody has to rediscover it: every artifact moves under
-# `target/<triple>/`, and an in-repo build on another host needs its own
-# `--target`. Delete these two lines the day the shell's dependency closure
-# holds no proc-macro; nothing else has ever needed them.
-[build]
-target = "x86_64-unknown-linux-gnu"

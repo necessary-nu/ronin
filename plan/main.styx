@@ -19166,4 +19166,10 @@ children (
             }
         )
     }
+
+    {
+        id drop-the-proc-macro-escape-hatch
+        title "Drop the proc-macro escape hatch, and take nsh's closed surface with it"
+        kind @build
+    }
 )
