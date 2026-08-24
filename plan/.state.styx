@@ -934,6 +934,7 @@ assertions (
     {id remove-the-kati-extensions-from-the-product, kind @complete, author "brendan@necessary.nu", at 2026-08-24T15:20:00.673750394Z}
     {id make-a-define-directive-whose-name-reads-as-an-assignment-panics, kind @doing, author "brendan@necessary.nu", at 2026-08-24T21:19:42.738522504Z}
     {id make-an-empty-static-pattern-prerequisite-is-not-an-empty-path, kind @doing, author "brendan@necessary.nu", at 2026-08-24T21:42:06.200358354Z}
+    {id make-second-expansion-sees-target-and-pattern-specific-variables, kind @doing, author "brendan@necessary.nu", at 2026-08-24T22:17:31.024824799Z}
 )
 
 impl_evidence (
