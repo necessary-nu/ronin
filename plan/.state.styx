@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-24T05:16:36.706119965Z
+last_sync_at 2026-08-24T05:49:07.802866713Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -889,8 +889,8 @@ assertions (
     {id an-oversized-composed-segment-cannot-write-its-response-file, kind @complete, author "brendan@necessary.nu", at 2026-08-24T03:27:02.36684404Z}
     {id make-recipe-file-operation-at-launch-only, kind @complete, author "brendan@necessary.nu", at 2026-08-24T04:16:19.495964811Z}
     {id make-target-specific-append-value-holds-only-the-appended-text, kind @complete, author "brendan@necessary.nu", at 2026-08-24T04:44:04.835765305Z}
-    {id ronin-manifest-mtime-test-margin, kind @doing, author "brendan@necessary.nu", at 2026-08-24T04:55:31.72916852Z}
-    {id ronin-regeneration-progress-total, kind @doing, author "brendan@necessary.nu", at 2026-08-24T05:17:23.556573821Z}
+    {id ronin-manifest-mtime-test-margin, kind @complete, author "brendan@necessary.nu", at 2026-08-24T05:49:01.987426631Z}
+    {id ronin-regeneration-progress-total, kind @complete, author "brendan@necessary.nu", at 2026-08-24T05:49:03.533332093Z}
 )
 
 impl_evidence (
