@@ -889,6 +889,7 @@ assertions (
     {id an-oversized-composed-segment-cannot-write-its-response-file, kind @complete, author "brendan@necessary.nu", at 2026-08-24T03:27:02.36684404Z}
     {id make-recipe-file-operation-at-launch-only, kind @complete, author "brendan@necessary.nu", at 2026-08-24T04:16:19.495964811Z}
     {id make-target-specific-append-value-holds-only-the-appended-text, kind @complete, author "brendan@necessary.nu", at 2026-08-24T04:44:04.835765305Z}
+    {id ronin-manifest-mtime-test-margin, kind @doing, author "brendan@necessary.nu", at 2026-08-24T04:55:31.72916852Z}
 )
 
 impl_evidence (

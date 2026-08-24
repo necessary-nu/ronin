@@ -2213,8 +2213,25 @@ mod tests {
             )
         };
         fs::write(&manifest, render_manifest("old")).unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(20));
         fs::write(&template, render_manifest("new")).unwrap();
+        // Make the template unambiguously newer than the manifest by
+        // construction rather than by racing the clock. The old shape slept
+        // 20 ms between the two writes so the template would land a later
+        // mtime; a loaded scheduler can eat that gap, and a filesystem whose
+        // mtime resolution is coarser than it (1 s without nanosecond stamps,
+        // 2 s on FAT) drops both writes into one tick regardless — so the
+        // stale manifest this case sets up was a race, not a fact. Backdate
+        // the manifest ten seconds instead: the ordering is asserted, not
+        // hoped for. The manifest goes into the PAST, never the future, so the
+        // copy regeneration writes over it (stamped at the current time) is not
+        // itself seen as stale, which would loop the rebuild to its limit.
+        let older = std::time::SystemTime::now() - std::time::Duration::from_secs(10);
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&manifest)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(older))
+            .unwrap();
 
         let arguments = vec![
             "ronin".into(),
