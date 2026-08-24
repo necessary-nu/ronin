@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-24T08:56:33.617800411Z
+last_sync_at 2026-08-24T09:16:08.741108127Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -93,10 +93,12 @@ derived_priorities (
     {id lint-reports-a-recursion-whose-makefile-is-missing, priority 2, derived_at 2026-08-20T20:57:41.240518327Z}
     {id lint-tests-leave-their-scratch-behind, priority 0, derived_at 2026-08-21T01:56:43.16299854Z}
     {id lint-tool-surface, priority 0, derived_at 2026-08-20T13:57:37.951529701Z}
+    {id make-a-command-line-assignment-with-an-unterminated-reference-is-refused, priority 0, derived_at 2026-08-24T09:16:08.741108127Z}
     {id make-a-command-line-file-argument-is-not-canonicalised, priority 2, derived_at 2026-08-20T08:27:31.859392001Z}
     {id make-a-composed-recipe-is-still-one-shell, priority 0, derived_at 2026-08-20T03:31:21.605164794Z}
     {id make-a-conditional-in-an-ignored-branch-is-not-read, priority 2, derived_at 2026-08-20T13:57:37.951529701Z}
     {id make-a-default-shell-launch-splits-shellflags-a-shell-would-have-read, priority 3, derived_at 2026-08-23T22:30:51.2870863Z}
+    {id make-a-define-directive-whose-name-reads-as-an-assignment-panics, priority 0, derived_at 2026-08-24T09:16:08.741108127Z}
     {id make-a-diagnostic-inside-a-define-names-the-call-not-the-define, priority 1, derived_at 2026-08-20T20:57:41.240518327Z}
     {id make-a-double-colon-action-searches-for-its-own-prerequisites, priority 0, derived_at 2026-08-23T00:18:32.020741461Z}
     {id make-a-double-colon-chains-dependent-reads-the-heads-name, priority 3, derived_at 2026-08-23T17:26:45.050121986Z}
