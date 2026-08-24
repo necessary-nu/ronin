@@ -1,0 +1,1 @@
+printf 'from-mkfiles := order=[$(order)] list=[$(MAKEFILE_LIST)]\norder += from-mkfiles\n' > extra.mk

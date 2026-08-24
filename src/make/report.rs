@@ -16,18 +16,6 @@ use std::path::Path;
 /// it. Scripts branch on the difference.
 pub(super) const ABANDONED: i32 = 2;
 
-/// What an invocation with nothing to read reports.
-///
-/// Absence of a Makefile is a front-end diagnostic, not a reason to recreate
-/// GNU Make's `***` and `Stop.` ceremony.
-pub(super) fn no_makefile() -> RunResult {
-    RunResult {
-        stdout: Vec::new(),
-        stderr: ordinary_diagnostic("no targets specified and no makefile found"),
-        exit_code: ABANDONED,
-    }
-}
-
 /// What an invocation that names standard input twice reports.
 ///
 /// There is one standard input and a read that may happen more than once, so

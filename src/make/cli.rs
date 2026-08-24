@@ -26,7 +26,7 @@ use crate::frontend::{Build, BuildGraph, Persistence};
 use crate::make::Shuffle;
 use crate::make::report::{
     ABANDONED, abandoned, answered, cut_short, discard_intermediates, duplicate_standard_input,
-    finished, no_makefile, ordinary_diagnostic,
+    finished, ordinary_diagnostic,
 };
 use crate::util::{BString, ByteSlice, terminated};
 use kati::bytes::Bytes;
@@ -47,8 +47,8 @@ mod subninja;
 mod switch_table;
 use diagnostics::{emit_raised, led_by_raised};
 use interface::{
-    ArgumentSource, compiler_flag_variables, decode_makefile_makeflags, evaluated_build_options,
-    evaluated_invocation, makeflags_arguments, prepend_command_line_evals, read_shuffle,
+    ArgumentSource, carry_command_line_evals, compiler_flag_variables, decode_makefile_makeflags,
+    evaluated_build_options, evaluated_invocation, makeflags_arguments, read_shuffle,
 };
 use jobserver_style::{carried_switches, read_jobserver_style, unknown_jobserver_style};
 use option_values::{jobs_value, load_value, value};
@@ -1977,10 +1977,14 @@ fn compile_invocation(
             directory: directory.clone(),
         })
     };
+    // No makefile is not itself a refusal. GNU Make reads whatever there is,
+    // `--eval` text included, and only gives up at the end of it — when there
+    // is no goal to aim at (main.c, `if (!goals)`). A run can reach a goal with
+    // nothing on disk: `--eval` carries rules of its own, and a goal named on
+    // the command line is a goal whether or not anything can make it. So an
+    // empty list is read as an empty read, and the compiler says which of GNU
+    // Make's two refusals applies once it knows whether anything was read.
     let makefiles = named_makefiles(&invocation, &directory);
-    if makefiles.is_empty() {
-        return finished(no_makefile());
-    }
     // Standard input is drained once and replayed into every read, because a
     // Makefile remade between reads sends the whole read around again and the
     // pipe is gone by then. Two of them cannot be told apart afterwards, so
@@ -2255,13 +2259,7 @@ fn evaluated(
     reported: &str,
     settled: &crate::make::Groundwork,
 ) -> Result<crate::make::Loaded, RunResult> {
-    if let Err(failure) = prepend_command_line_evals(&mut session, evals) {
-        return Err(RunResult {
-            stdout: terminated(reported),
-            stderr: ordinary_diagnostic(failure),
-            exit_code: ABANDONED,
-        });
-    }
+    carry_command_line_evals(&mut session, evals);
     let makefiles: Vec<PathBuf> = session.flags.makefiles.iter().map(PathBuf::from).collect();
     let cache_key = compilation_key(&context.directory, &makefiles, &context.makeflags);
     let compilation = crate::make::Compilation {

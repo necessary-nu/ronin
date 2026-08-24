@@ -667,40 +667,16 @@ fn makeflags_words(inherited: &str, halve_dollars: bool) -> Vec<String> {
     words
 }
 
-/// Parse `-E`/`--eval` fragments as Makefile source before the selected file.
+/// Hand the `-E`/`--eval` fragments to the read that is about to happen.
 ///
-/// Kati caches a Makefile's parsed statements in its owned session. Prepending
-/// the fragments there makes them ordinary compiler input while leaving the
-/// selected Makefile's identity, include base, and `MAKEFILE_LIST` unchanged.
+/// They are given to the read rather than spliced into a file, because that is
+/// what they are: GNU Make evaluates each fragment as its own buffer above
+/// `read_all_makefiles` (main.c). So they precede `MAKEFILES` as well as the
+/// named files, they leave `MAKEFILE_LIST` alone, and a run with no makefile on
+/// disk still has whatever rules they carry.
 // [spec:ronin:req:make.interface-compatibility]
-pub(super) fn prepend_command_line_evals(
-    session: &mut Session,
-    evals: &[Bytes],
-) -> Result<(), kati::anyhow::Error> {
-    if evals.is_empty() {
-        return Ok(());
-    }
-
-    // The first Makefile read, which is where GNU Make's own `-E` fragments
-    // land: they precede everything the invocation named, not each file.
-    let Some(makefile_name) = session.flags.makefiles.first().cloned() else {
-        return Ok(());
-    };
-    // A Makefile that is absent or will not open is not this function's failure
-    // to report: evaluation reads it again in a moment and says which file and
-    // why. Here the fragments simply have nothing to go in front of.
-    let kati::file::Source::Read(makefile) = session.get_makefile(&makefile_name)? else {
-        return Ok(());
-    };
-    let filename = session.intern("*command line eval*");
-    let mut statements = Vec::new();
-    for source in evals {
-        let parsed =
-            kati::parser::parse_buf(session, source, kati::loc::Loc { filename, line: 0 })?;
-        statements.extend(parsed.lock().iter().cloned());
-    }
-    makefile.stmts.lock().splice(0..0, statements);
-    Ok(())
+pub(super) fn carry_command_line_evals(session: &mut Session, evals: &[Bytes]) {
+    session.flags.command_line_evals = evals.to_vec();
 }
 
 #[cfg(test)]

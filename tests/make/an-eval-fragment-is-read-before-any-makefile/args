@@ -1,0 +1,2 @@
+--eval=from-eval:=order=[$(order)]list=[$(MAKEFILE_LIST)]
+--eval=order+=from-eval

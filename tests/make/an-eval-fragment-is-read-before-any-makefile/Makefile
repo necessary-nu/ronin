@@ -1,0 +1,22 @@
+# GNU Make evaluates each `--eval` fragment as its own buffer above the call
+# that reads the makefiles (`eval_buffer (p, NULL)`, main.c), so:
+#
+#   * what a fragment assigns is in scope while MAKEFILES and the named files
+#     are read — this file appends to what the fragment left, not the other way
+#     round;
+#   * a fragment is not a file, so it joins neither MAKEFILE_LIST nor the set of
+#     makefiles that can be remade, and a fragment reading MAKEFILE_LIST finds
+#     it still empty.
+#
+# Splicing the fragments into the first named makefile instead gets both
+# backwards: they run after MAKEFILES, and MAKEFILE_LIST already holds the file
+# they were spliced into.
+#
+# The fragments are in `args`; `from-mkfiles` comes from the file `setup`
+# writes, which `env` points MAKEFILES at. Each of the three records what it
+# found when it ran, and the recipe writes all of them out together.
+from-file := order=[$(order)]list=[$(MAKEFILE_LIST)]
+order += from-file
+
+all: ; @printf '%s\n' 'eval: $(from-eval)' 'mkfiles: $(from-mkfiles)' \
+	'file: $(from-file)' 'final: [$(order)]' > out

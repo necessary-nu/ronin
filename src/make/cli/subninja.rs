@@ -1,8 +1,8 @@
 //! Turn one statically expanded `$(MAKE)` command into a child compilation.
 
 use super::{
-    Action, GNUMAKEFLAGS, MAKELEVEL, compilation_key, named_makefiles, parse, path_of,
-    prepend_command_line_evals, propagated_makeflags, record_invocation_variables, session_for,
+    Action, GNUMAKEFLAGS, MAKELEVEL, carry_command_line_evals, compilation_key, named_makefiles,
+    parse, path_of, propagated_makeflags, record_invocation_variables, session_for,
 };
 use crate::make::{Compilation, CompilationContext, MakeError};
 use crate::util::{BString, ByteSlice};
@@ -73,15 +73,7 @@ pub(in crate::make) fn compile(
     session.invocation_environment = Some(parent.environment.clone());
     let level = parent.level.saturating_add(1);
     record_invocation_variables(&mut session, &invocation, level, 0);
-    // From the child's own directory, because prepending reads and parses the
-    // makefile the fragments go in front of, and that makefile is named the way
-    // this invocation named it — `Makefile` under `-C sub`, resolved when the
-    // unit is entered. Reading it from here would cache the parent's file under
-    // the child's name and leave the child evaluating the wrong makefile.
-    crate::make::in_directory(&directory, || {
-        prepend_command_line_evals(&mut session, &invocation.evals)
-            .map_err(|error| MakeError::Evaluate(error.to_string()))
-    })?;
+    carry_command_line_evals(&mut session, &invocation.evals);
 
     let path_prefix = directory
         .strip_prefix(&parent.root_directory)

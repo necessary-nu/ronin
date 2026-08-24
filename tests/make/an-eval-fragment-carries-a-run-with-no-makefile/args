@@ -1,0 +1,4 @@
+-C
+empty
+--eval=%:;@:>../remade.$@
+--eval=all:;@:>../built.out

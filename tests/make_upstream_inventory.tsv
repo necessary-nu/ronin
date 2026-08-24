@@ -267,7 +267,7 @@ case	features/include.diff.32	narration	ninja-progress+ninja-failure-block+recip
 case	features/include.diff.33	narration	ninja-progress+ninja-failure-block+recipe-echo+include-remake-refusal
 case	features/include.diff.34	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line
 case	features/include.diff.35	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+include-remake-refusal
-case	features/include.diff.36	unclassified	product-name+up-to-date-line+evaluation
+case	features/include.diff.36	narration	ninja-progress+no-work-line+up-to-date-line
 case	features/include.diff.37	narration	ninja-progress+no-work-line+up-to-date-line
 case	features/include.diff.4	narration	ninja-progress
 case	features/include.diff.5	narration	ninja-progress
