@@ -1,0 +1,60 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 46
+| # GNU Make asks whether a line defines a variable before it asks which
+| # directive its first word names (read.c `parse_var_assignment` calls
+| # `parse_variable_definition` before it reaches the `define` case), so an
+| # assignment operator standing where the directive's name would be makes
+| # `define` itself the variable being assigned. None of the lines below opens a
+| # multi-line definition, and none of them wants an `endef`.
+| #
+| # The scan sets its `end` at the first blank and then wants an operator, so it
+| # is exactly whether the operator comes next that decides: `define V =` keeps
+| # the directive, because a second word arrives first.
+| 
+| define = one
+| one := $(define)
+| 
+| define := two
+| two := $(define)
+| 
+| define ::= three
+| three := $(define)
+| 
+| define :::= four
+| four := $(define)
+| 
+| define += five
+| five := $(define)
+| 
+| define ?= six
+| six := $(define)
+| 
+| define != echo seven
+| seven := $(define)
+| 
+| export define = eight
+| eight := $(define)
+| 
+| define  =  nine
+| nine := [$(define)]
+| 
+| # A word before the operator leaves `define` the directive it is written as.
+| define KEPT =
+| body
+| endef
+| kept := $(KEPT)
+| 
+| all: ; @printf '%s\n' '$(one)' '$(two)' '$(three)' '$(four)' '$(five)' \
+| 	'$(six)' '$(seven)' '$(eight)' '$(nine)' '$(kept)' > out
+file out touched 10
+| one
+| two
+| three
+| four
+| four five
+| four five
+| seven
+| eight
+| [nine]
+| body
