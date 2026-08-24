@@ -606,3 +606,78 @@ fn an_assembled_script_reads_here() {
         assert_eq!(who("out"), resolved);
     }
 }
+
+/// A recipe held together by a line too long to be a shell argument reaches one
+/// shell as a whole script, so a `+`-marked line inside it does not run under
+/// `-t` or `-q` — where GNU Make, launching each line on its own, runs the
+/// marked ones (the whole set under `-t`, and those before the first unmarked
+/// line under `-q`). Splitting them out needs a response file per step: the one
+/// `<output>.rsp` is named per edge and written from the whole script, so a
+/// second oversized line would want the same name and content. That is a change
+/// to the build engine's response-file lifetime, out of proportion to a shape
+/// no measured makefile reaches — no recipe line in the corpus, the vendored
+/// kati corpus, GNU Make's own suite, or vim/zsh comes within two orders of
+/// magnitude of the 100 kB threshold. So the divergence is a recorded decision,
+/// owned by `an-oversized-recipes-marked-lines-cannot-be-split-out` and written
+/// up in docs/make-oracle-divergences.md. This gates it: launching the marked
+/// lines out would make the `-t`/`-q` assertions fail, which is the decision
+/// being reopened. No corpus case, because the Makefile is 120 kB — generated
+/// here the way `an_assembled_script_reads_here` generates its own.
+#[cfg(feature = "make")]
+#[test]
+fn oversized_marks_are_not_split_out() {
+    let directory = tempfile::tempdir().unwrap();
+    let link = shell_named(directory.path(), "make");
+    // Generated rather than checked in: what matters is the length.
+    let too_long = "x".repeat(120 * 1000);
+    let makefile = format!(
+        "goal:\n\t+@echo marked > marked.out\n\t@: {too_long}\n\t+@echo after > after.out\n"
+    );
+    std::fs::write(directory.path().join("Makefile"), &makefile).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(&link)
+            .current_dir(directory.path())
+            .args(args)
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("CARGO_MAKEFLAGS")
+            .env_remove("MAKELEVEL")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let wrote = |name: &str| directory.path().join(name).exists();
+    let clean = |name: &str| {
+        let _ = std::fs::remove_file(directory.path().join(name));
+    };
+
+    // `-t`: GNU touches `goal` and runs both marked lines. Ronin touches the
+    // target and runs neither — the recipe is one launch, with one answer to
+    // "does this run anyway", and it is no.
+    let touched = run(&["-t", "goal"]);
+    assert!(touched.status.success(), "{}", stderr(&touched));
+    assert!(wrote("goal"), "the target is touched");
+    assert!(
+        !wrote("marked.out") && !wrote("after.out"),
+        "the marked lines stay inside the one shell under -t"
+    );
+    clean("goal");
+
+    // `-q`: GNU runs the marked line before the first unmarked one and answers
+    // 1. Ronin answers 1 having written nothing, and touches nothing.
+    let questioned = run(&["-q", "goal"]);
+    assert_eq!(questioned.status.code(), Some(1), "{}", stderr(&questioned));
+    assert!(
+        !wrote("marked.out") && !wrote("goal"),
+        "the marked line stays inside the one shell under -q"
+    );
+
+    // A real build runs the whole recipe as one shell: every line happens, the
+    // same as GNU. The divergence is only in the pretending modes.
+    let built = run(&["goal"]);
+    assert!(built.status.success(), "{}", stderr(&built));
+    assert!(
+        wrote("marked.out") && wrote("after.out"),
+        "the whole recipe runs when the build is real"
+    );
+}

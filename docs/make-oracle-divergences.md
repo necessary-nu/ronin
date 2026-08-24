@@ -13,7 +13,7 @@ one under `kati/testcase` — were classified when the oracle moved to the
 released source.
 [`[spec:ronin:req:make.oracle-provenance]`](spec/ronin/make.md).
 
-The last section is about a fifth disagreement, and the only one Ronin chose:
+The last section is about a fifth kind of disagreement, and the one Ronin chose:
 [where Ronin deliberately disagrees with the oracle](#where-ronin-deliberately-disagrees-with-the-oracle).
 
 ## The oracle
@@ -237,12 +237,13 @@ two was GNU's.
 ## Where Ronin deliberately disagrees with the oracle
 
 Everything above is one build of GNU Make against another. This section is
-Ronin against all four of them, in the one place the disagreement is a decision
-rather than a defect. A case that reaches one carries a `divergence` file
-naming it, and `tests/make_port.rs` fails in both directions: an unrecorded
+Ronin against all four of them, in the places the disagreement is a decision
+rather than a defect. A case that reaches one is gated so the decision cannot
+be quietly conformed away: a build-intent case carries a `divergence` file
+naming it and `tests/make_port.rs` fails in both directions — an unrecorded
 divergence fails the gate, and so does a recorded one that has started to
-agree — so nothing here can be quietly conformed away without the decision
-being reopened.
+agree — and a shape too large to record as a case is gated by a generated test
+that would fail the moment the behaviour changed.
 
 ### `$(MAKEFLAGS)` hands back the text it stores
 
@@ -309,3 +310,57 @@ reads ` $(-*-eval-flags-*-)` there and ` --eval=X\ :=\ a$$b` here. The two
 agree on `$(MAKEFLAGS)` itself, because the reference names a *simple*
 variable and expanding it does not halve the fragment's `$$` either.
 `make-makeflags-keeps-its-eval-fragments-behind-a-reference` owns it.
+
+### An oversized recipe's marked lines do not run under `-t` or `-q`
+
+Owner: `an-oversized-recipes-marked-lines-cannot-be-split-out`.
+Gate: `tests/shell.rs::oversized_marks_are_not_split_out` (no corpus case — the
+Makefile is 120 kB, so the test generates it, the way `tests/shell.rs`
+generates its other oversized recipes).
+
+GNU Make runs each command line of a recipe as its own process, so a `+`-marked
+line runs even under `-t` and `-q`, where the switch stands in for the unmarked
+ones. Ronin runs a recipe line by line too — except when one line is longer
+than a shell argument list. Such a line cannot be launched on its own: it needs
+a response file, and the file is named after the edge (`<output>.rsp`), so two
+of them in one recipe would want the same name. So the whole recipe reaches one
+shell as a script read from that file, and one launch has one answer to "does
+this run anyway" — and it is no. Measured with a `+`-marked line either side of
+a 120 kB line, `goal` on the command line:
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| `-t` | both marked lines run, `goal` touched | `goal` touched, neither marked line runs |
+| `-q`, marked line first | marked line runs, exit 1 | exit 1, nothing written |
+| `-q`, long line first | marked line does **not** run, exit 1 | agrees |
+| (no switch) | the whole recipe runs | agrees |
+
+The third and fourth rows already agree: where the long line comes first, GNU's
+question stops at it before reaching the marked line, and a real build runs the
+whole recipe as one shell in both tools. The gap is exactly the marked lines a
+`-t` or a `-q` would reach past the long line.
+
+**Why the disagreement is kept.** The sound fix is a response file named per
+*step* rather than per edge — a `PreparedStep` carrying its own, written before
+it spawns and removed after — which is a change to the build engine's
+response-file lifetime and to `take_step`, and it has to leave every Ninja edge
+exactly as it is. Splitting only under `-t` and `-q` (where the long line never
+runs, so no step needs a file) would sidestep the response file but make an
+edge's steps depend on the switch the run was started with, which is a hazard to
+own rather than a free lunch. Both are out of proportion to the shape.
+
+**What was checked before choosing.** The divergence needs a recipe line over
+100 kB that also holds a marked line. The longest recipe line in the
+build-intent corpus is 424 bytes; the longest in the vendored kati corpus is
+876 bytes; none in GNU Make's own suite or the Makefiles of vim 9.2 or zsh
+5.9.2 reaches a kilobyte. Every one is more than two orders of magnitude below
+the threshold, so nothing measured here reaches the shape at all.
+
+**What is not part of the decision.** Marking the assembled script
+`runs_while_pretending` so that `-t`/`-q` run *all* of it is rejected for the
+reason `builtin-shell-oversized-recipe-line` rejected it, and `-q` strengthens
+the case: GNU Make runs only the marked lines it meets *before* the first
+unmarked one, and an assembled script has no "before". A composed recipe's
+short segments are a separate matter and do carry their per-line launches —
+`a-composed-recipe-segment-arrives-without-its-lines` delivered that; this is
+only the recipe held together by a single oversized line.
