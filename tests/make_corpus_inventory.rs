@@ -58,6 +58,17 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 41 when the readonly family was removed from the product on the same
+    // ruling — `.KATI_READONLY`, the `$=` final-assignment operator that is its
+    // per-variable spelling, `.KATI_ALLOW_RULES` and `.KATI_SYMBOLS`. Nine rows
+    // went, all of class `extension` and family `kati-extension`: the four
+    // `readonly_*.sh` scripts, the three `final_*.sh` scripts,
+    // `allow_rules.sh#script` and `shellstatus_readonly.mk#test`. Every one of
+    // the nine cases was deleted with the feature. `variables.mk` was rewritten
+    // rather than deleted, keeping its `.VARIABLES` half and losing its
+    // `.KATI_SYMBOLS` half, and it carried no row either way.
+    //
+    // Before that it moved
     // from 51 when the twelve `KATI_*` builtin functions were removed from the
     // product on the operator's ruling — see docs/make-kati-extensions.md.
     // Twenty-seven corpus cases went with them, because a case that only tests
@@ -182,9 +193,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 41);
+    assert_eq!(cases.len(), 32);
     assert_eq!(by_class["defect"], 17);
     assert_eq!(by_class["recorded"], 2);
-    assert_eq!(by_class["extension"], 21);
+    assert_eq!(by_class["extension"], 12);
     assert_eq!(by_class["artefact"], 1);
 }

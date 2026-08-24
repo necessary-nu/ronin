@@ -106,9 +106,9 @@ the makefile's ability to ask for the other side of it.
 
 | Name | Shape | Status |
 | --- | --- | --- |
-| `.KATI_READONLY` | global and target-specific variable | *pending* |
-| `.KATI_ALLOW_RULES` | global variable | *pending* |
-| `.KATI_SYMBOLS` | readable variable, a filtered `.VARIABLES` | *pending* |
+| `.KATI_READONLY` | global and target-specific variable | **removed** |
+| `.KATI_ALLOW_RULES` | global variable | **removed** |
+| `.KATI_SYMBOLS` | readable variable, a filtered `.VARIABLES` | **removed** |
 | `.KATI_RESTAT` | special target | *pending* |
 | `.KATI_DEPFILE` | target-specific variable → Ninja `depfile` | *pending* |
 | `.KATI_IMPLICIT_OUTPUTS` | target-specific variable → Ninja implicit outputs | *pending* |
@@ -122,11 +122,11 @@ front end never sets, so a makefile that names it is refused rather than obeyed.
 
 ### Assignment operator — `$=`
 
-`FOO :=$= bar` marks the binding readonly on assignment; a later write to it is
-a fatal `cannot assign to readonly variable`. It is not a distinct operator in
+`FOO :=$= bar` marked the binding readonly on assignment; a later write to it was
+a fatal `cannot assign to readonly variable`. It was not a distinct operator in
 the grammar but a `$=` prefix on the right-hand side of any of them, stripped by
 `parser.rs` into `AssignStmt::is_final`. It is the per-variable spelling of
-`.KATI_READONLY` and goes with it. *Pending.*
+`.KATI_READONLY` and went with it. **Removed.**
 
 Every other operator in the table is GNU's: `=`, `:=`, `::=`, `:::=`, `+=`,
 `?=`, `!=`.
@@ -184,3 +184,42 @@ nothing else. **No case that tests Make semantics moved.**
 which asserted `KATI_foreach_sep` restores a binding its body failed inside. The
 `$(foreach)` case beside it — the same property, on the GNU function — stays and
 is the one that gates the behaviour.
+
+### The readonly family (2026-08-24)
+
+`.KATI_READONLY`, the `$=` final-assignment operator that is its per-variable
+spelling, `.KATI_ALLOW_RULES` and `.KATI_SYMBOLS` — removed together, because
+they are one thing in the code: three well-known symbols and a readonly bit that
+nothing else set.
+
+**Removed outright.** `Variable::readonly` is gone, and with it every check that
+read it: `GlobalVars::assign`'s and `ScopedVars::assign`'s refusal, `undefine`'s,
+and `+=`'s. All four were reachable only from these two spellings — GNU Make has
+no readonly notion for variables at all, which is what `.KATI_READONLY` was added
+to supply. Three call chains lost an out-parameter they had carried only to
+report a refusal that can no longer happen.
+
+`.KATI_SYMBOLS` took a whole mechanism with it. `Evaluable::is_func` existed to
+answer *"would reading this value call something?"* without reading it, because
+`.KATI_SYMBOLS` is `.VARIABLES` minus the bindings whose value looks like a
+function. Its own comment says it is a heuristic. `.VARIABLES` never asked, so
+the trait method, both implementations and the `all` flag that selected between
+the two name lists are gone.
+
+`.KATI_ALLOW_RULES` took `RulesAllowed` and the per-rule check the evaluator made
+against it — a makefile could ask that recording a rule from here on be a warning
+or an error, which GNU Make has no way to say.
+
+**Corpus.** Nine cases deleted: `readonly_global.sh`,
+`readonly_global_missing.sh`, `readonly_rule.sh`, `readonly_rule_missing.sh`,
+`final_global.sh`, `final_rule.sh`, `final_rule2.sh`, `allow_rules.sh`,
+`shellstatus_readonly.mk` — the last of which asserted `.SHELLSTATUS` cannot be
+written through a computed name, which is the readonly rule under another name.
+`variables.mk` was rewritten rather than deleted: it tests `.VARIABLES` and
+`.KATI_SYMBOLS` in one file, and the `.VARIABLES` half is Make.
+
+**Conformance movement.** 365 runs → 356; normalised 324 identical / 41 differing
+→ 324 / 32; raw 275 identical, unmoved. All nine rows that left were class
+`extension`, family `kati-extension`, and they are exactly the nine deleted
+cases. No case that tests Make semantics moved, and nothing that was identical
+stopped being identical.
