@@ -1,0 +1,6 @@
+echo a > a
+touch -d '2020-01-01 00:00:00Z' a
+echo current > out
+touch -d '2021-01-01 00:00:00Z' out
+echo untouched > witness
+touch -d '2021-01-01 00:00:00Z' witness

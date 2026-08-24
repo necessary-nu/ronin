@@ -11103,6 +11103,13 @@ children (
                         kind @note
                         text "Narrowed from four kinds to three by make-recursive-child-recipes-expand-at-launch, which lifted the child unit's session and directory as this node's own text said it would have to.\n\nA recursive child's recipes are no longer read while the graph is compiled. GraphSink::recipe_expansion answers Launch for every unit, each unit's evaluator is retained beside the root's in PendingRecipes, and the child's directory is entered again for the length of the expansion — so a file operation in a child's recipe is now performed where GNU Make performs it, and not at all for a target that turns out to be up to date.\n\nProbed and recorded, tests/make/recursive-child-file-write-in-a-recipe-that-does-not-run: a root that runs a child with -C sub, and in the child a target newer than its prerequisite whose recipe writes a file during expansion. Before the change Ronin wrote sub/written while it compiled the graph, for a target that never ran; it now writes nothing, which is what GNU Make 4.4.1 does. The case failed the build-intent gate before and passes after.\n\nThe three that remain are the three the compiler still needs the text of before the graph is complete: a recipe naming the new-prerequisites variable, one feeding a depfile, and a grouped double-colon action. The fixture carrying this node's divergence marker, feature-file-write-in-a-recipe-that-does-not-run, is the first of those and still diverges, so the marker stays. What a fix has to settle for those three is unchanged and is stated above."
                     }
+
+                    {
+                        at 2026-08-24T00:15:14.976014718Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "The `$?` kind is resolved by make-a-scheduler-bound-recipe-is-expanded-though-its-target-is-current, which taught defers_recipe to hold a `$?` recipe unexpanded and hand the launch the scheduler's list. A `$(file>)` in a `$?` recipe now runs where GNU Make runs it — never, for an up-to-date target — so feature-file-write-in-a-recipe-that-does-not-run agrees with the oracle. Its divergence sidecar is deleted and the fixture now GATES that the `$?` kind is right; the make_port gate forced the deletion (a recorded divergence that has been fixed fails the gate).\n\nTwo kinds remain and this node stays open for them. The grouped double-colon action still performs its `$(file>)` while the graph is built — probed at f3a53097: `a b &:: dep ; $(file > written,made)` with the members current writes `written` where GNU writes nothing. The depfile kind (`.KATI_DEPFILE`/`--detect_depfiles`) is the same and is a kati extension no GNU makefile reaches. Neither has a fixture now; whoever closes them should record one from the oracle (the grouped shape above is the GNU-comparable one). The `$(MAKE)` kind was already retired by make-recursive-child-recipes-expand-at-launch."
+                    }
                 )
             }
 
@@ -13897,12 +13904,27 @@ children (
                 id make-a-scheduler-bound-recipe-is-expanded-though-its-target-is-current
                 title "Leave a recipe naming the new inputs unexpanded when its target is up to date"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-20T03:00:00.301619656Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Found while probing make-construction-expanded-recipe-is-one-shell, and pre-existing: unmoved by that node's fix and identical on a worktree at 252ca6c/f9e94d4.\n\nGNU Make expands a recipe in `new_job`, immediately before running it and only for a target it decided to remake, so a target that is already up to date has none of the expansion's effects happen at all. Ronin keeps that for every recipe it can defer — the whole of make-recipe-expanded-at-launch — but a recipe naming `$?` is one of the four kinds `defers_recipe` must read while the graph is built, and reading it is expanding it.\n\nProbed against reference/make-oracle/make-4.4.1/make, with `out` newer than `a`:\n\n    out: a\n    \\t@printf 'q=[%s]\\\\n' '$?' > witness $(error this should never be expanded)\n\n      GNU:   exit 0, `out` untouched, `witness` untouched, nothing said\n      Ronin: exit 2, the build abandoned on the `$(error)`\n\nThe same shape reaches a `$(shell)` that runs when GNU would never have started it, and a `$(wildcard)` answered against the files that existed before the build rather than after — everything make-recipe-expanded-at-launch is about. Take away the `$?` and the recipe defers and the cell agrees, which is what makes this a property of the `$?` binding rather than of the recipe.\n\nWHY IT IS NOT SIMPLY DEFERRED, measured rather than assumed. Removing the `$?` refusal from `defers_recipe` was tried first and is wrong: `NewInputsTiming::Launch` answers `$?` by stat'ing the target and its prerequisites, and that is a strictly weaker model than GNU's `d->changed`. Seven corpus cases fail under it — a prerequisite that does not exist counts as changed for GNU and is not newer than anything by stat, a prerequisite remade without its mtime moving (an empty recipe, a phony, a restat) counts and does not stat as newer, and an archive member's index date is not a file's. The scheduler's list is the accurate one and that is why the edge declares it.\n\nSo matching GNU here means keeping the scheduler's list while not expanding the recipe: the compiler would have to declare the edge's deferred freshness from the recipe's TEXT — which `references_new_inputs` already answers without expanding — and the launch-time expansion would have to be handed the list the scheduler computed. The hard part is the rest of the declaration, which is derived from the expansion rather than from the text: `deferred_new_inputs_filter_out` comes from a `$(filter-out ...,$?)` the expansion saw, and only an expansion can see it. Settle what happens to a filter-out that cannot be known before choosing.\n\nThe corpus case `tests/make/an-up-to-date-target-never-expands-its-new-inputs-recipe` is recorded from the oracle and carries a `divergence` file naming this node."
+                    }
+
+                    {
+                        at 2026-08-23T23:39:19.885218615Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-24T00:17:21.236994185Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
@@ -14826,6 +14848,14 @@ children (
                         author "brendan@necessary.nu"
                         kind @errata
                         text "Two details of the note above were written before the commit gate had finished with the change, and the gate moved them.\n\nWHAT THE EXTRACTION ACTUALLY WAS. The note says one function was extracted and names `record_searched_spellings` and `names_an_archive_member`. The first is right; the second was tried, then given back. `src/make/sink.rs` was at the density cap of 50 functions before this change, so the file had to lose one for the change to add one: the two names the compiler invents for itself — `completion_proxy` and `recipe_stage_proxy`, the same loop twice over a different prefix and counter — are now `src/make/sink/invented.rs`, a child module, which is why they can still read the sink's own fields. `declare_edge` stayed under the line cap without `names_an_archive_member` because the block it now calls one function for used to be eight lines inline. On the same pass, `BuildGraph::set_searched_at` and `set_settled_names` became one `set_searched_spellings`: the sink says both halves of the search's answer at one point, so the boundary crossing is one call. No behaviour moved with any of it — the corpus was rerun after each step.\n\nTHE WORKSPACE TEST COUNT IS 1005, not the 1004 the note records. `src/make/sink/invented.rs` needed a test of its own to clear the test-footprint gate on a new module, and `make::sink::invented::tests::an_invented_name_is_never_reused` is it: each invented name is its own, and one the graph already holds is stepped over rather than handed out twice, which is why those are loops rather than a counter read once.\n\nEvery other gate number in the note stands, and all of them were measured again on the committed tree after these three edits: fmt clean; `cargo check --workspace --all-targets` clean; `scripts/check-lints.sh` clean; workspace tests 1005 passed / 0 failed / 1 ignored; make_port 4/4 over 1005 cases; conformance 336 normalised identical / 51 differing, 286 raw; equivalence 297 / 280 / 75 / 0 disagreements; upstream inventory 1285 rows at 107 / 0 / 24 / 1154, no drift, compiler ZERO; vim 9.2 in 15 s and zsh 5.9.2 in 26 s; ninja conformance 425/425 plus every differential; `cargo test --workspace --no-default-features` 773 / 0; `scripts/check-release.sh` green end to end."
+                        after_done true
+                    }
+
+                    {
+                        at 2026-08-24T00:15:25.771568931Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Errata to the boundary this node recorded: feature-vpath-a-function-reads-a-name-read-early-as-written, which carried this node's marker, now agrees with the oracle and its divergence sidecar is deleted (the make_port gate forced it — a recorded divergence that has been fixed fails). The fix is make-a-scheduler-bound-recipe-is-expanded-though-its-target-is-current: that fixture forced the early read by naming `$?`, and a `$?` recipe is no longer read early — it defers to launch like any other. Read late, `$^` carries the settled (vpath-relocated) name directly, so `$(filter %.o,$^)` and `$(basename $^)` read it whole and the function-depth==0 workaround this node installed is never consulted for a `$?` recipe.\n\nThe boundary itself stands for the three carriers still read early — a grouped `::` action, a `.KATI_DEPFILE` recipe, and a `$(MAKE)` line — where a searched-for name inside a function argument is still spelt as written. That boundary remains documented by this node's delivery note and is still gated from the other side by feature-vpath-a-function-reads-a-remade-name-as-written, which is unchanged."
                         after_done true
                     }
                 )

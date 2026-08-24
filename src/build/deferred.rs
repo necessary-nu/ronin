@@ -234,6 +234,17 @@ impl Builder<'_> {
     /// from where it stands. A name that reaches outside the unit's directory
     /// keeps the only spelling it has, which is GNU Make's answer for an
     /// absolute prerequisite too.
+    /// This edge's `$?` — the prerequisites it was found out of date against —
+    /// spelt whole, where its command runs, for a front end that reads the set
+    /// as the edge launches. Empty for an edge with no deferred freshness,
+    /// which has no such set to name.
+    pub(super) fn launch_new_inputs(&self, edge: EdgeId) -> Vec<u8> {
+        if self.graph.deferred_freshness(edge).is_none() {
+            return Vec::new();
+        }
+        self.deferred_new_inputs_value(edge, NewInputsView::Whole)
+    }
+
     fn deferred_new_inputs_value(&self, edge: EdgeId, view: NewInputsView) -> Vec<u8> {
         let freshness = self.graph.deferred_freshness(edge);
         let directory = freshness

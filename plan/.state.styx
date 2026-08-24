@@ -878,6 +878,7 @@ assertions (
     {id make-a-shell-holding-shell-syntax-is-escaped-into-the-assembled-line, kind @complete, author "brendan@necessary.nu", at 2026-08-23T21:36:28.823235097Z}
     {id make-a-default-shell-launch-splits-shellflags-a-shell-would-have-read, kind @complete, author "brendan@necessary.nu", at 2026-08-23T22:33:07.826113105Z}
     {id make-a-regen-replay-reads-a-one-script-shell-as-a-command-line, kind @complete, author "brendan@necessary.nu", at 2026-08-23T23:14:30.155753654Z}
+    {id make-a-scheduler-bound-recipe-is-expanded-though-its-target-is-current, kind @complete, author "brendan@necessary.nu", at 2026-08-24T00:17:21.236994185Z}
 )
 
 impl_evidence (

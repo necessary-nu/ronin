@@ -1,4 +1,0 @@
-Ronin performs a recipe's file operation while it compiles the graph when the
-recipe is one it cannot hold unexpanded — here because `$?` is named — so the
-write happens for a target that is up to date and never runs, and it writes the
-unresolved `$?` marker rather than a value; make-recipe-file-operation-at-launch-only.

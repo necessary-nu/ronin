@@ -234,6 +234,14 @@ pub(crate) trait LateCommands {
     /// what the build file said. Empty for every edge no input of which has a
     /// second name, which is nearly all of them.
     ///
+    /// `new_inputs` is the prerequisites this edge was found to be out of date
+    /// against — GNU Make's `$?` — spelt where this edge's command runs. Only
+    /// the engine can answer it: which prerequisites count as new is settled by
+    /// the scheduler after they finish, and a stat of the tree cannot always
+    /// reproduce it. A front end whose recipe names that set is handed it here
+    /// rather than left to work it out. Empty for an edge with no deferred
+    /// freshness, which never reads it.
+    ///
     /// # Errors
     ///
     /// A rendered diagnostic, when the front end could not produce the
@@ -245,6 +253,7 @@ pub(crate) trait LateCommands {
         output: &[u8],
         trigger: &[u8],
         settled: &[(&[u8], &[u8])],
+        new_inputs: &[u8],
     ) -> Result<LateBinding, String>;
 
     /// Whatever binding a command had to say short of failing, rendered and
@@ -643,9 +652,17 @@ impl Builder<'_> {
     /// Ask the front end for this edge's command, if there is a front end to
     /// ask.
     pub(super) fn late_binding(&mut self, edge: EdgeId) -> BuildResult<LateBinding> {
-        let Some(recipes) = self.late_commands.as_deref_mut() else {
+        if self.late_commands.is_none() {
             return Ok(LateBinding::Settled);
-        };
+        }
+        // This edge's `$?`, computed while the whole builder is still borrowable
+        // and owned so it outlives the mutable borrow of the front end below. A
+        // recipe naming the set is handed this rather than left to stat for it.
+        let new_inputs = self.launch_new_inputs(edge);
+        let recipes = self
+            .late_commands
+            .as_deref_mut()
+            .expect("front end present");
         let output = self
             .graph
             .edge(edge)
@@ -684,7 +701,7 @@ impl Builder<'_> {
             .iter()
             .map(|(written, found)| (written.as_slice(), found.as_slice()))
             .collect::<Vec<_>>();
-        let bound = recipes.command(edge, &output, &trigger, &settled);
+        let bound = recipes.command(edge, &output, &trigger, &settled, &new_inputs);
         // Taken whether the binding worked or not: an expansion that ended in a
         // refusal may have warned on its way there.
         let raised = recipes.raised();

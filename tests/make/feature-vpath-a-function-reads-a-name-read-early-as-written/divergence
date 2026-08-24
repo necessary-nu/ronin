@@ -1,1 +1,0 @@
-Ronin spells a found-current prerequisite as written inside a function argument of a recipe read early — `$(filter %.o,$^)` and `$(basename $^)` — because the reference that carries the unsettled name is one word whose content no function can read; make-vpath-name-reaches-a-recipe-read-early.

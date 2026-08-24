@@ -203,6 +203,7 @@ impl LateCommands for PendingRecipes {
         output: &[u8],
         trigger: &[u8],
         settled: &[(&[u8], &[u8])],
+        new_inputs: &[u8],
     ) -> Result<LateBinding, String> {
         let Some((unit, recipe)) = self.edges.get(&edge).copied() else {
             // Nothing to expand, but the edge may still be a recipe whose
@@ -227,7 +228,7 @@ impl LateCommands for PendingRecipes {
         } = &mut self.units[unit];
         let expanded = expanded_in(directory, || {
             recipes
-                .expand(session, recipe, trigger, settled)
+                .expand(session, recipe, trigger, settled, Some(new_inputs))
                 .map_err(|failure| super::report::diagnostic_body(&failure))
         })?;
         let Some(expanded) = expanded else {
