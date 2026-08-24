@@ -892,6 +892,7 @@ assertions (
     {id ronin-manifest-mtime-test-margin, kind @complete, author "brendan@necessary.nu", at 2026-08-24T05:49:01.987426631Z}
     {id ronin-regeneration-progress-total, kind @complete, author "brendan@necessary.nu", at 2026-08-24T05:49:03.533332093Z}
     {id ronin-dyndep-diagnostic-context, kind @complete, author "brendan@necessary.nu", at 2026-08-24T06:16:56.506076954Z}
+    {id make-a-posix-target-is-read-where-it-is-written, kind @complete, author "brendan@necessary.nu", at 2026-08-24T07:29:20.545143401Z}
 )
 
 impl_evidence (

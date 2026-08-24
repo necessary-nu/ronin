@@ -1,9 +1,0 @@
-KNOWN GAP, owned by `make-a-posix-target-is-read-where-it-is-written`.
-
-The statement is evaluated after the file it stands in has been read whole, so
-the flag it sets cannot reach a fold above it in that file. The evaluator sets
-the flag for whatever is read after the eval, which is what makes an eval above
-a LATER include work.
-
-GNU Make 4.4.1 keeps the blanks in front of the fold and writes `[a    b]`;
-Ronin writes `[a b]`.

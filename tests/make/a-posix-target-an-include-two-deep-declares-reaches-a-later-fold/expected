@@ -1,0 +1,15 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 6
+| # The `.POSIX:` is one include deeper, and the fold in the outermost file was
+| # read before either include was evaluated.
+| include inc.mk
+| A = a   \
+|   b
+| all: ; @printf '[%s]\n' '$(A)' > out
+file inc.mk kept 1
+| include inc2.mk
+file inc2.mk kept 1
+| .POSIX:
+file out touched 1
+| [a    b]
