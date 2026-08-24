@@ -17,7 +17,7 @@ use std::num::NonZeroUsize;
 use std::path::Path;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use self::command::{Advance, CommandSpec, DepsType, PreparedEdge, ResponseFile, RunningStep};
+use self::command::{Advance, CommandSpec, DepsType, PreparedEdge, RunningStep};
 use self::reporter::Reporter;
 pub(crate) use self::reporter::{ColorChoice, OutputStyle, TerminalContext};
 pub(crate) use self::status::BuildState;
@@ -1298,11 +1298,14 @@ impl<'a> Builder<'a> {
                 })?;
         }
 
-        // The depfile's directory is made and the response file's is not, which
-        // is Ninja's asymmetry rather than an oversight here: a compiler writes
-        // its own depfile and cannot be asked to create the directory first,
-        // while a response file is written by the build tool, which fails
-        // outright if the manifest pointed it somewhere that does not exist.
+        // The depfile's directory is made and a response file the manifest
+        // placed is not, which is Ninja's asymmetry rather than an oversight
+        // here: a compiler writes its own depfile and cannot be asked to create
+        // the directory first, while a response file is written by the build
+        // tool, which fails outright if the manifest pointed it somewhere that
+        // does not exist. The one exception is a response file named after an
+        // invented output, handled in `prepare_response_file`: the compiler
+        // chose that path, so the tool that invented it makes its directory.
         if let Some(depfile) = command.depfile_path.as_ref() {
             self.disk
                 .make_dirs(depfile.to_path().expect("byte paths are valid on Unix"))
@@ -1316,45 +1319,19 @@ impl<'a> Builder<'a> {
                 })?;
         }
 
-        let response_file = match command.rspfile.clone() {
-            None => None,
-            Some(logical_path) => {
-                let path = logical_path
-                    .to_path()
-                    .expect("byte paths are valid on Unix")
-                    .to_owned();
-                if let Err((step, source)) = self
-                    .disk
-                    .write_response_file(&path, launch_rspfile_content.as_bytes())
-                {
-                    let error = BuildError::io(
-                        BuildOperation::WriteResponseFile(step),
-                        Some(logical_path),
-                        Some(edge),
-                        source,
-                    );
-                    // Ninja says this where it happens, on stderr, and carries
-                    // nothing out: `WriteFile` calls `Error()` itself and
-                    // returns false without writing to the build loop's error
-                    // string. The diagnostic is emitted here for the same
-                    // reason — the summary line that follows has only a status
-                    // left to report, and a status cannot name the file.
-                    self.emit_diagnostic(
-                        format!("{}: error: {error}\n", crate::cli::PRODUCT_NAME).as_bytes(),
-                    )?;
-                    return Err(error);
-                }
-                // Armed only once the write went through. Ninja removes the
-                // response file in `FinishCommand`, after the command it was
-                // written for has run, so a write that failed never reaches
-                // the removal — and a path that was never ours to write is not
-                // ours to delete either.
-                Some(ResponseFile {
-                    path: self.disk.resolve(&path),
-                    remove_on_drop: !self.options.keeprsp,
-                })
-            }
-        };
+        // Only an invented output — the staging proxy of a composed recipe's
+        // preceding segment — carries a response file with no directory behind
+        // it, because the loop above skips exactly those. That is the one output
+        // whose response-file directory the tool makes itself.
+        let output_is_invented = completion_outputs
+            .iter()
+            .any(|output| self.graph.is_virtual_output(*output));
+        let response_file = self.prepare_response_file(
+            edge,
+            command.rspfile.as_ref(),
+            &launch_rspfile_content,
+            output_is_invented,
+        )?;
 
         let command_start_mtime = if self.options.dryrun {
             0

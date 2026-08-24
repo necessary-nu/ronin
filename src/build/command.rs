@@ -410,6 +410,72 @@ impl<'a> Builder<'a> {
 }
 
 impl Builder<'_> {
+    /// Write the response file `rspfile` names, if it names one, and return the
+    /// handle that removes it once the command it fed has run.
+    ///
+    /// `output_is_invented` says the edge produces a name the compiler gave
+    /// itself — the staging proxy of a composed recipe's preceding segment,
+    /// `.ronin_recipe_stage/N` — rather than a file a manifest named. Its
+    /// response file, `…/N.rsp`, sits in a directory the output loop skips on
+    /// purpose, so two things follow that do not for a manifest's response file.
+    /// Its directory is made here, because the tool that invented the path is
+    /// the one that can place it; and a dry run writes nothing for it, so that
+    /// invented directory is never made where nothing may reach the disk. A
+    /// response file a manifest placed keeps Ninja's behaviour untouched: no
+    /// directory made for it, and a dry run left exactly as it was.
+    pub(super) fn prepare_response_file(
+        &mut self,
+        edge: EdgeId,
+        rspfile: Option<&BString>,
+        content: &BString,
+        output_is_invented: bool,
+    ) -> BuildResult<Option<ResponseFile>> {
+        let Some(logical_path) = rspfile.filter(|_| !(self.options.dryrun && output_is_invented))
+        else {
+            return Ok(None);
+        };
+        let path = logical_path
+            .to_path()
+            .expect("byte paths are valid on Unix")
+            .to_owned();
+        if output_is_invented {
+            self.disk.make_dirs(&path).map_err(|source| {
+                BuildError::io(
+                    BuildOperation::CreateOutputDirectory,
+                    Some(logical_path.clone()),
+                    Some(edge),
+                    source,
+                )
+            })?;
+        }
+        if let Err((step, source)) = self.disk.write_response_file(&path, content.as_bytes()) {
+            let error = BuildError::io(
+                BuildOperation::WriteResponseFile(step),
+                Some(logical_path.clone()),
+                Some(edge),
+                source,
+            );
+            // Ninja says this where it happens, on stderr, and carries nothing
+            // out: `WriteFile` calls `Error()` itself and returns false without
+            // writing to the build loop's error string. The diagnostic is
+            // emitted here for the same reason — the summary line that follows
+            // has only a status left to report, and a status cannot name the
+            // file.
+            self.emit_diagnostic(
+                format!("{}: error: {error}\n", crate::cli::PRODUCT_NAME).as_bytes(),
+            )?;
+            return Err(error);
+        }
+        // Armed only once the write went through. Ninja removes the response
+        // file in `FinishCommand`, after the command it was written for has run,
+        // so a write that failed never reaches the removal — and a path that was
+        // never ours to write is not ours to delete either.
+        Ok(Some(ResponseFile {
+            path: self.disk.resolve(&path),
+            remove_on_drop: !self.options.keeprsp,
+        }))
+    }
+
     pub(super) fn ensure_command(&mut self, edge: EdgeId) -> BuildResult<()> {
         self.command_cache
             .resize_with(self.graph.edge_count(), || None);

@@ -674,6 +674,81 @@ fn oversized_marks_are_not_split_out() {
     );
 }
 
+/// A composed recipe whose lines ahead of a `$(MAKE)` include one too long to
+/// be a shell argument stages that segment as its own edge, named after a proxy
+/// the compiler invents — `.ronin_recipe_stage/N` — and falls back to handing
+/// the whole segment to the shell through a response file, `…/N.rsp`. The
+/// output-directory loop skips an invented output on purpose, so the response
+/// file used to be written into a directory nothing had made and the build died
+/// where GNU Make builds. The write now makes that directory first, and only
+/// when a real build is about to write into it. GNU Make writes `big.out`, runs
+/// the child, writes `trailing.out`; a dry run writes none of them.
+#[cfg(feature = "make")]
+#[test]
+fn an_oversized_preceding_segment_writes_its_response_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let link = shell_named(directory.path(), "make");
+    std::fs::create_dir(directory.path().join("sub")).unwrap();
+    std::fs::write(
+        directory.path().join("sub").join("Makefile"),
+        "child:\n\t@echo childran > ../child.out\n",
+    )
+    .unwrap();
+    // Generated rather than checked in: a 120 kB Makefile is a quarter megabyte
+    // echoed back, and what matters is only that the line crosses the threshold.
+    let too_long = "A".repeat(120 * 1000);
+    let makefile = format!(
+        "goal:\n\t@echo {too_long} > big.out\n\
+         \t@$(MAKE) --no-print-directory -C sub child\n\
+         \t@echo trailing > trailing.out\n"
+    );
+    std::fs::write(directory.path().join("Makefile"), &makefile).unwrap();
+    let run = |args: &[&str]| {
+        Command::new(&link)
+            .current_dir(directory.path())
+            .args(args)
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("CARGO_MAKEFLAGS")
+            .env_remove("MAKELEVEL")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap()
+    };
+    let read = |name: &str| std::fs::read(directory.path().join(name)).ok();
+    let clean = || {
+        for name in ["big.out", "child.out", "trailing.out"] {
+            let _ = std::fs::remove_file(directory.path().join(name));
+        }
+    };
+
+    // A real build: the oversized preceding segment runs, its response file is
+    // written and read, and every one of the recipe's effects lands — the same
+    // as GNU Make. Before the fix this exited 2 with a `WriteFile` error and
+    // wrote nothing at all.
+    let built = run(&["goal"]);
+    assert!(built.status.success(), "{}", stderr(&built));
+    assert_eq!(
+        read("big.out").map(|bytes| bytes.len()),
+        Some(120 * 1000 + 1),
+        "the oversized preceding segment writes big.out"
+    );
+    assert_eq!(read("child.out").as_deref(), Some(&b"childran\n"[..]));
+    assert_eq!(read("trailing.out").as_deref(), Some(&b"trailing\n"[..]));
+    clean();
+
+    // A dry run reaches no disk: the response file is not written, so the
+    // segment's proxy directory is not made either, and no output appears. GNU
+    // Make prints the commands and writes nothing; before the fix even `-n`
+    // died trying to write the response file.
+    let pretended = run(&["-n", "goal"]);
+    assert!(pretended.status.success(), "{}", stderr(&pretended));
+    assert!(
+        read("big.out").is_none() && read("child.out").is_none() && read("trailing.out").is_none(),
+        "a dry run writes nothing"
+    );
+}
+
 /// A `.KATI_DEPFILE` names the dependency file in a variable and leaves the
 /// recipe's text untouched, so the recipe is launched one process per line like
 /// any other — where a `--detect_depfiles` run, which rewrites the assembled
