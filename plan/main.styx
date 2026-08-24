@@ -16699,6 +16699,35 @@ children (
                     }
                 )
             }
+
+            {
+                id make-consolidated-oracle-divergence-survey
+                title "Survey every Ronin-vs-oracle divergence into one document for the operator to rule on"
+                kind @docs
+                sealed true
+                log (
+                    {
+                        at 2026-08-24T09:22:11.529451556Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-24T09:22:30.023824238Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Delivered on the operator's 2026-08-24 instruction (\"I do not think we have any accepted divergences. You will need to explain all the divergences now\"). Restructured docs/make-oracle-divergences.md: the \"Where Ronin deliberately disagrees\" section became \"Where Ronin diverges from the oracle\" — a per-divergence survey the operator can read once and rule on each.\n\nSWEPT SOURCES: docs/make-oracle-divergences.md's own entries; both `divergence` sidecars under tests/make (find tests -name divergence: the two MAKEFLAGS cases); all 8 DISCOVERY_ONLY_CASES in tests/make_port.rs; and every plan decision note recording a divergence as deliberate.\n\nTEN DIVERGENCES catalogued, each re-measured against reference/make-oracle/make-4.4.1/make on 2026-08-24 (not recalled): (1) shuffle order-only — OPEN, no ruling; (2) $(MAKEFLAGS) $-doubling; (3) oversized recipe -t/-q marked lines; (4) .KATI_DEPFILE $(file) at build; (5) interrupt leaves 130 not 128+signum (SIGTERM 143→130, SIGHUP 129→130, SIGINT agrees) — the only one reachable in an ordinary build; (6) -n skips a +/$(MAKE) line; (7) output-directory creation; (8) recursive keep-going choreography (compile-to-one-graph); (9) -W over a :: chain refuses before the chain runs; (10) two defects found this dispatch (the define panic and the command-line-assignment refusal, filed as their own nodes). Each entry gives what Ronin does, what GNU does (measured), the reproducer, reachability, cost to match, and the authority.\n\nAUTHORITY, stated honestly per the operator's instruction: NONE of the ten carries a standalone operator ruling that it be accepted. Most were recorded by the delivering dispatch, grounded in a spec rule (product.build-outcome for #5) or an architecture decision (compiler boundary, one scheduler). The two genuine operator rulings that DO exist (both 2026-08-17: the runtime-speaks-Ninja narration line, and the -t/-B/-W implementation) are cited verbatim with their dates in a closing section — and both point toward conformance, so they are recorded to show where the operator has actually drawn the line, not as approvals of any divergence above.\n\nThe oracle-provenance sections (Debian/Fedora/Arch build differences, the vendored kati corpus) are preserved unchanged — those are GNU-vs-GNU, a different question from Ronin-vs-GNU. Doc grew 411 → 663 lines. No code changed; the ronin and kati binaries are byte-identical to baseline, so every behavioural gate is unmoved by construction."
+                    }
+
+                    {
+                        at 2026-08-24T09:22:34.0166559Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
+                    }
+                )
+            }
         )
         log (
             {

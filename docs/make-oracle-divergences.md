@@ -13,8 +13,10 @@ one under `kati/testcase` — were classified when the oracle moved to the
 released source.
 [`[spec:ronin:req:make.oracle-provenance]`](spec/ronin/make.md).
 
-The last section is about a fifth kind of disagreement, and the one Ronin chose:
-[where Ronin deliberately disagrees with the oracle](#where-ronin-deliberately-disagrees-with-the-oracle).
+The last section is about a fifth kind of disagreement — Ronin against all four
+builds of GNU Make — and it is a survey for the operator to rule on rather than
+a record of decisions already taken:
+[where Ronin diverges from the oracle](#where-ronin-diverges-from-the-oracle).
 
 ## The oracle
 
@@ -234,28 +236,105 @@ without the record, a re-record on Fedora or Arch would have silently replaced
 `ARFLAGS=-rvU` with `ARFLAGS=-rv` and nobody would have been told which of the
 two was GNU's.
 
-## Where Ronin deliberately disagrees with the oracle
+## Where Ronin diverges from the oracle
 
-Everything above is one build of GNU Make against another. This section is
-Ronin against all four of them, in the places the disagreement is a decision
-rather than a defect. A case that reaches one is gated so the decision cannot
-be quietly conformed away: a build-intent case carries a `divergence` file
-naming it and `tests/make_port.rs` fails in both directions — an unrecorded
-divergence fails the gate, and so does a recorded one that has started to
-agree — and a shape too large to record as a case is gated by a generated test
-that would fail the moment the behaviour changed.
+Everything above is one build of GNU Make against another. This section is Ronin
+against all four of them: every place a Ronin `make` build observably differs
+from GNU Make 4.4.1, gathered so the operator can read one document and rule on
+each.
 
-### `$(MAKEFLAGS)` hands back the text it stores
+It is a survey, not a record of settled decisions. The operator's instruction of
+2026-08-24, verbatim: *"I do not think we have any accepted divergences. You will
+need to explain all the divergences now."* So nothing below should be read as
+approved. Where a divergence names an **Authority**, that line says exactly who
+recorded it and on what basis — and for most of them the honest answer is that
+the delivering dispatch recorded it (authored under the operator's git identity,
+but written by the agent), grounded in a spec rule or an architecture decision,
+with **no standalone operator ruling**. Two genuine operator rulings do exist and
+are cited verbatim where they bear: the narration line and the `-t`/`-B`/`-W`
+implementation, both 2026-08-17.
 
-Owner: `make-makeflags-holds-its-switches-as-literal-text`.
-Cases: `makeflags-hands-back-the-switch-text-it-stores`,
-`a-child-keeps-a-switch-value-a-dollar-was-written-in`.
+Every measured cell below was re-measured against `reference/make-oracle/make-4.4.1/make`
+on 2026-08-24.
 
-GNU Make's `define_makeflags` runs `quote_for_env` over every switch argument,
-doubling each `$`, and then binds the result **recursively** —
-`define_variable_cname (MAKEFLAGS_NAME, flagstring, ..., 1)`. Reading the
-variable expands it, which halves the doubling again. So under
-`make -I 'a$b'`:
+### Summary
+
+| # | Divergence | Reachable in a real build? | Gated by | Authority |
+| --- | --- | --- | --- | --- |
+| 1 | A shuffled order-only prerequisite is permuted apart from the rest | No — only under `--shuffle`, plus one `$|` cell needing a cycle | nothing (open node) | **none** — open, awaiting a ruling |
+| 2 | `$(MAKEFLAGS)` hands back the text it stores | Only where a switch value holds a literal `$` | 2 `divergence` sidecars + this doc | dispatch (no operator ruling) |
+| 3 | An oversized recipe's marked lines do not run under `-t`/`-q` | No — needs a recipe line over 100 kB | `tests/shell.rs::oversized_marks_are_not_split_out` | dispatch (no operator ruling) |
+| 4 | A `.KATI_DEPFILE` recipe's `$(file …)` runs where it is built | No — `.KATI_DEPFILE` is a kati extension no GNU makefile names | `tests/shell.rs::a_depfile_recipe_is_read_where_it_is_built` | dispatch (no operator ruling) |
+| 5 | An interrupt leaves Ninja's 130, not GNU's 128+signum | **Yes** — any build killed by SIGTERM/SIGHUP/SIGQUIT | `tests/interrupts.rs`; `product.build-outcome` | spec `product.build-outcome` (no direct operator ruling) |
+| 6 | `-n` does not run a `+`-marked or `$(MAKE)`-referencing line | Only under `-n` with such a line | `DISCOVERY_ONLY_CASES` in `make_port` | dispatch decision on `make-recipe-dry-run` |
+| 7 | An output's directory is created where GNU leaves it to the recipe | **Yes** — a recipe that replaces a file with a same-named dir | nothing (retired node) | dispatch, citing the boundary + the narration ruling |
+| 8 | Recursive keep-going choreography differs | **Yes** — recursive `$(MAKE)` with per-child `-k`/`-S` | `DISCOVERY_ONLY_CASES` in `make_port` | architecture (compile recursive Make to one graph) |
+| 9 | `-W` over a `::` chain refuses before the chain's work runs | Only under `-W`/`-t`-family over a double-colon chain | `DISCOVERY_ONLY_CASES` in `make_port` | architecture (whole graph planned before it runs) |
+| 10 | Two defects found by this survey | **Yes** (a crash, a refused build) | filed as nodes | **none** — defects, not divergences to accept |
+
+A tenth line worth stating plainly: beyond #10's two, the upstream residue holds
+**85 more genuinely unclassified rows** (see `tests/make_upstream_inventory.tsv`
+and `make-upstream-residue-triage`) — real build-intent differences left
+unclassified on purpose rather than forced into narration. They are a long tail
+of individually small divergences (target/pattern-specific variable values,
+second-expansion prerequisite order, backslash-newline continuation, include
+remaking, `\#` escaping, static-pattern and vpath cases), most already tracked by
+open compiler nodes.
+
+---
+
+### 1. A shuffled order-only prerequisite is permuted apart from the rest
+
+**Owner:** `make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest`
+(open). Full evidence and the two candidate fix shapes are on that node.
+
+**What GNU does / what Ronin does.** GNU carries a target's normal and order-only
+prerequisites in ONE `->next` chain (told apart per entry by `ignore_mtime`) and
+shuffles that one chain. Ronin keeps two lists (`deps`, `order_onlys`) and
+shuffles each within itself, so the two groups never permute across each other.
+
+**Reproducer / measured.** `t: a b | c d` under `--shuffle=reverse`:
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| build order | `d c b a` | `b a d c` |
+| `$^` / `$|` | `[a b]` / `[c d]` | same |
+
+Only the order the four independent targets build in differs; the automatic
+variables agree. **Verified reachable only under the switch:** with no
+`--shuffle` and with `--shuffle=identity`, both tools build `a b c d`,
+`$^=[a b]`, `$|=[c d]`.
+
+One cell reaches an observable value, and it additionally needs a circular
+order-only prerequisite. `t: a | b t c` under `--shuffle=reverse`:
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| `$|` | `[t c]` | `[b c]` |
+
+Both drop the circular `t <- t`, both exit 0, both build the same files.
+
+**Cost to match.** Two shapes, both of which reorder edge-minting: (A) give
+`DepNode` one prerequisite list with a per-entry order-only flag (GNU's shape) —
+changes the mint order for *every* Makefile the compiler touches, which the
+equivalence gate and the inventory's compiler rows are pinned against; or (B) a
+combined walk gated on a live shuffle — contains the blast radius to shuffled
+runs at the price of two representations of one chain. The `.WAIT` barrier
+(synthesised order-only edges) has to be excluded from the shuffle either way.
+
+**Authority: none.** Open node, no ruling. This survey's line #1 is exactly what
+it asks the operator to rule on.
+
+### 2. `$(MAKEFLAGS)` hands back the text it stores
+
+**Owner:** `make-makeflags-holds-its-switches-as-literal-text` (Done).
+**Gated by:** two `divergence` sidecars —
+`tests/make/makeflags-hands-back-the-switch-text-it-stores` and
+`tests/make/a-child-keeps-a-switch-value-a-dollar-was-written-in`.
+
+**What GNU does / what Ronin does.** GNU's `define_makeflags` doubles each `$`
+and binds `MAKEFLAGS` recursively, so reading it halves the doubling again.
+Ronin reads back the text it stored. Measured with `make -I 'a$b'`:
 
 | | GNU Make 4.4.1 | Ronin |
 | --- | --- | --- |
@@ -263,149 +342,322 @@ variable expands it, which halves the doubling again. So under
 | `$(value MAKEFLAGS)` | ` -Ia$$b` | ` -Ia$$b` |
 | `$(MFLAGS)` | `-Ia$b` | `-Ia$b` |
 
-What is *stored* agrees. What reading it produces does not, and only where a
-switch value carries a literal `$` — which is `-I` and `--debug`, the two
-switches whose argument is arbitrary text.
+What is *stored* agrees; only reading `$(MAKEFLAGS)` differs, and only where a
+switch value carries a literal `$` (which is `-I` and `--debug`). The
+consequence is a data loss GNU reproduces on the way to a child: GNU expands
+`MAKEFLAGS` a second time in the child's `decode_env_switches`, reads `$b` as an
+undefined variable, and the directory arrives as `-Ia`. Ronin passes the switch
+whole.
 
-**Why the disagreement is kept.** GNU Make expands `MAKEFLAGS` twice on the way
-to a child and the second expansion destroys the switch. `target_environment`
-makes an explicit exception for this one name and expands it into the child's
-environment (` -Ia$b`); the child's `decode_env_switches` then expands
-`$(MAKEFLAGS)` *again* before splitting it into words, reads `$b` as an
-undefined variable, and the directory arrives as `-Ia`. Measured, with the
-directory present and holding an includable fragment:
+**Reachability.** Needs a literal `$` inside a published switch value. None
+exists in the build-intent corpus, the vendored kati corpus, GNU Make's own
+suite, or the Makefiles of vim 9.2, zsh 5.9.2, abseil or Ninja.
 
-| | GNU Make 4.4.1 | Ronin |
-| --- | --- | --- |
-| child `$(MAKEFLAGS)` | ` -Ia --no-print-directory` | ` -Ia$$b --no-print-directory` |
-| child `$(.INCLUDE_DIRS)` | `/usr/local/include /usr/include` | `a$b /usr/local/include /usr/include` |
-| child found the fragment | no | yes |
+**Cost to match.** Conforming on `$(MAKEFLAGS)` means reproducing GNU's
+double-expansion, i.e. reproducing the data loss in the child — which the
+dispatch judged is not compatibility of build intent.
 
-The same happens to `--debug=b$x`, which reaches the child as `--debug=b`.
+**Authority: no operator ruling.** Recorded by the delivering dispatch on
+`make-makeflags-holds-its-switches-as-literal-text`, grounded in the argument
+that "reproducing a data loss is not compatibility of build intent."
 
-Ronin expands `MAKEFLAGS` neither time: the stored text is what
-`$(MAKEFLAGS)` reads, what descends to a child, and what the child's decoder
-unquotes — one string with one meaning, and the unquoting is the exact inverse
-of the quoting that wrote it. Conforming to GNU Make on the first table would
-mean reproducing the second, and reproducing a data loss is not compatibility
-of build intent.
+### 3. An oversized recipe's marked lines do not run under `-t` or `-q`
 
-**What was checked before choosing.** The divergence needs a literal `$` inside
-a published switch value. There is none in the 932-case build-intent corpus,
-the 387-case vendored kati corpus, GNU Make's own test suite at `d66a65a`, or
-the Makefiles of vim 9.2, zsh 5.9.2, abseil or Ninja. Nothing measured here
-depends on GNU Make's spelling.
+**Owner:** `an-oversized-recipes-marked-lines-cannot-be-split-out` (Done).
+**Gated by:** `tests/shell.rs::oversized_marks_are_not_split_out` (generated
+Makefile — no corpus case, because a 120 kB Makefile echoed back would cost a
+quarter of a megabyte).
 
-**What is not part of the decision.** The quoting itself is GNU Make's and is
-matched exactly, including for `--debug`, whose argument used to be published
-raw. `$(value MAKEFLAGS)` and `$(MFLAGS)` agree with GNU Make on the switch
-table proper — `-I` and `--debug` — and on command-line assignments, which both
-tools keep behind a `$(MAKEOVERRIDES)` reference;
-`a-switch-value-is-stored-in-makeflags-as-gnu-make-quotes-it` gates that.
-
-One thing that looks like part of it is not, and is a plain gap rather than a
-decision: GNU Make keeps `--eval` fragments behind a `$(-*-eval-flags-*-)`
-reference of their own and Ronin writes them inline, so `$(value MAKEFLAGS)`
-reads ` $(-*-eval-flags-*-)` there and ` --eval=X\ :=\ a$$b` here. The two
-agree on `$(MAKEFLAGS)` itself, because the reference names a *simple*
-variable and expanding it does not halve the fragment's `$$` either.
-`make-makeflags-keeps-its-eval-fragments-behind-a-reference` owns it.
-
-### An oversized recipe's marked lines do not run under `-t` or `-q`
-
-Owner: `an-oversized-recipes-marked-lines-cannot-be-split-out`.
-Gate: `tests/shell.rs::oversized_marks_are_not_split_out` (no corpus case — the
-Makefile is 120 kB, so the test generates it, the way `tests/shell.rs`
-generates its other oversized recipes).
-
-GNU Make runs each command line of a recipe as its own process, so a `+`-marked
-line runs even under `-t` and `-q`, where the switch stands in for the unmarked
-ones. Ronin runs a recipe line by line too — except when one line is longer
-than a shell argument list. Such a line cannot be launched on its own: it needs
-a response file, and the file is named after the edge (`<output>.rsp`), so two
-of them in one recipe would want the same name. So the whole recipe reaches one
-shell as a script read from that file, and one launch has one answer to "does
-this run anyway" — and it is no. Measured with a `+`-marked line either side of
-a 120 kB line, `goal` on the command line:
+**What GNU does / what Ronin does.** GNU runs each recipe line as its own
+process, so a `+`-marked line runs even under `-t`/`-q`. Ronin runs a recipe
+line-by-line too, except when one line exceeds the shell argument limit: such a
+line needs a response file named per edge (`<output>.rsp`), so the whole recipe
+reaches one shell as one script, and one launch has one answer to "does this run
+anyway" — and it is no. Measured with a `+`-marked line either side of a 120 kB
+line:
 
 | | GNU Make 4.4.1 | Ronin |
 | --- | --- | --- |
-| `-t` | both marked lines run, `goal` touched | `goal` touched, neither marked line runs |
+| `-t` | both marked lines run; goal touched | goal touched; neither marked line runs |
 | `-q`, marked line first | marked line runs, exit 1 | exit 1, nothing written |
 | `-q`, long line first | marked line does **not** run, exit 1 | agrees |
-| (no switch) | the whole recipe runs | agrees |
+| (no switch) | whole recipe runs | agrees |
 
-The third and fourth rows already agree: where the long line comes first, GNU's
-question stops at it before reaching the marked line, and a real build runs the
-whole recipe as one shell in both tools. The gap is exactly the marked lines a
-`-t` or a `-q` would reach past the long line.
+**Reachability.** Needs a recipe *line* over 100 kB that also holds a
+`+`/`$(MAKE)` marked line. The longest recipe line in the build-intent corpus is
+424 bytes; in the vendored kati corpus, 876 bytes; nothing in the GNU suite or
+vim/zsh reaches a kilobyte.
 
-**Why the disagreement is kept.** The sound fix is a response file named per
-*step* rather than per edge — a `PreparedStep` carrying its own, written before
-it spawns and removed after — which is a change to the build engine's
-response-file lifetime and to `take_step`, and it has to leave every Ninja edge
-exactly as it is. Splitting only under `-t` and `-q` (where the long line never
-runs, so no step needs a file) would sidestep the response file but make an
-edge's steps depend on the switch the run was started with, which is a hazard to
-own rather than a free lunch. Both are out of proportion to the shape.
+**Cost to match.** A response file named per *step* rather than per edge — a
+change to the build engine's response-file lifetime and to `take_step`, which
+has to leave every Ninja edge untouched. The `-t`/`-q`-only shortcut would make
+an edge's steps depend on the switch the run started with.
 
-**What was checked before choosing.** The divergence needs a recipe line over
-100 kB that also holds a marked line. The longest recipe line in the
-build-intent corpus is 424 bytes; the longest in the vendored kati corpus is
-876 bytes; none in GNU Make's own suite or the Makefiles of vim 9.2 or zsh
-5.9.2 reaches a kilobyte. Every one is more than two orders of magnitude below
-the threshold, so nothing measured here reaches the shape at all.
+**Authority: no operator ruling.** Recorded by the delivering dispatch, grounded
+in the reachability evidence above.
 
-**What is not part of the decision.** Marking the assembled script
-`runs_while_pretending` so that `-t`/`-q` run *all* of it is rejected for the
-reason `builtin-shell-oversized-recipe-line` rejected it, and `-q` strengthens
-the case: GNU Make runs only the marked lines it meets *before* the first
-unmarked one, and an assembled script has no "before". A composed recipe's
-short segments are a separate matter and do carry their per-line launches —
-`a-composed-recipe-segment-arrives-without-its-lines` delivered that; this is
-only the recipe held together by a single oversized line.
+### 4. A `.KATI_DEPFILE` recipe's `$(file …)` is performed where it is built
 
-### A `.KATI_DEPFILE` recipe's `$(file ...)` is performed where it is built
+**Owner:** `make-recipe-file-operation-at-launch-only` (Done).
+**Gated by:** `tests/shell.rs::a_depfile_recipe_is_read_where_it_is_built` (no
+corpus case — `.KATI_DEPFILE` is a kati extension, so GNU Make has no answer to
+record against).
 
-Owner: `make-recipe-file-operation-at-launch-only`.
-Gate: `tests/shell.rs::a_depfile_recipe_is_read_where_built` (no corpus
-case — `.KATI_DEPFILE` is a kati extension, so GNU Make has no answer to record
-a build-intent case against).
-
-GNU Make expands a recipe only when it is about to run it, so a `$(file >)`
-inside the recipe of an up-to-date target never happens. Ronin holds such a
-recipe unexpanded and expands it at launch, which puts the write where GNU Make
-puts it — for an ordinary recipe, for a `$?` recipe, and now for a grouped
-`&::` recipe. A recipe naming a depfile is the exception: it is read where it
-is built, so its `$(file ...)` is performed there even for a target that is up
-to date. Measured, with a `.KATI_DEPFILE` recipe whose target is current and
-whose recipe holds `$(file > written,made)` (GNU Make, which does not know
-`.KATI_DEPFILE`, treats it as an inert target-specific variable and runs
-nothing):
+**What GNU does / what Ronin does.** GNU expands a recipe only when about to run
+it, so a `$(file >)` in the recipe of an up-to-date target never happens. Ronin
+holds an ordinary, `$?`, or grouped `&::` recipe unexpanded and expands it at
+launch — matching GNU. A recipe naming a depfile is the exception: it is read
+where it is built (the edge has to declare the depfile it will read at runtime,
+and a deferred rule has no path to), so its `$(file …)` runs there even for a
+current target. Measured with a `.KATI_DEPFILE` recipe whose target is current
+and whose recipe holds `$(file > written,made)`:
 
 | | GNU Make 4.4.1 | Ronin |
 | --- | --- | --- |
 | `written` after the build | absent | holds `made` |
 
-**Why the disagreement is kept.** A depfile is a dependency read at runtime:
-`.KATI_DEPFILE` names it in a variable and `--detect_depfiles` finds it by
-rewriting the assembled script, but either way the edge it is read for has to
-declare it, and a deferred rule has no path to. Deferring the recipe the way
-`$?` and grouped `&::` are deferred drops that declaration, so the depfile's
-dependency is lost — a target stops rebuilding when a header the depfile lists
-changes. Making it work needs the runtime depfile machinery wired onto the
-deferred edge, which is out of proportion to a `$(file ...)` in a depfile
-recipe. So the recipe is read where it is built, and the write goes with it.
+(GNU, not knowing `.KATI_DEPFILE`, treats it as an inert target-specific
+variable and runs nothing.)
 
-**What was checked before choosing.** `.KATI_DEPFILE` and `--detect_depfiles`
-are kati extensions; no GNU makefile names either, and the build-intent corpus,
-the vendored kati corpus, and the Makefiles of vim 9.2 and zsh 5.9.2 hold no
-`$(file ...)` in a depfile recipe. `--detect_depfiles` is not even a switch
-Ronin's Make front end accepts, so only `.KATI_DEPFILE` reaches the shape at
-all.
+**Reachability.** `.KATI_DEPFILE`/`--detect_depfiles` are kati extensions;
+`--detect_depfiles` is not even a switch Ronin's Make front end accepts. No GNU
+makefile names either, and no corpus holds a `$(file …)` in a depfile recipe.
 
-**What is not part of the decision.** The depfile's *dependency* is not given
-up: a `.KATI_DEPFILE` recipe that runs still writes its depfile, whose contents
-are read and make the target rebuild when a listed prerequisite changes. That
-is the behaviour the gate pins, and it is what deferring the recipe would break
-— which is the tooth on this decision, not a side effect of it.
+**Cost to match.** Wiring the runtime depfile machinery onto a deferred edge,
+which the dispatch judged out of proportion to a `$(file …)` in a depfile
+recipe. Deferring the recipe naively was measured to break the depfile's own
+dependency (touching a listed header stopped rebuilding the target).
+
+**Authority: no operator ruling.** Recorded by the delivering dispatch.
+
+### 5. An interrupt leaves Ninja's 130, not GNU's 128 + signal number
+
+**Owner:** `make-mode-leaves-an-interrupt-with-2-where-both-references-say-130`
+(Done), with `question-mode-answers-up-to-date-after-an-interrupt` for the `-q`
+face. **Gated by:** `tests/interrupts.rs` (e.g. `make_termination_leaves_ninjas_status`).
+
+**What GNU does / what Ronin does.** GNU catches a fatal signal, kills its
+children, withdraws the target, and then dies of the signal — so its exit is
+128 + the signal number. Ronin leaves Ninja's fixed interrupt code, 130, for
+every interrupt, without re-raising. Measured, each tool signalled on itself
+mid-recipe, through `scripts/sandboxed`:
+
+| signal | GNU Make 4.4.1 | Ronin | target |
+| --- | --- | --- | --- |
+| SIGINT | 130 | 130 | deleted, in both |
+| SIGTERM | **143** | **130** | deleted, in both |
+| SIGHUP | **129** | **130** | deleted, in both |
+
+SIGINT happens to agree on the number; SIGTERM and SIGHUP diverge. The files
+agree in every case. (The number also agrees on SIGINT while the *mechanism*
+differs — GNU re-raises, Ronin does not — which is the same trade one level up.)
+
+**Reachability.** **Yes** — any real build killed by SIGTERM (or SIGHUP/SIGQUIT)
+leaves a different exit code than GNU. This is the one divergence in this survey
+that an ordinary, un-fringe build reaches.
+
+**Cost to match.** Re-raising the signal in Make mode and not in Ninja mode —
+runtime emulation in the one front end that exists to avoid it. The two modes
+share one interrupt path.
+
+**Authority: a spec rule, not a direct operator ruling.**
+`[spec:ronin:req:product.build-outcome]` states it verbatim: *"an interrupt
+leaves with Ninja's 130 rather than re-raising the signal, so the status does
+not depend on how far the build had got; C samurai re-raised here, and Ninja is
+the contract."* The Make-mode delivery (2026-08-22) applied that rule; the
+divergence from GNU's 143 is stated by the gate `make_termination_leaves_ninjas_status`.
+No operator ruling names SIGTERM specifically.
+
+### 6. `-n` does not run a `+`-marked or `$(MAKE)`-referencing recipe line
+
+**Owner:** `make-recipe-dry-run` (Done). **Gated by:** the discovery-only cases
+`tests/make/dry-run-skips-a-plus-line` and
+`tests/make/dry-run-skips-a-make-reference-line` (in `DISCOVERY_ONLY_CASES`).
+
+**What GNU does / what Ronin does.** GNU runs a `+`-marked line, and a line whose
+unexpanded text names `$(MAKE)`, even under `-n` — because starting the child is
+the only way GNU can learn what the child would do. Ronin compiled the child
+into the graph, so its `-n` is Ninja's: print the commands, run none of them.
+Measured under `-n`:
+
+| makefile | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| `all:` / `+echo plus > plus` | writes `plus` | writes nothing |
+| a line running `$(MAKE)`-named text | runs it (writes its file) | writes nothing |
+
+The recursive-`$(MAKE)` case where the child is a real sub-make agrees (Ronin
+walks the composed child's edges), which is why this is only ever about a
+`+`/`$(MAKE)` line that is *not* a sub-make.
+
+**Reachability.** Only under `-n` (or `-n -t`) with such a line. A real build
+without `-n` runs everything in both tools.
+
+**Cost to match.** Would require an executor-side Make exception that launches a
+child during `-n` — which is exactly the `DRY_RUN_COMMAND` the compiler-boundary
+removal deleted.
+
+**Authority: a dispatch decision, no operator ruling.** `make-recipe-dry-run`,
+2026-08-08: *"Dry-run spellings are interface controls mapped onto the ordinary
+Ninja dry-run path. Plus-prefixed recursive Make lines are compiler inputs for
+subninja composition, not an exception that launches a child Make during
+dry-run."* The completion note (2026-08-09) adds: *"The `+` prefix on a line
+that is not Make loses its GNU effect, and that is the decision rather than an
+oversight."*
+
+### 7. An output's directory is created where GNU Make would leave it to the recipe
+
+**Owner:** `make-an-output-directory-is-created-where-gnu-make-would-refuse`
+(retired as a recorded intentional divergence — no code, no gate, and until now
+not in this doc). **Gated by:** nothing.
+
+**What GNU does / what Ronin does.** Ninja creates an edge's output directory
+before launching the command, and Ronin runs Make's recipes through Ninja's
+launcher, so it does too. GNU leaves `$@`'s directory to the recipe. Where the
+name is free the two agree; where the name is taken by a non-directory, they
+part. Measured, with `afile` an ordinary file:
+
+```
+all: ; @echo "all X=$(X)"
+afile/one.mk: ; @echo GEN; rm -f afile; mkdir afile; echo X=1 > afile/one.mk
+include afile/one.mk
+```
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| result | `GEN`, `all X=1`, exit 0 (the recipe cleared the file, made the dir, read the fragment) | `ronin: build stopped: File exists.` + `Makefile:3: afile/one.mk: Not a directory`, exit 2 |
+
+**Reachability.** **Yes** in principle — any recipe whose first job is to arrange
+its own output directory (replacing a file with a directory of the same name is
+the shape that reaches it). Nothing in any corpus depends on either answer,
+which is why it surfaced from a hand probe rather than a gate.
+
+**Cost to match.** A per-edge property the Make sink sets and the manifest parser
+leaves off — which
+`plan/decisions/make-compiles-to-ninja.md` and `docs/make-compiler-boundary-audit.md`
+forbid: "do not create my output's directory" is not a Ninja graph idiom, and an
+edge property that exists only to make the executor behave differently because
+the graph came from a Makefile is Make provenance in the graph.
+
+**Authority: a dispatch decision, citing the boundary and an operator ruling by
+analogy.** Recorded by the dispatch that retired the node (2026-08-19), grounded
+in the compiler-boundary audit and pointing at the narration operator ruling
+(below) — but there is **no operator ruling on directory creation itself**. If
+reopened it should be a `plan/decisions`-level question about who owns an
+output's directory for *every* front end, not a Make special case.
+
+### 8. Recursive keep-going choreography differs (recursive Make is one graph)
+
+**Surfaced by:** `tests/make/makeflags-keep-going-precedence` (in
+`DISCOVERY_ONLY_CASES`). **Owner:** the architecture of
+`make-single-ninja-scheduler` / `make-subninja-recursion` — recursive `$(MAKE)`
+invocations compile into one graph with one scheduler, so there is no child Make
+runner in which GNU's per-child keep-going choreography could occur.
+
+**What GNU does / what Ronin does.** A parent whose recipe is
+`-@$(MAKE) -S -f stop.mk` then `-@$(MAKE) -k -f go.mk` reaches two separate GNU
+processes: the first takes `-S` (stop at the first failure), the second takes
+`-k` (carry on to the target beside the failure). Measured:
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| files written | `went` only | `stopped` only |
+| exit | 0 (both lines `-@`-ignored) | 2 |
+
+Because Ronin composes both sub-makes into one graph with one scheduler, the
+`-S`/`-k` precedence across the composed boundary does not reproduce GNU's
+per-process choreography.
+
+**Reachability.** **Yes** — a recursive build that relies on different keep-going
+settings per child, under `-k`, can build different files and exit differently.
+
+**Cost to match.** Would require Ronin to preserve a per-child keep-going policy
+across composition — i.e. to schedule composed sub-makes as if they were
+separate runners, which is the recursive-jobserver model
+`make-single-ninja-scheduler` replaced with one scheduler.
+
+**Authority: architecture, no operator ruling.** This is a documented consequence
+of compiling recursive Make into one graph. The `make_port` harness records it as
+discovery-only precisely because "recursive Make invocations compile into one
+graph, so there is no child Make runner in which that choreography could occur."
+
+### 9. `-W` over a double-colon chain refuses before the chain's work runs
+
+**Surfaced by:** `tests/make/a-what-if-file-that-is-double-colon-refuses-after-the-chain-ran`
+(in `DISCOVERY_ONLY_CASES`). **Owner:** the architecture that plans the whole
+graph before running any of it.
+
+**What GNU does / what Ronin does.** GNU updates a `::` chain entry by entry and
+meets a recipe-less entry (always out of date) as it walks, so a `::` rule with
+work to do RUNS, and the run is refused only afterwards. Ronin plans the whole
+graph before any of it runs, so the refusal comes first and the work never
+happens. Measured with `-W out` over a `::` chain:
+
+| | GNU Make 4.4.1 | Ronin |
+| --- | --- | --- |
+| ran `touch out`? | yes — `out` written | no |
+| then | `*** No rule to make target 'out'.` exit 2 | `ronin: No rule to make target 'out'.` exit 2 |
+
+Both refuse, both leave the dependent alone; only whether the chain's own work
+ran first differs.
+
+**Reachability.** Only under the `-W`/`-t` family over a double-colon chain whose
+refusal falls after work — a fringe shape.
+
+**Cost to match.** Would require running part of a graph before the plan is
+complete — against Ronin's plan-then-run model, which hands a finished plan to a
+frontend and must not hand it a partial one.
+
+**Authority: architecture, no operator ruling.** A consequence of planning the
+whole graph before running it.
+
+### 10. Two defects this survey found (filed as nodes, not accepted)
+
+These are not deliberate divergences; they are bugs, found while surveying the
+upstream residue for `make-upstream-residue-triage`, and filed as nodes.
+
+**A crash.** `make-a-define-directive-whose-name-reads-as-an-assignment-panics`.
+`define = x` (a `define` directive whose remainder reads as an assignment) makes
+Ronin panic (`kati/src-rs/parser.rs:1125`, `assertion failed: sep != 0`, exit
+101) where GNU builds cleanly. A panic reachable from a plain makefile line.
+
+**A refused build.**
+`make-a-command-line-assignment-with-an-unterminated-reference-is-refused`.
+`make 'hello=$(world'` over `all:; $(info good)` — GNU stores the unused value
+and builds; Ronin refuses with `unterminated variable reference.` because it
+reads the command-line assignment's value eagerly.
+
+**Authority: none — these are defects to fix, not divergences to accept.**
+
+---
+
+### What was ruled to be implemented rather than diverge
+
+Two genuine operator rulings exist, both 2026-08-17, and both point the *other*
+way — toward conformance — so they are recorded here for completeness, to show
+where the line has actually been drawn by the operator rather than by a dispatch.
+
+**`-t`, `-B`, `-W` are implemented, not accepted no-ops.** Operator decision,
+Brendan, 2026-08-17, explicit (on `make-archive-member-touch`): *"implement `-t`
+fully. This reverses the accept-without-emulation disposition recorded for
+`make-option-touch-and-what-if`."* The reason given: `-t` "decides what the run
+writes to disk, and filesystem effects ARE a conformance criterion under
+`[spec:ronin:req:make.semantics+1]`." A second ruling the same day scoped it:
+*"the BEHAVIOUR lands as specified, the NARRATION does not"* — so a touched edge
+is reported by the ordinary `[N/M]` progress line and GNU's `touch <file>`
+stdout is not reproduced. `-B` and `-W` followed on the same criterion. So these
+switches are **not** divergences: Ronin matches GNU's filesystem effect (the two
+oversized/`-n` divergences above are the only residue).
+
+**Make-voiced runtime output is narration, and the runtime speaks Ninja.**
+Operator decision, Brendan, 2026-08-17, explicit (on
+`make-narration-contract-audit`): *"the runtime speaks Ninja; Make-voiced output
+is legitimate ONLY where a failure must be reported at all, and then in Ronin's
+established diagnostic shape — never as optional runtime chatter mimicking
+GNU."* This is the authority for treating GNU's success-path and progress
+chatter — `pattern recipe did not update peer target`, `*** Deleting file`,
+jobserver-mode warnings, `touch <file>`, `Entering/Leaving directory`,
+up-to-date announcements — as narration Ronin declines rather than as
+divergences of build intent. It is why those lines are recognised families in
+`tests/make_upstream_inventory.tsv` rather than open divergences, and it governs
+divergence #7 above by analogy (the same boundary decides output-directory
+creation), though it does not name that case.

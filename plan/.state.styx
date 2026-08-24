@@ -897,6 +897,7 @@ assertions (
     {id make-a-posix-target-is-read-where-it-is-written, kind @complete, author "brendan@necessary.nu", at 2026-08-24T07:29:20.545143401Z}
     {id make-an-environment-option-stream-is-expanded-before-it-is-split, kind @complete, author "brendan@necessary.nu", at 2026-08-24T08:32:04.195843423Z}
     {id make-upstream-residue-triage, kind @complete, author "brendan@necessary.nu", at 2026-08-24T09:15:35.189116612Z}
+    {id make-consolidated-oracle-divergence-survey, kind @complete, author "brendan@necessary.nu", at 2026-08-24T09:22:34.0166559Z}
 )
 
 impl_evidence (
