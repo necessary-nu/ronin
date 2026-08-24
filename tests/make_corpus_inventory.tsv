@@ -22,7 +22,6 @@
 
 family	build-order	the two tools schedule an order-only prerequisite at different points, so the recipe echoes interleave differently.
 family	corpus-todo	the corpus annotates the case with a leading # TODO, which is how the vendored harness recorded that kati does not match GNU Make here.
-family	corpus-version-gate	the case gates its expectation on $(filter 4.2%,$(MAKE_VERSION)), so moving the oracle off the vendored harness's 4.2.1 pin changes which branch GNU Make takes.
 family	dependent-attribution	kati names the goal rather than the rule that actually wanted the missing prerequisite.
 family	error-location	GNU Make 4.0+ names the makefile line inside *** [Makefile:N: target] Error N; kati writes only the target.
 family	evaluation	the makefile evaluates to something else: a different value, a different rule chosen, or a directive kati does not implement.
@@ -45,7 +44,6 @@ case	err_semicolon3.mk#default	defect	exit-status+stop-suffix+recipe-wording	f05
 case	err_semicolon4.mk#default	defect	exit-status+stop-suffix+recipe-wording	55be7a894c85f101
 case	fail_ignore_error.mk#test	defect	exit-status+identity-prefix+error-location	b7dbcb23b62bb0d8
 case	fail_subshell_in_recipe.mk#test	defect	exit-status+identity-prefix+error-location	b7dbcb23b62bb0d8
-case	file_func.sh#script	artefact	corpus-version-gate	bf768fc09971a5f6
 case	ignore_error.mk#test	defect	identity-prefix+error-location	a7a1c3b1ed8e8e57
 case	implicit_pattern_rule_warn.sh#script	extension	kati-extension	254724fe0651e623
 case	multi_rule_order_only.mk#test2	defect	build-order	1bb6f2cdc5e12f75
@@ -59,7 +57,6 @@ case	real_no_cmds_or_deps.sh#script	extension	kati-extension	52adfb2961ded527
 case	real_to_phony.sh#script	extension	kati-extension	a95e71a768400f2d
 case	recursive_self_reference.mk#default	defect	exit-status+stop-suffix	6999fe4ee4b0a2c7
 case	segfault_stack_overflow.sh#script	defect	exit-status+stop-suffix	5a04c69ebe6a42ab
-case	shellstatus_in_rule.mk#test	extension	kati-extension	3c32c2b9f1f3cf9d
 case	silent_ignore_error.mk#test	defect	identity-prefix+error-location	ca3a2f47b2c7169c
 case	suffix_rule_warn.sh#script	extension	kati-extension	49f6c8102c13451f
 case	top_level_phony.sh#script	extension	kati-extension	1c3662df94de401b

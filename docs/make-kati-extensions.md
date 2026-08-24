@@ -133,9 +133,9 @@ Every other operator in the table is GNU's: `=`, `:=`, `::=`, `:::=`, `+=`,
 
 ### The `KATI` variable
 
-kati's bootstrap makefile sets `KATI?=ckati`, and `ifdef KATI` is how the
-vendored corpus asks which tool is running it. It is not a name GNU Make defines.
-*Pending.*
+kati's bootstrap makefile set `KATI?=ckati`, and `ifdef KATI` is how the vendored
+corpus asked which tool was reading it. It is not a name GNU Make defines.
+**Removed.**
 
 ### Directives and syntax
 
@@ -223,3 +223,31 @@ written through a computed name, which is the readonly rule under another name.
 `extension`, family `kati-extension`, and they are exactly the nine deleted
 cases. No case that tests Make semantics moved, and nothing that was identical
 stopped being identical.
+
+### The `KATI` variable (2026-08-24)
+
+**Removed outright** — one line out of the bootstrap makefile kati reads before
+the real one.
+
+**Corpus, and this one is the interesting case: nothing was deleted.** Three
+cases used `ifdef KATI`, and all three gate a GNU Make feature rather than an
+extension, so all three had the gate deleted and now run their real branch on
+both tools:
+
+- `file_func.sh` used `ifdef KATI` *or* `$(filter 4.2%,$(MAKE_VERSION))` to
+  decide whether `$(file …)` exists at all. Both tools are 4.4.1 and both have
+  it, so the gate could only ever send GNU Make down the "pretend the answer"
+  path. Un-gated, the two agree byte for byte.
+- `ninja_regen_filefunc_read.sh` used it for the same reason, around a
+  `$(file <…)` the regeneration test needs.
+- `shellstatus_in_rule.mk` used it to choose between running `.SHELLSTATUS`
+  inside a rule and printing a canned sentence saying kati cannot. **The
+  sentence was stale.** Un-gated, kati reads `.SHELLSTATUS` inside a rule
+  exactly as GNU Make does, and the two agree byte for byte.
+
+**Conformance movement.** 356 runs, unchanged — no case was deleted. Normalised
+324 identical / 32 differing → 326 / 30; raw 275 identical → 276. Two rows left
+because the two tools now agree: `file_func.sh#script`, which was the last case
+of class `artefact` and took the `corpus-version-gate` family with it, and
+`shellstatus_in_rule.mk#test`. Two cases that tested a version gate and a
+self-report are now two cases that test Make.

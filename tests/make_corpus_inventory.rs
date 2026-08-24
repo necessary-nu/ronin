@@ -58,6 +58,23 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     assert!(!INVENTORY.contains("pending"));
     // The count is pinned so that a difference appearing or disappearing is a
     // decision somebody made rather than a number that drifted. It last moved
+    // from 32 when the `KATI` variable was removed from the product on the same
+    // ruling. kati's bootstrap set `KATI?=ckati`, and `ifdef KATI` was how the
+    // vendored corpus asked which tool was reading it. Three cases used it and
+    // NONE was deleted, because all three gate a GNU Make feature rather than an
+    // extension: `file_func.sh` and `ninja_regen_filefunc_read.sh` used it to
+    // decide whether `$(file ...)` exists, and `shellstatus_in_rule.mk` used it
+    // to choose between running `.SHELLSTATUS` inside a rule and printing a
+    // canned sentence saying kati cannot. All three had their gate deleted so
+    // the real branch always runs, and TWO ROWS LEFT BECAUSE THE TWO TOOLS NOW
+    // AGREE: `file_func.sh#script` (the last `artefact` case, which took the
+    // `corpus-version-gate` family with it, being the only case that named it)
+    // and `shellstatus_in_rule.mk#test`. The canned sentence was stale: kati
+    // reads `.SHELLSTATUS` inside a rule exactly as GNU Make does. Two cases
+    // that tested a version gate and a self-report are now two cases that test
+    // Make.
+    //
+    // Before that it moved
     // from 41 when the readonly family was removed from the product on the same
     // ruling — `.KATI_READONLY`, the `$=` final-assignment operator that is its
     // per-variable spelling, `.KATI_ALLOW_RULES` and `.KATI_SYMBOLS`. Nine rows
@@ -193,9 +210,9 @@ fn every_recorded_make_difference_is_classified_and_every_family_is_used() {
     // Before that it moved from 159, when the fatal diagnostics gained Make's
     // name and its `Stop.` and every abandoned build gained Make's exit status:
     // 66 cases became byte-identical, all of them from the defect class.
-    assert_eq!(cases.len(), 32);
+    assert_eq!(cases.len(), 30);
     assert_eq!(by_class["defect"], 17);
     assert_eq!(by_class["recorded"], 2);
-    assert_eq!(by_class["extension"], 12);
-    assert_eq!(by_class["artefact"], 1);
+    assert_eq!(by_class["extension"], 11);
+    assert_eq!(by_class.get("artefact"), None);
 }
