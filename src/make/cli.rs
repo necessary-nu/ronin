@@ -1027,13 +1027,20 @@ fn parse(
     arguments: &[BString],
     inherited: Option<&str>,
     gnumakeflags: Option<&str>,
+    diagnostics: &Arc<kati::diagnostics::Diagnostics>,
 ) -> Result<Action, Error> {
     let mut invocation = Invocation::new();
     for stream in [gnumakeflags, inherited] {
         let Some(stream) = stream else {
             continue;
         };
-        let stream = makeflags_arguments(stream);
+        // GNU Make expands each stream as makefile text before splitting it
+        // into switches, so a `$(error)` or a malformed reference in one ends
+        // the run here — before `-C`, with the environment its only scope.
+        let stream = match makeflags_arguments(stream, diagnostics) {
+            Ok(stream) => stream,
+            Err(result) => return Ok(Action::Immediate(result)),
+        };
         if let Some(action) = parse_arguments(&mut invocation, &stream, ArgumentSource::Inherited)?
         {
             return Ok(action);
@@ -1934,6 +1941,7 @@ fn compile_invocation(
         arguments,
         runner.makeflags.as_deref(),
         runner.gnumakeflags.as_deref(),
+        raised,
     )? {
         Action::Immediate(result) => {
             return Ok(CompiledInvocation {

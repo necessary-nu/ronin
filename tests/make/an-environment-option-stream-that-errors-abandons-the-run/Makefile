@@ -1,0 +1,6 @@
+# A `$(error)` raised while an environment stream is expanded ends the run
+# there and then, before `-C` has moved and before any target is considered —
+# GNU Make dies `*** the stream refused.  Stop.` with exit 2. So `ran` is never
+# written: the build the makefile describes is never reached.
+all:
+	@printf 'ran\n' > ran

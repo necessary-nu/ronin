@@ -1,0 +1,2 @@
+SHELL=/bin/sh
+MAKEFLAGS=$(shell echo -k)

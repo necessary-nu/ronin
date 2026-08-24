@@ -4,11 +4,15 @@ use super::jobserver_style::{carried_switches, unknown_jobserver_style};
 use super::{Action, Invocation, JobLimit, Switch, parse_arguments, refuse};
 use crate::Error;
 use crate::build::BuildOptions;
+use crate::cli::{PRODUCT_NAME, RunResult};
 use crate::error::CliError;
 use crate::make::Shuffle;
-use crate::util::{BString, ByteSlice};
+use crate::make::report::ABANDONED;
+use crate::util::{BString, ByteSlice, diagnostic, terminated};
 use kati::bytes::Bytes;
+use kati::diagnostics::Diagnostics;
 use kati::session::Session;
+use std::sync::Arc;
 
 /// Which of Make's option streams one word came from.
 ///
@@ -340,9 +344,31 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
 /// later word already has command-line shape, and `--` still separates
 /// assignments. Parsing this list before argv gives argv normal last-word-wins
 /// precedence while keeping one option grammar for both inputs.
-pub(super) fn makeflags_arguments(inherited: &str) -> Vec<BString> {
+pub(super) fn makeflags_arguments(
+    inherited: &str,
+    diagnostics: &Arc<Diagnostics>,
+) -> Result<Vec<BString>, RunResult> {
+    Ok(option_arguments(expanded_option_words(
+        inherited,
+        diagnostics,
+    )?))
+}
+
+/// Split the canonical `MAKEFLAGS` a makefile's own assignments left back into
+/// an argv-shaped list, without expanding it.
+///
+/// This is Ronin's own switch table read a second time, not a stream from the
+/// environment: GNU Make keeps the table it built and never hands it back to
+/// `variable_expand`, so a `$$` here is unquoted once and nothing is resolved.
+pub(super) fn evaluated_option_arguments(makeflags: &str) -> Vec<BString> {
+    option_arguments(makeflags_words(makeflags, true))
+}
+
+/// Assemble already-split option words into an argv-shaped list, applying the
+/// leading-cluster rule GNU Make gives `argv[1]` alone.
+fn option_arguments(words: Vec<String>) -> Vec<BString> {
     let mut arguments = vec![BString::from("make")];
-    for (position, word) in makeflags_words(inherited).into_iter().enumerate() {
+    for (position, word) in words.into_iter().enumerate() {
         if position == 0 && word != "--" && !word.starts_with('-') && !word.contains('=') {
             arguments.push(BString::from(format!("-{word}")));
         } else {
@@ -350,6 +376,48 @@ pub(super) fn makeflags_arguments(inherited: &str) -> Vec<BString> {
         }
     }
     arguments
+}
+
+/// Expand an environment option stream as makefile text, then split the result
+/// into words — the two halves of GNU Make's `decode_env_switches`, in that
+/// order.
+///
+/// `decode_env_switches` (main.c) never splits the environment's bytes: it
+/// hands `$(NAME)` to `variable_expand` and splits the RESULT, so
+/// `MAKEFLAGS='$(subst X,-,Xk)'` is `-k` and a `$(FOO)` resolves against the
+/// environment. The expansion is the bootstrap evaluator standing before switch
+/// decode — everything a session needs to construct itself (`-C`, `-f`, `-r`,
+/// `-R`, `--eval`) comes out of this same stream, so the names in scope are the
+/// environment's alone. A `$(warning)` reports through `diagnostics`; a
+/// `$(error)` and a malformed reference end the run with a refusal, as GNU
+/// Make's do here before `-C` has moved.
+///
+/// A stream with no `$` cannot expand to anything but itself, so it skips the
+/// evaluator and its whole environment load — the overwhelmingly common case
+/// stays exactly the split it always was. When the stream IS expanded, the
+/// split no longer halves `$$`: the expansion already did, and halving a second
+/// time would turn a directory's doubled dollar into a lost one. This is where
+/// the recorded literal-text divergence stays put — a value a Make WROTE
+/// travels as before, because Ronin still exports the stored text; only a
+/// hand-written reference decodes differently now, exactly as GNU Make's does.
+fn expanded_option_words(
+    inherited: &str,
+    diagnostics: &Arc<Diagnostics>,
+) -> Result<Vec<String>, RunResult> {
+    if !inherited.contains('$') {
+        return Ok(makeflags_words(inherited, true));
+    }
+    let expanded = kati::evaluate::expand_environment_option_stream(
+        None,
+        inherited.as_bytes(),
+        Arc::clone(diagnostics),
+    )
+    .map_err(|failure| RunResult {
+        stdout: Vec::new(),
+        stderr: terminated(diagnostic(PRODUCT_NAME, failure)),
+        exit_code: ABANDONED,
+    })?;
+    Ok(makeflags_words(&String::from_utf8_lossy(&expanded), false))
 }
 
 /// Turn the evaluated right-hand side of a Makefile `MAKEFLAGS` assignment
@@ -383,7 +451,7 @@ fn assigned_makeflags_arguments(value: &str) -> Result<MakeflagsWords, String> {
         arguments: vec![BString::from("make")],
         assignments: Vec::new(),
     };
-    for (position, word) in makeflags_words(value).into_iter().enumerate() {
+    for (position, word) in makeflags_words(value, true).into_iter().enumerate() {
         if word == "--" {
             continue;
         }
@@ -506,7 +574,7 @@ pub(super) fn decode_makefile_makeflags(
 /// `--shuffle` naming no mode — has to survive being read back here too.
 pub(super) fn evaluated_invocation(makeflags: &str) -> Result<Invocation, Error> {
     let mut invocation = Invocation::new();
-    let arguments = makeflags_arguments(makeflags);
+    let arguments = evaluated_option_arguments(makeflags);
     match parse_arguments(&mut invocation, &arguments, ArgumentSource::Makefile)? {
         None => Ok(invocation),
         Some(_) => Err(CliError::InvalidParameter {
@@ -557,7 +625,13 @@ pub(super) fn evaluated_build_options(
 /// `MAKEFLAGS=-I  -R` hands it `-R`. Dropping the empty word instead would turn
 /// the first into a switch missing its argument, which is a different
 /// complaint and, from a makefile's own write, a different outcome.
-fn makeflags_words(inherited: &str) -> Vec<String> {
+///
+/// `halve_dollars` is whether a doubled `$` collapses to one here. It does for
+/// a value that has not been through the evaluator — the halving is the inverse
+/// of the doubling `quote_for_makeflags` wrote — and it does NOT for one an
+/// environment stream already expanded, where the evaluator halved it once and
+/// a second pass would lose the byte a directory's `$$` stood for.
+fn makeflags_words(inherited: &str, halve_dollars: bool) -> Vec<String> {
     let bytes = inherited.as_bytes();
     let mut index = 0;
     while index < bytes.len() && bytes[index].is_ascii_whitespace() {
@@ -575,7 +649,7 @@ fn makeflags_words(inherited: &str) -> Vec<String> {
                 index += 1;
                 word.push(bytes[index]);
             }
-            b'$' if bytes.get(index + 1) == Some(&b'$') => {
+            b'$' if halve_dollars && bytes.get(index + 1) == Some(&b'$') => {
                 index += 1;
                 word.push(b'$');
             }
@@ -633,11 +707,18 @@ pub(super) fn prepend_command_line_evals(
 mod tests {
     use super::makeflags_arguments;
     use crate::util::BString;
+    use kati::diagnostics::Diagnostics;
+    use std::sync::Arc;
 
     #[test]
     fn makeflags_quoting_round_trips() {
+        let diagnostics = Arc::new(Diagnostics::collected());
         assert_eq!(
-            makeflags_arguments(r"ks -- SPACE=two\ words SLASH=a\\b DOLLAR=a$$b"),
+            makeflags_arguments(
+                r"ks -- SPACE=two\ words SLASH=a\\b DOLLAR=a$$b",
+                &diagnostics
+            )
+            .unwrap(),
             [
                 BString::from("make"),
                 BString::from("-ks"),
@@ -646,6 +727,17 @@ mod tests {
                 BString::from(r"SLASH=a\b"),
                 BString::from("DOLLAR=a$b"),
             ]
+        );
+    }
+
+    /// The filed reproducer: a `$(subst)` in an environment stream is makefile
+    /// text, decoded to switches only after it is expanded.
+    #[test]
+    fn a_stream_reference_expands_before_the_split() {
+        let diagnostics = Arc::new(Diagnostics::collected());
+        assert_eq!(
+            makeflags_arguments("$(subst X,-,Xk)", &diagnostics).unwrap(),
+            [BString::from("make"), BString::from("-k")]
         );
     }
 }

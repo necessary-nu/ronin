@@ -26,7 +26,8 @@ pub(super) fn parsed_with_environment(
         .iter()
         .map(|argument| BString::from(*argument))
         .collect::<Vec<_>>();
-    match parse(&arguments, inherited, gnumakeflags).unwrap() {
+    let diagnostics = std::sync::Arc::new(kati::diagnostics::Diagnostics::collected());
+    match parse(&arguments, inherited, gnumakeflags, &diagnostics).unwrap() {
         Action::Execute(invocation) => *invocation,
         Action::Immediate(_) => panic!("these arguments describe a build"),
     }
@@ -39,7 +40,8 @@ pub(super) fn refused(arguments: &[&str]) -> Option<String> {
         .iter()
         .map(|argument| BString::from(*argument))
         .collect::<Vec<_>>();
-    match parse(&arguments, None, None).unwrap() {
+    let diagnostics = std::sync::Arc::new(kati::diagnostics::Diagnostics::collected());
+    match parse(&arguments, None, None, &diagnostics).unwrap() {
         Action::Immediate(result) => {
             // An option Make does not know is a build it will not attempt,
             // and GNU Make abandons with two whatever the reason.
@@ -176,7 +178,8 @@ fn accepts_every_make_option_shape() {
             .iter()
             .map(|argument| BString::from(argument.as_str()))
             .collect::<Vec<_>>();
-        match parse(&arguments, inherited, None) {
+        let diagnostics = std::sync::Arc::new(kati::diagnostics::Diagnostics::collected());
+        match parse(&arguments, inherited, None, &diagnostics) {
             Ok(Action::Execute(_)) => true,
             Ok(Action::Immediate(result)) => result.exit_code == 0,
             Err(_) => false,

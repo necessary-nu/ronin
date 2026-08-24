@@ -1,0 +1,14 @@
+# A `$(warning)` raised while an environment stream is expanded is not fatal:
+# GNU Make reports it — with no makefile location, since there is no makefile
+# yet — and carries on to split the rest of the value into switches. So the
+# `-k` after it still arrives, and `good` runs after `bad` fails.
+#
+# The warning text itself is the runtime's to render and is not what this case
+# gates; the switch surviving it is.
+all: bad good
+
+bad:
+	@exit 1
+
+good:
+	@printf 'the switch survived the warning\n' > kept-going

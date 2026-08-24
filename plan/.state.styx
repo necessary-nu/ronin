@@ -893,6 +893,7 @@ assertions (
     {id ronin-regeneration-progress-total, kind @complete, author "brendan@necessary.nu", at 2026-08-24T05:49:03.533332093Z}
     {id ronin-dyndep-diagnostic-context, kind @complete, author "brendan@necessary.nu", at 2026-08-24T06:16:56.506076954Z}
     {id make-a-posix-target-is-read-where-it-is-written, kind @complete, author "brendan@necessary.nu", at 2026-08-24T07:29:20.545143401Z}
+    {id make-an-environment-option-stream-is-expanded-before-it-is-split, kind @doing, author "brendan@necessary.nu", at 2026-08-24T07:44:25.993122929Z}
 )
 
 impl_evidence (

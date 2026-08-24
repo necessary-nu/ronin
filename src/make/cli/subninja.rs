@@ -34,8 +34,13 @@ pub(in crate::make) fn compile(
         .rev()
         .find(|(name, _)| name == GNUMAKEFLAGS)
         .map(|(_, value)| value.to_string_lossy().into_owned());
-    let invocation = match parse(&words, inherited, gnumakeflags.as_deref())
-        .map_err(|error| MakeError::Evaluate(error.to_string()))?
+    let invocation = match parse(
+        &words,
+        inherited,
+        gnumakeflags.as_deref(),
+        &parent.diagnostics,
+    )
+    .map_err(|error| MakeError::Evaluate(error.to_string()))?
     {
         Action::Execute(invocation) => *invocation,
         Action::Immediate(result) => {

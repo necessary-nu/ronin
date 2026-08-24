@@ -1,0 +1,23 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 18
+| # The filed reproducer: an environment MAKEFLAGS is makefile TEXT, expanded
+| # before it is split into switches.
+| #
+| # GNU Make's `decode_env_switches` (main.c) builds `$(MAKEFLAGS)`, hands it to
+| # `variable_expand`, and only then splits the result into words. So the value
+| # `$(subst X,-,Xk)` decodes to `-k` — a reader that never expands it dies on
+| # `invalid option -- '$'` instead.
+| #
+| # The `-k` is the whole point of the case: with the stream expanded, `good`
+| # still runs after `bad` fails and `kept-going` is written; without it the
+| # build stops at the first failure and the file is never there.
+| all: bad good
+| 
+| bad:
+| 	@exit 1
+| 
+| good:
+| 	@printf 'the stream expanded to -k\n' > kept-going
+file kept-going touched 1
+| the stream expanded to -k
