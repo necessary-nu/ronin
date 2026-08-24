@@ -15,9 +15,9 @@ released source.
 
 The last section is about a fifth kind of disagreement — Ronin against all four
 builds of GNU Make. It began as a survey for the operator to rule on. On
-2026-08-24 he ruled on **every one of its ten numbered sections** — two of them
-ruled closed and fixed, one whose conditional ruling failed its condition and is
-therefore filed as a defect rather than accepted:
+2026-08-24 he ruled on **every one of its ten numbered sections** — three of them
+no longer divergences at all, and one whose conditional ruling failed its
+condition and is therefore filed as a defect rather than accepted:
 [where Ronin diverges from the oracle](#where-ronin-diverges-from-the-oracle).
 
 ## The oracle
@@ -252,18 +252,18 @@ ruled on seven of the ten numbered sections — #2, #3, #5, #7, #8, #9 and #10.
 Later the same day he ruled on the two he had left — **#1** (*"leave it."*) and
 **#6** (*"sounds like a bug in GNU, fuck GNU."*) — and confirmed the SIGQUIT
 carve-out inside #5 with the word *"exit 1"*. **#4** is the tenth, and his ruling
-on it is not a sentence about it: its only trigger is `.KATI_DEPFILE`, and on the
-same day he ruled *"fuck kati extensions"* — remove them from the product. A
+on it is not a sentence about it: its only trigger was `.KATI_DEPFILE`, and on
+the same day he ruled *"fuck kati extensions"* — remove them from the product. A
 divergence whose entry point no makefile can name is not one to accept or to
-repair; it is one that goes with the surface.
+repair; it is one that goes with the surface, and it did, the same day.
 
 So **every numbered section below carries an operator ruling**, each quoted
 verbatim with its date on the section's **Authority** line. That is a statement
-about authorship, not about approval: two of the ten (**#5**, **#7**) were ruled
-*closed* and the code was changed to match GNU Make, so they are no longer
-divergences at all, and one (**#8**) is not accepted either — his ruling on it
-was *conditional*, the condition was measured, and it failed, so #8 is filed as
-a defect to fix.
+about authorship, not about approval: **three** of the ten (**#4**, **#5**, **#7**)
+are no longer divergences at all — two ruled *closed* with the code changed to
+match GNU Make, and one whose trigger was deleted with the kati extensions — and
+one (**#8**) is not accepted either: his ruling on it was *conditional*, the
+condition was measured, and it failed, so #8 is filed as a defect to fix.
 
 How it got here is worth keeping, because it is the reason the document exists.
 Until 2026-08-24 this section carried the sentence *"nothing below should be read
@@ -283,7 +283,7 @@ on 2026-08-24.
 | 1 | A shuffled order-only prerequisite is permuted apart from the rest | No — only under `--shuffle`, plus one `$|` cell needing a cycle | 2 `divergence` sidecars in `make_port` | **operator, 2026-08-24**: *"leave it."* |
 | 2 | `$(MAKEFLAGS)` hands back the text it stores | Only where a switch value holds a literal `$` | 2 `divergence` sidecars + this doc | **operator, 2026-08-24**: *"We keep our behaviour."* |
 | 3 | An oversized recipe's marked lines do not run under `-t`/`-q` | No — needs a recipe line over 100 kB | `tests/shell.rs::oversized_marks_are_not_split_out` | **operator, 2026-08-24**: *"lol not a real problem."* |
-| 4 | A `.KATI_DEPFILE` recipe's `$(file …)` runs where it is built | No — `.KATI_DEPFILE` is a kati extension no GNU makefile names | `tests/shell.rs::a_depfile_recipe_is_read_where_it_is_built` | **operator, 2026-08-24**: *"fuck kati extensions"* — the trigger goes, so the divergence goes with it |
+| 4 | ~~A `.KATI_DEPFILE` recipe's `$(file …)` runs where it is built~~ **GONE** | was No — `.KATI_DEPFILE` was a kati extension no GNU makefile names | the extension is removed, so nothing reaches it | **operator, 2026-08-24**: *"fuck kati extensions"* — the trigger went, and the divergence went with it |
 | 5 | ~~An interrupt leaves Ninja's 130, not GNU's 128+signum~~ **FIXED** | was **Yes** | `tests/interrupts.rs`; `product.build-outcome+1` | **operator, 2026-08-24**: *"I think ronin should actually follow the GNU case even for ninja."* |
 | 6 | `-n` does not run a `+`-marked or `$(MAKE)`-referencing line | Only under `-n` with such a line | `DISCOVERY_ONLY_CASES` in `make_port` | **operator, 2026-08-24**: *"sounds like a bug in GNU, fuck GNU."* |
 | 7 | ~~An output's directory is created where GNU leaves it to the recipe~~ **FIXED** | was **Yes** | 4 corpus fixtures + a kati unit pair | **operator, 2026-08-24**: *"Make's rule applies when run as make."* |
@@ -453,14 +453,26 @@ an edge's steps depend on the switch the run started with.
 reading: a recipe line over 100 kB that also carries a `+`/`$(MAKE)` line does
 not exist in any corpus, and the longest line measured anywhere is 876 bytes.
 
-### 4. A `.KATI_DEPFILE` recipe's `$(file …)` is performed where it is built
+### 4. A `.KATI_DEPFILE` recipe's `$(file …)` is performed where it is built — **GONE 2026-08-24**
+
+**No longer reachable.** `.KATI_DEPFILE` was removed from the product on the
+operator's ruling of the same day — *"fuck kati extensions"* — so there is no
+makefile text left that puts a depfile on a Make edge, and therefore no recipe
+that has to be read where it is built. Make mode now defers every recipe kind it
+ever deferred, and the `$(file …)` in every one of them is performed at launch,
+which is GNU's answer. See **[`make-kati-extensions.md`](make-kati-extensions.md)**.
+
+The gate went with it, because it was gating the extension: `tests/shell.rs::a_depfile_recipe_is_read_where_built`
+existed to pin both halves of the decision below and has nothing left to pin.
+
+The rest of this section is the record of what the divergence WAS.
 
 **Owner:** `make-recipe-file-operation-at-launch-only` (Done).
-**Gated by:** `tests/shell.rs::a_depfile_recipe_is_read_where_it_is_built` (no
-corpus case — `.KATI_DEPFILE` is a kati extension, so GNU Make has no answer to
+**Was gated by:** `tests/shell.rs::a_depfile_recipe_is_read_where_built` (no
+corpus case — `.KATI_DEPFILE` is a kati extension, so GNU Make had no answer to
 record against).
 
-**What GNU does / what Ronin does.** GNU expands a recipe only when about to run
+**What GNU does / what Ronin did.** GNU expands a recipe only when about to run
 it, so a `$(file >)` in the recipe of an up-to-date target never happens. Ronin
 holds an ordinary, `$?`, or grouped `&::` recipe unexpanded and expands it at
 launch — matching GNU. A recipe naming a depfile is the exception: it is read
@@ -490,9 +502,10 @@ extensions"* — clarified in a follow-up as: remove the kati-only extensions fr
 the product. That is a ruling on this section even though it never mentions it,
 because `.KATI_DEPFILE` is the only text that reaches this divergence. A
 divergence with no reachable trigger is not one to accept and not one to repair;
-it goes when the surface goes, and the cost paragraph above stops being a cost at
-all. What the delivering dispatch had recorded here — the wiring judgement — is
-kept below as the mechanism's rationale, not as authority.
+it goes when the surface goes, and the cost paragraph above stopped being a cost
+at all. **Delivered the same day.** What the delivering dispatch had recorded
+here — the wiring judgement — is kept above as the mechanism's rationale, not as
+authority.
 
 ### 5. An interrupt leaves Ninja's 130, not GNU's 128 + signal number — **FIXED 2026-08-24**
 

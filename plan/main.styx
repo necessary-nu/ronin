@@ -11177,6 +11177,14 @@ children (
                         kind @status
                         text "Doing → Done (nplan complete)"
                     }
+
+                    {
+                        at 2026-08-24T15:19:30.841400102Z
+                        author "brendan@necessary.nu"
+                        kind @errata
+                        text "THE DIVERGENCE THIS NODE RECORDED NO LONGER EXISTS, and it was not repaired — its trigger was deleted.\n\nSection 4 of docs/make-oracle-divergences.md recorded that a `.KATI_DEPFILE` recipe's `$(file ...)` is performed where the recipe is READ rather than where it RUNS, because the edge has to declare the depfile it will read at runtime and a deferred rule has no path to. GNU Make, not knowing `.KATI_DEPFILE`, treats it as an inert target-specific variable and performs nothing.\n\nOPERATOR RULING, Brendan, 2026-08-24: \"fuck kati extensions\" — remove the kati-only extensions from the product. `.KATI_DEPFILE` was removed the same day (see remove-the-kati-extensions-from-the-product and docs/make-kati-extensions.md), and it was the ONLY makefile text that put a depfile on a Make edge. With no such text there is no recipe that has to be read where it is built, so Make mode defers every recipe kind it ever deferred and the `$(file ...)` in every one of them is performed at launch — which is GNU's answer.\n\nTHE GATE WENT WITH IT. `tests/shell.rs::a_depfile_recipe_is_read_where_built` existed to pin both halves of the recorded decision — the depfile dependency the reading bought, and the `$(file ...)` write at construction it cost — and has nothing left to pin. `::a_depfile_recipe_launches_per_line` and the make_port fixture `feature-vpath-a-depfile-recipe-spells-the-found-name` went for the same reason. That is a gate deleted because it was testing the extension rather than the product, and it is reported as such rather than quietly dropped.\n\nWHAT THIS NODE STILL OWNS is intact and still gated: an ordinary, a `$?`, and a grouped `&::` recipe are all held unexpanded and expanded at launch, matching GNU."
+                        after_done true
+                    }
                 )
             }
 
@@ -17241,6 +17249,7 @@ children (
                 id remove-the-kati-extensions-from-the-product
                 title "Remove the kati-only extensions from the product"
                 kind @refactor
+                sealed true
                 log (
                     {
                         at 2026-08-24T13:55:00.037009748Z
@@ -17254,6 +17263,20 @@ children (
                         author "brendan@necessary.nu"
                         kind @status
                         text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-24T15:19:55.541622643Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "DELIVERED WHOLE. Every makefile-visible kati extension is gone from the product, in four commits, each with its corpus movement audited by name.\n\n  1. the twelve KATI_* builtin functions          kati 0b4b3c9 / ronin 573a453\n  2. the readonly family: .KATI_READONLY, $=,\n     .KATI_ALLOW_RULES, .KATI_SYMBOLS             kati 7731bd8 / ronin 5a08bfd\n  3. the KATI variable                            kati 8ea644e / ronin a825f2d\n  4. the six .KATI_* Ninja-edge target variables  kati cf3af0b / ronin 0ce81c1\n\nCONFORMANCE, the whole movement in one place. The vendored kati corpus goes 387 runs to 349; normalised 336 identical / 51 differing to 326 / 28; raw 286 identical to 276. THE IDENTICAL COUNT WENT DOWN BY TEN AND THE DIFFERING COUNT BY TWENTY-THREE, so the corpus got smaller and what is left agrees more often. Forty-three cases were deleted and every one was audited by name; twenty-three inventory rows left and EVERY ONE was class `extension`, family `kati-extension`, except `file_func.sh#script`, which was the last `artefact` case and left because the two tools started AGREEING. Nothing that was byte-identical stopped being so. The `kati-extension` family went 31 rows to 9, and the nine that remain are all kati-only SWITCHES rather than makefile syntax.\n\nFour cases were rewritten rather than deleted, because half of each was always about Make: foreach.mk (keeps GNU's $(foreach)), variables.mk (keeps .VARIABLES), ninja_regen.sh (keeps the regeneration test), file_func.sh + ninja_regen_filefunc_read.sh + shellstatus_in_rule.mk (all three lost an `ifdef KATI` gate that was standing in front of a GNU feature).\n\nWHAT WAS NOT REMOVED, and it is a judgement worth the operator's eye: every kati-only COMMAND-LINE SWITCH. Ronin's make builds its Flags by hand and refuses any long option it does not know, so --detect_depfiles, --regen, --use_find_emulator, --warn_*/--werror_*, --writable, --default_pool and the rest are unreachable from the product. They reach only rkati, which is the evaluator with nothing else on top and exists so the conformance gate can measure evaluation against GNU Make — the measurement apparatus rather than the product's surface. Removing them would take the apparatus with them. Written down in docs/make-kati-extensions.md so it can be overruled.\n\nTHE ONE CAPABILITY LOSS, said plainly rather than buried. `.KATI_DEPFILE` was the only makefile text in Make mode that put a depfile on an edge, so a Make-compiled graph now reaches Ninja's dependency log by no route a Makefile can ask for. A GNU makefile says this with `-include`, which Ronin compiles, and the user-visible property is unchanged except for the one-run lag that IS GNU Make's behaviour. tests/make_state.rs was rewritten to that idiom. It also DISSOLVED divergence #4 of docs/make-oracle-divergences.md, which existed only because of that extension.\n\nFULL GATE BATTERY, all green: fmt both crates; cargo check --workspace --all-targets; workspace tests 1092 passed / 0 failed / 1 ignored; check-lints.sh EXIT 0; make_port 4/4 over 1199 cases with FIVE recorded divergences; conformance at the new baseline with no unclassified difference; equivalence 274 makefiles / 276 graphs / 56 make-rejected / 0 disagreements / 8 respellings; upstream inventory UNMOVED at 1285 rows, 57 unclassified / 0 COMPILER / 28 interface / 1200 narration, tsv byte-identical; ninja conformance 425/425 upstream plus 10 CLI, 92 build-outcome, 3 invocation, persistence and log-content; --no-default-features 836 passed / 0 failed; check-make-projects.sh all green, vim 9.2 in 18s and zsh 5.9.2 with 36 modules in 31s at -j8 on a host carrying this session's own load; check-release.sh EXIT 0 with no uncovered rules, no stale references and lint clean."
+                    }
+
+                    {
+                        at 2026-08-24T15:20:00.673750394Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
