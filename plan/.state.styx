@@ -1,6 +1,6 @@
 schema_version 7
 
-last_sync_at 2026-08-24T09:16:08.741108127Z
+last_sync_at 2026-08-24T09:22:54.049053197Z
 
 rule_versions (
     {id compat.byte-inputs, version 0}
@@ -171,6 +171,7 @@ derived_priorities (
     {id make-compiler-warnings-reach-the-sink, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-conformance-corpus, priority 3, derived_at 2026-08-04T14:40:50.111539567Z}
     {id make-conformance-oracle-identity, priority 3, derived_at 2026-08-13T14:32:14.94979399Z}
+    {id make-consolidated-oracle-divergence-survey, priority 0, derived_at 2026-08-24T09:22:54.049053197Z}
     {id make-construction-expanded-recipe-is-one-shell, priority 0, derived_at 2026-08-19T17:26:52.18798094Z}
     {id make-continuation-expansion, priority 3, derived_at 2026-08-11T14:15:42.552641851Z}
     {id make-corpus-host-make-shellout, priority 0, derived_at 2026-08-16T19:30:41.207932258Z}
