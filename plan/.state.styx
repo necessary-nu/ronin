@@ -936,6 +936,7 @@ assertions (
     {id make-an-empty-static-pattern-prerequisite-is-not-an-empty-path, kind @doing, author "brendan@necessary.nu", at 2026-08-24T21:42:06.200358354Z}
     {id make-second-expansion-sees-target-and-pattern-specific-variables, kind @doing, author "brendan@necessary.nu", at 2026-08-24T22:17:31.024824799Z}
     {id make-a-link-rule-does-not-inherit-the-compile-rules-source, kind @doing, author "brendan@necessary.nu", at 2026-08-24T22:44:08.130240267Z}
+    {id make-a-target-specific-export-flag-reaches-the-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-24T23:05:36.745469444Z}
 )
 
 impl_evidence (
