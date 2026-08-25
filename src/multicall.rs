@@ -120,9 +120,12 @@ pub(crate) fn select(arguments: &[BString]) -> FrontEnd {
 /// This is the frontend nsh's own `nsh-cli` is, and it is a frontend's worth of
 /// code rather than one call because nsh's surface is closed around a *typed*
 /// request: the library never parses an argument vector and never ends a
-/// process, so the invocation parse in [`shell_invocation`] and the
+/// process, so the invocation parse in `shell_invocation` and the
 /// `std::process::exit` the caller makes of this return value are both a
 /// frontend's to own. See that module for what is ported and what is declined.
+/// Named rather than linked, because the module is private: the shell's
+/// command-line grammar is this frontend's own and not part of the library's
+/// surface, which is the whole point being made here.
 // [spec:ronin:req:product.shell-identity]
 #[must_use]
 #[cfg(unix)]

@@ -932,12 +932,12 @@ assertions (
     {id make-keep-going-builds-what-it-can-past-an-unmakeable-prerequisite, kind @complete, author "brendan@necessary.nu", at 2026-08-24T12:42:28.681097696Z}
     {id make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest, kind @complete, author "brendan@necessary.nu", at 2026-08-24T13:50:50.355670116Z}
     {id remove-the-kati-extensions-from-the-product, kind @complete, author "brendan@necessary.nu", at 2026-08-24T15:20:00.673750394Z}
-    {id make-a-define-directive-whose-name-reads-as-an-assignment-panics, kind @doing, author "brendan@necessary.nu", at 2026-08-24T21:19:42.738522504Z}
-    {id make-an-empty-static-pattern-prerequisite-is-not-an-empty-path, kind @doing, author "brendan@necessary.nu", at 2026-08-24T21:42:06.200358354Z}
-    {id make-second-expansion-sees-target-and-pattern-specific-variables, kind @doing, author "brendan@necessary.nu", at 2026-08-24T22:17:31.024824799Z}
-    {id make-a-link-rule-does-not-inherit-the-compile-rules-source, kind @doing, author "brendan@necessary.nu", at 2026-08-24T22:44:08.130240267Z}
-    {id make-a-target-specific-export-flag-reaches-the-prerequisites, kind @doing, author "brendan@necessary.nu", at 2026-08-24T23:05:36.745469444Z}
-    {id make-an-eval-only-invocation-needs-no-makefile-on-disk, kind @doing, author "brendan@necessary.nu", at 2026-08-24T23:45:52.745884997Z}
+    {id make-a-define-directive-whose-name-reads-as-an-assignment-panics, kind @complete, author "brendan@necessary.nu", at 2026-08-25T00:07:15.155724388Z}
+    {id make-an-empty-static-pattern-prerequisite-is-not-an-empty-path, kind @complete, author "brendan@necessary.nu", at 2026-08-25T00:07:19.633062339Z}
+    {id make-second-expansion-sees-target-and-pattern-specific-variables, kind @complete, author "brendan@necessary.nu", at 2026-08-25T00:07:23.895553496Z}
+    {id make-a-link-rule-does-not-inherit-the-compile-rules-source, kind @complete, author "brendan@necessary.nu", at 2026-08-25T00:07:28.561437168Z}
+    {id make-a-target-specific-export-flag-reaches-the-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-25T00:07:32.656607643Z}
+    {id make-an-eval-only-invocation-needs-no-makefile-on-disk, kind @complete, author "brendan@necessary.nu", at 2026-08-25T00:07:37.933854104Z}
 )
 
 impl_evidence (
