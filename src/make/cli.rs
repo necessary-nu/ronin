@@ -296,7 +296,7 @@ const MAKE_OPTION_SURFACE: &[InterfaceOption] = &[
     InterfaceOption {
         spellings: &["--warn-undefined-variables"],
         argument: ArgumentShape::None,
-        class: OptionClass::NoOp,
+        class: OptionClass::CompilerInput,
     },
 ];
 
@@ -660,6 +660,7 @@ enum Switch {
     Silent,
     Touch,
     Trace,
+    WarnUndefinedVariables,
 }
 
 impl Switch {
@@ -715,6 +716,7 @@ impl Switch {
             b"--silent" | b"--quiet" => Self::Silent,
             b"--touch" => Self::Touch,
             b"--trace" => Self::Trace,
+            b"--warn-undefined-variables" => Self::WarnUndefinedVariables,
             _ => return None,
         })
     }
@@ -1385,6 +1387,7 @@ fn session_for(
         // one already paid for, and the compiler must keep it.
         recipes_own_output_directories: true,
         no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
+        warn_undefined_variables: invocation.given(Switch::WarnUndefinedVariables),
         environment_overrides: invocation.given(Switch::EnvironmentOverrides),
         ignore_errors: invocation.given(Switch::IgnoreErrors),
         // A fourth, and its effect on evaluation is one thing only: whether the

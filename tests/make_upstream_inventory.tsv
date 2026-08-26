@@ -989,8 +989,8 @@ case	options/shuffle.diff.8	narration	ninja-progress
 case	options/shuffle.diff.9	narration	product-name+ninja-progress
 case	options/warn-undefined-variables.diff	narration	no-work-line+up-to-date-line
 case	options/warn-undefined-variables.diff.1	narration	ninja-progress
-case	options/warn-undefined-variables.diff.2	unclassified	ninja-progress+evaluation
-case	options/warn-undefined-variables.diff.3	unclassified	no-work-line+up-to-date-line+evaluation
+case	options/warn-undefined-variables.diff.2	narration	ninja-progress
+case	options/warn-undefined-variables.diff.3	narration	no-work-line+up-to-date-line
 case	targets/DEFAULT.diff	unclassified	no-work-line+directory-announce+evaluation
 case	targets/DELETE_ON_ERROR.diff	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+delete-announce
 case	targets/DELETE_ON_ERROR.diff.1	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+delete-announce
@@ -1212,14 +1212,6 @@ case	variables/MAKEFLAGS.diff.215	narration	ninja-progress+debug-trace
 case	variables/MAKEFLAGS.diff.216	narration	ninja-progress+debug-trace
 case	variables/MAKEFLAGS.diff.217	narration	ninja-progress+debug-trace
 case	variables/MAKEFLAGS.diff.3	narration	ninja-progress
-case	variables/MAKEFLAGS.diff.53	interface	no-work-line+makeflags-content
-case	variables/MAKEFLAGS.diff.56	interface	no-work-line+makeflags-content
-case	variables/MAKEFLAGS.diff.59	interface	no-work-line+makeflags-content
-case	variables/MAKEFLAGS.diff.62	interface	no-work-line+makeflags-content
-case	variables/MAKEFLAGS.diff.84	interface	makeflags-content
-case	variables/MAKEFLAGS.diff.85	interface	makeflags-content
-case	variables/MAKEFLAGS.diff.86	interface	makeflags-content
-case	variables/MAKEFLAGS.diff.87	interface	makeflags-content
 case	variables/MAKEFLAGS.diff.88	interface	makeflags-content
 case	variables/MAKEFLAGS.diff.89	interface	makeflags-content
 case	variables/MAKEFLAGS.diff.90	interface	makeflags-content
@@ -1269,7 +1261,7 @@ case	variables/define.diff.3	narration	ninja-progress
 case	variables/define.diff.4	narration	ninja-progress
 case	variables/define.diff.5	narration	ninja-progress
 case	variables/define.diff.6	narration	product-name+fatal-decoration+shared-refusal
-case	variables/define.diff.7	unclassified	ninja-progress+evaluation
+case	variables/define.diff.7	narration	ninja-progress
 case	variables/define.diff.8	narration	ninja-progress
 case	variables/define.diff.9	narration	product-name+fatal-decoration+shared-refusal
 case	variables/flavors.diff	narration	ninja-progress

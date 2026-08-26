@@ -279,6 +279,9 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
     if invocation.given(Switch::Trace) {
         long.push(" --trace".to_owned());
     }
+    if invocation.given(Switch::WarnUndefinedVariables) {
+        long.push(" --warn-undefined-variables".to_owned());
+    }
     for option in long {
         base.push_str(&option);
     }
@@ -553,6 +556,7 @@ pub(super) fn decode_makefile_makeflags(
         environment_overrides: invocation.given(Switch::EnvironmentOverrides),
         no_builtin_rules: invocation.given(Switch::NoBuiltinRules),
         no_builtin_variables: invocation.given(Switch::NoBuiltinVariables),
+        warn_undefined_variables: invocation.given(Switch::WarnUndefinedVariables),
         include_dirs: invocation.include_dirs.clone(),
         // What this write said about a word it dropped. GNU Make prints these
         // where the decode reaches them, which is inside the assignment, so

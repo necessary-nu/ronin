@@ -3355,3 +3355,100 @@ fn make_evaluation_uses_ordinary_diagnostics() {
         assert!(!diagnostic.contains(make_only), "{diagnostic}");
     }
 }
+
+/// `--warn-undefined-variables` says so where an expansion reads a name nothing
+/// defined, and stays quiet where a name is only asked about.
+// [spec:ronin:req:make.narration+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn undefined_variables_are_warned_about_when_asked() {
+    let directory = make_case(
+        "make-warn-undefined",
+        "EMPTY =\n\
+         EREF = $(EMPTY)\n\
+         UREF = $(UNDEFINED)\n\
+         SEREF := $(EREF)\n\
+         SUREF := $(UREF)\n\
+         ASKED := $(origin NEVER) $(flavor NEVER) $(value NEVER)\n\
+         all: ; @echo ref $(EREF) $(UREF)\n",
+    );
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("--warn-undefined-variables")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{said}");
+    // The recursive assignment on line 3 expands nothing, so the two warnings
+    // are the immediate assignment that reads it and the recipe that does.
+    assert_eq!(
+        said.matches("warning: undefined variable 'UNDEFINED'")
+            .count(),
+        2,
+        "{said}"
+    );
+    assert!(said.contains("Makefile:5: warning:"), "{said}");
+    assert!(said.contains("Makefile:7: warning:"), "{said}");
+    // Asking about a name is not expanding one.
+    assert!(!said.contains("NEVER"), "{said}");
+}
+
+/// Without the switch nothing is said, and the switch reaches a child through
+/// `MAKEFLAGS` the way GNU Make sends it.
+// [spec:ronin:req:make.narration+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn the_undefined_warning_is_off_and_inherited() {
+    let directory = make_case(
+        "make-warn-undefined-off",
+        "all: ; @echo flags [$(MAKEFLAGS)] ref $(UNDEFINED)\n",
+    );
+    let silent = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&silent.stderr).contains("undefined variable"),
+        "{}",
+        String::from_utf8_lossy(&silent.stderr)
+    );
+    let asked = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("--warn-undefined-variables")
+        .output()
+        .unwrap();
+    // No letter group in front of it, so the switch table's leading space is
+    // all that separates the value from the bracket — as it is under GNU Make.
+    assert!(
+        String::from_utf8_lossy(&asked.stdout).contains("flags [ --warn-undefined-variables]"),
+        "{}",
+        String::from_utf8_lossy(&asked.stdout)
+    );
+}
+
+/// Text after the assignment on a `define` line is GNU Make's own complaint,
+/// made without stopping the read.
+// [spec:ronin:req:make.narration+1/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn extra_text_after_a_define_directive_is_named() {
+    let directory = make_case(
+        "make-define-extraneous",
+        "NAME =\n\
+         define NAME = $(NAME)\n\
+         ouch\n\
+         endef\n\
+         define QUIET =   # nothing to complain about\n\
+         fine\n\
+         endef\n\
+         all: ; @echo ok\n",
+    );
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(0), "{said}");
+    assert!(
+        said.contains("Makefile:2: extraneous text after 'define' directive"),
+        "{said}"
+    );
+    // A comment and trailing blanks are not text: the second `define` is silent.
+    assert_eq!(said.matches("extraneous text").count(), 1, "{said}");
+}
