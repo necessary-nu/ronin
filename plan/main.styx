@@ -17101,12 +17101,34 @@ children (
                 id make-a-vpath-resolved-name-keeps-its-explicit-rule
                 title "Prefer the explicit rule for a VPATH-resolved name over a pattern rule"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:40:45.719279921Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/vpath.diff.4 (suite script features/vpath:105). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — a `vpa/` directory exists and is empty; goal is `foo.x`:\n\n    VPATH = vpa\n    %.x: ; @echo pattern $@\n    vpa/foo.x: ; @echo vpath $@\n\n  GNU 4.4.1  vpath vpa/foo.x\n  Ronin      pattern foo.x\n\nGNU searches VPATH for the goal, finds that `vpa/foo.x` is a target with an EXPLICIT rule, and uses that rule — an explicit rule for the vpath-resolved name outranks a pattern rule for the bare name. Ronin does not consider the vpath-resolved name a candidate at all and falls to the pattern rule.\n\nDifferent rule, different command, different work: build intent. Owner adjacent to make-vpath-search (done) and make-vpath-gpath-output-location (done); this is the rule-search precedence those did not cover."
+                    }
+
+                    {
+                        at 2026-08-26T14:55:02.860110076Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T14:55:40.374599843Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and widened it by one shape. All measured against\nreference/make-oracle/make-4.4.1/make.\n\nThe filing's case held exactly as written: with an empty `vpa/`, `VPATH = vpa`, a `%.x:` rule and a\n`vpa/foo.x:` rule, GNU echoed `vpath vpa/foo.x` and Ronin echoed `pattern foo.x`. Two more shapes were\nmeasured beside it:\n\n  * the same names reached as a PREREQUISITE rather than as the goal — `all: foo.x` — behave identically\n    on both sides of the fix, so this is not a property of being a goal;\n  * a RECIPE-LESS rule at the found path, `vpa/bar.x: dep`, is the more telling half: GNU renames the\n    target to `vpa/bar.x`, keeps `dep`, and THEN applies the pattern rule to it — `pattern vpa/bar.x\n    [dep]`. Ronin built `bar.x` from the pattern rule with no prerequisites at all, so `dep` was not in\n    the graph.\n\nThe two shapes that already agreed were checked too and were left alone: a found path that is on disk and\nnot a target, and one that is on disk AND a target, both already answered `vpa/foo.c`.\n\nMECHANISM. GNU looks a name up in the directory search BEFORE it looks for an implicit rule.\n`update_file_1` (remake.c) calls `file_mtime` above `try_implicit_rule`, and its own comment says why:\nreading the modtime first means the file \"may not need an implicit rule\". `f_mtime` runs\n`vpath_search`, and `selective_vpath_search` (vpath.c) accepts a candidate the makefile merely MENTIONS —\n\"makefile-mentioned file need not exist\". On a hit, `f_mtime` calls `rehash_file` (file.c), which merges\nthe two file objects into the one standing at the found path: recipe, prerequisites, variable set lists\nand all.\n\nWHERE THE FIX WENT — kati 566ede8cb4047ed04ed4003ad7cd71ae99e3dbe5, branch\nnplan/make-a-vpath-resolved-name-keeps-its-explicit-rule, one file:\n  * `dep.rs::at_found_name` and `dep.rs::at_gpath`: the merge onto the found name was conditioned on\n    `declares_a_target(found) && is_declared(name)`. `rehash_file` asks nothing about the searched name —\n    it rehashes whatever object `f_mtime` was called for — so the second half of the condition is not\n    GNU's. Dropping it leaves `declares_a_target(found)`, and `is_declared` had no other caller and is\n    gone. `merge_into_found_name` already handled a searched name with no rule of its own.\n\nTEETH, MEASURED BY PARKING THE FIX: `tests/make/a-vpath-found-name-that-carries-a-rule-outranks-the-pattern-rule`\nfails without it — `all.out` holds `all [foo.x bar.x]` where GNU left `all [vpa/foo.x vpa/bar.x]`. One\ncase, both halves in it: the explicit rule at the found path, and the recipe-less rule whose prerequisite\nthe pattern rule then inherits. Each recipe writes its own file, so the recording does not depend on the\norder two independent recipes ran in.\n\nA RECORDING HAZARD worth writing down: `MAKE_PORT_RECORD=1` re-records EVERY case, not the new one. This\nrun's re-record flipped `feature-restart-count`'s `gen.mk` from `touched` to `kept` — the recorder's\ntouch detection is mtime-resolution-sensitive on a makefile GNU remakes and then restarts over. That file\nwas restored from the index and is unchanged in this landing; only the new case's `expected` is added.\n\nINVENTORY ROW MOVED — exactly one, audited by name against the pre-run tsv:\n  features/vpath.diff.4  unclassified/ninja-progress+evaluation → narration/ninja-progress\nThat is the row this node owns. unclassified 51 → 50, narration 1206 → 1207, compiler ZERO, interface 28\nunchanged, total 1285 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean root and kati; check --workspace --all-targets EXIT 0;\nworkspace tests 1101 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1198 ported cases (1206\nin the corpus), eight discovery-only cases unchanged; conformance 354 runs, 326/28 normalised, 276 raw —\nunchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T14:55:45.286414252Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

@@ -1,0 +1,37 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 26
+| # GNU Make searches the directory list for a name it cannot find on disk before
+| # it looks for an implicit rule — `f_mtime` runs above `try_implicit_rule` in
+| # `update_file_1` (remake.c), and its own comment says so: looking at the modtime
+| # beforehand means the file "may not need an implicit rule". When the search
+| # lands on a path the makefile declares a target for, `rehash_file` (file.c)
+| # makes the two names one file, retaining the object at the found path.
+| #
+| # So `foo.x` is `vpa/foo.x`, and it is built by the recipe written for that name
+| # rather than by the pattern rule that matches the name as written; `bar.x` is
+| # `vpa/bar.x`, whose rule carries a prerequisite and no recipe, so the pattern
+| # rule does apply there and is handed `dep`.
+| #
+| # Each recipe writes its own file rather than appending to a shared one, so
+| # what the build wrote does not depend on the order two independent recipes ran
+| # in.
+| VPATH = vpa
+| 
+| all: foo.x bar.x ; @printf 'all [$^]\n' > all.out
+| 
+| %.x: ; @printf 'pattern $@ [$^]\n' > pattern.out
+| 
+| vpa/foo.x: ; @printf 'vpath $@\n' > vpath.out
+| 
+| dep: ; @printf 'dep\n' > dep.out
+| 
+| vpa/bar.x: dep
+file all.out touched 1
+| all [vpa/foo.x vpa/bar.x]
+file dep.out touched 1
+| dep
+file pattern.out touched 1
+| pattern vpa/bar.x [dep]
+file vpath.out touched 1
+| vpath vpa/foo.x
