@@ -17778,6 +17778,34 @@ children (
                     }
                 )
             }
+
+            {
+                id make-a-command-line-variables-value-is-settled-once
+                title "Settle a command-line variable's value once, not twice"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-26T22:12:34.553352437Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-26 defect-batch-2 dispatch, on the coordinator's instruction to file what batch 1\nfound and did not take. MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-26, in three\nshapes, and the answer is the same each time: Ronin settles a command-line variable's value EXACTLY ONE\nTIME MORE than GNU Make does.\n\nThe value's expansion is observable because a `$(shell)` in it has an effect. Invoked as\n`make 'V=$(shell echo hit >> counted; echo x)'`, counting the lines of `counted` the run leaves:\n\n    the makefile never mentions $(V)          GNU 1   Ronin 2\n    the recipe reads $(V) once                GNU 2   Ronin 3\n    the recipe reads $(V) twice               GNU 3   Ronin 4\n\nAlways +1, never a doubling and never proportional to the number of references — so it is one extra settle\nof the definition and not an extra expansion per read. `$(V)` itself reads `x` on both sides in every\nshape, so nothing about the VALUE is wrong; what differs is how many times the command ran to produce it.\n\nWHY IT MATTERS. A command-line assignment whose value holds a `$(shell)` is ordinary — `make\n'CFLAGS=$(shell pkg-config --cflags foo)'` — and the extra run is a command the build makes that GNU does\nnot. Where the command has a side effect, as here, the extra run is an extra effect.\n\nADJACENT AND PROBABLY THE SAME GROUND: make-makeoverrides-reaches-a-recursive-invocation measured a second\ncommand-line-variable defect that also lives in how the definition is settled. GNU Make republishes\n`MAKEOVERRIDES` as the SETTLED variables — `quote_for_env(name)`, a `:` if the variable came out simple,\n`=`, then the value — while Ronin republishes the assignment as it was written:\n\n    command line        GNU              Ronin\n    FOO+=bar            FOO=bar          FOO+=bar\n    FOO?=bar            FOO=bar          FOO?=bar\n    FOO!=echo hi        FOO=hi           FOO!=echo\\ hi\n    FOO::=x             FOO:=x           FOO::=x\n    FOO:::=y            FOO=y            FOO:::=y\n    FOO=plain           FOO=plain        FOO=plain   (the only spelling that agrees)\n\nThe `!=` row is build intent on its own: republishing an unsettled `!=` means a CHILD runs the command\nagain, where GNU ran it once and passed the answer down. Doing it GNU's way requires each command-line\nassignment to be settled — expanded, or run — before `MAKEOVERRIDES` is rendered, which is the same\nquestion this node's counting exposes from the other end. Whoever takes this should expect one fix."
+                    }
+                )
+            }
+
+            {
+                id make-a-run-leaves-no-directory-the-suite-did-not-ask-for
+                title "Leave behind no directory GNU Make's own run does not"
+                kind @fix
+                log (
+                    {
+                        at 2026-08-26T22:12:58.683752881Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "Filed by the 2026-08-26 defect-batch-2 dispatch, on the coordinator's instruction to file what batch 1\nfound and did not take. MEASURED on 2026-08-26 with BOTH tools, in matched disposable worktrees of\nreference/gnumake at d66a65ad, running GNU Make's own `features/output-sync` script alone:\n\n    GNU Make 4.4.1   18 Tests in 1 Category Complete ... No Failures :-)\n                     leftovers in tests/: NONE\n    Ronin            17 Tests in 1 Category Failed\n                     leftovers in tests/: `bar`, a directory\n\nWHY IT IS NOT A NARRATION ROW. The script's own `output_sync_clean` does `rmfiles('foo/Makefile',\n'bar/Makefile', @syncfiles)` then `rmdir('foo')` and `rmdir('bar')`. `foo` goes and `bar` does not, so the\n`rmdir` failed — something was still in `bar` when the cleanup ran, and was gone by the time the directory\nwas listed afterwards. The suite's tests share one working directory, so a directory that outlives its own\nscript is state a LATER script runs on top of. Batch 1 traced three second-expansion rows that changed\nfamily but did not clear to exactly this contamination.\n\nThe test count differs too — 18 against 17 — which is worth a look at the same time: one case does not run\nat all under Ronin.\n\nWHERE TO START. The script runs several sub-makes in parallel under `-O`, synchronised through sentinel\nfiles in `../mksync.*`, with `bar/Makefile` written and removed per case. The likeliest shape is a child\nthat outlives the run that started it, still holding or writing inside `bar` after the parent has been\nreaped — the same family of question as the interrupt-path work, and it is why the timing looks like a race\nrather than a missing `rm`.\n\nNOT the same as a build leaving an output: what is left is a directory the suite created and expected to\nremove, so the fix is about when Ronin's children are finished with the tree, not about what a recipe\nwrites."
+                    }
+                )
+            }
         )
         log (
             {
