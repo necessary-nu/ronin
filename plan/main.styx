@@ -16853,12 +16853,34 @@ children (
                 id make-an-escaped-hash-in-a-function-argument-keeps-its-backslash
                 title "Keep a backslash-escaped hash as written inside a function call argument"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:39:09.334677154Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/escape.diff.8 (suite script features/escape:85). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    self = $1\n    foo := $(call self,#foo#)#foo\n    bar := $(call self,\\#bar\\#)#bar\n    all:;@echo \"$(foo) $(bar)\"\n\n  GNU 4.4.1  #foo# \\#bar\\#\n  Ronin      #foo# #bar#\n\nBoth agree on the unescaped `#foo#`: inside a function-call argument a bare `#` is not a comment, so it survives on both sides. They disagree on the ESCAPED one. GNU removes a `\\#` escape only where the `#` would otherwise open a comment; inside a function argument it would not, so the backslash is left standing and the value keeps both characters. Ronin removes the backslash unconditionally, so `\\#bar\\#` collapses to `#bar#`.\n\nThe difference reaches a recipe's command line — the echoed text differs — so it is build intent, not narration."
+                    }
+
+                    {
+                        at 2026-08-26T18:49:34.738472594Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T18:49:57.084940731Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and widened the case beyond `$(call)`. Measured against\nreference/make-oracle/make-4.4.1/make.\n\nThe filing's case held exactly: GNU `#foo# \\#bar\\#`, Ronin `#foo# #bar#`. Three more shapes were measured:\n  * `$(patsubst %,[%],\\#)` — GNU `[\\#]`, Ronin `[#]`. So it is not about `$(call)`: any reference's\n    contents behave this way.\n  * `x\\#y` at the top level of an assignment — the backslash DOES come off on both sides. That is the\n    control that says the two questions are separate, and it is what keeps the fix from being \"never\n    unquote\".\n  * `$(subst \\#,S,a\\#b)` — `aSb` on both sides, because both halves are literal `\\#` either way and they\n    still match each other. Agreement here would survive either reading, which is why it is a control\n    rather than evidence.\n\nMECHANISM. GNU Make never unquotes a `\\#` inside a reference because it never LOOKS inside one.\n`remove_comments` calls `find_map_unquote (line, MAP_COMMENT|MAP_VARIABLE)` (read.c); `MAP_VARIABLE` makes\nthe scan stop on a `$` and, for `$(` or `${`, skip to the matching close before resuming the search. The\nbackslash-halving that turns `\\#` into `#` happens only where the scan is actually looking, so it reaches\nthe top level of a line and nothing nested inside a reference. A `define` body and a recipe line are the\nother two places the scan does not reach, and Ronin already had both.\n\nWHERE THE FIX WENT — kati 5187320bd47362f483f9febb26bb986765d21d04, branch\nnplan/make-an-escaped-hash-in-a-function-argument-keeps-its-backslash, one file:\n  * `expr.rs::should_handle_comments`: `ParseExprOpt::Func` joins `Define` and `Command`. The read already\n    parses a reference's contents under that option, so the place GNU Make's scan skips is the place this\n    already knew it was in. The doc comment names `MAP_VARIABLE` so the next reader can find the reason.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/an-escaped-hash-inside-a-reference-keeps-its-backslash` fails without it — `inside=[#bar#]` and\n`deeper=[[#]]` where GNU left `inside=[\\#bar\\#]` and `deeper=[[\\#]]`. Three controls in the same file agree\non both sides: `plain=[x#y]` (the top-level unquoting that must stay), `bare=[#foo#]` (an unescaped `#`\ninside a call is not a comment either) and `matched=[aSb]`.\n\nINVENTORY ROW MOVED — exactly one, audited by name against the pre-run tsv:\n  features/escape.diff.8  unclassified/ninja-progress+evaluation → narration/ninja-progress\nThat is the row this node owns. unclassified 36 → 35, narration 1221 → 1222, compiler ZERO, interface 28\nunchanged, total 1285 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1101 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1205 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T18:50:07.663151433Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

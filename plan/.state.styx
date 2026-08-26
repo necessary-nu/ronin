@@ -945,6 +945,7 @@ assertions (
     {id make-second-expanded-prerequisites-keep-their-rule-line-order, kind @complete, author "brendan@necessary.nu", at 2026-08-26T17:50:19.924661077Z}
     {id make-a-grouped-pattern-target-keeps-its-own-explicit-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-26T18:10:02.226741215Z}
     {id make-a-foreach-variable-name-is-trimmed-of-whitespace, kind @complete, author "brendan@necessary.nu", at 2026-08-26T18:29:48.531505461Z}
+    {id make-an-escaped-hash-in-a-function-argument-keeps-its-backslash, kind @complete, author "brendan@necessary.nu", at 2026-08-26T18:50:07.663151433Z}
 )
 
 impl_evidence (
