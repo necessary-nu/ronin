@@ -17486,12 +17486,34 @@ children (
                 id make-a-command-line-variable-reaches-a-shell-functions-recursive-make
                 title "Carry a command-line variable into a recursive Make run from a shell function"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:41:17.248406399Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from variables/MAKEFLAGS.diff.116 and .117 (suite script variables/MAKEFLAGS:349 and :355, GNU's own sv 63347 regression). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — a `bye/makefile` holding `hello=moon` and `all:; $(info $(hello))`, and:\n\n    v:=$(shell $(MAKE) -C bye --no-print-directory)\n    all: ; $(info $(v))\n\ninvoked as `make hello=world`:\n\n  GNU 4.4.1  world make[1]: 'all' is up to date.\n  Ronin      moon ronin: no work to do.\n\nRow .117 is the same case written with the shell-assignment operator (`v != $(MAKE) -C bye --no-print-directory`) and behaves identically.\n\nThe command-line definition `hello=world` must outrank the sub-makefile's own `hello=moon`, and it reaches the child through MAKEFLAGS. Ronin's `$(shell $(MAKE) …)` launches a real child process at evaluation time — this one is NOT composed into the graph, since its output is captured as a variable's value — and that child is not given the parent's command-line definitions.\n\nThe captured value reaches `$(info)` and could as easily reach a recipe, so this is build intent."
+                    }
+
+                    {
+                        at 2026-08-26T21:33:34.433978311Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T21:33:58.260132761Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and found the cause is one missing bit rather than anything about recursion.\nAll measured against reference/make-oracle/make-4.4.1/make.\n\nBoth filed rows held — the `$(shell)` and `!=` spellings behave identically. The probe that settled it read\nthe child's ENVIRONMENT rather than its output:\n\n    parent's own $(MAKEFLAGS)   both:  ` -- hello=world`\n    child's environment          GNU:  MAKEFLAGS= -- hello=world|MFLAGS=|\n                                Ronin:  (nothing — no MAKEFLAGS at all)\n\nSo Ronin worked out the right `MAKEFLAGS` and did not hand it to anyone. `MAKELEVEL` reached the child as 1\non both sides, so the environment-building machinery was working; `MAKEFLAGS` alone was absent from it.\n\nMECHANISM. GNU Make marks `MAKEFLAGS` exported BY NAME rather than leaving it to origin:\n`define_makeflags (0)->export = v_export` (main.c). A file-origin variable is not exported otherwise, and\nRonin defines it at file origin (or environment-override under `-e`), so it never travelled.\n\nWHERE THE FIX WENT — kati 88fe1ec4ca97e23fe919967708e7085c8bcbbc31, branch\nnplan/make-a-command-line-variable-reaches-a-shell-functions-recursive-make, one file:\n  * `evaluate.rs`: the `MAKEFLAGS` binding is given `VarExport::Export` where it is defined.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/a-command-line-value-reaches-a-shell-functions-child-make` fails without it — `captured.out`\nholds `moon` where GNU left `world`, and `shelled.out` (the `!=` spelling) goes the same way. Each child\nwrites what it saw to a file of its own rather than to stdout, because what a child prints on stdout is\nnarration and the two tools narrate differently; `out` carries the halfway point, the environment's own\n`MAKEFLAGS`, so a failure says which half went wrong.\n\nINVENTORY: NO ROW MOVED, and that is worth stating rather than glossing. variables/MAKEFLAGS.diff.116 and\n.117 are still `unclassified/no-work-line+up-to-date-line+evaluation`. Their output is now right to the\nnarration:\n    GNU    world make[1]: 'all' is up to date.  /  make: 'all' is up to date.\n    Ronin  world ronin: no work to do.          /  ronin: no work to do.\nThe captured value now begins `world` on both sides — the whole of what the case was testing. What is left\nis the child's own up-to-date line INSIDE that captured value, where the classifier has to compose\n`product-name` with `up-to-date-line` inside a variable's contents and does not. The defect is closed and\ngated by the recorded case; the row is narration residue the classifier cannot yet explain, and belongs to\nwhoever widens it.\n\nA SECOND, SMALLER DIFFERENCE MEASURED AND NOT TAKEN: GNU's child environment also carries `MFLAGS=` and\nRonin's does not. `$(MFLAGS)` reads the same on both sides at every level — the child derives it from its\nown switches — so nothing observable follows from it inside make; only a recipe reading `env` would see it.\nRecorded here rather than fixed.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1104 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1211 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings; upstream classes\nunchanged at unclassified 27 / compiler 0 / interface 20 / narration 1230."
+                    }
+
+                    {
+                        at 2026-08-26T21:34:10.813314491Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

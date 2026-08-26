@@ -1,0 +1,21 @@
+# GNU Make marks `MAKEFLAGS` exported by name — `define_makeflags (0)->export =
+# v_export` (main.c) — which is how every child of this make is told what
+# switches and command-line definitions the invocation carried. A file-origin
+# variable is not exported otherwise, so without the mark the child starts from
+# its own makefile alone.
+#
+# The child here is not a composed recursive `$(MAKE)`: its output is captured
+# as a variable's value, so it is a real process either way. It reads
+# `hello=world` out of the inherited `MAKEFLAGS`, and that outranks the
+# `hello = moon` its own makefile writes.
+#
+# Each child writes what it saw to a file of its own rather than to stdout,
+# because what a child prints on stdout is narration and the two tools narrate
+# differently. `flags` is the halfway point, so a failure says which half went
+# wrong: whether the environment carried the switches, or whether the child
+# read them.
+captured := $(shell $(MAKE) -C bye --no-print-directory >/dev/null)
+shelled != $(MAKE) -C hi --no-print-directory >/dev/null
+flags := $(shell echo "$$MAKEFLAGS")
+
+all: ; @printf 'flags=[%s]\n' '$(flags)' > out
