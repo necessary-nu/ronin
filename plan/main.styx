@@ -16961,12 +16961,34 @@ children (
                 id make-a-shell-assignment-keeps-a-hash-its-command-printed
                 title "Keep a hash a shell assignment's command printed out of comment stripping"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:39:28.286542058Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/shell_assignment.diff.1 (suite script features/shell_assignment:27). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    foo1!=echo bar#baz\n    hash != printf '\\043'\n    foo2!= echo \"bar$(hash)baz\"\n    all: ; @echo \"<$(foo1)> <$(hash)> <$(foo2)>\"\n\n  GNU 4.4.1  <bar> <#> <bar#baz>\n  Ronin      <bar> <> <barbaz>\n\nBoth agree on `foo1`: the `#baz` there is a makefile comment on the assignment line and is stripped before the command runs. They disagree on what the COMMAND'S OUTPUT may contain. `printf '\\043'` prints a `#`, and GNU stores that `#` verbatim: a `!=` assignment's value is the command's output with newlines turned into spaces and nothing else. Ronin puts the captured output back through comment stripping, so the `#` and everything after it on the line disappear — which then also empties `$(hash)` out of `foo2`.\n\nThe value reaches a recipe's command line, so this is build intent."
+                    }
+
+                    {
+                        at 2026-08-26T19:13:15.620296086Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T19:13:38.892334638Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING exactly and drew the boundary around it. Measured against\nreference/make-oracle/make-4.4.1/make.\n\nThe filing's case held: GNU `<bar> <#> <bar#baz>`, Ronin `<bar> <> <barbaz>`. What the probe added is the\nset of things that must NOT change, because the fix is \"stop reading this text as makefile source\" and that\ncould take too much with it:\n  * `$(shell printf '\\043')` — already `#` on both sides. So it is `!=` alone, not the shell capture.\n  * a backslash the command printed (`a\\b`, `a\\\\b`) — identical on both sides before and after.\n  * a `$` the command printed — `a$b` reads `$b` as a reference on BOTH sides, and `x$(inner)y` expands to\n    `xINNERy` on both. So the captured text is still a recursive value that expands when read, which is\n    what GNU Make stores.\n  * a newline in the output is a space on both sides.\n  * `echo bar#baz` — the `#baz` there IS a comment, on the assignment line, and is gone before the command\n    runs on both sides. That is the control the recorded case keeps.\n\nMECHANISM. GNU Make's `!=` (`f_shell` in `do_variable_definition`, variable.c) runs the command and defines\nthe result as a recursive variable. Nothing re-reads it as a line: `remove_comments` ran once, over the\nmakefile line, before the command was launched, and the only reader afterwards is\n`variable_expand_string`, which handles `$` and nothing else. So a `#` in the output is a `#`.\n\nWHERE THE FIX WENT — kati 0832004e28bbd9db58046c4a2eaa572dbb115957, branch\nnplan/make-a-shell-assignment-keeps-a-hash-its-command-printed, two files:\n  * `expr.rs`: a fourth `ParseExprOpt`, `Captured`, for text a command wrote — not makefile source, never\n    read as a line, so nothing in it opens a comment. It joins `Define` and `Command` in\n    `should_handle_comments` and behaves like `Normal` everywhere else, which is what keeps `$` references\n    and backslashes reading as they did.\n  * `eval.rs::eval_rhs`, `AssignOp::ShellEq`: the captured output is parsed under it.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/a-shell-assignment-keeps-every-byte-its-command-wrote` fails without it, four of its five\nanswers wrong — `hash=[] quoted=[barbaz] escaped=[a#b] folded=[a]` where GNU left\n`hash=[#] quoted=[bar#baz] escaped=[a\\#b] folded=[a#b c#d]`. `trailing=[bar]` agrees on both sides and is\nthe control: a `#` on the assignment LINE is still a comment.\n\nINVENTORY ROW MOVED — exactly one, audited by name against the pre-run tsv:\n  features/shell_assignment.diff.1  unclassified/ninja-progress+evaluation → narration/ninja-progress\nThat is the row this node owns. unclassified 35 → 34, narration 1222 → 1223, compiler ZERO, interface 28\nunchanged, total 1285 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1101 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1206 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T19:13:49.601562374Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

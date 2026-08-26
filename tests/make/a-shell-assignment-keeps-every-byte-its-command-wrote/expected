@@ -1,0 +1,31 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 22
+| # A `!=` assignment's value is what its command wrote, with newlines turned into
+| # spaces and nothing else done to it. GNU Make hands the output straight to
+| # `define_variable_in_set` as a recursive value, and the only thing that reads
+| # it again is `variable_expand_string`, which knows about `$` and nothing else.
+| # Comment removal happened to the LINE, before the command ran; it does not
+| # happen a second time to what the command printed.
+| #
+| #   trailing  the `#baz` here IS a makefile comment: it is on the assignment
+| #             line, so it is gone before the command runs. That is the control.
+| #   hash      the command prints a `#`, which is kept.
+| #   quoted    the same one reached through another variable, so the value goes
+| #             on to a recipe's command line.
+| #   escaped   a backslash the command printed in front of a `#` is text too.
+| #   folded    a newline in the output is a space; the `#` either side of it
+| #             survives.
+| trailing != echo bar#baz
+| hash != printf '\043'
+| quoted != echo "bar$(hash)baz"
+| escaped != printf 'a\134\043b'
+| folded != printf 'a\043b\nc\043d'
+| all: ; @printf '%s\n' 'trailing=[$(trailing)]' 'hash=[$(hash)]' \
+| 	'quoted=[$(quoted)]' 'escaped=[$(escaped)]' 'folded=[$(folded)]' > out
+file out touched 5
+| trailing=[bar]
+| hash=[#]
+| quoted=[bar#baz]
+| escaped=[a\#b]
+| folded=[a#b c#d]
