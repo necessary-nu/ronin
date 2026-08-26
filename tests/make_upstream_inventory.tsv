@@ -726,7 +726,7 @@ case	functions/findstring.diff	narration	ninja-progress
 case	functions/flavor.diff	narration	ninja-progress
 case	functions/foreach.diff	narration	ninja-progress
 case	functions/foreach.diff.1	narration	ninja-progress
-case	functions/foreach.diff.2	unclassified	ninja-progress+evaluation
+case	functions/foreach.diff.2	narration	ninja-progress
 case	functions/foreach.diff.3	narration	ninja-progress
 case	functions/foreach.diff.4	narration	product-name+fatal-decoration+shared-refusal
 case	functions/foreach.diff.5	narration	product-name+fatal-decoration+shared-refusal
@@ -823,12 +823,12 @@ case	misc/bs-nl.diff.17	narration	ninja-progress
 case	misc/bs-nl.diff.18	narration	ninja-progress+recipe-echo
 case	misc/bs-nl.diff.19	narration	ninja-progress
 case	misc/bs-nl.diff.2	narration	ninja-progress
-case	misc/bs-nl.diff.20	unclassified	ninja-progress+evaluation
-case	misc/bs-nl.diff.21	unclassified	ninja-progress+evaluation
-case	misc/bs-nl.diff.22	unclassified	ninja-progress+evaluation
-case	misc/bs-nl.diff.23	unclassified	ninja-progress+evaluation
-case	misc/bs-nl.diff.24	unclassified	ninja-progress+evaluation
-case	misc/bs-nl.diff.25	unclassified	ninja-progress+evaluation
+case	misc/bs-nl.diff.20	narration	ninja-progress
+case	misc/bs-nl.diff.21	narration	ninja-progress
+case	misc/bs-nl.diff.22	narration	ninja-progress
+case	misc/bs-nl.diff.23	narration	ninja-progress
+case	misc/bs-nl.diff.24	narration	ninja-progress
+case	misc/bs-nl.diff.25	narration	ninja-progress
 case	misc/bs-nl.diff.26	narration	ninja-progress+recipe-echo
 case	misc/bs-nl.diff.27	narration	ninja-progress+recipe-echo
 case	misc/bs-nl.diff.3	narration	ninja-progress

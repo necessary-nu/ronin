@@ -16903,12 +16903,34 @@ children (
                 id make-a-foreach-variable-name-is-trimmed-of-whitespace
                 title "Trim whitespace from the variable name a foreach binds"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:39:23.866915754Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch. Seven suite rows, one cause: functions/foreach.diff.2 (functions/foreach:55) and misc/bs-nl.diff.20 through .25 (misc/bs-nl:144, 150, 155, 166, 176, 190). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — the variable-name argument reaches `foreach` with whitespace around it, here from a backslash-newline continuation:\n\n    $(foreach \\\n      a \\\n    , b c d \\\n    , $(info [$a]))\n    all:;@:\n\n  GNU 4.4.1  [b] [c] [d]\n  Ronin      [] [] []\n\nThe list argument is split identically on both sides — Ronin runs the body three times — so the fault is only in the NAME. GNU strips whitespace from the variable name before binding it (`func_foreach` in function.c), so the name is `a` and `$a` finds it. Ronin binds a name that still carries the surrounding spaces and newline-derived whitespace, so `$a` expands to nothing.\n\nmisc/bs-nl 20-25 are the same shape written five more ways — continuations, carriage returns, tabs, a `define` body, and the whole thing inside a recipe — and all five differ from GNU in exactly this one way. Fixing the trim should move all seven rows."
+                    }
+
+                    {
+                        at 2026-08-26T18:29:17.622382835Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T18:29:38.232308525Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and corrected the RULE it names. Measured against\nreference/make-oracle/make-4.4.1/make.\n\nThe filing's case held exactly, and the filing said GNU \"strips whitespace from the variable name\". It does\nmore than strip: `func_foreach` (function.c) reduces the argument to its FIRST TOKEN — `next_token` skips\nthe leading whitespace, then `end_of_token (vp)[0] = '\\0'` cuts off everything from the next blank on. The\ndifference is measurable and is in the recorded case:\n\n  $(foreach a b, x y, ...)   GNU binds `a`, and `$(a b)` names nothing.\n\nTwo more things the probe settled, both narrowing the filing:\n  * The continuation is incidental. `$(foreach  a , b c d , ...)` written on ONE line with plain spaces\n    fails the same way, so this is not about backslash-newline folding at all — the six misc/bs-nl rows are\n    the same defect written six ways, which the filing suspected and this confirms.\n  * An all-whitespace name argument leaves the name empty on both sides, and the body still runs once per\n    word. That is the boundary the `unwrap_or_default` covers.\n\nWHERE THE FIX WENT — kati bf7fc02b88f6d28f1fa672ae7508cfa6cce679bb, branch\nnplan/make-a-foreach-variable-name-is-trimmed-of-whitespace, one file:\n  * `func.rs::foreach_func`: the expanded first argument is reduced to its first token before it is\n    interned. One line of code and a comment saying which two of GNU's calls it stands for.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/a-foreach-binds-the-first-token-of-its-name-argument` fails without it, with all four of its\nanswers wrong at once — `spaced=[[] [] []] folded=[[] [] []] first=[[] []] whole=[[x] [y]]` where GNU left\n`spaced=[[b] [c] [d]] folded=[[b] [c] [d]] first=[[x] [y]] whole=[[] []]`. The last pair is the one the\nfiling's wording would have got wrong: with a two-token name argument the name is the first token, so\n`$(a b)` is empty and not the loop word.\n\nINVENTORY ROWS MOVED — exactly seven, audited by name against the pre-run tsv, and they are the seven this\nnode owns:\n  functions/foreach.diff.2                       unclassified/ninja-progress+evaluation → narration/ninja-progress\n  misc/bs-nl.diff.20 .21 .22 .23 .24 .25         the same, all six\nunclassified 43 → 36, narration 1214 → 1221, compiler ZERO, interface 28 unchanged, total 1285 unchanged.\nBiggest single move of this batch.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1101 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1204 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T18:29:48.531505461Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

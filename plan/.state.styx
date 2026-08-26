@@ -944,6 +944,7 @@ assertions (
     {id make-every-matching-pattern-specific-assignment-composes-in-order, kind @complete, author "brendan@necessary.nu", at 2026-08-26T16:53:03.744393967Z}
     {id make-second-expanded-prerequisites-keep-their-rule-line-order, kind @complete, author "brendan@necessary.nu", at 2026-08-26T17:50:19.924661077Z}
     {id make-a-grouped-pattern-target-keeps-its-own-explicit-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-26T18:10:02.226741215Z}
+    {id make-a-foreach-variable-name-is-trimmed-of-whitespace, kind @complete, author "brendan@necessary.nu", at 2026-08-26T18:29:48.531505461Z}
 )
 
 impl_evidence (
