@@ -1,0 +1,53 @@
+# GNU Make holds one `pattern_var` per pattern-specific ASSIGNMENT, not per
+# pattern (`create_pattern_var`, variable.c), ordered shortest pattern first and
+# within one length by the order they were written. When a target first needs
+# them, `initialize_file_variables` replays every entry that matches into a
+# single set built for that target, through `do_variable_definition` — so `+=`
+# appends to what an earlier entry left whichever pattern that entry belonged
+# to, and `?=` finds the name already set and does nothing.
+#
+# Collecting each pattern's assignments into a set of its own settles them
+# against each other first, which loses the interleaving: `a%: X = 1`,
+# `%b: X = 2`, `a%: X += 3` is `2 3`, not `1 3` and not `2`.
+#
+# AAA: `a%` sets it, so the later `%b: AAA ?= xxx` is a no-op and
+#      `%b: AAA += bbb` appends -> `aaa bbb`.
+# BBB: `%b` sets it and the later `a%: BBB += ddd` appends -> `ccc ddd`.
+# X:   the same shape written with one name, so the order is the whole answer.
+# GGG: the control that reaches outside the pattern sets — a global value a
+#      pattern `?=` must not replace and a pattern `+=` must append to.
+#
+# The replay is one SET, so `define_variable_in_set`'s origin ladder applies
+# across every pattern in it: "if the old definition is from a stronger source
+# than this one, don't redefine it". OVR, APP and WEAK are that half — an
+# `override` line refuses a plain one that follows it, whichever pattern each
+# was written under, and a plain line is still there for a later `override` to
+# append to. (The target's own scope is a different set and is not compared
+# this way: a plain target-specific assignment still shadows an `override`
+# pattern one.)
+a%: AAA = aaa
+%b: BBB = ccc
+a%: BBB += ddd
+%b: AAA ?= xxx
+%b: AAA += bbb
+
+a%: X = 1
+%b: X = 2
+a%: X += 3
+
+GGG = global
+%b: GGG ?= no
+a%: GGG += extra
+
+%b: override OVR = strong
+a%: OVR = weak
+
+a%: override APP += a1
+%b: APP += b1
+
+a%: WEAK = plain
+%b: override WEAK += strengthened
+
+.PHONY: ab
+ab: ; @printf '%s\n' 'AAA=[$(AAA)]' 'BBB=[$(BBB)]' 'X=[$(X)]' 'GGG=[$(GGG)]' \
+	'OVR=[$(OVR)]' 'APP=[$(APP)]' 'WEAK=[$(WEAK)]' > out
