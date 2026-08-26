@@ -16967,12 +16967,34 @@ children (
                 id make-second-expanded-prerequisites-keep-their-rule-line-order
                 title "Order second-expanded prerequisites the way GNU orders its rule lines"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:39:47.048944521Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/se_explicit.diff.20 (suite script features/se_explicit:324). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    .SECONDEXPANSION:\n    all: hello.tsk\n    dep1:=hello.o\n    dep2:=hello.h\n    hello.tsk: $$(dep1)\n    hello.tsk: $$(dep2); $(info $@ from $^)\n    hello.o:; $(info $@)\n    hello.h:; $(info $@)\n\n  GNU 4.4.1  hello.h / hello.o / hello.tsk from hello.h hello.o\n  Ronin      hello.o / hello.h / hello.tsk from hello.o hello.h\n\nThe same two prerequisites in the opposite order, so the build order and `$^` both differ. GNU puts the prerequisites of the rule line that CARRIES THE RECIPE ahead of the ones accumulated from the recipe-less lines; Ronin appends in source order. `$^` reaches the command line, so this is build intent rather than a scheduling detail.\n\nThe `is up to date` / `no work to do` half of the same suite row is narration (up-to-date-line) and is not this."
+                    }
+
+                    {
+                        at 2026-08-26T17:49:39.938013099Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T17:50:09.692228196Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and corrected its account of the rule. Measured against\nreference/make-oracle/make-4.4.1/make.\n\nThe filing's case held exactly, and its sentence — \"GNU puts the prerequisites of the rule line that\nCARRIES THE RECIPE ahead of the ones accumulated from the recipe-less lines\" — is right about GNU but\nwrong about what Ronin was doing. Ronin ALREADY did that: the same makefile with the `$$` taken off gave\n`hello.h hello.o` on both sides. What Ronin did not do was keep a DEFERRED line in its place: every\nsecond-expanded line was expanded after the written-out ones and appended to the end. Measured on three\nshapes:\n\n  t: A / t: $$(d) ; recipe                        GNU [D A]      Ronin [A D]\n  t: $$(p) / t: $$(q) ; recipe / t: $$(r)         GNU [Q P R]    Ronin [P Q R]\n  t: A / t: $$(d) / t: B ; recipe                 GNU [B A D]    Ronin [B A D]  (agreed by accident)\n\nMECHANISM. `record_files` (read.c) builds `f->deps` as the lines are read — a recipe-carrying line's\nprerequisites go in FRONT of what the target already had, a recipe-less line's go on the END — and\n`expand_deps` (file.c) later walks that one chain and replaces each `need_2nd_expansion` entry IN PLACE.\nSo the deferred line's own prerequisites land at that line's position, not after everything.\n\nWHERE THE FIX WENT — kati b0d0ad6213deaf9948ecf981b1733483b9b11670, branch\nnplan/make-second-expanded-prerequisites-keep-their-rule-line-order, one file:\n  * `dep.rs::RuleMerger::fill_dep_node` already walks the rules in GNU's order — primary first, then as\n    written — so it now returns a `DeferredSegment` per deferred rule line, carrying where in\n    `actual_inputs` and `actual_order_only_inputs` that line's prerequisites belong.\n  * `dep.rs::build_plan`'s deferred loop splices each expansion in at that position instead of extending,\n    tracking what earlier segments already inserted in front of it.\n\nA REGRESSION I CAUGHT AND RESCOPED FOR. The first cut also noted the PICKED rule as a deferred segment,\nwhich brought `.DEFAULT` in: features/se_explicit.diff.28 (the sv 62706 `.DEFAULT` case) moved BACKWARDS\nfrom narration to unclassified, because Ronin started second-expanding `.DEFAULT`'s prerequisite line and\nprinting an `$(info)` GNU never runs. GNU reads nothing off `.DEFAULT` but its recipe — `update_file_1`\ntakes `default_file->cmds` and stops — so the picked-rule branch is now deliberately not noted, which is\nalso the set of segments Ronin had before. Every other rule that reaches that branch is an implicit one\nwhose deferred prerequisites the search has already expanded. The `.DEFAULT` shape is in the recorded case\nas a control.\n\nA TEST THAT WAS ENCODING THE DEFECT. `tests/cli.rs::make_mode_expands_a_static_pattern_rules_prerequisites_again`\nasserted `built one.o from first.c first.c.one one.h`. The oracle was asked about that exact makefile and\nanswers `built one.o from first.c.one one.h first.c` — the recipe-carrying static pattern line first. The\nassertion was written to Ronin's old order and is corrected here, with the reason in a comment beside it.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/second-expanded-prerequisites-keep-their-rule-lines-place` fails without it — `mixed.out` holds\n`[A D]` where GNU left `[D A]`, and the parked binary also gets `spread.out` and `tsk.out` wrong\n(`[P Q R]` and `[hello.o hello.h]`). Two controls in the same case agree on both sides: `written.out`,\nwhere nothing is deferred, and `default.out`, where `.DEFAULT`'s `$$(shell)` prerequisite must never run —\nthat one is what the rescope above is for, and its evidence is a file that must NOT be there.\n\nINVENTORY ROW MOVED — exactly one, audited by name against the pre-run tsv:\n  features/se_explicit.diff.20  unclassified/no-work-line+up-to-date-line+evaluation\n                              → narration/no-work-line+up-to-date-line\nThat is the row this node owns. unclassified 45 → 44, narration 1212 → 1213, compiler ZERO, interface 28\nunchanged, total 1285 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1101 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1202 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T17:50:19.924661077Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

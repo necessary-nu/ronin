@@ -1173,8 +1173,10 @@ fn make_mode_expands_a_static_pattern_rules_prerequisites_again() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    // The rule that carries the recipe has its prerequisites in front of the
+    // ones the recipe-less line above it added, so `first.c` comes last.
     assert!(
-        stdout.contains("built one.o from first.c first.c.one one.h"),
+        stdout.contains("built one.o from first.c.one one.h first.c"),
         "{stdout}"
     );
 }

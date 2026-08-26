@@ -1,0 +1,64 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 51
+| # GNU Make builds a target's prerequisite chain as it reads the rule lines:
+| # `record_files` (read.c) puts the prerequisites of a line that CARRIES A RECIPE
+| # in front of what the target already had, and a recipe-less line's on the end.
+| # So the chain is the recipe's line first, then the rest in the order they were
+| # written.
+| #
+| # A prerequisite held for `.SECONDEXPANSION` sits in that chain like any other
+| # and is expanded where it stands — `expand_deps` (file.c) walks the chain and
+| # replaces each deferred entry in place. It does not go on the end, which is
+| # where it lands if the deferred lines are expanded after every written-out one.
+| #
+| #   mixed     the recipe's line is second and its prerequisite is deferred, so
+| #             the deferred one comes FIRST.
+| #   spread    three lines, all deferred, the recipe's in the middle: its own
+| #             first, then the other two as written.
+| #   hello.tsk two lines, both deferred, the recipe's second.
+| #   written   the control with nothing deferred, where the two tools already
+| #             agreed.
+| #   nothing.z the other control: `.DEFAULT` supplies a recipe to a target that
+| #             has no rule, and GNU Make reads NOTHING else off it —
+| #             `update_file_1` takes `default_file->cmds` and stops (remake.c) —
+| #             so the prerequisite written on the `.DEFAULT` line is never
+| #             expanded and its `$$(shell)` never runs. Ordering the deferred
+| #             lines by where their rule sits is exactly the change that could
+| #             start reading it.
+| .SECONDEXPANSION:
+| d := D
+| p := P
+| q := Q
+| dep1 := hello.o
+| dep2 := hello.h
+| 
+| all: mixed spread hello.tsk written nothing.z
+| 
+| mixed: A
+| mixed: $$(d) ; @printf '[%s]\n' '$^' > mixed.out
+| 
+| spread: $$(p)
+| spread: $$(q) ; @printf '[%s]\n' '$^' > spread.out
+| spread: R
+| 
+| hello.tsk: $$(dep1)
+| hello.tsk: $$(dep2) ; @printf '[%s]\n' '$^' > tsk.out
+| 
+| written: A
+| written: D ; @printf '[%s]\n' '$^' > written.out
+| 
+| .DEFAULT: $$(shell echo ran > default-prereq.out) ; @printf '[%s]\n' '$@' > default.out
+| 
+| .PHONY: all
+| A D P Q R hello.o hello.h: ; @:
+file default.out touched 1
+| [nothing.z]
+file mixed.out touched 1
+| [D A]
+file spread.out touched 1
+| [Q P R]
+file tsk.out touched 1
+| [hello.h hello.o]
+file written.out touched 1
+| [D A]

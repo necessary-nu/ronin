@@ -942,6 +942,7 @@ assertions (
     {id make-an-existing-target-is-not-rebuilt-through-a-declined-implicit-chain, kind @complete, author "brendan@necessary.nu", at 2026-08-26T15:31:19.577906167Z}
     {id make-a-normal-prerequisite-outranks-the-same-name-as-order-only, kind @complete, author "brendan@necessary.nu", at 2026-08-26T15:57:15.822139062Z}
     {id make-every-matching-pattern-specific-assignment-composes-in-order, kind @complete, author "brendan@necessary.nu", at 2026-08-26T16:53:03.744393967Z}
+    {id make-second-expanded-prerequisites-keep-their-rule-line-order, kind @complete, author "brendan@necessary.nu", at 2026-08-26T17:50:19.924661077Z}
 )
 
 impl_evidence (

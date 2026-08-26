@@ -454,7 +454,7 @@ case	features/se_explicit.diff.17	narration	no-work-line
 case	features/se_explicit.diff.18	narration	product-name+fatal-decoration+shared-refusal
 case	features/se_explicit.diff.19	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.2	narration	ninja-progress+recipe-echo
-case	features/se_explicit.diff.20	unclassified	no-work-line+up-to-date-line+evaluation
+case	features/se_explicit.diff.20	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.21	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.22	narration	no-work-line+up-to-date-line+recipe-interleave
 case	features/se_explicit.diff.23	narration	no-work-line+up-to-date-line
