@@ -1,0 +1,19 @@
+# GNU Make holds one prerequisite chain per target with an `ignore_mtime` bit on
+# each entry, so a name written both ways is one entry written twice with the
+# bit set differently. `set_file_variables` (commands.c) reconciles them before
+# it reads `$|`, `$^`, `$+` and `$?` off the chain — "if so then we need to
+# 'upgrade' one that is order-only" — and clears the bit on both. The manual
+# states the same rule: a file that is both a normal and an order-only
+# prerequisite is a normal prerequisite.
+#
+# `baz` is declared order-only on the rule that carries the recipe and normally
+# on the recipe-less rule below it, so it leaves `$|` and stays in `$^`. `qux`
+# is the control: order-only and nothing else, so it stays in `$|`.
+foo: bar | baz qux
+	@printf 'pipe=[%s]\n' '$|' > out
+	@printf 'hat=[%s]\n' '$^' >> out
+	@printf 'plus=[%s]\n' '$+' >> out
+	@printf 'query=[%s]\n' '$?' >> out
+foo: baz
+.PHONY: baz bar foo qux
+bar baz qux: ; @:

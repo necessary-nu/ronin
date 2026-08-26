@@ -16867,12 +16867,34 @@ children (
                 id make-a-normal-prerequisite-outranks-the-same-name-as-order-only
                 title "Drop a name from the order-only list once it is also an ordinary prerequisite"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:39:16.414649997Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/order_only.diff.3 and .4 (suite script features/order_only:40 and :57). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    foo: bar | baz\n    \t@echo \"pipe=$|\"\n    \t@echo \"hat=$^\"\n    foo: baz\n    .PHONY: baz bar foo\n    bar baz: ; @:\n\n  GNU 4.4.1  pipe=          hat=bar baz\n  Ronin      pipe=baz       hat=bar baz\n\nGNU's manual is explicit: a file declared as both a normal and an order-only prerequisite is a normal prerequisite, and the normal declaration takes precedence. GNU carries one `->next` chain with an `ignore_mtime` bit per entry, so the second, ordinary mention clears the bit on the entry that is already there. Ronin keeps two lists (`deps`, `order_onlys`) and adds `baz` to both, so `$|` still names it.\n\n`$^` already agrees, so the graph edges agree; what differs is the text `$|` puts on the command line, which is build intent. Related but not the same as make-shuffle-reorders-order-only-prerequisites-apart-from-the-rest, which is about the same two-list representation seen from the shuffle end."
+                    }
+
+                    {
+                        at 2026-08-26T15:56:35.419307546Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T15:57:00.877583983Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and narrowed where the answer is decided. Measured against\nreference/make-oracle/make-4.4.1/make.\n\nThe filing's case held exactly: `pipe=` / `hat=bar baz` from GNU, `pipe=baz` / `hat=bar baz` from Ronin. Two\nthings were added by measurement:\n  * Writing the two rule lines the other way round — the recipe-less `foo: baz` FIRST — changes nothing on\n    either side. So the reconciliation is not about which line was read first.\n  * A control: an order-only name that is ONLY order-only stays in `$|` on both sides, which is what keeps\n    the fix from being \"empty `$|`\". It is in the recorded case as `qux`.\n  * `$+` and `$?` were measured too and already agreed, so `$|` is the whole of it.\n\nMECHANISM, and it is narrower than the filing's \"GNU carries one `->next` chain ... so the second, ordinary\nmention clears the bit on the entry that is already there\". The bit is not cleared as the makefile is read.\nBoth entries stay in the chain with their own bits until the recipe's automatic variables are computed, and\n`set_file_variables` (commands.c) reconciles them there: it hashes the chain by name, and on a collision\nwhose two entries disagree it writes `d->ignore_mtime = hd->ignore_mtime = 0` — its own comment is \"if so\nthen we need to 'upgrade' one that is order-only\". The three lists are read off afterwards, so the name\nleaves `$|` and stays in `$^`. Entries carrying `need_2nd_expansion` or `ignore_automatic_vars` are skipped\nby that pass, which is why `.EXTRA_PREREQS` does not take part.\n\nWHERE THE FIX WENT — kati b2a53e1cb7e2ca0d0eda5295ced994d75bb9b940, branch\nnplan/make-a-normal-prerequisite-outranks-the-same-name-as-order-only, one file:\n  * `command.rs::eval_impl`, `AutoCommand::Bar`: the duplicate-suppressing set `$|` walks with now starts\n    holding every ordinary prerequisite, so a name the ordinary list already has is not written. That is\n    the two-list spelling of GNU's upgrade. `.EXTRA_PREREQS` needs no exclusion here because Ronin already\n    splits those out of `actual_inputs` before any automatic variable sees the node.\n\nTEETH, MEASURED BY PARKING THE FIX: `tests/make/a-name-declared-both-ways-is-an-ordinary-prerequisite`\nfails without it — `out` holds `pipe=[baz qux]` where GNU left `pipe=[qux]`, with `$^`, `$+` and `$?`\nidentical on both sides in the same file, which is the evidence that only `$|` was wrong.\n\nINVENTORY ROWS MOVED — exactly two, audited by name against the pre-run tsv, and they are the two this node\nowns:\n  features/order_only.diff.3  unclassified/ninja-progress+recipe-echo+evaluation → narration/ninja-progress+recipe-echo\n  features/order_only.diff.4  unclassified/ninja-progress+recipe-echo+evaluation → narration/ninja-progress+recipe-echo\nunclassified 48 → 46, narration 1209 → 1211, compiler ZERO, interface 28 unchanged, total 1285 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1101 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1200 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T15:57:15.822139062Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
