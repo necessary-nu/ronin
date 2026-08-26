@@ -1,0 +1,30 @@
+# A pattern rule with several target patterns makes all of them with one recipe.
+# GNU Make records the others on the file it was asked for as `also_make`
+# (`pattern_search`, implicit.c) and then, while updating that file, walks their
+# prerequisites too — `update_file_1` (remake.c) says why in as many words: "we
+# need to walk our deps, AND the deps of any also_make targets to ensure
+# everything happens in the correct order". That walk is the one that decides
+# whether the recipe runs, so what a peer's own recipe-less rule declared is
+# built, and built first.
+#
+# It is not in the file's own prerequisite chain, so it reaches neither `$^` nor
+# `$|`: `hat.out` and `bar.out` are the controls for that.
+#
+#   x.t2: dep        an ordinary prerequisite declared on the peer
+#   y.t2: | oo       an order-only one, which must not show in `$|` either
+#   base             the rule's own prerequisite, which is what `$^` holds
+all: x y
+
+x: x.t1 x.t2 ; @printf 'x\n' > x.out
+x.t2: dep
+
+y: y.t1 y.t2 ; @printf 'y\n' > y.out
+y.t2: | oo
+
+dep: ; @printf 'dep\n' > dep.out
+oo: ; @printf 'oo\n' > oo.out
+base: ; @printf 'base\n' > base.out
+
+%.t1 %.t2: base ; @printf '[%s]\n' '$^' > $*-hat.out ; printf '[%s]\n' '$|' > $*-bar.out
+
+.PHONY: all

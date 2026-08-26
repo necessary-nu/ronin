@@ -17089,12 +17089,34 @@ children (
                 id make-a-grouped-pattern-target-keeps-its-own-explicit-prerequisites
                 title "Keep the explicit prerequisites of one target of a multi-target pattern rule"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:40:16.697564299Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/patternrules.diff.7 (suite script features/patternrules:161). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    final: x ; @echo $@\n    x: x.t1 x.t2 ; @echo $@\n    x.t2: dep\n    dep: ; @echo $@\n    %.t1 %.t2: ; @echo $*.t1 ; echo $*.t2\n\n  GNU 4.4.1  dep / x.t1 / x.t2 / x / final\n  Ronin      x.t1 / x.t2 / x / final          (dep is never built)\n\n`x.t2: dep` is a recipe-less rule adding a prerequisite to `x.t2`. `x.t2` is then produced by the multi-target pattern rule `%.t1 %.t2:`. GNU keeps the explicit prerequisite and orders `dep` ahead of the pattern rule's recipe; Ronin drops it when the pattern rule takes over the target, so `dep` is not in the graph at all.\n\nA prerequisite missing from the graph is build intent, and this one loses a whole edge."
+                    }
+
+                    {
+                        at 2026-08-26T18:09:27.766071397Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T18:09:51.359545774Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and settled how the prerequisite reaches the graph, which the filing left open.\nMeasured against reference/make-oracle/make-4.4.1/make.\n\nThe filing's case held exactly: GNU built `dep` and Ronin did not. The control it implies was measured too\n— the same makefile with a SINGLE-target pattern rule `%.t2:` — and there the two already agreed, which\npins the fault to the multi-target shape rather than to pattern rules generally. Three more shapes were\nmeasured:\n  * `$^` must NOT show the peer's prerequisite. With `%.t1 %.t2: base`, GNU's `$^` is `base` alone while\n    `dep` is still built. So this is not \"add it to the prerequisite list\".\n  * `$|` likewise, for a peer that declared an order-only prerequisite.\n  * A peer with a RECIPE of its own: GNU still uses the pattern rule (the peer was marked made by\n    `also_make`) and builds the peer's `dep` first. Ronin already agreed here and still does.\n\nMECHANISM, and it is stated in GNU's own comment. `pattern_search` (implicit.c) records the other targets\non the matched file as `also_make` and does NOT merge their prerequisites into `file->deps` — which is why\n`$^` does not show them. `update_file_1` (remake.c) then walks them anyway: \"we need to walk our deps, AND\nthe deps of any also_make targets to ensure everything happens in the correct order\". That is the same loop\nthat decides `must_make`, so the peer's prerequisites are ordinary prerequisites of the shared action for\nscheduling and freshness, and invisible to the automatic variables.\n\nWHERE THE FIX WENT — kati 37d28242f172abb641bf6607cfa6701ad6a31137, branch\nnplan/make-a-grouped-pattern-target-keeps-its-own-explicit-prerequisites, one file:\n  * `dep.rs::build_plan`: the peers a multi-target pattern rule claimed (`DepNode::peer_outputs`) now\n    contribute their own declared prerequisites to `grouped_peer_inputs` /`grouped_peer_order_only` — the\n    same hidden channel an explicit `&:` peer's prerequisites already ride, which puts them in the graph\n    and the freshness test and out of `$^`, `$<` and `$|`. Read where `peer_outputs` is still full: a peer\n    later reached in its own right is struck off that list, and that happens after this point.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/a-multi-target-pattern-rule-builds-its-peers-prerequisites` fails without it — `dep.out` was\nnot produced at all. Four controls in the same case agree on both sides: `x-hat.out` and `y-hat.out` hold\n`[base]` (the rule's own prerequisite and nothing else), `x-bar.out` and `y-bar.out` are empty, and\n`oo.out` proves an order-only prerequisite declared on a peer is built too.\n\nINVENTORY ROW MOVED — exactly one, audited by name against the pre-run tsv:\n  features/patternrules.diff.7  unclassified/ninja-progress+evaluation → narration/ninja-progress\nThat is the row this node owns. unclassified 44 → 43, narration 1213 → 1214, compiler ZERO, interface 28\nunchanged, total 1285 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1101 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1203 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T18:10:02.226741215Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
