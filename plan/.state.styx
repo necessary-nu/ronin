@@ -939,6 +939,7 @@ assertions (
     {id make-a-target-specific-export-flag-reaches-the-prerequisites, kind @complete, author "brendan@necessary.nu", at 2026-08-25T00:07:32.656607643Z}
     {id make-an-eval-only-invocation-needs-no-makefile-on-disk, kind @complete, author "brendan@necessary.nu", at 2026-08-25T00:07:37.933854104Z}
     {id make-a-vpath-resolved-name-keeps-its-explicit-rule, kind @complete, author "brendan@necessary.nu", at 2026-08-26T14:55:45.286414252Z}
+    {id make-an-existing-target-is-not-rebuilt-through-a-declined-implicit-chain, kind @complete, author "brendan@necessary.nu", at 2026-08-26T15:31:19.577906167Z}
 )
 
 impl_evidence (

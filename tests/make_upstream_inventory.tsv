@@ -477,12 +477,12 @@ case	features/se_implicit.diff.1	unclassified	ninja-progress+evaluation
 case	features/se_implicit.diff.10	narration	ninja-progress+recipe-echo
 case	features/se_implicit.diff.11	narration	no-work-line
 case	features/se_implicit.diff.12	narration	ninja-progress
-case	features/se_implicit.diff.13	unclassified	ninja-progress+no-work-line+evaluation
+case	features/se_implicit.diff.13	narration	no-work-line
 case	features/se_implicit.diff.14	narration	ninja-progress
 case	features/se_implicit.diff.15	narration	no-work-line
 case	features/se_implicit.diff.16	narration	no-work-line
 case	features/se_implicit.diff.17	narration	ninja-progress
-case	features/se_implicit.diff.18	unclassified	ninja-progress+no-work-line+evaluation
+case	features/se_implicit.diff.18	narration	no-work-line
 case	features/se_implicit.diff.19	narration	no-work-line
 case	features/se_implicit.diff.2	narration	ninja-progress
 case	features/se_implicit.diff.20	narration	no-work-line

@@ -1,0 +1,13 @@
+# Timestamps decide two of the three answers, so they are set rather than left
+# to how fast the setup ran.
+: > log
+echo kept > kept.z
+echo o > older.x
+echo o > older.tsk
+echo n > newer.tsk
+echo n > newer.x
+touch -d '2020-01-01 00:00:00' older.x
+touch -d '2021-01-01 00:00:00' older.tsk
+touch -d '2020-01-01 00:00:00' newer.tsk
+touch -d '2021-01-01 00:00:00' newer.x
+touch -d '2021-01-01 00:00:00' kept.z
