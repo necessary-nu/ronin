@@ -1,0 +1,2 @@
+printf '#!/bin/sh\necho hit >> counted\necho hi\n' > gen
+chmod +x gen

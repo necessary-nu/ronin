@@ -1,0 +1,10 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # Every command-line assignment operator, and what each settles to. GNU Make
+| # renders this table from the variable store — the name, a `:` where the
+| # variable came out simple, `=`, then the stored value — so five spellings come
+| # back as two, in the reverse of the order the command line introduced them.
+| all: ; @printf '%s\n' '$(MAKEOVERRIDES)' > overrides.out
+file overrides.out touched 1
+| E:=5 D=4 C:=3 B=2 A=1

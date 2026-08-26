@@ -162,24 +162,26 @@ fn command_variable_name(assignment: &str) -> Option<&str> {
 /// [`makeflags_words`] splits on any ASCII whitespace, so escaping the newline
 /// here is what keeps the same word whole on the way back. The two choices are
 /// one choice — change either and the round trip breaks.
+///
+/// The evaluator re-renders `MAKEOVERRIDES` from the settled variables once the
+/// command line has been read, which has to quote the same way this does or the
+/// two spellings of the same table would disagree. One function, called from
+/// both, is what keeps them from drifting.
 fn quote_for_makeflags(word: &str) -> String {
-    let mut quoted = String::with_capacity(word.len());
-    for character in word.chars() {
-        match character {
-            '\\' => quoted.push_str("\\\\"),
-            '$' => quoted.push_str("$$"),
-            character if character.is_ascii_whitespace() => {
-                quoted.push('\\');
-                quoted.push(character);
-            }
-            character => quoted.push(character),
-        }
-    }
-    quoted
+    String::from_utf8(kati::flags::quote_for_makeflags(word.as_bytes()))
+        .expect("quoting adds only ASCII to valid UTF-8")
 }
 
 /// Keep the last value for each command-line name and publish the table in the
 /// reverse of first-introduction order, as GNU Make 4.4.1 does.
+///
+/// The assignments as they were WRITTEN, which is all that is known here: this
+/// runs before anything is bound, and `MAKEFLAGS` has to hold a table while the
+/// command line is being read. The evaluator renders the same table a second
+/// time from the variables the reading bound, which is where a `FOO!=cmd`
+/// becomes the `FOO=<answer>` a child is handed — see
+/// `resettle_command_variables` (kati `evaluate.rs`). Both spellings are this
+/// table; the difference is what has happened by the time each is asked for.
 fn command_overrides(invocation: &Invocation) -> String {
     let mut assignments: Vec<(&str, &str)> = Vec::new();
     for assignment in &invocation.variables {

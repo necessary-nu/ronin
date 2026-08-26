@@ -954,6 +954,7 @@ assertions (
     {id make-a-makefile-written-during-evaluation-is-there-to-include, kind @complete, author "brendan@necessary.nu", at 2026-08-26T21:13:54.626502462Z}
     {id make-a-command-line-variable-reaches-a-shell-functions-recursive-make, kind @complete, author "brendan@necessary.nu", at 2026-08-26T21:34:10.813314491Z}
     {id make-touch-touches-a-target-whose-recipe-expands-to-nothing, kind @complete, author "brendan@necessary.nu", at 2026-08-26T23:21:32.879577603Z}
+    {id make-a-command-line-variables-value-is-settled-once, kind @doing, author "brendan@necessary.nu", at 2026-08-26T23:22:01.736618399Z}
 )
 
 impl_evidence (

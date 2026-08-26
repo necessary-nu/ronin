@@ -811,8 +811,8 @@ fn read_unit(
     let refusals = refused_makefiles(refusals);
     let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
     let exported = exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
-    let command_line =
-        command_line_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+    let command_line = command_line_environment(&mut ev, &exported)
+        .map_err(|error| MakeError::evaluate(&error))?;
     // A Makefile may replace MAKEOVERRIDES (and therefore the recursive
     // MAKEFLAGS value) before naming a child. That evaluated compiler
     // variable, not the invocation's pre-evaluation seed, is what the
@@ -1853,8 +1853,19 @@ fn flag_recipe_environment(makeflags: &str, mflags: String) -> [(OsString, Optio
 /// there. A Makefile that clears `MAKEOVERRIDES` removes that half, leaving the
 /// environment-origin value GNU Make exposes to its child. Explicit
 /// `export`/`unexport` results are applied after this list and can replace it.
+///
+/// `settled` is what the export pass already expanded, and a name it settled is
+/// read from there rather than expanded a second time. A command-line variable
+/// is exported without being asked, so nearly every name here is one of those —
+/// and settling a value twice is not the same as settling it once when a
+/// `$(shell)` in it has an effect. GNU Make expands an exported recursive value
+/// once per environment it builds (`target_environment`, variable.c), never
+/// twice for the same one. What is left to expand is the command-line name the
+/// export pass declined: a name no shell could read back, or one the makefile
+/// took back with `unexport`.
 fn command_line_environment(
     ev: &mut kati::eval::Evaluator,
+    settled: &[(std::ffi::OsString, Option<std::ffi::OsString>)],
 ) -> Result<Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>, kati::anyhow::Error> {
     use std::os::unix::ffi::OsStringExt;
     let variables = ev
@@ -1862,12 +1873,13 @@ fn command_line_environment(
         .globals
         .matching(|variable| variable.read().origin() == kati::var::VarOrigin::CommandLine);
     let mut environment = Vec::with_capacity(variables.len());
-    for (name, _) in variables {
-        let value = ev.eval_var(name)?;
-        environment.push((
-            std::ffi::OsString::from_vec(name.as_bytes(&ev.session).to_vec()),
-            Some(std::ffi::OsString::from_vec(value.to_vec())),
-        ));
+    for (symbol, _) in variables {
+        let name = std::ffi::OsString::from_vec(symbol.as_bytes(&ev.session).to_vec());
+        let value = match settled.iter().find(|(settled, _)| *settled == name) {
+            Some((_, value)) => value.clone(),
+            None => Some(std::ffi::OsString::from_vec(ev.eval_var(symbol)?.to_vec())),
+        };
+        environment.push((name, value));
     }
     Ok(environment)
 }

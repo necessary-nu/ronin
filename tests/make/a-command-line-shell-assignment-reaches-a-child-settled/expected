@@ -1,0 +1,17 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 4
+| # `MAKEOVERRIDES` carries what a command-line assignment SETTLED to, not the
+| # operator it was written with, so the child is handed `FOO=hi` and does not run
+| # the command again. `counted` is what says so: one line for the whole tree.
+| all: ; @$(MAKE) --no-print-directory -f child.mk
+file child.mk kept 1
+| all: ; @printf 'FOO=[%s] OVR=[%s]\n' '$(FOO)' '$(MAKEOVERRIDES)' > child.out
+file child.out touched 1
+| FOO=[hi] OVR=[FOO=hi]
+file counted touched 1
+| hit
+file gen kept 3
+| #!/bin/sh
+| echo hit >> counted
+| echo hi
