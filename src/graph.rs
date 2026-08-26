@@ -134,6 +134,19 @@ pub(crate) struct Edge {
     /// Whether the build throws this edge's outputs away once it has finished
     /// with them, which every intermediate but a `.SECONDARY` one is.
     pub(crate) disposable: bool,
+    /// Whether a run under `-t` stands in for this edge's recipe rather than
+    /// leaving its outputs alone.
+    ///
+    /// An edge that runs no command is two different things in Make. A target
+    /// with no recipe written for it is left alone — "According to POSIX, -t
+    /// doesn't affect targets with no cmds" (`notice_finished_file`, remake.c)
+    /// — while a target whose recipe came to nothing is touched, because it HAS
+    /// a recipe and the touch is standing in for it. Neither can be read off the
+    /// edge's having no command, so the front end that compiled it says.
+    ///
+    /// False as well for a recipe every written line of which is recursive:
+    /// GNU Make runs those under `-t` instead of standing in for them.
+    pub(crate) has_touchable_recipe: bool,
     /// Whether an output this edge does not write is absent rather than an
     /// alias for what the edge reads.
     ///
@@ -958,6 +971,7 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         always_dirty: false,
         intermediate: false,
         disposable: false,
+        has_touchable_recipe: false,
         outputs_unaliased: false,
         outputs_low_resolution: false,
         outputs_reobserved: false,

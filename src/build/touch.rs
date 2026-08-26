@@ -106,6 +106,28 @@ impl Builder<'_> {
         Ok(())
     }
 
+    /// Touch the outputs of an edge that reached the build, ran nothing, and
+    /// had a recipe to run.
+    ///
+    /// The other touch is per step: a recipe with command lines is touched
+    /// because the run stood in for one of them. A recipe that came to no
+    /// command line at all has no step to stand in for, and GNU Make touches it
+    /// all the same — `notice_finished_file` asks whether the target HAS a
+    /// recipe (`file->cmds != 0`) and never what that recipe expands to, so
+    /// `b: c;` and `b: c; $(EMPTY)` are touched exactly as `b: c; @:` is. Only a
+    /// target with no recipe written for it is left alone, which is the POSIX
+    /// rule the same clause spells out.
+    ///
+    /// Which of the two an edge with no command is cannot be read off the graph
+    /// — both compile to the same commandless shape — so the compiler says, and
+    /// [`crate::graph::Edge::has_touchable_recipe`] is what it says it with.
+    pub(super) fn touch_the_recipe_that_ran_nothing(&self, edge: EdgeId) -> BuildResult<()> {
+        if !self.graph.edge(edge).has_touchable_recipe {
+            return Ok(());
+        }
+        self.touch_outputs(edge, true)
+    }
+
     /// The files this edge is really for, which is not always what it is
     /// declared to write.
     ///

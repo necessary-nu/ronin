@@ -443,12 +443,21 @@ which Ronin also honours.
   tools touched rather than ran the recipe). This is the 2026-08-17 operator
   ruling on `make-archive-member-touch` exactly: *"the BEHAVIOUR lands as
   specified, the NARRATION does not."*
-* **`dash-n.diff.4` — DEFECT** (`make-touch-touches-a-target-whose-recipe-expands-to-nothing`).
+* **`dash-n.diff.4` — DEFECT, FIXED 2026-08-27**
+  (`make-touch-touches-a-target-whose-recipe-expands-to-nothing`).
   Run `-t -n`, and deliberately *not* covered by `touch-announce`. The
-  filesystem half is the real finding: under `-t` alone, GNU leaves both `a` and
-  `b`, and Ronin leaves only `a`, because `b`'s recipe `$(FOO)` expands to a
-  lone `+` and Ronin makes no edge for a recipe that expands to nothing. A
-  control probe with `b: c; @:` has Ronin touch both.
+  filesystem half was the real finding: under `-t` alone, GNU left both `a` and
+  `b`, and Ronin left only `a`, because `b`'s recipe `$(FOO)` expands to a
+  lone `+` and Ronin made no edge for a recipe that expands to nothing. A
+  control probe with `b: c; @:` had Ronin touch both.
+
+  The `+` turned out to be incidental — *any* recipe coming to nothing behaved
+  that way — and the graph now carries whether the target HAS a recipe as
+  against whether that recipe produced a command, which is the distinction `-t`
+  turns on. The filesystem halves agree in all eight probed shapes. The row's
+  remaining residue is narration: under `-t -n` GNU names the touch it would
+  perform and Ronin names the recipe it stands in for. Nothing is written on
+  either side.
 * **`dash-n.diff.5` — DUPLICATE.** `-n` over `@$(MAKE) -f … bar`. GNU echoes
   the line *and runs it*, so the child's `echo n --no-print-directory` appears;
   Ronin does not. This is divergence #6 of `make-oracle-divergences.md` (`-n`

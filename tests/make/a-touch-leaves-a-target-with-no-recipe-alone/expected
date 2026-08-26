@@ -1,0 +1,13 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 7
+| # The boundary the case beside this one sits against: `b` has prerequisites and
+| # no recipe, so there is nothing for the touch to stand in for. "According to
+| # POSIX, -t doesn't affect targets with no cmds" (remake.c).
+| .SUFFIXES:
+| a: b
+| 	@echo made > $@
+| b: c
+file a touched 0
+file c kept 1
+| seed

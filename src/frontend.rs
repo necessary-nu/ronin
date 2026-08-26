@@ -159,6 +159,15 @@ pub struct EdgeSpec<'a> {
     /// Whether the front end should throw the outputs away once the build has
     /// finished with them.
     pub disposable: bool,
+    /// Whether a run told to touch its targets rather than make them should
+    /// stand in for this edge's recipe, which a commandless edge can only be
+    /// asked because the front end that compiled it knows the target had one.
+    ///
+    /// GNU Make touches a target whose recipe it did not run and leaves alone
+    /// one that never had a recipe at all, and a recipe expanding to no command
+    /// compiles to the same commandless edge as the second. A manifest has no
+    /// `-t` and no way to say this, so a graph parsed from one never carries it.
+    pub has_touchable_recipe: bool,
     /// Whether an output no command here writes is absent rather than an alias
     /// for the inputs.
     ///
@@ -479,6 +488,7 @@ impl BuildGraph {
             stored.always_dirty = spec.always_dirty;
             stored.intermediate = spec.intermediate;
             stored.disposable = spec.disposable;
+            stored.has_touchable_recipe = spec.has_touchable_recipe;
             stored.outputs_unaliased = spec.outputs_unaliased;
             stored.outputs_low_resolution = spec.outputs_low_resolution;
         }
@@ -1082,6 +1092,7 @@ mod tests {
             always_dirty: false,
             intermediate: false,
             disposable: false,
+            has_touchable_recipe: false,
             outputs_unaliased: false,
             outputs_low_resolution: false,
             bindings: Vec::new(),
@@ -1110,6 +1121,7 @@ mod tests {
                 always_dirty: true,
                 intermediate: false,
                 disposable: false,
+                has_touchable_recipe: false,
                 outputs_unaliased: false,
                 outputs_low_resolution: false,
                 bindings: vec![(description, b"copying".to_vec())],

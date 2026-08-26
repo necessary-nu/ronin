@@ -550,6 +550,11 @@ impl GraphSink {
             always_dirty: pending.always_dirty,
             intermediate: pending.intermediate,
             disposable: pending.disposable,
+            // Every line of the recipe this wrapper stands for is a recursive
+            // one, which is what made it a wrapper. GNU Make runs those under
+            // `-t` rather than standing in for them, and the child run touches
+            // whatever it is asked to.
+            has_touchable_recipe: false,
             // A recursive wrapper really is an alias: its outputs stand for
             // the child goals that replace it.
             outputs_unaliased: false,
@@ -618,6 +623,10 @@ impl GraphSink {
             always_dirty: true,
             intermediate: false,
             disposable: false,
+            // A staging proxy is a name the compiler invented, not a Make
+            // target: no recipe was written for it and there is nothing for
+            // `-t` to stand in for.
+            has_touchable_recipe: false,
             outputs_unaliased: false,
             outputs_low_resolution: false,
             bindings: Vec::new(),
@@ -1477,6 +1486,7 @@ impl BuildSink for GraphSink {
             always_dirty: edge.always_dirty,
             intermediate: edge.intermediate,
             disposable: edge.disposable,
+            has_touchable_recipe: edge.has_touchable_recipe,
             // A Make target with no commands compiles to the `phony` rule for
             // want of anything else to build it with, and means the opposite of
             // what a manifest's `phony` means: GNU Make made the target, wrote

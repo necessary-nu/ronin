@@ -1868,7 +1868,11 @@ impl<'a> Builder<'a> {
     /// dependents alone, and one that is not there leaves them out of date. The
     /// second look costs a stat and is the difference between a build that
     /// settles and one that runs the same recipe forever.
-    fn finish_phony_edge(&mut self, edge: EdgeId) -> (bool, Vec<NodeId>) {
+    ///
+    /// Under `-t` that target is touched before the second look, because a
+    /// recipe coming to nothing is still a recipe the touch stands in for.
+    fn finish_phony_edge(&mut self, edge: EdgeId) -> BuildResult<(bool, Vec<NodeId>)> {
+        self.touch_the_recipe_that_ran_nothing(edge)?;
         let reobserve = self.graph.edge(edge).outputs_unaliased && !self.options.dryrun;
         let outputs: Vec<NodeId> = self.graph.edge(edge).out.to_vec();
         let mut every_output_made = true;
@@ -1890,7 +1894,7 @@ impl<'a> Builder<'a> {
         // new, so nothing that waited for it is settled by this.
         let pruned = reobserve && every_output_made;
         self.runtime.edge_mut(edge).set_restat_clean(pruned);
-        (pruned, Vec::new())
+        Ok((pruned, Vec::new()))
     }
 
     fn recompute_consumers_after_restat(&mut self, edge: EdgeId) -> BuildResult<()> {
@@ -2178,7 +2182,7 @@ impl<'a> Builder<'a> {
                 }
                 let is_phony = self.graph.is_phony_rule(self.graph.edge(edge).rule);
                 if is_phony {
-                    let result = Ok(self.finish_phony_edge(edge));
+                    let result = self.finish_phony_edge(edge);
                     if let Err(error) = self.settle_edge(edge, result) {
                         failures += 1;
                         last_error = Some(error);

@@ -495,6 +495,14 @@ impl Builder<'_> {
         how: Unrun,
     ) -> BuildResult<(bool, Vec<NodeId>)> {
         let executed = matches!(how, Unrun::Phony);
+        // Ahead of the stats below, so the date `-t` has just given each output
+        // is the date this run reads back. Only the edge whose recipe was read
+        // and came to nothing: an edge skipped because its outputs were already
+        // newer than its prerequisites is one GNU Make does not remake, and a
+        // target it does not remake is a target it does not touch.
+        if matches!(how, Unrun::NoCommand) {
+            self.touch_the_recipe_that_ran_nothing(edge)?;
+        }
         let deferred = self.graph.deferred_freshness(edge).is_some();
         let outputs = self.graph.deferred_freshness(edge).map_or_else(
             || self.graph.edge(edge).out.clone(),

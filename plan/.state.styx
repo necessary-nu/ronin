@@ -953,6 +953,7 @@ assertions (
     {id make-makeoverrides-reaches-a-recursive-invocation, kind @complete, author "brendan@necessary.nu", at 2026-08-26T20:46:51.040613437Z}
     {id make-a-makefile-written-during-evaluation-is-there-to-include, kind @complete, author "brendan@necessary.nu", at 2026-08-26T21:13:54.626502462Z}
     {id make-a-command-line-variable-reaches-a-shell-functions-recursive-make, kind @complete, author "brendan@necessary.nu", at 2026-08-26T21:34:10.813314491Z}
+    {id make-touch-touches-a-target-whose-recipe-expands-to-nothing, kind @doing, author "brendan@necessary.nu", at 2026-08-26T22:47:58.15107186Z}
 )
 
 impl_evidence (
