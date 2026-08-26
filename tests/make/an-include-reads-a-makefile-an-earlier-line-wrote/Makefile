@@ -1,0 +1,20 @@
+# GNU Make opens an included name every time the directive names it
+# (`eval_makefile`, read.c), so a file a makefile CREATES between two `include`
+# lines is one the second line reads. Two things have to hold for that:
+#
+#   * nothing may remember that the name was absent. A read that did not get a
+#     file learns nothing about the file except that it did not have it then.
+#   * a name this read got is not a name it went without. GNU Make keeps one
+#     goaldep per `include` line, so the `-include` that missed and the
+#     `include` that read the file are two entries and only the first carries a
+#     failure — and that one is `RM_DONTCARE`, which `show_goal_error` returns
+#     from without a word.
+#
+# `late` is the pair. `never` is the control: an optional include of a name
+# nothing ever creates is still silent and still does not refuse the run.
+default: ; @printf 'late=[%s] never=[%s]\n' '$(late)' '$(never)' > out
+
+-include late.mk
+-include never.mk
+$(shell printf 'late := written-during-the-read\n' > late.mk)
+include late.mk

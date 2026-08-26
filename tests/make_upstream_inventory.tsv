@@ -257,7 +257,7 @@ case	features/include.diff.23	narration	product-name+fatal-decoration+shared-ref
 case	features/include.diff.24	narration	ninja-progress
 case	features/include.diff.25	narration	ninja-progress
 case	features/include.diff.26	narration	ninja-progress+no-work-line+up-to-date-line
-case	features/include.diff.27	unclassified	product-name+evaluation
+case	features/include.diff.27	narration	ninja-progress
 case	features/include.diff.28	narration	ninja-progress
 case	features/include.diff.29	narration	ninja-progress
 case	features/include.diff.3	narration	product-name+fatal-decoration+shared-refusal

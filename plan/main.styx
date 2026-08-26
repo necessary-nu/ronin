@@ -17378,12 +17378,34 @@ children (
                 id make-a-makefile-written-during-evaluation-is-there-to-include
                 title "Include a makefile an earlier line of the same makefile wrote"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:40:53.833886261Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/include.diff.27 (suite script features/include:362). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer, in a directory with no `hello.mk`:\n\n    default:; @echo $(hello)\n    -include hello.mk\n    $(shell echo hello=world >hello.mk)\n    include hello.mk\n\n  GNU 4.4.1  world                                    exit 0\n  Ronin      Makefile:2: hello.mk: No such file or directory\n             ronin: No rule to make target 'hello.mk'.  exit 2\n\nRonin DOES run the `$(shell)` — `hello.mk` is on disk after both runs — but the `include` on the following line still fails, and the failure is reported against line 2, the `-include`, which GNU keeps silent. So there are two things wrong in one case: an `-include` that is not silent, and an `include` that does not see a file an earlier line of the same makefile created.\n\nA refusal (exit 2, nothing built) where GNU builds. Neighbouring node: make-include-semantics (done)."
+                    }
+
+                    {
+                        at 2026-08-26T21:13:17.73939869Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T21:13:43.293464111Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and found the fault is TWO defects that only show together — which is why the\nfiling saw \"two things wrong in one case\". All measured against reference/make-oracle/make-4.4.1/make.\n\nThe filing's case held. What the probe added is the set of shapes that ALREADY worked, and they are what\nlocalised it:\n\n    include after a $(shell) that wrote the file, no `-include` above it   both: world\n    a bare `-include` of a name nothing creates                            both: silent, exit 0\n    `-include a.mk` (missing) then $(shell) then `include hello.mk`        both: world  (different names)\n    `include hello.mk` then `-include hello.mk`                            both: world  (order reversed)\n    `-include hello.mk` then $(shell) then `-include hello.mk`             both: world  (both optional)\n    `-include hello.mk` then $(shell) then `include hello.mk`              GNU world, Ronin refused\n\nSo it needed the SAME NAME, the optional include FIRST, and the second one REQUIRED. Each of the two\ndefects is invisible without the other.\n\nDEFECT ONE — absence was remembered. `get_makefile` cached `Source::Absent` as a `None` entry, so the\nsecond `include` was told what the first was told. GNU Make's `eval_makefile` (read.c) calls `fopen` every\ntime the directive names the file; a read that did not get a file has learnt nothing about it except that\nit did not have it then.\n\nDEFECT TWO — a name the read GOT was still recorded as a name it went without. `note_unread_include` from\nthe `-include` left a `MissingInclude` keyed by name; the later `include` succeeded and did not clear it,\nand `plan_regeneration` then found that entry beside a `read_makefiles` entry whose `required` the\nsuccessful include had just raised to true. The result was the complaint and the refusal — and it is why\nthe diagnostic pointed at line 2, the `-include`, which is where the stale entry's location came from.\nGNU Make keeps ONE GOALDEP PER `include` LINE: the failed `-include` and the successful `include` are two\nentries, only the first carries an errno, and that one is `RM_DONTCARE`, which `show_goal_error` (remake.c)\nreturns from without a word.\n\nWHERE THE FIX WENT — kati e2aeddd09c0019af4246bbe6a5db9b851459dc0b, branch\nnplan/make-a-makefile-written-during-evaluation-is-there-to-include, two files:\n  * `file_cache.rs`: absence joins the same `unread` set as a file that would not open, rather than the\n    cache. The cache now holds only makefiles actually READ, so its type lost its `Option`. The name is\n    still in `all_filenames`, which is what it was in the cache for.\n  * `eval.rs::do_include`: a successful read takes the name off `missing_includes`.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/an-include-reads-a-makefile-an-earlier-line-wrote` fails without it — \"build failed where GNU\nMake's build succeeded\". The case carries the control in the same file: `never.mk` is optionally included\nand never created, and must stay silent and not refuse.\n\nINVENTORY ROW MOVED — exactly one, audited by name against the pre-run tsv:\n  features/include.diff.27  unclassified/product-name+evaluation → narration/ninja-progress\nThat is the row this node owns. unclassified 28 → 27, narration 1229 → 1230, compiler ZERO, interface 20\nunchanged, corpus 1277 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1104 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1210 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T21:13:54.626502462Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }
