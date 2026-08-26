@@ -1,0 +1,18 @@
+﻿all: first ; @printf '%s\n' 'goal=[$@]' 'inc=[$(V)]' 'mid=[$(MID)]' > out
+# The rule above is first in the file on purpose: this file's very first bytes
+# are a UTF-8 byte order mark, so the comment could not come before it.
+#
+# GNU Make skips one at the head of a makefile and nowhere else — `eval`
+# (read.c) tests for `EF BB BF` only while `ebuf->floc.lineno == 1`. So the
+# first target is `all` and not a three-byte-prefixed name nobody can write
+# down, and `$@` says so.
+#
+# `inc.mk` starts with a mark too, because the test is per makefile buffer
+# rather than per run: an included file gets the same treatment.
+#
+# `MID` is the control. The mark in front of it is on a later line, so it is
+# ordinary text there and the name it makes is not `MID`, which is why `$(MID)`
+# is empty on both tools.
+first: ; @printf '[%s]\n' '$@' > first.out
+include inc.mk
+﻿MID := mid

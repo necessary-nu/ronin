@@ -17313,12 +17313,34 @@ children (
                 id make-a-byte-order-mark-is-not-part-of-the-first-target
                 title "Skip a UTF-8 byte order mark at the head of a makefile"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:40:48.982598478Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/utf8.diff (suite script features/utf8:8). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer — a makefile whose first three bytes are the UTF-8 BOM (EF BB BF), then `all: ; @echo $@`:\n\n  GNU 4.4.1  all\n  Ronin      ﻿all\n\nGNU skips a UTF-8 byte order mark at the head of a makefile, so the first target is named `all`. Ronin reads the BOM as part of the target's name, so the default goal is a three-byte-prefixed name and `$@` echoes it.\n\nSmall, but it is a target NAME: a makefile saved by an editor that writes a BOM would have every reference to its first target miss. Build intent."
+                    }
+
+                    {
+                        at 2026-08-26T19:34:04.152562808Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T19:34:25.830754852Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and found the rule has two more edges than it named. Measured against\nreference/make-oracle/make-4.4.1/make.\n\nThe filing's case held exactly: GNU `all`, Ronin a three-byte-prefixed name. Two shapes were measured\nbeside it, and both are in the recorded case:\n  * An INCLUDED makefile whose first bytes are the mark: GNU skips it there too, so `V := from-inc` in\n    `inc.mk` defines `V`. Ronin defined a prefixed name and `$(V)` was empty. So the filing's \"at the head\n    of a makefile\" is per makefile BUFFER, not per run.\n  * A mark on a LATER line: ordinary text on both sides, so the name it makes is not the one written and\n    the reference to it is empty. That is the control, and it is what says the rule is about the line\n    number rather than about the bytes.\n\nMECHANISM. `eval` (read.c) tests for `EF BB BF` and advances past it only inside\n`if (ebuf->floc.lineno == 1)`. Every makefile buffer starts at line 1, which is why an `include`d file is\ncovered and a later line is not.\n\nWHERE THE FIX WENT — kati 484c2f53141ee6f8a5b83a76ee87c74ce47415b6, branch\nnplan/make-a-byte-order-mark-is-not-part-of-the-first-target, one file:\n  * `file.rs::Makefile::from_bytes`, which is the single point every makefile's bytes pass through on their\n    way to statements: `without_byte_order_mark` takes a leading mark off the text handed to `parse_file`.\n    The bytes are still noted as they were READ, because `read_sources`/`supply_makefile` hands them back\n    to a pass that re-reads this unit and that pass must see what the file holds. `--eval` fragments do not\n    go through here — they are parsed by `parse_buf` — which matches GNU, whose eval buffers inherit the\n    enclosing line number and so almost never satisfy the test.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/a-byte-order-mark-at-the-head-of-a-makefile-is-skipped` fails without it — `out` holds\n`goal=[\\u{feff}all] inc=[]` where GNU left `goal=[all] inc=[from-the-included-file]`. Both halves in one\ncase: the goal's own name, and the variable an included file with its own mark defines. `mid=[]` agrees on\nboth sides and is the control for a mark that is not on line 1.\n\nINVENTORY ROW MOVED — exactly one, audited by name against the pre-run tsv:\n  features/utf8.diff  unclassified/ninja-progress+recipe-echo+evaluation → narration/ninja-progress\nThat is the row this node owns. unclassified 34 → 33, narration 1223 → 1224, compiler ZERO, interface 28\nunchanged, total 1285 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1101 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1207 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T19:34:37.404605983Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

@@ -656,7 +656,7 @@ case	features/temp_stdin.diff.3	narration	no-work-line+up-to-date-line
 case	features/temp_stdin.diff.4	unclassified	ninja-progress+no-work-line+debug-trace+evaluation
 case	features/temp_stdin.diff.5	unclassified	ninja-progress+no-work-line+recipe-echo+product-name+evaluation
 case	features/temp_stdin.diff.6	unclassified	no-work-line+evaluation
-case	features/utf8.diff	unclassified	ninja-progress+recipe-echo+evaluation
+case	features/utf8.diff	narration	ninja-progress
 case	features/varnesting.diff	narration	ninja-progress
 case	features/varnesting.diff.1	narration	ninja-progress
 case	features/vpath.diff	narration	ninja-progress
