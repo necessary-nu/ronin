@@ -603,7 +603,7 @@ case	features/suffixrules.diff.7	narration	ninja-progress
 case	features/suffixrules.diff.8	narration	no-work-line+up-to-date-line
 case	features/suffixrules.diff.9	narration	ninja-progress
 case	features/targetvars.diff	narration	ninja-progress+recipe-echo
-case	features/targetvars.diff.1	unclassified	ninja-progress+evaluation
+case	features/targetvars.diff.1	narration	ninja-progress
 case	features/targetvars.diff.10	narration	ninja-progress
 case	features/targetvars.diff.11	narration	ninja-progress
 case	features/targetvars.diff.12	narration	ninja-progress
