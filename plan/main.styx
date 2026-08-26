@@ -17428,12 +17428,34 @@ children (
                 id make-makeoverrides-reaches-a-recursive-invocation
                 title "Carry an appended MAKEOVERRIDES into a recursive invocation"
                 kind @fix
+                sealed true
                 log (
                     {
                         at 2026-08-24T10:41:11.443163762Z
                         author "brendan@necessary.nu"
                         kind @note
                         text "Filed by the 2026-08-24 upstream residue dispatch, from features/recursion.diff.2 (suite script features/recursion:57). MEASURED against reference/make-oracle/make-4.4.1/make on 2026-08-24.\n\nReproducer:\n\n    ifeq ($(MAKELEVEL),0)\n    MAKEOVERRIDES += FOO+=bar\n    endif\n    .PHONY: M R\n    M: ; @$(MAKE) --no-print-directory -f Makefile R\n    R: ; @echo '[$(FOO)]'\n\n  GNU 4.4.1  [bar]\n  Ronin      []\n\n`MAKEOVERRIDES` is how a makefile adds its own definitions to what a recursive invocation inherits: GNU writes it into the `-- ` half of MAKEFLAGS, the child reads `FOO+=bar` as a command-line definition, and `R` sees it. Ronin composes the recursive invocation into the same graph and does not carry the appended override across the boundary, so `$(FOO)` is empty in the composed sub-unit.\n\nThe value reaches the recipe's command line, so this is build intent, not choreography. Neighbouring nodes: make-subninja-recursion, make-makefile-set-makeflags (both done)."
+                    }
+
+                    {
+                        at 2026-08-26T20:44:29.348568645Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Todo → Doing (nplan start)"
+                    }
+
+                    {
+                        at 2026-08-26T20:44:59.459810797Z
+                        author "brendan@necessary.nu"
+                        kind @note
+                        text "PROBE CONFIRMED THE FILING and narrowed it to one missing step. All measured against\nreference/make-oracle/make-4.4.1/make.\n\nThe filing's case held: GNU `[bar]`, Ronin `[]`. The narrowing came from asking what the PARENT saw, which\nthe filing did not:\n\n  parent, MAKEOVERRIDES appended, nothing on the command line\n      GNU   OVR=[FOO+=bar] FLAGS=[ -- FOO+=bar] value=[ -- $(MAKEOVERRIDES)]\n      Ronin OVR=[FOO+=bar] FLAGS=[]             value=[]\n  parent, the same append AND a real command-line override `Z=9`\n      both  OVR=[Z=9 FOO+=bar] FLAGS=[ -- Z=9 FOO+=bar] value=[ -- $(MAKEOVERRIDES)]\n\nSo Ronin already carried `MAKEOVERRIDES` into `MAKEFLAGS` and across the composed boundary — it did it\nwhenever the COMMAND LINE had overrides. What was missing is the other way the variable comes to hold\nsomething: a makefile defining it from nothing.\n\nMECHANISM. `MAKEOVERRIDES` is defined at startup only inside `if (command_variables)` (main.c), as\n`${-*-command-variables-*-}`. `define_makeflags` writes the ` -- $(MAKEOVERRIDES)` suffix when\n`v && v->value && v->value[0] != '\\0'` — the STORED TEXT, so the default definition qualifies by being a\nreference. And that question is asked a second time once the read is over: `define_makeflags (0)` under\n\"Set up 'MAKEFLAGS' again for the normal targets\". A makefile appending to an undefined `MAKEOVERRIDES`\ndefines it, and the second pass is what notices.\n\nWHERE THE FIX WENT — kati 141a23e2d18dee9ddd972272e59df7f73041e4a8, branch\nnplan/make-makeoverrides-reaches-a-recursive-invocation, plus the Ronin side in the same landing:\n  * kati `evaluate.rs::republish_makeflags_after_read`, run where GNU Make runs its second\n    `define_makeflags`: if `MAKEOVERRIDES` now has stored text and the suffix was not written, write it and\n    record that it is written. Sticky in one direction, as the startup answer already was.\n  * kati `flags.rs`: `MakeflagsAssignment::published` — the switch table as last published, which is what\n    the second pass rebuilds the value on top of. Written at startup and on every `MAKEFLAGS` assignment.\n  * `src/make/cli.rs`: seeds it.\n\nA SECOND DIFFERENCE MEASURED AND NOT TAKEN, recorded so the next dispatch does not rediscover it. GNU Make\nrepublishes `MAKEOVERRIDES` as the SETTLED variables rather than as the assignments were written —\n`quote_for_env(name)`, a `:` if the variable came out simple, `=`, then the value. Measured at MAKELEVEL 0,\nwhere it has nothing to do with this fix:\n\n    command line        GNU              Ronin\n    FOO+=bar            FOO=bar          FOO+=bar\n    FOO?=bar            FOO=bar          FOO?=bar\n    FOO!=echo hi        FOO=hi           FOO!=echo\\ hi\n    FOO::=x             FOO:=x           FOO::=x\n    FOO:::=y            FOO=y            FOO:::=y\n    FOO=plain           FOO=plain        FOO=plain   (the only spelling that agrees)\n\nThe last row of that table is the sharp one: republishing `FOO!=echo hi` as an unsettled `!=` means a child\nRUNS the command again, where GNU ran it once and passed the answer. Doing it GNU's way needs each\ncommand-line assignment settled — expanded, or run — before `MAKEOVERRIDES` is rendered, which is\nevaluator work rather than command-line work, and it is the same ground as the \"every command-line variable\nis expanded twice at settle time\" defect this batch was also handed. Left for that one rather than folded\nin here.\n\nTEETH, MEASURED BY PARKING THE FIX:\n`tests/make/an-appended-makeoverrides-reaches-a-recursive-invocation` fails without it — `child.out` holds\n`child FOO=[] level=1` where GNU left `child FOO=[bar] level=1`. `parent.out` carries the other half in the\nsame case: the parent's own `$(MAKEFLAGS)` and `$(value MAKEFLAGS)`, which show the suffix and the\nreference it is made of.\n\nINVENTORY ROW MOVED — exactly one, audited by name against the pre-run tsv:\n  features/recursion.diff.2  unclassified/ninja-progress+evaluation → narration/ninja-progress\nThat is the row this node owns. unclassified 29 → 28, narration 1228 → 1229, compiler ZERO, interface 20\nunchanged, corpus 1277 unchanged.\n\nGATES (serial, through scripts/sandboxed): fmt clean; check --workspace --all-targets EXIT 0; workspace\ntests 1104 passed / 0 failed; check-lints.sh EXIT 0; make_port 4/4 over 1209 ported cases; conformance 354\nruns, 326/28 normalised, 276 raw — unchanged; equivalence 274/276/56/0 + 8 respellings."
+                    }
+
+                    {
+                        at 2026-08-26T20:46:51.040613437Z
+                        author "brendan@necessary.nu"
+                        kind @status
+                        text "Doing → Done (nplan complete)"
                     }
                 )
             }

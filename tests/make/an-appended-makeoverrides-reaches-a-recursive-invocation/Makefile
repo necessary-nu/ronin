@@ -1,0 +1,24 @@
+# `MAKEOVERRIDES` is how a makefile hands definitions of its own to a recursive
+# invocation: GNU Make writes ` -- $(MAKEOVERRIDES)` on the end of `MAKEFLAGS`,
+# and the child reads what is after the `--` as command-line definitions.
+#
+# The suffix is decided by `define_makeflags` from what `MAKEOVERRIDES` HOLDS —
+# "If there are any overrides to add, write a reference to $(MAKEOVERRIDES) ...
+# Separate the variables from the switches with a '--' arg", guarded by
+# `v->value[0] != '\0'` — and that question is asked again once the read is
+# over: `define_makeflags (0)` under "Set up 'MAKEFLAGS' again for the normal
+# targets" (main.c). Deciding it once at startup covers the command line's own
+# assignments and misses this one, because `MAKEOVERRIDES` is defined only where
+# there were command variables and a makefile appending to it defines it from
+# nothing.
+#
+#   R      reads `FOO`, which only the parent's append can have given it.
+#   parent records what the parent itself sees, which is the same suffix.
+ifeq ($(MAKELEVEL),0)
+MAKEOVERRIDES += FOO+=bar
+endif
+
+.PHONY: M R
+M: ; @printf 'parent flags=[%s] value=[%s]\n' '$(MAKEFLAGS)' '$(value MAKEFLAGS)' > parent.out
+	@$(MAKE) --no-print-directory -f Makefile R
+R: ; @printf 'child FOO=[%s] level=%s\n' '$(FOO)' '$(MAKELEVEL)' > child.out

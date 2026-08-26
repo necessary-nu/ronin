@@ -1399,7 +1399,7 @@ fn session_for(
         // A parent's assignments and this invocation's own, in that order,
         // which is the order Make applies them.
         cl_vars: invocation.variables.clone(),
-        makeflags: Some(makeflags),
+        makeflags: Some(makeflags.clone()),
         eval_flags,
         make_overrides: Some(make_overrides.clone()),
         makeflags_assignment: Some(kati::flags::MakeflagsAssignment {
@@ -1407,6 +1407,7 @@ fn session_for(
             protected: carried.clone(),
             effective: carried,
             has_overrides: !make_overrides.is_empty(),
+            published: makeflags,
             has_evals,
         }),
         // One word, and that word is a path. GNU Make answers `$(MAKE)` this

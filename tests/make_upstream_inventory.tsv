@@ -426,7 +426,7 @@ case	features/patternrules.diff.9	narration	ninja-progress
 case	features/quoting.diff	narration	ninja-progress
 case	features/recursion.diff	narration	ninja-progress+directory-announce+recursive-invocation-echo
 case	features/recursion.diff.1	narration	ninja-progress
-case	features/recursion.diff.2	unclassified	ninja-progress+evaluation
+case	features/recursion.diff.2	narration	ninja-progress
 case	features/reinvoke.diff	narration	ninja-progress
 case	features/reinvoke.diff.1	narration	ninja-progress
 case	features/reinvoke.diff.10	narration	no-work-line+up-to-date-line
