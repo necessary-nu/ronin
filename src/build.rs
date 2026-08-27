@@ -1255,10 +1255,17 @@ impl<'a> Builder<'a> {
         seen: &mut crate::graph::MarkSet,
         swept: &mut Vec<NodeId>,
     ) {
-        let Some(edge) = self.graph.node(node).generator else {
+        if self.graph.node(node).generator.is_none() {
             return;
-        };
-        if !self.graph.edge(edge).disposable || self.graph.peer_outputs(edge).contains(&node) {
+        }
+        // Asked of the OUTPUT rather than of the edge that writes it, because
+        // that is where GNU Make decides it: one rule with several target
+        // patterns writes several names and asks `!is_explicit` of each of
+        // them, so a name the implicit search invented and a name the makefile
+        // mentioned can come off the same action and only the first of them
+        // goes. A name that is still a peer was never given an answer at all,
+        // which is GNU Make stamping `is_target` on an `also_make` entry.
+        if !self.graph.is_disposable_output(node) {
             return;
         }
         if !seen.replace(node.index()) {

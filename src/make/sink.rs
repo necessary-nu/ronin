@@ -116,7 +116,7 @@ pub(crate) struct PendingSubninja {
     deferred: Option<PendingDeferred>,
     completion_output: Option<Node>,
     intermediate: bool,
-    disposable: bool,
+    disposable_outputs: Vec<Node>,
     low_resolution: bool,
     withdrawal: PendingWithdrawal,
     peer_outputs: Vec<Node>,
@@ -549,7 +549,6 @@ impl GraphSink {
             validations: &[],
             always_dirty: pending.always_dirty,
             intermediate: pending.intermediate,
-            disposable: pending.disposable,
             // Every line of the recipe this wrapper stands for is a recursive
             // one, which is what made it a wrapper. GNU Make runs those under
             // `-t` rather than standing in for them, and the child run touches
@@ -577,6 +576,8 @@ impl GraphSink {
         );
         self.graph
             .set_peer_outputs(edge, pending.peer_outputs.clone());
+        self.graph
+            .set_disposable_outputs(&pending.disposable_outputs);
         Ok(edge)
     }
 
@@ -622,7 +623,6 @@ impl GraphSink {
             validations: &[],
             always_dirty: true,
             intermediate: false,
-            disposable: false,
             // A staging proxy is a name the compiler invented, not a Make
             // target: no recipe was written for it and there is nothing for
             // `-t` to stand in for.
@@ -1418,6 +1418,7 @@ impl BuildSink for GraphSink {
             on_error: edge.delete_on_error,
         };
         let peer_outputs = self.node_list(names, edge.peer_outputs)?;
+        let disposable_outputs = self.node_list(names, edge.disposable_outputs)?;
         let deferred = self.deferred_edge(names, edge)?;
         let outputs = if edge.completion_join {
             self.observed_members.insert(edge.output, completion_output);
@@ -1455,7 +1456,7 @@ impl BuildSink for GraphSink {
                 deferred,
                 completion_output: edge.completion_join.then_some(completion_output),
                 intermediate: edge.intermediate,
-                disposable: edge.disposable,
+                disposable_outputs,
                 low_resolution,
                 withdrawal,
                 peer_outputs,
@@ -1485,7 +1486,6 @@ impl BuildSink for GraphSink {
             validations: &[],
             always_dirty: edge.always_dirty,
             intermediate: edge.intermediate,
-            disposable: edge.disposable,
             has_touchable_recipe: edge.has_touchable_recipe,
             // A Make target with no commands compiles to the `phony` rule for
             // want of anything else to build it with, and means the opposite of
@@ -1499,6 +1499,7 @@ impl BuildSink for GraphSink {
         };
         match self.graph.add_edge(spec) {
             Ok(built) => {
+                self.graph.set_disposable_outputs(&disposable_outputs);
                 self.record_late_bindings(built, edge.rule, outputs.first().copied());
                 // Every Make target is one GNU Make decides from the disk, and
                 // looks at again once its recipe has run whatever the recipe

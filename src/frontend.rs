@@ -35,6 +35,7 @@ use std::num::NonZeroUsize;
 mod deferred;
 mod execute;
 mod ordering;
+mod outputs;
 mod staging;
 
 pub use crate::parse::{Manifest, ManifestOptions, load_manifest};
@@ -156,9 +157,6 @@ pub struct EdgeSpec<'a> {
     /// named. A graph parsed from a manifest never carries it: Ninja has no way
     /// to say it.
     pub intermediate: bool,
-    /// Whether the front end should throw the outputs away once the build has
-    /// finished with them.
-    pub disposable: bool,
     /// Whether a run told to touch its targets rather than make them should
     /// stand in for this edge's recipe, which a commandless edge can only be
     /// asked because the front end that compiled it knows the target had one.
@@ -487,7 +485,6 @@ impl BuildGraph {
             let stored = self.arenas.edge_mut(edge.0);
             stored.always_dirty = spec.always_dirty;
             stored.intermediate = spec.intermediate;
-            stored.disposable = spec.disposable;
             stored.has_touchable_recipe = spec.has_touchable_recipe;
             stored.outputs_unaliased = spec.outputs_unaliased;
             stored.outputs_low_resolution = spec.outputs_low_resolution;
@@ -560,7 +557,7 @@ impl BuildGraph {
     ///
     /// Nothing in a Ninja manifest says either half, so a graph parsed from one
     /// carries neither — the same bounded divergence `intermediate` and
-    /// `disposable` already have. `restat` is the near neighbour of the second
+    /// `set_disposable_outputs` already have. `restat` is the near neighbour of the second
     /// half rather than the same thing: it asks for the second look on one rule
     /// and grants the outcome only to an output whose timestamp did not move at
     /// all.
@@ -570,43 +567,6 @@ impl BuildGraph {
         let stored = self.arenas.edge_mut(edge.0);
         stored.freshness_history = crate::graph::FreshnessHistory::FilesystemOnly;
         stored.outputs_reobserved = true;
-    }
-
-    /// Name the outputs of `edge` a stopped command may be made to give back,
-    /// and say whether an ordinary failure is reason enough to take them.
-    ///
-    /// The eligible names rather than a switch: `.PRECIOUS` and `.PHONY` take
-    /// individual outputs off the list, so a grouped recipe may have to leave
-    /// one member and withdraw the rest. They are named whatever `on_error`
-    /// says, because a recipe killed by a signal is cleaned up after without
-    /// `.DELETE_ON_ERROR` having asked.
-    ///
-    /// Nothing in a Ninja manifest says this, so a graph parsed from one never
-    /// calls this at all — the same bounded divergence `intermediate` and
-    /// `disposable` already have — and an edge nobody answered for keeps
-    /// Ninja's answer, which is that a cut-short command gives everything back.
-    pub(crate) fn set_withdrawal(&mut self, edge: Edge, outputs: Vec<Node>, on_error: bool) {
-        self.arenas.set_withdrawal(
-            edge.0,
-            outputs.into_iter().map(|node| node.0).collect(),
-            on_error,
-        );
-    }
-
-    /// Declare which of `edge`'s outputs the recipe makes only on the way to
-    /// making one that was asked for — GNU Make's `also_make`.
-    ///
-    /// They stay outputs: the edge is what writes them, and a failed recipe
-    /// withdraws them like any other. What they are not is part of the question
-    /// the edge answers before it runs, nor part of what the build sweeps up
-    /// afterwards. An empty list stores nothing.
-    ///
-    /// Nothing in a Ninja manifest says this, so a graph parsed from one never
-    /// carries it — the same bounded divergence `intermediate` and `disposable`
-    /// already have.
-    pub(crate) fn set_peer_outputs(&mut self, edge: Edge, outputs: Vec<Node>) {
-        self.arenas
-            .set_peer_outputs(edge.0, outputs.into_iter().map(|node| node.0).collect());
     }
 
     /// Say that `output` was found at `found`, so the build observes it there
@@ -622,7 +582,7 @@ impl BuildGraph {
     /// carries the second place to look and the build decides.
     ///
     /// Nothing in a Ninja manifest says this, so a graph parsed from one never
-    /// carries it — the same bounded divergence `intermediate` and `disposable`
+    /// carries it — the same bounded divergence `intermediate` and `set_disposable_outputs`
     /// already have.
     /// The second half is the same answer about this edge's PREREQUISITES. A
     /// front end that runs the build expands a recipe as it launches it and so
@@ -1091,7 +1051,6 @@ mod tests {
             validations: &[],
             always_dirty: false,
             intermediate: false,
-            disposable: false,
             has_touchable_recipe: false,
             outputs_unaliased: false,
             outputs_low_resolution: false,
@@ -1120,7 +1079,6 @@ mod tests {
                 validations: &used[3..],
                 always_dirty: true,
                 intermediate: false,
-                disposable: false,
                 has_touchable_recipe: false,
                 outputs_unaliased: false,
                 outputs_low_resolution: false,

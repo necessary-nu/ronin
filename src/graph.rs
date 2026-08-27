@@ -131,9 +131,6 @@ pub(crate) struct Edge {
     /// consumer that has to be rebuilt anyway makes it worth creating. It is
     /// deleted once the build has finished.
     pub(crate) intermediate: bool,
-    /// Whether the build throws this edge's outputs away once it has finished
-    /// with them, which every intermediate but a `.SECONDARY` one is.
-    pub(crate) disposable: bool,
     /// Whether a run under `-t` stands in for this edge's recipe rather than
     /// leaving its outputs alone.
     ///
@@ -284,6 +281,16 @@ pub(crate) struct Graph {
     /// edges that have any. Beside the arena for the reason `withdrawal`
     /// is: almost no edge in almost any graph has one.
     peer_outputs: crate::htab::RapidHashMap<EdgeId, IdVec<NodeId>>,
+    /// Outputs the build throws away once it has finished with them, which is
+    /// every intermediate but a `.SECONDARY` one and a goal.
+    ///
+    /// Per NODE rather than per edge, because that is where GNU Make decides
+    /// it: one rule with several target patterns writes several names, and
+    /// `!is_explicit` is asked of each of them (implicit.c), so a name the
+    /// implicit search invented and a name the makefile mentioned can come off
+    /// one action with different answers. Beside the arena for the reason
+    /// `withdrawal` is — no node of a Ninja manifest is ever in it.
+    disposable_outputs: crate::htab::RapidHashSet<NodeId>,
     /// A second place to look for an output, for the outputs a front end found
     /// somewhere other than where the build file named them.
     ///
@@ -970,7 +977,6 @@ pub(crate) fn mkedge(graph: &mut Graph, scope: EnvironmentId) -> EdgeId {
         dyndep: None,
         always_dirty: false,
         intermediate: false,
-        disposable: false,
         has_touchable_recipe: false,
         outputs_unaliased: false,
         outputs_low_resolution: false,

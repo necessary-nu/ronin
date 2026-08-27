@@ -126,6 +126,33 @@ directory can hold a target's name — `features/output-sync` leaves `bar/` and
 already exists and skip it. The `.base` does not, because it was written before
 any of that.
 
+**Corrected 2026-08-27: not all of that state is the harness's.** Measured with
+both tools in matched disposable worktrees, GNU Make's own run leaves nothing in
+`tests/` beside the driver's own `work/` directory — which is where
+`features/vpath`'s `kbd.c` lives, and that one really is the harness's. Two of
+the leftovers named above are Ronin's:
+
+* `features/output-sync` leaves `bar/` **only under Ronin**, and not as a race.
+  The script's `output_sync_clean` removes the files it named and then `rmdir`s
+  the directory; the `rmdir` fails because Ronin's `.ninja_log` and
+  `.ninja_deps` are inside it. `foo/` goes because its sub-make was lifted into
+  the parent's graph, and `bar/`'s was not — the recipe line has a `;` in front
+  of the invocation, so a real child process runs there and opens its own
+  persistence. Recorded on
+  `make-a-run-leaves-no-directory-the-suite-did-not-ask-for`; the directory half
+  is product scope, since Ronin keeps build state where it builds and GNU Make
+  keeps none.
+* `features/patternrules` left `a.15` and `a.2` **only under Ronin**, and that
+  one was a defect: disposability was decided per edge where GNU Make decides it
+  per file, so a multi-target pattern rule's outputs all took the answer of
+  whichever name the walk reached first. Fixed under
+  `make-a-shared-rules-outputs-are-each-swept-on-their-own-answer`; the script
+  now leaves nothing but Ronin's own logs.
+
+The rows in the table below still stand as written — recreate the case with the
+state the suite had and GNU produces Ronin's output exactly — but the sentence
+above them should not be read as saying that every leftover is the harness's.
+
 The test for this is direct: recreate the case *with the state the suite had*
 and run both tools. In all seven, GNU then produces Ronin's output exactly.
 

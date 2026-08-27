@@ -1,0 +1,8 @@
+# One pattern rule writes three names and only two of them are the implicit
+# search's invention. `a.3` is written without a `%` in the prerequisite list,
+# which GNU Make counts as mentioned — "ought to exist" — so it survives the
+# sweep while `a.1` and `a.15` go. The answer is per file
+# (`f->intermediate |= !f->is_explicit`, implicit.c) and not per rule.
+a.4:
+%.4: %.1 %.15 a.3 ; cat $^ >$@
+%.1 %.15 %.3: ; touch $*.1 $*.15 $*.3

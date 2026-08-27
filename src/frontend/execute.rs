@@ -562,7 +562,6 @@ mod tests {
                     validations: &[],
                     always_dirty: false,
                     intermediate: false,
-                    disposable: false,
                     has_touchable_recipe: false,
                     outputs_unaliased: false,
                     outputs_low_resolution: false,

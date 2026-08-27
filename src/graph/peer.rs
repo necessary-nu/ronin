@@ -84,6 +84,16 @@ impl Graph {
         }
         self.peer_outputs.insert(edge, outputs);
     }
+
+    /// Whether the build throws this output away once it has finished with it.
+    pub(crate) fn is_disposable_output(&self, node: NodeId) -> bool {
+        self.disposable_outputs.contains(&node)
+    }
+
+    /// Say that the build may sweep these outputs up.
+    pub(crate) fn set_disposable_outputs(&mut self, outputs: &[NodeId]) {
+        self.disposable_outputs.extend(outputs.iter().copied());
+    }
 }
 
 #[cfg(test)]

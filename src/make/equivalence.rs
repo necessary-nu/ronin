@@ -827,7 +827,15 @@ fn peers(graph: &BuildGraph) -> Vec<String> {
 /// Every output either graph would delete once the build has finished with it,
 /// as a sorted list of paths.
 fn disposable(graph: &BuildGraph) -> Vec<String> {
-    outputs_where(graph, |edge| edge.disposable)
+    let arenas = graph.arenas();
+    let mut paths = arenas
+        .edge_ids()
+        .flat_map(|edge| arenas.edge(edge).out.iter())
+        .filter(|node| arenas.is_disposable_output(**node))
+        .map(|node| arenas.node_path(*node).to_string())
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 /// Every output either graph reads off the disk again once its command has
@@ -1285,8 +1293,8 @@ hello.x:
     assert_eq!(peers(&both.direct), vec!["hello.w".to_owned()]);
     assert_eq!(
         disposable(&both.direct),
-        vec!["hello.w".to_owned(), "hello.z".to_owned()],
-        "the edge is disposable; sparing the peer is the build's reading of this list"
+        vec!["hello.z".to_owned()],
+        "the peer was never given a sweep answer: GNU Make stamps `is_target` on an `also_make` entry"
     );
     assert!(
         peers(&both.parsed).is_empty(),
