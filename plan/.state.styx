@@ -955,6 +955,8 @@ assertions (
     {id make-a-command-line-variable-reaches-a-shell-functions-recursive-make, kind @complete, author "brendan@necessary.nu", at 2026-08-26T21:34:10.813314491Z}
     {id make-touch-touches-a-target-whose-recipe-expands-to-nothing, kind @complete, author "brendan@necessary.nu", at 2026-08-26T23:21:32.879577603Z}
     {id make-a-command-line-variables-value-is-settled-once, kind @complete, author "brendan@necessary.nu", at 2026-08-26T23:53:33.987813081Z}
+    {id make-a-command-line-assignment-with-an-unterminated-reference-is-refused, kind @doing, author "brendan@necessary.nu", at 2026-08-26T23:54:16.538307127Z}
+    {id make-a-run-leaves-no-directory-the-suite-did-not-ask-for, kind @doing, author "brendan@necessary.nu", at 2026-08-26T23:58:55.22777276Z}
 )
 
 impl_evidence (
