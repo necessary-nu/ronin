@@ -19987,4 +19987,26 @@ children (
             }
         )
     }
+
+    {
+        id the-make-gate-inherits-the-release-runs-own-load
+        title "Wait for the machine to go quiet rather than refusing the release run"
+        kind @fix
+        deps (the-candidate-walk-allocates-a-vector-per-character)
+        log (
+            {
+                at 2026-08-27T17:20:02.069587196Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "FOUND BY WIRING THE GATE IN AND THEN ACTUALLY RUNNING THE THING IT WAS WIRED INTO.\n\nThe Make performance gate refuses to sample when the one-minute load average is above `--max-load`, which is right: wall time from a busy machine is not a measurement, and a gate that records one anyway teaches everyone to ignore it. But `scripts/check-release.sh` puts `scripts/check-make-projects.sh` a few lines above it, and has to — that gate builds the whole of vim and the whole of zsh at `-j8`, and those builds are what make the trees this gate measures up to date. So the release run hands the performance gate a load average of four to eight that IS THE RELEASE RUN'S OWN, and a gate that refused on sight would fail every release pass. A gate that fails every pass is a gate somebody deletes.\n\nIt now waits and watches the average decay, polling every five seconds for up to five minutes, and refuses only if the machine is still busy after that — which means somebody else's work, not ours. It says so on stderr the first time it waits, so a run that pauses is not a run that has hung.\n\nWHY FIVE MINUTES: the one-minute average after a `-j8` vim-and-zsh build takes roughly that long to come back through 4.0, and a ceiling shorter than the decay it is meant to absorb is the same failure with extra steps.\n\nPROVEN BY RUNNING IT, not by reasoning about it: `scripts/sandboxed scripts/check-release.sh` end to end, EXIT 0, with `validation: Ronin/GNU runtime ratio within 120% of the recorded ratio` in the log and the four ratios at 1.60x / 9.57x / 1.86x / 1.59x — measured after vim and zsh had just been built by the gate above.\n\nTwo lint findings came with it and neither was suppressed: `Duration::from_secs(300)` became `Duration::from_mins(5)`, and the `while load > max` float comparison became an explicit `loop` with the comparison inside and a comment saying why comparing these two floats is exactly what is wanted.\n\nAlso lands `benchmarks/make-performance-2026-08-27.md`, the record of what the profiling work found and what the three fixes did to it, including the two remaining items with the numbers that size them."
+            }
+
+            {
+                at 2026-08-27T17:20:07.880758831Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+        )
+    }
 )

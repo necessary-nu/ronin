@@ -23,6 +23,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 #[path = "support/make_workloads.rs"]
@@ -53,6 +54,18 @@ const CLEAN_BUILD_WORKLOAD: &str = "vim-clean-build";
 /// busy machine is not a measurement, and a gate that records one anyway is
 /// worse than no gate: it teaches everyone to ignore it.
 const DEFAULT_MAX_LOAD: f64 = 4.0;
+
+/// How long to wait for the machine to go quiet before giving up on it.
+///
+/// Generous, because the load this gate usually inherits is the release run's
+/// own: a `-j8` build of vim and zsh finishes a few lines above it, and the
+/// one-minute average takes about that long to decay back through 4.0.
+const QUIET_HOST_PATIENCE: Duration = Duration::from_mins(5);
+
+/// How often to look while waiting. Long enough that the watching costs
+/// nothing, short enough that a run does not sit idle after the machine has
+/// already gone quiet.
+const QUIET_HOST_POLL: Duration = Duration::from_secs(5);
 
 struct Tool {
     name: &'static str,
@@ -251,7 +264,17 @@ fn load_average() -> Option<f64> {
     loadavg.split_whitespace().next()?.parse().ok()
 }
 
-/// Refuse to start on a busy machine.
+/// Wait for a quiet machine, and refuse if one does not arrive.
+///
+/// Waiting rather than refusing outright, because of where this runs:
+/// `scripts/check-release.sh` puts `scripts/check-make-projects.sh` — which
+/// builds the whole of vim and the whole of zsh at `-j8` — a few lines above
+/// it, and has to, since those builds are what make the trees this gate
+/// measures up to date. A gate that refused the moment it inherited the load
+/// average of the work it depends on would fail every release run, and a gate
+/// that fails every run gets deleted. So it sits and watches the average decay
+/// instead, and only gives up if the machine is still busy after
+/// [`QUIET_HOST_PATIENCE`] — which means somebody else's work, not ours.
 ///
 /// Checked only before sampling, and that is not an oversight. Once sampling
 /// has begun the one-minute average includes the harness's own workloads —
@@ -260,18 +283,39 @@ fn load_average() -> Option<f64> {
 /// competition for the machine. It is recorded for the reader and not gated
 /// on.
 fn require_quiet_host(config: &Config) -> Result<f64, String> {
-    let Some(load) = load_average() else {
+    let Some(mut load) = load_average() else {
         return Ok(f64::NAN);
     };
-    if load > config.max_load {
-        return Err(format!(
-            "one-minute load average is {load:.2}, above the {:.2} this gate will measure \
-             at. Wall time from a busy machine is not a measurement. Wait for the host to \
-             go quiet, or raise --max-load deliberately and say so in the record.",
-            config.max_load
-        ));
+    let deadline = Instant::now() + QUIET_HOST_PATIENCE;
+    let mut waited = false;
+    // `while load > max` reads as a float comparison in a loop condition,
+    // which the lint is right to question in general and which is exactly
+    // what is wanted here: the average is a float and the ceiling is a float,
+    // and the loop ends when one falls below the other.
+    loop {
+        if load <= config.max_load {
+            return Ok(load);
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "one-minute load average is still {load:.2} after waiting {} s, above the \
+                 {:.2} this gate will measure at. Wall time from a busy machine is not a \
+                 measurement. Wait for the host to go quiet, or raise --max-load \
+                 deliberately and say so in the record.",
+                QUIET_HOST_PATIENCE.as_secs(),
+                config.max_load
+            ));
+        }
+        if !waited {
+            eprintln!(
+                "make-baseline: load average is {load:.2}, waiting for it to fall below {:.2}",
+                config.max_load
+            );
+            waited = true;
+        }
+        thread::sleep(QUIET_HOST_POLL);
+        load = load_average().unwrap_or(load);
     }
-    Ok(load)
 }
 
 /// The single directory under `projects` whose name starts with `prefix`.
