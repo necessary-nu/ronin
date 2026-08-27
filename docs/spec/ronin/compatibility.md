@@ -270,6 +270,25 @@ the supported CLI surface.
 > measured workload exceeds its recorded values by more than an explicit
 > tolerance.
 
+> [spec:ronin:req:performance.make-oracle-baseline]
+> Make mode's wall time is recorded against the same GNU Make 4.4.1 oracle the
+> conformance and equivalence gates use, on the same trees, the same targets
+> and the same `-j`, with the two tools sampled interleaved rather than one
+> after the other. The workloads separate what a single real project mixes
+> together: a wide graph in one directory with no recursion, a deep tree of
+> directories whose Makefiles hold almost no graph, the two hand-written real
+> build systems at their up-to-date and incremental steady states, and a clean
+> build from empty. Each workload asserts the shape it claims — a no-op that
+> builds something, or an incremental run that builds nothing, is refused
+> rather than timed — and the gate refuses to measure at all on a host whose
+> load average says the number would be noise.
+>
+> The recorded baseline is what was measured, including where Ronin is slower
+> than GNU Make, and validation refuses a Ronin/GNU ratio materially worse than
+> the recorded one. There is no absolute threshold in either direction: the
+> gate's subject is the direction of travel, and a threshold Ronin does not
+> meet today would be a gate nobody could leave switched on.
+
 > [spec:ronin:req:release.compatibility-gate]
 > A Ronin release requires formatting, Rust tests, port coverage, the classified
 > upstream Ninja conformance suite, and performance validation to pass for the

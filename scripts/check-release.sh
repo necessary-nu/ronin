@@ -9,6 +9,11 @@ ninja_build=${NINJA_BUILD:-"$repo_root/reference/ninja-build"}
 ninja_binary=${NINJA_BINARY:-"$ninja_build/ninja"}
 performance_warmups=${PERFORMANCE_WARMUPS:-2}
 performance_repetitions=${PERFORMANCE_REPETITIONS:-15}
+# Fewer than the Ninja gate's fifteen because these workloads are seconds
+# rather than milliseconds: nine interleaved samples of each is a minute and a
+# half, and fifteen would be four.
+make_performance_warmups=${MAKE_PERFORMANCE_WARMUPS:-1}
+make_performance_repetitions=${MAKE_PERFORMANCE_REPETITIONS:-9}
 
 cargo fmt --all -- --check
 cargo check --all-targets
@@ -43,6 +48,16 @@ scripts/check-performance.sh \
     --ninja-source "$ninja_source" \
     --warmups "$performance_warmups" \
     --repetitions "$performance_repetitions"
+
+# The same question for the other front end, against the tool it stands in for.
+# It runs after check-make-projects.sh above, and has to: its two real
+# workloads measure vim and zsh at their up-to-date steady state, and there is
+# nothing up to date until that gate has built one. The clean build of vim is
+# recorded rather than gated — sixteen seconds a side is too much to spend on
+# every release pass, and `--clean-build` is how you ask for it.
+scripts/check-make-performance.sh \
+    --warmups "$make_performance_warmups" \
+    --repetitions "$make_performance_repetitions"
 
 uncovered=$(nplan spec uncovered --prefix samurai --color never)
 printf '%s\n' "$uncovered"
