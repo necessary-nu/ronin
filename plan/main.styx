@@ -19963,6 +19963,7 @@ children (
         title "Stop rebuilding the implicit-rule candidate list one allocation per character"
         kind @perf
         deps (the-implicit-rule-search-stats-every-candidate-name)
+        sealed true
         log (
             {
                 at 2026-08-27T17:12:03.448139647Z
@@ -19976,6 +19977,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @status
                 text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-27T17:12:56.834485417Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
