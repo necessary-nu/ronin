@@ -19903,6 +19903,7 @@ children (
         title "Stop hashing kati's internal lookup keys with SipHash"
         kind @perf
         deps (make-mode-has-never-been-measured-against-gnu-make)
+        sealed true
         log (
             {
                 at 2026-08-27T16:13:07.716958913Z
@@ -19916,6 +19917,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @status
                 text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-27T16:14:26.749436714Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
