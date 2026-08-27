@@ -561,7 +561,7 @@ impl BuildGraph {
     /// half rather than the same thing: it asks for the second look on one rule
     /// and grants the outcome only to an output whose timestamp did not move at
     /// all.
-    // [spec:ronin:req:make.state-outside-the-tree+2]
+    // [spec:ronin:req:make.state-outside-the-tree+3]
     // [spec:ronin:req:make.remade-target-re-observed]
     pub(crate) fn set_make_target_freshness(&mut self, edge: Edge) {
         let stored = self.arenas.edge_mut(edge.0);

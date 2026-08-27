@@ -290,8 +290,9 @@ rebuilds the object one run later than a runtime depfile would — **which is
 exactly what GNU Make does**. `tests/make_state.rs` was rewritten to that idiom
 and its `state_preserves_discovered_dependencies` case is now
 `a_discovered_dependency_reaches_the_next_build`, asserting the same user-visible
-property by the route GNU takes. Both logs are still placed, named and formatted
-as Ninja's, which is what `[spec:ronin:req:make.state-outside-the-tree+2]` asks.
+property by the route GNU takes. Make mode has since stopped writing either log
+at all — `[spec:ronin:req:make.state-outside-the-tree+3]` — which leaves that
+`-include` route the only one a Makefile ever had.
 
 **It also dissolves divergence #4** of `make-oracle-divergences.md`: a
 `.KATI_DEPFILE` recipe's `$(file …)` was performed where the recipe was read

@@ -885,8 +885,9 @@ pub(super) fn build_compiler_inputs(
     }
     let (mut graph, mut read) = Read::taken_from(loaded);
     let mut recipes = read.recipes.take();
-    let (mut persistence, warning) = Persistence::open(&mut graph, directory)?;
-    reported.push_str(warning.as_deref().unwrap_or_default());
+    // Make keeps no state beside the build, so there is nothing to open and
+    // nothing an opening could complain about.
+    let mut persistence = Persistence::none();
 
     let Read {
         refusals,

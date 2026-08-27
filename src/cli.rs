@@ -1763,11 +1763,16 @@ pub(crate) fn run_bytes<'sink>(
             append_output(&mut output, &warning);
         }
         if let Some(tool) = invocation.selected_tool {
+            // A tool over the logs is reached only here, where the manifest
+            // front end has just opened both of them.
+            let (build_log, deps_log) = persistence
+                .logs_mut()
+                .expect("the manifest front end opens both logs");
             let result = run_log_tool(
                 tool,
                 &graph,
-                &mut persistence.build_log,
-                &mut persistence.deps_log,
+                build_log,
+                deps_log,
                 &invocation.tool_arguments,
                 ToolRunContext::new(&invocation.build_options, &invocation.working_directory),
             );

@@ -179,7 +179,7 @@ impl MakeError {
 /// engine cannot hold, such as two rules generating one output.
 // [spec:ronin:req:make.graph-direct]
 // [spec:ronin:req:make.compiler-boundary]
-// [spec:ronin:req:make.state-outside-the-tree+2]
+// [spec:ronin:req:make.state-outside-the-tree+3]
 pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeError> {
     let _directory = compilation_directory_guard();
     let directory = std::env::current_dir().map_err(|error| {

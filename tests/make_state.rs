@@ -1,18 +1,22 @@
-//! Make-compiled graphs use Ninja's persistence, with Make freshness compiled
-//! into ordinary Ninja rule controls rather than selected by the executor.
+//! Make mode keeps no build state beside the build, and needs none.
 //!
 //! Each test runs the real executable under the name `make`, which selects the
-//! Make compiler, then inspects the same `.ninja_log` and `.ninja_deps` that a
-//! manifest graph would use in the build directory.
+//! Make compiler, then lists the directory it built in. Neither `.ninja_log`
+//! nor `.ninja_deps` may be there afterwards: GNU Make decides what is out of
+//! date from the timestamps on the disk and leaves nothing behind, so a
+//! Makefile-derived graph has nothing either file could hold that its own
+//! semantics would read back. What Make freshness needs from the engine is
+//! compiled into ordinary Ninja rule controls instead — `generator` for the
+//! command-hash half — which is why the absence costs nothing.
 //!
-//! What no longer PUTS anything in `.ninja_deps` is makefile text. The only
-//! spelling that ever declared a depfile in Make mode was `.KATI_DEPFILE`, a
-//! kati extension removed from the product on the operator's ruling of
-//! 2026-08-24 — see docs/make-kati-extensions.md. The fixture makefile now says
+//! A discovered dependency reaches the next build the way GNU Make's does, and
+//! by no other route: `.KATI_DEPFILE`, the only spelling that ever declared a
+//! depfile in Make mode, was removed from the product on the operator's ruling
+//! of 2026-08-24 — see docs/make-kati-extensions.md. The fixture makefile says
 //! what a GNU makefile says: `-include` the dependency file its own recipe
-//! writes, which the next run reads as ordinary makefile text. Both logs are
-//! still placed, named and formatted as Ninja's, which is what
-//! `[spec:ronin:req:make.state-outside-the-tree+2]` asks.
+//! writes, which the next run reads as ordinary makefile text.
+//!
+//! `[spec:ronin:req:make.state-outside-the-tree+3]`
 
 #![cfg(all(unix, feature = "make"))]
 
@@ -89,10 +93,12 @@ fn named(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|name| (*name).to_owned()).collect()
 }
 
-// [spec:ronin:req:make.state-outside-the-tree+2/test]
+/// The directory holds what the recipes wrote and nothing else — no log, no
+/// dependency record, nothing a `rmdir` of an emptied tree would trip over.
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
 // [spec:ronin:req:make.compiler-boundary/test]
 #[test]
-fn make_build_uses_ninja_state() {
+fn a_make_build_leaves_only_what_it_made() {
     let fixture = Fixture::new();
     let tree = fixture.tree("project");
     let sources = named(&["Makefile", "main.c", "hdr.h"]);
@@ -101,14 +107,80 @@ fn make_build_uses_ninja_state() {
     fixture.build_in(&tree, &[]);
 
     let mut built = sources;
-    built.extend(named(&[
-        ".ninja_deps",
-        ".ninja_log",
-        "app",
-        "main.o",
-        "main.o.d",
-    ]));
+    built.extend(named(&["app", "main.o", "main.o.d"]));
     assert_eq!(listing(&tree), built);
+}
+
+/// Nothing is left behind by a run that decided to do nothing either. Both
+/// files used to appear before anything was decided, because opening them was
+/// the first thing a build did — so a run that was already up to date, a `-n`,
+/// and a makefile whose only target has no recipe each littered a directory
+/// they never wrote to.
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
+#[test]
+fn a_build_with_nothing_to_do_writes_nothing() {
+    let fixture = Fixture::new();
+    let tree = fixture.root.path().join("idle");
+    fs::create_dir_all(&tree).unwrap();
+    fs::write(tree.join("Makefile"), "all:\n").unwrap();
+
+    for arguments in [&[][..], &["-n"][..], &["-q"][..], &["-t"][..]] {
+        let output = Command::new(&fixture.program)
+            .current_dir(&tree)
+            .args(arguments)
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("CARGO_MAKEFLAGS")
+            .env_remove("MAKELEVEL")
+            .output()
+            .unwrap();
+        assert_eq!(
+            listing(&tree),
+            named(&["Makefile"]),
+            "{arguments:?} left something behind: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// A recursive child left no log wherever it ran, and a build that composed
+/// the same child into one graph never had one to leave. Composition is meant
+/// to be invisible, and this is the property that says so: the two spellings
+/// of the same recursive build leave the same directories behind.
+///
+/// `make-foo`'s line is one static invocation and the compiler lifts it;
+/// `make-bar`'s has a command in front of the `$(MAKE)`, so nothing can lift
+/// it and a real child process runs in `bar`. That child used to open its own
+/// persistence in the directory it was told to build in, which is how
+/// `features/output-sync` came to have a `bar/` its own cleanup could not
+/// `rmdir`.
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
+#[test]
+fn a_recursive_child_leaves_no_state_either() {
+    let fixture = Fixture::new();
+    let tree = fixture.root.path().join("recursive");
+    for child in ["foo", "bar"] {
+        fs::create_dir_all(tree.join(child)).unwrap();
+        fs::write(tree.join(child).join("Makefile"), "all: ; @:\n").unwrap();
+    }
+    fs::write(
+        tree.join("Makefile"),
+        "all: make-foo make-bar\n\
+         make-foo: ; $(MAKE) -C foo\n\
+         make-bar: ; @true ; $(MAKE) -C bar\n",
+    )
+    .unwrap();
+
+    fixture.build_in(&tree, &[]);
+
+    assert_eq!(listing(&tree.join("foo")), named(&["Makefile"]));
+    assert_eq!(listing(&tree.join("bar")), named(&["Makefile"]));
+    assert_eq!(
+        listing(&tree),
+        named(&["Makefile", "foo", "bar"]),
+        "the parent kept state of its own"
+    );
 }
 
 /// The dependency a recipe discovered reaches the next build through the
@@ -121,7 +193,7 @@ fn make_build_uses_ninja_state() {
 /// after it can. That one-run lag IS GNU Make's behaviour, and the property a
 /// user cares about is unchanged: editing a header the compiler discovered
 /// rebuilds the object.
-// [spec:ronin:req:make.state-outside-the-tree+2/test]
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
 #[test]
 fn a_discovered_dependency_reaches_the_next_build() {
     let fixture = Fixture::new();
@@ -135,7 +207,7 @@ fn a_discovered_dependency_reaches_the_next_build() {
     assert!(fixture.build_in(&tree, &[]).contains("no work to do"));
 }
 
-// [spec:ronin:req:make.state-outside-the-tree+2/test]
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
 #[test]
 fn changed_recipe_keeps_current_target() {
     let fixture = Fixture::new();
@@ -159,9 +231,11 @@ fn changed_recipe_keeps_current_target() {
     assert_eq!(fs::read(tree.join("installed")).unwrap(), b"kept\n");
 }
 
-// [spec:ronin:req:make.state-outside-the-tree+2/test]
+/// A `-f` elsewhere builds here, and leaves the directory the makefile came
+/// from exactly as it found it.
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
 #[test]
-fn state_follows_working_directory() {
+fn a_build_writes_where_it_was_invoked() {
     let fixture = Fixture::new();
     let elsewhere = fixture.tree("elsewhere");
     let work = fixture.root.path().join("work");
@@ -172,14 +246,7 @@ fn state_follows_working_directory() {
 
     assert_eq!(
         listing(&work),
-        named(&[
-            ".ninja_deps",
-            ".ninja_log",
-            "main.c",
-            "app",
-            "main.o",
-            "main.o.d"
-        ])
+        named(&["main.c", "app", "main.o", "main.o.d"])
     );
     assert_eq!(listing(&elsewhere), named(&["Makefile", "main.c", "hdr.h"]));
     assert!(
@@ -189,7 +256,7 @@ fn state_follows_working_directory() {
     );
 }
 
-// [spec:ronin:req:make.state-outside-the-tree+2/test]
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
 // [spec:ronin:req:make.compiler-boundary/test]
 #[test]
 fn equivalent_frontends_execute_identically() {
@@ -236,7 +303,9 @@ fn equivalent_frontends_execute_identically() {
         fs::read(make_tree.join("out")).unwrap(),
         fs::read(ninja_tree.join("out")).unwrap()
     );
-    assert!(make_tree.join(".ninja_log").exists());
+    // The two front ends reach the same verdict from different state: the
+    // manifest graph reads Ninja's log, and the Make graph reads the disk.
+    assert!(!make_tree.join(".ninja_log").exists());
     assert!(ninja_tree.join(".ninja_log").exists());
     assert!(fixture.build_in(&make_tree, &[]).contains("no work to do"));
     assert!(run_ninja().contains("no work to do"));
@@ -246,9 +315,9 @@ const GOALS: [&str; 8] = [
     "one", "two", "three", "four", "five", "six", "seven", "eight",
 ];
 
-// [spec:ronin:req:make.state-outside-the-tree+2/test]
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
 #[test]
-fn concurrent_builds_share_ninja_log() {
+fn concurrent_builds_settle_on_the_filesystem() {
     let fixture = Fixture::new();
     let tree = fixture.root.path().join("contended");
     fs::create_dir_all(&tree).unwrap();
@@ -281,7 +350,7 @@ fn concurrent_builds_share_ninja_log() {
         assert!(build.wait().unwrap().success());
     }
 
-    assert!(tree.join(".ninja_log").exists());
+    assert!(!tree.join(".ninja_log").exists());
     let settled = fixture.build_in(&tree, &GOALS);
     assert!(settled.contains("no work to do"), "{settled}");
 }

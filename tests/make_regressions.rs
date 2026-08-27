@@ -271,11 +271,12 @@ fn substitution_reference_keeps_nonmatches() {
 
 /// Findutils links one generated manual fragment to another. A later recursive
 /// group updates the referent, making the followed link exactly as new as its
-/// prerequisite while Ronin's build log still remembers the link's old mtime.
-/// GNU Make uses the equal filesystem timestamps and leaves the link alone.
-// [spec:ronin:req:make.state-outside-the-tree+2/test]
+/// prerequisite. GNU Make reads the equal filesystem timestamps and leaves the
+/// link alone; a wall-clock record of when the link was made would say the
+/// opposite, and Make mode holds no such record to be misled by.
+// [spec:ronin:req:make.state-outside-the-tree+3/test]
 #[test]
-fn symlink_freshness_ignores_old_build_log() {
+fn symlink_freshness_reads_the_filesystem_alone() {
     let directory = test_directory("symlink-freshness");
     fs::write(
         directory.join("Makefile"),
@@ -295,7 +296,7 @@ fn symlink_freshness_ignores_old_build_log() {
         Path::new("source")
     );
 
-    // Newer than the first build's wall-clock log record. The existing link
+    // Newer than the wall clock the first build ran at. The existing link
     // follows this file, so both filesystem mtimes are still equal.
     write_at(&directory, "source", "updated", 2_000_000_000);
     let output = make_command(&directory).arg("all").output().unwrap();

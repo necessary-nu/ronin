@@ -1024,7 +1024,7 @@ impl GraphSink {
     /// No binding here describes a dry run. Make's `-n` is Ninja's `-n` on the
     /// graph kati compiled, and the recursion GNU Make would have run a child
     /// process to discover is already in that graph as composed child edges.
-    // [spec:ronin:req:make.state-outside-the-tree+2]
+    // [spec:ronin:req:make.state-outside-the-tree+3]
     fn executor_rule_bindings(
         &self,
         rule: &SinkRule<'_>,

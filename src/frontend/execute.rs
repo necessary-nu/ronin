@@ -24,12 +24,40 @@ use std::path::Path;
 /// produced, and `.ninja_deps` remembers the dependencies compilers reported,
 /// so a header nothing names in the graph still triggers a rebuild. Both are
 /// read once, appended to as the build runs, and flushed by [`Persistence::finish`].
+///
+/// A front end whose semantics do not reach either file has neither, which is
+/// [`Persistence::none`]. That is not a lesser opening of the same thing: a
+/// build with no persistence writes nothing beside itself and reads nothing
+/// from beside itself, so what it decides is a function of the graph and the
+/// filesystem alone.
 pub struct Persistence {
-    pub(crate) build_log: crate::log::BuildLog,
-    pub(crate) deps_log: crate::deps::DepsLog,
+    pub(crate) build_log: Option<crate::log::BuildLog>,
+    pub(crate) deps_log: Option<crate::deps::DepsLog>,
 }
 
 impl Persistence {
+    /// Build state kept nowhere, for a front end that keeps none.
+    ///
+    /// GNU Make decides what is out of date from the timestamps on the disk and
+    /// records nothing between invocations; a Makefile-derived graph therefore
+    /// has nothing a build log or a dependency log could hold that its own
+    /// semantics would ever read back. Both of Ninja's files would be
+    /// write-only — and a directory Make was invoked in is one the build did
+    /// not create and must leave as it found it.
+    ///
+    /// The engine reads this as the absence it is rather than as an empty log:
+    /// an edge records nothing when it finishes and consults nothing when it is
+    /// scanned, so the two costs a log carries — the write and the read of the
+    /// last run's opinion — are both simply not paid.
+    // [spec:ronin:req:make.state-outside-the-tree+3]
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            build_log: None,
+            deps_log: None,
+        }
+    }
+
     /// Opens both logs for a build in `directory`, creating what is not there.
     ///
     /// `directory` is the build directory. Every front end uses the same two
@@ -51,7 +79,7 @@ impl Persistence {
     ///
     /// Returns an [`Error`] when the directory cannot be created or when either
     /// log exists and cannot be read or reopened for appending.
-    // [spec:ronin:req:make.state-outside-the-tree+2]
+    // [spec:ronin:req:make.state-outside-the-tree+3]
     pub fn open(graph: &mut BuildGraph, directory: &Path) -> Result<(Self, Option<String>), Error> {
         std::fs::create_dir_all(directory).map_err(|source| {
             PersistenceError::io(
@@ -74,11 +102,21 @@ impl Persistence {
             })?;
         Ok((
             Self {
-                build_log,
-                deps_log,
+                build_log: Some(build_log),
+                deps_log: Some(deps_log),
             },
             warning,
         ))
+    }
+
+    /// The two logs, for a caller that only makes sense over an opened pair.
+    ///
+    /// Absent for [`Persistence::none`], which is what a front end keeping no
+    /// state beside the build has.
+    pub(crate) fn logs_mut(
+        &mut self,
+    ) -> Option<(&mut crate::log::BuildLog, &mut crate::deps::DepsLog)> {
+        Some((self.build_log.as_mut()?, self.deps_log.as_mut()?))
     }
 
     /// Flushes both logs.
@@ -91,13 +129,17 @@ impl Persistence {
     /// Returns the build log's failure if it had one, otherwise the dependency
     /// log's.
     pub fn finish(self) -> Result<(), Error> {
-        let build_log_path = self.build_log.path().to_owned();
-        let deps_log_path = self.deps_log.path().to_owned();
-        let build_log = self.build_log.finish().map_err(|source| {
-            PersistenceError::io(PersistenceOperation::FlushBuildLog, build_log_path, source)
+        let build_log = self.build_log.map_or(Ok(()), |log| {
+            let path = log.path().to_owned();
+            log.finish().map_err(|source| {
+                PersistenceError::io(PersistenceOperation::FlushBuildLog, path, source)
+            })
         });
-        let deps_log = self.deps_log.finish().map_err(|source| {
-            PersistenceError::io(PersistenceOperation::FlushDepsLog, deps_log_path, source)
+        let deps_log = self.deps_log.map_or(Ok(()), |log| {
+            let path = log.path().to_owned();
+            log.finish().map_err(|source| {
+                PersistenceError::io(PersistenceOperation::FlushDepsLog, path, source)
+            })
         });
         build_log?;
         deps_log?;
@@ -288,8 +330,8 @@ impl<'graph, 'sink> Build<'graph, 'sink> {
         let mut builder = Builder::from_parts(
             graph.arenas_mut(),
             options,
-            Some(&mut persistence.build_log),
-            Some(&mut persistence.deps_log),
+            persistence.build_log.as_mut(),
+            persistence.deps_log.as_mut(),
             output.map(|sink| sink as &mut dyn Write),
             diagnostics.map(|sink| sink as &mut dyn Write),
         );

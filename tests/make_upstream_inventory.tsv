@@ -346,8 +346,8 @@ case	features/patspecific_vars.diff.1	narration	ninja-progress
 case	features/patspecific_vars.diff.2	narration	ninja-progress
 case	features/patspecific_vars.diff.3	narration	ninja-progress
 case	features/patspecific_vars.diff.4	narration	ninja-progress
-case	features/patspecific_vars.diff.5	unclassified	ninja-progress+evaluation
-case	features/patspecific_vars.diff.6	unclassified	ninja-progress+evaluation
+case	features/patspecific_vars.diff.5	narration	ninja-progress
+case	features/patspecific_vars.diff.6	narration	ninja-progress
 case	features/patspecific_vars.diff.7	narration	ninja-progress
 case	features/patspecific_vars.diff.8	narration	ninja-progress
 case	features/patspecific_vars.diff.9	narration	ninja-progress
@@ -453,7 +453,7 @@ case	features/se_explicit.diff.16	narration	no-work-line
 case	features/se_explicit.diff.17	narration	no-work-line
 case	features/se_explicit.diff.18	narration	product-name+fatal-decoration+shared-refusal
 case	features/se_explicit.diff.19	narration	no-work-line+up-to-date-line
-case	features/se_explicit.diff.2	narration	ninja-progress+recipe-echo
+case	features/se_explicit.diff.2	narration	ninja-progress
 case	features/se_explicit.diff.20	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.21	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.22	narration	no-work-line+up-to-date-line+recipe-interleave
@@ -464,7 +464,7 @@ case	features/se_explicit.diff.26	narration	no-work-line
 case	features/se_explicit.diff.27	narration	no-work-line+up-to-date-line
 case	features/se_explicit.diff.28	narration	no-work-line
 case	features/se_explicit.diff.29	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line
-case	features/se_explicit.diff.3	unclassified	ninja-progress+evaluation
+case	features/se_explicit.diff.3	narration	ninja-progress
 case	features/se_explicit.diff.30	narration	no-work-line
 case	features/se_explicit.diff.4	narration	ninja-progress
 case	features/se_explicit.diff.5	narration	no-work-line
@@ -472,8 +472,8 @@ case	features/se_explicit.diff.6	narration	product-name+fatal-decoration+shared-
 case	features/se_explicit.diff.7	narration	ninja-progress
 case	features/se_explicit.diff.8	narration	ninja-progress
 case	features/se_explicit.diff.9	narration	ninja-progress
-case	features/se_implicit.diff	narration	ninja-progress+recipe-echo
-case	features/se_implicit.diff.1	unclassified	ninja-progress+evaluation
+case	features/se_implicit.diff	narration	ninja-progress
+case	features/se_implicit.diff.1	narration	ninja-progress
 case	features/se_implicit.diff.10	narration	ninja-progress+recipe-echo
 case	features/se_implicit.diff.11	narration	no-work-line
 case	features/se_implicit.diff.12	narration	ninja-progress
@@ -498,12 +498,12 @@ case	features/se_implicit.diff.29	narration	no-work-line
 case	features/se_implicit.diff.3	narration	ninja-progress
 case	features/se_implicit.diff.4	narration	ninja-progress
 case	features/se_implicit.diff.5	narration	ninja-progress
-case	features/se_implicit.diff.6	narration	ninja-progress+recipe-echo
+case	features/se_implicit.diff.6	narration	ninja-progress
 case	features/se_implicit.diff.7	narration	ninja-progress
 case	features/se_implicit.diff.8	narration	ninja-progress
 case	features/se_implicit.diff.9	narration	product-name+fatal-decoration+shared-refusal
 case	features/se_statpat.diff	narration	ninja-progress
-case	features/se_statpat.diff.1	unclassified	ninja-progress+evaluation
+case	features/se_statpat.diff.1	narration	ninja-progress
 case	features/se_statpat.diff.10	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line
 case	features/se_statpat.diff.11	narration	no-work-line
 case	features/se_statpat.diff.2	narration	ninja-progress
@@ -947,7 +947,7 @@ case	options/dash-n.diff.1	narration	ninja-progress+recipe-echo
 case	options/dash-n.diff.2	narration	no-work-line+up-to-date-line
 case	options/dash-n.diff.3	narration	no-work-line+up-to-date-line
 case	options/dash-n.diff.4	unclassified	ninja-progress+evaluation
-case	options/dash-n.diff.5	unclassified	ninja-progress+no-work-line+recipe-echo+evaluation
+case	options/dash-n.diff.5	unclassified	ninja-progress+recipe-echo+evaluation
 case	options/dash-q.diff.9	narration	product-name+fatal-decoration+shared-refusal
 case	options/dash-r.diff	narration	product-name+fatal-decoration+shared-refusal
 case	options/dash-r.diff.1	narration	product-name+fatal-decoration+shared-refusal
@@ -991,7 +991,7 @@ case	options/warn-undefined-variables.diff	narration	no-work-line+up-to-date-lin
 case	options/warn-undefined-variables.diff.1	narration	ninja-progress
 case	options/warn-undefined-variables.diff.2	narration	ninja-progress
 case	options/warn-undefined-variables.diff.3	narration	no-work-line+up-to-date-line
-case	targets/DEFAULT.diff	unclassified	no-work-line+directory-announce+evaluation
+case	targets/DEFAULT.diff	narration	ninja-progress+directory-announce
 case	targets/DELETE_ON_ERROR.diff	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+delete-announce
 case	targets/DELETE_ON_ERROR.diff.1	narration	ninja-progress+ninja-failure-block+recipe-echo+recipe-error-line+delete-announce
 case	targets/FORCE.diff	narration	ninja-progress+recipe-echo
@@ -1103,7 +1103,7 @@ case	variables/LIBPATTERNS.diff.1	narration	product-name+ninja-progress
 case	variables/MAKE.diff	narration	ninja-progress+recipe-echo+directory-announce
 case	variables/MAKECMDGOALS.diff	narration	ninja-progress
 case	variables/MAKECMDGOALS.diff.1	narration	ninja-progress
-case	variables/MAKECMDGOALS.diff.2	narration	ninja-progress+recipe-echo
+case	variables/MAKECMDGOALS.diff.2	narration	ninja-progress
 case	variables/MAKEFILES.diff	narration	ninja-progress
 case	variables/MAKEFILES.diff.1	narration	ninja-progress
 case	variables/MAKEFLAGS.diff.1	narration	ninja-progress+trace-line+recipe-echo
@@ -1245,7 +1245,7 @@ case	variables/automatic.diff.3	narration	ninja-progress
 case	variables/automatic.diff.4	narration	ninja-progress
 case	variables/automatic.diff.5	narration	ninja-progress
 case	variables/automatic.diff.6	narration	ninja-progress
-case	variables/automatic.diff.7	unclassified	no-work-line+evaluation
+case	variables/automatic.diff.7	narration	ninja-progress
 case	variables/automatic.diff.8	narration	ninja-progress
 case	variables/define.diff	narration	ninja-progress+recipe-echo
 case	variables/define.diff.1	narration	ninja-progress+recipe-echo
@@ -1299,7 +1299,7 @@ case	variables/private.diff.3	narration	ninja-progress
 case	variables/private.diff.4	narration	ninja-progress
 case	variables/private.diff.5	narration	ninja-progress
 case	variables/private.diff.6	narration	ninja-progress
-case	variables/private.diff.7	unclassified	ninja-progress+evaluation
+case	variables/private.diff.7	narration	ninja-progress
 case	variables/private.diff.8	narration	ninja-progress
 case	variables/private.diff.9	narration	ninja-progress
 case	variables/special.diff	narration	ninja-progress

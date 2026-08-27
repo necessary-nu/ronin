@@ -1935,8 +1935,6 @@ struct CompiledInvocation {
     /// What the read narrated on its way here, which the run that follows
     /// leads its own output with.
     reported: String,
-    /// Where the invocation ended up after its `-C` options were applied.
-    directory: PathBuf,
 }
 
 /// Read and compile one Make invocation, stopping where a build would begin.
@@ -1961,7 +1959,6 @@ fn compile_invocation(
             return Ok(CompiledInvocation {
                 prepared: PreparedGraph::Finished(result),
                 reported,
-                directory: runner.working_directory.as_path().to_owned(),
             });
         }
         Action::Execute(invocation) => *invocation,
@@ -1978,7 +1975,6 @@ fn compile_invocation(
         Ok(CompiledInvocation {
             prepared: PreparedGraph::Finished(result),
             reported: String::new(),
-            directory: directory.clone(),
         })
     };
     // No makefile is not itself a refusal. GNU Make reads whatever there is,
@@ -2027,11 +2023,7 @@ fn compile_invocation(
         reporting: purpose.reporting,
     };
     let prepared = prepare_graph(&root, &mut reported, output, diagnostics, held)?;
-    Ok(CompiledInvocation {
-        prepared,
-        reported,
-        directory,
-    })
+    Ok(CompiledInvocation { prepared, reported })
 }
 
 /// One Make invocation, with the descriptor its compiler diagnostics reach.
@@ -2059,8 +2051,7 @@ fn reported_run(
         },
         held,
     )?;
-    let mut reported = compiled.reported;
-    let directory = compiled.directory;
+    let reported = compiled.reported;
     let (mut graph, mut recipes, opened, invocation, options) = match compiled.prepared {
         PreparedGraph::Ready {
             graph,
@@ -2071,13 +2062,7 @@ fn reported_run(
         } => (*graph, recipes, persistence, *invocation, *options),
         PreparedGraph::Finished(result) => return Ok(result),
     };
-    let mut persistence = if let Some(persistence) = opened {
-        persistence
-    } else {
-        let (persistence, warning) = Persistence::open(&mut graph, &directory)?;
-        reported.push_str(warning.as_deref().unwrap_or_default());
-        persistence
-    };
+    let mut persistence = opened.unwrap_or_else(Persistence::none);
     let targets = graph.default_targets();
     let mut build = Build::with_options(&mut graph, &mut persistence, options);
     if let Some(recipes) = recipes.as_deref_mut() {

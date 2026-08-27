@@ -113,16 +113,25 @@ manifest-derived graph is.
 
 ## Persistent state
 
-> [spec:ronin:req:make.state-outside-the-tree+2]
-> A Makefile-derived graph uses Ninja's build-log and dependency-log placement,
-> formats, and names. Kati MUST encode GNU Make's timestamp-only recipe
-> freshness with Ninja's existing `generator` rule control: a changed or
-> missing persisted command hash alone MUST NOT make an otherwise up-to-date
-> Make target dirty. Both the direct and emitted graphs carry that control, so
-> the engine interprets it without consulting front-end provenance. Front-end
-> provenance does not select an external Make namespace or suppress state
-> beside the build. If state placement is configurable for Ninja graphs, that
-> ordinary Ninja control is available uniformly to every front end.
+> [spec:ronin:req:make.state-outside-the-tree+3]
+> Make mode keeps no build state beside the build. A `make` invocation MUST
+> leave neither `.ninja_log` nor `.ninja_deps` in any directory it built in,
+> wherever it was invoked and whatever it built, and MUST read neither. GNU
+> Make decides what is out of date from the timestamps on the disk and records
+> nothing between invocations, so a Makefile-derived graph has nothing either
+> file could hold that its own semantics would read back — and a directory Make
+> was invoked in is one the build did not create and must leave as it found it.
+>
+> Kati MUST encode that timestamp-only recipe freshness with Ninja's existing
+> `generator` rule control: a changed or missing persisted command hash alone
+> MUST NOT make an otherwise up-to-date Make target dirty. Both the direct and
+> the emitted graph carry that control, so the engine interprets it without
+> consulting front-end provenance — which is what lets an emitted manifest,
+> built by stock Ninja against Ninja's own state, reach the same verdict.
+>
+> A manifest-derived graph is unchanged: Ninja's placement, formats and names
+> are Ninja's own contract. The absence is Make mode's semantics, not a
+> configuration, and no front end selects an external Make namespace.
 
 ## Product surface
 

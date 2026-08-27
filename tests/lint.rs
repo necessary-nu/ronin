@@ -600,8 +600,8 @@ fn a_composed_remake_recursion_runs() {
 /// The one place a lint's own contract could fail to be true of itself: the
 /// read is the read phase a build would perform, and a build's `$(MAKE)` is the
 /// path of the Make that is running. Gated on what the child left behind rather
-/// than on what either tool printed — a build log in the child's own directory
-/// is a thing only a Make of ours writes.
+/// than on what either tool printed — the child writes down the `$(MAKE)` it
+/// was reached by, and only this Make hands a child the staged link below.
 // [spec:ronin:req:tools.lint/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -634,14 +634,9 @@ fn a_remade_include_recurses_here() {
         "{}",
         stdout(&output)
     );
-    // The child ran, and it was one of ours: nothing else writes a build log.
-    assert!(
-        directory.join("sub").join(".ninja_log").is_file(),
-        "the child left no build log, so it was not this Make"
-    );
-    // And what it was reached by: a path, ending in the name that selects the
-    // front end, which is the only way a string a recipe runs can name this
-    // executable and get a Make.
+    // The child ran, and what it was reached by says whose it was: a path,
+    // ending in the name that selects the front end, which is the only way a
+    // string a recipe runs can name this executable and get a Make.
     let named = fs::read_to_string(directory.join("sub").join("marker.out")).unwrap();
     let named = Path::new(named.trim());
     assert!(named.is_absolute(), "{}", named.display());
