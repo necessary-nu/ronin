@@ -19933,6 +19933,7 @@ children (
         title "Answer the implicit search's existence questions from a directory read"
         kind @perf
         deps (make-mode-hashes-a-symbol-index-with-siphash)
+        sealed true
         log (
             {
                 at 2026-08-27T16:45:49.221581318Z
@@ -19946,6 +19947,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @status
                 text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-27T16:46:51.414171065Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }

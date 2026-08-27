@@ -966,7 +966,7 @@ assertions (
     {id make-a-shared-rules-outputs-are-each-swept-on-their-own-answer, kind @complete, author "brendan@necessary.nu", at 2026-08-27T00:32:26.336278837Z}
     {id make-mode-has-never-been-measured-against-gnu-make, kind @complete, author "brendan@necessary.nu", at 2026-08-27T16:13:50.412401648Z}
     {id make-mode-hashes-a-symbol-index-with-siphash, kind @complete, author "brendan@necessary.nu", at 2026-08-27T16:14:26.749436714Z}
-    {id the-implicit-rule-search-stats-every-candidate-name, kind @doing, author "brendan@necessary.nu", at 2026-08-27T16:46:16.821871361Z}
+    {id the-implicit-rule-search-stats-every-candidate-name, kind @complete, author "brendan@necessary.nu", at 2026-08-27T16:46:51.414171065Z}
 )
 
 impl_evidence (
