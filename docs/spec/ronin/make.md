@@ -111,6 +111,28 @@ manifest-derived graph is.
 > name does not create, read, or modify a variable binding, and a session's
 > variable scope can be replaced without reinterning its symbols.
 
+> [spec:ronin:req:make.exported-value-charged-to-the-job]
+> An exported recursive value that cannot be expanded MUST NOT refuse a run
+> that starts no process carrying it. GNU Make expands such a value only in
+> `target_environment`, which `start_job_command` reaches after every reason
+> not to fork — the empty command, `-n`, `-q` — and which `$(shell)` reaches
+> for itself; a run launching none of them never reads the value and never
+> sees that it will not expand. A front end settling one environment per
+> compilation unit MUST therefore hold that failure and raise it where a
+> process would have been started, and MUST report it against the site the
+> value was defined at, or against no site at all when it was defined in no
+> file.
+>
+> A recipe line that comes to exactly `:` under a Bourne-compatible shell
+> starts no process. `start_job_command` counts the line as started and goes
+> to the next one — "People use this for timestamp rules, so avoid forking a
+> useless shell" — so the target is still remade and the line is still
+> reported, and no environment is built for it.
+>
+> How many times such a value is expanded is a separate question this does not
+> answer: GNU Make expands it once per job it launches, and a compiler that
+> settles one environment for a unit expands it once for the unit.
+
 ## Persistent state
 
 > [spec:ronin:req:make.state-outside-the-tree+3]

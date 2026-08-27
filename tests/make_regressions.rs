@@ -2482,3 +2482,147 @@ fn a_child_narrates_its_own_spelling() {
         "the dry run narrated the placeholder: {printed}"
     );
 }
+
+/// `-q` answers about the goals without starting anything, so the exported
+/// command-line value below is never read and its unterminated reference is
+/// never a refusal.
+///
+/// Measured against reference/make-oracle/make-4.4.1/make on 2026-08-27:
+/// `make -f M -q 'hello=$(world'` over this makefile exits 1 — "something to
+/// do" — and says nothing. The status is what separates it from the refusal:
+/// both 1 and 2 read as a failing run, and only 1 is an answer.
+// [spec:ronin:req:make.exported-value-charged-to-the-job/test]
+// [spec:ronin:req:make.question-status+1/test]
+#[test]
+fn a_question_reads_no_exported_value() {
+    let directory = test_directory("question-no-environment");
+    fs::write(directory.join("Makefile"), "all:; @echo ran > out\n").unwrap();
+
+    let output = make_command(&directory)
+        .args(["-q", "hello=$(world"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(output.stderr.is_empty(), "{output:?}");
+    assert!(!directory.join("out").exists());
+}
+
+/// The one line `-q` really starts is a line the makefile marked as running
+/// anyway, and GNU Make reaches `target_environment` for it exactly as a build
+/// would — so a value it cannot read refuses the question too.
+///
+/// Measured against 4.4.1 on 2026-08-27 over `all:; +@echo ran > out`: with a
+/// readable value the line runs, `out` is written and the answer is 0; with
+/// `hello=$(world` it is `make: *** unterminated variable reference.  Stop.`,
+/// exit 2, and `out` is not written.
+// [spec:ronin:req:make.exported-value-charged-to-the-job/test]
+// [spec:ronin:req:make.question-status+1/test]
+#[test]
+fn a_question_refuses_the_line_it_runs() {
+    let directory = test_directory("question-runs-a-plus-line");
+    fs::write(directory.join("Makefile"), "all:; +@echo ran > out\n").unwrap();
+
+    let refused = make_command(&directory)
+        .args(["-q", "hello=$(world"])
+        .output()
+        .unwrap();
+    assert_eq!(refused.status.code(), Some(2), "{refused:?}");
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("unterminated variable reference"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(!directory.join("out").exists());
+
+    let answered = make_command(&directory)
+        .args(["-q", "hello=world"])
+        .output()
+        .unwrap();
+    assert_eq!(answered.status.code(), Some(0), "{answered:?}");
+    assert!(directory.join("out").exists());
+}
+
+/// And the same value read by a job that really starts refuses that job, with
+/// the location GNU Make gives it — which for a value the command line supplied
+/// is where the read had got to rather than a definition site, because there is
+/// no file behind it.
+///
+/// Measured against 4.4.1 on 2026-08-27: `make: *** unterminated variable
+/// reference.  Stop.`, exit 2, `out` not written.
+// [spec:ronin:req:make.exported-value-charged-to-the-job/test]
+#[test]
+fn a_job_refuses_a_value_it_cannot_read() {
+    let directory = test_directory("job-refuses-value");
+    fs::write(directory.join("Makefile"), "all:; @echo ran > out\n").unwrap();
+
+    let output = make_command(&directory)
+        .args(["hello=$(world"])
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("unterminated variable reference"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!directory.join("out").exists());
+}
+
+/// An exported value a MAKEFILE defined and that will not expand is reported
+/// against the line that defined it, not against wherever the read had reached
+/// when the environment was settled.
+///
+/// GNU Make's `recursively_expand_for_file` (variable.c) sets `expanding_var`
+/// to the variable's own `fileinfo` before expanding, and
+/// `variable_expand_string` dies at that location. Measured against 4.4.1 on
+/// 2026-08-27 over this makefile: `M:2: *** unterminated variable reference.
+/// Stop.` — the `export` line, with two lines of makefile behind it.
+// [spec:ronin:req:make.exported-value-charged-to-the-job/test]
+#[test]
+fn an_unreadable_export_names_where_it_was_written() {
+    let directory = test_directory("export-names-its-line");
+    fs::write(
+        directory.join("Makefile"),
+        "# a comment\nexport FOO = $(bar\nall:; @echo ran > out\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim_end(),
+        "ronin: Makefile:2: unterminated variable reference."
+    );
+    assert!(!directory.join("out").exists());
+}
+
+/// A recipe line that comes to exactly `:` starts no process, so the makefile
+/// below runs no shell at all and the exported value nothing else reads is
+/// never read.
+///
+/// `start_job_command` (job.c): "Optimize an empty command. People use this for
+/// timestamp rules, so avoid forking a useless shell." The line is still
+/// counted as started, so the goal is remade rather than reported as having
+/// nothing to do — which is the half a plain `LateBinding::Nothing` would get
+/// wrong. Measured against 4.4.1 on 2026-08-27: silent, exit 0, and with
+/// `hello=$(world` on the command line, still silent and still 0.
+// [spec:ronin:req:make.exported-value-charged-to-the-job/test]
+#[test]
+fn an_empty_command_starts_no_process() {
+    let directory = test_directory("empty-command");
+    fs::write(directory.join("Makefile"), "all: ; @:\n").unwrap();
+
+    for arguments in [&[][..], &["hello=$(world"][..]] {
+        let output = make_command(&directory).args(arguments).output().unwrap();
+        assert_eq!(output.status.code(), Some(0), "{arguments:?}: {output:?}");
+        assert!(output.stderr.is_empty(), "{arguments:?}: {output:?}");
+        assert!(
+            !String::from_utf8_lossy(&output.stdout).contains("no work to do"),
+            "{arguments:?}: the target was remade, not skipped: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}

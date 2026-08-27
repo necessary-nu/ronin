@@ -1,0 +1,4 @@
+# The other side of the same rule: this recipe really does start a process, so
+# GNU Make builds an environment for it, reads the exported command-line value,
+# and dies on the unterminated reference before `out` is written.
+all:; @echo ran > out

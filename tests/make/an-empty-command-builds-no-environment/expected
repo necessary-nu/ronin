@@ -1,0 +1,8 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 5
+| # `start_job_command` (job.c) takes an empty command to the next line without
+| # forking — "People use this for timestamp rules, so avoid forking a useless
+| # shell" — and it does that BEFORE it calls target_environment. So the
+| # unterminated reference in the exported command-line value is never read.
+| all:; @:

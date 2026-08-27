@@ -869,23 +869,30 @@ better.
 
 ---
 
-### Two defects this survey found (filed as nodes, not accepted)
+### Two defects this survey found (filed as nodes, not accepted) — **BOTH FIXED**
 
-These are not deliberate divergences; they are bugs, found while surveying the
-upstream residue for `make-upstream-residue-triage`, and filed as nodes.
+These were never deliberate divergences; they were bugs, found while surveying
+the upstream residue for `make-upstream-residue-triage`, filed as nodes and
+since repaired.
 
-**A crash.** `make-a-define-directive-whose-name-reads-as-an-assignment-panics`.
-`define = x` (a `define` directive whose remainder reads as an assignment) makes
-Ronin panic (`kati/src-rs/parser.rs:1125`, `assertion failed: sep != 0`, exit
-101) where GNU builds cleanly. A panic reachable from a plain makefile line.
+**A crash — FIXED 2026-08-25.**
+`make-a-define-directive-whose-name-reads-as-an-assignment-panics`. `define = x`
+(a `define` directive whose remainder reads as an assignment) made Ronin panic
+(`kati/src-rs/parser.rs:1125`, `assertion failed: sep != 0`, exit 101) where GNU
+builds cleanly. Nine of the ten spellings the node covers were wrong; all ten
+now agree.
 
-**A refused build.**
+**A refused build — FIXED 2026-08-27.**
 `make-a-command-line-assignment-with-an-unterminated-reference-is-refused`.
 `make 'hello=$(world'` over `all:; $(info good)` — GNU stores the unused value
-and builds; Ronin refuses with `unterminated variable reference.` because it
-reads the command-line assignment's value eagerly.
+and builds; Ronin refused with `unterminated variable reference.` because a
+compilation unit's exported environment is settled at read time and the failure
+was charged there. It is now charged where GNU charges it: at the job that would
+have carried the value, which `start_job_command` (job.c) reaches only past the
+empty command, `-n` and `-q`. All ten measured cells agree.
 
-**Authority: none — these are defects to fix, not divergences to accept.**
+**Authority: none was needed — these were defects to fix, not divergences to
+accept, and both are fixed.**
 
 ---
 

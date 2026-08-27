@@ -179,6 +179,18 @@ pub(crate) struct LateStep {
     pub(crate) runs_while_pretending: bool,
 }
 
+/// Whether the build stands in for this step rather than starting a process
+/// for it.
+///
+/// Two reasons and they compose: the run is pretending — `-n` about every step
+/// and `-t` about every step the front end did not mark as running anyway —
+/// and GNU Make's empty command, a line that starts no process however the run
+/// was invoked. `start_job_command` (job.c) reaches both by the same
+/// `goto next_command`, and neither has an environment built for it.
+fn stands_in_for_step(pretending: Pretending, step: &PreparedStep) -> bool {
+    pretending.stands_in_for(step.runs_while_pretending) || step.launch.is_the_empty_command()
+}
+
 /// Whether an edge the build reached has a command to run at all.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub(super) enum Runs {
@@ -668,6 +680,14 @@ impl Builder<'_> {
         step: &crate::build::LateStep,
     ) -> BuildResult<bool> {
         let launch = self.deferred_launch(edge, &step.launch);
+        // A line the question walk really starts is a line the front end has to
+        // be able to start. GNU Make's `-q` steps aside for every line except
+        // one the makefile marked as running anyway, and for that one it
+        // reaches `target_environment` exactly as a build would — so a value it
+        // cannot read refuses here too.
+        if let Some(diagnostic) = launch.refusal(false) {
+            return Err(BuildError::LateCommand { diagnostic });
+        }
         let rendered = launch.rendered();
         let supervisor = match processes {
             Some(supervisor) => supervisor,
@@ -1055,6 +1075,9 @@ impl Builder<'_> {
                 }
                 Launch::Direct(direct)
             }
+            // There is nothing in it to substitute into: a refusal is the
+            // front end's own words about a line it could not settle.
+            Launch::Refused(diagnostic) => Launch::Refused(diagnostic.clone()),
         }
     }
 
@@ -1088,6 +1111,24 @@ impl Builder<'_> {
                 runs_while_pretending: step.runs_while_pretending,
             })
             .collect()
+    }
+
+    /// Why this edge cannot be run, when one of its steps is a line the front
+    /// end could settle everything about except a value only a process needs.
+    ///
+    /// GNU Make reads such a value in `target_environment`, which
+    /// `start_job_command` (job.c) calls only once it is past every reason not
+    /// to fork — the empty command, `-n`, `-t`. So the question is asked of
+    /// exactly the steps that would really start something, and a run that
+    /// starts none of them never asks it at all.
+    pub(super) fn refused_step(
+        &self,
+        steps: &std::collections::VecDeque<PreparedStep>,
+    ) -> Option<String> {
+        let pretending = self.pretending();
+        steps
+            .iter()
+            .find_map(|step| step.launch.refusal(stands_in_for_step(pretending, step)))
     }
 
     /// Start the next process this edge is made of, or say that it is over.
@@ -1188,7 +1229,7 @@ impl Builder<'_> {
         prepared.running_step = RunningStep {
             ignore_errors: step.ignore_errors,
         };
-        let pretended = pretending.stands_in_for(step.runs_while_pretending);
+        let pretended = stands_in_for_step(pretending, &step);
         prepared.pretended_a_step |= pretended;
         (step.launch, pretended)
     }

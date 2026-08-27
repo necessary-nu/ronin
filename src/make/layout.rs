@@ -28,6 +28,16 @@ pub(crate) struct CommandLayout {
     /// The root unit, whose auxiliary paths are already the ones the build
     /// reads: a child's are qualified by where its Makefile was read.
     pub(super) root: bool,
+    /// Why no recipe of this unit can be started, when one of the values its
+    /// environment exports could not be read.
+    ///
+    /// GNU Make expands an exported recursive value in `target_environment`,
+    /// which it reaches from the job it is about to launch and from nowhere
+    /// else — so a value that will not expand refuses that job and leaves a
+    /// run launching none of them alone. A compilation unit settles its
+    /// environment once, before any job, so the failure is carried here and
+    /// charged to each launch that would have run in it.
+    pub(super) unreadable: Option<String>,
 }
 
 impl CommandLayout {
@@ -44,6 +54,7 @@ impl CommandLayout {
             recipe_environment,
             root_directory,
             root,
+            unreadable: None,
         }
     }
 
@@ -235,6 +246,12 @@ impl CommandLayout {
         script: Script<'_>,
         scoped: &[kati::export::EnvironmentChange],
     ) -> Option<crate::subprocess::Launch> {
+        // Asked before the shell is, because a unit that cannot build an
+        // environment cannot start this script under any shell, and the
+        // composed command line the `None` below defers to would start it.
+        if let Some(diagnostic) = &self.unreadable {
+            return Some(crate::subprocess::Launch::Refused(diagnostic.clone()));
+        }
         if shell != kati::simple_command::DEFAULT_SHELL {
             return None;
         }
@@ -348,6 +365,9 @@ impl CommandLayout {
             argv.push(BString::from(step.text.to_vec()));
             return self.direct_launch(argv, scoped);
         }
+        if let Some(diagnostic) = &self.unreadable {
+            return crate::subprocess::Launch::Refused(diagnostic.clone());
+        }
         let mut command = self.prefix(scoped);
         command.extend_from_slice(&kati::simple_command::escaped_shell_name(&step.shell));
         command.push(b' ');
@@ -368,7 +388,10 @@ impl CommandLayout {
         argv: Vec<BString>,
         scoped: &[kati::export::EnvironmentChange],
     ) -> crate::subprocess::Launch {
-        crate::subprocess::Launch::Direct(Box::new(crate::subprocess::DirectLaunch {
+        let starts_no_process = kati::simple_command::is_the_empty_command(
+            &argv.iter().map(|word| &word[..]).collect::<Vec<_>>(),
+        );
+        let launch = crate::subprocess::Launch::Direct(Box::new(crate::subprocess::DirectLaunch {
             argv,
             directory: self.command_directory.clone(),
             environment: self
@@ -388,7 +411,19 @@ impl CommandLayout {
                 })
                 .collect(),
             diagnostic_prefix: format!("{}: ", crate::cli::PRODUCT_NAME),
-        }))
+            starts_no_process,
+        }));
+        // GNU Make decides a line needs no process before it builds an
+        // environment for one: `start_job_command` (job.c) reaches the empty
+        // command's `goto next_command` above its own `target_environment`
+        // call. So a unit whose environment could not be settled still runs
+        // such a line's worth of nothing, and refuses every other line.
+        match &self.unreadable {
+            Some(diagnostic) if !launch.is_the_empty_command() => {
+                crate::subprocess::Launch::Refused(diagnostic.clone())
+            }
+            _ => launch,
+        }
     }
 
     /// Whether every line of this recipe can be launched on its own.
@@ -769,9 +804,7 @@ mod tests {
                     BString::from(b"echo one > out".to_vec()),
                 ]
             ),
-            crate::subprocess::Launch::Shell(command) => {
-                panic!("plain flags launch directly, got a shell errand: {command:?}")
-            }
+            other => panic!("plain flags launch directly, got {:?}", other.rendered()),
         }
     }
 
@@ -785,9 +818,10 @@ mod tests {
             crate::subprocess::Launch::Direct(direct) => {
                 assert_eq!(direct.argv[1], BString::from(b"-c".to_vec()));
             }
-            crate::subprocess::Launch::Shell(command) => {
-                panic!("single-quoted flags are words, not a shell errand: {command:?}")
-            }
+            other => panic!(
+                "single-quoted flags are words, not a shell errand: {:?}",
+                other.rendered()
+            ),
         }
     }
 
@@ -805,9 +839,9 @@ mod tests {
                     "the flags reach the shell unescaped: {command:?}"
                 );
             }
-            crate::subprocess::Launch::Direct(direct) => panic!(
+            other => panic!(
                 "flags holding shell syntax must not become argv words: {:?}",
-                direct.argv
+                other.rendered()
             ),
         }
     }

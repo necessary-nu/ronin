@@ -1308,6 +1308,9 @@ impl<'a> Builder<'a> {
         }
         let bound = !bound_steps.is_empty();
         let steps = self.prepared_steps(edge, &command, bound_steps);
+        if let Some(diagnostic) = self.refused_step(&steps) {
+            return Err(BuildError::LateCommand { diagnostic });
+        }
         let launch_rspfile_content =
             self.deferred_response_file_content(edge, &command.rspfile_content);
         let completion_outputs = self.graph.deferred_freshness(edge).map_or_else(

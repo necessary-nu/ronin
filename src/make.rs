@@ -810,8 +810,9 @@ fn read_unit(
     } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
     let refusals = refused_makefiles(refusals);
     let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
-    let exported = exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
-    let command_line = command_line_environment(&mut ev, &exported)
+    let (exported, unreadable) =
+        exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+    let command_line = command_line_environment(&mut ev, &exported, unreadable.as_ref())
         .map_err(|error| MakeError::evaluate(&error))?;
     // A Makefile may replace MAKEOVERRIDES (and therefore the recursive
     // MAKEFLAGS value) before naming a child. That evaluated compiler
@@ -831,7 +832,10 @@ fn read_unit(
     let mut recipe_environment = context.recipe_environment.clone();
     apply_recipe_environment(&mut recipe_environment, &flag_environment);
     apply_recipe_environment(&mut recipe_environment, &exported);
-    sink.set_recipe_environment(recipe_environment);
+    sink.set_recipe_environment(
+        recipe_environment,
+        unreadable.as_ref().map(|held| held.why.clone()),
+    );
     let deferred = match emit_build(&nodes, &mut ev, sink) {
         Ok(deferred) => deferred,
         Err(error) => {
@@ -1795,6 +1799,16 @@ impl Loaded {
     }
 }
 
+/// One unit's settled export set, and the one name it could not read.
+///
+/// The name comes back beside the changes rather than as a failure because GNU
+/// Make only ever reads such a value where it starts something; see
+/// [`kati::export::Unreadable`].
+type SettledExports = (
+    Vec<(OsString, Option<OsString>)>,
+    Option<kati::export::Unreadable>,
+);
+
 /// The environment changes Make's export set makes to a child's, as bytes the
 /// front end can put in an `env` prefix or hand to a semantic child compiler.
 ///
@@ -1803,12 +1817,10 @@ impl Loaded {
 /// string type.
 fn exported_environment(
     ev: &mut kati::eval::Evaluator,
-) -> Result<Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>, kati::anyhow::Error> {
-    Ok(as_environment(&kati::export::exported_environment(
-        ev,
-        None,
-        kati::export::ChildKind::Recipe,
-    )?))
+) -> Result<SettledExports, kati::anyhow::Error> {
+    let (changes, unreadable) =
+        kati::export::settled_environment(ev, None, kati::export::ChildKind::Recipe)?;
+    Ok((as_environment(&changes), unreadable))
 }
 
 /// One of kati's environment deltas as the front end's own strings.
@@ -1863,9 +1875,14 @@ fn flag_recipe_environment(makeflags: &str, mflags: String) -> [(OsString, Optio
 /// twice for the same one. What is left to expand is the command-line name the
 /// export pass declined: a name no shell could read back, or one the makefile
 /// took back with `unexport`.
+///
+/// `unreadable` is the name that pass could not read at all, which is left out
+/// here for the same reason it was left out there: expanding it would raise the
+/// refusal GNU Make raises only at the job that carries the value.
 fn command_line_environment(
     ev: &mut kati::eval::Evaluator,
     settled: &[(std::ffi::OsString, Option<std::ffi::OsString>)],
+    unreadable: Option<&kati::export::Unreadable>,
 ) -> Result<Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>, kati::anyhow::Error> {
     use std::os::unix::ffi::OsStringExt;
     let variables = ev
@@ -1875,6 +1892,9 @@ fn command_line_environment(
     let mut environment = Vec::with_capacity(variables.len());
     for (symbol, _) in variables {
         let name = std::ffi::OsString::from_vec(symbol.as_bytes(&ev.session).to_vec());
+        if unreadable.is_some_and(|held| held.name == name.as_os_str().as_encoded_bytes()) {
+            continue;
+        }
         let value = match settled.iter().find(|(settled, _)| *settled == name) {
             Some((_, value)) => value.clone(),
             None => Some(std::ffi::OsString::from_vec(ev.eval_var(symbol)?.to_vec())),

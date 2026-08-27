@@ -1026,8 +1026,6 @@ impl_evidence (
         make.exported-value-charged-to-the-job
     ), covered_claims (
         {impl_name target-impl, rule make.exported-value-charged-to-the-job}
-    ), rule_versions_seen (
-        {id make.exported-value-charged-to-the-job, version 0}
     )}
     {id make-build-intent-gate, covered_rules (
         make.semantics

@@ -38,6 +38,16 @@ pub(crate) enum Launch {
     Shell(BString),
     /// An argument list to run with no shell in between.
     Direct(Box<DirectLaunch>),
+    /// A line that cannot be started at all, and what to say about it.
+    ///
+    /// Everything about the command is settled except something only a process
+    /// needs — a value for the environment it would have run in, which the
+    /// front end could not read. A run that never starts this line never needs
+    /// it, which is why the refusal travels with the launch instead of having
+    /// stopped the read: it is charged where a process would have been.
+    ///
+    /// The text is the front end's own diagnostic, already rendered.
+    Refused(String),
 }
 
 /// A command to exec with nothing between the build and it.
@@ -61,9 +71,40 @@ pub(crate) struct DirectLaunch {
     /// that may not be run alike, since what it reports is that it could not
     /// start the command rather than what the command said.
     pub(crate) diagnostic_prefix: String,
+    /// Whether the build stands in for this line instead of starting it, which
+    /// is GNU Make's empty command.
+    ///
+    /// `start_job_command` (job.c) takes a Bourne-compatible shell asked to run
+    /// exactly `:` to the next command line rather than forking — "People use
+    /// this for timestamp rules, so avoid forking a useless shell" — after the
+    /// line has been echoed and counted as started, and before it builds any
+    /// environment for it. The front end decides it, because it is a fact about
+    /// the argument list GNU Make would have assembled; the engine acts on it
+    /// without knowing what a Makefile is, the way it acts on
+    /// [`crate::build::LateStep::runs_while_pretending`].
+    pub(crate) starts_no_process: bool,
 }
 
 impl Launch {
+    /// Why this launch cannot be made, for a run that is about to make it.
+    ///
+    /// `None` for every launch that can be started, and for a refused one the
+    /// build is standing in for rather than running — GNU Make reads the value
+    /// this is about where it builds the environment for a job it is starting,
+    /// so a job it does not start never asks.
+    pub(crate) fn refusal(&self, stood_in_for: bool) -> Option<String> {
+        match self {
+            Self::Refused(diagnostic) if !stood_in_for => Some(diagnostic.clone()),
+            _ => None,
+        }
+    }
+
+    /// Whether the build stands in for this line rather than starting it. See
+    /// [`DirectLaunch::starts_no_process`].
+    pub(crate) fn is_the_empty_command(&self) -> bool {
+        matches!(self, Self::Direct(direct) if direct.starts_no_process)
+    }
+
     /// How this launch is named in a diagnostic and in the failure block.
     pub(crate) fn rendered(&self) -> BString {
         match self {
@@ -74,10 +115,13 @@ impl Launch {
                     if !rendered.is_empty() {
                         rendered.push(b' ');
                     }
-                    rendered.extend_from_slice(word.as_bytes());
+                    rendered.extend_from_slice(word);
                 }
                 BString::from(rendered)
             }
+            // Nothing was started, so nothing has a command line to be named
+            // by. The refusal itself is what gets reported.
+            Self::Refused(_) => BString::default(),
         }
     }
 }
@@ -676,6 +720,9 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
         let direct = match launch {
             Launch::Shell(_) => None,
             Launch::Direct(direct) => Some(direct),
+            // Refused before the supervisor is reached: the build charges the
+            // refusal to the run and never asks for a process.
+            Launch::Refused(_) => unreachable!("a refused launch never reaches a spawn"),
         };
         let (child, output) = match self.start(edge, &command, direct.as_deref(), use_console)? {
             Started::Running(child, output) => (child, output),

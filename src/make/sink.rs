@@ -183,6 +183,9 @@ struct Unit {
     root: bool,
     serial_pool: Option<Vec<u8>>,
     recipe_environment: Vec<(Vec<u8>, Option<Vec<u8>>)>,
+    /// Why no recipe of this unit can be started — see
+    /// [`CommandLayout::unreadable`].
+    unreadable: Option<String>,
     targets: Vec<Node>,
     subninjas: Vec<PendingSubninja>,
     edges: Vec<Edge>,
@@ -308,6 +311,7 @@ impl GraphSink {
                 root: true,
                 serial_pool: None,
                 recipe_environment: Vec::new(),
+                unreadable: None,
                 targets: Vec::new(),
                 subninjas: Vec::new(),
                 edges: Vec::new(),
@@ -352,6 +356,7 @@ impl GraphSink {
             root: false,
             serial_pool: None,
             recipe_environment: Vec::new(),
+            unreadable: None,
             targets: Vec::new(),
             subninjas: Vec::new(),
             edges: Vec::new(),
@@ -373,9 +378,17 @@ impl GraphSink {
     /// the root Make invocation. They become part of each child command, so a
     /// composed subninja observes its own exports and `MAKELEVEL` without a
     /// nested process boundary.
+    ///
+    /// `unreadable` is what settling that environment could not read, which
+    /// arrives here because it arises there: a name whose value would not
+    /// expand is one this unit cannot start a process under, and every recipe
+    /// of the unit is refused where a process would have been. See
+    /// [`CommandLayout::unreadable`].
+    // [spec:ronin:req:make.exported-value-charged-to-the-job]
     pub(crate) fn set_recipe_environment(
         &mut self,
         environment: Vec<(OsString, Option<OsString>)>,
+        unreadable: Option<String>,
     ) {
         let mut normalised = BTreeMap::new();
         for (name, value) in environment {
@@ -385,6 +398,7 @@ impl GraphSink {
             );
         }
         self.unit.recipe_environment = normalised.into_iter().collect();
+        self.unit.unreadable = unreadable;
     }
 
     /// Finish the current compilation unit without finishing the shared graph.
@@ -943,6 +957,7 @@ impl GraphSink {
             recipe_environment: self.unit.recipe_environment.clone(),
             root_directory: self.root_directory.clone(),
             root: self.unit.root,
+            unreadable: self.unit.unreadable.clone(),
         }
     }
 
