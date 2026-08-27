@@ -964,7 +964,8 @@ assertions (
     {id make-a-command-line-variables-value-is-settled-once, kind @complete, author "brendan@necessary.nu", at 2026-08-26T23:53:33.987813081Z}
     {id make-a-run-leaves-no-directory-the-suite-did-not-ask-for, kind @doing, author "brendan@necessary.nu", at 2026-08-26T23:58:55.22777276Z}
     {id make-a-shared-rules-outputs-are-each-swept-on-their-own-answer, kind @complete, author "brendan@necessary.nu", at 2026-08-27T00:32:26.336278837Z}
-    {id make-mode-has-never-been-measured-against-gnu-make, kind @doing, author "brendan@necessary.nu", at 2026-08-27T15:24:46.11839316Z}
+    {id make-mode-has-never-been-measured-against-gnu-make, kind @complete, author "brendan@necessary.nu", at 2026-08-27T16:13:50.412401648Z}
+    {id make-mode-hashes-a-symbol-index-with-siphash, kind @doing, author "brendan@necessary.nu", at 2026-08-27T16:13:54.835848932Z}
 )
 
 impl_evidence (
