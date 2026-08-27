@@ -19993,6 +19993,7 @@ children (
         title "Wait for the machine to go quiet rather than refusing the release run"
         kind @fix
         deps (the-candidate-walk-allocates-a-vector-per-character)
+        sealed true
         log (
             {
                 at 2026-08-27T17:20:02.069587196Z
@@ -20006,6 +20007,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @status
                 text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-27T17:20:33.538476986Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
