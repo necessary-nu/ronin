@@ -1,0 +1,56 @@
+oracle GNU Make 4.4.1
+outcome failure
+file Makefile kept 53
+| # Twenty pairs of rules that each make the other's prerequisite. Every road out
+| # of `out.a` walks back to `out.a`, and the one Make takes is the one that runs
+| # out of rules: `rule->in_use` strikes each link from the candidates as the
+| # search passes through it, so the road is as long as the catalogue and no
+| # longer, and the bottom of it takes `out.a` on trust because the makefile
+| # writes it down. Both tools then drop the circular dependency that road leaves
+| # and fail on the recipe, which is copying a file from nowhere.
+| #
+| # The size is the point. A search that answers whether a chain exists and lets
+| # the plan derive it again is exponential in the number of pairs -- twenty-two
+| # pairs was twenty-five seconds of it -- while GNU Make is flat, because
+| # `pattern_search` keeps the road it finds.
+| all: out.a
+| %.a: %.g0.a ; cp $< $@
+| %.g0.a: %.a ; cp $< $@
+| %.a: %.g1.a ; cp $< $@
+| %.g1.a: %.a ; cp $< $@
+| %.a: %.g2.a ; cp $< $@
+| %.g2.a: %.a ; cp $< $@
+| %.a: %.g3.a ; cp $< $@
+| %.g3.a: %.a ; cp $< $@
+| %.a: %.g4.a ; cp $< $@
+| %.g4.a: %.a ; cp $< $@
+| %.a: %.g5.a ; cp $< $@
+| %.g5.a: %.a ; cp $< $@
+| %.a: %.g6.a ; cp $< $@
+| %.g6.a: %.a ; cp $< $@
+| %.a: %.g7.a ; cp $< $@
+| %.g7.a: %.a ; cp $< $@
+| %.a: %.g8.a ; cp $< $@
+| %.g8.a: %.a ; cp $< $@
+| %.a: %.g9.a ; cp $< $@
+| %.g9.a: %.a ; cp $< $@
+| %.a: %.g10.a ; cp $< $@
+| %.g10.a: %.a ; cp $< $@
+| %.a: %.g11.a ; cp $< $@
+| %.g11.a: %.a ; cp $< $@
+| %.a: %.g12.a ; cp $< $@
+| %.g12.a: %.a ; cp $< $@
+| %.a: %.g13.a ; cp $< $@
+| %.g13.a: %.a ; cp $< $@
+| %.a: %.g14.a ; cp $< $@
+| %.g14.a: %.a ; cp $< $@
+| %.a: %.g15.a ; cp $< $@
+| %.g15.a: %.a ; cp $< $@
+| %.a: %.g16.a ; cp $< $@
+| %.g16.a: %.a ; cp $< $@
+| %.a: %.g17.a ; cp $< $@
+| %.g17.a: %.a ; cp $< $@
+| %.a: %.g18.a ; cp $< $@
+| %.g18.a: %.a ; cp $< $@
+| %.a: %.g19.a ; cp $< $@
+| %.g19.a: %.a ; cp $< $@

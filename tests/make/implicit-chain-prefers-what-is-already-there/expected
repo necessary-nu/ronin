@@ -1,0 +1,25 @@
+oracle GNU Make 4.4.1
+outcome success
+file Makefile kept 15
+| # A chain search offers every rule the chance to be satisfied by what is on disk
+| # before any of them may invent a prerequisite, which is `pattern_search`'s
+| # `for (intermed_ok = 0; intermed_ok < 2; ++intermed_ok)`.
+| #
+| # `out.b` can be had two ways. `%.b: %.d` is written first and would work, by
+| # making `out.d` out of `out.a` -- the target being searched for, taken on trust
+| # because the makefile writes it down. `%.b: %.c` is written last and needs
+| # nothing made at all, because `out.c` is here. The second is the one Make
+| # takes, and taking the first instead is a build that runs two recipes where one
+| # was needed and makes a file nobody asked for.
+| all: out.a
+| %.a: %.b ; @echo "A $@ <- $<" >> log; cp $< $@
+| %.b: %.d ; @echo "B $@ <- $<" >> log; cp $< $@
+| %.d: %.a ; @echo "D $@ <- $<" >> log; cp $< $@
+| %.b: %.c ; @echo "C $@ <- $<" >> log; cp $< $@
+file log touched 2
+| C out.b <- out.c
+| A out.a <- out.b
+file out.a touched 1
+| seed
+file out.c kept 1
+| seed
