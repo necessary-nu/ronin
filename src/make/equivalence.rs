@@ -1857,3 +1857,129 @@ impl Report {
         assert_eq!(unclassified, 0, "the two paths disagree");
     }
 }
+
+/// The graph must be the same however many threads read the Makefiles.
+///
+/// A recursive dispatch unit — several `.PHONY` recipes, each running
+/// `$(MAKE) -C` once — is the shape whose child Makefiles are read ahead of the
+/// composition on worker threads, so it is the shape whose graph could depend
+/// on which read finished first. See [`crate::make::read_ahead`]. Composition
+/// itself never leaves the calling thread, so the claim under test is that
+/// nothing about the graph — node numbering, edge order, or wiring — moves when
+/// the reads overlap.
+///
+/// Run many times at `-j8` rather than once, because a scheduling difference
+/// that appears one run in ten is exactly the defect this exists to catch, and
+/// a single agreeing run would be evidence of nothing. `-j1` runs among them
+/// pin the answer to the serial graph rather than merely to a graph the
+/// parallel path agrees with itself about.
+// [spec:ronin:req:make.graph-direct/test]
+#[test]
+#[ignore = "changes the process working directory; the release gate runs it alone"]
+fn one_graph_however_many_threads_read_it() {
+    let tree = tempfile::tempdir().expect("a scratch directory");
+    write_dispatch_tree(tree.path(), 0);
+    let original = std::env::current_dir().expect("a working directory");
+    let mut built: Vec<(usize, String)> = Vec::new();
+    let started =
+        || crate::make::parallel::READS_STARTED.load(std::sync::atomic::Ordering::Relaxed);
+    let before = started();
+    for jobs in [1, 8, 8, 1, 8, 8, 8, 16, 8, 1] {
+        std::env::set_current_dir(tree.path()).expect("the scratch tree exists");
+        let mut session = Session::from_args(vec![
+            std::ffi::OsString::from("make"),
+            std::ffi::OsString::from(format!("-j{jobs}")),
+            std::ffi::OsString::from("-f"),
+            std::ffi::OsString::from("Makefile"),
+        ])
+        .expect("the command line is one Make accepts");
+        // As the Make command line collects them, which is what an invocation
+        // that drains its own diagnostics does — and what lets a read start
+        // early at all, because only a held diagnostic can be put back in the
+        // order the recipes were written in.
+        session.diagnostics = std::sync::Arc::new(kati::diagnostics::Diagnostics::collected());
+        let loaded = crate::make::load_makefile(session, kati::shuffle::Shuffle::None);
+        std::env::set_current_dir(&original).expect("the original directory still exists");
+        let loaded = loaded.expect("the dispatch tree compiles");
+        built.push((jobs, describe_graph(&loaded.graph)));
+    }
+    assert!(
+        started() > before,
+        "no read was handed to a worker, so this compared the serial path with itself"
+    );
+    let (_, first) = &built[0];
+    for (index, (jobs, described)) in built.iter().enumerate().skip(1) {
+        assert_eq!(
+            described, first,
+            "run {index} at -j{jobs} built a different graph from the first run at -j1"
+        );
+    }
+}
+
+/// A tree of directories whose every Makefile dispatches into its children with
+/// one `.PHONY` recipe each, which is what puts several reads in flight at once.
+fn write_dispatch_tree(directory: &Path, depth: usize) {
+    std::fs::create_dir_all(directory).expect("the scratch tree is writable");
+    if depth == 2 {
+        let mut makefile = String::from(".PHONY: all\nall:");
+        for index in 0..4 {
+            let _ = write!(makefile, " build/{index}");
+        }
+        makefile.push('\n');
+        for index in 0..4 {
+            let _ = write!(
+                makefile,
+                "build/{index}: src/{index}\n\t@cp src/{index} build/{index}\n"
+            );
+        }
+        std::fs::create_dir_all(directory.join("src")).expect("the scratch tree is writable");
+        for index in 0..4 {
+            std::fs::write(directory.join(format!("src/{index}")), b"seed\n")
+                .expect("the scratch tree is writable");
+        }
+        std::fs::write(directory.join("Makefile"), makefile).expect("the scratch tree is writable");
+        return;
+    }
+    let mut makefile = String::from("SUBDIRS =");
+    for child in 0..4 {
+        let _ = write!(makefile, " sub{child}");
+    }
+    makefile.push_str(
+        "\n.PHONY: all $(SUBDIRS)\nall: $(SUBDIRS)\n\
+         $(SUBDIRS):\n\t@$(MAKE) --no-print-directory -C $@ all\n",
+    );
+    std::fs::write(directory.join("Makefile"), makefile).expect("the scratch tree is writable");
+    for child in 0..4 {
+        write_dispatch_tree(&directory.join(format!("sub{child}")), depth + 1);
+    }
+}
+
+/// One graph as text, in the order the graph holds it.
+///
+/// Deliberately unsorted: node and edge numbering is insertion order, and
+/// insertion order is the thing a difference in scheduling would move. Sorting
+/// would hide exactly the defect being looked for.
+fn describe_graph(graph: &BuildGraph) -> String {
+    let arenas = graph.arenas();
+    let mut described = String::new();
+    for node in arenas.node_ids() {
+        let _ = writeln!(described, "node {}", arenas.node_path(node));
+    }
+    for edge in arenas.edge_ids() {
+        let held = arenas.edge(edge);
+        let paths = |nodes: &[crate::graph::NodeId]| {
+            nodes
+                .iter()
+                .map(|node| arenas.node_path(*node).to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        let _ = writeln!(
+            described,
+            "edge [{}] <- [{}]",
+            paths(&held.out),
+            paths(&held.input)
+        );
+    }
+    described
+}

@@ -125,6 +125,7 @@ pub(in crate::make) fn compile(
             assumed_old: Vec::new(),
             level,
             jobs: parent.jobs,
+            parallel_reads: parent.parallel_reads,
             environment,
             recipe_environment,
         },

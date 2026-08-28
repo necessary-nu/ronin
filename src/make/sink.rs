@@ -112,7 +112,13 @@ pub(crate) struct PendingSubninja {
     order_only_inputs: Vec<Node>,
     /// The subset of `order_only_inputs` this wrapper outlives a failure of.
     forgiven_order_inputs: Vec<Node>,
-    always_dirty: bool,
+    /// `.PHONY`, which is what a recursive dispatch rule is.
+    ///
+    /// Read by the compiler because it settles, without staging anything,
+    /// that the wrapper this recipe becomes is out of date and its child will
+    /// therefore be composed rather than short-circuited. See
+    /// `crate::make::read_ahead`.
+    pub(crate) always_dirty: bool,
     deferred: Option<PendingDeferred>,
     completion_output: Option<Node>,
     intermediate: bool,

@@ -529,7 +529,7 @@ fn stream_buffer_size(file: &std::fs::File) -> usize {
 /// five file opens here, 51 to 101 microseconds measured — which is real money
 /// against a no-op build that finishes in under three milliseconds. The value
 /// cannot change usefully within one run, so read it once and keep it.
-fn cores() -> usize {
+pub(crate) fn cores() -> usize {
     static CORES: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
     *CORES
         .get_or_init(|| std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get))

@@ -25,6 +25,8 @@ pub use kati;
 pub(crate) mod cli;
 mod interrupts;
 mod layout;
+mod parallel;
+use parallel::{ChildUnit, evaluate_unit, prepare_session, read_ahead};
 mod recipe;
 mod report;
 mod sink;
@@ -228,6 +230,9 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
             assumed_old: Vec::new(),
             level,
             jobs: session.flags.num_jobs.max(1),
+            // This entry compiles for a caller that runs the graph itself, and
+            // the session's job count is the whole of what it was told.
+            parallel_reads: session.flags.num_jobs.max(1),
             environment,
             recipe_environment,
         },
@@ -341,6 +346,16 @@ pub(crate) struct CompilationContext {
     pub(crate) assumed_old: Vec<crate::util::BString>,
     pub(crate) level: usize,
     pub(crate) jobs: usize,
+    /// How many of this compilation's Makefile reads may overlap.
+    ///
+    /// Separate from `jobs` because `jobs` is what `MAKEFLAGS` carries, and it
+    /// collapses "no `-j` at all" and "`-j` with no number" into one unlimited
+    /// value — both mean the same thing to the switch table. They mean
+    /// opposite things here: with no `-j`, GNU Make runs one recipe at a time
+    /// and reads one child Makefile at a time, and so must this. This is the
+    /// number the BUILD would run commands against, which is the number
+    /// recursive children are counted against too. See [`read_ahead`].
+    pub(crate) parallel_reads: usize,
     /// The environment this unit imports while kati evaluates it.
     pub(crate) environment: Vec<(OsString, OsString)>,
     /// Changes child commands need in addition to the root build environment.
@@ -548,6 +563,20 @@ struct CompilationState<'a> {
     /// accumulates rather than replacing, because a pass reads everything the
     /// pass before it read and then one child more.
     units_read: ReadJournals,
+    /// Workers that read a recursive child's Makefiles ahead of the
+    /// composition, or `None` where every read happens on this thread.
+    ///
+    /// Composition itself stays here: one graph is built by one thread, in the
+    /// order it is built in today, which is what keeps the graph the same
+    /// whatever the workers do. See [`read_ahead`].
+    ///
+    /// Started on first use rather than with the state, because most
+    /// compilations never read ahead at all — a Makefile with no recursive
+    /// recipes, or with one, has nothing to overlap — and threads that would
+    /// take no work are worth not starting.
+    read_pool: std::cell::OnceCell<Option<parallel::ReadPool>>,
+    /// How many workers to start when one is first wanted.
+    read_threads: usize,
 }
 
 /// One unit's unexpanded recipes and everything expanding them will need,
@@ -769,8 +798,22 @@ where
         unfinished: Vec::new(),
         read_units: &settled.read_units,
         units_read: ReadJournals::new(),
+        // `-j` is what GNU Make counts its recursive children against, and a
+        // recursive child of Ronin's is a Makefile read rather than a process,
+        // so it is counted against the same number. At `-j1` there is no pool
+        // at all and every Makefile is read exactly where and when it was read
+        // before, which is what keeps a serial run's behaviour — the order two
+        // reads' `$(shell)` commands run in included — untouched.
+        read_pool: std::cell::OnceCell::new(),
+        read_threads: root.context.parallel_reads,
     };
-    let root = compile_unit(root, &mut sink, None, &mut resolve, &mut state)?;
+    let root = compile_unit(
+        ChildUnit::Unread(Box::new(root)),
+        &mut sink,
+        None,
+        &mut resolve,
+        &mut state,
+    )?;
     let pending_recipes = (!state.pending_recipes.is_empty()).then_some(state.pending_recipes);
     let graph = sink.into_graph().map_err(MakeError::Construct)?;
     Ok(Loaded {
@@ -797,7 +840,7 @@ where
 /// read is what a pass repeats, and every field below is something the read
 /// settled and the compilation around it then carries.
 fn read_unit(
-    session: Session,
+    evaluated: Evaluated,
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
     context: &CompilationContext,
@@ -807,7 +850,7 @@ fn read_unit(
         mut nodes,
         regeneration_nodes,
         refusals,
-    } = evaluate(session).map_err(|error| MakeError::evaluate(&error))?;
+    } = evaluated;
     let refusals = refused_makefiles(refusals);
     let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
     let (exported, unreadable) =
@@ -892,7 +935,7 @@ struct UnitRead {
 }
 
 fn compile_unit<F>(
-    compilation: Compilation,
+    child: ChildUnit,
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
     resolve: &mut F,
@@ -901,53 +944,34 @@ fn compile_unit<F>(
 where
     F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
-    let compilation_key = compilation.cache_key.clone();
+    // Either a worker already read this unit while an earlier recipe of the
+    // same parent was being composed, or nothing has read it and it is read
+    // here. Both go through the same prepared session and produce the same
+    // value; the only difference is which thread paid for it.
+    let (compilation_key, context, read_ahead) = match child {
+        ChildUnit::Refused(error) => return Err(error),
+        ChildUnit::Unread(compilation) => {
+            let mut compilation = *compilation;
+            let compilation_key = compilation.cache_key.clone();
+            let context = compilation.context.clone();
+            prepare_session(&mut compilation, state.read_units);
+            (compilation_key, context, Err(compilation.session))
+        }
+        ChildUnit::Read(read) => (read.cache_key.clone(), read.context.clone(), Ok(*read)),
+    };
     if !state.compiling.insert(compilation_key.clone()) {
         return Err(MakeError::Evaluate(
             "recursive Make compilation includes itself".to_owned(),
         ));
     }
-    let context = compilation.context.clone();
-    let mut session = compilation.session;
-    // `--shuffle` is Make's own reordering rather than this frontend's: the
-    // walk that drops circular prerequisites reads the order it chose, so the
-    // evaluator has to be told before it plans.
-    session.flags.shuffle = compilation.shuffle;
-    // A `$(shell)` in this unit's makefile and a recipe line in the graph it
-    // compiles to are the same language, so the read uses the shell the build
-    // will use. Per unit, because a recursive child reads with its own session
-    // and must not read with a different shell than its parent.
-    // [spec:ronin:req:product.builtin-shell]
-    session.flags.default_shell_program =
-        crate::subprocess::builtin_shell().map(std::path::Path::to_path_buf);
-    // Per unit for the same reason, and the same watch in every one of them: a
-    // recursive child reading its own makefile is stopped by the interrupt its
-    // parent was sent.
-    session.interrupts = Some(std::sync::Arc::clone(&context.interrupts));
-    // Per unit rather than per pass, because a staging pass reads units it has
-    // read before AND one it has not: the parent and the children behind the
-    // settled boundaries are repeating themselves, while the child the pass
-    // was taken for is speaking for the first time.
-    let replayed = state.read_units.get(&compilation_key);
-    session.flags.is_repeated_read = replayed.is_some();
-    // And what that first read was TOLD, for the calls that cannot be held
-    // back because the expansion that asked has to be handed a value. A unit
-    // reading for the first time — the child this pass was taken for — gets
-    // nothing and asks the ground itself.
-    session.ground_journal.replay(
-        replayed
-            .map(|journal| journal.ground.clone())
-            .unwrap_or_default(),
-    );
-    // And the text it READ, which is the other half of the same premise. A
-    // makefile a staged child has since written was not part of the first read
-    // and must not become part of this one; one it has rewritten is still the
-    // text the first read had.
-    for (name, contents) in replayed.map_or(&[][..], |journal| &journal.sources) {
-        session.supply_makefile(name.clone(), contents.clone());
-    }
-    let read = in_directory(&context.directory, || {
-        read_unit(session, sink, parent_scope, &context)
+    let evaluated = match read_ahead {
+        Ok(read) => read.collect(),
+        Err(session) => evaluate_unit(session, &context.directory),
+    };
+    let read = evaluated.and_then(|evaluated| {
+        in_directory(&context.directory, || {
+            read_unit(evaluated, sink, parent_scope, &context)
+        })
     });
     let UnitRead {
         unit,
@@ -1020,8 +1044,9 @@ where
     } = unit;
     let mut subtree_edges = edges;
     let disk = freshness_disk(descendant_context)?;
-    for (pending_index, mut pending) in dependency_ordered(subninjas, sink).into_iter().enumerate()
-    {
+    let ordered = dependency_ordered(subninjas, sink);
+    let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state);
+    for (pending_index, mut pending) in ordered.into_iter().enumerate() {
         // Whose recipe this is decides which switches its segments run under.
         // A recursive recipe the makefile update would run — a Makefile's own,
         // or that of anything a Makefile is made from — is part of the phase
@@ -1082,12 +1107,15 @@ where
 
         let Some(child_groups) = compose_child_groups(
             &pending,
-            (compilation_key, pending_index),
+            RecipeSite {
+                at: (compilation_key, pending_index),
+                for_makefile,
+                read_ahead: read_ahead.get_mut(pending_index).and_then(Option::take),
+            },
             sink,
             resolve,
             descendant_context,
             state,
-            for_makefile,
         )?
         else {
             // The wrapper's edge exists and still carries the probe, because
@@ -1121,6 +1149,20 @@ where
     })
 }
 
+/// Where one recursive recipe sits in the compilation, and what has already
+/// been done for it.
+struct RecipeSite<'a> {
+    /// The unit's cache key, and which pending recursive recipe of that unit
+    /// this is. The same pair an [`EvaluationBoundary`] is keyed on.
+    at: (&'a [u8], usize),
+    /// Whether this recipe belongs to the makefile update rather than to a
+    /// goal, which decides the switches its segments run under.
+    for_makefile: bool,
+    /// The child's Makefiles, where a worker read them ahead of the
+    /// composition. See [`read_ahead`].
+    read_ahead: Option<ChildUnit>,
+}
+
 /// Compile every child one recursive recipe starts, in the order the recipe
 /// wrote them, with what each of them is read off staged first.
 ///
@@ -1128,21 +1170,24 @@ where
 /// read off is not on the ground yet, and the unit it belongs to is left
 /// incomplete for the pass that follows the build of it.
 ///
-/// `at` is where in the compilation this recipe sits: the unit's key and which
-/// pending recursive recipe of that unit it is.
+/// `site` is where in the compilation this recipe sits, which phase it belongs
+/// to, and whatever a worker has already read for it.
 fn compose_child_groups<F>(
     pending: &sink::PendingSubninja,
-    at: (&[u8], usize),
+    site: RecipeSite<'_>,
     sink: &mut GraphSink,
     resolve: &mut F,
     descendant_context: &CompilationContext,
     state: &mut CompilationState<'_>,
-    for_makefile: bool,
 ) -> Result<Option<Vec<UnitSubgraph>>, MakeError>
 where
     F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
 {
-    let (compilation_key, pending_index) = at;
+    let RecipeSite {
+        at: (compilation_key, pending_index),
+        for_makefile,
+        mut read_ahead,
+    } = site;
     let mut child_groups = Vec::with_capacity(pending.invocations.len());
     for (group_index, invocation) in pending.invocations.iter().enumerate() {
         // The recipe's own lines ahead of this invocation are compiler input
@@ -1161,25 +1206,36 @@ where
         {
             return Ok(None);
         }
-        let child = match resolve(
-            &invocation.command,
-            &invocation.make,
-            &invocation.shell,
-            &invocation.shell_flags,
-            descendant_context,
-        ) {
-            Ok(child) => child,
+        // A recipe whose Makefiles a worker already read arrives resolved. Only
+        // the first invocation can have been read ahead, because the ones after
+        // it are read off what the ones before them staged.
+        let resolved = read_ahead.take().unwrap_or_else(|| {
+            match resolve(
+                &invocation.command,
+                &invocation.make,
+                &invocation.shell,
+                &invocation.shell_flags,
+                descendant_context,
+            ) {
+                Ok(child) => ChildUnit::Unread(Box::new(child)),
+                Err(refusal) => ChildUnit::Refused(refusal),
+            }
+        });
+        let child = match resolved {
             // A report names the invocation and reads the rest of the build. A
             // build cannot: there is no child graph to compose and the recipe
             // line that would have started a Make of its own was lifted out of
             // the recipe, so the work would simply not happen.
-            Err(MakeError::MissingChildMakefile { directory }) if descendant_context.reporting => {
+            ChildUnit::Refused(MakeError::MissingChildMakefile { directory })
+                if descendant_context.reporting =>
+            {
                 child_groups.push(unreadable_child(descendant_context, invocation, &directory));
                 continue;
             }
-            Err(refusal) => return Err(refusal),
+            ChildUnit::Refused(refusal) => return Err(refusal),
+            resolved => resolved,
         };
-        let child_key = child.cache_key.clone();
+        let child_key = child.cache_key().to_vec();
         let child_subgraph = if let Some(subgraph) = state.cache.get(&child_key) {
             subgraph.clone()
         } else {

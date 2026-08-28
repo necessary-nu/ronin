@@ -51,7 +51,7 @@ use interface::{
     evaluated_build_options, evaluated_invocation, makeflags_arguments, read_shuffle,
 };
 use jobserver_style::{carried_switches, read_jobserver_style, unknown_jobserver_style};
-use option_values::{jobs_value, load_value, value};
+use option_values::{JobCounts, jobs_value, load_value, value};
 use remake::{CompilerInputBuild, Settlement, build_compiler_inputs, sweeps_nothing};
 use selection::{DEFAULT_MAKEFILES, STANDARD_INPUT, is_standard_input, named_makefiles};
 pub(super) use subninja::compile as compile_subninja;
@@ -1571,13 +1571,6 @@ fn build_options(
 }
 
 /// How many recipes at once, for the pool the evaluator declares for itself.
-const fn job_count(options: &BuildOptions) -> usize {
-    match options.jobs {
-        JobLimit::Fixed(jobs) => jobs.get(),
-        JobLimit::Auto | JobLimit::Unlimited => usize::MAX,
-    }
-}
-
 /// Enter the directories `-C` named, in order, and report where that landed.
 ///
 /// This moves the process, which is what GNU Make's `-C` is.
@@ -1733,7 +1726,7 @@ fn prepare_graph(
         let mut session = session_for(
             root.invocation,
             root.makefiles,
-            job_count(root.options),
+            JobCounts::of(root.options).carried,
             root.invoked_as,
             root.diagnostics,
             root.census,
@@ -1745,7 +1738,7 @@ fn prepare_graph(
         let compilation = compilation_context(
             root.invocation,
             root.directory.to_owned(),
-            job_count(root.options),
+            JobCounts::of(root.options),
             root.level,
             &session,
             root.reporting,
@@ -2156,7 +2149,7 @@ fn record_invocation_variables(
 fn compilation_context(
     invocation: &Invocation,
     directory: PathBuf,
-    jobs: usize,
+    jobs: JobCounts,
     level: usize,
     session: &Session,
     reporting: bool,
@@ -2194,7 +2187,8 @@ fn compilation_context(
         assumed_new: invocation.assumed_new.clone(),
         assumed_old: invocation.assumed_old.clone(),
         level,
-        jobs,
+        jobs: jobs.carried,
+        parallel_reads: jobs.parallel_reads,
         // Everything this unit was evaluated with except how many times it has
         // been read. GNU Make marks `MAKE_RESTARTS` no-export precisely so a
         // child never sees it, and here it would do more than be visible: a

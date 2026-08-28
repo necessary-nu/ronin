@@ -8,7 +8,7 @@
 //! [`Invocation::unreadable`](super::Invocation) and its two neighbours for
 //! the three ways GNU Make raises that one flag.
 
-use super::{ArgumentSource, BString, Invocation, JobLimit, LoadLimit};
+use super::{ArgumentSource, BString, BuildOptions, Invocation, JobLimit, LoadLimit};
 use crate::util::ByteSlice;
 
 /// The value an option takes, whether it was attached or stands alone.
@@ -135,5 +135,51 @@ pub(super) fn load_value(arguments: &[BString], index: &mut usize, attached: &[u
     LoadLimit {
         ceiling,
         propagated: true,
+    }
+}
+
+/// The two job counts one invocation carries, which are not the same number.
+///
+/// They differ for exactly one invocation shape — no `-j` at all — and that
+/// difference matters, so they travel together rather than one of them being
+/// derived from the other at each use.
+#[derive(Clone, Copy)]
+pub(super) struct JobCounts {
+    /// What `MAKEFLAGS` carries, and what the session is told.
+    pub(super) carried: usize,
+    /// How many of this invocation's Makefile reads may overlap.
+    pub(super) parallel_reads: usize,
+}
+
+impl JobCounts {
+    pub(super) const fn of(options: &BuildOptions) -> Self {
+        Self {
+            carried: job_count(options),
+            parallel_reads: read_job_count(options),
+        }
+    }
+}
+
+/// How many Makefile reads this invocation may have in flight at once.
+///
+/// [`job_count`] is what `MAKEFLAGS` carries, and it answers "as many as it
+/// takes" for both `-j` with no number and no `-j` at all, because the switch
+/// table makes no distinction between them. Reading does: with no `-j`, GNU
+/// Make runs one recipe at a time and reads one recursive child at a time, and
+/// a compilation that read several would be doing something a serial run of
+/// GNU Make never does. This mirrors `Build::job_limit`, which is the number
+/// the build itself runs commands against.
+const fn read_job_count(options: &BuildOptions) -> usize {
+    match options.jobs {
+        JobLimit::Auto => 1,
+        JobLimit::Unlimited => usize::MAX,
+        JobLimit::Fixed(jobs) => jobs.get(),
+    }
+}
+
+const fn job_count(options: &BuildOptions) -> usize {
+    match options.jobs {
+        JobLimit::Fixed(jobs) => jobs.get(),
+        JobLimit::Auto | JobLimit::Unlimited => usize::MAX,
     }
 }

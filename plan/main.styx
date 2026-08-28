@@ -20202,4 +20202,19 @@ children (
             }
         )
     }
+
+    {
+        id the-make-front-end-reads-one-makefile-at-a-time
+        title "Read a recursive Make's sibling child Makefiles at the same time"
+        kind @perf
+        deps (the-chain-search-answers-a-boolean-and-build-plan-derives-it-again)
+        log (
+            {
+                at 2026-08-28T14:51:58.925715335Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+        )
+    }
 )

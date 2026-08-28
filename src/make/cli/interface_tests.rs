@@ -265,7 +265,10 @@ fn eval_fragments_reach_compilation() {
     let context = super::compilation_context(
         &invocation,
         directory.path().canonicalize().unwrap(),
-        1,
+        super::JobCounts {
+            carried: 1,
+            parallel_reads: 1,
+        },
         0,
         &session,
         false,
@@ -319,7 +322,10 @@ fn generated_include_is_provisional_graph_root() {
     let context = super::compilation_context(
         &invocation,
         directory.path().canonicalize().unwrap(),
-        1,
+        super::JobCounts {
+            carried: 1,
+            parallel_reads: 1,
+        },
         0,
         &session,
         false,

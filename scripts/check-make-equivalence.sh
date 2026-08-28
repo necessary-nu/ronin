@@ -20,6 +20,16 @@ if [ "$corpus_size" -eq 0 ]; then
     exit 1
 fi
 
-exec cargo test --release --lib \
+cargo test --release --lib \
     make::equivalence::the_direct_graph_matches_the_manifest_over_the_corpus \
+    -- --ignored --exact --test-threads=1 --nocapture
+
+# And that the graph a compilation builds does not depend on how many threads
+# read its Makefiles. Recursive children are read ahead of the composition on
+# workers, so a scheduling difference is something the graph could pick up;
+# this is where it would show. It runs here rather than in the ordinary test
+# pass for the same reason the corpus does: it changes the process working
+# directory.
+exec cargo test --release --lib \
+    make::equivalence::one_graph_however_many_threads_read_it \
     -- --ignored --exact --test-threads=1 --nocapture
