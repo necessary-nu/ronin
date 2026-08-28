@@ -1,6 +1,34 @@
-workload,gnu_median_ms,ronin_median_ms
-wide-noop,858.567,658.832
-recursive-noop,79.317,456.482
-vim-noop,15.506,27.552
-zsh-incremental,1356.128,2112.582
-vim-clean-build,14967.081,15105.164
+# schema=ronin-make-performance-baseline-v1
+# workload_version=1
+# ronin_revision=551d5741be0a5bc4f848c031a6697d093e0ff0e7
+# ronin_dirty=false
+# build_profile=release
+# platform=Linux n-debian13-dev 6.12.100+deb13-amd64 #1 SMP PREEMPT_DYNAMIC Debian 6.12.100-1 (2026-07-30) x86_64 GNU/Linux
+# rustc=rustc 1.97.1 (8bab26f4f 2026-07-14)
+# jobs=8
+# warmups=1
+# repetitions=5
+# load_average_before=0.74
+# max_load=4.00
+# noise_control=interleaved tool samples; stdout/stderr discarded; blocking wait, no sampling thread; MAKEFLAGS/MFLAGS/MAKELEVEL cleared; median wall time; no CPU pinning
+# validation=Ronin/GNU runtime ratio <= 120% of the recorded ratio; no absolute threshold, because Ronin is slower than GNU Make on these workloads and the recorded numbers say so
+# sizes=wide:4000,recursive:259units(fanout 6 depth 3 leaf 8)
+# gnu-make=GNU Make 4.4.1
+# ronin=GNU Make compatible: ronin 0.1.0
+tool,workload,median_ms,min_ms,max_ms,samples
+gnu-make,wide-noop,918.201,837.569,974.041,5
+ronin,wide-noop,748.759,677.379,895.126,5
+gnu-make,recursive-noop,78.654,77.303,85.258,5
+ronin,recursive-noop,162.805,140.578,170.192,5
+gnu-make,vim-noop,15.834,15.466,18.556,5
+ronin,vim-noop,27.269,26.617,28.144,5
+gnu-make,zsh-incremental,1360.252,1325.009,1400.394,5
+ronin,zsh-incremental,2077.537,2070.608,2105.461,5
+gnu-make,vim-clean-build,15185.080,15053.765,15875.583,5
+ronin,vim-clean-build,15125.885,15103.739,15739.696,5
+# load_average_after=8.02 (includes this gate's own workloads)
+# ratio wide-noop=0.82x
+# ratio recursive-noop=2.07x
+# ratio vim-noop=1.72x
+# ratio zsh-incremental=1.53x
+# ratio vim-clean-build=1.00x
