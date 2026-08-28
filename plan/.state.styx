@@ -970,6 +970,7 @@ assertions (
     {id the-candidate-walk-allocates-a-vector-per-character, kind @complete, author "brendan@necessary.nu", at 2026-08-27T17:12:56.834485417Z}
     {id the-make-gate-inherits-the-release-runs-own-load, kind @complete, author "brendan@necessary.nu", at 2026-08-27T17:20:33.538476986Z}
     {id the-implicit-search-interns-every-name-it-invents, kind @complete, author "brendan@necessary.nu", at 2026-08-28T00:55:09.347250169Z}
+    {id the-suffix-pair-walk-interns-a-name-per-pair, kind @complete, author "brendan@necessary.nu", at 2026-08-28T03:37:40.369678123Z}
 )
 
 impl_evidence (
