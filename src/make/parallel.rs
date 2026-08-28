@@ -378,13 +378,65 @@ impl Drop for ReadPool {
 // ---------------------------------------------------------------------------
 
 use super::{
-    Compilation, CompilationContext, CompilationState, Evaluated, MakeError, ReadJournals, Session,
-    evaluate, in_directory, sink,
+    Compilation, CompilationContext, CompilationState, Evaluated, MakeError, Prepared,
+    ReadJournals, Session, admit_regeneration_roots, command_line_environment, evaluate,
+    evaluated_flag_variables, exported_environment, flag_recipe_environment, in_directory,
+    refused_makefiles, sink,
 };
 use std::collections::HashSet;
 
-/// Read one unit's Makefiles, which is the half of the read that reaches no
-/// graph.
+/// Settle everything a read says that the graph is not told.
+///
+/// Split from [`super::read_unit`] because none of it reaches the
+/// [`super::GraphSink`] every unit shares — it reads the evaluator and the
+/// dependency nodes and nothing else — so it can run on the worker that read
+/// the Makefile instead of on the one thread every unit's emission passes
+/// through. Emission stays where the sink is, and this runs in the order it
+/// always ran relative to it: before.
+///
+/// The environment work is why the split is worth making. Deciding a unit's
+/// export set walks its whole variable table, and it is done once per unit for
+/// as many units as the tree has.
+///
+/// What moves with it is the timing of a `$(shell)` these expansions run — an
+/// exported recursive value, or `MAKEFLAGS` — which is the same edge reading a
+/// Makefile early already takes, and is taken only where a worker read the
+/// unit. See [`read_ahead`].
+fn prepare_read(evaluated: Evaluated) -> Result<Prepared, MakeError> {
+    let Evaluated {
+        mut ev,
+        mut nodes,
+        regeneration_nodes,
+        refusals,
+    } = evaluated;
+    let refusals = refused_makefiles(refusals);
+    let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
+    let (exported, unreadable) =
+        exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+    let command_line = command_line_environment(&mut ev, &exported, unreadable.as_ref())
+        .map_err(|error| MakeError::evaluate(&error))?;
+    // A Makefile may replace MAKEOVERRIDES (and therefore the recursive
+    // MAKEFLAGS value) before naming a child. That evaluated compiler
+    // variable, not the invocation's pre-evaluation seed, is what the
+    // semantic subninja parses.
+    let (makeflags, mflags) =
+        evaluated_flag_variables(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
+    let flag_environment = flag_recipe_environment(&makeflags, mflags);
+    Ok(Prepared {
+        ev,
+        nodes,
+        refusals,
+        regeneration_names,
+        exported,
+        unreadable,
+        command_line,
+        makeflags,
+        flag_environment,
+    })
+}
+
+/// Read one unit's Makefiles and settle everything they say that the graph is
+/// not told, which is the half of the read that reaches no graph.
 ///
 /// Split from [`super::read_unit`] because it is at once the expensive half and the
 /// only half that can leave this thread: it is handed a session and gives back
@@ -393,6 +445,11 @@ use std::collections::HashSet;
 /// unit, the layout — writes to that sink and stays where the sink is. See
 /// [`ReadPool`].
 ///
+/// [`prepare_read`] is here rather than beyond the handoff for the same reason
+/// the evaluation is: it reads the evaluator this call just built and writes to
+/// no sink, so the thread that made the evaluator is the thread that should
+/// pay for reading it.
+///
 /// The directory is entered here rather than around both halves because
 /// entering it is what a worker does on its own behalf: kati reads relative
 /// names against the working directory, and on a worker that directory is the
@@ -400,9 +457,9 @@ use std::collections::HashSet;
 pub(super) fn evaluate_unit(
     session: Session,
     directory: &std::path::Path,
-) -> Result<Evaluated, MakeError> {
+) -> Result<Prepared, MakeError> {
     in_directory(directory, || {
-        evaluate(session).map_err(|error| MakeError::evaluate(&error))
+        prepare_read(evaluate(session).map_err(|error| MakeError::evaluate(&error))?)
     })
 }
 
@@ -479,7 +536,7 @@ pub(super) struct ChildRead {
     pub(super) cache_key: Vec<u8>,
     pub(super) context: CompilationContext,
     /// Where the worker answers.
-    answer: std::sync::mpsc::Receiver<Option<Result<Evaluated, MakeError>>>,
+    answer: std::sync::mpsc::Receiver<Option<Result<Prepared, MakeError>>>,
     /// What the read raised, held apart from the invocation's own descriptor
     /// so that two reads at once cannot interleave their warnings.
     raised: std::sync::Arc<kati::diagnostics::Diagnostics>,
@@ -501,9 +558,9 @@ impl ChildRead {
     /// in the order the recipes were written in. A Makefile read early on a
     /// worker still belongs behind everything the recipes before it said, which
     /// is where GNU Make would have put it.
-    pub(super) fn collect(self) -> Result<Evaluated, MakeError> {
-        let evaluated = if let Ok(Some(evaluated)) = self.answer.recv() {
-            evaluated
+    pub(super) fn collect(self) -> Result<Prepared, MakeError> {
+        let prepared = if let Ok(Some(prepared)) = self.answer.recv() {
+            prepared
         } else {
             // No worker read it. The session was left where either side could
             // take it for exactly this, so the read happens here instead.
@@ -520,12 +577,12 @@ impl ChildRead {
             }
         };
         self.context.diagnostics.absorb(&self.raised);
-        evaluated.map(|mut evaluated| {
+        prepared.map(|mut prepared| {
             // From here the session speaks for itself again: anything it says
             // while a recipe of it is expanded is said in the order the build
             // reaches it, and belongs in the invocation's own descriptor.
-            evaluated.ev.session.diagnostics = std::sync::Arc::clone(&self.context.diagnostics);
-            evaluated
+            prepared.ev.session.diagnostics = std::sync::Arc::clone(&self.context.diagnostics);
+            prepared
         })
     }
 }

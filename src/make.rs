@@ -834,6 +834,26 @@ where
     })
 }
 
+/// What one unit's read settled before anything of it reached the graph.
+///
+/// The half of a read that touches no [`GraphSink`], carried as one value so
+/// that it can be produced on whichever thread performed the read and consumed
+/// on the one thread that writes the graph. Every field is a function of the
+/// evaluator and the dependency nodes alone — see [`parallel::prepare_read`],
+/// which is the whole of what makes them, and which lives beside the read it
+/// belongs to rather than beside the emission it feeds.
+struct Prepared {
+    ev: kati::eval::Evaluator,
+    nodes: Vec<kati::dep::NamedDepNode>,
+    refusals: Vec<RefusedMakefile>,
+    regeneration_names: RegenerationNames,
+    exported: Vec<(OsString, Option<OsString>)>,
+    unreadable: Option<kati::export::Unreadable>,
+    command_line: Vec<(OsString, Option<OsString>)>,
+    makeflags: String,
+    flag_environment: [(OsString, Option<OsString>); 2],
+}
+
 /// One unit's makefile read, and the build it describes emitted into the sink.
 ///
 /// A function rather than a closure so the thing it produces has a name: the
@@ -843,31 +863,23 @@ where
 /// `reaper` is where what the read no longer needs is freed. See
 /// [`parallel::Reaper`].
 fn read_unit(
-    evaluated: Evaluated,
+    prepared: Prepared,
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
     context: &CompilationContext,
     reaper: Option<&parallel::Reaper>,
 ) -> Result<UnitRead, MakeError> {
-    let Evaluated {
+    let Prepared {
         mut ev,
-        mut nodes,
-        regeneration_nodes,
+        nodes,
         refusals,
-    } = evaluated;
-    let refusals = refused_makefiles(refusals);
-    let regeneration_names = admit_regeneration_roots(&mut nodes, regeneration_nodes);
-    let (exported, unreadable) =
-        exported_environment(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
-    let command_line = command_line_environment(&mut ev, &exported, unreadable.as_ref())
-        .map_err(|error| MakeError::evaluate(&error))?;
-    // A Makefile may replace MAKEOVERRIDES (and therefore the recursive
-    // MAKEFLAGS value) before naming a child. That evaluated compiler
-    // variable, not the invocation's pre-evaluation seed, is what the
-    // semantic subninja parses.
-    let (makeflags, mflags) =
-        evaluated_flag_variables(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
-    let flag_environment = flag_recipe_environment(&makeflags, mflags);
+        regeneration_names,
+        exported,
+        unreadable,
+        command_line,
+        makeflags,
+        flag_environment,
+    } = prepared;
     if let Some(parent) = parent_scope {
         sink.begin_subninja(
             parent,
