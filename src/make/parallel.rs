@@ -23,11 +23,38 @@
 //! there is no per-thread working directory to have, so
 //! [`ReadPool::available`] answers false and every read stays on the calling
 //! thread.
+//!
+//! # Why anything is freed here
+//!
+//! Many threads read and one thread composes, so by default many threads
+//! allocate and one frees. That asymmetry does not shrink when workers are
+//! added: the composing thread's share of it grows with the TOTAL work, which
+//! is why the run stopped getting faster past `-j4` however many workers it was
+//! given. [`Reaper`] and [`Released`] are the two answers, and they differ in
+//! whether anybody waits for the memory to come back. Neither changes what is
+//! built — freeing is observable to nothing but the allocator, and none of what
+//! they free has a `Drop` that does anything else.
+//!
+//! # What the two of them and the first recipe's dispatch are worth
+//!
+//! One number for all three, because they were measured together. On the
+//! recursive workload the Make baseline uses — 259 Makefiles, fan-out 6, depth
+//! 3 — at `-j8`: 259 ms against 192, 2.8 cores busy against 3.5, and the
+//! composing thread 34% of the run's samples against 20%.
+//!
+//! Taken apart against the same baseline, on a host that had other work on it
+//! at the time and whose absolute numbers are therefore its own: dispatching
+//! the first recipe was 276 ms against 257. Not freeing on this thread AT ALL —
+//! which bounds what [`Reaper`] and [`Released`] can be worth rather than
+//! measuring them — was 257 against 213.
 
 use std::sync::mpsc;
 
 /// One unit of work handed to a worker, already holding everything it needs.
 type Read = Box<dyn FnOnce() + Send + 'static>;
+
+/// Something a read is finished with, on its way to being freed.
+type Discarded = Box<dyn Send + 'static>;
 
 /// How many Makefile reads have been handed to a worker.
 ///
@@ -55,6 +82,151 @@ fn unshare_filesystem_context() -> rustix::io::Result<()> {
     unsafe { rustix::thread::unshare_unsafe(rustix::thread::UnshareFlags::FS) }
 }
 
+/// A thread that frees what the composition is finished with, so that the
+/// thread composing does not.
+///
+/// What a read leaves behind is the evaluator's own working memory — the
+/// dependency nodes the graph was emitted from, and the session itself where no
+/// recipe of that unit still needs one. It is allocated on whichever worker
+/// read the unit and would otherwise be freed on the one thread every unit
+/// passes through, so the composition pays a teardown proportional to the total
+/// read rather than to its own work.
+///
+/// This one is waited for: [`ReadPool`] joins it when the compilation that owns
+/// it returns, and by then it has had the whole compilation to keep up with a
+/// composition that is doing far more than freeing. See [`Released`] for the
+/// case where waiting is what there is nothing left to overlap with.
+pub(crate) struct Reaper {
+    /// `None` once the reaper is being dropped, which closes the queue and is
+    /// what tells the thread to finish.
+    queue: Option<mpsc::Sender<Discarded>>,
+    thread: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Reaper {
+    /// A reaper, or `None` where the thread could not be started and the caller
+    /// should free what it has where it stands.
+    fn new() -> Option<Self> {
+        let (sender, receiver) = mpsc::channel::<Discarded>();
+        let thread = std::thread::Builder::new()
+            .name("ronin-make-free".to_owned())
+            .spawn(move || {
+                while let Ok(discarded) = receiver.recv() {
+                    drop(discarded);
+                }
+            })
+            .ok()?;
+        Some(Self {
+            queue: Some(sender),
+            thread: Some(thread),
+        })
+    }
+
+    /// Free `value` on the reaper's thread rather than on this one.
+    fn discard<T: Send + 'static>(&self, value: T) {
+        if let Some(queue) = &self.queue {
+            // A queue whose reaper has gone hands the value straight back, and
+            // dropping the returned error frees it here.
+            let _: Result<(), mpsc::SendError<Discarded>> = queue.send(Box::new(value));
+        }
+    }
+}
+
+impl Drop for Reaper {
+    fn drop(&mut self) {
+        self.queue = None;
+        if let Some(thread) = self.thread.take() {
+            let _: std::thread::Result<()> = thread.join();
+        }
+    }
+}
+
+/// Free `value` on `reaper` where there is one, and here where there is not.
+///
+/// A run with no workers has no reaper either, and frees exactly where it froze
+/// before this existed.
+pub(super) fn discard<T: Send + 'static>(reaper: Option<&Reaper>, value: T) {
+    match reaper {
+        Some(reaper) => reaper.discard(value),
+        None => drop(value),
+    }
+}
+
+/// Something the run holds until it is over, whose memory nothing waits for.
+///
+/// The recipes a read left standing are one evaluator session per unit — on a
+/// recursive tree, several hundred of them, read by as many threads as the pool
+/// has and freed by the one thread the run ends on. Unlike what [`Reaper`]
+/// takes, they are freed at the very end: the build has run, the result is
+/// settled, and there is no work left to overlap the freeing with. So nothing
+/// waits for it. The thread returns the memory if the process is still there to
+/// receive it, and the process exits over the top of it if not, which is what
+/// the operating system would have done anyway.
+///
+/// Safe to leave running because none of what it holds reaches outside itself:
+/// no descriptor, no file, no lock of this program's own, and no `Drop` that
+/// does anything but free.
+///
+/// A thread is not free either. `elsewhere` is how the caller says there is
+/// enough here to be worth one, and it is load bearing: starting one
+/// unconditionally cost a one-Makefile build 0.23 ms a run, measured over three
+/// hundred runs of it, which is a tenth of that build. A small run frees where
+/// it always froze.
+pub(crate) struct Released<T: Send + 'static> {
+    held: Option<T>,
+    elsewhere: bool,
+}
+
+impl<T: Send + 'static> Released<T> {
+    pub(crate) const fn new(value: T, elsewhere: bool) -> Self {
+        Self {
+            held: Some(value),
+            elsewhere,
+        }
+    }
+}
+
+impl<T: Send + 'static> std::ops::Deref for Released<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        self.held
+            .as_ref()
+            .expect("a released value is held until drop")
+    }
+}
+
+impl<T: Send + 'static> std::ops::DerefMut for Released<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.held
+            .as_mut()
+            .expect("a released value is held until drop")
+    }
+}
+
+impl<T: Send + 'static> Drop for Released<T> {
+    fn drop(&mut self) {
+        let Some(value) = self.held.take() else {
+            return;
+        };
+        if !self.elsewhere {
+            // Freed right here, which is what a run with little to free would
+            // have paid more to give away than to do.
+            drop(value);
+            return;
+        }
+        if let Err(unstarted) = std::thread::Builder::new()
+            .name("ronin-make-free".to_owned())
+            .spawn(move || drop(value))
+        {
+            // No thread to free it on is not a reason to keep it: the closure
+            // holding the value comes back with the error, and dropping that
+            // frees it here.
+            drop(unstarted);
+        }
+    }
+}
+
 /// Worker threads that read child Makefiles, each standing in its own
 /// directory.
 pub(crate) struct ReadPool {
@@ -62,6 +234,9 @@ pub(crate) struct ReadPool {
     /// what tells the workers to finish.
     queue: Option<mpsc::Sender<Read>>,
     workers: Vec<std::thread::JoinHandle<()>>,
+    /// Where what the reads leave behind is freed. `None` where the thread
+    /// could not be started, which costs speed and nothing else.
+    reaper: Option<Reaper>,
 }
 
 impl ReadPool {
@@ -107,7 +282,13 @@ impl ReadPool {
         Some(Self {
             queue: Some(sender),
             workers,
+            reaper: Reaper::new(),
         })
+    }
+
+    /// Where this pool's callers free what a read left behind.
+    pub(crate) const fn reaper(&self) -> Option<&Reaper> {
+        self.reaper.as_ref()
     }
 
     /// Whether a thread on this platform can be given a working directory of
@@ -186,6 +367,9 @@ impl Drop for ReadPool {
         for worker in self.workers.drain(..) {
             let _: std::thread::Result<()> = worker.join();
         }
+        // The reaper is joined by its own drop, which runs as this struct's
+        // fields are released — so the compilation returns with nothing of it
+        // still holding a session either.
     }
 }
 
@@ -359,8 +543,8 @@ impl ChildUnit {
     }
 }
 
-/// Start reading the Makefiles of this unit's later recursive recipes, so they
-/// are read while its earlier ones are composed.
+/// Start reading the Makefiles of every recursive recipe of one unit, so that
+/// none of them is read on the thread that composes.
 ///
 /// # What may be read early, and why it is only ever a read
 ///
@@ -423,6 +607,11 @@ where
     // run pays for the existence of read-ahead: at `-j1` there is no second
     // thread to read on, and a serial run must not pay even the cost of being
     // asked whether it could have used one.
+    //
+    // A unit with one recursive recipe has nothing to overlap: the composition
+    // asks for that read immediately and has no other recipe's resolution or
+    // staging to get on with while a worker performs it, so the handoff would
+    // be the whole of what moved.
     if state.read_threads < 2 || ordered.len() < 2 {
         return Vec::new();
     }
@@ -440,16 +629,24 @@ where
     // Every recipe is resolved here, in the order the recipes were written,
     // which is the order they were resolved in before. Resolving is not silent
     // — it is where an invocation's own switches are parsed, and parsing one
-    // can raise a warning — so the recipe that is not read early is resolved
-    // early all the same rather than resolved out of turn later.
+    // can raise a warning — so the order it happens in is the order the recipes
+    // stand in and not the order the reads finish.
     //
     // A unit two of these recipes both invoke is compiled once and taken from
     // the cache the second time. Reading it twice would run its `$(shell)`
     // calls twice, so the second recipe is left to find it where the first put
     // it.
+    //
+    // THE FIRST RECIPE IS DISPATCHED LIKE THE REST, and dispatched before the
+    // ones after it are even resolved. The composition asks for it next, so a
+    // worker cannot finish it any sooner than this thread would have — but it
+    // can finish it while this thread resolves the recipes behind it, works out
+    // which of their targets the disk says are current, and stages the first
+    // one's wrapper. Read here instead, that work waits behind a read that does
+    // not need it; read there, it is the read that waits.
     let mut started = Vec::with_capacity(ordered.len());
     let mut claimed = HashSet::new();
-    for (index, pending) in ordered.iter().enumerate() {
+    for pending in ordered {
         let invocation = &pending.invocations[0];
         started.push(Some(
             match resolve(
@@ -463,14 +660,11 @@ where
                 Ok(mut compilation) => {
                     let claimable = !state.cache.contains_key(&compilation.cache_key)
                         && claimed.insert(compilation.cache_key.clone());
-                    // The first recipe is read where it always was: the
-                    // composition asks for it next, so handing it to a worker
-                    // would add a handoff to a wait that buys nothing.
-                    if index == 0 || !claimable {
-                        ChildUnit::Unread(Box::new(compilation))
-                    } else {
+                    if claimable {
                         prepare_session(&mut compilation, state.read_units);
                         ChildUnit::Read(Box::new(start_read(pool, compilation)))
+                    } else {
+                        ChildUnit::Unread(Box::new(compilation))
                     }
                 }
             },
@@ -622,5 +816,87 @@ mod tests {
                 pool.workers.len()
             );
         }
+    }
+
+    /// A value that says when it was freed, and on which thread.
+    struct Witness(std::sync::Arc<std::sync::Mutex<Option<std::thread::ThreadId>>>);
+
+    impl Drop for Witness {
+        fn drop(&mut self) {
+            *self
+                .0
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                Some(std::thread::current().id());
+        }
+    }
+
+    /// What is given to a reaper is freed, and freed somewhere else.
+    ///
+    /// Both halves matter and for different reasons: something the reaper
+    /// swallowed and never freed would be a leak that grows with the size of
+    /// the tree, and something it freed on the calling thread would be the cost
+    /// this exists to move, still being paid.
+    #[test]
+    fn a_reaper_frees_its_work_on_another_thread() {
+        let Some(reaper) = Reaper::new() else {
+            return;
+        };
+        let freed = std::sync::Arc::new(std::sync::Mutex::new(None));
+        reaper.discard(Witness(std::sync::Arc::clone(&freed)));
+        // Joins the reaper, so the answer is settled by the time it returns.
+        drop(reaper);
+        let freed_on = *freed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(
+            freed_on.is_some(),
+            "the reaper never freed what it was given"
+        );
+        assert_ne!(
+            freed_on,
+            Some(std::thread::current().id()),
+            "the reaper freed it on the thread that handed it over"
+        );
+    }
+
+    /// A release the caller said was not worth a thread is freed where it
+    /// stands, and one that was is freed off it.
+    ///
+    /// The small case is the one with teeth: starting a thread costs about what
+    /// freeing one unit's session does, so a run with little to free that
+    /// started one anyway would be slower for the trouble.
+    #[test]
+    fn a_release_takes_a_thread_only_when_told() {
+        let freed = std::sync::Arc::new(std::sync::Mutex::new(None));
+        drop(Released::new(Witness(std::sync::Arc::clone(&freed)), false));
+        assert_eq!(
+            *freed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Some(std::thread::current().id()),
+            "a release not worth a thread was not freed where it stood"
+        );
+
+        let freed = std::sync::Arc::new(std::sync::Mutex::new(None));
+        drop(Released::new(Witness(std::sync::Arc::clone(&freed)), true));
+        // Nothing waits for this one, which is the whole point of it, so the
+        // answer is waited for here instead rather than asserted immediately.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let freed_on = loop {
+            let seen = *freed
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if seen.is_some() || std::time::Instant::now() > deadline {
+                break seen;
+            }
+            std::thread::yield_now();
+        };
+        assert!(freed_on.is_some(), "a released value was never freed");
+        assert_ne!(
+            freed_on,
+            Some(std::thread::current().id()),
+            "a release worth a thread was freed on the run's own thread"
+        );
     }
 }

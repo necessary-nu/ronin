@@ -1884,7 +1884,8 @@ fn one_graph_however_many_threads_read_it() {
     let started =
         || crate::make::parallel::READS_STARTED.load(std::sync::atomic::Ordering::Relaxed);
     let before = started();
-    for jobs in [1, 8, 8, 1, 8, 8, 8, 16, 8, 1] {
+    let schedule = [1, 8, 8, 1, 8, 8, 8, 16, 8, 1];
+    for jobs in schedule {
         std::env::set_current_dir(tree.path()).expect("the scratch tree exists");
         let mut session = Session::from_args(vec![
             std::ffi::OsString::from("make"),
@@ -1903,9 +1904,18 @@ fn one_graph_however_many_threads_read_it() {
         let loaded = loaded.expect("the dispatch tree compiles");
         built.push((jobs, describe_graph(&loaded.graph)));
     }
-    assert!(
-        started() > before,
-        "no read was handed to a worker, so this compared the serial path with itself"
+    // Every recursive recipe the tree has, the first of each unit included:
+    // four at the root, and four in each of the root's four children. The
+    // depth-two Makefiles dispatch nothing. A run that left one read per unit
+    // on the composing thread would be five short of this per parallel run,
+    // which is what this number is here to catch — the assertion is not that
+    // some read reached a worker but that every read did.
+    let dispatched_per_run = 4 + 4 * 4;
+    let parallel_runs = schedule.iter().filter(|jobs| **jobs > 1).count();
+    assert_eq!(
+        started() - before,
+        dispatched_per_run * parallel_runs,
+        "not every recursive recipe's read was handed to a worker"
     );
     let (_, first) = &built[0];
     for (index, (jobs, described)) in built.iter().enumerate().skip(1) {

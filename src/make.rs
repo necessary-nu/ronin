@@ -839,11 +839,15 @@ where
 /// A function rather than a closure so the thing it produces has a name: the
 /// read is what a pass repeats, and every field below is something the read
 /// settled and the compilation around it then carries.
+///
+/// `reaper` is where what the read no longer needs is freed. See
+/// [`parallel::Reaper`].
 fn read_unit(
     evaluated: Evaluated,
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
     context: &CompilationContext,
+    reaper: Option<&parallel::Reaper>,
 ) -> Result<UnitRead, MakeError> {
     let Evaluated {
         mut ev,
@@ -888,6 +892,11 @@ fn read_unit(
             return Err(MakeError::evaluate(&error));
         }
     };
+    // The dependency graph the build was just emitted from, which nothing
+    // downstream of the emission reads: it is the read's own working memory,
+    // built on whichever thread read the unit, and freeing it is given away
+    // rather than paid for on the one thread every unit passes through.
+    parallel::discard(reaper, nodes);
     // The layout is read while this unit is still the current one: it is
     // what wraps every command this unit produces, and a recipe expanded
     // later has to be wrapped in exactly the same thing.
@@ -903,7 +912,15 @@ fn read_unit(
         sources: ev.session.read_sources(),
     };
     let (deferred_edges, settled_edges) = sink.take_late_edges();
-    let pending_recipes = (!deferred.is_empty()).then_some((ev, deferred, layout, deferred_edges));
+    // A unit with nothing left to expand has no further use for the session
+    // that read it, and that session is the whole of what the read built:
+    // its symbol table, its variables, and every expression they parsed to.
+    let pending_recipes = if deferred.is_empty() {
+        parallel::discard(reaper, (ev, layout));
+        None
+    } else {
+        Some((ev, deferred, layout, deferred_edges))
+    };
     Ok(UnitRead {
         unit,
         exported,
@@ -968,9 +985,17 @@ where
         Ok(read) => read.collect(),
         Err(session) => evaluate_unit(session, &context.directory),
     };
+    // `None` until the first unit that read ahead started the pool, and for the
+    // whole of a run that never starts one — a serial compilation frees exactly
+    // where it froze before the pool existed.
+    let reaper = state
+        .read_pool
+        .get()
+        .and_then(Option::as_ref)
+        .and_then(parallel::ReadPool::reaper);
     let read = evaluated.and_then(|evaluated| {
         in_directory(&context.directory, || {
-            read_unit(evaluated, sink, parent_scope, &context)
+            read_unit(evaluated, sink, parent_scope, &context, reaper)
         })
     });
     let UnitRead {

@@ -2045,7 +2045,7 @@ fn reported_run(
         held,
     )?;
     let reported = compiled.reported;
-    let (mut graph, mut recipes, opened, invocation, options) = match compiled.prepared {
+    let (mut graph, recipes, opened, invocation, options) = match compiled.prepared {
         PreparedGraph::Ready {
             graph,
             recipes,
@@ -2055,11 +2055,30 @@ fn reported_run(
         } => (*graph, recipes, persistence, *invocation, *options),
         PreparedGraph::Finished(result) => return Ok(result),
     };
+    // The unexpanded recipes are the last thing the read leaves standing: one
+    // evaluator session per unit, and on a recursive tree several hundred of
+    // them, read by as many threads as the pool had and freed by this one. The
+    // build is the last thing that can want them, so whatever is left when it
+    // ends is freed with nothing waiting for the memory — there is no work
+    // after this point to overlap the freeing with, and a run that has answered
+    // has no reason to stay for it. See [`crate::make::parallel::Released`],
+    // and the module above it for what this is worth.
+    //
+    // Inside the `Option` rather than around it, so that a read which left no
+    // recipe at all has nothing to release and starts no thread to release it.
+    // A read that left ONE unit's recipes does not start one either: a thread
+    // costs about what freeing a single session does, so the run that would
+    // gain least is the one that would pay most for it.
+    let mut recipes = recipes.map(|recipes| {
+        let recipes = *recipes;
+        let worth_a_thread = recipes.units() > 1;
+        crate::make::parallel::Released::new(recipes, worth_a_thread)
+    });
     let mut persistence = opened.unwrap_or_else(Persistence::none);
     let targets = graph.default_targets();
     let mut build = Build::with_options(&mut graph, &mut persistence, options);
-    if let Some(recipes) = recipes.as_deref_mut() {
-        build = build.late_commands(recipes);
+    if let Some(recipes) = recipes.as_mut() {
+        build = build.late_commands(&mut **recipes);
     }
     if let Some(sink) = output {
         build = build.output(sink);

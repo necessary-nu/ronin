@@ -146,6 +146,16 @@ impl PendingRecipes {
     pub(crate) fn is_empty(&self) -> bool {
         self.edges.is_empty() && self.settled.is_empty()
     }
+
+    /// How many units left a session here.
+    ///
+    /// Asked for the size of the teardown rather than for anything about the
+    /// build: a unit's session is the whole of what reading its Makefile built,
+    /// so this is what says whether freeing them is worth giving away. See the
+    /// caller in [`crate::make::cli`].
+    pub(crate) const fn units(&self) -> usize {
+        self.units.len()
+    }
 }
 
 /// Run `expand` with `directory` as the process directory.
