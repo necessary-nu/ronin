@@ -1,6 +1,6 @@
 workload,gnu_median_ms,ronin_median_ms
-wide-noop,871.176,1076.683
-recursive-noop,79.017,649.669
-vim-noop,15.611,29.035
-zsh-incremental,1427.876,2273.000
+wide-noop,858.567,658.832
+recursive-noop,79.317,456.482
+vim-noop,15.506,27.552
+zsh-incremental,1356.128,2112.582
 vim-clean-build,14967.081,15105.164
