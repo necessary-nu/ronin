@@ -973,7 +973,7 @@ assertions (
     {id the-suffix-pair-walk-interns-a-name-per-pair, kind @complete, author "brendan@necessary.nu", at 2026-08-28T03:37:40.369678123Z}
     {id the-chain-search-proves-every-name-twice, kind @complete, author "brendan@necessary.nu", at 2026-08-28T05:01:03.220799715Z}
     {id an-eight-link-implicit-chain-is-refused-where-gnu-make-builds-it, kind @complete, author "brendan@necessary.nu", at 2026-08-28T08:20:23.293203433Z}
-    {id the-chain-search-answers-a-boolean-and-build-plan-derives-it-again, kind @doing, author "brendan@necessary.nu", at 2026-08-28T11:01:19.569967927Z}
+    {id the-chain-search-answers-a-boolean-and-build-plan-derives-it-again, kind @complete, author "brendan@necessary.nu", at 2026-08-28T13:25:23.47631789Z}
 )
 
 impl_evidence (
