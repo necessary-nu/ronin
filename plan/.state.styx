@@ -969,6 +969,7 @@ assertions (
     {id the-implicit-rule-search-stats-every-candidate-name, kind @complete, author "brendan@necessary.nu", at 2026-08-27T16:46:51.414171065Z}
     {id the-candidate-walk-allocates-a-vector-per-character, kind @complete, author "brendan@necessary.nu", at 2026-08-27T17:12:56.834485417Z}
     {id the-make-gate-inherits-the-release-runs-own-load, kind @complete, author "brendan@necessary.nu", at 2026-08-27T17:20:33.538476986Z}
+    {id the-implicit-search-interns-every-name-it-invents, kind @complete, author "brendan@necessary.nu", at 2026-08-28T00:55:09.347250169Z}
 )
 
 impl_evidence (
