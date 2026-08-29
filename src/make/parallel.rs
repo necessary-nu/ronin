@@ -47,6 +47,33 @@
 //! the first recipe was 276 ms against 257. Not freeing on this thread AT ALL —
 //! which bounds what [`Reaper`] and [`Released`] can be worth rather than
 //! measuring them — was 257 against 213.
+//!
+//! # What serving the reads in the composition's order is worth
+//!
+//! Reading a Makefile early buys nothing if the composition is not standing
+//! where the read lands, and for a long time it was not. Instrumenting every
+//! read with the moment it was dispatched, started, finished and consumed, over
+//! twenty runs of the same 259-Makefile tree at `-j8`, said where the wall
+//! went: the composing thread spent 60 ms of a 127 ms wall blocked in
+//! [`ChildRead::collect`], all eight workers were busy the whole time, and 198
+//! reads sat dispatched and unstarted at a tenth of the way in. It was not
+//! waiting for work to be done. It was waiting for the RIGHT work to be done,
+//! while eight workers read units it would not reach for another sixty
+//! milliseconds. See [`ReadOrder`] for what that is and why.
+//!
+//! Serving the queue in the order the composition asks, same instrumentation,
+//! same twenty runs: 127.5 ms to 85.3 ms of wall, the composing thread's wait
+//! 59.9 ms to 9.0 ms, and the count of units it reached having to wait for a
+//! read nothing had yet started 3.7 a run to zero. The two phases the run used
+//! to have — every worker busy and the composition blocked, then the
+//! composition alone — became one phase with both sides busy: the composing
+//! thread is 85% to 98% occupied from a twentieth of the way in, and the cores
+//! the run keeps busy went from 5.1 to 6.7.
+//!
+//! It also moved where the ceiling is. Before, `-j16` bought 12% over `-j8`;
+//! after, it buys nothing, because the composing thread is now the run's
+//! critical path rather than sitting under it. Anything taken off THAT thread
+//! is now wall at one to one.
 
 use std::sync::mpsc;
 
@@ -239,6 +266,166 @@ impl<T: Send + 'static> Drop for Released<T> {
     }
 }
 
+/// Where a read stands in the order the composition will ask for it.
+///
+/// The composition walks the tree depth first — a unit, then the whole subtree
+/// under its first recursive recipe, then the subtree under its second — and it
+/// consumes the reads in exactly that order. The reads are STARTED in a
+/// different one: a worker that has read a unit resolves every child that unit
+/// names and hands them all over at once, so what arrives at the queue is a
+/// breadth-first wave. Served in arrival order those two diverge immediately,
+/// and the composition ends up blocked on a read sitting near the back of a
+/// queue two hundred deep while eight workers read units it will not reach for
+/// another sixty milliseconds. Measured on the 259-Makefile recursive tree at
+/// `-j8`: 198 reads dispatched and not yet started at a tenth of the way in,
+/// the composing thread blocked for 60 ms of a 127 ms wall, and 22% of the
+/// units composed by the time the last read finished.
+///
+/// This is the key that serves the queue in the composition's order instead.
+/// Each unit holds a half-open interval of the order; its recursive recipes
+/// divide that interval between them, in recipe order, one part each; and a
+/// read is served by the low end of its own part. So a subtree sorts ahead of
+/// its parent's next sibling, the leftmost descendant sorts first of all, and
+/// what comes out is a depth-first pre-order over a tree nobody has yet seen
+/// the whole of — computed from the two things every dispatching side already
+/// has, which are its own interval and which child this is.
+///
+/// The interval divides at every level, so on a fan-out of six there is nothing
+/// left to divide past about twenty-four of them. Descendants below that share
+/// a key and are served in the order they arrived, which is the order every
+/// read was served in before this existed: the ordering degrades to
+/// first-come-first-served rather than to anything wrong.
+#[derive(Clone, Copy)]
+pub(super) struct ReadOrder {
+    /// Where this unit's subtree begins.
+    at: u64,
+    /// How much of the order it has to divide between its children.
+    span: u64,
+}
+
+impl ReadOrder {
+    /// The whole order, held by a unit no worker read ahead.
+    ///
+    /// The composition read that unit on its own thread and is about to
+    /// dispatch its children and block on the first of them, so those children
+    /// are the most urgent reads there are and the whole order is what says so.
+    /// It is also what the root of a compilation holds, which is the same
+    /// statement about the same thing.
+    ///
+    /// A unit deeper in the tree that reaches here — one whose worker declined
+    /// to chain — lifts its whole subtree over reads that were started for its
+    /// own later siblings. The composition is standing inside that subtree, so
+    /// lifting it is right; what is imprecise is only that the subtree's last
+    /// children are lifted as far as its first.
+    pub(super) const WHOLE: Self = Self {
+        at: 0,
+        span: u64::MAX,
+    };
+
+    /// The part of this order belonging to the `index`th of `children`
+    /// recursive recipes.
+    fn nth(self, index: usize, children: usize) -> Self {
+        let children = u64::try_from(children).unwrap_or(u64::MAX).max(1);
+        let index = u64::try_from(index).unwrap_or(0).min(children - 1);
+        let span = self.span / children;
+        Self {
+            at: self.at + span * index,
+            span,
+        }
+    }
+
+    /// What the queue serves by, smallest first.
+    const fn key(self) -> u64 {
+        self.at
+    }
+}
+
+/// How many reads have been started, which is what breaks a tie in the order.
+///
+/// Process-wide rather than per pool, because it is only ever compared with
+/// itself and a compilation only ever has one pool: what it has to be is
+/// increasing, not small.
+static ARRIVALS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// One read waiting for a worker, and where the composition will ask for it.
+struct Queued {
+    key: u64,
+    /// Which arrival this was, so that two reads the order cannot tell apart
+    /// are served in the order they were started — where they were before
+    /// [`ReadOrder`] existed.
+    arrival: u64,
+    read: Read,
+}
+
+impl PartialEq for Queued {
+    fn eq(&self, other: &Self) -> bool {
+        (self.key, self.arrival) == (other.key, other.arrival)
+    }
+}
+
+impl Eq for Queued {}
+
+impl PartialOrd for Queued {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Queued {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.key, self.arrival).cmp(&(other.key, other.arrival))
+    }
+}
+
+/// Reads that have arrived and not yet been taken, held by whichever worker is
+/// picking one. See [`ReadOrder`].
+///
+/// The arrival is a channel and the choice is a heap, and the split is what
+/// keeps the sorting off the dispatching thread. A dispatcher only sends, which
+/// takes no lock; a worker takes the one lock the workers already shared — a
+/// channel receiver cannot be read by eight threads without one — moves
+/// whatever has arrived into the heap, and takes the read the composition will
+/// ask for soonest. The whole of what this adds to a worker's turn is a heap
+/// push and a heap pop, on the thread that was going to take that lock anyway.
+///
+/// The other spelling — a lock the dispatcher takes too, holding the heap and a
+/// condition variable in place of the channel — was written and measured
+/// against this one. On the recursive tree the two are the same to within the
+/// host's noise, and on a unit with two hundred and sixteen recursive recipes
+/// all dispatched from the one composing thread NEITHER could be told from the
+/// other or from an unchanged tree: semantically inert variants of this file
+/// measured anywhere from 0.94x to 1.27x of it on that shape, which brackets
+/// both. This one is kept because a thread starting a read should not have to
+/// wait behind eight taking them, not because the difference was measurable.
+struct Taking {
+    ready: std::collections::BinaryHeap<std::cmp::Reverse<Queued>>,
+    /// Where dispatchers put reads. Closing it is what ends the workers, which
+    /// is why a dispatcher is what a read in flight holds: the queue stays open
+    /// until every read that could start another has finished.
+    arrivals: mpsc::Receiver<Queued>,
+}
+
+impl Taking {
+    /// The read the composition will ask for soonest, or `None` where nothing
+    /// is waiting and nothing can arrive.
+    ///
+    /// A read taken while nothing was waiting is taken as it arrives rather
+    /// than against what arrives just after it. That is the one place the order
+    /// gives way, and it gives way where there was no choice to make.
+    fn take(&mut self) -> Option<Read> {
+        loop {
+            while let Ok(queued) = self.arrivals.try_recv() {
+                self.ready.push(std::cmp::Reverse(queued));
+            }
+            if let Some(std::cmp::Reverse(queued)) = self.ready.pop() {
+                return Some(queued.read);
+            }
+            self.ready
+                .push(std::cmp::Reverse(self.arrivals.recv().ok()?));
+        }
+    }
+}
+
 /// Where more reads may be started from, held by a worker that is performing
 /// one.
 ///
@@ -246,13 +433,13 @@ impl<T: Send + 'static> Drop for Released<T> {
 /// names and reads them too, which needs a way back into the queue. It holds
 /// this rather than the pool itself, and the difference is whether the
 /// compilation can ever return: the pool ends its workers by dropping its own
-/// sender, and a worker holding the pool would keep the pool alive instead of
-/// the queue open, so nothing would ever close and the join would never return.
-/// A sender is dropped when the read that holds it finishes, so the queue closes
-/// as soon as the last read is over.
+/// dispatcher, and a worker holding the pool would keep the pool alive instead
+/// of the queue open, so nothing would ever close and the join would never
+/// return. A dispatcher is dropped when the read that holds it finishes, so the
+/// queue closes as soon as the last read is over.
 #[derive(Clone)]
 pub(crate) struct Dispatcher {
-    queue: mpsc::Sender<Read>,
+    queue: mpsc::Sender<Queued>,
     /// Set when the pool is going away. A read still in the queue when that
     /// happens answers nothing and reads nothing: whoever asked for it holds the
     /// session and reads it where it stands, which is what the answer never
@@ -267,20 +454,25 @@ impl Dispatcher {
     /// The answer is a channel rather than a shared slot because the caller
     /// consumes the reads in the order the recipe wrote them, not the order
     /// they finish: it waits for the one it has reached and lets the rest go on
-    /// arriving behind it.
-    pub(crate) fn start<T, F>(&self, read: F) -> mpsc::Receiver<T>
+    /// arriving behind it. `order` is where in that order this one stands, and
+    /// it is what decides which waiting read a free worker takes next.
+    pub(crate) fn start<T, F>(&self, order: ReadOrder, read: F) -> mpsc::Receiver<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
         let (sender, receiver) = mpsc::channel();
         let stopped = std::sync::Arc::clone(&self.stopped);
-        let _: Result<(), mpsc::SendError<Read>> = self.queue.send(Box::new(move || {
-            if stopped.load(std::sync::atomic::Ordering::Acquire) {
-                return;
-            }
-            let _: Result<(), mpsc::SendError<T>> = sender.send(read());
-        }));
+        let _: Result<(), mpsc::SendError<Queued>> = self.queue.send(Queued {
+            key: order.key(),
+            arrival: ARRIVALS.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            read: Box::new(move || {
+                if stopped.load(std::sync::atomic::Ordering::Acquire) {
+                    return;
+                }
+                let _: Result<(), mpsc::SendError<T>> = sender.send(read());
+            }),
+        });
         receiver
     }
 }
@@ -317,14 +509,17 @@ impl ReadPool {
         if threads < 2 || !Self::available() {
             return None;
         }
-        let (sender, receiver) = mpsc::channel::<Read>();
-        let receiver = std::sync::Arc::new(std::sync::Mutex::new(receiver));
+        let (sender, arrivals) = mpsc::channel::<Queued>();
+        let taking = std::sync::Arc::new(std::sync::Mutex::new(Taking {
+            ready: std::collections::BinaryHeap::new(),
+            arrivals,
+        }));
         let mut workers: Vec<std::thread::JoinHandle<()>> = Vec::with_capacity(threads);
         for _ in 0..threads {
-            let receiver = std::sync::Arc::clone(&receiver);
+            let served = std::sync::Arc::clone(&taking);
             let Ok(worker) = std::thread::Builder::new()
                 .name("ronin-make-read".to_owned())
-                .spawn(move || Self::serve(&receiver))
+                .spawn(move || Self::serve(&served))
             else {
                 // A pool that could not be staffed is not a smaller pool: the
                 // workers already spawned are told to finish by dropping the
@@ -379,7 +574,7 @@ impl ReadPool {
 
     /// Take work until the queue closes, standing in a directory of this
     /// thread's own.
-    fn serve(receiver: &std::sync::Mutex<mpsc::Receiver<Read>>) {
+    fn serve(taking: &std::sync::Mutex<Taking>) {
         #[cfg(target_os = "linux")]
         if unshare_filesystem_context().is_err() {
             // Without a directory of its own this thread would read against
@@ -390,12 +585,12 @@ impl ReadPool {
         }
         loop {
             let work = {
-                let Ok(receiver) = receiver.lock() else {
+                let Ok(mut taking) = taking.lock() else {
                     return;
                 };
-                receiver.recv()
+                taking.take()
             };
-            let Ok(work) = work else {
+            let Some(work) = work else {
                 return;
             };
             work();
@@ -412,16 +607,17 @@ impl ReadPool {
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
-        self.dispatcher
-            .as_ref()
-            .map_or_else(|| mpsc::channel().1, |dispatcher| dispatcher.start(read))
+        self.dispatcher.as_ref().map_or_else(
+            || mpsc::channel().1,
+            |dispatcher| dispatcher.start(ReadOrder::WHOLE, read),
+        )
     }
 }
 
 impl Drop for ReadPool {
     fn drop(&mut self) {
         // Closing the queue is what ends the workers: a worker blocked on an
-        // empty queue wakes when the last sender goes, and one part way through
+        // empty queue wakes when the last dispatcher goes, and one part way through
         // a read finishes it first. Joined rather than detached so that no
         // worker is still standing in a directory, or still holding a session,
         // after the compilation that owns them has returned.
@@ -681,6 +877,18 @@ impl InvocationKey {
     }
 }
 
+/// What the worker that read one unit left the composition of that unit's own
+/// children.
+///
+/// The two travel together because they come from the same place and are used
+/// in the same breath: [`read_ahead`] takes the reads the worker already
+/// started, and orders whatever it has to start itself out of where this unit
+/// stands. See [`ReadOrder`].
+pub(super) struct ReadsAhead {
+    pub(super) chained: Vec<ChainedRead>,
+    pub(super) order: ReadOrder,
+}
+
 /// One recursive invocation of a unit, resolved and read by the worker that
 /// read the unit naming it.
 pub(super) struct ChainedRead {
@@ -739,6 +947,9 @@ pub(super) struct ChildRead {
     /// What the emission this read prepares will be asked to evaluate, for the
     /// case where this thread ends up performing the read after all.
     evaluation: kati::ninja::BuildEvaluation,
+    /// Where the composition will ask for this unit, and therefore the order
+    /// its own children are divided out of. See [`ReadOrder`].
+    order: ReadOrder,
 }
 
 impl ChildRead {
@@ -774,6 +985,7 @@ impl ChildRead {
             raised,
             unread,
             evaluation,
+            order: _,
         } = self;
         let read =
             if let Ok(Some(read)) = answer.recv() {
@@ -811,6 +1023,17 @@ impl ChildRead {
 }
 
 impl ChildUnit {
+    /// Where the composition stands when it reaches this unit, which is what
+    /// its own children's reads are ordered out of. See [`ReadOrder`].
+    pub(super) const fn read_order(&self) -> ReadOrder {
+        match self {
+            Self::Read(read) => read.order,
+            // Nothing read this one ahead, so the composition is about to read
+            // it here and then block on the first child it dispatches.
+            Self::Unread(_) | Self::Refused(_) => ReadOrder::WHOLE,
+        }
+    }
+
     /// What this child compilation is cached under.
     pub(super) fn cache_key(&self) -> &[u8] {
         match self {
@@ -927,8 +1150,9 @@ pub(super) fn read_ahead(
     resolve: super::Resolver,
     descendant_context: &CompilationContext,
     state: &CompilationState<'_>,
-    chained: Vec<ChainedRead>,
+    ahead: ReadsAhead,
 ) -> Vec<Option<ChildUnit>> {
+    let ReadsAhead { chained, order } = ahead;
     if !chained.is_empty() {
         return adopted(ordered, chained);
     }
@@ -986,7 +1210,7 @@ pub(super) fn read_ahead(
     // one's wrapper. Read here instead, that work waits behind a read that does
     // not need it; read there, it is the read that waits.
     let mut started = Vec::with_capacity(ordered.len());
-    for pending in ordered {
+    for (index, pending) in ordered.iter().enumerate() {
         let invocation = &pending.invocations[0];
         started.push(Some(
             match resolve(
@@ -1000,7 +1224,11 @@ pub(super) fn read_ahead(
                 Ok(mut compilation) => {
                     if plan.claim(&compilation.cache_key) {
                         prepare_session(&mut compilation, &plan.read_units);
-                        ChildUnit::Read(Box::new(start_read(&plan, compilation)))
+                        ChildUnit::Read(Box::new(start_read(
+                            &plan,
+                            compilation,
+                            order.nth(index, ordered.len()),
+                        )))
                     } else {
                         ChildUnit::Unread(Box::new(compilation))
                     }
@@ -1058,6 +1286,7 @@ fn chained_reads(
     context: &CompilationContext,
     raised: &std::sync::Arc<kati::diagnostics::Diagnostics>,
     plan: &ChainPlan,
+    order: ReadOrder,
 ) -> Vec<ChainedRead> {
     let Some(recursions) = prepared.recursions.as_ref() else {
         return Vec::new();
@@ -1087,7 +1316,8 @@ fn chained_reads(
         std::sync::Arc::clone(raised),
     );
     let mut chained = Vec::with_capacity(recursions.len());
-    for recursion in recursions {
+    let children = recursions.len();
+    for (index, recursion) in recursions.iter().enumerate() {
         let child = match (plan.resolve)(
             &recursion.command,
             &recursion.make,
@@ -1102,7 +1332,11 @@ fn chained_reads(
                     prepare_session(&mut compilation, &plan.read_units);
                     #[cfg(test)]
                     CHAINED_READS_STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    ChildUnit::Read(Box::new(start_read(plan, compilation)))
+                    ChildUnit::Read(Box::new(start_read(
+                        plan,
+                        compilation,
+                        order.nth(index, children),
+                    )))
                 } else {
                     ChildUnit::Unread(Box::new(compilation))
                 }
@@ -1118,7 +1352,7 @@ fn chained_reads(
 
 /// Hand one prepared child compilation to a worker, and let that worker carry
 /// on into the child's own children.
-fn start_read(plan: &ChainPlan, compilation: Compilation) -> ChildRead {
+fn start_read(plan: &ChainPlan, compilation: Compilation, order: ReadOrder) -> ChildRead {
     #[cfg(test)]
     READS_STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let Compilation {
@@ -1140,14 +1374,14 @@ fn start_read(plan: &ChainPlan, compilation: Compilation) -> ChildRead {
     let carried = plan.clone();
     let below = context.clone();
     let collecting = std::sync::Arc::clone(&raised);
-    let answer = plan.dispatcher.start(move || {
+    let answer = plan.dispatcher.start(order, move || {
         let session = held
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
         session.map(|session| {
             let prepared = evaluate_unit(session, &directory, evaluation, true)?;
-            let chained = chained_reads(&prepared, &below, &collecting, &carried);
+            let chained = chained_reads(&prepared, &below, &collecting, &carried, order);
             Ok(ReadAhead { prepared, chained })
         })
     });
@@ -1158,6 +1392,7 @@ fn start_read(plan: &ChainPlan, compilation: Compilation) -> ChildRead {
         raised,
         unread,
         evaluation,
+        order,
     }
 }
 

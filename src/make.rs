@@ -26,7 +26,7 @@ pub(crate) mod cli;
 mod interrupts;
 mod layout;
 mod parallel;
-use parallel::{ChainedRead, ChildUnit, evaluate_unit, read_ahead};
+use parallel::{ChildUnit, ReadsAhead, evaluate_unit, read_ahead};
 mod recipe;
 mod report;
 mod sink;
@@ -1013,6 +1013,9 @@ fn compile_unit(
     resolve: Resolver,
     state: &mut CompilationState<'_>,
 ) -> Result<CompiledUnit, MakeError> {
+    // Where the composition stands, which is what the reads this unit starts
+    // for its own children are ordered by. See [`parallel::ReadOrder`].
+    let order = child.read_order();
     let (compilation_key, read_ahead) = child.claim(state)?;
     if !state.compiling.insert(compilation_key.clone()) {
         return Err(MakeError::Evaluate(
@@ -1099,7 +1102,7 @@ fn compile_unit(
         resolve,
         &descendant_context,
         state,
-        chained,
+        ReadsAhead { chained, order },
     );
     state.compiling.remove(&compilation_key);
     // Three shared handles, three paths, a string and four vectors, and the
@@ -1127,7 +1130,7 @@ fn compose_subninjas(
     resolve: Resolver,
     descendant_context: &CompilationContext,
     state: &mut CompilationState<'_>,
-    chained: Vec<ChainedRead>,
+    ahead: ReadsAhead,
 ) -> Result<ComposedUnit, MakeError> {
     let UnitOutput {
         targets,
@@ -1137,7 +1140,7 @@ fn compose_subninjas(
     let mut subtree_edges = edges;
     let disk = freshness_disk(descendant_context, state)?;
     let ordered = dependency_ordered(subninjas, sink);
-    let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, chained);
+    let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, ahead);
     for (pending_index, mut pending) in ordered.into_iter().enumerate() {
         // Whose recipe this is decides which switches its segments run under.
         // A recursive recipe the makefile update would run — a Makefile's own,
