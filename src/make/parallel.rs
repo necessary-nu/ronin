@@ -456,7 +456,6 @@ use super::{
     evaluated_flag_variables, exported_environment, flag_recipe_environment, in_directory,
     refused_makefiles, sink,
 };
-use std::collections::HashSet;
 
 /// Settle everything a read says that the graph is not told.
 ///
@@ -702,7 +701,7 @@ struct ChainPlan {
     /// tells it again.
     read_units: std::sync::Arc<ReadJournals>,
     /// Every unit whose read has been started, so that no unit is read twice.
-    claims: std::sync::Arc<std::sync::Mutex<HashSet<Vec<u8>>>>,
+    claims: std::sync::Arc<std::sync::Mutex<crate::htab::RapidHashSet<Vec<u8>>>>,
     evaluation: kati::ninja::BuildEvaluation,
 }
 

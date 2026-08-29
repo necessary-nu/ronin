@@ -25,7 +25,6 @@ use crate::make::report::{
     refused_makefile,
 };
 use bstr::BString;
-use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 
@@ -666,7 +665,7 @@ struct Read {
     /// The staged work belonging to a Makefile's own recipe, which the makefile
     /// update would have run had the wrapper not been held back from it.
     makefile_staged: Vec<Node>,
-    boundaries: HashSet<EvaluationBoundary>,
+    boundaries: crate::htab::RapidHashSet<EvaluationBoundary>,
     /// The recursive recipes this read staged and did not finish compiling,
     /// whose edges hold the freshness probe rather than a recipe.
     unfinished: Vec<Node>,
@@ -971,7 +970,7 @@ pub(super) fn build_compiler_inputs(
 struct StagedWork<'a> {
     staged: Staged<'a>,
     /// The boundaries this pass reached, which the next one is past.
-    boundaries: HashSet<EvaluationBoundary>,
+    boundaries: crate::htab::RapidHashSet<EvaluationBoundary>,
     /// What the passes before this one settled, which this one adds to.
     settled: &'a mut crate::make::Groundwork,
     complaints: &'a [(Node, String)],
@@ -1101,7 +1100,7 @@ struct Staged<'a> {
 /// What one settled compilation boundary leaves the read to carry forward.
 struct StagedBoundary<'a> {
     /// The boundaries this pass reached, which the next one is past.
-    boundaries: HashSet<EvaluationBoundary>,
+    boundaries: crate::htab::RapidHashSet<EvaluationBoundary>,
     /// What the passes before this one laid down, which this one adds to.
     settled: &'a mut crate::make::Groundwork,
     /// Whether the staged work moved a Makefile the read consulted.

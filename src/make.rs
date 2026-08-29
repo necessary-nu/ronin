@@ -54,6 +54,7 @@ pub use sink::GraphSink;
 pub const MAKE_VERSION: &str = "4.4.1";
 
 use crate::frontend::{BuildGraph, Edge, FrontendError, Node, Scope};
+use crate::htab::{RapidHashMap, RapidHashSet};
 use crate::make::sink::{UnitOutput, UnitSubgraph};
 use kati::build_sink::RecipeExpansion;
 use kati::evaluate::{Evaluated, evaluate};
@@ -495,7 +496,7 @@ pub(crate) struct UnitJournal {
 }
 
 /// Every unit's journal, keyed by cache key.
-pub(crate) type ReadJournals = HashMap<Vec<u8>, UnitJournal>;
+pub(crate) type ReadJournals = RapidHashMap<Vec<u8>, UnitJournal>;
 
 /// Turn one recursive invocation into the child compilation it names.
 ///
@@ -508,8 +509,8 @@ pub(crate) type Resolver =
     fn(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>;
 
 struct CompilationState<'a> {
-    cache: HashMap<Vec<u8>, UnitSubgraph>,
-    compiling: HashSet<Vec<u8>>,
+    cache: RapidHashMap<Vec<u8>, UnitSubgraph>,
+    compiling: RapidHashSet<Vec<u8>>,
     /// Every unit's unexpanded recipes, gathered as the units are compiled.
     ///
     /// One collection for the whole compilation, because the graph is one
@@ -537,8 +538,8 @@ struct CompilationState<'a> {
     /// The required Makefiles the first unit of this compilation that had any
     /// could not make.
     refusals: Vec<RefusedMakefile>,
-    settled_boundaries: &'a HashSet<EvaluationBoundary>,
-    evaluation_boundaries: HashSet<EvaluationBoundary>,
+    settled_boundaries: &'a RapidHashSet<EvaluationBoundary>,
+    evaluation_boundaries: RapidHashSet<EvaluationBoundary>,
     /// The recursive recipes an earlier pass carried to their end.
     ///
     /// A recipe cut into segments is mid-flight from the moment its first
@@ -549,7 +550,7 @@ struct CompilationState<'a> {
     /// remade on every pass, moves its own stamp, and starts the read over
     /// again — where GNU Make restarts once and settles, because after its
     /// re-exec nothing survives but the disk.
-    finished_recipes: &'a HashSet<RecursiveRecipe>,
+    finished_recipes: &'a RapidHashSet<RecursiveRecipe>,
     /// The recursive recipes this pass compiled whole, which the pass after it
     /// counts as finished.
     ///
@@ -558,7 +559,7 @@ struct CompilationState<'a> {
     /// other recipe's boundary builds the staged work alone, so a wrapper it
     /// composed on the way there has not run and its recipe is still in
     /// flight. See [`Loaded::completed_recipes`].
-    completed_recipes: HashSet<RecursiveRecipe>,
+    completed_recipes: RapidHashSet<RecursiveRecipe>,
     /// The outputs of every recursive wrapper this pass staged and did not
     /// finish, because the compilation stopped at a boundary before its
     /// children were composed.
@@ -606,7 +607,7 @@ struct CompilationState<'a> {
     /// gets that from its own cache; a worker reading a descendant's Makefiles
     /// ahead of the composition cannot see that cache, so this is what it asks
     /// instead. Shared, because both sides claim into it.
-    read_claims: std::sync::Arc<std::sync::Mutex<HashSet<Vec<u8>>>>,
+    read_claims: std::sync::Arc<std::sync::Mutex<RapidHashSet<Vec<u8>>>>,
     /// The build root a composed unit last asked its wrappers' dates of, and
     /// the disk that answers for it. See [`freshness_disk`].
     freshness_disk: Option<(PathBuf, crate::os::RealDiskInterface)>,
@@ -790,9 +791,9 @@ pub(crate) fn load_with_subninjas(
 #[derive(Default)]
 pub(crate) struct Groundwork {
     /// The compiler-input boundaries whose staged work is on the ground.
-    pub(crate) boundaries: HashSet<EvaluationBoundary>,
+    pub(crate) boundaries: RapidHashSet<EvaluationBoundary>,
     /// The recursive recipes an earlier pass carried to their end.
-    pub(crate) recipes: HashSet<RecursiveRecipe>,
+    pub(crate) recipes: RapidHashSet<RecursiveRecipe>,
     /// The units an earlier pass read, which this one repeats rather than
     /// performs.
     ///
@@ -811,8 +812,8 @@ fn load_with_subninjas_unlocked(
 ) -> Result<Loaded, MakeError> {
     let mut sink = GraphSink::new_at(&root.context.root_directory, expansion);
     let mut state = CompilationState {
-        cache: HashMap::new(),
-        compiling: HashSet::new(),
+        cache: RapidHashMap::default(),
+        compiling: RapidHashSet::default(),
         pending_recipes: recipe::PendingRecipes::new(std::sync::Arc::clone(
             &root.context.diagnostics,
         )),
@@ -824,12 +825,12 @@ fn load_with_subninjas_unlocked(
         remake_complaints: Vec::new(),
         settled_boundaries: &settled.boundaries,
         refusals: Vec::new(),
-        evaluation_boundaries: HashSet::new(),
+        evaluation_boundaries: RapidHashSet::default(),
         finished_recipes: &settled.recipes,
-        completed_recipes: HashSet::new(),
+        completed_recipes: RapidHashSet::default(),
         unfinished: Vec::new(),
         read_units: std::sync::Arc::clone(&settled.read_units),
-        units_read: ReadJournals::new(),
+        units_read: ReadJournals::default(),
         // `-j` is what GNU Make counts its recursive children against, and a
         // recursive child of Ronin's is a Makefile read rather than a process,
         // so it is counted against the same number. At `-j1` there is no pool
@@ -1794,7 +1795,7 @@ pub struct Loaded {
     /// ask the question it never reached.
     refusals: Vec<RefusedMakefile>,
     /// Recursive evaluation boundaries satisfied by building those inputs.
-    evaluation_boundaries: HashSet<EvaluationBoundary>,
+    evaluation_boundaries: RapidHashSet<EvaluationBoundary>,
     /// The recursive recipes this read compiled whole.
     ///
     /// Worth carrying out because a recipe cut into segments has to stop being
@@ -1802,7 +1803,7 @@ pub struct Loaded {
     /// — and only the caller knows whether this pass was the one that ran it.
     /// Ask [`Self::compilation_ran_to_the_end`] first: a read that stopped at a
     /// boundary builds the staged work alone.
-    completed_recipes: HashSet<RecursiveRecipe>,
+    completed_recipes: RapidHashSet<RecursiveRecipe>,
     /// The targets of every recursive recipe this read staged and did not
     /// finish compiling, whose edges still hold the freshness probe.
     unfinished: Vec<Node>,
@@ -1924,7 +1925,7 @@ impl Loaded {
 
     /// Recursive compiler boundaries satisfied by the provisional build.
     #[must_use]
-    pub(crate) const fn evaluation_boundaries(&self) -> &HashSet<EvaluationBoundary> {
+    pub(crate) const fn evaluation_boundaries(&self) -> &RapidHashSet<EvaluationBoundary> {
         &self.evaluation_boundaries
     }
 
@@ -1951,11 +1952,11 @@ impl Loaded {
     /// over a graph holding every recipe whole, and the pass over it is the one
     /// that BUILDS: the makefile update, and then the goals.
     #[must_use]
-    pub(crate) fn take_recipes_carried_whole(&mut self) -> HashSet<RecursiveRecipe> {
+    pub(crate) fn take_recipes_carried_whole(&mut self) -> RapidHashSet<RecursiveRecipe> {
         if self.evaluation_boundaries.is_empty() {
             std::mem::take(&mut self.completed_recipes)
         } else {
-            HashSet::new()
+            RapidHashSet::default()
         }
     }
 
