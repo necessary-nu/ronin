@@ -802,7 +802,7 @@ fn after_remaking(
     reported: &mut String,
     diagnostics: &mut Option<&mut dyn Write>,
     persistence: Persistence,
-    read_units: &mut crate::make::ReadJournals,
+    read_units: &mut std::sync::Arc<crate::make::ReadJournals>,
 ) -> Result<AfterRemaking, Error> {
     match settled_makefiles(remaking, refusals, keep_going, reported, diagnostics) {
         Settled::Over(result) => {
@@ -822,7 +822,7 @@ fn after_remaking(
             // it read, and this restart happens because that text is new: GNU
             // Make reads it again and says everything again, which is what
             // `MAKE_RESTARTS` is there to let a Makefile notice.
-            read_units.clear();
+            std::sync::Arc::make_mut(read_units).clear();
             Ok(AfterRemaking::Finished(Settlement::Restart))
         }
         Settled::Stands(stands) => Ok(AfterRemaking::Stands(persistence, stands)),
@@ -881,7 +881,9 @@ pub(super) fn build_compiler_inputs(
     // which is precisely what must not be handed on.
     let mut loaded = loaded;
     for (unit, journal) in loaded.take_units_read() {
-        settled.read_units.entry(unit).or_insert(journal);
+        std::sync::Arc::make_mut(&mut settled.read_units)
+            .entry(unit)
+            .or_insert(journal);
     }
     let (mut graph, mut read) = Read::taken_from(loaded);
     let mut recipes = read.recipes.take();
@@ -1169,7 +1171,7 @@ fn after_staging(
             settled.boundaries.extend(boundaries);
             persistence.finish()?;
             if remade {
-                settled.read_units.clear();
+                std::sync::Arc::make_mut(&mut settled.read_units).clear();
                 return Ok(Settlement::Restart);
             }
             Ok(Settlement::Staged)

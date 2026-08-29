@@ -1883,7 +1883,10 @@ fn one_graph_however_many_threads_read_it() {
     let mut built: Vec<(usize, String)> = Vec::new();
     let started =
         || crate::make::parallel::READS_STARTED.load(std::sync::atomic::Ordering::Relaxed);
+    let chained =
+        || crate::make::parallel::CHAINED_READS_STARTED.load(std::sync::atomic::Ordering::Relaxed);
     let before = started();
+    let chained_before = chained();
     let schedule = [1, 8, 8, 1, 8, 8, 8, 16, 8, 1];
     for jobs in schedule {
         std::env::set_current_dir(tree.path()).expect("the scratch tree exists");
@@ -1916,6 +1919,18 @@ fn one_graph_however_many_threads_read_it() {
         started() - before,
         dispatched_per_run * parallel_runs,
         "not every recursive recipe's read was handed to a worker"
+    );
+    // And of those, which thread did the handing. The root is read on the
+    // composing thread, so its four recipes are dispatched there; each of the
+    // root's four children is read on a worker, and that worker resolves and
+    // dispatches the child's own four before the composition has walked down to
+    // it. Sixteen of the twenty per run, therefore, and the number is what says
+    // the reads are not bounded by one recipe's fan-out — a run where each unit
+    // waited for the composition to reach it would chain none at all.
+    assert_eq!(
+        chained() - chained_before,
+        4 * 4 * parallel_runs,
+        "a worker that read a unit did not go on to read the children it names"
     );
     let (_, first) = &built[0];
     for (index, (jobs, described)) in built.iter().enumerate().skip(1) {

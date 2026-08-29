@@ -26,7 +26,7 @@ pub(crate) mod cli;
 mod interrupts;
 mod layout;
 mod parallel;
-use parallel::{ChildUnit, evaluate_unit, prepare_session, read_ahead};
+use parallel::{ChainedRead, ChildUnit, evaluate_unit, prepare_session, read_ahead};
 mod recipe;
 mod report;
 mod sink;
@@ -57,7 +57,7 @@ use crate::frontend::{BuildGraph, Edge, FrontendError, Node, Scope};
 use crate::make::sink::{UnitOutput, UnitSubgraph};
 use kati::build_sink::RecipeExpansion;
 use kati::evaluate::{Evaluated, evaluate};
-use kati::ninja::emit_build;
+use kati::ninja::emit_populated;
 use kati::session::Session;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::error;
@@ -476,6 +476,12 @@ fn unit_remakes(
 /// pass re-reads a unit over text that has not moved while the ground under it
 /// has: the staged work is what moved it. See
 /// [`kati::session::GroundJournal`].
+///
+/// `Clone` because the record is shared with the workers for the length of a
+/// pass and taken back between passes, which is what
+/// [`std::sync::Arc::make_mut`] needs to say. Nothing clones one in practice:
+/// the pass that would has already put every worker down.
+#[derive(Clone)]
 pub(crate) struct UnitJournal {
     /// The answers the ground gave, in the order the read asked for them.
     ground: Vec<kati::session::GroundAnswer>,
@@ -490,6 +496,16 @@ pub(crate) struct UnitJournal {
 
 /// Every unit's journal, keyed by cache key.
 pub(crate) type ReadJournals = HashMap<Vec<u8>, UnitJournal>;
+
+/// Turn one recursive invocation into the child compilation it names.
+///
+/// A bare function rather than a closure, and named here rather than left to a
+/// type parameter, because resolving happens on whichever thread reaches the
+/// invocation: a worker that has just read a unit resolves the children that
+/// unit names so it can read them too, and a closure over the composition's own
+/// state could not cross to it. See [`read_ahead`].
+pub(crate) type Resolver =
+    fn(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>;
 
 struct CompilationState<'a> {
     cache: HashMap<Vec<u8>, UnitSubgraph>,
@@ -558,7 +574,7 @@ struct CompilationState<'a> {
     /// `kati::flags::Flags::is_repeated_read` — and what it was told then is
     /// what it is told again, because the ground has moved and GNU Make's one
     /// read never saw it move.
-    read_units: &'a ReadJournals,
+    read_units: std::sync::Arc<ReadJournals>,
     /// Every unit this pass read, which is the set the next pass repeats. It
     /// accumulates rather than replacing, because a pass reads everything the
     /// pass before it read and then one child more.
@@ -574,9 +590,23 @@ struct CompilationState<'a> {
     /// compilations never read ahead at all — a Makefile with no recursive
     /// recipes, or with one, has nothing to overlap — and threads that would
     /// take no work are worth not starting.
-    read_pool: std::cell::OnceCell<Option<parallel::ReadPool>>,
+    read_pool: std::cell::OnceCell<Option<std::sync::Arc<parallel::ReadPool>>>,
     /// How many workers to start when one is first wanted.
     read_threads: usize,
+    /// What this compilation asks its emissions to evaluate, and when.
+    ///
+    /// Read off the sink once, because the sink answers it the same way every
+    /// time, and carried here because the half of an emission that never sees
+    /// the sink runs on a worker and still has to run under the sink's policy.
+    evaluation: kati::ninja::BuildEvaluation,
+    /// Every unit whose read has been started, by cache key.
+    ///
+    /// One unit is read once per pass however many recipes name it, because
+    /// reading it twice would run its `$(shell)` calls twice. The composition
+    /// gets that from its own cache; a worker reading a descendant's Makefiles
+    /// ahead of the composition cannot see that cache, so this is what it asks
+    /// instead. Shared, because both sides claim into it.
+    read_claims: std::sync::Arc<std::sync::Mutex<HashSet<Vec<u8>>>>,
 }
 
 /// One unit's unexpanded recipes and everything expanding them will need,
@@ -739,15 +769,12 @@ enum EvaluationPredecessor {
 /// shared graph before returning it to the executor.
 // [spec:ronin:req:make.recursive-invocation+2]
 // [spec:ronin:req:make.compiler-boundary]
-pub(crate) fn load_with_subninjas<F>(
+pub(crate) fn load_with_subninjas(
     root: Compilation,
-    resolve: F,
+    resolve: Resolver,
     settled: &Groundwork,
     expansion: RecipeExpansion,
-) -> Result<Loaded, MakeError>
-where
-    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
-{
+) -> Result<Loaded, MakeError> {
     let _directory = compilation_directory_guard();
     load_with_subninjas_unlocked(root, resolve, settled, expansion)
 }
@@ -765,18 +792,20 @@ pub(crate) struct Groundwork {
     pub(crate) recipes: HashSet<RecursiveRecipe>,
     /// The units an earlier pass read, which this one repeats rather than
     /// performs.
-    pub(crate) read_units: ReadJournals,
+    ///
+    /// Shared rather than owned because a worker reads it: a unit whose read a
+    /// worker prepares is told what an earlier pass told it, and what a session
+    /// is told must not depend on which thread ends up reading it. It is
+    /// changed only between passes, when no worker exists.
+    pub(crate) read_units: std::sync::Arc<ReadJournals>,
 }
 
-fn load_with_subninjas_unlocked<F>(
+fn load_with_subninjas_unlocked(
     root: Compilation,
-    mut resolve: F,
+    resolve: Resolver,
     settled: &Groundwork,
     expansion: RecipeExpansion,
-) -> Result<Loaded, MakeError>
-where
-    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
-{
+) -> Result<Loaded, MakeError> {
     let mut sink = GraphSink::new_at(&root.context.root_directory, expansion);
     let mut state = CompilationState {
         cache: HashMap::new(),
@@ -796,7 +825,7 @@ where
         finished_recipes: &settled.recipes,
         completed_recipes: HashSet::new(),
         unfinished: Vec::new(),
-        read_units: &settled.read_units,
+        read_units: std::sync::Arc::clone(&settled.read_units),
         units_read: ReadJournals::new(),
         // `-j` is what GNU Make counts its recursive children against, and a
         // recursive child of Ronin's is a Makefile read rather than a process,
@@ -806,12 +835,14 @@ where
         // reads' `$(shell)` commands run in included — untouched.
         read_pool: std::cell::OnceCell::new(),
         read_threads: root.context.parallel_reads,
+        evaluation: kati::ninja::BuildEvaluation::of(&sink),
+        read_claims: std::sync::Arc::default(),
     };
     let root = compile_unit(
         ChildUnit::Unread(Box::new(root)),
         &mut sink,
         None,
-        &mut resolve,
+        resolve,
         &mut state,
     )?;
     let pending_recipes = (!state.pending_recipes.is_empty()).then_some(state.pending_recipes);
@@ -844,7 +875,14 @@ where
 /// belongs to rather than beside the emission it feeds.
 struct Prepared {
     ev: kati::eval::Evaluator,
-    nodes: Vec<kati::dep::NamedDepNode>,
+    /// The build the dependency nodes describe, walked and expanded as far as
+    /// anything can be without a sink to hand it to. See
+    /// [`kati::ninja::populate_build`].
+    populated: kati::ninja::PopulatedBuild,
+    /// Every recursive invocation the population found, or `None` where this
+    /// unit is one whose children must not be looked for before it is emitted.
+    /// See [`kati::ninja::PopulatedBuild::liftable_recursions`].
+    recursions: Option<Vec<kati::ninja::PopulatedRecursion>>,
     refusals: Vec<RefusedMakefile>,
     regeneration_names: RegenerationNames,
     exported: Vec<(OsString, Option<OsString>)>,
@@ -871,7 +909,8 @@ fn read_unit(
 ) -> Result<UnitRead, MakeError> {
     let Prepared {
         mut ev,
-        nodes,
+        populated,
+        recursions: _,
         refusals,
         regeneration_names,
         exported,
@@ -895,7 +934,7 @@ fn read_unit(
         recipe_environment,
         unreadable.as_ref().map(|held| held.why.clone()),
     );
-    let deferred = match emit_build(&nodes, &mut ev, sink) {
+    let deferred = match emit_populated(populated, &mut ev, sink) {
         Ok(deferred) => deferred,
         Err(error) => {
             if let Some(failure) = sink.construction_failure() {
@@ -904,11 +943,6 @@ fn read_unit(
             return Err(MakeError::evaluate(&error));
         }
     };
-    // The dependency graph the build was just emitted from, which nothing
-    // downstream of the emission reads: it is the read's own working memory,
-    // built on whichever thread read the unit, and freeing it is given away
-    // rather than paid for on the one thread every unit passes through.
-    parallel::discard(reaper, nodes);
     // The layout is read while this unit is still the current one: it is
     // what wraps every command this unit produces, and a recipe expanded
     // later has to be wrapped in exactly the same thing.
@@ -963,16 +997,13 @@ struct UnitRead {
     journal: UnitJournal,
 }
 
-fn compile_unit<F>(
+fn compile_unit(
     child: ChildUnit,
     sink: &mut GraphSink,
     parent_scope: Option<Scope>,
-    resolve: &mut F,
+    resolve: Resolver,
     state: &mut CompilationState<'_>,
-) -> Result<CompiledUnit, MakeError>
-where
-    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
-{
+) -> Result<CompiledUnit, MakeError> {
     // Either a worker already read this unit while an earlier recipe of the
     // same parent was being composed, or nothing has read it and it is read
     // here. Both go through the same prepared session and produce the same
@@ -983,7 +1014,12 @@ where
             let mut compilation = *compilation;
             let compilation_key = compilation.cache_key.clone();
             let context = compilation.context.clone();
-            prepare_session(&mut compilation, state.read_units);
+            prepare_session(&mut compilation, &state.read_units);
+            state
+                .read_claims
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .insert(compilation_key.clone());
             (compilation_key, context, Err(compilation.session))
         }
         ChildUnit::Read(read) => (read.cache_key.clone(), read.context.clone(), Ok(*read)),
@@ -993,9 +1029,21 @@ where
             "recursive Make compilation includes itself".to_owned(),
         ));
     }
+    // What a worker read ahead for the children of THIS unit while it was
+    // reading this unit, which the composition below adopts rather than
+    // resolving and reading again. Empty where nothing read ahead.
+    let mut chained = Vec::new();
     let evaluated = match read_ahead {
-        Ok(read) => read.collect(),
-        Err(session) => evaluate_unit(session, &context.directory),
+        Ok(read) => read.collect().map(|read| {
+            chained = read.chained;
+            read.prepared
+        }),
+        Err(session) => evaluate_unit(
+            session,
+            &context.directory,
+            state.evaluation,
+            state.read_threads >= 2,
+        ),
     };
     // `None` until the first unit that read ahead started the pool, and for the
     // whole of a run that never starts one — a serial compilation frees exactly
@@ -1004,7 +1052,7 @@ where
         .read_pool
         .get()
         .and_then(Option::as_ref)
-        .and_then(parallel::ReadPool::reaper);
+        .and_then(|pool| pool.reaper());
     let read = evaluated.and_then(|evaluated| {
         in_directory(&context.directory, || {
             read_unit(evaluated, sink, parent_scope, &context, reaper)
@@ -1048,6 +1096,7 @@ where
         resolve,
         &descendant_context,
         state,
+        chained,
     );
     state.compiling.remove(&compilation_key);
     let composed = composed?;
@@ -1063,17 +1112,15 @@ where
     })
 }
 
-fn compose_subninjas<F>(
+fn compose_subninjas(
     unit: UnitOutput,
     compilation_key: &[u8],
     sink: &mut GraphSink,
-    resolve: &mut F,
+    resolve: Resolver,
     descendant_context: &CompilationContext,
     state: &mut CompilationState<'_>,
-) -> Result<ComposedUnit, MakeError>
-where
-    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
-{
+    chained: Vec<ChainedRead>,
+) -> Result<ComposedUnit, MakeError> {
     let UnitOutput {
         targets,
         subninjas,
@@ -1082,7 +1129,7 @@ where
     let mut subtree_edges = edges;
     let disk = freshness_disk(descendant_context)?;
     let ordered = dependency_ordered(subninjas, sink);
-    let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state);
+    let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, chained);
     for (pending_index, mut pending) in ordered.into_iter().enumerate() {
         // Whose recipe this is decides which switches its segments run under.
         // A recursive recipe the makefile update would run — a Makefile's own,
@@ -1209,17 +1256,14 @@ struct RecipeSite<'a> {
 ///
 /// `site` is where in the compilation this recipe sits, which phase it belongs
 /// to, and whatever a worker has already read for it.
-fn compose_child_groups<F>(
+fn compose_child_groups(
     pending: &sink::PendingSubninja,
     site: RecipeSite<'_>,
     sink: &mut GraphSink,
-    resolve: &mut F,
+    resolve: Resolver,
     descendant_context: &CompilationContext,
     state: &mut CompilationState<'_>,
-) -> Result<Option<Vec<UnitSubgraph>>, MakeError>
-where
-    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
-{
+) -> Result<Option<Vec<UnitSubgraph>>, MakeError> {
     let RecipeSite {
         at: (compilation_key, pending_index),
         for_makefile,

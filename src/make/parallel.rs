@@ -67,6 +67,18 @@ type Discarded = Box<dyn Send + 'static>;
 pub(crate) static READS_STARTED: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
+/// How many of those a worker handed to another worker, rather than the
+/// composing thread handing it over.
+///
+/// Test-only, and for the same reason [`READS_STARTED`] is: whether a worker
+/// carries on into the children of the unit it just read depends on the shape
+/// of that unit, so a test that meant to exercise the chaining can stop
+/// exercising it without failing. This is what lets it assert that it did. See
+/// [`chained_reads`].
+#[cfg(test)]
+pub(crate) static CHAINED_READS_STARTED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 /// Give this thread its own working directory, root and umask.
 ///
 /// `unshare` is deprecated in rustix in favour of an `unsafe` spelling, and the
@@ -227,12 +239,58 @@ impl<T: Send + 'static> Drop for Released<T> {
     }
 }
 
+/// Where more reads may be started from, held by a worker that is performing
+/// one.
+///
+/// A worker that has just read a unit resolves the recursive children that unit
+/// names and reads them too, which needs a way back into the queue. It holds
+/// this rather than the pool itself, and the difference is whether the
+/// compilation can ever return: the pool ends its workers by dropping its own
+/// sender, and a worker holding the pool would keep the pool alive instead of
+/// the queue open, so nothing would ever close and the join would never return.
+/// A sender is dropped when the read that holds it finishes, so the queue closes
+/// as soon as the last read is over.
+#[derive(Clone)]
+pub(crate) struct Dispatcher {
+    queue: mpsc::Sender<Read>,
+    /// Set when the pool is going away. A read still in the queue when that
+    /// happens answers nothing and reads nothing: whoever asked for it holds the
+    /// session and reads it where it stands, which is what the answer never
+    /// arriving already means. Without this, abandoning a compilation would wait
+    /// for every read its workers had queued ahead of it.
+    stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Dispatcher {
+    /// Start `read` on a worker, answering on the returned receiver.
+    ///
+    /// The answer is a channel rather than a shared slot because the caller
+    /// consumes the reads in the order the recipe wrote them, not the order
+    /// they finish: it waits for the one it has reached and lets the rest go on
+    /// arriving behind it.
+    pub(crate) fn start<T, F>(&self, read: F) -> mpsc::Receiver<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let (sender, receiver) = mpsc::channel();
+        let stopped = std::sync::Arc::clone(&self.stopped);
+        let _: Result<(), mpsc::SendError<Read>> = self.queue.send(Box::new(move || {
+            if stopped.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
+            let _: Result<(), mpsc::SendError<T>> = sender.send(read());
+        }));
+        receiver
+    }
+}
+
 /// Worker threads that read child Makefiles, each standing in its own
 /// directory.
 pub(crate) struct ReadPool {
     /// `None` once the pool is being dropped, which closes the queue and is
     /// what tells the workers to finish.
-    queue: Option<mpsc::Sender<Read>>,
+    dispatcher: Option<Dispatcher>,
     workers: Vec<std::thread::JoinHandle<()>>,
     /// Where what the reads leave behind is freed. `None` where the thread
     /// could not be started, which costs speed and nothing else.
@@ -280,7 +338,10 @@ impl ReadPool {
             workers.push(worker);
         }
         Some(Self {
-            queue: Some(sender),
+            dispatcher: Some(Dispatcher {
+                queue: sender,
+                stopped: std::sync::Arc::default(),
+            }),
             workers,
             reaper: Reaper::new(),
         })
@@ -289,6 +350,12 @@ impl ReadPool {
     /// Where this pool's callers free what a read left behind.
     pub(crate) const fn reaper(&self) -> Option<&Reaper> {
         self.reaper.as_ref()
+    }
+
+    /// Where a read is started from, whether by the composition or by a worker
+    /// already performing one.
+    const fn dispatcher(&self) -> Option<&Dispatcher> {
+        self.dispatcher.as_ref()
     }
 
     /// Whether a thread on this platform can be given a working directory of
@@ -337,22 +404,17 @@ impl ReadPool {
 
     /// Start `read` on a worker, answering on the returned receiver.
     ///
-    /// The answer is a channel rather than a shared slot because the caller
-    /// consumes the reads in the order the recipe wrote them, not the order
-    /// they finish: it waits for the one it has reached and lets the rest go on
-    /// arriving behind it.
-    pub(crate) fn start<T, F>(&self, read: F) -> mpsc::Receiver<T>
+    /// Answers on a receiver that never delivers where the pool is already
+    /// going away, which is what the caller reads as "no worker read it".
+    #[cfg(test)]
+    fn start<T, F>(&self, read: F) -> mpsc::Receiver<T>
     where
         T: Send + 'static,
         F: FnOnce() -> T + Send + 'static,
     {
-        let (sender, receiver) = mpsc::channel();
-        if let Some(queue) = &self.queue {
-            let _: Result<(), mpsc::SendError<Read>> = queue.send(Box::new(move || {
-                let _: Result<(), mpsc::SendError<T>> = sender.send(read());
-            }));
-        }
-        receiver
+        self.dispatcher
+            .as_ref()
+            .map_or_else(|| mpsc::channel().1, |dispatcher| dispatcher.start(read))
     }
 }
 
@@ -363,7 +425,18 @@ impl Drop for ReadPool {
         // a read finishes it first. Joined rather than detached so that no
         // worker is still standing in a directory, or still holding a session,
         // after the compilation that owns them has returned.
-        self.queue = None;
+        //
+        // A read a worker queued for a descendant may still be waiting when
+        // that happens, and there may be a whole subtree of them. Stopping them
+        // first is what keeps abandoning a compilation cheap: each one answers
+        // nothing, which is what whoever asked already treats as its own cue to
+        // read the unit itself.
+        if let Some(dispatcher) = &self.dispatcher {
+            dispatcher
+                .stopped
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        self.dispatcher = None;
         for worker in self.workers.drain(..) {
             let _: std::thread::Result<()> = worker.join();
         }
@@ -398,11 +471,30 @@ use std::collections::HashSet;
 /// export set walks its whole variable table, and it is done once per unit for
 /// as many units as the tree has.
 ///
-/// What moves with it is the timing of a `$(shell)` these expansions run — an
-/// exported recursive value, or `MAKEFLAGS` — which is the same edge reading a
-/// Makefile early already takes, and is taken only where a worker read the
-/// unit. See [`read_ahead`].
-fn prepare_read(evaluated: Evaluated) -> Result<Prepared, MakeError> {
+/// So is the population. [`kati::ninja::populate_build`] is the half of an
+/// emission that never reaches the sink: it walks the dependency nodes, expands
+/// whichever recipes the destination cannot expand for itself, and mints the
+/// rule numbers. Only what it settled is then handed over, on the one thread
+/// that writes the graph, in the order it always was.
+///
+/// What moves with the two of them is the timing of the evaluation-time effects
+/// they carry — a `$(shell)` in an exported recursive value or in `MAKEFLAGS`,
+/// and, for a recipe the compiler itself has to read, the `$(shell)`, `$(file)`
+/// and `$(info)` in that recipe. Under
+/// [`RecipeExpansion::Launch`](kati::build_sink::RecipeExpansion::Launch) the
+/// recipes read here are only the ones whose text the graph's shape depends on
+/// — a recursive `$(MAKE)` line, an automatic depfile, a `::` action — and
+/// their effects were already happening while the graph was built rather than
+/// when the recipe ran. This is the same edge reading a Makefile early already
+/// takes, moved to the same thread, and taken only where a worker read the
+/// unit. What they SAY is not moved: the diagnostics a worker raises are held
+/// and drained where the composition reaches this child. See [`ChildRead`] and
+/// [`read_ahead`].
+fn prepare_read(
+    evaluated: Evaluated,
+    evaluation: kati::ninja::BuildEvaluation,
+    chains: bool,
+) -> Result<Prepared, MakeError> {
     let Evaluated {
         mut ev,
         mut nodes,
@@ -422,9 +514,21 @@ fn prepare_read(evaluated: Evaluated) -> Result<Prepared, MakeError> {
     let (makeflags, mflags) =
         evaluated_flag_variables(&mut ev).map_err(|error| MakeError::evaluate(&error))?;
     let flag_environment = flag_recipe_environment(&makeflags, mflags);
+    let populated = kati::ninja::populate_build(&nodes, &mut ev, evaluation)
+        .map_err(|error| MakeError::evaluate(&error))?;
+    // The dependency graph the build will be emitted from, which nothing
+    // downstream of the population reads: it is the read's own working memory,
+    // and it is freed on whichever thread built it rather than on the one
+    // thread every unit passes through.
+    drop(nodes);
+    // Asked only where a worker could act on the answer. A serial run reads
+    // every Makefile on its own thread whatever this says, and must not pay
+    // even the walk that would tell it what it could have read ahead.
+    let recursions = chains.then(|| populated.liftable_recursions(&ev)).flatten();
     Ok(Prepared {
         ev,
-        nodes,
+        populated,
+        recursions,
         refusals,
         regeneration_names,
         exported,
@@ -457,9 +561,15 @@ fn prepare_read(evaluated: Evaluated) -> Result<Prepared, MakeError> {
 pub(super) fn evaluate_unit(
     session: Session,
     directory: &std::path::Path,
+    evaluation: kati::ninja::BuildEvaluation,
+    chains: bool,
 ) -> Result<Prepared, MakeError> {
     in_directory(directory, || {
-        prepare_read(evaluate(session).map_err(|error| MakeError::evaluate(&error))?)
+        prepare_read(
+            evaluate(session).map_err(|error| MakeError::evaluate(&error))?,
+            evaluation,
+            chains,
+        )
     })
 }
 
@@ -530,13 +640,93 @@ pub(super) enum ChildUnit {
     Refused(MakeError),
 }
 
+/// One unit a worker read, and whatever that worker went on to read for the
+/// children the unit itself names. See [`chained_reads`].
+pub(super) struct ReadAhead {
+    pub(super) prepared: Prepared,
+    pub(super) chained: Vec<ChainedRead>,
+}
+
+/// The four values a recursive invocation is resolved from, kept so the
+/// composition can recognise the invocation a worker resolved for it.
+///
+/// Matched on rather than trusted by position, because position is a fact about
+/// two lists built in two places and this is a fact about the invocation itself.
+#[derive(PartialEq, Eq)]
+struct InvocationKey {
+    command: Vec<u8>,
+    make: Vec<u8>,
+    shell: Vec<u8>,
+    shell_flags: Vec<u8>,
+}
+
+impl InvocationKey {
+    /// What a worker resolved, as the composition will ask for it.
+    fn of(invocation: &sink::SubninjaInvocation) -> Self {
+        Self {
+            command: invocation.command.clone(),
+            make: invocation.make.clone(),
+            shell: invocation.shell.clone(),
+            shell_flags: invocation.shell_flags.clone(),
+        }
+    }
+
+    /// The same, as the population settled it before any of it reached a sink.
+    fn lifted(recursion: &kati::ninja::PopulatedRecursion) -> Self {
+        Self {
+            command: recursion.command.to_vec(),
+            make: recursion.make.to_vec(),
+            shell: recursion.shell.to_vec(),
+            shell_flags: recursion.shell_flags.to_vec(),
+        }
+    }
+}
+
+/// One recursive invocation of a unit, resolved and read by the worker that
+/// read the unit naming it.
+pub(super) struct ChainedRead {
+    invocation: InvocationKey,
+    child: ChildUnit,
+}
+
+/// Everything a worker needs to carry on reading past the unit it was given.
+///
+/// Cloned into each read rather than borrowed, because a read outlives the call
+/// that started it: the composition has moved on by the time the worker finishes
+/// and resolves the children it found.
+#[derive(Clone)]
+struct ChainPlan {
+    dispatcher: Dispatcher,
+    resolve: super::Resolver,
+    /// What an earlier pass told each unit it read, which is what this pass
+    /// tells it again.
+    read_units: std::sync::Arc<ReadJournals>,
+    /// Every unit whose read has been started, so that no unit is read twice.
+    claims: std::sync::Arc<std::sync::Mutex<HashSet<Vec<u8>>>>,
+    evaluation: kati::ninja::BuildEvaluation,
+}
+
+impl ChainPlan {
+    /// Say whether this cache key is ours to read, claiming it if it is.
+    ///
+    /// One unit is read once per pass however many recipes name it. The
+    /// composition gets that from its own cache of compiled subgraphs; a worker
+    /// cannot see that cache, and both sides claim here instead.
+    fn claim(&self, key: &[u8]) -> bool {
+        self.claims
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.to_vec())
+    }
+}
+
 /// One recursive child's Makefiles, read on a worker before the composition
 /// reached the recipe that asks for them.
 pub(super) struct ChildRead {
     pub(super) cache_key: Vec<u8>,
     pub(super) context: CompilationContext,
     /// Where the worker answers.
-    answer: std::sync::mpsc::Receiver<Option<Result<Prepared, MakeError>>>,
+    answer: std::sync::mpsc::Receiver<Option<Result<ReadAhead, MakeError>>>,
     /// What the read raised, held apart from the invocation's own descriptor
     /// so that two reads at once cannot interleave their warnings.
     raised: std::sync::Arc<kati::diagnostics::Diagnostics>,
@@ -547,6 +737,9 @@ pub(super) struct ChildRead {
     /// performed can still be performed here: exactly one side takes the
     /// session out, so the Makefiles are read exactly once either way.
     unread: std::sync::Arc<std::sync::Mutex<Option<Session>>>,
+    /// What the emission this read prepares will be asked to evaluate, for the
+    /// case where this thread ends up performing the read after all.
+    evaluation: kati::ninja::BuildEvaluation,
 }
 
 impl ChildRead {
@@ -557,32 +750,43 @@ impl ChildRead {
     /// this child, rather than as they were raised: that is what puts them back
     /// in the order the recipes were written in. A Makefile read early on a
     /// worker still belongs behind everything the recipes before it said, which
-    /// is where GNU Make would have put it.
-    pub(super) fn collect(self) -> Result<Prepared, MakeError> {
-        let prepared = if let Ok(Some(prepared)) = self.answer.recv() {
-            prepared
+    /// is where GNU Make would have put it. What the worker said while it
+    /// resolved this child's own children is in the same descriptor and behind
+    /// the read, which is where those words fall when the composition does the
+    /// resolving itself.
+    pub(super) fn collect(self) -> Result<ReadAhead, MakeError> {
+        let read = if let Ok(Some(read)) = self.answer.recv() {
+            read
         } else {
             // No worker read it. The session was left where either side could
-            // take it for exactly this, so the read happens here instead.
+            // take it for exactly this, so the read happens here instead — and
+            // nothing was read ahead for its children either.
             let unread = self
                 .unread
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .take();
             match unread {
-                Some(session) => evaluate_unit(session, &self.context.directory),
+                Some(session) => {
+                    evaluate_unit(session, &self.context.directory, self.evaluation, false).map(
+                        |prepared| ReadAhead {
+                            prepared,
+                            chained: Vec::new(),
+                        },
+                    )
+                }
                 None => Err(MakeError::Evaluate(
                     "reading a recursive Make child was abandoned".to_owned(),
                 )),
             }
         };
         self.context.diagnostics.absorb(&self.raised);
-        prepared.map(|mut prepared| {
+        read.map(|mut read| {
             // From here the session speaks for itself again: anything it says
             // while a recipe of it is expanded is said in the order the build
             // reaches it, and belongs in the invocation's own descriptor.
-            prepared.ev.session.diagnostics = std::sync::Arc::clone(&self.context.diagnostics);
-            prepared
+            read.prepared.ev.session.diagnostics = std::sync::Arc::clone(&self.context.diagnostics);
+            read
         })
     }
 }
@@ -608,8 +812,8 @@ impl ChildUnit {
 /// Composition is not moved. One graph is built by one thread in the order it
 /// was built in before, so every node, every edge and every invented name
 /// falls where it fell — the graph does not depend on what the workers did or
-/// when. Only the Makefile read moves, which is both the expensive half and the
-/// half that reaches no graph at all. See [`evaluate_unit`].
+/// when. Only the Makefile read moves, and the half of the emission that
+/// reaches no graph at all with it. See [`evaluate_unit`].
 ///
 /// A read may only start early if the composition is certain to reach it,
 /// because reading a Makefile runs its `$(shell)` calls and those are not
@@ -629,6 +833,17 @@ impl ChildUnit {
 /// stop the composition would leave every recipe after it unreached, and a read
 /// started for one of those would be a read GNU Make never did.
 ///
+/// # Where the reads come from
+///
+/// This one thread starts the reads for the unit it is composing. Everything
+/// deeper is started by the workers themselves: a worker that finishes a unit
+/// resolves the children that unit names and reads those too, so a subtree's
+/// reads are in flight long before the composition walks down to it. See
+/// [`chained_reads`]. What arrives here as `chained` is what the worker that
+/// read THIS unit already did for it, and where there is any of it this call
+/// resolves nothing and starts nothing: the invocations are matched against
+/// what the worker resolved, and each pending recipe takes its own.
+///
 /// # What reading early can still see differently
 ///
 /// Two things, both of which need `-j` greater than one to happen at all, and
@@ -640,7 +855,9 @@ impl ChildUnit {
 /// A descendant of an earlier recipe can stop the composition at a boundary,
 /// and then a read started here was one this pass did not need. The pass that
 /// follows reads it anyway, so no Makefile is read that this invocation was not
-/// going to read — it is read a pass earlier than it would have been.
+/// going to read — it is read a pass earlier than it would have been. Chaining
+/// widens that: the reads in flight when a boundary is reached are a subtree's
+/// worth rather than one recipe's.
 ///
 /// And a read that runs early sees the tree as it is early. Resolving an
 /// invocation looks for the child's default Makefile on disk, and the read
@@ -649,15 +866,16 @@ impl ChildUnit {
 /// the graph is built from still reaches the sink in recipe order, so the graph
 /// does not move — but which bytes a Makefile was read from can, exactly as it
 /// can for GNU Make's concurrent children.
-pub(super) fn read_ahead<F>(
+pub(super) fn read_ahead(
     ordered: &[sink::PendingSubninja],
-    resolve: &mut F,
+    resolve: super::Resolver,
     descendant_context: &CompilationContext,
     state: &CompilationState<'_>,
-) -> Vec<Option<ChildUnit>>
-where
-    F: FnMut(&[u8], &[u8], &[u8], &[u8], &CompilationContext) -> Result<Compilation, MakeError>,
-{
+    chained: Vec<ChainedRead>,
+) -> Vec<Option<ChildUnit>> {
+    if !chained.is_empty() {
+        return adopted(ordered, chained);
+    }
     // A run with no workers to read on, or a unit with nothing to overlap, is
     // answered on an integer comparison. Asked first, and before the shape of
     // the unit is examined at all, because this is the whole of what a `-j1`
@@ -679,9 +897,19 @@ where
     // worker.
     let Some(pool) = state
         .read_pool
-        .get_or_init(|| ReadPool::new(state.read_threads))
+        .get_or_init(|| ReadPool::new(state.read_threads).map(std::sync::Arc::new))
     else {
         return Vec::new();
+    };
+    let Some(dispatcher) = pool.dispatcher() else {
+        return Vec::new();
+    };
+    let plan = ChainPlan {
+        dispatcher: dispatcher.clone(),
+        resolve,
+        read_units: std::sync::Arc::clone(&state.read_units),
+        claims: std::sync::Arc::clone(&state.read_claims),
+        evaluation: state.evaluation,
     };
     // Every recipe is resolved here, in the order the recipes were written,
     // which is the order they were resolved in before. Resolving is not silent
@@ -702,7 +930,6 @@ where
     // one's wrapper. Read here instead, that work waits behind a read that does
     // not need it; read there, it is the read that waits.
     let mut started = Vec::with_capacity(ordered.len());
-    let mut claimed = HashSet::new();
     for pending in ordered {
         let invocation = &pending.invocations[0];
         started.push(Some(
@@ -715,11 +942,9 @@ where
             ) {
                 Err(refusal) => ChildUnit::Refused(refusal),
                 Ok(mut compilation) => {
-                    let claimable = !state.cache.contains_key(&compilation.cache_key)
-                        && claimed.insert(compilation.cache_key.clone());
-                    if claimable {
-                        prepare_session(&mut compilation, state.read_units);
-                        ChildUnit::Read(Box::new(start_read(pool, compilation)))
+                    if plan.claim(&compilation.cache_key) {
+                        prepare_session(&mut compilation, &plan.read_units);
+                        ChildUnit::Read(Box::new(start_read(&plan, compilation)))
                     } else {
                         ChildUnit::Unread(Box::new(compilation))
                     }
@@ -730,8 +955,114 @@ where
     started
 }
 
-/// Hand one prepared child compilation to a worker.
-fn start_read(pool: &ReadPool, compilation: Compilation) -> ChildRead {
+/// Line the reads a worker started up against the recipes they were started
+/// for.
+///
+/// Matched on the invocation rather than taken in order, because the two lists
+/// are built in two places — one from the populated nodes, the other from what
+/// those nodes' edges left in the sink — and a pending recipe whose invocation
+/// is not among them is simply one nothing was read for, which the composition
+/// resolves for itself.
+fn adopted(ordered: &[sink::PendingSubninja], chained: Vec<ChainedRead>) -> Vec<Option<ChildUnit>> {
+    let mut chained = chained.into_iter().map(Some).collect::<Vec<_>>();
+    ordered
+        .iter()
+        .map(|pending| {
+            let wanted = InvocationKey::of(pending.invocations.first()?);
+            let matched = chained
+                .iter()
+                .position(|read| read.as_ref().is_some_and(|read| read.invocation == wanted))?;
+            chained[matched].take().map(|read| read.child)
+        })
+        .collect()
+}
+
+/// Read the children one unit names, from the worker that has just read the
+/// unit itself.
+///
+/// This is what stops the reads being bounded by one recipe's fan-out. The
+/// composition dispatches the children of the unit it is composing and then
+/// waits for the first of them; everything below that would otherwise wait for
+/// the composition to walk down to it. Started here, a subtree's reads are in
+/// flight while the composition is still emitting the unit above them.
+///
+/// The gate is [`read_ahead`]'s, asked of the populated nodes instead of the
+/// sink's pending recipes, because the sink has not been written yet: see
+/// [`kati::ninja::PopulatedBuild::liftable_recursions`], which answers `None`
+/// unless every recursive recipe of the unit is one the composition is certain
+/// to reach.
+///
+/// What the resolutions say goes into `raised` with what the read said, and
+/// behind it, which is where those words fall when the composition resolves for
+/// itself. The children's own contexts get the real descriptor back, because a
+/// child's diagnostics belong wherever the composition puts them and not in the
+/// collection its parent's read is held in.
+fn chained_reads(
+    prepared: &Prepared,
+    context: &CompilationContext,
+    raised: &std::sync::Arc<kati::diagnostics::Diagnostics>,
+    plan: &ChainPlan,
+) -> Vec<ChainedRead> {
+    let Some(recursions) = prepared.recursions.as_ref() else {
+        return Vec::new();
+    };
+    if recursions.len() < 2
+        || !context_admits_early_reads(context)
+        || recursions
+            .iter()
+            .any(|recursion| runs_a_command_to_resolve(&recursion.command))
+    {
+        return Vec::new();
+    }
+    let mut descendant_context = context.clone();
+    descendant_context.makeflags.clone_from(&prepared.makeflags);
+    super::apply_exported_environment(&mut descendant_context.environment, &prepared.command_line);
+    super::apply_exported_environment(&mut descendant_context.environment, &prepared.exported);
+    super::apply_recipe_environment(
+        &mut descendant_context.recipe_environment,
+        &prepared.flag_environment,
+    );
+    super::apply_recipe_environment(
+        &mut descendant_context.recipe_environment,
+        &prepared.exported,
+    );
+    let reached = std::mem::replace(
+        &mut descendant_context.diagnostics,
+        std::sync::Arc::clone(raised),
+    );
+    let mut chained = Vec::with_capacity(recursions.len());
+    for recursion in recursions {
+        let child = match (plan.resolve)(
+            &recursion.command,
+            &recursion.make,
+            &recursion.shell,
+            &recursion.shell_flags,
+            &descendant_context,
+        ) {
+            Err(refusal) => ChildUnit::Refused(refusal),
+            Ok(mut compilation) => {
+                compilation.context.diagnostics = std::sync::Arc::clone(&reached);
+                if plan.claim(&compilation.cache_key) {
+                    prepare_session(&mut compilation, &plan.read_units);
+                    #[cfg(test)]
+                    CHAINED_READS_STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    ChildUnit::Read(Box::new(start_read(plan, compilation)))
+                } else {
+                    ChildUnit::Unread(Box::new(compilation))
+                }
+            }
+        };
+        chained.push(ChainedRead {
+            invocation: InvocationKey::lifted(recursion),
+            child,
+        });
+    }
+    chained
+}
+
+/// Hand one prepared child compilation to a worker, and let that worker carry
+/// on into the child's own children.
+fn start_read(plan: &ChainPlan, compilation: Compilation) -> ChildRead {
     #[cfg(test)]
     READS_STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let Compilation {
@@ -749,12 +1080,20 @@ fn start_read(pool: &ReadPool, compilation: Compilation) -> ChildRead {
     let unread = std::sync::Arc::new(std::sync::Mutex::new(Some(session)));
     let held = std::sync::Arc::clone(&unread);
     let directory = context.directory.clone();
-    let answer = pool.start(move || {
+    let evaluation = plan.evaluation;
+    let carried = plan.clone();
+    let below = context.clone();
+    let collecting = std::sync::Arc::clone(&raised);
+    let answer = plan.dispatcher.start(move || {
         let session = held
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .take();
-        session.map(|session| evaluate_unit(session, &directory))
+        session.map(|session| {
+            let prepared = evaluate_unit(session, &directory, evaluation, true)?;
+            let chained = chained_reads(&prepared, &below, &collecting, &carried);
+            Ok(ReadAhead { prepared, chained })
+        })
     });
     ChildRead {
         cache_key,
@@ -762,12 +1101,13 @@ fn start_read(pool: &ReadPool, compilation: Compilation) -> ChildRead {
         answer,
         raised,
         unread,
+        evaluation,
     }
 }
 
-/// Whether every recursive recipe of one unit is one a read may start early
-/// for. See [`read_ahead`].
-fn reads_may_start_early(ordered: &[sink::PendingSubninja], context: &CompilationContext) -> bool {
+/// Whether this invocation's surroundings allow a read to start before the
+/// composition reaches it. See [`read_ahead`].
+fn context_admits_early_reads(context: &CompilationContext) -> bool {
     // A report classifies invocations as it reaches them and tolerates a child
     // it cannot read; neither is worth teaching to happen out of order for a
     // path that is not the one under time pressure.
@@ -777,7 +1117,13 @@ fn reads_may_start_early(ordered: &[sink::PendingSubninja], context: &Compilatio
     // A descriptor that writes each warning through as it is raised has already
     // put it wherever the threads happened to put it. Only a held one can be
     // drained back into the order the recipes were written in.
-    if !context.diagnostics.is_collecting() {
+    context.diagnostics.is_collecting()
+}
+
+/// Whether every recursive recipe of one unit is one a read may start early
+/// for. See [`read_ahead`].
+fn reads_may_start_early(ordered: &[sink::PendingSubninja], context: &CompilationContext) -> bool {
+    if !context_admits_early_reads(context) {
         return false;
     }
     ordered.iter().all(|pending| {
