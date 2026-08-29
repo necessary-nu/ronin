@@ -1473,9 +1473,11 @@ fn session_for(
 /// and for a semantic subninja compiled inside this process.
 // [spec:ronin:req:make.recursive-invocation+2]
 fn record_invocation(session: &mut Session, name: &'static str, value: String) {
-    let environment = session
-        .invocation_environment
-        .get_or_insert_with(|| std::env::vars_os().collect());
+    let environment = std::sync::Arc::make_mut(
+        session
+            .invocation_environment
+            .get_or_insert_with(|| std::sync::Arc::new(std::env::vars_os().collect())),
+    );
     environment.retain(|(candidate, _)| candidate != name);
     environment.push((OsString::from(name), OsString::from(value)));
 }
@@ -2146,9 +2148,11 @@ fn record_invocation_variables(
     // Kati installs MAKEFLAGS as a file-origin recursive compiler variable.
     // Leaving an inherited environment binding beside it would make `-e`
     // incorrectly outrank that built-in definition.
-    let environment = session
-        .invocation_environment
-        .get_or_insert_with(|| std::env::vars_os().collect());
+    let environment = std::sync::Arc::make_mut(
+        session
+            .invocation_environment
+            .get_or_insert_with(|| std::sync::Arc::new(std::env::vars_os().collect())),
+    );
     environment.retain(|(candidate, _)| candidate != "MAKEFLAGS");
     // GNU Make empties `GNUMAKEFLAGS` rather than withdrawing it: `main` writes
     // `define_variable_cname (GNUMAKEFLAGS_NAME, "", o_env, 0)` the instant its
@@ -2187,7 +2191,8 @@ fn compilation_context(
     recipe_environment.extend(
         session
             .invocation_environment
-            .iter()
+            .as_deref()
+            .into_iter()
             .flatten()
             .find(|(name, _)| name == GNUMAKEFLAGS)
             .map(|(name, value)| (name.clone(), Some(value.clone()))),
@@ -2221,12 +2226,17 @@ fn compilation_context(
 }
 
 /// The environment a recursive child of this unit is compiled with.
-fn descendant_environment(session: &Session) -> Vec<(OsString, OsString)> {
+fn descendant_environment(session: &Session) -> std::sync::Arc<Vec<(OsString, OsString)>> {
     let mut environment = session
         .invocation_environment
         .clone()
-        .unwrap_or_else(|| std::env::vars_os().collect());
-    environment.retain(|(name, _)| name != MAKE_RESTARTS);
+        .unwrap_or_else(|| std::sync::Arc::new(std::env::vars_os().collect()));
+    // Copied only where the name is actually there to withdraw. A run that was
+    // never restarted — every run that is not remaking a Makefile — shares the
+    // snapshot it was handed instead of copying it to remove nothing.
+    if environment.iter().any(|(name, _)| name == MAKE_RESTARTS) {
+        std::sync::Arc::make_mut(&mut environment).retain(|(name, _)| name != MAKE_RESTARTS);
+    }
     environment
 }
 
@@ -2309,10 +2319,10 @@ mod tests {
     #[test]
     fn child_does_not_inherit_restart_count() {
         let mut session = Session::from_args(vec![OsString::from("make")]).expect("a taken argv");
-        session.invocation_environment = Some(vec![
+        session.invocation_environment = Some(std::sync::Arc::new(vec![
             (OsString::from(MAKE_RESTARTS), OsString::from("2")),
             (OsString::from("PATH"), OsString::from("/bin")),
-        ]);
+        ]));
         let environment = descendant_environment(&session);
         assert!(environment.iter().all(|(name, _)| name != MAKE_RESTARTS));
         assert!(environment.iter().any(|(name, _)| name == "PATH"));

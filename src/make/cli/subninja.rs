@@ -70,7 +70,7 @@ pub(in crate::make) fn compile(
         &parent.diagnostics,
         &parent.census,
     );
-    session.invocation_environment = Some(parent.environment.clone());
+    session.invocation_environment = Some(std::sync::Arc::clone(&parent.environment));
     let level = parent.level.saturating_add(1);
     record_invocation_variables(&mut session, &invocation, level, 0);
     carry_command_line_evals(&mut session, &invocation.evals);

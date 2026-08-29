@@ -195,10 +195,9 @@ pub fn load_makefile(session: Session, shuffle: Shuffle) -> Result<Loaded, MakeE
         key.push(0);
         key.extend_from_slice(makefile.as_encoded_bytes());
     }
-    let environment = session
-        .invocation_environment
-        .clone()
-        .unwrap_or_else(|| std::env::vars_os().collect::<Vec<_>>());
+    let environment = session.invocation_environment.clone().unwrap_or_else(|| {
+        std::sync::Arc::new(std::env::vars_os().collect::<Vec<(OsString, OsString)>>())
+    });
     let environment_value = |name: &str| {
         environment
             .iter()
@@ -358,7 +357,12 @@ pub(crate) struct CompilationContext {
     /// recursive children are counted against too. See [`read_ahead`].
     pub(crate) parallel_reads: usize,
     /// The environment this unit imports while kati evaluates it.
-    pub(crate) environment: Vec<(OsString, OsString)>,
+    ///
+    /// Shared with the child sessions compiled from it rather than copied into
+    /// each: see [`kati::Session::invocation_environment`]. A unit that exports
+    /// nothing — which is every unit of a tree that only dispatches — holds the
+    /// same allocation its parent does.
+    pub(crate) environment: std::sync::Arc<Vec<(OsString, OsString)>>,
     /// Changes child commands need in addition to the root build environment.
     pub(crate) recipe_environment: Vec<(OsString, Option<OsString>)>,
 }
@@ -1618,9 +1622,20 @@ fn dependency_ordered(
 /// Apply Make's `export`/`unexport` result to the environment imported by a
 /// semantic child compiler session.
 fn apply_exported_environment(
-    environment: &mut Vec<(OsString, OsString)>,
+    environment: &mut std::sync::Arc<Vec<(OsString, OsString)>>,
     changes: &[(OsString, Option<OsString>)],
 ) {
+    // A unit that exports nothing keeps its parent's environment rather than
+    // copying it to sort it back into the order it was already in. This is the
+    // common case and the whole point of sharing the snapshot: on a tree that
+    // only dispatches, no unit changes the environment its parent settled, so
+    // nothing below the root ever copies it.
+    if changes.is_empty() {
+        return;
+    }
+    // Only now is a copy owed, and `make_mut` is what makes it: the snapshot
+    // this unit shares with its parent becomes this unit's own.
+    let environment = std::sync::Arc::make_mut(environment);
     // The environment reaches here having just been cloned out of a parent's
     // context, so its capacity is exactly its length and the first name pushed
     // into it moves the whole of it. Asked for once, up front, rather than a
