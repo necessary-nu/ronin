@@ -70,10 +70,14 @@
 //! thread is 85% to 98% occupied from a twentieth of the way in, and the cores
 //! the run keeps busy went from 5.1 to 6.7.
 //!
-//! It also moved where the ceiling is. Before, `-j16` bought 12% over `-j8`;
-//! after, it buys nothing, because the composing thread is now the run's
-//! critical path rather than sitting under it. Anything taken off THAT thread
-//! is now wall at one to one.
+//! It also moved what the run is waiting on. The composing thread is now busy
+//! for 90% of the wall — 76.7 ms of 85.3 — where it was busy for half of a
+//! wall half as long again, so it is close to being the thing the run is
+//! bound by rather than sitting well under it, and work taken off THAT thread
+//! is worth about one to one against the wall while work taken off a worker is
+//! still divided by however many there are. It is not the ceiling yet: `-j16`
+//! still measures about 12% under `-j8`, as it did before, and the cores the
+//! run keeps busy went 5.4 to 6.3 at `-j8` and 6.9 to 7.6 at `-j16`.
 
 use std::sync::mpsc;
 
