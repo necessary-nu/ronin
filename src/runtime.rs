@@ -286,6 +286,21 @@ impl RuntimeState {
         state
     }
 
+    /// Exactly what [`Self::new`] would have made, in the allocations this one
+    /// already holds.
+    ///
+    /// [`Self::reset`] deliberately keeps what a scan was ASKED — `-B`, `-W`,
+    /// `-o` — because one state answers a graph twice under different switches
+    /// and the answer belongs to the scan rather than to the graph. A caller
+    /// recycling one state across scans that were asked DIFFERENT things wants
+    /// none of that carried over, and a fresh state carries none.
+    pub(crate) fn reset_asked(&mut self, graph: &Graph) {
+        self.always_make = false;
+        self.assumed_new = AssumedNodes::default();
+        self.assumed_old = AssumedNodes::default();
+        self.reset(graph);
+    }
+
     pub(crate) fn reset(&mut self, graph: &Graph) {
         self.nodes
             .resize(graph.node_ids().len(), NodeRuntime::default());

@@ -735,26 +735,33 @@ impl BuildGraph {
     }
 
     /// Evaluate one staged edge's timestamp freshness without executing it.
+    /// `runtime` is scratch: it is reset to what a fresh one holds before
+    /// anything reads it, so what the caller passes decides only which
+    /// allocation the scan uses. Passed in because one scan sizes its state to
+    /// the WHOLE graph while reading one edge's ancestors, and a composition
+    /// that stages a wrapper per unit would otherwise stand up a new one of
+    /// those per unit against a graph that grew with every unit before it.
     pub(crate) fn edge_dirty_with<F>(
         &self,
         edge: Edge,
         stat: &mut F,
         asserted: crate::runtime::AssertedDates<'_>,
+        runtime: &mut RuntimeState,
     ) -> Result<bool, crate::error::GraphError>
     where
         F: FnMut(&std::path::Path) -> std::io::Result<i64>,
     {
         let target = self.arenas.edge(edge.0).out[0];
-        let mut runtime = RuntimeState::new(&self.arenas);
+        runtime.reset_asked(&self.arenas);
         // `-W FILE` and `-o FILE` are answers about a file, and this question
         // is about a file, so both switches reach it. Resolved against the
         // graph here for the reason the build resolves them against its own:
         // the names were given to the invocation, and one the graph does not
         // hold answers about nothing.
-        asserted.mark_on(&self.arenas, &mut runtime);
+        asserted.mark_on(&self.arenas, runtime);
         recompute_dirty_with_validations(
             &self.arenas,
-            &mut runtime,
+            runtime,
             &mut TraversalScratch::default(),
             target,
             stat,

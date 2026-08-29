@@ -754,40 +754,60 @@ impl ChildRead {
     /// resolved this child's own children is in the same descriptor and behind
     /// the read, which is where those words fall when the composition does the
     /// resolving itself.
-    pub(super) fn collect(self) -> Result<ReadAhead, MakeError> {
-        let read = if let Ok(Some(read)) = self.answer.recv() {
-            read
-        } else {
-            // No worker read it. The session was left where either side could
-            // take it for exactly this, so the read happens here instead — and
-            // nothing was read ahead for its children either.
-            let unread = self
-                .unread
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .take();
-            match unread {
-                Some(session) => {
-                    evaluate_unit(session, &self.context.directory, self.evaluation, false).map(
-                        |prepared| ReadAhead {
+    /// The context hands itself back rather than being read through the read,
+    /// because the composition wants it too and it is not a cheap thing to have
+    /// twice: three shared handles, three paths, a string and four vectors, all
+    /// of which would be copied here and thrown away again on the one thread
+    /// every unit passes through.
+    ///
+    /// What the read is left holding — the answer channel, the descriptor it
+    /// raised into and the cell the session was offered through — is freed on
+    /// the reaper's thread for the same reason everything else a read leaves
+    /// behind is. See [`Reaper`].
+    pub(super) fn collect(
+        self,
+        reaper: Option<&Reaper>,
+    ) -> (CompilationContext, Result<ReadAhead, MakeError>) {
+        let Self {
+            cache_key,
+            context,
+            answer,
+            raised,
+            unread,
+            evaluation,
+        } = self;
+        let read =
+            if let Ok(Some(read)) = answer.recv() {
+                read
+            } else {
+                // No worker read it. The session was left where either side could
+                // take it for exactly this, so the read happens here instead — and
+                // nothing was read ahead for its children either.
+                let taken = unread
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .take();
+                match taken {
+                    Some(session) => evaluate_unit(session, &context.directory, evaluation, false)
+                        .map(|prepared| ReadAhead {
                             prepared,
                             chained: Vec::new(),
-                        },
-                    )
+                        }),
+                    None => Err(MakeError::Evaluate(
+                        "reading a recursive Make child was abandoned".to_owned(),
+                    )),
                 }
-                None => Err(MakeError::Evaluate(
-                    "reading a recursive Make child was abandoned".to_owned(),
-                )),
-            }
-        };
-        self.context.diagnostics.absorb(&self.raised);
-        read.map(|mut read| {
+            };
+        context.diagnostics.absorb(&raised);
+        let read = read.map(|mut read| {
             // From here the session speaks for itself again: anything it says
             // while a recipe of it is expanded is said in the order the build
             // reaches it, and belongs in the invocation's own descriptor.
-            read.prepared.ev.session.diagnostics = std::sync::Arc::clone(&self.context.diagnostics);
+            read.prepared.ev.session.diagnostics = std::sync::Arc::clone(&context.diagnostics);
             read
-        })
+        });
+        discard(reaper, (cache_key, answer, raised, unread));
+        (context, read)
     }
 }
 
@@ -802,7 +822,44 @@ impl ChildUnit {
             Self::Refused(_) => &[],
         }
     }
+
+    /// What this unit is cached under, and the read that will answer for it.
+    ///
+    /// Either a worker already read it while an earlier recipe of the same
+    /// parent was being composed, or nothing has read it and the composition
+    /// reads it. Both go through the same prepared session and produce the same
+    /// value; the only difference is which thread paid for it.
+    ///
+    /// An unread unit carries its context out beside the session, because it is
+    /// the composition that needs it. A started read leaves its own where it is
+    /// until [`ChildRead::collect`] hands it back, so neither is copied.
+    pub(super) fn claim(self, state: &super::CompilationState<'_>) -> Result<Claimed, MakeError> {
+        Ok(match self {
+            Self::Refused(error) => return Err(error),
+            Self::Unread(compilation) => {
+                let mut compilation = *compilation;
+                let cache_key = compilation.cache_key.clone();
+                let context = compilation.context.clone();
+                prepare_session(&mut compilation, &state.read_units);
+                state
+                    .read_claims
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .insert(cache_key.clone());
+                (cache_key, Err((compilation.session, context)))
+            }
+            // The key is taken rather than copied: a started read holds the only
+            // copy of it and nothing reads it through the read again.
+            Self::Read(mut read) => (std::mem::take(&mut read.cache_key), Ok(read)),
+        })
+    }
 }
+
+/// What [`ChildUnit::claim`] answers with.
+pub(super) type Claimed = (
+    Vec<u8>,
+    Result<Box<ChildRead>, (Session, CompilationContext)>,
+);
 
 /// Start reading the Makefiles of every recursive recipe of one unit, so that
 /// none of them is read on the thread that composes.

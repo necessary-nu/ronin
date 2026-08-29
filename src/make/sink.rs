@@ -222,6 +222,14 @@ pub struct GraphSink {
     /// Non-phony rule used only while deciding whether a recursive wrapper's
     /// recipe is current. It is never allowed to execute.
     subninja_probe: Rule,
+    /// The scan state that decision uses, kept from one wrapper to the next.
+    ///
+    /// Holds nothing between uses: it is reset to what a fresh one holds before
+    /// each scan reads it, so all it carries across is the allocation. See
+    /// [`crate::frontend::BuildGraph::edge_dirty_with`], which sizes it to the
+    /// whole graph — a composition staging one wrapper per unit against a graph
+    /// that grows with every unit pays for that sizing once per unit.
+    subninja_freshness: crate::runtime::RuntimeState,
     /// kati's rule handles to Ronin's. kati mints one rule per edge and
     /// declares it immediately before that edge, so this holds one entry for
     /// as long as it takes to reach the edge that names it.
@@ -309,6 +317,7 @@ impl GraphSink {
             .expect("the internal recursive-freshness rule is unique");
         Self {
             graph,
+            subninja_freshness: crate::runtime::RuntimeState::default(),
             root_directory: root_directory.to_owned(),
             unit: Unit {
                 scope,
@@ -684,7 +693,10 @@ impl GraphSink {
     where
         F: FnMut(&Path) -> std::io::Result<i64>,
     {
-        if self.graph.edge_dirty_with(edge, stat, asserted)? {
+        if self
+            .graph
+            .edge_dirty_with(edge, stat, asserted, &mut self.subninja_freshness)?
+        {
             return Ok(true);
         }
         self.graph.set_edge_rule(edge, self.phony);

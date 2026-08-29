@@ -26,7 +26,7 @@ pub(crate) mod cli;
 mod interrupts;
 mod layout;
 mod parallel;
-use parallel::{ChainedRead, ChildUnit, evaluate_unit, prepare_session, read_ahead};
+use parallel::{ChainedRead, ChildUnit, evaluate_unit, read_ahead};
 mod recipe;
 mod report;
 mod sink;
@@ -607,6 +607,9 @@ struct CompilationState<'a> {
     /// ahead of the composition cannot see that cache, so this is what it asks
     /// instead. Shared, because both sides claim into it.
     read_claims: std::sync::Arc<std::sync::Mutex<HashSet<Vec<u8>>>>,
+    /// The build root a composed unit last asked its wrappers' dates of, and
+    /// the disk that answers for it. See [`freshness_disk`].
+    freshness_disk: Option<(PathBuf, crate::os::RealDiskInterface)>,
 }
 
 /// One unit's unexpanded recipes and everything expanding them will need,
@@ -837,6 +840,7 @@ fn load_with_subninjas_unlocked(
         read_threads: root.context.parallel_reads,
         evaluation: kati::ninja::BuildEvaluation::of(&sink),
         read_claims: std::sync::Arc::default(),
+        freshness_disk: None,
     };
     let root = compile_unit(
         ChildUnit::Unread(Box::new(root)),
@@ -1004,55 +1008,49 @@ fn compile_unit(
     resolve: Resolver,
     state: &mut CompilationState<'_>,
 ) -> Result<CompiledUnit, MakeError> {
-    // Either a worker already read this unit while an earlier recipe of the
-    // same parent was being composed, or nothing has read it and it is read
-    // here. Both go through the same prepared session and produce the same
-    // value; the only difference is which thread paid for it.
-    let (compilation_key, context, read_ahead) = match child {
-        ChildUnit::Refused(error) => return Err(error),
-        ChildUnit::Unread(compilation) => {
-            let mut compilation = *compilation;
-            let compilation_key = compilation.cache_key.clone();
-            let context = compilation.context.clone();
-            prepare_session(&mut compilation, &state.read_units);
-            state
-                .read_claims
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .insert(compilation_key.clone());
-            (compilation_key, context, Err(compilation.session))
-        }
-        ChildUnit::Read(read) => (read.cache_key.clone(), read.context.clone(), Ok(*read)),
-    };
+    let (compilation_key, read_ahead) = child.claim(state)?;
     if !state.compiling.insert(compilation_key.clone()) {
         return Err(MakeError::Evaluate(
             "recursive Make compilation includes itself".to_owned(),
         ));
     }
+    // `None` until the first unit that read ahead started the pool, and for the
+    // whole of a run that never starts one — a serial compilation frees exactly
+    // where it froze before the pool existed.
+    // The handle is taken out of `state` rather than borrowed from it, because
+    // what it frees is handed over after the composition has finished with the
+    // unit and `state` is wanted mutably in between.
+    let pool = state
+        .read_pool
+        .get()
+        .and_then(Option::as_ref)
+        .map(std::sync::Arc::clone);
+    let reaper = pool.as_deref().and_then(parallel::ReadPool::reaper);
     // What a worker read ahead for the children of THIS unit while it was
     // reading this unit, which the composition below adopts rather than
     // resolving and reading again. Empty where nothing read ahead.
     let mut chained = Vec::new();
-    let evaluated = match read_ahead {
-        Ok(read) => read.collect().map(|read| {
-            chained = read.chained;
-            read.prepared
-        }),
-        Err(session) => evaluate_unit(
-            session,
-            &context.directory,
-            state.evaluation,
-            state.read_threads >= 2,
-        ),
+    let (context, evaluated) = match read_ahead {
+        Ok(read) => {
+            let (context, read) = read.collect(reaper);
+            (
+                context,
+                read.map(|read| {
+                    chained = read.chained;
+                    read.prepared
+                }),
+            )
+        }
+        Err((session, context)) => {
+            let evaluated = evaluate_unit(
+                session,
+                &context.directory,
+                state.evaluation,
+                state.read_threads >= 2,
+            );
+            (context, evaluated)
+        }
     };
-    // `None` until the first unit that read ahead started the pool, and for the
-    // whole of a run that never starts one — a serial compilation frees exactly
-    // where it froze before the pool existed.
-    let reaper = state
-        .read_pool
-        .get()
-        .and_then(Option::as_ref)
-        .and_then(|pool| pool.reaper());
     let read = evaluated.and_then(|evaluated| {
         in_directory(&context.directory, || {
             read_unit(evaluated, sink, parent_scope, &context, reaper)
@@ -1099,6 +1097,11 @@ fn compile_unit(
         chained,
     );
     state.compiling.remove(&compilation_key);
+    // Three shared handles, three paths, a string and four vectors, and the
+    // children that wanted them have been composed. Freed on the reaper's
+    // thread for the reason everything else a read leaves behind is: this one
+    // is walked once per unit on the one thread every unit passes through.
+    parallel::discard(reaper, (descendant_context, compilation_key));
     let composed = composed?;
     // A recursive recipe's own lines reach their edges while the children are
     // composed, which is after this unit's edges were claimed.
@@ -1127,7 +1130,7 @@ fn compose_subninjas(
         edges,
     } = unit;
     let mut subtree_edges = edges;
-    let disk = freshness_disk(descendant_context)?;
+    let disk = freshness_disk(descendant_context, state)?;
     let ordered = dependency_ordered(subninjas, sink);
     let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, chained);
     for (pending_index, mut pending) in ordered.into_iter().enumerate() {
@@ -1467,7 +1470,32 @@ const fn incomplete_unit(targets: Vec<Node>, edges: Vec<Edge>) -> ComposedUnit {
     }
 }
 
-fn freshness_disk(context: &CompilationContext) -> Result<crate::os::RealDiskInterface, MakeError> {
+/// The disk a unit's recursive wrappers ask about their targets' dates.
+///
+/// Held from one unit to the next in `state`. Standing one up walks every
+/// component of the build root with the kernel — `realpath` and a `stat` on top
+/// of it — and then opens the directory to hold it for relative stats, and the
+/// build root is one directory for the whole compilation: every unit below the
+/// first was asking the same question of the same path and paying the same
+/// syscalls for the same answer. The interface shares its open descriptor
+/// across clones, so the compilation now opens the root once rather than once
+/// per unit as well.
+///
+/// Keyed by the root the context names rather than assumed constant, so a unit
+/// that arrives with a different root gets its own answer. What the memo does
+/// change is that the build root's existence is read at the first unit that
+/// asks and not again: a root removed midway through a composition is no longer
+/// noticed by the unit that trips over it, which is the same answer the
+/// composition would have given had that unit been composed first.
+fn freshness_disk(
+    context: &CompilationContext,
+    state: &mut CompilationState<'_>,
+) -> Result<crate::os::RealDiskInterface, MakeError> {
+    if let Some((root, disk)) = &state.freshness_disk
+        && root == &context.root_directory
+    {
+        return Ok(disk.clone());
+    }
     let working_directory = if context.root_directory.as_os_str().is_empty() {
         crate::os::WorkingDirectory::default()
     } else {
@@ -1477,7 +1505,9 @@ fn freshness_disk(context: &CompilationContext) -> Result<crate::os::RealDiskInt
             ))
         })?
     };
-    Ok(crate::os::RealDiskInterface::new(working_directory))
+    let disk = crate::os::RealDiskInterface::new(working_directory);
+    state.freshness_disk = Some((context.root_directory.clone(), disk.clone()));
+    Ok(disk)
 }
 
 enum RecursiveWrapper {
@@ -1590,6 +1620,11 @@ fn apply_exported_environment(
     environment: &mut Vec<(OsString, OsString)>,
     changes: &[(OsString, Option<OsString>)],
 ) {
+    // The environment reaches here having just been cloned out of a parent's
+    // context, so its capacity is exactly its length and the first name pushed
+    // into it moves the whole of it. Asked for once, up front, rather than a
+    // growth per name.
+    environment.reserve(changes.len());
     for (name, value) in changes {
         environment.retain(|(candidate, _)| candidate != name);
         if let Some(value) = value {
@@ -1605,6 +1640,8 @@ fn apply_recipe_environment(
     environment: &mut Vec<(OsString, Option<OsString>)>,
     changes: &[(OsString, Option<OsString>)],
 ) {
+    // Reserved for the reason the exported environment is: see above.
+    environment.reserve(changes.len());
     for (name, value) in changes {
         environment.retain(|(candidate, _)| candidate != name);
         environment.push((name.clone(), value.clone()));
