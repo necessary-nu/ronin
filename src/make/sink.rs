@@ -17,7 +17,9 @@ use kati::build_sink::{
 use kati::bytes::Bytes;
 use kati::strutil::escape_shell;
 use kati::symtab::{Interner, Symbol};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
+
+use crate::htab::{RapidHashMap, RapidHashSet};
 use std::ffi::{OsStr, OsString};
 use std::num::NonZeroUsize;
 use std::os::unix::ffi::OsStrExt;
@@ -233,31 +235,31 @@ pub struct GraphSink {
     /// kati's rule handles to Ronin's. kati mints one rule per edge and
     /// declares it immediately before that edge, so this holds one entry for
     /// as long as it takes to reach the edge that names it.
-    rules: HashMap<RuleId, Rule>,
+    rules: RapidHashMap<RuleId, Rule>,
     /// Rules whose recipe kati left unexpanded, waiting for the edge that
     /// names them so the recipe can be recorded against the edge instead.
-    deferred_rules: HashMap<RuleId, DeferredRecipeId>,
+    deferred_rules: RapidHashMap<RuleId, DeferredRecipeId>,
     /// Edges whose command this graph's own executor will ask for when it is
     /// about to run them.
     deferred_edges: Vec<(Edge, DeferredRecipeId)>,
     /// The launches a recipe read while compiling became, waiting for the edge
     /// that names their rule.
-    settled_rules: HashMap<RuleId, SettledSteps>,
+    settled_rules: RapidHashMap<RuleId, SettledSteps>,
     /// Rules whose recipe reaches one shell as a whole script, waiting for the
     /// edge whose output names the response file that script may be read from.
-    settled_scripts: HashMap<RuleId, SettledScript>,
+    settled_scripts: RapidHashMap<RuleId, SettledScript>,
     /// Edges whose recipe was read while compiling and which still run a
     /// process per command line.
     settled_edges: Vec<(Edge, SettledSteps)>,
     /// Recursive rules are not executor rules. They wait for their immediately
     /// following edge so the compiler can replace that edge with graph
     /// composition.
-    subninja_rules: HashMap<RuleId, SubninjaRule>,
+    subninja_rules: RapidHashMap<RuleId, SubninjaRule>,
     /// kati's symbols to Ronin's nodes, so a path shared by many edges is
     /// canonicalized and interned once.
-    interned: HashMap<Symbol, Node>,
-    observed_members: HashMap<Symbol, Node>,
-    declared_pools: HashSet<Vec<u8>>,
+    interned: RapidHashMap<Symbol, Node>,
+    observed_members: RapidHashMap<Symbol, Node>,
+    declared_pools: RapidHashSet<Vec<u8>>,
     completion_proxies: usize,
     recipe_stages: usize,
     serial_units: usize,
@@ -334,16 +336,16 @@ impl GraphSink {
             bindings,
             phony,
             subninja_probe,
-            rules: HashMap::new(),
-            deferred_rules: HashMap::new(),
+            rules: RapidHashMap::default(),
+            deferred_rules: RapidHashMap::default(),
             deferred_edges: Vec::new(),
-            settled_rules: HashMap::new(),
-            settled_scripts: HashMap::new(),
+            settled_rules: RapidHashMap::default(),
+            settled_scripts: RapidHashMap::default(),
             settled_edges: Vec::new(),
-            subninja_rules: HashMap::new(),
-            interned: HashMap::new(),
-            observed_members: HashMap::new(),
-            declared_pools: HashSet::new(),
+            subninja_rules: RapidHashMap::default(),
+            interned: RapidHashMap::default(),
+            observed_members: RapidHashMap::default(),
+            declared_pools: RapidHashSet::default(),
             completion_proxies: 0,
             recipe_stages: 0,
             serial_units: 0,
