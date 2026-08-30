@@ -371,6 +371,75 @@ fn an_unmoved_stamp_rebuilds_nothing() {
     );
 }
 
+/// The same claim about a target whose whole recipe is the recursion. zsh's
+/// generated `Src/Modules/Makefile` puts one in front of every module that
+/// reads a sibling directory's header: `$(dir_top)/Src/Zle/complete.mdh: FORCE`
+/// re-enters `Src/Zle` on every single invocation, and GNU Make then reads the
+/// file that child left exactly where it found it and remakes nothing behind
+/// it — `Prerequisite '../../Src/Zle/complete.mdh' is older than target
+/// 'zutil.mdh'`, on a run where it had just said `Must remake target
+/// '../../Src/Zle/complete.mdh'`.
+///
+/// Composed into the parent graph, such a recipe runs out of commands: the
+/// child's edges are the work and the parent's edge is left with none. The
+/// second look has to survive that, or the always-out-of-date prerequisite
+/// cascades through everything reading the target, on every invocation for
+/// ever. It cost zsh a `zutil.c` compile and a `zutil.so` link a build.
+// [spec:ronin:req:make.remade-target-re-observed/test]
+// [spec:ronin:req:make.recursive-invocation+2/test]
+#[test]
+fn a_forced_recursion_that_moves_nothing_rebuilds_nothing() {
+    let directory = test_directory("forced-recursion-no-cascade");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: consumer\n\
+         consumer: sub/target\n\
+         \t@echo run >> consumer.runs\n\
+         \t@touch consumer\n\
+         sub/target: FORCE\n\
+         \t@cd sub && $(MAKE) target\n\
+         FORCE:\n\
+         .PHONY: FORCE\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("sub/Makefile"),
+        "target: source\n\t@cp source target\n",
+    )
+    .unwrap();
+    write_at(&directory, "sub/source", "source\n", 100);
+    write_at(&directory, "sub/target", "source\n", 150);
+    write_at(&directory, "consumer", "built\n", 200);
+
+    for invocation in 1..=3 {
+        let output = make_command(&directory).output().unwrap();
+        let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "invocation {invocation}: {reported}"
+        );
+        assert!(
+            !directory.join("consumer.runs").exists(),
+            "invocation {invocation} remade consumer though the recursion moved nothing: {reported}"
+        );
+    }
+
+    // The other half, as above: re-observing is not never rebuilding. A child
+    // that does move its target reaches what reads it through the parent.
+    write_at(&directory, "sub/source", "moved\n", 300);
+    let output = make_command(&directory).output().unwrap();
+    let reported = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{reported}");
+    assert_eq!(
+        fs::read_to_string(directory.join("consumer.runs")).unwrap(),
+        "run\n",
+        "a recursion that does move its target must remake what reads it: {reported}"
+    );
+}
+
 /// Zstd's object rules consist of nothing but GNU Make's built-in compile
 /// variables. Undefined, the C rule lost both its compiler and its output
 /// argument and ran `MMD`; the assembler rule became the source path alone and

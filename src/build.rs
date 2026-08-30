@@ -1881,9 +1881,29 @@ impl<'a> Builder<'a> {
     ///
     /// Under `-t` that target is touched before the second look, because a
     /// recipe coming to nothing is still a recipe the touch stands in for.
+    ///
+    /// A target whose whole recipe was composed into child graphs is settled
+    /// the same way, and for the same reason. Nothing is left for it to run
+    /// once the children have run, so it arrives here commandless — but the
+    /// name it makes is a file on disk, not an alias, and GNU Make reads that
+    /// file again once the recursion has finished with it. Skipping the second
+    /// look leaves whatever forced the recursion — zsh's `X.mdh: FORCE`, and
+    /// every other always-out-of-date prerequisite standing in front of a
+    /// `$(MAKE)` — cascading through targets the child left exactly where it
+    /// found them, on every invocation forever.
+    ///
+    /// Not, however, a target the Makefile declared `.PHONY`. GNU Make does
+    /// not stat one of those and neither does the command path beside this
+    /// one, and a recursive tree is full of them: `$(SUBDIRS): ; $(MAKE) -C
+    /// $@` names a directory that is on the disk and is not a file the build
+    /// makes, so reading its date would settle every consumer against the
+    /// wrong thing — and pay a dirty recomputation per subdirectory to do it.
     fn finish_phony_edge(&mut self, edge: EdgeId) -> BuildResult<(bool, Vec<NodeId>)> {
         self.touch_the_recipe_that_ran_nothing(edge)?;
-        let reobserve = self.graph.edge(edge).outputs_unaliased && !self.options.dryrun;
+        let stored = self.graph.edge(edge);
+        let reobserve = (stored.outputs_unaliased
+            || (stored.outputs_reobserved && !stored.always_dirty))
+            && !self.options.dryrun;
         let outputs: Vec<NodeId> = self.graph.edge(edge).out.to_vec();
         let mut every_output_made = true;
         if reobserve {
