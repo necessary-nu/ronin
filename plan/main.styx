@@ -20500,13 +20500,36 @@ children (
         id the-shell-costs-more-to-build-than-the-command-costs-to-run
         title "Take upstream's cheaper shell construction, six invocations a build"
         kind @perf
-        deps (the-expression-scan-questions-every-literal-byte)
+        deps (the-c-librarys-allocator-is-a-sixth-of-a-make-run)
     }
 
     {
         id the-c-librarys-allocator-is-a-sixth-of-a-make-run
         title "Install an allocator built for what evaluating a Makefile allocates"
         kind @perf
-        deps (the-shell-costs-more-to-build-than-the-command-costs-to-run)
+        deps (the-expression-scan-questions-every-literal-byte)
+        sealed true
+        log (
+            {
+                at 2026-08-30T23:34:27.307351023Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-30T23:34:49.227167023Z
+                author "brendan@necessary.nu"
+                kind @decision
+                text "THE ONE THE CAMPAIGN HAS BEEN PARKING, unparked by the operator and written up as [dec:ronin:allocator-is-not-the-c-librarys].\n\nWHY THERE WAS NOTHING ELSE TO DO. A flat profile of the vim `src` sub-make after the two cuts before this one: `free` 4.56%, `_int_malloc` 3.96%, `malloc_consolidate` 2.99%, `malloc` 2.66%, `_int_free_chunk` 1.57%, `unlink_chunk` 1.57%, `realloc` 0.91%, `_int_realloc` 0.71% — 18.9% of user cycles, and the DWARF call graph attributes them to dozens of callers with none above 1%. `parse_expr_impl_ext` is the largest at 0.86% of `_int_malloc`. There is no site to fix. The traffic IS the work: an expression tree per line, a dependency node per target, a name per symbol, built and dropped inside a process that lives milliseconds. `malloc_consolidate` at 3.0% is glibc merging free chunks back into its bins and is pure overhead of that shape.\n\nTHE THREE-WAY MEASUREMENT, same tree, same host, `perf stat -e instructions:u -r 20`, vim-noop from the top which is the gated row:\n\n  GNU Make 4.4.1     48.658M    1.000x\n  glibc             104.3M      2.14x\n  jemalloc           93.986M    1.932x\n  mimalloc           89.037M    1.830x\n\nand the vim `src` sub-make, 80% of that row's gap: glibc 81.926M, jemalloc 75.404M, mimalloc 71.608M. jemalloc was measured because kati already vendors it behind an off-by-default feature, so it was the dependency already in the audited set; it is better than glibc on both and worse than mimalloc on both.\n\nWHAT IT COSTS, AND IT IS NOT NOTHING. `sh -c 'true'` goes 437.7k instructions to 653.8k, +49%. All of it is mimalloc's `_mi_options_init`, which walks about fifty options on process load calling `getenv` once or twice each, and each call scans the whole environment with a case-insensitive compare — so the constant rises with the size of the environment the recipe inherited. Profiled to be sure: `getenv` 2.28%, `_mi_strnicmp` 2.07%, `_mi_strlcpy` 1.21% of the shell's run. Nothing in the shell's own work got slower, and there is no compile-time switch for it in the vendored sources. Ronin runs as its own `/bin/sh` once per recipe line, so this is the decision's weak point and it is written into the record rather than left to be discovered.\n\nEvery workload measured still comes out ahead, including vim-noop, which starts SEVEN shells and improves by 15.2M instructions net of all of them.\n\nTWO THINGS THE CHANGE BROKE THAT THE MEASUREMENT DID NOT SHOW, both found by the gates. `scripts/check-ninja-conformance.sh` type-checks the library for `x86_64-pc-windows-gnu`, and mimalloc is the only dependency here that compiles C: an unqualified `[dependencies]` entry made that gate die in `cc-rs` looking for `x86_64-w64-mingw32-gcc`. It is under `[target.'cfg(unix)'.dependencies]` beside `kati` and `nsh` for that reason, with `#[cfg(unix)]` on the static. And the closure had to be proven proc-macro-free for crt-static — `cargo tree -e normal,build` finds no `syn`, `quote` or `proc-macro2`, and the release build succeeding under `+crt-static` is the harder proof."
+            }
+
+            {
+                at 2026-08-30T23:34:57.794168123Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
     }
 )

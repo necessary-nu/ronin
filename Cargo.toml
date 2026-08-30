@@ -55,6 +55,22 @@ tempfile = "3"
 # feature that only its own `rkati` binary asks for, so nothing on this side
 # has to remember to opt out of a C build it never wanted.
 kati = { path = "kati", version = "0.1.0", optional = true }
+# The binary's allocator, installed in src/main.rs. Evaluating a Makefile is
+# many small allocations built and dropped inside a process that lives for
+# milliseconds, and the C library's allocator was 18.9% of the vim `src`
+# sub-make's user cycles with no caller above 1% — see
+# plan/decisions/allocator-is-not-the-c-librarys.md for the measurement, the
+# jemalloc comparison, and what it costs the shell path.
+#
+# Unix-only, which is where it was measured and where Make mode exists at all.
+# It is also the one dependency here that compiles C, and the Windows type
+# check in scripts/check-ninja-conformance.sh has no cross toolchain to build
+# it with: an unqualified entry breaks that gate rather than the build.
+#
+# `default-features = false` is written out although the default feature set is
+# empty: `override`, `secure` and `debug` are all there to be asked for, and
+# saying so keeps a later `features = [...]` from quietly turning one on.
+mimalloc = { version = "0.1", default-features = false }
 # The shell Ronin runs commands under, rather than the one the machine
 # happens to have. A git dependency because nsh is upstream with its own plan
 # discipline — a fix there arrives here as a lock bump, not as a commit from

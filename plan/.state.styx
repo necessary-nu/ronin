@@ -979,6 +979,7 @@ assertions (
     {id the-symbol-maps-hash-an-index-with-siphash, kind @complete, author "brendan@necessary.nu", at 2026-08-30T23:27:01.078642698Z}
     {id siphash-still-hashes-a-byte-a-word-and-a-name, kind @complete, author "brendan@necessary.nu", at 2026-08-30T23:27:30.706075184Z}
     {id the-expression-scan-questions-every-literal-byte, kind @complete, author "brendan@necessary.nu", at 2026-08-30T23:29:21.619424483Z}
+    {id the-c-librarys-allocator-is-a-sixth-of-a-make-run, kind @complete, author "brendan@necessary.nu", at 2026-08-30T23:34:57.794168123Z}
 )
 
 impl_evidence (
