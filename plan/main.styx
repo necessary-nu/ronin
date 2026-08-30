@@ -20501,6 +20501,29 @@ children (
         title "Take upstream's cheaper shell construction, six invocations a build"
         kind @perf
         deps (the-c-librarys-allocator-is-a-sixth-of-a-make-run)
+        sealed true
+        log (
+            {
+                at 2026-08-30T23:56:03.746480965Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-30T23:56:23.214767069Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "THE NUMBER `the-symbol-maps-hash-an-index-with-siphash` HANDED UPSTREAM, taken. That node measured `nsh::builder::Builder::build` at 47.78% INCLUSIVE of every `sh -c` this binary runs as its own shell and filed it rather than working around it, per [dec:ronin:builtin-shell]. It is fixed upstream and arrives here as a lock bump and nothing else: cd93991 to 9c3f343.\n\nWHAT UPSTREAM FOUND, because the number alone did not say it. `Locale::is_alpha` and `is_alphanumeric` wrap the C library's `isalpha`/`isalnum` in a `uselocale` in and a `uselocale` back — per byte. `valid_name` asks per byte of a name, the environment import asks `valid_name` per variable, and `set_entry` asks it AGAIN for the same name, so importing fifty variables was on the order of a thousand locale selections establishing that ordinary letters are letters. A locale object is immutable after `newlocale`, so the answer is a property of the handle: it is now a 256-entry table filled under one selection, lazily, because building a shell constructs seven locales and keeps one. Beside it, `set_entry` cloned the whole variable — value included — to read three flags, then inserted it over itself with a fresh copy of the name; and `Locale::new` issued a separate `newlocale` per category, so a shell selecting all six through one `LANG` loaded the same locale data six times.\n\nPAIRED, both arms identical but for the lock rev, both through this binary's multicall so the allocator is the same on each side, `perf stat -e instructions:u`:\n\n  sh -c 'true'                          816,940 -> 663,912   -18.7%\n  if test -n \"\" -a -f po/Makefile; ...  890,314 -> 738,759   -17.0%\n  dash 0.5.13.5, sh -c 'true'           217,423\n\nAbout 152k instructions of constant off every shell this tool starts. Six process images a gated vim no-op are shells, so roughly 0.9M of that row; a build whose recipes are one line each pays it once per line.\n\nA FOURTH CUT WAS MEASURED AND NOT TAKEN, upstream's decision and worth knowing here: taking the environment snapshot's bytes out of the owned `OsString` rather than copying them is worth about 10k an invocation, and it added a function to a file nsh's `function-density` gate holds at its current count. It needs that file split first.\n\nSTILL 3.0x DASH. What is left, from a profile of the new shell: `__memcmp_avx2_movbe` at 7.6% is `BTreeMap<BString, Variable>` probing — `set_bytes` takes four probes per variable and two of them exist only to discover that an ordinary name carries no Bash attributes. An 8,209-byte zeroed input frame and ten `fcntl` descriptor snapshots are allocated and never read by a `-c` invocation."
+            }
+
+            {
+                at 2026-08-30T23:56:31.402983937Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
     }
 
     {

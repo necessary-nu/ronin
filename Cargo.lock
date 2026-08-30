@@ -252,7 +252,7 @@ dependencies = [
 [[package]]
 name = "nsh"
 version = "0.1.0"
-source = "git+https://github.com/necessary-nu/nsh?branch=master#cd9399150af8df613e69514d68e97c7867505c15"
+source = "git+https://github.com/necessary-nu/nsh?branch=master#9c3f34344b2207d98fe377713960d75161ec7460"
 dependencies = [
  "bstr",
  "nsh-platform",
@@ -261,7 +261,7 @@ dependencies = [
 [[package]]
 name = "nsh-platform"
 version = "0.1.0"
-source = "git+https://github.com/necessary-nu/nsh?branch=master#cd9399150af8df613e69514d68e97c7867505c15"
+source = "git+https://github.com/necessary-nu/nsh?branch=master#9c3f34344b2207d98fe377713960d75161ec7460"
 dependencies = [
  "libc",
  "ntapi",
