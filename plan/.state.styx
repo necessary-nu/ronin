@@ -976,6 +976,7 @@ assertions (
     {id the-chain-search-answers-a-boolean-and-build-plan-derives-it-again, kind @complete, author "brendan@necessary.nu", at 2026-08-28T13:25:23.47631789Z}
     {id the-make-front-end-reads-one-makefile-at-a-time, kind @doing, author "brendan@necessary.nu", at 2026-08-28T14:51:58.925715335Z}
     {id the-composition-stops-where-gnu-make-stops, kind @doing, author "brendan@necessary.nu", at 2026-08-30T18:47:10.999541411Z}
+    {id the-symbol-maps-hash-an-index-with-siphash, kind @doing, author "brendan@necessary.nu", at 2026-08-30T21:03:14.520534759Z}
 )
 
 impl_evidence (
