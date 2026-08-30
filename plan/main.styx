@@ -20385,4 +20385,46 @@ children (
             }
         )
     }
+
+    {
+        id the-build-starts-only-after-the-last-makefile-is-read
+        title "Start ready work while the composition is still reading"
+        kind @perf
+        log (
+            {
+                at 2026-08-30T22:10:34.244017878Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "FILED 2026-08-31 on the operator's direction (\"wbs those 3 things\"). The structural item: GNU Make's top-level make starts children immediately, so compiles in early directories run while later directories' Makefiles are still being read; Ronin composes the ENTIRE graph before the scheduler runs anything, so the whole front end is a pure wall-clock prefix. At zsh scale the prefix is ~100ms; at kernel scale (thousands of Makefiles) it is the difference that makes a cold build feel slower at compile parity. The machinery is half-present: the boundary passes already stage and build mid-compilation for $(shell)/regen, so \"begin building completed subgraphs while composition continues\" extends an existing mechanism rather than inventing one. Hazards known in advance: the sink is single-writer in run order (determinism is structural — preserve it); a started edge must never race a composition boundary that would have withheld it; -B/-n/-q phase semantics (made_for_a_makefile) decide which staged work may run early. Sequencing per the operator-approved queue: after the front-end constant-factor node lands and the host's measurement contention clears; the scheduler node (the-scheduler-picks-ready-edges-without-looking-down-the-graph) goes first as self-contained."
+            }
+        )
+    }
+
+    {
+        id the-scheduler-picks-ready-edges-without-looking-down-the-graph
+        title "Schedule ready commands by the length of what waits behind them"
+        kind @perf
+        log (
+            {
+                at 2026-08-30T22:10:43.769283272Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "FILED 2026-08-31 on the operator's direction. Stock Ninja 1.12 changed its scheduler to prioritise commands on the critical path (start the deepest chains first so the terminal link is not waiting on a straggler scheduled last). If Ronin's runtime still picks ready edges in plain ready-order, every clean build's tail pays for it, in BOTH modes — this is where holding the whole graph should beat GNU Make's accidental DFS and currently does not. Scheduling order is not semantically observable (console pool and friends aside), so it is conformance-safe; verify against the pinned Ninja oracle's behaviour and the ninja-conformance gates rather than assuming. First check what the runtime actually does today — this node is filed on the ASSUMPTION of ready-order, and ten consecutive briefs this campaign each contained at least one wrong premise. A/B evidence wanted: vim/zsh clean-build tail (time from last compile start to link end) before/after, plus a synthetic with a deep chain beside wide fanout. Self-contained in the scheduler; queued FIRST of the three runtime nodes."
+            }
+        )
+    }
+
+    {
+        id an-unlifted-recursion-brings-its-own-job-budget
+        title "Share one job budget with a child the graph could not lift"
+        kind @fix
+        log (
+            {
+                at 2026-08-30T22:10:54.610415373Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "FILED 2026-08-31 on the operator's direction. Open question, cheap to answer, filed as fix because the likely defect is a compat one: when a $(MAKE) invocation cannot be composed statically, a real child ronin runs. GNU Make coordinates -j across the whole tree through one jobserver (--jobserver-auth in MAKEFLAGS); if Ronin's escape-path child brings its own -j8 instead of joining the parent's budget, kernel-shaped builds oversubscribe the machine — and a GNU child make invoked UNDER ronin (mixed trees) is entitled to read a jobserver from MAKEFLAGS too. Verify both directions: (a) child ronin under parent ronin — one budget or two? (b) GNU make under ronin — is a jobserver offered, and must one be per make compat? (c) ronin under GNU make — do we JOIN an offered jobserver, which GNU's own sub-makes are required to? The census/carried-switches machinery already threads MAKEFLAGS; the question is whether job tokens ride it. Answer with process-count evidence under a constrained -j, then fix whichever directions are wrong. Cheap to check inside whichever runtime node runs first."
+            }
+        )
+    }
 )
