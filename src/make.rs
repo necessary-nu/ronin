@@ -1154,16 +1154,18 @@ fn compose_subninjas(
         let outputs = pending.outputs().collect::<Vec<_>>();
         let for_makefile = made_for_a_makefile(sink, &state.remakes, &outputs);
         let parent_inputs = pending.evaluation_inputs();
-        if !parent_inputs.is_empty() {
-            if !state.stage(
-                compilation_key,
-                pending_index,
-                EvaluationPredecessor::ParentPrerequisites,
-                &parent_inputs,
-                for_makefile,
-            ) {
-                return Ok(incomplete_unit(targets, subtree_edges));
-            }
+        // Work an earlier pass put on the ground stays on it: the closure that
+        // pass built is replaced with phony so the final graph runs none of it
+        // twice. This is the question [`CompilationState::stage`] asks first,
+        // asked here on its own because the answer is wanted before the
+        // freshness below — it is a fact about what has already run, and holds
+        // whether or not this recipe still has anything left to do.
+        let staged_already = state.settled_boundaries.contains(&EvaluationBoundary {
+            compilation_key: compilation_key.to_vec(),
+            pending_index,
+            predecessor: EvaluationPredecessor::ParentPrerequisites,
+        });
+        if staged_already && !parent_inputs.is_empty() {
             sink.mark_subgraphs_prebuilt(&parent_inputs);
         }
 
@@ -1199,6 +1201,34 @@ fn compose_subninjas(
             }
             RecursiveWrapper::Dirty(wrapper) => wrapper,
         };
+        // Only a recipe that is going to run needs its compiler inputs on the
+        // ground, because only a recipe that is going to run has a child to
+        // compile, and it is the child that reads them. A wrapper the graph
+        // has just answered for has no child: what made it current is that
+        // every one of those inputs is already clean, so a provisional build
+        // of them would build nothing and the pass that waits for it learns
+        // only what this line has learnt already. GNU Make asks in the same
+        // order — `Considering target file 'zutil.mdh'` down to `No need to
+        // remake target 'zutil.mdh'`, and the `$(MAKE)` on its recipe line is
+        // never reached.
+        //
+        // Staged the other way round it costs a pass each, and the pass reads
+        // the whole compilation again: zsh's generated `Src/Modules/Makefile`
+        // holds two recursive recipes per module and made 61 passes over its
+        // 3,231 lines to compose ten children, where a `modobjs` with no
+        // recursion in it reads the same file once.
+        if !staged_already
+            && !parent_inputs.is_empty()
+            && !state.stage(
+                compilation_key,
+                pending_index,
+                EvaluationPredecessor::ParentPrerequisites,
+                &parent_inputs,
+                for_makefile,
+            )
+        {
+            return Ok(incomplete_unit(targets, subtree_edges));
+        }
 
         let Some(child_groups) = compose_child_groups(
             &pending,
