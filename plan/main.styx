@@ -20471,6 +20471,29 @@ children (
         title "Step the expression scan over the text no arm of it can act on"
         kind @perf
         deps (siphash-still-hashes-a-byte-a-word-and-a-name)
+        sealed true
+        log (
+            {
+                at 2026-08-30T23:28:57.723663282Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-30T23:29:17.347016183Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "THE TOP SELF-TIME SYMBOL IN THE PROFILE WAS A BYTE LOOP. `parse_expr_impl_ext` at 4.95% of the vim `src` sub-make, ahead of `_int_malloc` and of `build_plan`, and doing nothing complicated: read a byte, ask up to six questions of it, `i += 1`. Around 500k iterations a run at ~6.6 cycles each. A makefile is mostly text where all six answers are no.\n\nWHAT MAKES THE SKIP SAFE, because a parser is where a wrong optimisation is silent. The set of bytes an arm can act on is a pure function of four things — `opt`, `terms`, `terms_ignored`, `save_paren` — and the last two move at exactly two statements in the loop, both of which now recompute. The set has to be a SUPERSET of what the arms match, never a subset: an extra stop costs one iteration that decides to do nothing, a missing one reads a `$` as literal text. Enumerated arm by arm: the terminator break, the `#` comment (only when `terms.is_none()`), `$`, `(`/`{` under `Func`, the `save_paren` close, and `\\\\` under anything but `Command`. Plain newlines are NOT special here -- `loc.line` only moves inside the two fold arms, both reached through `$` or `\\\\` -- so skipping cannot lose a line number.\n\n`memchr` for a set of three or fewer, a 256-bit table above that. The two common shapes fall in the fast half: `Normal` stops on `$ # \\\\`, `Command` on `$` alone.\n\n`Symtab::intern` came with it because it is the same mistake in a different place: it did `s.into()` to get a `Bytes` BEFORE the lookup, so a caller passing `&str`, `&[u8]` or `Vec` bought an allocation and a copy to ask a question whose answer is usually \"already interned\". Probing borrowed and converting only on a miss.\n\nWORTH -4.0%: 85.335M to 81.926M instructions on the vim `src` sub-make. `parse_expr_impl_ext` 4.95% self to 2.23%. Equivalence 274/276/8/56/0, `$(.VARIABLES)` byte-identical, `make -n -B` identical over vim `src` (475 lines) and zsh (427).\n\nWHAT IS LEFT IN THAT FUNCTION, for whoever comes next: it is now allocation-bound rather than scan-bound. 8.43% inclusive against 2.72% self, the difference being one `Arc<Value>` per fragment and a `Vec<Arc<Value>>` per list. A parse of a line with no `$` still costs one `Vec` allocation and one `Arc`. An inline first-element slot, or an evaluation-scoped arena for the `Value` tree, is where the next cut is -- and `drop_glue<Value>` is 1.98% on its own."
+            }
+
+            {
+                at 2026-08-30T23:29:21.619424483Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
+            }
+        )
     }
 
     {
