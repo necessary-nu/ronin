@@ -20553,6 +20553,21 @@ children (
                 kind @status
                 text "Doing → Done (nplan complete)"
             }
+
+            {
+                at 2026-08-31T00:17:03.000272585Z
+                author "brendan@necessary.nu"
+                kind @errata
+                text "THIS NODE'S WORK WAS LANDED AND THEN REVERTED IN THE SAME SESSION, and the reason is the finding.\n\n`scripts/check-performance.sh` — the NINJA-mode gate — refuses mimalloc twice over, and this campaign had not been running it because the campaign is about Make mode. It samples each coordinator's peak RSS from `/proc` and rejects above 200% of Ninja's, and it rejects a Ronin/Ninja wall ratio above 120% of the recorded one. On `clean-tree-noop`, all four arms measured in the same window on the same host:\n\n  build               wall      Ronin/Ninja   peak RSS     of Ninja\n  glibc (recorded)    8.747 ms    0.675x       4,596 KiB     81%\n  jemalloc, tuned     9.536 ms    0.75x        8,180 KiB    145%\n  jemalloc, default   8.954 ms    0.70x       11,996 KiB    212%\n  mimalloc           10.538 ms    0.84x       23,640 KiB    402%\n\nThe wall refusal is a consequence of the footprint one: these workloads run for eight milliseconds, so pages an allocator commits before doing any work are a measurable fraction of the run. mimalloc's RSS is FIVE TIMES the C library's across every Ninja workload — manifest-command-evaluation 27,372 KiB against 11,888 for jemalloc, wide-noop 21,488, canonicalization 19,308.\n\nThe tuning was tried rather than assumed. jemalloc with `narenas:2,dirty_decay_ms:0,muzzy_decay_ms:0` — a build tool's lifetime instead of a server's — brings clean-tree-noop to 8,180 KiB, but the wide no-op still sits at 11,868 against Ninja's 5,924, which is 200.3%. No margin. Note for whoever tries this again: the symbol tikv-jemallocator reads is `_rjem_malloc_conf`, not `malloc_conf`; exporting the unprefixed name silently does nothing and the RSS does not move.\n\nWHAT THE MEASUREMENT IS STILL WORTH, because it was not wasted. On the gated vim no-op, `perf stat -e instructions:u -r 20`, GNU Make 4.4.1 at 48.658M: glibc 103.205M (2.120x), jemalloc 93.986M (1.932x), mimalloc 87.938M (1.806x). The allocator is genuinely 18.9% of a Make-mode evaluation's user cycles and 14.6% of the gated row is genuinely available there. It is simply not available at this price. That makes the number an argument FOR the representation change rather than a substitute for it: removing the allocations removes the allocator's share of them and costs nothing in footprint.\n\n[dec:ronin:allocator-is-not-the-c-librarys] is rewritten from @approved to @rejected with all four arms in it, rather than deleted, so that the next person to profile this reaches the record before the experiment. `the-allocator-swap-was-refused-by-the-ninja-gate` carries the follow-up.\n\nAND THE PROCESS FINDING. The Make campaign has run `check-make-equivalence`, `check-make-conformance`, `check-make-upstream` and `check-make-performance` for forty nodes and never `check-performance.sh`, because Make mode does not touch Ninja mode. A change to the BINARY — the allocator, the linkage, a global — is not a Make change or a Ninja change, and the only gate that caught this one was the mode nobody was working in."
+                after_done true
+            }
         )
+    }
+
+    {
+        id the-allocator-swap-was-refused-by-the-ninja-gate
+        title "Reduce the allocation itself, since replacing the allocator costs footprint"
+        kind @perf
+        deps (the-c-librarys-allocator-is-a-sixth-of-a-make-run)
     }
 )

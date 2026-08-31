@@ -1,30 +1,5 @@
 use std::io::Write;
 
-/// The allocator every mode of this binary runs on.
-///
-/// A Make-mode evaluation is an expression tree per line, a dependency node per
-/// target and a name per symbol, all built and dropped inside a process that
-/// lives for milliseconds. Profiling the vim `src` sub-make put 18.9% of user
-/// cycles inside the C library's `malloc`, `free` and `malloc_consolidate`,
-/// spread across dozens of callers with none above 1% — no site to fix, only a
-/// different allocator. This one retires 12.6% fewer instructions over that
-/// sub-make and 14.8% fewer over the whole gated vim no-op.
-///
-/// It costs the shell path: mimalloc reads the environment once per option at
-/// process load, which is 216k instructions, and this binary runs as its own
-/// `/bin/sh` once per recipe line. Every workload measured still comes out
-/// ahead. See plan/decisions/allocator-is-not-the-c-librarys.md.
-///
-/// Unix-only because that is where it was measured, where Make mode exists,
-/// and because it is the one dependency here that compiles C: the Windows type
-/// check in `scripts/check-ninja-conformance.sh` has no cross toolchain to
-/// build it with.
-// no-globals-gate: the process allocator, a property of the binary and not
-// evaluation state.
-#[cfg(unix)]
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 fn write_terminal(
     result: &ronin::RunResult,
     stdout: &mut dyn Write,
