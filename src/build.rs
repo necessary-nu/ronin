@@ -10,7 +10,6 @@ use crate::os::RealDiskInterface;
 use crate::runtime::{FileTime, RuntimeState};
 use crate::subprocess::{ProcessOutput, ProcessSupervisor, SupervisorWake, status_interrupted};
 use crate::util::{BString, ByteSlice};
-use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap};
 use std::io::Write;
 use std::num::NonZeroUsize;
@@ -25,6 +24,7 @@ pub(crate) use self::status::{BuildState, ProgressCarry};
 type BuildResult<T> = Result<T, BuildError>;
 
 pub(crate) use command::IGNORE_ERRORS;
+use priority::{CriticalPathWeight, ReadyEdge, ScheduleOrder, SchedulePriority, edge_cost};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) enum JobLimit {
@@ -122,6 +122,34 @@ pub(crate) struct BuildOptions {
     /// Whether a target written `lib.a(member.o)` names a member of an
     /// archive rather than a file. Make mode only — see [`crate::os`].
     pub(crate) archive_members: bool,
+    /// Whether a run with one job runs the recipes in the order GNU Make's
+    /// recursion would reach them, rather than longest-chain-first.
+    ///
+    /// Ninja prioritises the critical path at every job count, `-j1` included,
+    /// and says nothing anywhere about which ready edge is next; a Ninja build
+    /// therefore takes the same order here that stock Ninja gives it. GNU Make
+    /// does fix an order, and only at one job: `update_goal_chain` walks the
+    /// goals in turn and `update_file` walks each prerequisite list left to
+    /// right, running a target after the prerequisites under it. Makefiles rely
+    /// on it — a recipe whose input another recipe wrote without saying so
+    /// builds serially and is a race in parallel — and serial is Make's
+    /// DEFAULT, so this is the ordinary `make` invocation rather than a corner
+    /// of one.
+    ///
+    /// A run-level setting, like the launcher settings above it, and for the
+    /// same reason: which order a run wants is the front end's to say once, and
+    /// nothing about it is written into the graph. Above one job GNU Make
+    /// documents the order as undefined, so the question does not arise and
+    /// Ninja's answer stands for both front ends.
+    ///
+    /// Deliberately unannotated. [`spec:ronin:req:make.semantics`] names GNU
+    /// Make's scheduling as explicitly NOT a conformance criterion, and
+    /// [`spec:ronin:req:compat.scheduling`] allows a different ready edge only
+    /// where Ninja does not fix the tie order — which Ninja does. Neither rule
+    /// covers this, and the corpus contradicts the first: a case there compares
+    /// a file whose contents only a serial order decides. See the decision on
+    /// the-scheduler-picks-ready-edges-without-looking-down-the-graph.
+    pub(crate) serial_prerequisite_order: bool,
     /// Whether an edge is brought up to date by giving its outputs a fresh date
     /// rather than by running what makes them, which is GNU Make's `-t`.
     ///
@@ -200,6 +228,7 @@ impl Default for BuildOptions {
             working_directory: crate::os::WorkingDirectory::default(),
             create_output_directories: true,
             archive_members: false,
+            serial_prerequisite_order: false,
             touch: false,
             always_make: false,
             assumed_new: Vec::new(),
@@ -227,37 +256,6 @@ enum Withdraw {
     /// whether what it wrote goes is `.DELETE_ON_ERROR`'s answer and not this
     /// one's.
     DeleteOnError,
-}
-
-#[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
-struct ReadyEdge {
-    weight: CriticalPathWeight,
-    edge: Reverse<EdgeId>,
-}
-
-impl ReadyEdge {
-    const fn new(weight: CriticalPathWeight, edge: EdgeId) -> Self {
-        Self {
-            weight,
-            edge: Reverse(edge),
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
-#[repr(transparent)]
-struct CriticalPathWeight(usize);
-
-impl CriticalPathWeight {
-    const ROOT: Self = Self(1);
-
-    const fn next(self) -> Self {
-        Self(self.0.saturating_add(1))
-    }
-
-    const fn max(self, other: Self) -> Self {
-        if self.0 >= other.0 { self } else { other }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -292,6 +290,7 @@ pub(crate) struct Plan {
     wanted_count: usize,
     weight: Vec<CriticalPathWeight>,
     expanded_weight: Vec<CriticalPathWeight>,
+    order: ScheduleOrder,
     pending: Vec<usize>,
     dependents: Vec<Vec<EdgeId>>,
     ready: BinaryHeap<ReadyEdge>,
@@ -359,7 +358,7 @@ impl Plan {
         weight: CriticalPathWeight,
     ) -> BuildResult<()> {
         let mut work = vec![(node, weight, None)];
-        while let Some((node, weight, needed_by)) = work.pop() {
+        while let Some((node, consumer_weight, needed_by)) = work.pop() {
             // A Makefile this read already tried to remake and lost is a target
             // with a rule that has been spent. GNU Make reads `updated` with a
             // failing `update_status` back before it looks at the file or the
@@ -406,6 +405,9 @@ impl Plan {
                 self.tracked[edge.index()] = true;
                 self.tracked_count += 1;
             }
+            // A phony edge runs no command, so it adds nothing to the run of
+            // commands waiting behind its inputs. Ninja's EdgeWeightHeuristic.
+            let weight = consumer_weight.plus(edge_cost(graph, edge));
 
             if edge_dirty {
                 let previous_weight = self.weight[edge.index()];
@@ -437,14 +439,25 @@ impl Plan {
                     && index < depfile_end
                     && graph.node(input).generator.is_none())
                 {
-                    work.push((input, weight.next(), needed_by));
+                    work.push((input, weight, needed_by));
                 }
             }
         }
         Ok(())
     }
 
-    pub(crate) fn prepare_queue(&mut self, graph: &Graph) {
+    /// Where `edge` sits in the queue, greatest first.
+    ///
+    /// The two orders are the same queue read two ways rather than two queues,
+    /// because everything else about readiness — pool depth, dependency
+    /// release, dyndep rebuilds — is the same question whichever way the answer
+    /// is sorted.
+    fn priority(&self, edge: EdgeId) -> SchedulePriority {
+        self.order.priority(self.weight[edge.index()])
+    }
+
+    pub(crate) fn prepare_queue(&mut self, graph: &Graph, order: ScheduleOrder) {
+        self.order = order;
         self.synchronize_arenas(graph);
         self.running.fill(false);
         self.completed.fill(false);
@@ -493,7 +506,7 @@ impl Plan {
                 && self.pending[index] == 0
             {
                 if self.wanted[index] {
-                    self.ready.push(ReadyEdge::new(self.weight[index], edge));
+                    self.ready.push(ReadyEdge::new(self.priority(edge), edge));
                 } else {
                     clean.push(edge);
                 }
@@ -522,7 +535,7 @@ impl Plan {
                 }
                 if self.wanted[dependent.index()] {
                     self.ready
-                        .push(ReadyEdge::new(self.weight[dependent.index()], dependent));
+                        .push(ReadyEdge::new(self.priority(dependent), dependent));
                 } else {
                     work.push(dependent);
                 }
@@ -541,10 +554,12 @@ impl Plan {
             if !self.tracked[index] {
                 continue;
             }
+            // The edge's own weight is what its inputs read as their consumer's;
+            // each of them adds its own cost on arrival.
             let weight = self.weight[index];
             let inputs: &[NodeId] = &graph.edge(edge).input;
             for &input in inputs.iter().rev() {
-                self.add_node(graph, runtime, input, weight.next())?;
+                self.add_node(graph, runtime, input, weight)?;
             }
         }
         self.rebuild_frontier(graph);
@@ -568,7 +583,7 @@ impl Plan {
                 self.ready.extend(blocked);
                 return None;
             };
-            let edge = candidate.edge.0;
+            let edge = candidate.edge();
             if graph.edge(edge).pool.is_none_or(|pool| {
                 let depth = graph
                     .pool(pool)
@@ -594,8 +609,7 @@ impl Plan {
             if let Some(pool) = graph.edge(edge).pool {
                 self.pool_occupancy[pool.index()].release();
             }
-            self.ready
-                .push(ReadyEdge::new(self.weight[edge.index()], edge));
+            self.ready.push(ReadyEdge::new(self.priority(edge), edge));
         }
     }
 
@@ -1428,6 +1442,26 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Which order this run hands ready edges to the runtime.
+    ///
+    /// Read from what the run was ASKED for rather than from
+    /// [`Self::job_limit`], which a load average over `-l` narrows to one
+    /// mid-build: that brake is a momentary width, not a decision that this is
+    /// a serial build, and re-sorting the queue underneath a running build
+    /// because the machine got busy would be neither order.
+    const fn schedule_order(&self) -> ScheduleOrder {
+        let serial = match self.options.jobs {
+            JobLimit::Auto => true,
+            JobLimit::Unlimited => false,
+            JobLimit::Fixed(jobs) => jobs.get() == 1,
+        };
+        if self.options.serial_prerequisite_order && serial {
+            ScheduleOrder::Prerequisite
+        } else {
+            ScheduleOrder::CriticalPath
+        }
+    }
+
     /// Whether a finished command says the build was cut short rather than that
     /// it failed.
     ///
@@ -2093,7 +2127,7 @@ impl<'a> Builder<'a> {
         reason = "the completion-driven scheduler loop is clearer as one explicit state machine"
     )]
     pub(crate) fn build(&mut self) -> BuildResult<()> {
-        self.plan.prepare_queue(self.graph);
+        self.plan.prepare_queue(self.graph, self.schedule_order());
         self.progress.started = 0;
         self.progress.finished = 0;
         self.progress.start = Instant::now();
@@ -2427,6 +2461,7 @@ impl<'a> Builder<'a> {
 }
 
 mod command;
+mod priority;
 mod release;
 use command::Runs;
 pub(crate) use command::{LateBinding, LateCommand, LateCommands, LateStep};

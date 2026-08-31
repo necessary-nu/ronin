@@ -1537,6 +1537,13 @@ fn build_options(
     // An inherited outer transport remains attached above and may bound the
     // same scheduler.
     options.serve_jobserver = false;
+    // A serial GNU Make run reaches its recipes in a defined order — each goal
+    // in turn, each prerequisite list left to right, a target after what is
+    // under it — and makefiles that never declared a dependency they rely on
+    // are correct under it and racy without it. Serial is Make's default, so
+    // this covers the ordinary `make` invocation. Above one job GNU Make
+    // documents no order and Ninja's longest-chain-first is the better answer.
+    options.serial_prerequisite_order = true;
     // 130 is Ninja's `ExitInterrupted` and nothing at all to Make: GNU Make
     // reports a recipe that exits 130 as `Error 130` and goes on under -k
     // exactly as it would for any other status.

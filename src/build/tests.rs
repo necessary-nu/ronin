@@ -306,7 +306,7 @@ fn ninja_plan_basic() {
     let runtime = mark_dirty(&graph, &["mid", "out"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     let edge = plan.find_work(&graph).unwrap();
     assert_eq!(output_path(&graph, edge), "mid");
     assert!(plan.find_work(&graph).is_none());
@@ -320,6 +320,113 @@ fn ninja_plan_basic() {
     assert!(plan.find_work(&graph).is_none());
 }
 
+/// Drain the plan one edge at a time, naming each edge by its first output.
+///
+/// One in flight throughout, so what comes back is the order a serial run would
+/// run the recipes in and nothing about the harness can reorder it.
+fn drain_serially(plan: &mut Plan, graph: &Graph, runtime: &RuntimeState) -> Vec<String> {
+    let mut ran = Vec::new();
+    while let Some(edge) = plan.find_work(graph) {
+        ran.push(output_path(graph, edge));
+        plan.edge_finished(graph, runtime, edge, EdgeResult::Succeeded)
+            .unwrap();
+    }
+    ran
+}
+
+/// A phony edge runs no command, so it must not lengthen the path it sits on.
+///
+/// Ninja's `EdgeWeightHeuristic` (build.cc) spends 0 on a phony edge and 1 on
+/// every other, which is what makes the weight a count of COMMANDS rather than
+/// of graph hops. This graph is built so that the two answers disagree about
+/// which branch is longer, and disagree the wrong way round. Counting commands,
+/// `a0` heads four and `b0` heads two. Counting hops, `b0`'s two commands sit
+/// under four phony bridges and read as seven against `a0`'s five — so the tool
+/// starts the SHORT branch, and the long one is still running when everything
+/// else has finished. That is the exact failure prioritising the critical path
+/// exists to prevent, produced by the heuristic meant to prevent it.
+// [spec:ronin:req:compat.scheduling/test]
+#[test]
+fn phony_bridges_do_not_lengthen_the_path_they_bridge() {
+    let graph = plan_graph(concat!(
+        "build a0: cat\nbuild a1: cat a0\nbuild a2: cat a1\nbuild a3: cat a2\n",
+        "build b0: cat\nbuild b1: cat b0\n",
+        "build bp0: phony b1\nbuild bp1: phony bp0\n",
+        "build bp2: phony bp1\nbuild bp3: phony bp2\n",
+        "build all: phony a3 bp3\n",
+    ));
+    let runtime = mark_dirty(
+        &graph,
+        &[
+            "a0", "a1", "a2", "a3", "b0", "b1", "bp0", "bp1", "bp2", "bp3", "all",
+        ],
+    );
+    let mut plan = Plan::default();
+    add_plan_target(&mut plan, &graph, &runtime, b"all");
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
+
+    let ran: Vec<String> = drain_serially(&mut plan, &graph, &runtime)
+        .into_iter()
+        .filter(|path| !path.starts_with("bp") && path != "all")
+        .collect();
+    // The four-command branch starts first and its head is reached before the
+    // two-command branch's, which is stock Ninja's order on this manifest.
+    assert_eq!(ran, ["a0", "a1", "a2", "b0", "a3", "b1"]);
+}
+
+/// One job at a time under the Make front end hands back the lowest-numbered
+/// ready edge, which is the recipe GNU Make's recursion would reach next.
+///
+/// The two orders on one graph, which is the whole of the difference: under
+/// Ninja's, `b1` is deeper and gets pulled to the front; under Make's serial
+/// one the queue is flat and `a` — composed first and ready immediately — goes
+/// first, as `update_file` walking the prerequisite list left to right would
+/// have it. That the identifiers ARE that walk is the Make front end's doing
+/// and is what the `tests/make` corpus checks against GNU Make itself; what is
+/// pinned here is that the plan defers to them rather than to the path length.
+// [spec:ronin:req:compat.scheduling/test]
+#[test]
+fn one_job_under_make_defers_to_the_order_the_front_end_composed() {
+    let source =
+        "build a: cat\nbuild b1: cat\nbuild b: cat b1\nbuild c: cat\nbuild all: phony a b c\n";
+    let dirty = ["a", "b", "b1", "c", "all"];
+
+    let graph = plan_graph(source);
+    let runtime = mark_dirty(&graph, &dirty);
+    let mut plan = Plan::default();
+    add_plan_target(&mut plan, &graph, &runtime, b"all");
+    plan.prepare_queue(&graph, ScheduleOrder::Prerequisite);
+    let ran = drain_serially(&mut plan, &graph, &runtime);
+    assert_eq!(ran, ["a", "b1", "b", "c", "all"]);
+
+    // The same graph under Ninja's order, which is what every Ninja build and
+    // every parallel Make run still gets: the deepest chain is pulled forward.
+    let mut plan = Plan::default();
+    add_plan_target(&mut plan, &graph, &runtime, b"all");
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
+    let ran = drain_serially(&mut plan, &graph, &runtime);
+    assert_eq!(ran, ["b1", "a", "b", "c", "all"]);
+}
+
+/// A prerequisite two dependents share is reached once, under whichever of them
+/// the walk read first, and keeps that place — which is where GNU Make's
+/// recursion runs it, the second dependent finding it already updated.
+// [spec:ronin:req:compat.scheduling/test]
+#[test]
+fn a_shared_prerequisite_keeps_the_place_the_first_dependent_gave_it() {
+    let graph = plan_graph(
+        "build shared: cat\nbuild a: cat shared\nbuild b: cat shared\nbuild all: phony a b\n",
+    );
+    let runtime = mark_dirty(&graph, &["shared", "a", "b", "all"]);
+    let mut plan = Plan::default();
+    add_plan_target(&mut plan, &graph, &runtime, b"all");
+    plan.prepare_queue(&graph, ScheduleOrder::Prerequisite);
+    assert_eq!(
+        drain_serially(&mut plan, &graph, &runtime),
+        ["shared", "a", "b", "all"]
+    );
+}
+
 /// A `restat` that rewrote its output with the content it already had leaves
 /// the consumer clean, and Ninja's `Plan::CleanNode` takes it out of the plan
 /// rather than running it. The plan names the command edges it pruned so the
@@ -330,7 +437,7 @@ fn plan_names_the_pruned_command_edges() {
     let mut runtime = mark_dirty(&graph, &["mid", "out"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     assert_eq!(plan.command_edge_count(&graph), 2);
     let edge = plan.find_work(&graph).unwrap();
     assert_eq!(output_path(&graph, edge), "mid");
@@ -365,7 +472,7 @@ fn plan_tracks_clean_order_only_bridges() {
     let runtime = mark_dirty(&graph, &["generated", "group", "out"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
 
     for expected in ["generated", "group", "out"] {
         let edge = plan.find_work(&graph).unwrap();
@@ -383,7 +490,7 @@ fn ninja_plan_double_output_direct() {
     let runtime = mark_dirty(&graph, &["mid1", "mid2", "out"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     let first = plan.find_work(&graph).unwrap();
     assert_eq!(output_path(&graph, first), "mid1");
     plan.edge_finished(&graph, &runtime, first, EdgeResult::Succeeded)
@@ -403,7 +510,7 @@ fn ninja_plan_double_output_indirect() {
     let runtime = mark_dirty(&graph, &["a1", "a2", "b1", "b2", "out"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     for expected in ["a1", "b1", "b2", "out"] {
         let edge = plan.find_work(&graph).unwrap();
         assert_eq!(output_path(&graph, edge), expected);
@@ -421,7 +528,7 @@ fn ninja_plan_double_dependent() {
     let runtime = mark_dirty(&graph, &["mid", "a1", "a2", "out"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     for expected in ["mid", "a1", "a2", "out"] {
         let edge = plan.find_work(&graph).unwrap();
         assert_eq!(output_path(&graph, edge), expected);
@@ -439,7 +546,7 @@ fn check_depth_one_pool(pool_definition: &str) {
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out1");
     add_plan_target(&mut plan, &graph, &runtime, b"out2");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     let first = plan.find_work(&graph).unwrap();
     assert_eq!(output_path(&graph, first), "out1");
     assert!(plan.find_work(&graph).is_none());
@@ -467,7 +574,7 @@ fn ninja_plan_console_pool() {
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out1");
     add_plan_target(&mut plan, &graph, &runtime, b"out2");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     let first = plan.find_work(&graph).unwrap();
     assert!(plan.find_work(&graph).is_none());
     plan.edge_finished(&graph, &runtime, first, EdgeResult::Succeeded)
@@ -497,7 +604,7 @@ fn ninja_plan_pools_with_depth_two() {
     );
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"allTheThings");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     let mut initial = Vec::new();
     while let Some(edge) = plan.find_work(&graph) {
         initial.push(edge);
@@ -536,7 +643,7 @@ fn ninja_plan_pool_with_failing_edge() {
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out1");
     add_plan_target(&mut plan, &graph, &runtime, b"out2");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     let first = plan.find_work(&graph).unwrap();
     assert!(plan.find_work(&graph).is_none());
     plan.edge_finished(&graph, &runtime, first, EdgeResult::Failed)
@@ -557,7 +664,7 @@ fn ninja_plan_pool_with_redundant_edges() {
     let runtime = mark_dirty(&graph, &["foo", "bar", "foo.obj", "bar.obj", "lib", "all"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"all");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
 
     let first = plan.find_work(&graph).unwrap();
     let second = plan.find_work(&graph).unwrap();
@@ -602,12 +709,12 @@ fn ninja_plan_priority_without_build_log() {
     let runtime = mark_dirty(&graph, &["a1", "a0", "b0", "c0", "out"]);
     let mut plan = Plan::default();
     add_plan_target(&mut plan, &graph, &runtime, b"out");
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     assert_eq!(
         [("out", 1), ("a0", 2), ("b0", 2), ("c0", 2), ("a1", 3)].map(|(path, weight)| {
             let node = nodeget(&graph, path.as_bytes()).unwrap();
             let edge = graph.node(node).generator.unwrap();
-            let actual = plan.weight[edge.index()].0;
+            let actual = plan.weight[edge.index()].raw();
             (actual, weight)
         }),
         [(1, 1), (2, 2), (2, 2), (2, 2), (3, 3)]
@@ -653,7 +760,7 @@ fn ronin_plan_handles_deep_graphs_without_recursion() {
     }
     let mut plan = Plan::default();
     plan.add_target(&graph, &runtime, target).unwrap();
-    plan.prepare_queue(&graph);
+    plan.prepare_queue(&graph, ScheduleOrder::CriticalPath);
     let mut scheduled = 0;
     while let Some(edge) = plan.find_work(&graph) {
         plan.edge_finished(&graph, &runtime, edge, EdgeResult::Succeeded)

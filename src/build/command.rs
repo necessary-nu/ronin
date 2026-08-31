@@ -597,7 +597,7 @@ impl Builder<'_> {
         if self.plan.is_empty() {
             return Ok(true);
         }
-        self.plan.prepare_queue(self.graph);
+        self.plan.prepare_queue(self.graph, self.schedule_order());
         let keep_going = self.options.maxfail > 1;
         let mut up_to_date = true;
         let mut processes = None;

@@ -140,7 +140,7 @@ impl Plan {
             .any(|output| runtime.node(*output).dirty());
         if dirty {
             self.ready
-                .push(ReadyEdge::new(self.weight[dependent.index()], dependent));
+                .push(ReadyEdge::new(self.priority(dependent), dependent));
             return Released::Scheduled;
         }
         if std::mem::replace(&mut self.completed[dependent.index()], true) {
