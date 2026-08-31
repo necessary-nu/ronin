@@ -20689,6 +20689,7 @@ children (
         id a-unit-with-many-recursive-recipes-is-read-once-per-recipe
         title "Stage every independent boundary in one pass instead of one per pass"
         kind @perf
+        deps (a-notparallel-unit-runs-its-composed-children-at-once)
         log (
             {
                 at 2026-08-31T08:30:23.601139725Z
