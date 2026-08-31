@@ -20768,6 +20768,7 @@ children (
         id a-notparallel-unit-runs-its-composed-children-at-once
         title "Serialise the recursive children a .NOTPARALLEL unit composes"
         kind @fix
+        sealed true
         log (
             {
                 at 2026-08-31T12:54:55.088780426Z
@@ -20802,6 +20803,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @note
                 text "THE COMMITTED TREE, 0bc9e5e, verified after the fact — the last two edits landed after the battery above, so all of it was run again.\n\nThose edits were the second round of the same code-quality refusal, and were fixed rather than bypassed: `function-density` then refused `src/make.rs` at 51, so `fn serial_job` came out and its six lines are inline at the one place that built one. That is the exact trap this file's own history records at plan/main.styx — \"extracting a helper out of `compile_unit` to satisfy `too_many_lines` immediately breaks it\" — and the way through was to make the caller shorter instead, which the `flat_map` line already wanted. sink.rs 50, make.rs 49.\n\n    repro                     GNU `run`, Ronin `run run` — no OVERLAP\n    60 compositions declared  GNU peak 1, Ronin peak 1\n    60 compositions not       GNU peak 8, Ronin peak 8\n    parent/child 0/0 and 1/0  GNU 8, Ronin 8\n    parent/child 0/1 and 1/1  GNU 1, Ronin 1\n    -k after a failure        both `fail ok`\n\n    zsh clean, eight more paired builds, load 5.02 to 5.48:\n      GNU Make 4.4.1   36.3 36.3 36.4 36.5 36.5 36.6 36.7 36.8   median 36.5\n      Ronin            40.7 40.9 41.0 41.0 41.0 41.1 41.2 41.2   median 41.05  1.12x\n    Eight of eight exit 0 with 36 modules. TWENTY-FIVE clean zsh builds across\n    three series on this node, zero failures.\n\n    equivalence     20 runs, every one 274/276/8/56/0, 0 disagreements\n    conformance     276 raw identical, 326 normalised, 28 differing\n    upstream        18 unclassified / 0 compiler / 15 interface\n    port ledger     170\n    ninja conf.     425/425, 10 differential, 92 build-outcome, 3 invocation\n    projects        vim 16 s, zsh with 36 modules 41 s\n    cargo test      897 / 0, and 1213 / 0 through the commit gate's own witness\n    fmt/lints/doc   clean\n\n    check-make-performance.sh  exit 0, load 4.49 -> 4.94, --max-load 4.5\n      wide-noop 0.61x (rec 0.618x)   recursive-noop 0.99x (rec 1.009x)\n      vim-noop  1.72x (rec 1.710x)   zsh-incremental 1.07x (rec 1.033x)\n\nTHE NINJA GATE REFUSED ONCE IN FOUR AND IT IS THE HOST, established rather than asserted. The refusal was `deep-graph-evaluation Ronin/Ninja ratio regressed to 0.89x from the recorded 0.72x`; three consecutive re-runs then passed at 0.825x, 0.831x and 0.599x, and an earlier run on the same tree gave 0.819x. Ronin's own absolute across every measurable run is 5.920, 5.963, 6.213, 6.245 ms — a 0.3 ms spread on a 6 ms workload. Ninja's arm is what swings: 7.178, 7.512, 7.585, 9.947 ms. The ratio moved because the denominator did.\n\nAnd the change cannot reach that path at all. `chain_serial_jobs` is called from `compose_subninjas` and nowhere else, and a Ninja manifest never enters it. Measured where the host cannot get in — `perf stat -e instructions:u -r 20`, the gate's own 2,000-edge phony chain, both binaries built from the same tree with only this commit between them, two alternating passes:\n\n    committed   15,209,142    15,208,808\n    main        15,210,873    15,210,899\n\nThe committed binary runs about 2,000 instructions FEWER out of 15.2 million — 0.013%, and in the wrong direction to be a regression. Both gates pass on the committed tree."
+            }
+
+            {
+                at 2026-08-31T15:02:50.208731305Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
