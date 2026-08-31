@@ -150,6 +150,19 @@ impl PendingSubninja {
     }
 }
 
+/// One recursive recipe of a `.NOTPARALLEL` unit, as a thing to be scheduled.
+///
+/// GNU Make's job here is the entire sub-make, so the job is the wrapper edge
+/// together with every edge of the children this recipe composed, and what
+/// finishing it means is the wrapper's own targets — which
+/// [`PendingSubninja::outputs`] names, and which nothing can ask for until the
+/// last edge of the subtree has finished, the wrapper being either a phony over
+/// every child goal or the recipe's residual segment ordered behind them.
+pub(crate) struct SerialJob {
+    pub(crate) completion: Vec<Node>,
+    pub(crate) edges: Vec<Edge>,
+}
+
 struct PendingDeferred {
     outputs: Vec<Node>,
     always_dirty_output: bool,
@@ -175,6 +188,13 @@ pub(crate) struct UnitOutput {
     pub(crate) targets: Vec<Node>,
     pub(crate) subninjas: Vec<PendingSubninja>,
     pub(crate) edges: Vec<Edge>,
+    /// Whether the makefiles this unit read declared bare `.NOTPARALLEL`.
+    ///
+    /// Carried out with the unit rather than asked of the sink later, because
+    /// by the time the recursive recipes are composed the sink is on another
+    /// unit: composing a child begins one, and that overwrites what this read
+    /// left. See [`GraphSink::chain_serial_jobs`].
+    pub(crate) serial: bool,
 }
 
 /// The targets and complete edge closure contributed by one compiled unit.
@@ -182,6 +202,22 @@ pub(crate) struct UnitOutput {
 pub(crate) struct UnitSubgraph {
     pub(crate) targets: Vec<Node>,
     pub(crate) edges: Vec<Edge>,
+}
+
+/// One child compilation a recursive recipe asked for, and whether this recipe
+/// is the one that composed it.
+pub(crate) struct ChildGroup {
+    pub(crate) subgraph: UnitSubgraph,
+    /// False where the compilation had already composed this exact child — the
+    /// same command, in the same directory, for the same goals — and handed
+    /// back the edges it made then.
+    ///
+    /// It matters only to `.NOTPARALLEL`. Two recipes reaching one cached child
+    /// are two names for a single copy of the work, which the build runs once,
+    /// so there is no second copy for the serialising wait to hold apart from
+    /// the first. Sequencing those edges behind the recipe that made them would
+    /// also be a cycle: that recipe's wrapper is already waiting on them.
+    pub(crate) fresh: bool,
 }
 
 struct Unit {
@@ -380,9 +416,87 @@ impl GraphSink {
         };
     }
 
+    /// Hold each recursive recipe of a `.NOTPARALLEL` unit behind the one
+    /// before it, for the whole of the sub-make each stands for.
+    ///
+    /// GNU Make's `.NOTPARALLEL` is a scheduler constraint on the make PROCESS
+    /// that read the declaration: `new_job` starts a job and then blocks in
+    /// `reap_children` until that job is finished
+    /// (reference/make-oracle/make-4.4.1/src/job.c:1962, the same line
+    /// `job_slots == 1` takes). The job it blocks on is one target's entire
+    /// recipe, so for a `$(MAKE) -C sub` line the serialised span is the whole
+    /// child make — while that child, which is handed the jobserver untouched,
+    /// stays parallel INSIDE itself unless its own makefiles say otherwise
+    /// (doc/make.texi:4416).
+    ///
+    /// A depth-one pool cannot say that. A pool slot is held while one command
+    /// runs, and the composition has dissolved the child make into edges of
+    /// this same graph, so the recipe that GNU treats as one long job is a
+    /// whole subtree here and its wrapper's own edge is a phony that runs at
+    /// the END of it. The wait is therefore expressed as a wait: the previous
+    /// recipe's targets become order-only inputs of this recipe's wrapper and
+    /// of every edge of every child this recipe composed.
+    ///
+    /// What is NOT held together is the unit's own command edges against a
+    /// composed subtree: those are in the unit's depth-one pool, which holds
+    /// them apart from each other but not from a sub-make running beside them,
+    /// where GNU Make blocks the whole process. Closing that would mean
+    /// ordering the unit's ordinary recipes into the same chain, which is a
+    /// total order over work GNU Make leaves the scheduler free to pick from.
+    ///
+    /// Forgiven, because GNU's block is on the job FINISHING and not on it
+    /// succeeding: under `-k` a failed recipe does not stop the next one from
+    /// running. See [`crate::graph::Graph::forgive_order`].
+    ///
+    /// Installed on the settled unit and never during it. `.NOTPARALLEL`
+    /// throttles GNU Make at recipe-launch time and does not restructure the
+    /// graph — `not_parallel` is read in `new_job` and nowhere in `remake.c` —
+    /// so the wait must not reach either of the two questions the composition
+    /// asks while it is still running.
+    ///
+    /// It must not reach whether a recipe HAS to run. The previous recipe's
+    /// targets are `.PHONY` names that are never on disk, an order-only
+    /// prerequisite that cannot be found is a reason to remake, and a wrapper
+    /// carrying one is dirty for good.
+    ///
+    /// And it must not reach what a staging pass BUILDS. A boundary is built
+    /// from the graph as it stands, so a wait threaded into that graph drags
+    /// the previous recipe's whole subtree into a provisional build that had
+    /// no reason to want it — the subtree then runs there, is composed again
+    /// afterwards, and runs twice. Both were measured on zsh: composed with
+    /// the waits in place, `Src/Makefile`'s `modobjs` recursion went from one
+    /// staged append to three, `stamp-modobjs` held every object file three
+    /// times, and the link of `zsh` failed on multiply-defined symbols, with
+    /// the clean build making 96 provisional graphs where it makes 52.
+    ///
+    /// So the chain is wired once, over the jobs a completed composition
+    /// settled on. An edge an earlier job already holds is left to that job:
+    /// a child composed for one recipe and reached again by a later one is a
+    /// single copy of the work, which the build runs once and which the
+    /// earlier wait already covers.
+    // [spec:ronin:req:make.notparallel-domain]
+    pub(crate) fn chain_serial_jobs(&mut self, jobs: &[SerialJob]) {
+        let mut claimed = RapidHashSet::default();
+        for window in jobs.windows(2) {
+            let [before, after] = window else { continue };
+            claimed.extend(before.edges.iter().copied());
+            for edge in &after.edges {
+                if claimed.contains(edge) {
+                    continue;
+                }
+                self.graph.add_order_only_inputs(*edge, &before.completion);
+                self.graph.forgive_order_inputs(*edge, &before.completion);
+            }
+        }
+    }
+
     /// Constrain only this compilation unit's command edges to depth one.
     /// A semantic child gets its own unit, so a parent's `.NOTPARALLEL` never
     /// turns into a global executor switch that serialises the child graph.
+    ///
+    /// This is half of the domain. The unit's recursive recipes are the other
+    /// half, and a pool cannot hold them — see [`Self::chain_serial_jobs`].
+    // [spec:ronin:req:make.notparallel-domain]
     pub(crate) fn serialise_unit(&mut self, serial: bool) {
         if serial {
             let name = format!("make_serial_{}", self.serial_units).into_bytes();
@@ -426,6 +540,7 @@ impl GraphSink {
             targets: std::mem::take(&mut self.unit.targets),
             subninjas: std::mem::take(&mut self.unit.subninjas),
             edges: std::mem::take(&mut self.unit.edges),
+            serial: self.unit.serial_pool.is_some(),
         }
     }
 
@@ -459,20 +574,40 @@ impl GraphSink {
         self.node_list(names, symbols)
     }
 
-    /// Make each child group wait for the parent or preceding child group.
-    fn attach_child_ordering(
+    /// Replace a recursive wrapper edge with the child goals it requested.
+    ///
+    /// Parent prerequisites become order-only inputs of every edge in each
+    /// child subtree: no indirect child work starts before the wrapper recipe
+    /// could have started, while the child's own timestamps still decide what
+    /// work it needs. The wrapper becomes a phony alias for child targets whose
+    /// identities remain local to their own recursive compilation units.
+    // [spec:ronin:req:make.recursive-invocation+2]
+    ///
+    /// `begun` is whether the recipe has already run part of itself at a
+    /// compilation boundary, which the finished edge has to carry: one of
+    /// those lines may have written this wrapper's own target, and reading the
+    /// date it then has would be reading the recipe's work as a reason not to
+    /// finish the recipe. See [`crate::graph::Edge::recipe_begun`].
+    pub(crate) fn complete_subninja(
         &mut self,
-        pending: &PendingSubninja,
-        child_groups: &[UnitSubgraph],
-    ) -> Vec<Node> {
+        edge: Edge,
+        pending: PendingSubninja,
+        child_groups: &[ChildGroup],
+        begun: bool,
+    ) -> Result<Edge, FrontendError> {
+        debug_assert_eq!(pending.invocations.len(), child_groups.len());
+        // Each child group waits for the parent, and then for the group before
+        // it: GNU Make runs a recipe's lines in the order they were written, so
+        // the Make a later invocation starts reads whatever an earlier one left.
         let mut waits = pending
             .inputs
             .iter()
             .chain(&pending.order_only_inputs)
             .copied()
             .collect::<Vec<_>>();
-        let mut child_targets = Vec::new();
-        for child in child_groups {
+        let mut child_targets: Vec<Node> = Vec::new();
+        for group in child_groups {
+            let child = &group.subgraph;
             let preceding = waits
                 .iter()
                 .copied()
@@ -495,32 +630,6 @@ impl GraphSink {
                 }
             }
         }
-        child_targets
-    }
-
-    /// Replace a recursive wrapper edge with the child goals it requested.
-    ///
-    /// Parent prerequisites become order-only inputs of every edge in each
-    /// child subtree: no indirect child work starts before the wrapper recipe
-    /// could have started, while the child's own timestamps still decide what
-    /// work it needs. The wrapper becomes a phony alias for child targets whose
-    /// identities remain local to their own recursive compilation units.
-    // [spec:ronin:req:make.recursive-invocation+2]
-    ///
-    /// `begun` is whether the recipe has already run part of itself at a
-    /// compilation boundary, which the finished edge has to carry: one of
-    /// those lines may have written this wrapper's own target, and reading the
-    /// date it then has would be reading the recipe's work as a reason not to
-    /// finish the recipe. See [`crate::graph::Edge::recipe_begun`].
-    pub(crate) fn complete_subninja(
-        &mut self,
-        edge: Edge,
-        pending: PendingSubninja,
-        child_groups: &[UnitSubgraph],
-        begun: bool,
-    ) -> Result<Edge, FrontendError> {
-        debug_assert_eq!(pending.invocations.len(), child_groups.len());
-        let child_targets = self.attach_child_ordering(&pending, child_groups);
 
         if child_targets.iter().any(|target| {
             pending.explicit_outputs.contains(target) || pending.implicit_outputs.contains(target)

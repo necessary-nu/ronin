@@ -232,6 +232,43 @@ manifest-derived graph is.
 > Make executor: no graph acquires GNU Make's scheduler, dirtiness model, or
 > reporter by being reached this way.
 
+> [spec:ronin:req:make.notparallel-domain]
+> `.NOTPARALLEL` with no prerequisites serialises the compilation unit that read
+> it, and the unit is where the domain begins and ends. GNU Make's
+> `not_parallel` is a flag of one make PROCESS — set in `snap_deps` from any
+> makefile in that process's include closure, so a declaration inside an
+> `include` serialises the whole of the process that included it and nothing
+> else. A compiled unit is that process. Every composition of one makefile is
+> therefore a domain of its own, exactly as every `$(MAKE)` GNU Make starts is a
+> process of its own, and two units reading one makefile constrain each other
+> not at all. What holds several compositions of one makefile apart is their
+> parent, if the parent declared it.
+>
+> What a domain serialises is its JOBS, and a recursive recipe's job is the
+> whole sub-make it stands for: `new_job` starts the job and then blocks until
+> it has finished, and for a `$(MAKE)` line that is the child's entire lifetime.
+> A depth-one pool answers for the unit's own command edges. It cannot answer
+> for a recursion, because the compiler has dissolved that sub-make into edges
+> of this same graph and a pool slot is held only while one command runs. Those
+> are held apart by ordering instead: taken in a topological order of the
+> unit's recursive recipes, each waits for the one before it — its wrapper and
+> every edge of the children that recipe composed. The wait is on the previous
+> job having finished and not on it having succeeded, so `-k` still reaches the
+> recipe after a failed one, and a recipe the unit is not going to run is not a
+> job and takes no place in the order.
+>
+> The declaration neither propagates nor restructures the graph. A
+> `.NOTPARALLEL` parent hands its children `-jN` and the job budget untouched
+> and their own makefiles decide their parallelism; `--shuffle` is declined for
+> the declaring unit alone. And because the constraint belongs to the scheduler,
+> it is wired onto a composition that has already settled — never into the
+> question of whether a recipe has to run, and never into what a staging pass
+> builds, both of which would turn a wait into work.
+>
+> `.NOTPARALLEL` WITH prerequisites is a different mechanism and not this one:
+> GNU Make 4.4.1 sets a wait point between the named targets' prerequisites and
+> leaves `not_parallel` clear. Only the bare form is read.
+
 > [spec:ronin:req:make.nesting-census+2]
 > Linting a Makefile reports every recursive invocation the compile
 > classified, each with the Makefile and line it was written on and whether it

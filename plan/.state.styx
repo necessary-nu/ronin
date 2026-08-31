@@ -986,6 +986,7 @@ assertions (
     {id the-build-starts-only-after-the-last-makefile-is-read, kind @complete, author "brendan@necessary.nu", at 2026-08-31T09:25:29.638871308Z}
     {id a-hundred-recursive-recipes-in-one-unit-refuse-to-build, kind @complete, author "brendan@necessary.nu", at 2026-08-31T11:11:36.05769827Z}
     {id a-unit-with-many-recursive-recipes-is-read-once-per-recipe, kind @doing, author "brendan@necessary.nu", at 2026-08-31T11:14:13.593134153Z}
+    {id a-notparallel-unit-runs-its-composed-children-at-once, kind @doing, author "brendan@necessary.nu", at 2026-08-31T12:59:22.946810563Z}
 )
 
 impl_evidence (

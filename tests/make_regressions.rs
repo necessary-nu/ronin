@@ -2781,3 +2781,131 @@ fn a_read_that_never_settles_is_still_refused() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// A `.NOTPARALLEL` makefile's recursive recipes do not run at the same time.
+///
+/// GNU Make's `.NOTPARALLEL` throttles the make PROCESS that read it: `new_job`
+/// starts one job and then blocks in `reap_children` until it has finished
+/// (make-4.4.1/src/job.c:1962, the line `job_slots == 1` also takes). A
+/// `$(MAKE)` recipe's job is the whole sub-make, so two of them belonging to
+/// one `.NOTPARALLEL` makefile never overlap.
+///
+/// Ronin composed each recursive recipe into a compilation unit of its own and
+/// gave each unit its own depth-one pool, which serialises a unit's command
+/// edges against each other and says nothing about one unit against another.
+/// The two sub-makes here reach one shared recipe, and both ran it at once:
+/// `ranlog` read `OVERLAP run run` where GNU Make 4.4.1 leaves `run`.
+///
+/// The `OVERLAP` line is the assertion. The number of `run` lines is not: two
+/// compositions of one makefile hold two isolated copies of its rules, both
+/// settled against the disk as it was before either ran, so Ronin runs the
+/// shared recipe once per copy where GNU's second process re-stats and finds it
+/// current. Both tools write `OVERLAP run run` with the declaration removed,
+/// which is what makes the overlap — and only the overlap — this case's
+/// subject.
+// [spec:ronin:req:make.notparallel-domain/test]
+#[test]
+fn two_notparallel_sub_makes_never_overlap() {
+    let directory = test_directory("notparallel-sub-makes");
+    fs::write(
+        directory.join("Makefile"),
+        ".NOTPARALLEL:\n\
+         .PHONY: all a b\n\
+         all: a b\n\
+         a: ; @$(MAKE) -f child.mk ta\n\
+         b: ; @$(MAKE) -f child.mk tb\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("child.mk"),
+        "shared:\n\
+         \t@if [ -e busy ]; then echo OVERLAP >> ranlog; fi; : > busy; sleep 1; \\\n\
+         \t rm -f busy; echo run >> ranlog; : > shared\n\
+         ta: shared ; @:\n\
+         tb: shared ; @:\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("-j8").output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ran = fs::read_to_string(directory.join("ranlog")).unwrap();
+    assert!(
+        !ran.contains("OVERLAP"),
+        "the two sub-makes of a .NOTPARALLEL makefile overlapped: {ran:?}"
+    );
+}
+
+/// And it does not serialise a child that never asked to be.
+///
+/// `.NOTPARALLEL` is not propagated. `not_parallel` is read in `new_job` and in
+/// `shuffle_deps_recursive` and nowhere else; `define_makeflags` has no case for
+/// it, and the jobserver is created before `snap_deps` has even discovered the
+/// declaration — so a `.NOTPARALLEL` parent still hands `-jN` and
+/// `--jobserver-auth` to its children, whose own makefiles decide for
+/// themselves. make-4.4.1/doc/make.texi:4416 says so in as many words: "Any
+/// recursively invoked make command will still run recipes in parallel (unless
+/// its makefile also contains this target)."
+///
+/// So the wait belongs between the parent's recursive recipes and not inside
+/// the subtree one of them composes. Eight recipes that must overlap, behind a
+/// parent that must not run two of anything: a pool inherited by the composed
+/// child would take this to one at a time, and GNU Make 4.4.1 runs it eight.
+// [spec:ronin:req:make.notparallel-domain/test]
+#[test]
+fn a_notparallel_parent_leaves_its_child_parallel() {
+    let directory = test_directory("notparallel-child-stays-parallel");
+    let jobs = 8;
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".NOTPARALLEL:\n.PHONY: all\nall: ; @$(MAKE) -C sub all\n",
+    )
+    .unwrap();
+    // Each recipe waits for every one of them to have arrived. Nothing here
+    // measures a peak, so nothing here can pass by being lucky about timing:
+    // if the child is serialised the barrier is never met and the case fails on
+    // its own timeout rather than on a count.
+    fs::write(
+        directory.join("sub").join("waiter.sh"),
+        "#!/bin/sh\n\
+         : > \"arrived.$1\"\n\
+         i=0\n\
+         while [ \"$(ls arrived.* 2>/dev/null | wc -l)\" -lt \"$2\" ]; do\n\
+         \ti=$((i + 1))\n\
+         \t[ \"$i\" -gt 200 ] && exit 1\n\
+         \tsleep 0.05\n\
+         done\n",
+    )
+    .unwrap();
+    let mut child = String::from(".PHONY: all");
+    for index in 0..jobs {
+        let _ = write!(child, " p{index}");
+    }
+    child.push_str("\nall:");
+    for index in 0..jobs {
+        let _ = write!(child, " p{index}");
+    }
+    child.push('\n');
+    for index in 0..jobs {
+        let _ = writeln!(child, "p{index}: ; @sh waiter.sh {index} {jobs}");
+    }
+    fs::write(directory.join("sub").join("Makefile"), &child).unwrap();
+
+    let output = make_command(&directory)
+        .arg(format!("-j{jobs}"))
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "the child of a .NOTPARALLEL parent did not run its recipes together: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

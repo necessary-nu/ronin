@@ -55,7 +55,7 @@ pub const MAKE_VERSION: &str = "4.4.1";
 
 use crate::frontend::{BuildGraph, Edge, FrontendError, Node, Scope};
 use crate::htab::{RapidHashMap, RapidHashSet};
-use crate::make::sink::{UnitOutput, UnitSubgraph};
+use crate::make::sink::{ChildGroup, UnitOutput, UnitSubgraph};
 use kati::build_sink::RecipeExpansion;
 use kati::evaluate::{Evaluated, evaluate};
 use kati::ninja::emit_populated;
@@ -1136,11 +1136,24 @@ fn compose_subninjas(
         targets,
         subninjas,
         edges,
+        serial: not_parallel,
     } = unit;
     let mut subtree_edges = edges;
     let disk = freshness_disk(descendant_context, state)?;
-    let ordered = dependency_ordered(subninjas, sink);
+    let (ordered, ordered_acyclically) = dependency_ordered(subninjas, sink);
     let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, ahead);
+    // One entry per recursive recipe this unit is going to run, in the order
+    // GNU Make would have run them, for a unit whose makefiles declared
+    // `.NOTPARALLEL`. Left empty for one that did not, and wired into the graph
+    // only once the whole unit has composed — see
+    // [`GraphSink::chain_serial_jobs`].
+    //
+    // Only across the part `dependency_ordered` actually sorted. The chain runs
+    // forwards through that order, so it can never close a loop the sort has
+    // already ruled out; the unsorted remainder is a cycle among the wrappers,
+    // and Make's own cycle diagnostics answer for it without this adding an
+    // edge that would make the report be about the wrong thing.
+    let mut serial_jobs: Vec<sink::SerialJob> = Vec::new();
     for (pending_index, mut pending) in ordered.into_iter().enumerate() {
         // Whose recipe this is decides which switches its segments run under.
         // A recursive recipe the makefile update would run — a Makefile's own,
@@ -1249,22 +1262,42 @@ fn compose_subninjas(
             state.unfinished.extend(pending.outputs());
             return Ok(incomplete_unit(targets, subtree_edges));
         };
+        // Read before the wrapper is completed, because completing it consumes
+        // the recipe. This is the job GNU Make would now be blocked in, so it
+        // is what the next recursive recipe of a `.NOTPARALLEL` unit waits for.
+        let completion = pending.outputs().collect::<Vec<_>>();
         let wrapper = sink
             .complete_subninja(wrapper, pending, &child_groups, begun)
             .map_err(MakeError::Construct)?;
+        // The recipe is going to run, so it is a job: the wrapper, and every
+        // edge of the children THIS recipe composed. A child it only reached is
+        // one copy of one piece of work, already held by the recipe that
+        // composed it — see [`sink::ChildGroup::fresh`].
+        if not_parallel && pending_index < ordered_acyclically {
+            let fresh = child_groups.iter().filter(|group| group.fresh);
+            let edges = std::iter::once(wrapper)
+                .chain(fresh.flat_map(|group| group.subgraph.edges.iter().copied()))
+                .collect();
+            serial_jobs.push(sink::SerialJob { completion, edges });
+        }
         // Compiled whole: every segment of this recipe is in the graph, so the
         // pass that builds this graph is the one that runs the rest of it.
         state.completed_recipes.insert(RecursiveRecipe {
             compilation_key: compilation_key.to_vec(),
             pending_index,
         });
-        for edge in child_groups.into_iter().flat_map(|child| child.edges) {
+        for edge in child_groups.into_iter().flat_map(|c| c.subgraph.edges) {
             if !subtree_edges.contains(&edge) {
                 subtree_edges.push(edge);
             }
         }
         subtree_edges.push(wrapper);
     }
+    // The unit has composed whole, so these are the edges the build will
+    // schedule and this is the last moment at which no staging pass can see
+    // what the chain adds.
+    // [spec:ronin:req:make.notparallel-domain]
+    sink.chain_serial_jobs(&serial_jobs);
     Ok(ComposedUnit {
         subgraph: UnitSubgraph {
             targets,
@@ -1304,7 +1337,7 @@ fn compose_child_groups(
     resolve: Resolver,
     descendant_context: &CompilationContext,
     state: &mut CompilationState<'_>,
-) -> Result<Option<Vec<UnitSubgraph>>, MakeError> {
+) -> Result<Option<Vec<ChildGroup>>, MakeError> {
     let RecipeSite {
         at: (compilation_key, pending_index),
         for_makefile,
@@ -1358,8 +1391,11 @@ fn compose_child_groups(
             resolved => resolved,
         };
         let child_key = child.cache_key().to_vec();
-        let child_subgraph = if let Some(subgraph) = state.cache.get(&child_key) {
-            subgraph.clone()
+        let group = if let Some(subgraph) = state.cache.get(&child_key) {
+            ChildGroup {
+                subgraph: subgraph.clone(),
+                fresh: false,
+            }
         } else {
             let child_scope = pending.scope;
             let child = compile_unit(child, sink, Some(child_scope), resolve, state)?;
@@ -1367,16 +1403,19 @@ fn compose_child_groups(
                 return Ok(None);
             }
             state.cache.insert(child_key, child.subgraph.clone());
-            child.subgraph
+            ChildGroup {
+                subgraph: child.subgraph,
+                fresh: true,
+            }
         };
-        child_groups.push(child_subgraph);
+        child_groups.push(group);
 
         if group_index + 1 < pending.invocations.len()
             && !stage_completed_group(
                 sink,
                 state,
                 (compilation_key, pending_index, group_index),
-                &child_groups[group_index].targets,
+                &child_groups[group_index].subgraph.targets,
                 for_makefile,
             )
         {
@@ -1484,7 +1523,7 @@ fn unreadable_child(
     context: &CompilationContext,
     invocation: &crate::make::sink::SubninjaInvocation,
     directory: &std::path::Path,
-) -> UnitSubgraph {
+) -> ChildGroup {
     context.census.record(kati::census::Invocation {
         location: invocation.location.clone(),
         disposition: kati::census::Disposition::MissingMakefile {
@@ -1495,9 +1534,12 @@ fn unreadable_child(
                 .to_string(),
         },
     });
-    UnitSubgraph {
-        targets: Vec::new(),
-        edges: Vec::new(),
+    ChildGroup {
+        subgraph: UnitSubgraph {
+            targets: Vec::new(),
+            edges: Vec::new(),
+        },
+        fresh: true,
     }
 }
 
@@ -1597,10 +1639,15 @@ fn stage_recursive_wrapper(
 /// only what each wrapper directly reads finds `X.mdh` no producer at all and
 /// composes it first, against a provisional graph that has not been given the
 /// edge which makes what it asks for.
+///
+/// The count beside the order is how many of them the sort actually settled: a
+/// cyclic remainder is appended in the order it arrived and stands in no
+/// relation to anything, which is what `.NOTPARALLEL` chaining has to know so
+/// it does not turn that remainder into a wait that cannot be satisfied.
 fn dependency_ordered(
     subninjas: Vec<sink::PendingSubninja>,
     sink: &GraphSink,
-) -> Vec<sink::PendingSubninja> {
+) -> (Vec<sink::PendingSubninja>, usize) {
     let mut producers = HashMap::new();
     for (index, pending) in subninjas.iter().enumerate() {
         for output in pending.outputs() {
@@ -1648,8 +1695,9 @@ fn dependency_ordered(
             }
         }
     }
+    let ordered_acyclically = ordered.len();
     ordered.extend(pending.into_iter().flatten());
-    ordered
+    (ordered, ordered_acyclically)
 }
 
 /// Apply Make's `export`/`unexport` result to the environment imported by a
