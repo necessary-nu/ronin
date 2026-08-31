@@ -90,7 +90,7 @@ pub(crate) fn parse_makeflags_value(makeflags: Option<&str>) -> ProcessResult<Jo
                 mode,
             });
         }
-        if let Some(path) = value.strip_prefix("fifo:") {
+        if let Some(path) = value.strip_prefix(FIFO_AUTHORIZATION) {
             return Ok(JobserverConfig {
                 mode: JobserverMode::PosixFifo,
                 path: path.into(),
@@ -141,6 +141,12 @@ pub(crate) fn inherited_client() -> ProcessResult<jobserver::Client> {
 /// long-running and a child hands a token back in the middle of them.
 #[cfg(unix)]
 const SERVED_RETRY_INTERVAL: Duration = Duration::from_millis(2);
+
+/// How `--jobserver-auth` names a jobserver that is a named pipe.
+///
+/// GNU Make's `FIFO_PREFIX` (posixos.c), and the only form Ronin publishes: a
+/// path survives an intermediate process that passes no descriptors down.
+const FIFO_AUTHORIZATION: &str = "fifo:";
 
 /// The byte written into a served jobserver for each shareable slot.
 ///
@@ -207,6 +213,25 @@ impl Transport {
             publication_of(OsString::from(budget)).into()
         };
         Self::Inherited(client, publication)
+    }
+
+    /// The address a child is given to reach this budget, as
+    /// `--jobserver-auth` spells it.
+    ///
+    /// Only a served jobserver answers. An inherited one was named by whoever
+    /// published it and is republished under the name it arrived with, which
+    /// the front end already holds; asking the transport would only be asking
+    /// the same string back through a longer route.
+    pub(crate) fn served_authorization(&self) -> Option<OsString> {
+        match self {
+            Self::Inherited(..) => None,
+            #[cfg(unix)]
+            Self::Served(served) => {
+                let mut authorization = OsString::from(FIFO_AUTHORIZATION);
+                authorization.push(&served.path);
+                Some(authorization)
+            }
+        }
     }
 
     /// The environment a child needs to draw on this build's job budget.
@@ -288,7 +313,7 @@ impl ServedJobserver {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
 
         let operate = |operation, source| ProcessError::Jobserver { operation, source };
-        let path = std::env::temp_dir().join(format!(
+        let path = temporary_directory().join(format!(
             "ronin-jobserver-{}-{}",
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
@@ -383,10 +408,31 @@ impl Drop for ServedJobserver {
     }
 }
 
+/// Where GNU Make 4.4.1 puts the fifo it publishes.
+///
+/// `get_tmpdir` (misc.c): `MAKE_TMPDIR` before `TMPDIR`, and a name that is set
+/// but does not stat as a directory is passed over rather than used — GNU says
+/// `TMPDIR value X: ...` and goes on to the next candidate, and to `/tmp` when
+/// none of them will do. Which is the point: a `TMPDIR` pointing at nothing
+/// costs the run a diagnostic, never the budget.
+///
+/// `std::env::temp_dir` would answer `TMPDIR` alone and would not look at it.
+#[cfg(unix)]
+fn temporary_directory() -> std::path::PathBuf {
+    ["MAKE_TMPDIR", "TMPDIR"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .filter(|value| !value.is_empty())
+        .map(std::path::PathBuf::from)
+        .find(|candidate| candidate.is_dir())
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+}
+
 /// The environment GNU Make 4.4.1 would publish for this jobserver.
 #[cfg(unix)]
 fn publication_for(jobs: NonZeroUsize, path: &std::path::Path) -> [(&'static str, OsString); 3] {
-    let mut authorization = OsString::from(format!("-j{jobs} --jobserver-auth=fifo:"));
+    let mut authorization =
+        OsString::from(format!("-j{jobs} --jobserver-auth={FIFO_AUTHORIZATION}"));
     authorization.push(path);
     publication_of(authorization)
 }
@@ -846,7 +892,7 @@ mod tests {
     }
 
     #[test]
-    // [spec:ronin:req:make.jobserver+1/test]
+    // [spec:ronin:req:make.jobserver+2/test]
     // [spec:ronin:req:make.recursive-invocation+2/test]
     fn an_inherited_jobserver_survives_a_rewritten_makeflags() {
         let inherit =

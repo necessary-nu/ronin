@@ -281,13 +281,49 @@ manifest-derived graph is.
 > makes its own parent's target — ends the lint where it would have ended the
 > build, and is reported as the refusal it is.
 
-> [spec:ronin:req:make.jobserver+1]
-> Ronin does not create a GNU Make jobserver for recursive Make execution. A
-> parent graph and every compiled subninja share one Ninja scheduler and one
-> job limit. Jobserver-related option spellings and authentication tokens are
-> accepted at the Make interface; the outer invocation may map a usable
-> inherited budget onto the Ninja scheduler or ignore it, but it does not
-> introduce a second scheduling mechanism.
+> [spec:ronin:req:make.jobserver+2]
+> `-j` bounds the whole Make tree and not just this process. GNU Make gives one
+> jobserver per tree: the top invocation creates it, every Make below joins it
+> through `--jobserver-auth` in `MAKEFLAGS`, and the tokens in it are what stop
+> the levels from adding up. Ronin's budget is that budget.
+>
+> A parent graph and every compiled subninja share one Ninja scheduler, so a
+> recursion Ronin composed costs no token beyond the slot its edge already
+> holds. A recursion Ronin could not compose starts a real Make, and so does
+> any jobserver-speaking tool a recipe invokes; those draw on the same pool.
+> There is one pool and one scheduler, never two schedulers.
+>
+> Where the budget lives has three answers, and they are GNU Make's three. A
+> run that joined a budget a parent published republishes the address it
+> arrived under, unchanged, so a grandchild reaches the outer budget rather
+> than the middle's idea of it. A run that joined none and may hand out more
+> than one slot creates the budget, spends it through the same client a child
+> does — the implicit slot first, tokens past it — and publishes its own
+> address. A run with one slot or none to share creates and publishes nothing:
+> `-j1` and a bare `-j` stand up no jobserver, as GNU Make stands up none for
+> `job_slots <= 1`. Neither does a dry run — GNU Make publishes one there and
+> spends it on the `+` lines it runs anyway, and Ronin runs none of them, so
+> the budget would be one nothing could spend. An address this run could not
+> join is not republished, and neither is one it could not create; handing a
+> child a budget nobody is feeding is worse than handing it none, and a
+> jobserver that cannot be made costs the budget rather than the build.
+>
+> `.FEATURES` claims `jobserver` and `jobserver-fifo`, and the claims are met:
+> the published form is the named pipe GNU Make 4.4.1 publishes on Linux, in
+> the directory `MAKE_TMPDIR` names, or `TMPDIR`, or `/tmp` — GNU Make's
+> `get_tmpdir` order, and a name that does not stat as a directory is passed
+> over rather than used. `--jobserver-style` is read and refused exactly where
+> GNU Make refuses it, but selects nothing: the named-pipe form is the only one
+> served, because a path reaches a grandchild through an intermediate process
+> that passes no descriptors down.
+>
+> The address is settled before the makefiles are read, where GNU Make settles
+> it after. Ronin compiles recipes rather than interpreting them, so each
+> unit's `MAKEFLAGS` is fixed while the unit is read. Two consequences are
+> accepted: a `$(MAKEFLAGS)` expanded during the read carries the address
+> where GNU Make's does not yet, and a makefile's own `MAKEFLAGS += -jN`
+> cannot resize a budget that already exists. What a recipe finally reads is
+> the value GNU Make would have given it.
 
 ## Verification
 

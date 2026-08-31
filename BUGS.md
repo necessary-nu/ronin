@@ -563,11 +563,21 @@ when the recursive invocation runs inside a shell loop or compound recipe. The
 reduced case MUST print `VALUE=` repeatedly with `-j16`.
 
 Resolution: each compiled Make unit now exports its final canonical
-`MAKEFLAGS` and `MFLAGS` values to every recipe. The jobserver layer splices its
-authorization into those values before execution, so a real recursive process
-inside a shell loop receives both the shared job budget and the command-line
-override table. The reduced shell-loop case is an integration test and prints
-`VALUE=` without falling back to `file-default`.
+`MAKEFLAGS` and `MFLAGS` values to every recipe, so a real recursive process
+inside a shell loop receives the command-line override table. The reduced
+shell-loop case is an integration test and prints `VALUE=` without falling back
+to `file-default`.
+
+Corrected 2026-08-31. This entry claimed the jobserver authorization was
+spliced into those values before execution. It was not: the splice
+(`Transport::publish_into`) is real and unit-tested, but its only Make-mode
+call site runs over an empty base environment, and Make mode set
+`serve_jobserver = false` outright, so there was no authorization to splice.
+A shell-loop recursion therefore received the width and no budget, and ran
+`-j` of its own beside its parent's. The authorization now travels the way GNU
+Make sends it — through the switch table that rebuilds `MAKEFLAGS`, settled
+before the read — and one budget bounds the tree. See
+`[spec:ronin:req:make.jobserver+2]`.
 
 ## A shell-computed recursive assignment is rejected as non-static
 

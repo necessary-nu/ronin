@@ -2,15 +2,14 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 
-#[path = "support/scratch.rs"]
-mod scratch_directory;
+#[path = "support/make_mode.rs"]
+mod make_mode;
 
-use scratch_directory::Scratch;
-
-/// A scratch directory of this test's own, which goes away with the test.
-fn test_directory(label: &str) -> Scratch {
-    Scratch::named(&format!("ronin-{label}-"))
-}
+#[cfg(unix)]
+use make_mode::peak_concurrency;
+use make_mode::{Scratch, test_directory};
+#[cfg(all(unix, feature = "make"))]
+use make_mode::{invoked_as, make_command};
 
 // [spec:ronin:req:product.ronin-identity/test]
 // [spec:ronin:req:product.no-samuflags/test]
@@ -670,34 +669,6 @@ fn a_manifest_diagnostic_points_at_the_token_it_is_about() {
         indented,
         "ronin: error: build.ninja:1: unexpected indent\n\n"
     );
-}
-
-/// The peak number of work units alive at once, from a log of start and end
-/// stamps, and how many units the log recorded.
-#[cfg(unix)]
-fn peak_concurrency(log: &str) -> (usize, usize) {
-    let mut events = log
-        .lines()
-        .filter_map(|line| {
-            let (kind, stamp) = line.split_once(' ')?;
-            let start = kind == "S";
-            // Ends sort before starts at an identical stamp, so a unit that
-            // finishes exactly as another begins is not counted as an overlap.
-            Some((stamp.parse::<f64>().ok()?, i32::from(start), start))
-        })
-        .collect::<Vec<_>>();
-    events.sort_by(|left, right| left.partial_cmp(right).expect("stamps are finite"));
-    let (mut live, mut peak, mut started) = (0, 0, 0);
-    for (_, _, start) in events {
-        if start {
-            live += 1;
-            started += 1;
-            peak = peak.max(live);
-        } else {
-            live -= 1;
-        }
-    }
-    (peak, started)
 }
 
 #[cfg(unix)]
@@ -2133,26 +2104,6 @@ fn make_mode_synchronizes_each_target_output() {
 /// Run the binary under a name of our choosing, which is what selects the front
 /// end. A symlink is how a multi-call binary is installed, so it is how this is
 /// tested.
-#[cfg(all(unix, feature = "make"))]
-fn invoked_as(directory: &std::path::Path, name: &str) -> PathBuf {
-    let link = directory.join(name);
-    let _ = fs::remove_file(&link);
-    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ronin"), &link).unwrap();
-    link
-}
-
-#[cfg(all(unix, feature = "make"))]
-fn make_command(program: &std::path::Path, directory: &std::path::Path) -> Command {
-    let mut command = Command::new(program);
-    command
-        .current_dir(directory)
-        .env_remove("MAKEFLAGS")
-        .env_remove("MFLAGS")
-        .env_remove("CARGO_MAKEFLAGS")
-        .env_remove("MAKELEVEL");
-    command
-}
-
 // [spec:ronin:req:product.make-identity/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -3064,180 +3015,6 @@ fn recursive_make_uses_ninja_narration() {
         assert!(!said.contains("Leaving directory"), "{arguments:?}: {said}");
         assert!(!said.contains("ronin["), "{arguments:?}: {said}");
     }
-}
-
-#[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.jobserver+1/test]
-// [spec:ronin:req:make.recursive-invocation+2/test]
-#[test]
-fn recursive_make_tree_uses_one_budget() {
-    const LEVELS: [&str; 3] = ["a", "b", "c"];
-    const UNITS: usize = 6;
-    const BUDGETS: [usize; 3] = [1, 2, 4];
-
-    let directory = test_directory("make-recursive-budget");
-    let served = directory.join("jobservers");
-    fs::create_dir_all(&served).unwrap();
-    let log = directory.join("units");
-    let stamp = directory.join("unit.sh");
-    fs::write(
-        &stamp,
-        "#!/bin/sh\nset -- \"$TMPDIR\"/ronin-jobserver-*\n[ ! -e \"$1\" ] || printf 'JOBSERVER\\n' >> \"$LOG\"\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-
-    // The levels nest and only the deepest one has work, which is the shape a
-    // generated build has. Levels side by side would not measure the budget's
-    // reach: every level owns one implicit slot, so a tree whose work sits one
-    // hop down runs `-j` recipes whether or not the budget arrived at all.
-    // Nothing tells any level how many jobs it may run.
-    let tree = |prefix: &str, recurse: &str| {
-        let (deepest, delegating) = LEVELS.split_last().expect("the tree has levels");
-        for (index, level) in delegating.iter().enumerate() {
-            let next = LEVELS[index + 1];
-            fs::write(
-                directory.join(format!("{prefix}{level}.mk")),
-                format!("all:\n\t@{recurse} -f {prefix}{next}.mk all\n.PHONY: all\n"),
-            )
-            .unwrap();
-        }
-        let units = (0..UNITS)
-            .map(|unit| format!("{deepest}{unit}"))
-            .collect::<Vec<_>>()
-            .join(" ");
-        fs::write(
-            directory.join(format!("{prefix}{deepest}.mk")),
-            format!(
-                "all: {units}\n{units}:\n\t@{} $@\n.PHONY: all {units}\n",
-                stamp.display()
-            ),
-        )
-        .unwrap();
-        format!(
-            "all:\n\t@{recurse} -f {prefix}{}.mk all\n.PHONY: all\n",
-            LEVELS[0]
-        )
-    };
-    fs::write(directory.join("Makefile"), tree("", "$(MAKE)")).unwrap();
-
-    let program = invoked_as(&directory, "make");
-    let measure = |jobs: usize| {
-        let _ = fs::remove_file(&log);
-        let output = make_command(&program, &directory)
-            .arg(format!("-j{jobs}"))
-            .env("LOG", &log)
-            .env("TMPDIR", &served)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let events = fs::read_to_string(&log).unwrap();
-        assert!(
-            !events.lines().any(|line| line == "JOBSERVER"),
-            "Make mode created a recursive GNU Make jobserver"
-        );
-        let (peak, units) = peak_concurrency(&events);
-        assert_eq!(units, UNITS);
-        peak
-    };
-
-    // Exactly `-j`, not at most it. The ceiling alone is met by a tree that
-    // runs one recipe at a time, which is what a budget reaching nobody looks
-    // like; the whole point of sharing it is that it is also spent.
-    for jobs in BUDGETS {
-        let peak = measure(jobs);
-        assert_eq!(
-            peak, jobs,
-            "-j{jobs} ran {peak} recipes of a recursive Makefile tree at once"
-        );
-    }
-    assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
-}
-
-/// A child `-j` remains accepted interface data; it cannot create another
-/// scheduler inside the graph the parent already owns.
-#[cfg(all(unix, feature = "make"))]
-// [spec:ronin:req:make.jobserver+1/test]
-#[test]
-fn child_jobs_keep_one_scheduler() {
-    const LEVELS: [&str; 3] = ["a", "b", "c"];
-    const UNITS: usize = 6;
-    /// Different from the root limit, so two schedulers are distinguishable.
-    const FORCED: usize = 4;
-
-    let directory = test_directory("make-forced-budget");
-    let served = directory.join("jobservers");
-    fs::create_dir_all(&served).unwrap();
-    let log = directory.join("units");
-    let stamp = directory.join("unit.sh");
-    fs::write(
-        &stamp,
-        "#!/bin/sh\nprintf 'S %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\nsleep 0.2\nprintf 'E %s\\n' \"$(date +%s.%N)\" >> \"$LOG\"\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&stamp, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-
-    // The forcing level is the first, and the work is two hops below it, so
-    // what is measured is the budget reaching the bottom rather than the
-    // forcing level spending its own implicit slot.
-    fs::write(
-        directory.join("Makefile"),
-        format!(
-            "all:\n\t@$(MAKE) -j{FORCED} -f {}.mk all\n.PHONY: all\n",
-            LEVELS[0]
-        ),
-    )
-    .unwrap();
-    let (deepest, delegating) = LEVELS.split_last().expect("the tree has levels");
-    for (index, level) in delegating.iter().enumerate() {
-        fs::write(
-            directory.join(format!("{level}.mk")),
-            format!(
-                "all:\n\t@$(MAKE) -f {}.mk all\n.PHONY: all\n",
-                LEVELS[index + 1]
-            ),
-        )
-        .unwrap();
-    }
-    let units = (0..UNITS)
-        .map(|unit| format!("{deepest}{unit}"))
-        .collect::<Vec<_>>()
-        .join(" ");
-    fs::write(
-        directory.join(format!("{deepest}.mk")),
-        format!(
-            "all: {units}\n{units}:\n\t@{} $@\n.PHONY: all {units}\n",
-            stamp.display()
-        ),
-    )
-    .unwrap();
-
-    let program = invoked_as(&directory, "make");
-    let output = make_command(&program, &directory)
-        .arg("-j2")
-        .env("LOG", &log)
-        .env("TMPDIR", &served)
-        .output()
-        .unwrap();
-    // Both streams: the forcing level is a recipe, and a recipe's diagnostics
-    // reach the run through the captured output its parent replays.
-    let said = String::from_utf8_lossy(&output.stdout).into_owned()
-        + &String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "{said}");
-    let (peak, ran) = peak_concurrency(&fs::read_to_string(&log).unwrap());
-    assert_eq!(ran, UNITS);
-    // The child spelling did not replace the root graph's one scheduler.
-    assert_eq!(
-        peak, 2,
-        "child -j{FORCED} split a root -j2 graph into another scheduler ({peak})"
-    );
-    assert!(!said.contains("resetting jobserver mode"), "{said}");
-
-    assert_eq!(fs::read_dir(&served).unwrap().count(), 0);
 }
 
 /// A Makefile-compiled graph fails in the same shape as a manifest graph.

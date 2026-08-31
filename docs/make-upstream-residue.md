@@ -352,6 +352,36 @@ the whole fault is in the name: GNU strips whitespace from it before binding
   Ronin `no work to do.` — the second half of the test, and ordinary
   `no-work-line` narration. Ronin has no jobserver FIFO to fail to create.
 
+### Update, 2026-08-31: five of these rows are gone
+
+The reading above — "there is no jobserver and no handle to publish" — was the
+defect rather than the explanation. `.FEATURES` claimed `jobserver` and
+`jobserver-fifo` the whole time, and a `$(MAKE)` Ronin could not compose forked
+a real Make that ran `-j` of its own beside its parent's.
+`[spec:ronin:req:make.jobserver+2]` makes the claim true: one budget, published
+where GNU publishes it, joined and republished the way GNU joins and
+republishes it. The four `jobserver-auth` rows lost their only difference and
+are now `narration` — Ninja's progress line and the recipe echo, nothing else.
+
+`.15` (`MAKE_TMPDIR=.` beside `TMPDIR=nosuchdir`, asserting
+`/--jobserver-auth=fifo:\./`) went further and left the inventory: Ronin reads
+`MAKE_TMPDIR` before `TMPDIR` as GNU's `get_tmpdir` does, so the fifo lands in
+`.` and the case passes outright.
+
+`.13` is unchanged and stays where it was. Ronin has the same forgiveness GNU's
+fallback provides, by a shorter route — a `TMPDIR` that is not a directory is
+passed over for `/tmp`, and a fifo it still could not create costs the budget
+rather than the build — and says nothing while doing it. GNU's two lines about
+it joined `jobserver-narration`.
+
+The `jobserver-auth` family stays, narrowed to the runs where GNU stands a
+jobserver up and Ronin does not. Both tools' addresses are anonymised to
+`<auth>` before anything is compared, because the value names a temporary file
+minted per process and there is nothing byte-comparable in it — that the
+address Ronin publishes is one a child can actually spend is gated by peak
+concurrency in `an_unlifted_recursion_draws_on_the_shared_budget`, not by
+bytes.
+
 ## features/temp_stdin — 4 rows
 
 * **`.diff` — narration, documented only.** `make -f temp_stdin.mk -v -f-`. The

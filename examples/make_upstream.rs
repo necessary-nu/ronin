@@ -197,7 +197,7 @@ const FAMILIES: [Family; 34] = [
     Family {
         name: "jobserver-narration",
         class: Class::Narration,
-        reason: "GNU Make's jobserver-mode runner messages — `-jN forced in submake: resetting jobserver mode`, `jobserver unavailable: using -j1`, `cannot open jobserver` — which a single-scheduler Ronin (make-single-ninja-scheduler) never emits, because recursive Make invocations compile into one graph with one scheduler and there is no jobserver transport between separate processes.",
+        reason: "GNU Make's jobserver-mode runner messages — `-jN forced in submake: resetting jobserver mode`, `jobserver unavailable: using -j1`, `cannot open jobserver`, and its complaint about a `TMPDIR` it would not put a fifo in — which Ronin never says. It settles every one of those situations the same way (make.jobserver): a `-j` typed beside an inherited address masters a new group, an address it could not join is dropped rather than republished, and a temporary directory that is not one is passed over for the next candidate. Saying so is narration about the runner's own bookkeeping, not about the build.",
     },
     Family {
         name: "recursive-invocation-echo",
@@ -212,7 +212,7 @@ const FAMILIES: [Family; 34] = [
     Family {
         name: "jobserver-auth",
         class: Class::Interface,
-        reason: "interface observation: a Makefile read MAKEFLAGS and GNU's value carried `--jobserver-auth=`, which a single-scheduler Ronin (make-single-ninja-scheduler) has no transport for and therefore never writes. Recognised by deleting only that switch from GNU's line: if what is left is not what Ronin printed, the case is still unexplained.",
+        reason: "interface observation: a Makefile read MAKEFLAGS and GNU's value carried `--jobserver-auth=` where Ronin's did not, which is now only the cases where GNU stands a jobserver up and Ronin does not. Both tools' handles are normalised to `<auth>` first, because the value is a temporary path minted per process and there is nothing byte-comparable in it — that the address Ronin publishes is the one a child can actually spend is gated by peak concurrency, not by bytes. Recognised, after that, by deleting the switch from GNU's line alone: if what is left is not what Ronin printed, the case is still unexplained.",
     },
     Family {
         name: "trace-line",
@@ -429,13 +429,7 @@ fn normalise(line: &str, side: Side, source: &Source) -> Contribution {
         if body.contains("pattern recipe did not update peer target '") {
             return Contribution::narration("pattern-peer-warning");
         }
-        // GNU Make's jobserver-mode runner messages. A single-scheduler Ronin
-        // (make-single-ninja-scheduler) composes recursive Make into one graph
-        // and has no jobserver transport, so none of these has a counterpart.
-        if body.contains("forced in submake: resetting jobserver mode.")
-            || body.contains("jobserver unavailable: using -j1")
-            || body.contains("cannot open jobserver ")
-        {
+        if is_jobserver_narration(body) {
             return Contribution::narration("jobserver-narration");
         }
         // What Make says once a parallel run has failed and is letting the
@@ -1056,6 +1050,12 @@ struct OurSide {
     commands: Vec<String>,
     /// Whether it refused an option, and so never ran the build at all.
     refused_an_option: bool,
+    /// Whether any line of it carried a jobserver address.
+    ///
+    /// What decides whether GNU's address is a difference at all: two tools
+    /// that both published one agree, and the case's residue is whatever else
+    /// is left. See [`without_jobserver_auth`].
+    published_a_budget: bool,
 }
 
 /// Read Ronin's lines into narration, leftovers, and the commands it ran.
@@ -1065,6 +1065,7 @@ fn read_our_side(lines: &[String], source: &Source) -> OurSide {
         residue: Leftovers::default(),
         commands: Vec::new(),
         refused_an_option: false,
+        published_a_budget: false,
     };
     // Ninja's failure block echoes back the command line it launched, and what
     // that line looks like is decided by the makefile: `SHELL`, `.SHELLFLAGS`
@@ -1087,7 +1088,9 @@ fn read_our_side(lines: &[String], source: &Source) -> OurSide {
             note(&mut side.families, "ninja-failure-block");
             continue;
         }
-        let contribution = normalise(line, Side::Ours, source);
+        let (line, budget) = anonymous_jobserver_auth(line);
+        side.published_a_budget |= budget;
+        let contribution = normalise(&line, Side::Ours, source);
         if let Some(family) = contribution.family
             && !side.families.contains(&family)
         {
@@ -1127,15 +1130,21 @@ fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSi
         }
     };
     for line in lines {
-        // The one switch GNU writes into MAKEFLAGS that a single-scheduler
-        // Ronin has nothing to put there: the jobserver's own handle. Taken
-        // off before the line is read rather than used to delete it, for the
-        // same reason the fatal wrapper is — what remains has to match what
+        // The jobserver's own handle, which both tools now write into
+        // MAKEFLAGS and neither writes twice the same way: it names a
+        // temporary file minted per process. Anonymised on both sides, so what
+        // is compared is whether an address was published rather than which
+        // one — and where only GNU published one, taken off its line
+        // altogether. Taken off rather than used to delete the line, for the
+        // same reason the fatal wrapper is: what remains has to match what
         // Ronin printed, or the case is still unexplained.
-        let (line, jobserver) = without_jobserver_auth(line);
-        if jobserver {
+        let (line, jobserver) = anonymous_jobserver_auth(line);
+        let line = if jobserver && !ours.published_a_budget {
             note("jobserver-auth", &mut side.families);
-        }
+            without_jobserver_auth(&line)
+        } else {
+            line
+        };
         let contribution = normalise(&line, Side::Theirs, source);
         if let Some(family) = contribution.family {
             side.refused_fatally |= family == "fatal-decoration";
@@ -1196,22 +1205,60 @@ fn read_their_side(lines: &[String], source: &Source, ours: &OurSide) -> TheirSi
     side
 }
 
-/// A line with GNU's jobserver handle taken out of it, and whether one was
-/// there.
+/// The switch that names a jobserver, in the spelling the tools share.
+const JOBSERVER_AUTH: &str = "--jobserver-auth=";
+
+/// Whether a diagnostic is GNU Make's bookkeeping about its own jobserver.
 ///
-/// `--jobserver-auth=fifo:/tmp/GMfifo123` is one word wherever it appears, and
-/// the space in front of it goes with it so `-j2 --jobserver-auth=x -w` reads
-/// back as `-j2 -w` rather than growing a double space.
-fn without_jobserver_auth(line: &str) -> (String, bool) {
-    if !line.contains("--jobserver-auth=") {
+/// What it did about a group it left, an address it could not open, and a
+/// `TMPDIR` it would not put a fifo in. Ronin settles every one of those the
+/// same way and says nothing about any of them, which is where the narration
+/// line falls for every other piece of the runner's own record-keeping.
+fn is_jobserver_narration(body: &str) -> bool {
+    body.contains("forced in submake: resetting jobserver mode.")
+        || body.contains("jobserver unavailable: using -j1")
+        || body.contains("cannot open jobserver ")
+        || body.contains("using default temporary directory ")
+        || body.starts_with("TMPDIR value ")
+        || body.starts_with("MAKE_TMPDIR value ")
+}
+
+/// A line with any jobserver handle in it replaced by the placeholder the
+/// upstream suite uses for the same reason, and whether one was there.
+///
+/// `--jobserver-auth=fifo:/tmp/GMfifo123` names a file minted per process, so
+/// the only comparable thing about it is that it is there. Upstream's own
+/// jobserver suite reaches the same conclusion and writes
+/// `$(patsubst --jobserver-auth=%,--jobserver-auth=<auth>,$(MAKEFLAGS))`; this
+/// is that substitution, applied to the suites that did not think to.
+fn anonymous_jobserver_auth(line: &str) -> (String, bool) {
+    if !line.contains(JOBSERVER_AUTH) {
         return (line.to_owned(), false);
     }
-    let kept = line
+    let anonymous = line
         .split(' ')
-        .filter(|word| !word.starts_with("--jobserver-auth="))
+        .map(|word| {
+            if word.starts_with(JOBSERVER_AUTH) {
+                format!("{JOBSERVER_AUTH}<auth>")
+            } else {
+                word.to_owned()
+            }
+        })
         .collect::<Vec<_>>()
         .join(" ");
-    (kept, true)
+    (anonymous, true)
+}
+
+/// A line with the jobserver handle taken out of it altogether.
+///
+/// One word wherever it appears, and the space in front of it goes with it so
+/// `-j2 --jobserver-auth=x -w` reads back as `-j2 -w` rather than growing a
+/// double space.
+fn without_jobserver_auth(line: &str) -> String {
+    line.split(' ')
+        .filter(|word| !word.starts_with(JOBSERVER_AUTH))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Add a family to the list once, whoever noticed it.
@@ -2365,6 +2412,24 @@ mod tests {
             classify(&also_differs, &unread()).class,
             Class::Unclassified
         );
+
+        // Two tools that both published an address agree, whatever the two
+        // temporary files are called, and nothing is left to explain.
+        let both = Divergence {
+            expected: lines(&["all: /-j2 --jobserver-auth=fifo:/tmp/GMfifo7 -w/"]),
+            actual: lines(&["all: /-j2 --jobserver-auth=fifo:/tmp/ronin-jobserver-9-0 -w/"]),
+        };
+        let verdict = classify(&both, &unread());
+        assert_eq!(verdict.class, Class::Narration);
+        assert!(!verdict.families.contains(&"jobserver-auth"));
+
+        // And a run where both published one but the rest of the value moved
+        // is a difference the anonymising must not swallow.
+        let both_but = Divergence {
+            expected: lines(&["all: /-j2 --jobserver-auth=fifo:/tmp/GMfifo7 -w/"]),
+            actual: lines(&["all: /-j4 --jobserver-auth=fifo:/tmp/ronin-jobserver-9-0 -w/"]),
+        };
+        assert_eq!(classify(&both_but, &unread()).class, Class::Unclassified);
     }
 
     /// Ninja's failure block echoes back whatever launcher the makefile chose,

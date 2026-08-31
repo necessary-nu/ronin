@@ -25,10 +25,10 @@ family	makeflags-content	interface	interface observation: a Makefile read MAKEFL
 family	parse-failure	compiler	compiler candidate: Ronin could not parse a Makefile GNU Make read.
 family	pattern-peer-warning	narration	GNU Make's success-path `pattern recipe did not update peer target 'X'` warning, which make-narration-contract-audit retired as silent by operator decision (2026-08-17): emitting it would emulate Make rather than compile to a Ninja graph. The build the two tools agree on is gated separately.
 family	delete-announce	narration	GNU Make's `*** Deleting file 'X'` announcement on the .DELETE_ON_ERROR path. make-delete-on-error-cleanup decided the announcement is not owed: Ronin withdraws the failed output silently, which is the same act the interrupt path already performs without a word.
-family	jobserver-narration	narration	GNU Make's jobserver-mode runner messages — `-jN forced in submake: resetting jobserver mode`, `jobserver unavailable: using -j1`, `cannot open jobserver` — which a single-scheduler Ronin (make-single-ninja-scheduler) never emits, because recursive Make invocations compile into one graph with one scheduler and there is no jobserver transport between separate processes.
+family	jobserver-narration	narration	GNU Make's jobserver-mode runner messages — `-jN forced in submake: resetting jobserver mode`, `jobserver unavailable: using -j1`, `cannot open jobserver`, and its complaint about a `TMPDIR` it would not put a fifo in — which Ronin never says. It settles every one of those situations the same way (make.jobserver): a `-j` typed beside an inherited address masters a new group, an address it could not join is dropped rather than republished, and a temporary directory that is not one is passed over for the next candidate. Saying so is narration about the runner's own bookkeeping, not about the build.
 family	recursive-invocation-echo	narration	GNU Make echoed a recipe line that runs Make again; Ronin composes a recursive $(MAKE) into the same graph (make-subninja-recursion, make-single-ninja-scheduler), so no such command is ever launched and there is nothing to echo. The sub-build's own output still appears on both sides. Recognised from the make program the driver actually invoked, read off the case's own `.run` file, and never under `-n`, where an echoed line is the dry run's report of intent rather than narration.
 family	waiting-for-jobs	narration	GNU Make's `*** Waiting for unfinished jobs....`, said once a parallel run has had a failure and is letting its in-flight recipes finish. Ronin waits for the same recipes — measured on features/parallelism, where every remaining job's output appears on both sides — and says nothing while it does.
-family	jobserver-auth	interface	interface observation: a Makefile read MAKEFLAGS and GNU's value carried `--jobserver-auth=`, which a single-scheduler Ronin (make-single-ninja-scheduler) has no transport for and therefore never writes. Recognised by deleting only that switch from GNU's line: if what is left is not what Ronin printed, the case is still unexplained.
+family	jobserver-auth	interface	interface observation: a Makefile read MAKEFLAGS and GNU's value carried `--jobserver-auth=` where Ronin's did not, which is now only the cases where GNU stands a jobserver up and Ronin does not. Both tools' handles are normalised to `<auth>` first, because the value is a temporary path minted per process and there is nothing byte-comparable in it — that the address Ronin publishes is the one a child can actually spend is gated by peak concurrency, not by bytes. Recognised, after that, by deleting the switch from GNU's line alone: if what is left is not what Ronin printed, the case is still unexplained.
 family	trace-line	narration	GNU Make's `--trace` line — `makefile:N: update target 'X' due to: ...` — naming each target it is about to remake and why. Ronin's counterpart is Ninja's progress counter, which names the target without the reason. Recognised only when the run asked for `--trace`.
 family	touch-announce	narration	GNU Make's `touch <file>` line under `-t`. The 2026-08-17 operator ruling on make-archive-member-touch scoped `-t` to behaviour: "the BEHAVIOUR lands as specified, the NARRATION does not" — a touched edge is reported by the ordinary [N/M] progress line. Measured on options/dash-t: both tools leave the same files at the same size. Recognised only when the run asked for `-t` and did NOT ask for `-n`, because under `-n` nothing is touched and the line is the dry run's report of intent rather than narration.
 family	include-remake-refusal	narration	both tools refused a run whose `include` could not be satisfied, and each named the same unremakeable makefile in its own words: GNU adds `Failed to remake makefile 'X'.`, Ronin adds `No rule to make target 'X'.` or the include's own `X: No such file or directory`. Measured on features/include 19, 20, 31 and 32: both exit 2 with nothing built. Recognised only for a name this makefile actually includes.
@@ -275,17 +275,16 @@ case	features/include.diff.6	narration	ninja-progress+ninja-failure-block
 case	features/include.diff.7	narration	ninja-progress
 case	features/include.diff.8	narration	product-name+fatal-decoration+shared-refusal
 case	features/include.diff.9	narration	product-name+fatal-decoration+shared-refusal
-case	features/jobserver.diff	interface	ninja-progress+jobserver-auth+recipe-echo
-case	features/jobserver.diff.1	interface	ninja-progress+jobserver-auth+recipe-echo
+case	features/jobserver.diff	narration	ninja-progress+recipe-echo
+case	features/jobserver.diff.1	narration	ninja-progress+recipe-echo
 case	features/jobserver.diff.10	narration	ninja-progress
 case	features/jobserver.diff.11	narration	ninja-progress+recipe-echo
 case	features/jobserver.diff.12	narration	ninja-progress+recipe-echo
 case	features/jobserver.diff.13	unclassified	no-work-line+evaluation
 case	features/jobserver.diff.14	narration	no-work-line
-case	features/jobserver.diff.15	interface	ninja-progress+jobserver-auth+makeflags-content
 case	features/jobserver.diff.16	narration	ninja-progress+jobserver-narration
-case	features/jobserver.diff.2	interface	ninja-progress+jobserver-auth+recipe-echo+jobserver-narration
-case	features/jobserver.diff.3	interface	ninja-progress+jobserver-auth+recipe-echo+jobserver-narration
+case	features/jobserver.diff.2	narration	ninja-progress+recipe-echo+jobserver-narration
+case	features/jobserver.diff.3	narration	ninja-progress+recipe-echo+jobserver-narration
 case	features/jobserver.diff.4	narration	ninja-progress+jobserver-narration
 case	features/jobserver.diff.5	narration	ninja-progress+no-work-line+jobserver-narration
 case	features/jobserver.diff.6	narration	ninja-progress+no-work-line

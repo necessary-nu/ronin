@@ -50,7 +50,9 @@ use interface::{
     ArgumentSource, carry_command_line_evals, compiler_flag_variables, decode_makefile_makeflags,
     evaluated_build_options, evaluated_invocation, makeflags_arguments, read_shuffle,
 };
-use jobserver_style::{carried_switches, read_jobserver_style, unknown_jobserver_style};
+use jobserver_style::{
+    carried_switches, read_jobserver_auth, read_jobserver_style, unknown_jobserver_style,
+};
 use option_values::{JobCounts, jobs_value, load_value, value};
 use remake::{CompilerInputBuild, Settlement, build_compiler_inputs, sweeps_nothing};
 use selection::{DEFAULT_MAKEFILES, STANDARD_INPUT, is_standard_input, named_makefiles};
@@ -199,7 +201,12 @@ const MAKE_OPTION_SURFACE: &[InterfaceOption] = &[
         class: OptionClass::NoOp,
     },
     InterfaceOption {
-        spellings: &["--jobserver-auth", "--jobserver-fds", "--sync-mutex"],
+        spellings: &["--jobserver-auth", "--jobserver-fds"],
+        argument: ArgumentShape::Required,
+        class: OptionClass::NinjaControl,
+    },
+    InterfaceOption {
+        spellings: &["--sync-mutex"],
         argument: ArgumentShape::Required,
         class: OptionClass::NoOp,
     },
@@ -397,6 +404,16 @@ struct Invocation {
     /// for one it would have accepted: a makefile guarding on the refusal would
     /// otherwise take the wrong branch.
     jobserver_style: Option<BString>,
+    /// The address of the job budget this run publishes, if it publishes one.
+    ///
+    /// GNU Make's `jobserver_auth`, and it moves the same way: a parent's
+    /// address arrives through `MAKEFLAGS`, `main` either joins it or replaces
+    /// it with the one this run created, and whatever is left is what
+    /// `define_makeflags` writes for the next Make down. Nothing else in the
+    /// switch table is settled by the runtime rather than by a word, which is
+    /// why it is set after the options are normalised rather than where it is
+    /// parsed.
+    jobserver_auth: Option<BString>,
     /// The files `-W` named, canonicalised, in the order they were given.
     ///
     /// GNU Make's `new_files`, which `main` stamps `NEW_MTIME` on rather than
@@ -451,6 +468,7 @@ impl Invocation {
             negated: 0,
             output_sync: None,
             jobserver_style: None,
+            jobserver_auth: None,
             assumed_new: Vec::new(),
             assumed_old: Vec::new(),
             bad: None,
@@ -1131,6 +1149,14 @@ fn parse_arguments(
             {
                 read_jobserver_style(invocation, source, option, arguments, &mut index);
             }
+            option
+                if option == b"--jobserver-auth"
+                    || option.starts_with(b"--jobserver-auth=")
+                    || option == b"--jobserver-fds"
+                    || option.starts_with(b"--jobserver-fds=") =>
+            {
+                read_jobserver_auth(invocation, source, option, arguments, &mut index);
+            }
             b"--load-average" | b"--max-load" => {
                 invocation.load = Some(load_value(arguments, &mut index, b""));
             }
@@ -1482,11 +1508,81 @@ fn record_invocation(session: &mut Session, name: &'static str, value: String) {
     environment.push((OsString::from(name), OsString::from(value)));
 }
 
+/// Settle where this run's job budget lives, and the address it publishes.
+///
+/// One budget for the whole tree, which is what GNU Make's jobserver is for
+/// and what Ronin has to reach the same way wherever a real process is
+/// involved. There are exactly three answers, and they are GNU's three:
+///
+/// * A parent published one and this run joined it. The address it arrived
+///   under is republished unchanged, so a Make below a Make below GNU reaches
+///   the outer budget rather than the middle one's idea of it. GNU's
+///   `jobserver_auth` survives `define_makeflags` for the same reason.
+/// * Nothing was joined and this run may hand out more than one slot, so it
+///   creates the budget and publishes its own address. Ronin's own scheduler
+///   spends that budget through the same client a child does — the implicit
+///   slot first, tokens past it — so composed edges and forked children draw
+///   on one pool and `-j` bounds the whole tree.
+/// * Nothing was joined and there is one slot or none to share. GNU Make
+///   stands up no jobserver for `-j1` or a bare `-j` (`job_slots <= 1`) and
+///   neither does this. Nor does a dry run: GNU publishes one there and spends
+///   it on the `+` lines it runs anyway, and Ronin runs none of those, so the
+///   budget would be one nothing could spend.
+///
+/// An address with nothing behind it is worse than no address at all, because
+/// a child reads it and waits — so a budget this run could not join is not
+/// republished, and one it could not create is not invented.
+///
+/// The address is settled here, before the makefiles are read, because Ronin
+/// bakes each unit's `MAKEFLAGS` into the recipes it emits. GNU sets its
+/// jobserver up after the read instead, so a makefile's own `MAKEFLAGS += -jN`
+/// can resize the budget and a `$(MAKEFLAGS)` expanded while the makefile is
+/// being read carries no address yet. Both of those are visible differences
+/// and both are the price of compiling recipes rather than interpreting them;
+/// what a recipe finally reads is the same string GNU would have given it.
+fn settle_jobserver(invocation: &mut Invocation, options: &mut BuildOptions) {
+    // The transport is created here rather than left to the executor, which is
+    // where a manifest build creates one: the address has to exist before the
+    // read, and by the time the executor runs, every recipe that would carry
+    // it has already been emitted.
+    options.serve_jobserver = false;
+    if options.jobserver.is_some() {
+        // Joined. Whatever address it arrived under is the one to republish;
+        // the invocation already holds it, parsed out of `MAKEFLAGS`.
+        return;
+    }
+    // Not joined, so an address that reached this run names a budget it is not
+    // part of. GNU clears `jobserver_auth` on every path that gives up on a
+    // parent's group, and a child handed the dead address would open a fifo
+    // nobody is feeding.
+    invocation.jobserver_auth = None;
+    let JobLimit::Fixed(jobs) = options.jobs else {
+        return;
+    };
+    if jobs.get() < 2 || options.dryrun {
+        return;
+    }
+    // A budget that could not be created is not a refusal. GNU Make falls back
+    // from a fifo it could not make to a pipe and builds anyway (posixos.c,
+    // `if (js_type == js_none)`), which is the same judgement the inherited
+    // side of this already makes: the transport is an optional outer bound and
+    // never the reason a Makefile goes unread. Ronin has no second style to
+    // fall back to, so what is left is this process's own scheduler and a
+    // `MAKEFLAGS` naming no budget — which is what a `-j1` run publishes too.
+    let Ok(Some(transport)) = crate::jobserver::Transport::serve(jobs) else {
+        return;
+    };
+    invocation.jobserver_auth = transport
+        .served_authorization()
+        .map(|authorization| BString::from(authorization.as_encoded_bytes()));
+    options.jobserver = Some(transport);
+}
+
 /// The scheduler settings this invocation maps onto Ninja's controls.
 // [spec:ronin:req:make.narration+1]
-// [spec:ronin:req:make.jobserver+1]
+// [spec:ronin:req:make.jobserver+2]
 fn build_options(
-    invocation: &Invocation,
+    invocation: &mut Invocation,
     runner: &Runner,
     working_directory: crate::os::WorkingDirectory,
 ) -> Result<BuildOptions, Error> {
@@ -1531,12 +1627,7 @@ fn build_options(
             .inherited_jobs
             .unwrap_or(JobLimit::Fixed(std::num::NonZeroUsize::MIN)),
     )?;
-    // Recursive Make invocations have already compiled into this graph. Its
-    // fixed limit therefore belongs directly to the Ninja scheduler; creating
-    // a GNU Make token server beside it would be a second scheduling mechanism.
-    // An inherited outer transport remains attached above and may bound the
-    // same scheduler.
-    options.serve_jobserver = false;
+    settle_jobserver(invocation, &mut options);
     // A serial GNU Make run reaches its recipes in a defined order — each goal
     // in turn, each prerequisite list left to right, a target after what is
     // under it — and makefiles that never declared a dependency they rely on
@@ -1951,7 +2042,10 @@ fn compile_invocation(
     held: &mut Vec<u8>,
 ) -> Result<CompiledInvocation, Error> {
     let mut reported = String::new();
-    let invocation = match parse(
+    // Mutable because one thing about a Make invocation is settled by the
+    // runtime rather than by a word: where its job budget lives. See
+    // [`settle_jobserver`].
+    let mut invocation = match parse(
         arguments,
         runner.makeflags.as_deref(),
         runner.gnumakeflags.as_deref(),
@@ -1971,7 +2065,7 @@ fn compile_invocation(
         .map_err(|source| CliError::CurrentDirectory { source })?;
     let level = runner.makelevel.as_deref().unwrap_or_default();
     let level: usize = level.trim().parse().unwrap_or(0);
-    let options = build_options(&invocation, runner, working_directory)?;
+    let options = build_options(&mut invocation, runner, working_directory)?;
 
     let finished = |result| {
         Ok(CompiledInvocation {
@@ -2854,7 +2948,7 @@ mod tests {
         let runner = crate::cli::Runner::new(&directory).unwrap();
         let options = |arguments: &[&str]| {
             let working = crate::os::WorkingDirectory::new(&directory).unwrap();
-            super::build_options(&parsed(arguments), &runner, working).unwrap()
+            super::build_options(&mut parsed(arguments), &runner, working).unwrap()
         };
         assert!((options(&["make", "-l", "2.5"]).maxload - 2.5).abs() < f64::EPSILON);
         // Zero is what the scheduler reads as no ceiling, and it is what an
@@ -2863,36 +2957,73 @@ mod tests {
         assert!(options(&["make", "-l"]).maxload.abs() < f64::EPSILON);
     }
 
-    /// `-j` is a limit on the one scheduler that runs the compiled graph. Even
-    /// when an outer jobserver token is accepted as interface data, an explicit
-    /// child limit cannot make Make mode serve another token pool.
-    // [spec:ronin:req:make.jobserver+1/test]
+    /// `-j` is a limit on the whole tree, and the tree reaches past this
+    /// process wherever a recursion could not be composed. So the limit is a
+    /// limit on the one Ninja scheduler AND the budget a real child draws on,
+    /// which is one pool with one address — never a second scheduler.
+    // [spec:ronin:req:make.jobserver+2/test]
     #[test]
     fn make_jobs_use_one_ninja_scheduler() {
         let directory = std::env::temp_dir();
-        let options = |runner: &crate::cli::Runner, arguments: &[&str]| {
+        let settled = |runner: &crate::cli::Runner, arguments: &[&str]| {
             let working = crate::os::WorkingDirectory::new(&directory).unwrap();
-            let invocation = parsed_under(runner.makeflags.as_deref(), arguments);
-            super::build_options(&invocation, runner, working).unwrap()
+            let mut invocation = parsed_under(runner.makeflags.as_deref(), arguments);
+            let options = super::build_options(&mut invocation, runner, working).unwrap();
+            let published = super::compiler_flag_variables(&invocation).makeflags;
+            (options, published)
+        };
+        let address = |published: &str| {
+            published
+                .split_ascii_whitespace()
+                .find_map(|word| word.strip_prefix("--jobserver-auth=").map(str::to_owned))
         };
 
+        // A run at the top of the tree creates the budget and publishes where
+        // it is, so a `$(MAKE)` nothing could compose joins it rather than
+        // starting a second one. `serve_jobserver` stays false throughout:
+        // the transport is made here, not left to the executor to make.
         let root = crate::cli::Runner::new(&directory).unwrap();
-        let root_options = options(&root, &["make", "-j4"]);
+        let (root_options, root_published) = settled(&root, &["make", "-j4"]);
         assert_eq!(root_options.jobs, JobLimit::fixed(4).unwrap());
-        assert!(root_options.jobserver.is_none());
+        assert!(root_options.jobserver.is_some());
         assert!(!root_options.serve_jobserver);
+        let served = address(&root_published).expect("a served budget publishes its address");
+        assert!(served.starts_with("fifo:"), "{root_published}");
+        assert!(std::path::Path::new(&served["fifo:".len()..]).exists());
 
+        // One slot is not a budget to share, and GNU Make stands up no
+        // jobserver for it. Nor for a run that will start no process at all.
+        let (serial_options, serial_published) = settled(&root, &["make"]);
+        assert!(serial_options.jobserver.is_none());
+        assert_eq!(address(&serial_published), None);
+        let (pretend_options, pretend_published) = settled(&root, &["make", "-j4", "-n"]);
+        assert!(pretend_options.jobserver.is_none());
+        assert_eq!(address(&pretend_published), None);
+
+        // A width inherited with no authorization behind it is a width and
+        // nothing more: this run is the top of its own tree and creates the
+        // budget, exactly as GNU Make does with `job_slots > 1` and no
+        // `jobserver_auth`.
         let mut under_parent = crate::cli::Runner::new(&directory).unwrap();
         under_parent.makeflags = Some(" -j8".to_owned());
-        let inherited_options = options(&under_parent, &["make"]);
+        let (inherited_options, inherited_published) = settled(&under_parent, &["make"]);
         assert_eq!(inherited_options.jobs, JobLimit::fixed(8).unwrap());
-        assert!(inherited_options.jobserver.is_none());
+        assert!(inherited_options.jobserver.is_some());
+        assert!(address(&inherited_published).is_some());
 
+        // An address a parent published beside a `-j` typed on this command
+        // line is GNU Make's "forced in submake": the parent's group is left
+        // and this run masters a new one. What it must never do is republish
+        // the parent's address while spending a budget of its own.
         under_parent.makeflags = Some(" -j8 --jobserver-auth=fifo:/tmp/parent".to_owned());
-        let child_options = options(&under_parent, &["make", "-j2"]);
+        let (child_options, child_published) = settled(&under_parent, &["make", "-j2"]);
         assert_eq!(child_options.jobs, JobLimit::fixed(2).unwrap());
-        assert!(child_options.jobserver.is_none());
+        assert!(child_options.jobserver.is_some());
         assert!(!child_options.serve_jobserver);
+        assert_ne!(
+            address(&child_published).as_deref(),
+            Some("fifo:/tmp/parent")
+        );
     }
 
     /// The group and its order are GNU Make 4.4.1's own, read off a makefile

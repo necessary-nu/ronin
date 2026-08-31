@@ -214,11 +214,12 @@ fn command_overrides(invocation: &Invocation) -> String {
 /// which is the only way they reach it.
 ///
 /// Job and load limits remain compiler-visible because Makefiles branch on
-/// them, while execution still has one Ninja scheduler. The jobserver
-/// authorization itself is deliberately absent: Ronin stands up no GNU Make
-/// jobserver at any level, and an inherited outer jobserver is consumed by the
-/// one scheduler that inherited it.
+/// them. So does the jobserver authorization, which is how the budget reaches
+/// past this process: a recursion Ronin composed is bounded by the one Ninja
+/// scheduler, and one it could not compose forks a real Make that has nothing
+/// else to read the budget from.
 // [spec:ronin:req:make.recursive-invocation+2]
+// [spec:ronin:req:make.jobserver+2]
 pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVariables {
     let letters: String = invocation
         .propagated()
@@ -277,6 +278,19 @@ pub(super) fn compiler_flag_variables(invocation: &Invocation) -> CompilerFlagVa
         if !long.contains(&option) {
             long.push(option);
         }
+    }
+    // Between `--debug` and `--trace`, which is where GNU Make's switch table
+    // puts it, and it is one word so that a Makefile filtering on it — as
+    // upstream's own jobserver suite does with
+    // `$(patsubst --jobserver-auth=%,...,$(MAKEFLAGS))` — sees one word.
+    // Quoted like every other switch argument: `define_makeflags` runs one
+    // `quote_for_env` over `flags->arg` whatever switch it belongs to, and a
+    // fifo under a `TMPDIR` with a blank in it is a path this has to carry.
+    if let Some(auth) = &invocation.jobserver_auth {
+        long.push(format!(
+            " --jobserver-auth={}",
+            quote_for_makeflags(&auth.to_str_lossy())
+        ));
     }
     if invocation.given(Switch::Trace) {
         long.push(" --trace".to_owned());

@@ -206,6 +206,23 @@ GNU Make's scheduler, timing, wording, or private statuses.
 - `make-option-coverage` is historical evidence only. Every accepted spelling
   is reclassified under the complete interface table.
 
+#### Correction, 2026-08-31: the jobserver is not runtime emulation
+
+The three jobserver rows above — `make-jobserver-server`,
+`make-recursive-jobserver-reach`, `make-jobserver-explicit-under-parent` —
+were classified `R` on the reading that a token server is a second executor.
+It is not one. `-j` is a claim on the machine and not on this process, and the
+jobserver is the only protocol that makes the claim hold across processes: it
+is what `cargo`, `cc -flto=jobserver` and Ninja itself already join, and what
+Ronin's manifest mode has always served. Ronin's Make mode measured three
+recipes at once under `-j2` because of the misclassification, in every
+direction that involved a real child process.
+
+What the boundary actually forbids is a second *scheduler*, and one budget
+spent through one client by one Ninja scheduler is the opposite of that: see
+`[spec:ronin:req:make.jobserver+2]`. Recursions Ronin composes still cost no
+token beyond the slot their edge already holds. Reclassified `I`.
+
 ### Refactor chain
 
 The replacement leaves own the boundary in dependency order:
