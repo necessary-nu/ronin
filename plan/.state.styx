@@ -983,7 +983,8 @@ assertions (
     {id the-shell-costs-more-to-build-than-the-command-costs-to-run, kind @complete, author "brendan@necessary.nu", at 2026-08-30T23:56:31.402983937Z}
     {id the-scheduler-picks-ready-edges-without-looking-down-the-graph, kind @doing, author "brendan@necessary.nu", at 2026-08-31T00:47:43.15086287Z}
     {id an-unlifted-recursion-brings-its-own-job-budget, kind @doing, author "brendan@necessary.nu", at 2026-08-31T01:55:16.799360246Z}
-    {id the-build-starts-only-after-the-last-makefile-is-read, kind @doing, author "brendan@necessary.nu", at 2026-08-31T08:00:49.397580604Z}
+    {id the-build-starts-only-after-the-last-makefile-is-read, kind @complete, author "brendan@necessary.nu", at 2026-08-31T09:25:29.638871308Z}
+    {id a-hundred-recursive-recipes-in-one-unit-refuse-to-build, kind @doing, author "brendan@necessary.nu", at 2026-08-31T09:25:34.994752983Z}
 )
 
 impl_evidence (

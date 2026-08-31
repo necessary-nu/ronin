@@ -20398,6 +20398,7 @@ children (
         id the-build-starts-only-after-the-last-makefile-is-read
         title "Start ready work while the composition is still reading"
         kind @perf
+        sealed true
         log (
             {
                 at 2026-08-30T22:10:34.244017878Z
@@ -20439,6 +20440,13 @@ children (
                 author "brendan@necessary.nu"
                 kind @note
                 text "ERRATUM. \"A `Makemod` unit at MAKELEVEL 3\", in the measurement note above, is `Src/Modules` — the Makefile `Src/mkmakemod.sh` generates, which is the same `Src/Modules/Makefile` the comment at src/make.rs:1216 names. Established by sampling `/proc/PID/cwd` for every live process through a whole zsh clean build rather than inferred from the level. See the matching entry on `a-unit-with-many-recursive-recipes-is-read-once-per-recipe`; no number changes."
+            }
+
+            {
+                at 2026-08-31T09:25:29.638871308Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Doing → Done (nplan complete)"
             }
         )
     }
@@ -20694,6 +20702,34 @@ children (
                 author "brendan@necessary.nu"
                 kind @note
                 text "ERRATUM ON THE NOTE ABOVE — THE SIXTY-PASS UNIT IS NAMED PRECISELY NOW. That note calls it \"a `Makemod` unit at MAKELEVEL 3\", which was read off the trace's `MAKELEVEL` and was a guess about which Makefile that level belonged to. It is `Src/Modules`, whose Makefile `Src/mkmakemod.sh` generates — established by sampling `/proc/PID/cwd` and `/proc/PID/cmdline` for every live process through a whole zsh clean build, which finds `zsh-5.9.2` at the top, then `Src`, then TWO successive makes in `Src/Modules`, then `Src/Builtins` and `Src/Zle`. So it is exactly the file the comment at src/make.rs:1216 already names, `Src/Modules/Makefile`, and the two halves of the note agree rather than describing two different things. No number moves: the sixty passes, the 4,547 ms of composition, the 2,062 ms of staged work and the 6,795 ms process wall all come from the phase trace and are untouched by which Makefile it was."
+            }
+        )
+    }
+
+    {
+        id a-hundred-recursive-recipes-in-one-unit-refuse-to-build
+        title "Count go-arounds that settled nothing, not passes"
+        kind @fix
+        log (
+            {
+                at 2026-08-31T09:17:57.718809456Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "A MAKEFILE GNU MAKE BUILDS IN SEVENTY MILLISECONDS, RONIN REFUSED. Found and fixed inside `the-build-starts-only-after-the-last-makefile-is-read`, which was measuring the front end and ran the pass count up on purpose to see what it cost. It cost more than time.\n\nTHE DEFECT. A single Makefile with a hundred or more independent recursive recipes — each `$(MAKE) -C` behind a prerequisite the same Makefile generates — ended with\n\n    ronin: manifest 'Makefile' dirty after 100 tries      exit 2\n\nwhere GNU Make 4.4.1 built the same tree, exit 0, in 70 ms. Nothing about the Makefile is malformed and nothing about it is circular. It is simply large.\n\nWHY. `compose_subninjas` stops at the FIRST recipe whose compiler inputs are not on the ground (src/make.rs:1226 and :1245), stages them, and the read starts again — so a unit holding N such recipes takes N staging passes to compose. `prepare_graph` capped the loop at a hundred PASSES, and that cap was doing two jobs at once: stopping a read that never settles, and stopping a read that settles one boundary at a time and is going to finish. Measured on the exact boundary, so it is not an estimate: 99 recipes built, 100 refused.\n\nIt is not hypothetical either. zsh's generated `Src/Modules/Makefile` already makes SIXTY of these passes on a clean build — sixty per cent of the way to a refusal, on a project this repository builds as a gate. A zsh with seventeen more modules would stop building.\n\nTHE FIX, AND WHY IT IS THIS ONE. The limit now counts consecutive go-arounds that settled NOTHING NEW, not go-arounds. `Groundwork::boundaries` is a set that only ever grows, and `after_staging` extends it with exactly the boundaries a pass put behind the compilation for good, so \"did this pass settle anything\" is already computed and only had to be read. A pass that settled a boundary resets the count; one that did not increments it; a hundred in a row still refuses.\n\nThat keeps the refusal pointed at the read it was built for — a Makefile with a rule that remakes it and a recipe that changes it, which never settles however many passes it gets — and takes it off the read that is finishing. It also terminates for the same reason it always did: the count is bounded by a hundred, and the resets are bounded by how many boundaries the compilation has, which is a recipe of the Makefile times the three kinds of predecessor.\n\nNothing about composition, its order, or the graph changed. `MANIFEST_RETRY_LIMIT` is now a named constant instead of a literal `100` in two places that had to agree.\n\nEVIDENCE.\n\n  recipes   GNU 4.4.1        Ronin before                Ronin after\n    99      exit 0           exit 0                      exit 0\n   100      exit 0           exit 2, dirty after 100     exit 0\n   105      exit 0           exit 2, dirty after 100     exit 0,  5.2 s\n   130      exit 0           exit 2, dirty after 100     exit 0,  8.0 s\n   200      exit 0           exit 2, dirty after 100     exit 0, 15.4 s\n\nAnd the read the limit exists for, unchanged: a Makefile whose own recipe appends a line to it every pass still exits 2 with `manifest 'Makefile' dirty after 100 tries`, after exactly a hundred appends.\n\nTwo regression tests in `tests/make_regressions.rs`: `recursive_recipes_beyond_the_retry_limit_still_compose` builds 105 of them through one shared child directory — the shared child is what keeps the case to 5.6 s, since what it has to exercise is the number of go-arounds and not the cost of compiling 105 distinct children — and `a_read_that_never_settles_is_still_refused` holds the other half. Both fail on the tree before this change, in the two different ways they should.\n\nWHAT IS NOT FIXED HERE. The wall clock. Composing a unit N times is quadratic in N — measured against GNU on the same trees, instruction counts, so the host cannot get into it:\n\n    recipes    GNU Make 4.4.1     Ronin           ratio\n       10         31.4 M            216.5 M        6.9x\n       20         60.7 M            753.2 M       12.4x\n       40        119.4 M          2,795.4 M       23.4x\n       80        236.7 M         10,766.8 M       45.5x\n\nGNU doubles when N doubles; Ronin nearly quadruples. That is `a-unit-with-many-recursive-recipes-is-read-once-per-recipe`, which stays open. This node makes the build finish; that one makes it fast."
+            }
+
+            {
+                at 2026-08-31T09:25:34.994752983Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-08-31T09:25:45.535394301Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "GATES on the fixed tree. `cargo fmt --all -- --check`, `scripts/check-lints.sh` and `RUSTDOCFLAGS=-D warnings cargo doc --no-deps` clean, no new warnings — `prepare_graph` crossed the hundred-line lint on the first attempt and the loop was written tighter rather than the lint waived.\n\n    cargo test --all-targets --no-fail-fast             895 / 0   (893 + the two added)\n    cargo test --workspace --all-targets --no-fail-fast 1211 / 0  (1209 + two)\n\n    Make equivalence   274 makefiles, 276 graphs, 8 respellings, 56 make-rejected,\n                       0 disagreements — TWENTY runs, every column identical on all\n                       twenty, `one_graph_however_many_threads_read_it` with each\n    Make conformance   354 runs against GNU Make 4.4.1; 276 identical raw,\n                       326 identical normalised, 28 differing\n    Upstream           18 unclassified / 0 compiler / 15 interface\n    Port ledger        170 symbols\n    Ninja conformance  425 / 425 upstream, 10 differential, 92 build-outcome,\n                       3 invocation-boundary; persistence round trip, log content\n\nEvery count is the reference it was told to hold, and the two that moved moved by exactly the two tests added."
             }
         )
     }

@@ -2695,3 +2695,89 @@ fn an_empty_command_starts_no_process() {
         );
     }
 }
+
+/// A unit holding more independent recursive recipes than the read has
+/// go-arounds still composes.
+///
+/// The compilation stops at the FIRST recipe whose compiler inputs are not on
+/// the ground, builds them, and reads the whole unit again — so a Makefile with
+/// N of them takes N staging passes to compose. Counting those against the same
+/// ceiling that stops a Makefile which never settles made the two
+/// indistinguishable, and the boundary was exact: ninety-nine of these recipes
+/// built, one hundred left with `manifest 'Makefile' dirty after 100 tries`
+/// while GNU Make 4.4.1 built the same tree in seventy milliseconds. zsh's
+/// generated `Src/Modules/Makefile` already stands at sixty.
+///
+/// A hundred and five, so the case sits past the ceiling rather than on it, and
+/// one shared child directory, so what it costs is the go-arounds rather than
+/// compiling a hundred and five distinct children.
+#[test]
+fn recursive_recipes_beyond_the_retry_limit_still_compose() {
+    let directory = test_directory("recipes-past-the-retry-limit");
+    let recipes = 105;
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(directory.join("sub").join("Makefile"), "all:\n\t@:\n").unwrap();
+    fs::write(directory.join("mk.sh"), "#!/bin/sh\n: > \"$1\"\n").unwrap();
+
+    let mut makefile = String::from(".PHONY: all");
+    for index in 0..recipes {
+        let _ = write!(makefile, " out{index}");
+    }
+    makefile.push_str("\nall:");
+    for index in 0..recipes {
+        let _ = write!(makefile, " out{index}");
+    }
+    makefile.push('\n');
+    for index in 0..recipes {
+        // The child is read off `in{index}`, which does not exist until this
+        // recipe's own prerequisite has been built — which is what makes every
+        // one of them a boundary the read has to settle before it can go on.
+        let _ = write!(
+            makefile,
+            "in{index}: mk.sh\n\t@sh mk.sh in{index}\nout{index}: in{index}\n\t@$(MAKE) -C sub\n"
+        );
+    }
+    fs::write(directory.join("Makefile"), &makefile).unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for index in 0..recipes {
+        assert!(
+            directory.join(format!("in{index}")).exists(),
+            "in{index} was never staged"
+        );
+    }
+}
+
+/// And the read that ceiling exists to stop is still stopped.
+///
+/// This Makefile has a rule that remakes it and a recipe that changes it, so
+/// every pass finds it out of date again and nothing any pass does brings the
+/// read closer to finishing. That is the shape the limit is for, and it is the
+/// one thing the case above must not have made buildable: the limit now counts
+/// go-arounds that settled nothing, and this one settles nothing, a hundred
+/// times over.
+#[test]
+fn a_read_that_never_settles_is_still_refused() {
+    let directory = test_directory("never-settles");
+    fs::write(
+        directory.join("Makefile"),
+        "all:\n\t@echo done\nMakefile: FORCE\n\t@printf '# more\\n' >> Makefile\nFORCE:\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("dirty after 100 tries"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

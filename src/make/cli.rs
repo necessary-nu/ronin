@@ -87,6 +87,18 @@ pub(crate) const GNUMAKEFLAGS: &str = "GNUMAKEFLAGS";
 /// branching on it is asking about.
 const MAKE_RESTARTS: &str = "MAKE_RESTARTS";
 
+/// How many times the read may go around having settled nothing new before the
+/// invocation gives up on it.
+///
+/// The read this stops is the one that never finishes: a Makefile with a rule
+/// that remakes it, whose recipe moves its own date, so that every pass finds
+/// it out of date again. Nothing about such a read improves with another pass,
+/// and Ninja's manifest loop has always had the same ceiling for the same
+/// reason.
+///
+/// It is deliberately NOT a ceiling on passes. See [`prepare_graph`].
+const MANIFEST_RETRY_LIMIT: usize = 100;
+
 /// The workings GNU Make's `--debug` selects, in the bits GNU Make holds them
 /// in. `a` is every one of them and `n` is none.
 const DB_BASIC: u16 = 0x001;
@@ -1818,7 +1830,24 @@ fn prepare_graph(
     // that decides whether the next one is repeating them.
     let mut settled = crate::make::Groundwork::default();
     let mut restarts = 0_usize;
-    for _ in 0..100 {
+    // Passes that went around having settled nothing new. The limit is on
+    // THOSE, not on passes: a read whose Makefiles keep remaking each other
+    // never settles and has to be stopped, and a read that settles one more
+    // boundary every time is not that read — it is finishing, one recursive
+    // recipe at a time, and the number of them is a fact about the Makefile
+    // rather than about this limit.
+    //
+    // Counting passes instead made a Makefile with a hundred independent
+    // recursive recipes refuse outright. `compose_subninjas` stops at the
+    // first recipe whose compiler inputs are not on the ground, so a unit
+    // holding N of them takes N staging passes to compose, and at N = 100 the
+    // hundredth pass met the cap and the build ended with `manifest 'Makefile'
+    // dirty after 100 tries` where GNU Make built the same tree. Measured, and
+    // exactly on the boundary: 99 recipes built, 100 refused. zsh's generated
+    // `Src/Modules/Makefile` already stands at sixty.
+    let mut fruitless = 0_usize;
+    while fruitless < MANIFEST_RETRY_LIMIT {
+        let settled_before = settled.boundaries.len();
         // Each pass reads the whole compilation again, so what an earlier one
         // classified is the same lines classified twice. The last pass is the
         // one the build is made from, and it is the one a census describes.
@@ -1899,6 +1928,15 @@ fn prepare_graph(
                 });
             }
         }
+        // A pass that put a boundary behind the compilation for good has moved
+        // the read forward, and the next one starts from a ground the one
+        // before it did not have. Consecutive rather than cumulative, because
+        // what the limit looks for is a read that has STOPPED settling — and
+        // the set it watches only ever grows, so a run alternating progress
+        // with a stall is still bounded by how many boundaries the Makefile
+        // has.
+        let settled_more = settled.boundaries.len() > settled_before;
+        fruitless = if settled_more { 0 } else { fruitless + 1 };
     }
 
     let path = BString::from(
@@ -1911,7 +1949,7 @@ fn prepare_graph(
         std::mem::take(reported),
         CliError::ManifestRetryLimit {
             path,
-            attempts: 100,
+            attempts: MANIFEST_RETRY_LIMIT,
         }
         .into(),
     )))
