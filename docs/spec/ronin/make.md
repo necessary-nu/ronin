@@ -232,6 +232,42 @@ manifest-derived graph is.
 > Make executor: no graph acquires GNU Make's scheduler, dirtiness model, or
 > reporter by being reached this way.
 
+> [spec:ronin:req:make.compiler-input-staging]
+> A child Makefile that cannot be read until something exists is a boundary, not
+> a refusal. The composition records what the read needs, leaves the unit
+> incomplete, builds that work provisionally, and reads the same text again —
+> which is why it is not GNU Make's restart and takes no place in
+> `MAKE_RESTARTS`.
+>
+> A pass stages EVERY boundary it can reach. A boundary is a prerequisite of the
+> wrapper that reads it, so it sits below that wrapper and no provisional build
+> of it reaches one: staging N of them together is the same work in one build
+> rather than N, and it is what keeps a unit holding N independent recursive
+> recipes from being read N times, at a cost that grows with every read. Only a
+> recipe read off a held one is held with it, which the order the recipes compose
+> in already answers; where that order finds a cycle nothing is known about
+> anything and the first held recipe holds the rest.
+>
+> Composing is not staging and does not batch. Every composition of one makefile
+> holds its own ISOLATED copy of every rule in it, each settled against the disk
+> as it was before any of them ran, so two boundaries left in two copies put both
+> copies of their shared work into one provisional build and one recipe runs
+> twice at once. A pass therefore composes children only until one of them stops:
+> a composition that completed leaves no boundary, and a pass that has stopped
+> inside one composes no further child. `.NOTPARALLEL` does not answer for this
+> and cannot — its chain is wired onto a composition that has already settled,
+> for the reason given there.
+>
+> A unit the pass could not finish is not composed a second time in that pass,
+> however many recipes name it. A unit that composed whole is cached and handed
+> to the next recipe naming it; one that stopped is half a unit, and reading it
+> again would run its `$(shell)` calls twice and emit a second copy of its edges.
+> The recipe naming it is held instead.
+>
+> None of this reaches the graph the build runs. The pass that completes composes
+> every recipe of every unit in the same order, and the graph it produces is the
+> graph the same tree produces however many passes it took to get there.
+
 > [spec:ronin:req:make.notparallel-domain]
 > `.NOTPARALLEL` with no prerequisites serialises the compilation unit that read
 > it, and the unit is where the domain begins and ends. GNU Make's

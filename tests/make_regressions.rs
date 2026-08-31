@@ -2755,6 +2755,203 @@ fn recursive_recipes_beyond_the_retry_limit_still_compose() {
     }
 }
 
+/// Every independent recursive recipe of one unit stages its boundary in the
+/// same pass, so the staged work goes out together.
+///
+/// The composition used to return at the FIRST recipe whose compiler inputs
+/// were not on the ground, build them, and read the whole unit again — so a
+/// Makefile with N of them was read N times, and because the graph grows with
+/// every pass the cost was quadratic in N rather than linear. zsh's generated
+/// `Src/Modules/Makefile` made sixty passes over its 3,231 lines on a clean
+/// build.
+///
+/// A pass count would be the direct measurement and cannot be taken from
+/// inside the Makefile: a repeated read replays what the first read was told
+/// rather than asking again, so a `$(shell)` counter counts one however many
+/// passes there are. What a Makefile CAN see is whether its boundaries were
+/// staged together, so every one of them waits for all the others to have
+/// arrived. Staged one per pass they never meet, and nothing here can pass by
+/// being lucky about timing: the barrier is either met or the case fails on
+/// its own timeout.
+// [spec:ronin:req:make.compiler-input-staging/test]
+#[test]
+fn many_independent_recursions_stage_in_one_pass() {
+    let directory = test_directory("independent-recursions-one-pass");
+    let recipes = 6;
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(directory.join("sub").join("Makefile"), "all:\n\t@:\n").unwrap();
+    fs::write(
+        directory.join("mk.sh"),
+        "#!/bin/sh\n\
+         : > \"arrived.$1\"\n\
+         i=0\n\
+         while [ \"$(ls arrived.* 2>/dev/null | wc -l)\" -lt \"$2\" ]; do\n\
+         \ti=$((i + 1))\n\
+         \t[ \"$i\" -gt 200 ] && exit 1\n\
+         \tsleep 0.05\n\
+         done\n\
+         : > \"$1\"\n",
+    )
+    .unwrap();
+
+    let mut makefile = String::from(".PHONY: all");
+    for index in 0..recipes {
+        let _ = write!(makefile, " out{index}");
+    }
+    makefile.push_str("\nall:");
+    for index in 0..recipes {
+        let _ = write!(makefile, " out{index}");
+    }
+    makefile.push('\n');
+    // Each recipe is read off an `in{index}` that does not exist until its own
+    // prerequisite has been built, so each is a boundary of its own, and no
+    // recipe here reads anything another one makes.
+    for index in 0..recipes {
+        let _ = write!(
+            makefile,
+            "in{index}: mk.sh\n\t@sh mk.sh in{index} {recipes}\n\
+             out{index}: in{index}\n\t@$(MAKE) -C sub\n"
+        );
+    }
+    fs::write(directory.join("Makefile"), &makefile).unwrap();
+
+    let output = make_command(&directory).arg("-j8").output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{recipes} independent recursive recipes did not stage together: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A pass leaves a boundary inside at most one composition of any one makefile.
+///
+/// Staging batches and composing does not, and this is why. A boundary is a
+/// prerequisite of the wrapper that reads it, so it sits below that wrapper and
+/// no provisional build of it reaches one — a pass may stage every boundary it
+/// finds. Composing is different: it puts the child's edges into the graph the
+/// next provisional build runs FROM, and two compositions of one makefile are
+/// two ISOLATED copies of every rule in it, both settled against the disk as it
+/// was before either ran. Two boundaries in two copies put both in one build,
+/// and one recipe runs twice at once.
+///
+/// This is zsh's `signames.c` in twelve lines: two goals into one makefile
+/// reaching one shared recipe, which writes and then deletes the temporary
+/// files it reads. GNU Make never overlaps them, because `.NOTPARALLEL` makes
+/// the parent run its two recursive recipes one at a time; Ronin composed both
+/// copies in one pass and staged a boundary in each, and the build died with
+/// `gawk: fatal: cannot open file 'sigtmp.out'`.
+///
+/// The `OVERLAP` line is the assertion, exactly as in
+/// [`two_notparallel_sub_makes_never_overlap`], and the two goals reach
+/// different child makefiles so that no cached child is shared between them.
+// [spec:ronin:req:make.compiler-input-staging/test]
+#[test]
+fn one_copy_of_a_makefile_stages_per_pass() {
+    let directory = test_directory("one-staging-copy-a-pass");
+    fs::write(directory.join("mk.sh"), "#!/bin/sh\n: > \"$1\"\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        ".NOTPARALLEL:\n\
+         .PHONY: all a b\n\
+         all: a b\n\
+         a: ; @$(MAKE) -f child.mk ta\n\
+         b: ; @$(MAKE) -f child.mk tb\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("child.mk"),
+        "ta: innera ; @:\n\
+         tb: innerb ; @:\n\
+         innera: gen ; @$(MAKE) -f deepa.mk leaf\n\
+         innerb: gen ; @$(MAKE) -f deepb.mk leaf\n\
+         gen: shared ; @sh mk.sh gen\n\
+         shared:\n\
+         \t@if [ -e busy ]; then echo OVERLAP >> ranlog; fi; : > busy; sleep 1; \\\n\
+         \t rm -f busy; echo run >> ranlog; : > shared\n",
+    )
+    .unwrap();
+    for child in ["deepa.mk", "deepb.mk"] {
+        fs::write(directory.join(child), "leaf: ; @:\n").unwrap();
+    }
+
+    let output = make_command(&directory).arg("-j8").output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let ran = fs::read_to_string(directory.join("ranlog")).unwrap();
+    assert!(
+        !ran.contains("OVERLAP"),
+        "two copies of one recipe were staged into one provisional build: {ran:?}"
+    );
+}
+
+/// One unit is read once a pass however many recipes name it, including the
+/// pass that could not finish it.
+///
+/// A child that composes WHOLE is cached and handed to the second recipe naming
+/// it; one that stopped at a boundary is not, because what it left in the sink
+/// is half a unit. While a pass ended at the first recipe it could not carry
+/// there was never a second recipe to reach an unfinished child. Batching gives
+/// it one, and composing that child again reads its Makefile a second time —
+/// running its `$(shell)` calls twice — and emits a second copy of its edges.
+///
+/// Both recipes here name the same child, in the same directory for the same
+/// goals, and that child stops at a boundary of its own on the first pass. The
+/// two counters are the two Makefiles' own `$(shell)`: the child must be read
+/// exactly as many times as the parent, never more.
+// [spec:ronin:req:make.compiler-input-staging/test]
+#[test]
+fn a_stopped_child_is_read_once_a_pass() {
+    let directory = test_directory("stopped-child-read-once");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::create_dir_all(directory.join("deep")).unwrap();
+    fs::write(directory.join("mk.sh"), "#!/bin/sh\n: > \"$1\"\n").unwrap();
+    fs::write(directory.join("deep").join("Makefile"), "all:\n\t@:\n").unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "COUNTED := $(shell echo . >> parent-reads)\n\
+         .PHONY: all a b\n\
+         all: a b\n\
+         a: ; @$(MAKE) -C sub\n\
+         b: ; @$(MAKE) -C sub\n",
+    )
+    .unwrap();
+    fs::write(
+        directory.join("sub").join("Makefile"),
+        "COUNTED := $(shell echo . >> ../child-reads)\n\
+         .PHONY: all\n\
+         all: outer\n\
+         gen: ../mk.sh ; @sh ../mk.sh gen\n\
+         outer: gen ; @$(MAKE) -C ../deep\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).arg("-j8").output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let parent = fs::read_to_string(directory.join("parent-reads"))
+        .unwrap()
+        .len();
+    let child = fs::read_to_string(directory.join("child-reads"))
+        .unwrap()
+        .len();
+    assert!(
+        child <= parent,
+        "the unfinished child was read {child} times against the parent's {parent}"
+    );
+}
+
 /// And the read that ceiling exists to stop is still stopped.
 ///
 /// This Makefile has a rule that remakes it and a recipe that changes it, so

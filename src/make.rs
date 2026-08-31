@@ -25,6 +25,7 @@ pub use kati;
 pub(crate) mod cli;
 mod interrupts;
 mod layout;
+mod order;
 mod parallel;
 use parallel::{ChildUnit, ReadsAhead, evaluate_unit, read_ahead};
 mod recipe;
@@ -60,7 +61,7 @@ use kati::build_sink::RecipeExpansion;
 use kati::evaluate::{Evaluated, evaluate};
 use kati::ninja::emit_populated;
 use kati::session::Session;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::HashSet;
 use std::error;
 use std::ffi::OsString;
 use std::fmt;
@@ -615,6 +616,19 @@ struct CompilationState<'a> {
     /// The build root a composed unit last asked its wrappers' dates of, and
     /// the disk that answers for it. See [`freshness_disk`].
     freshness_disk: Option<(PathBuf, crate::os::RealDiskInterface)>,
+    /// The child units this pass began composing and could not finish, by cache
+    /// key.
+    ///
+    /// A unit that composes WHOLE is cached in `cache` and handed to the second
+    /// recipe naming it; one that stopped at a boundary is not, because what it
+    /// left in the sink is half a unit. While a pass ended at the first recipe
+    /// it could not carry, there was never a second recipe to reach one of
+    /// these. Carrying on gives it one, and composing that child again would
+    /// read its Makefile a second time — running its `$(shell)` calls twice —
+    /// and emit its edges a second time. So a child already found unfinished
+    /// holds the recipe naming it instead, and the pass after the staged work
+    /// composes it once.
+    unfinished_units: RapidHashSet<Vec<u8>>,
 }
 
 /// One unit's unexpanded recipes and everything expanding them will need,
@@ -705,6 +719,21 @@ impl CompilationState<'_> {
                     boundary.predecessor,
                     EvaluationPredecessor::PrecedingLines(_) | EvaluationPredecessor::ChildGroup(_)
                 )
+        })
+    }
+
+    /// Whether an earlier pass already built what this recipe's own
+    /// prerequisites stage.
+    ///
+    /// The question [`Self::stage`] asks first, asked on its own because the
+    /// answer is wanted before the wrapper's freshness is settled: it is a fact
+    /// about what has already run, and it holds whether or not the recipe still
+    /// has anything left to do.
+    fn staged_already(&self, compilation_key: &[u8], pending_index: usize) -> bool {
+        self.settled_boundaries.contains(&EvaluationBoundary {
+            compilation_key: compilation_key.to_vec(),
+            pending_index,
+            predecessor: EvaluationPredecessor::ParentPrerequisites,
         })
     }
 
@@ -846,6 +875,7 @@ fn load_with_subninjas_unlocked(
         evaluation: kati::ninja::BuildEvaluation::of(&sink),
         read_claims: std::sync::Arc::default(),
         freshness_disk: None,
+        unfinished_units: RapidHashSet::default(),
     };
     let root = compile_unit(
         ChildUnit::Unread(Box::new(root)),
@@ -1123,6 +1153,7 @@ fn compile_unit(
     })
 }
 
+// [spec:ronin:req:make.compiler-input-staging]
 fn compose_subninjas(
     unit: UnitOutput,
     compilation_key: &[u8],
@@ -1140,21 +1171,13 @@ fn compose_subninjas(
     } = unit;
     let mut subtree_edges = edges;
     let disk = freshness_disk(descendant_context, state)?;
-    let (ordered, ordered_acyclically) = dependency_ordered(subninjas, sink);
+    let (ordered, mut holds) = order::dependency_ordered(subninjas, sink);
     let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, ahead);
-    // One entry per recursive recipe this unit is going to run, in the order
-    // GNU Make would have run them, for a unit whose makefiles declared
-    // `.NOTPARALLEL`. Left empty for one that did not, and wired into the graph
-    // only once the whole unit has composed — see
-    // [`GraphSink::chain_serial_jobs`].
-    //
-    // Only across the part `dependency_ordered` actually sorted. The chain runs
-    // forwards through that order, so it can never close a loop the sort has
-    // already ruled out; the unsorted remainder is a cycle among the wrappers,
-    // and Make's own cycle diagnostics answer for it without this adding an
-    // edge that would make the report be about the wrong thing.
-    let mut serial_jobs: Vec<sink::SerialJob> = Vec::new();
+    let mut serial_jobs = order::SerialJobs::default();
     for (pending_index, mut pending) in ordered.into_iter().enumerate() {
+        if holds.reads_a_held_recipe(pending_index) {
+            continue;
+        }
         // Whose recipe this is decides which switches its segments run under.
         // A recursive recipe the makefile update would run — a Makefile's own,
         // or that of anything a Makefile is made from — is part of the phase
@@ -1173,15 +1196,9 @@ fn compose_subninjas(
         // asked here on its own because the answer is wanted before the
         // freshness below — it is a fact about what has already run, and holds
         // whether or not this recipe still has anything left to do.
-        let staged_already = state.settled_boundaries.contains(&EvaluationBoundary {
-            compilation_key: compilation_key.to_vec(),
-            pending_index,
-            predecessor: EvaluationPredecessor::ParentPrerequisites,
-        });
-        if staged_already && !parent_inputs.is_empty() {
+        if !parent_inputs.is_empty() && state.staged_already(compilation_key, pending_index) {
             sink.mark_subgraphs_prebuilt(&parent_inputs);
         }
-
         let begun = state.recipe_begun(compilation_key, pending_index);
         // `-B` outranks the disk for the COMPOSITION exactly as it does in the
         // build: GNU Make's `always_make_flag` makes every target with a recipe
@@ -1203,10 +1220,7 @@ fn compose_subninjas(
             &mut pending,
             &disk,
             begun || forced,
-            crate::runtime::AssertedDates {
-                new: &descendant_context.assumed_new,
-                old: &descendant_context.assumed_old,
-            },
+            descendant_context,
         )? {
             RecursiveWrapper::Current(wrapper) => {
                 subtree_edges.push(wrapper);
@@ -1230,8 +1244,7 @@ fn compose_subninjas(
         // holds two recursive recipes per module and made 61 passes over its
         // 3,231 lines to compose ten children, where a `modobjs` with no
         // recursion in it reads the same file once.
-        if !staged_already
-            && !parent_inputs.is_empty()
+        if !parent_inputs.is_empty()
             && !state.stage(
                 compilation_key,
                 pending_index,
@@ -1240,7 +1253,33 @@ fn compose_subninjas(
                 for_makefile,
             )
         {
-            return Ok(incomplete_unit(targets, subtree_edges));
+            holds.hold(pending_index);
+            continue;
+        }
+        // Staging batches; composing does not. A boundary is a prerequisite of
+        // the wrapper that reads it, so it sits BELOW that wrapper and no
+        // provisional build of it reaches one — however many of them a pass
+        // stages, it stages work the build was going to do. Composing a child
+        // is not like that: it puts the child's edges into the graph the next
+        // provisional build runs FROM, and two compositions of one makefile
+        // are two ISOLATED copies of every rule in it. Both settled against
+        // the disk as it was before either ran, both dirty, and a boundary
+        // that reaches both runs one recipe twice at once — which for zsh is
+        // `signames.c` writing and then deleting `sigtmp.out` while the other
+        // copy reads it, `Src/Makefile` reaching it from two of the five goals
+        // it hands `Makemod`.
+        //
+        // `.NOTPARALLEL` does not answer for this and cannot. Its chain is
+        // wired onto a composition that COMPLETED, over the edges the build
+        // will actually schedule, because threading a wait into the graph a
+        // staging pass builds from drags the previous recipe's whole subtree
+        // into a provisional build that had no reason to want it — measured on
+        // this same tree, twice, both times exit 2. So the pass that has held
+        // a recipe composes no further child, which is exactly the set of
+        // fresh compositions the read this replaces would have made.
+        if !holds.composing() {
+            holds.hold(pending_index);
+            continue;
         }
 
         let Some(child_groups) = compose_child_groups(
@@ -1260,7 +1299,9 @@ fn compose_subninjas(
             // only completing it replaces the rule. Whatever asks for these
             // outputs before the next pass would run `false`.
             state.unfinished.extend(pending.outputs());
-            return Ok(incomplete_unit(targets, subtree_edges));
+            holds.stopped_inside();
+            holds.hold(pending_index);
+            continue;
         };
         // Read before the wrapper is completed, because completing it consumes
         // the recipe. This is the job GNU Make would now be blocked in, so it
@@ -1269,16 +1310,8 @@ fn compose_subninjas(
         let wrapper = sink
             .complete_subninja(wrapper, pending, &child_groups, begun)
             .map_err(MakeError::Construct)?;
-        // The recipe is going to run, so it is a job: the wrapper, and every
-        // edge of the children THIS recipe composed. A child it only reached is
-        // one copy of one piece of work, already held by the recipe that
-        // composed it — see [`sink::ChildGroup::fresh`].
-        if not_parallel && pending_index < ordered_acyclically {
-            let fresh = child_groups.iter().filter(|group| group.fresh);
-            let edges = std::iter::once(wrapper)
-                .chain(fresh.flat_map(|group| group.subgraph.edges.iter().copied()))
-                .collect();
-            serial_jobs.push(sink::SerialJob { completion, edges });
+        if not_parallel && holds.sorted(pending_index) {
+            serial_jobs.push(wrapper, &child_groups, completion);
         }
         // Compiled whole: every segment of this recipe is in the graph, so the
         // pass that builds this graph is the one that runs the rest of it.
@@ -1293,11 +1326,11 @@ fn compose_subninjas(
         }
         subtree_edges.push(wrapper);
     }
-    // The unit has composed whole, so these are the edges the build will
-    // schedule and this is the last moment at which no staging pass can see
-    // what the chain adds.
+    if holds.any() {
+        return Ok(incomplete_unit(targets, subtree_edges));
+    }
     // [spec:ronin:req:make.notparallel-domain]
-    sink.chain_serial_jobs(&serial_jobs);
+    serial_jobs.chain(sink);
     Ok(ComposedUnit {
         subgraph: UnitSubgraph {
             targets,
@@ -1330,6 +1363,7 @@ struct RecipeSite<'a> {
 ///
 /// `site` is where in the compilation this recipe sits, which phase it belongs
 /// to, and whatever a worker has already read for it.
+// [spec:ronin:req:make.compiler-input-staging]
 fn compose_child_groups(
     pending: &sink::PendingSubninja,
     site: RecipeSite<'_>,
@@ -1396,10 +1430,19 @@ fn compose_child_groups(
                 subgraph: subgraph.clone(),
                 fresh: false,
             }
+        } else if state.unfinished_units.contains(&child_key) {
+            // An earlier recipe of this pass stopped inside this very unit, so
+            // there is nothing to hand over and nothing to be gained by reading
+            // it again — reading it again would run its `$(shell)` calls a
+            // second time and emit a second copy of its edges. This recipe
+            // waits for the same staged work that one is waiting for.
+            // See [`CompilationState::unfinished_units`].
+            return Ok(None);
         } else {
             let child_scope = pending.scope;
             let child = compile_unit(child, sink, Some(child_scope), resolve, state)?;
             if !child.complete {
+                state.unfinished_units.insert(child_key);
                 return Ok(None);
             }
             state.cache.insert(child_key, child.subgraph.clone());
@@ -1608,8 +1651,12 @@ fn stage_recursive_wrapper(
     pending: &mut sink::PendingSubninja,
     disk: &crate::os::RealDiskInterface,
     begun: bool,
-    asserted: crate::runtime::AssertedDates<'_>,
+    context: &CompilationContext,
 ) -> Result<RecursiveWrapper, MakeError> {
+    let asserted = crate::runtime::AssertedDates {
+        new: &context.assumed_new,
+        old: &context.assumed_old,
+    };
     let edge = sink.probe_subninja(pending).map_err(MakeError::Construct)?;
     let mut stat = |path: &std::path::Path| disk.stat(path);
     let dirty = begun
@@ -1621,83 +1668,6 @@ fn stage_recursive_wrapper(
     } else {
         RecursiveWrapper::Current(edge)
     })
-}
-
-/// Put held recursive edges before any held edge that needs their outputs.
-///
-/// Kati emits recursive edges in target walk order, which is not necessarily
-/// prerequisite order. A provisional compiler graph must nevertheless be able
-/// to build a recursive target used as another recursive target's evaluation
-/// input. Stable topological order makes that producer available first; Make's
-/// ordinary cycle diagnostics remain responsible for a cyclic remainder.
-///
-/// A wrapper's prerequisite is not necessarily another wrapper's output, so
-/// the producer is searched for through whatever ordinary targets stand
-/// between the two. zsh's generated `Src/Makemod` is the shape that shows it:
-/// `X.mdh` re-invokes the makefile and needs `X.mdhi`, which has an ordinary
-/// recipe and needs `X.mdhs`, which re-invokes the makefile too. Comparing
-/// only what each wrapper directly reads finds `X.mdh` no producer at all and
-/// composes it first, against a provisional graph that has not been given the
-/// edge which makes what it asks for.
-///
-/// The count beside the order is how many of them the sort actually settled: a
-/// cyclic remainder is appended in the order it arrived and stands in no
-/// relation to anything, which is what `.NOTPARALLEL` chaining has to know so
-/// it does not turn that remainder into a wait that cannot be satisfied.
-fn dependency_ordered(
-    subninjas: Vec<sink::PendingSubninja>,
-    sink: &GraphSink,
-) -> (Vec<sink::PendingSubninja>, usize) {
-    let mut producers = HashMap::new();
-    for (index, pending) in subninjas.iter().enumerate() {
-        for output in pending.outputs() {
-            producers.insert(output, index);
-        }
-    }
-
-    let mut predecessor_counts = vec![0usize; subninjas.len()];
-    let mut successors = vec![Vec::new(); subninjas.len()];
-    for (consumer, pending) in subninjas.iter().enumerate() {
-        let mut predecessors = HashSet::new();
-        let mut walked = HashSet::new();
-        let mut frontier = pending.evaluation_inputs();
-        while let Some(input) = frontier.pop() {
-            if !walked.insert(input) {
-                continue;
-            }
-            let Some(&producer) = producers.get(&input) else {
-                // Nothing held makes this one, so what makes it is an
-                // ordinary edge and the wrapper being looked for is behind
-                // that edge rather than at it.
-                frontier.extend(sink.prerequisites_of(input));
-                continue;
-            };
-            if producer != consumer && predecessors.insert(producer) {
-                predecessor_counts[consumer] += 1;
-                successors[producer].push(consumer);
-            }
-        }
-    }
-
-    let mut ready = predecessor_counts
-        .iter()
-        .enumerate()
-        .filter_map(|(index, count)| (*count == 0).then_some(index))
-        .collect::<BTreeSet<_>>();
-    let mut pending = subninjas.into_iter().map(Some).collect::<Vec<_>>();
-    let mut ordered = Vec::with_capacity(pending.len());
-    while let Some(index) = ready.pop_first() {
-        ordered.push(pending[index].take().expect("ready pending edge exists"));
-        for successor in &successors[index] {
-            predecessor_counts[*successor] -= 1;
-            if predecessor_counts[*successor] == 0 {
-                ready.insert(*successor);
-            }
-        }
-    }
-    let ordered_acyclically = ordered.len();
-    ordered.extend(pending.into_iter().flatten());
-    (ordered, ordered_acyclically)
 }
 
 /// Apply Make's `export`/`unexport` result to the environment imported by a
