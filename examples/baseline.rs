@@ -510,8 +510,36 @@ fn recorded_baseline() -> Result<BTreeMap<&'static str, Baseline>, String> {
 /// eight rows read 5% to 13% ADVERSE against `baseline-v1.csv` on today's host,
 /// with the same statistic the record used, and a systematic move of that size
 /// across seven rows at once is a host or a drift to attribute, not a set of
-/// numbers to overwrite. Attributing it needs a machine quiet enough for the
-/// guard above, which is the other half of this gate's fix.
+/// numbers to overwrite.
+///
+/// THAT DRIFT HAS NOW BEEN ATTRIBUTED, and it is the host. The tree the record
+/// was taken from — `3e6b947` — was rebuilt and run beside today's binary,
+/// both against the same pinned Ninja, interleaved in one rotation, in three
+/// windows of which two swapped the slots. The RECORD'S OWN REVISION reads 2.5%
+/// to 16% adverse against its own recorded ratios today, on seven of the eight
+/// rows. `scheduler-barrier`, the worst row, is host in full: 1.16 from the
+/// baseline's binary against 1.16 from today's.
+///
+/// So the ratio is not host-immune, and the mechanism is measured rather than
+/// supposed: at `-j8` Ninja achieves 5.46 CPUs utilised on that row against
+/// Ronin's 2.63, so Ronin retires 0.71 of Ninja's user instructions and 0.52 of
+/// its kernel cycles and still loses wall. A wait-bound tool pays for every
+/// wake-up as the run queue grows and a CPU-bound one does not, which is why
+/// this row's ratio climbs with load while both binaries stand still.
+///
+/// The control rules out the lazy reading of that. Within an hour of four
+/// consecutive refusals here, the MAKE gate passed on the same host at load
+/// 16.3 with every row at or better than its record — 0.62x, 0.93x, 1.59x,
+/// 1.05x against 0.62, 1.01, 1.71, 1.03. The machine has not become generally
+/// slower. GNU Make waits on processes the way Ronin does and their ratio
+/// holds; pinned Ninja holds cores where Ronin waits, and that ratio does not.
+/// A ratio is host-immune exactly when both tools answer the host the same way.
+///
+/// The rows are therefore still NOT re-recorded, and now for a stated reason
+/// rather than a pending one: the record was taken at 99% idle, this host has
+/// not been under load 12 since, and a record taken here would encode the
+/// contention rather than the tree. `benchmarks/ninja-baseline-drift-2026-09-02.md`
+/// carries the windows, and re-recording waits for a host the 4.00 guard admits.
 // [spec:ronin:req:performance.no-unexplained-regression]
 #[allow(
     clippy::cast_precision_loss,
@@ -581,16 +609,45 @@ fn metadata(
     let dirty = !git_output(root, &["status", "--porcelain"])?.is_empty();
     let platform = command_output(Path::new("uname"), &["-a"])?;
     let rustc = command_output(Path::new("rustc"), &["--version"])?;
+    // What the run WILL take, not what the catalog would have chosen on its
+    // own. `--repetitions` is how a deliberate experiment overrides the counts,
+    // and until this read the override the header named the counts the run did
+    // not use: a 151-repetition attribution pool reported itself as the 21 and
+    // 31 of a gate run. The counts are the whole subject of the statistic this
+    // header documents, so a report misstating its own is worse than one
+    // carrying no number at all.
     let repetitions = catalog
         .iter()
-        .map(|workload| format!("{}:{}", workload.name, workload.repetitions))
+        .map(|workload| {
+            format!(
+                "{}:{}",
+                workload.name,
+                config.repetitions.unwrap_or(workload.repetitions)
+            )
+        })
         .collect::<Vec<_>>()
         .join(",");
+    // WHICH BINARIES THIS REPORT MEASURED, which `ronin_revision` cannot say.
+    // That field is the CHECKOUT's revision and stays one; every arm here can
+    // be pointed somewhere else with `--ronin`, `--ninja` or `--samurai`, and a
+    // report that names only the tree it was launched from cannot distinguish
+    // two arms built from different commits. Attributing a drift means running
+    // one revision's binary beside another's, so the path is the identity that
+    // matters and the revision is metadata about the harness.
+    let ronin_binary = config.ronin.display();
+    let ninja_binary = config.ninja.display();
+    let samurai_binary = config
+        .samurai
+        .as_ref()
+        .map_or_else(|| "none".to_owned(), |path| path.display().to_string());
     Ok(format!(
         "# schema=ronin-performance-baseline-v3\n\
          # workload_version={WORKLOAD_VERSION}\n\
          # ronin_revision={ronin_revision}\n\
          # ronin_dirty={dirty}\n\
+         # ronin_binary={ronin_binary}\n\
+         # ninja_binary={ninja_binary}\n\
+         # samurai_binary={samurai_binary}\n\
          # ninja_revision={ninja_revision}\n\
          # build_profile=release\n\
          # platform={platform}\n\

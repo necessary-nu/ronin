@@ -32,6 +32,14 @@ fn baseline_catalog_and_metadata_remain_complete() {
         "statistic",
         "load_average_before",
         "max_load",
+        // WHICH BINARIES A REPORT MEASURED. `ronin_revision` is the checkout's
+        // revision and cannot answer it: every arm can be pointed elsewhere
+        // with `--ronin`, `--ninja` or `--samurai`, which is how one revision
+        // is run beside another to attribute a drift. A report naming only the
+        // tree it was launched from describes two different arms identically.
+        "ronin_binary",
+        "ninja_binary",
+        "samurai_binary",
     ] {
         assert!(HARNESS.contains(metadata), "missing metadata {metadata}");
     }
