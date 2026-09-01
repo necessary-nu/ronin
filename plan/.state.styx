@@ -991,7 +991,7 @@ assertions (
     {id the-make-gate-flaps-because-five-repetitions-is-too-few, kind @complete, author "brendan@necessary.nu", at 2026-09-01T21:33:15.674339972Z}
     {id a-rule-line-grows-a-buffer-for-every-word-in-it, kind @complete, author "brendan@necessary.nu", at 2026-09-01T22:07:37.609469088Z}
     {id symtab-name-hands-out-an-owner-where-a-borrow-would-do, kind @complete, author "brendan@necessary.nu", at 2026-09-01T23:03:27.371371556Z}
-    {id seven-ninja-rows-drifted-adverse-while-the-gate-flapped, kind @doing, author "brendan@necessary.nu", at 2026-09-01T23:08:05.944642349Z}
+    {id seven-ninja-rows-drifted-adverse-while-the-gate-flapped, kind @complete, author "brendan@necessary.nu", at 2026-09-01T23:50:59.208117108Z}
 )
 
 impl_evidence (
