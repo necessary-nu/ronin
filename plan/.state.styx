@@ -989,6 +989,7 @@ assertions (
     {id a-notparallel-unit-runs-its-composed-children-at-once, kind @complete, author "brendan@necessary.nu", at 2026-08-31T15:02:50.208731305Z}
     {id a-sessions-allocations-die-together-and-are-freed-one-by-one, kind @complete, author "brendan@necessary.nu", at 2026-09-01T20:14:20.379630114Z}
     {id the-make-gate-flaps-because-five-repetitions-is-too-few, kind @complete, author "brendan@necessary.nu", at 2026-09-01T21:33:15.674339972Z}
+    {id a-rule-line-grows-a-buffer-for-every-word-in-it, kind @complete, author "brendan@necessary.nu", at 2026-09-01T22:07:37.609469088Z}
 )
 
 impl_evidence (
