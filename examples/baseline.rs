@@ -22,6 +22,14 @@ use workloads::{
     LARGE_MANIFEST_EDGES, SCHEDULER_EDGES, WIDE_EDGES, WORKLOAD_VERSION,
 };
 
+#[path = "support/quiet_host.rs"]
+mod quiet_host;
+use quiet_host::{DEFAULT_MAX_LOAD, load_average, require_quiet_host};
+
+#[path = "support/statistic.rs"]
+mod statistic;
+use statistic::{median_u64, quiet_decile, repetitions_for};
+
 #[derive(Clone)]
 struct Tool {
     name: &'static str,
@@ -40,6 +48,11 @@ struct Workload {
     directory: PathBuf,
     arguments: Vec<String>,
     reset: Reset,
+    /// How many interleaved samples this row takes, from the spread its own
+    /// samples were measured to have. These workloads run between 3 and 320 ms
+    /// across three tools, so the counts are set by the spread rather than by
+    /// the clock.
+    repetitions: usize,
 }
 
 struct Measurement {
@@ -50,7 +63,7 @@ struct Measurement {
 struct Record {
     tool: &'static str,
     workload: &'static str,
-    median_ms: f64,
+    statistic_ms: f64,
     median_peak_rss_kib: Option<u64>,
 }
 
@@ -64,9 +77,25 @@ struct Config {
     ninja: PathBuf,
     samurai: Option<PathBuf>,
     ninja_source: PathBuf,
-    repetitions: usize,
+    /// Set only by `--repetitions`, which overrides every workload's own
+    /// measured count at once. Unset is the normal case and the right one: the
+    /// harness knows which row's samples spread and which row's do not, and a
+    /// caller passing one number for the catalog is passing the wrong number to
+    /// at least one of them.
+    repetitions: Option<usize>,
     warmups: usize,
     output: Option<PathBuf>,
+    /// Where to write every individual sample, rather than the summary the
+    /// report carries.
+    ///
+    /// The summary is one number per tool per workload, which is enough to gate
+    /// on and not enough to argue about. Choosing how many repetitions a row
+    /// needs, or which statistic over them is stable, is a question about the
+    /// SPREAD of the samples, and the spread is exactly what a median throws
+    /// away. This is how that question gets answered from measurement instead
+    /// of from assertion.
+    samples: Option<PathBuf>,
+    max_load: f64,
     validate: bool,
 }
 
@@ -86,9 +115,11 @@ impl Default for Config {
             // `--without-samurai` is how you ask for two.
             samurai: Some(reference.join("samurai")),
             ninja_source: reference.join("ninja"),
-            repetitions: 5,
+            repetitions: None,
             warmups: 1,
             output: None,
+            samples: None,
+            max_load: DEFAULT_MAX_LOAD,
             validate: false,
         }
     }
@@ -137,9 +168,11 @@ fn parse_arguments() -> Result<Config, String> {
                 config.ninja_source = PathBuf::from(value(&mut arguments, "--ninja-source")?);
             }
             "--repetitions" => {
-                config.repetitions = value(&mut arguments, "--repetitions")?
-                    .parse()
-                    .map_err(|_| "invalid --repetitions value".to_owned())?;
+                config.repetitions = Some(
+                    value(&mut arguments, "--repetitions")?
+                        .parse()
+                        .map_err(|_| "invalid --repetitions value".to_owned())?,
+                );
             }
             "--warmups" => {
                 config.warmups = value(&mut arguments, "--warmups")?
@@ -149,20 +182,28 @@ fn parse_arguments() -> Result<Config, String> {
             "--output" => {
                 config.output = Some(PathBuf::from(value(&mut arguments, "--output")?));
             }
+            "--samples" => {
+                config.samples = Some(PathBuf::from(value(&mut arguments, "--samples")?));
+            }
+            "--max-load" => {
+                config.max_load = value(&mut arguments, "--max-load")?
+                    .parse()
+                    .map_err(|_| "invalid --max-load value".to_owned())?;
+            }
             "--validate" => config.validate = true,
             "--help" | "-h" => {
                 println!(
                     "usage: cargo run --release --example baseline -- \
                      [--ronin PATH] [--ninja PATH] [--samurai PATH|--without-samurai] \
-                     [--ninja-source PATH] [--warmups N] [--repetitions N] [--output PATH] \
-                     [--validate]"
+                     [--ninja-source PATH] [--warmups N] [--repetitions N] [--max-load LOAD] \
+                     [--output PATH] [--samples PATH] [--validate]"
                 );
                 std::process::exit(0);
             }
             _ => return Err(format!("unknown argument: {argument}")),
         }
     }
-    if config.repetitions == 0 {
+    if config.repetitions == Some(0) {
         return Err("--repetitions must be positive".into());
     }
     Ok(config)
@@ -221,6 +262,7 @@ fn command_evaluation(directory: &Path) -> io::Result<Workload> {
         directory: directory.to_owned(),
         arguments: vec!["-t".into(), "commands".into(), "all".into()],
         reset: Reset::None,
+        repetitions: repetitions_for("manifest-command-evaluation"),
     })
 }
 
@@ -231,6 +273,7 @@ fn deep_graph(directory: &Path) -> io::Result<Workload> {
         directory: directory.to_owned(),
         arguments: Vec::new(),
         reset: Reset::None,
+        repetitions: repetitions_for("deep-graph-evaluation"),
     })
 }
 
@@ -241,6 +284,7 @@ fn wide_noop(directory: &Path) -> io::Result<Workload> {
         directory: directory.to_owned(),
         arguments: Vec::new(),
         reset: Reset::None,
+        repetitions: repetitions_for("wide-noop-build"),
     })
 }
 
@@ -251,6 +295,7 @@ fn path_canonicalization(directory: &Path) -> io::Result<Workload> {
         directory: directory.to_owned(),
         arguments: vec!["-t".into(), "targets".into(), "all".into()],
         reset: Reset::None,
+        repetitions: repetitions_for("path-canonicalization"),
     })
 }
 
@@ -265,6 +310,7 @@ fn dependency_log(directory: &Path, tool: &Tool) -> Result<Workload, String> {
         directory: directory.to_owned(),
         arguments: Vec::new(),
         reset: Reset::None,
+        repetitions: repetitions_for("dependency-log-load"),
     })
 }
 
@@ -283,6 +329,7 @@ fn clean_tree(directory: &Path, tool: &Tool) -> Result<Workload, String> {
         directory: directory.to_owned(),
         arguments: Vec::new(),
         reset: Reset::None,
+        repetitions: repetitions_for("clean-tree-noop"),
     })
 }
 
@@ -301,6 +348,7 @@ fn large_manifest(directory: &Path) -> io::Result<Workload> {
         directory: directory.to_owned(),
         arguments: vec!["-t".into(), "commands".into(), "all".into()],
         reset: Reset::None,
+        repetitions: repetitions_for("large-manifest-parse"),
     })
 }
 
@@ -311,6 +359,7 @@ fn scheduler(directory: &Path) -> io::Result<Workload> {
         directory: directory.to_owned(),
         arguments: vec!["-j".into(), "8".into()],
         reset: Reset::SchedulerOutputs,
+        repetitions: repetitions_for("scheduler-barrier"),
     })
 }
 
@@ -410,19 +459,6 @@ fn time_once(tool: &Tool, workload: &Workload) -> Result<Measurement, String> {
     }
 }
 
-fn median_duration(samples: &mut [Duration]) -> Duration {
-    samples.sort_unstable();
-    samples[samples.len() / 2]
-}
-
-fn median_u64(samples: &mut [u64]) -> Option<u64> {
-    if samples.is_empty() {
-        return None;
-    }
-    samples.sort_unstable();
-    Some(samples[samples.len() / 2])
-}
-
 fn recorded_baseline() -> Result<BTreeMap<&'static str, Baseline>, String> {
     let mut baseline = BTreeMap::new();
     for (line_number, line) in RECORDED_BASELINE.lines().enumerate() {
@@ -459,6 +495,23 @@ fn recorded_baseline() -> Result<BTreeMap<&'static str, Baseline>, String> {
     Ok(baseline)
 }
 
+/// Refuse a run whose Ronin/Ninja ratio, absolute runtime or peak memory is
+/// materially worse than what was recorded.
+///
+/// THE RECORDED ROWS ARE MEDIANS AND THE RUN'S TIMES ARE DECILES, deliberately.
+/// What is compared is a RATIO, and a ratio is very nearly independent of which
+/// quantile it is taken at: both tools' distributions shift together under the
+/// same contention. Measured over a 151-repetition pool of all eight rows here,
+/// the decile ratio and the median ratio agree to within 3.8% on seven of them
+/// and 6.2% on `large-manifest-parse` — an order of magnitude inside the 20%
+/// margin. Peak RSS is compared median to median, unchanged.
+///
+/// Re-recording was measured and declined rather than skipped: seven of these
+/// eight rows read 5% to 13% ADVERSE against `baseline-v1.csv` on today's host,
+/// with the same statistic the record used, and a systematic move of that size
+/// across seven rows at once is a host or a drift to attribute, not a set of
+/// numbers to overwrite. Attributing it needs a machine quiet enough for the
+/// guard above, which is the other half of this gate's fix.
 // [spec:ronin:req:performance.no-unexplained-regression]
 #[allow(
     clippy::cast_precision_loss,
@@ -486,7 +539,7 @@ fn validate(records: &[Record]) -> Result<(), String> {
     for (workload, baseline) in baseline {
         let current = current[workload];
         let ninja = ninja[workload];
-        let current_ratio = current.median_ms / ninja.median_ms;
+        let current_ratio = current.statistic_ms / ninja.statistic_ms;
         let recorded_ratio = baseline.ronin_ms / baseline.ninja_ms;
         if current_ratio > recorded_ratio * MAX_RECORDED_RUNTIME_RATIO {
             return Err(format!(
@@ -494,10 +547,10 @@ fn validate(records: &[Record]) -> Result<(), String> {
                  from the recorded {recorded_ratio:.2}x"
             ));
         }
-        if current.median_ms > ninja.median_ms * MAX_NINJA_RUNTIME_RATIO {
+        if current.statistic_ms > ninja.statistic_ms * MAX_NINJA_RUNTIME_RATIO {
             return Err(format!(
                 "{workload} took {:.3} ms versus Ninja's {:.3} ms",
-                current.median_ms, ninja.median_ms
+                current.statistic_ms, ninja.statistic_ms
             ));
         }
         match (current.median_peak_rss_kib, ninja.median_peak_rss_kib) {
@@ -517,14 +570,24 @@ fn validate(records: &[Record]) -> Result<(), String> {
     Ok(())
 }
 
-fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
+fn metadata(
+    config: &Config,
+    ninja_revision: &str,
+    catalog: &[Workload],
+    load: f64,
+) -> Result<String, String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let ronin_revision = git_output(root, &["rev-parse", "HEAD"])?;
     let dirty = !git_output(root, &["status", "--porcelain"])?.is_empty();
     let platform = command_output(Path::new("uname"), &["-a"])?;
     let rustc = command_output(Path::new("rustc"), &["--version"])?;
+    let repetitions = catalog
+        .iter()
+        .map(|workload| format!("{}:{}", workload.name, workload.repetitions))
+        .collect::<Vec<_>>()
+        .join(",");
     Ok(format!(
-        "# schema=ronin-performance-baseline-v2\n\
+        "# schema=ronin-performance-baseline-v3\n\
          # workload_version={WORKLOAD_VERSION}\n\
          # ronin_revision={ronin_revision}\n\
          # ronin_dirty={dirty}\n\
@@ -533,17 +596,47 @@ fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
          # platform={platform}\n\
          # rustc={rustc}\n\
          # warmups={}\n\
-         # repetitions={}\n\
-         # noise_control=interleaved tool samples; stdout/stderr discarded; {} warmup(s); median wall time; Linux peak RSS sampled from /proc every 100 us; no CPU pinning\n\
+         # repetitions={repetitions}\n\
+         # load_average_before={load:.2}\n\
+         # max_load={:.2}\n\
+         # noise_control=interleaved tool samples with a rotating offset; stdout/stderr discarded; {} warmup(s); tenth-percentile wall time over each row's own repetition count; Linux peak RSS sampled from /proc every 100 us and summarised by its median; no CPU pinning\n\
+         # statistic=tenth percentile of the samples. Contention can only ADD time, so the informative part of a no-op's distribution is its floor; a median sat inside the tail a busy host writes and refused an unmodified tree up to 19.4% of the time at five repetitions. Peak RSS keeps its median, because the failure IT is gated against is a high number\n\
          # validation_thresholds=Ronin/Ninja runtime ratio <= {:.0}% of recorded v1 ratio and Ronin runtime <= {:.0}% of pinned Ninja; peak RSS <= {:.0}% of pinned Ninja\n\
          # sizes=command:{COMMAND_EDGES},deep:{DEEP_EDGES},wide:{WIDE_EDGES},canonical:{CANONICAL_PATHS},deps:{DEPENDENCY_EDGES},clean:{CLEAN_TREE_EDGES},large:{LARGE_MANIFEST_EDGES},scheduler:{SCHEDULER_EDGES}\n",
         config.warmups,
-        config.repetitions,
+        config.max_load,
         config.warmups,
         MAX_RECORDED_RUNTIME_RATIO * 100.0,
         MAX_NINJA_RUNTIME_RATIO * 100.0,
         MAX_NINJA_RSS_RATIO * 100.0
     ))
+}
+
+/// Refuse a validating run told to take fewer samples than a row was measured
+/// to need.
+///
+/// `--repetitions` is how a deliberate experiment overrides the counts, and an
+/// experiment is welcome to take five of everything. A GATE is not: five is the
+/// count whose median refused an unmodified tree 19.4% of the time on
+/// `dependency-log-load` and 15.6% on `path-canonicalization`, and a verdict the
+/// harness knows its own samples cannot support is worse than no verdict.
+fn refuse_an_unsupportable_verdict(config: &Config, catalog: &[Workload]) -> Result<(), String> {
+    let Some(asked) = config.repetitions.filter(|_| config.validate) else {
+        return Ok(());
+    };
+    for workload in catalog {
+        let needed = repetitions_for(workload.name);
+        if asked < needed {
+            return Err(format!(
+                "--validate with --repetitions {asked}, but {} was measured to need {needed} \
+                 before its statistic is tighter than the margin it is judged against. Drop \
+                 --repetitions and let each row take the count it needs, or drop --validate and \
+                 take the measurement you asked for.",
+                workload.name
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[allow(
@@ -553,6 +646,7 @@ fn metadata(config: &Config, ninja_revision: &str) -> Result<String, String> {
 fn run() -> Result<(), String> {
     let config = parse_arguments()?;
     let ninja_revision = validate_ninja_pin(&config)?;
+    let load = require_quiet_host("baseline", config.max_load)?;
     let mut tools = vec![
         tool("ronin", config.ronin.clone())?,
         tool("ninja", config.ninja.clone())?,
@@ -562,16 +656,18 @@ fn run() -> Result<(), String> {
     }
 
     let temporary = TemporaryDirectory::new().map_err(|error| error.to_string())?;
-    let mut report = metadata(&config, &ninja_revision)?;
-    report.push_str(
-        "tool,tool_version,workload,median_ms,min_ms,max_ms,\
-         median_peak_rss_kib,min_peak_rss_kib,max_peak_rss_kib\n",
-    );
-    let mut records = Vec::new();
     let catalogs = tools
         .iter()
         .map(|tool| workload_catalog(&temporary.0, tool))
         .collect::<Result<Vec<_>, _>>()?;
+    refuse_an_unsupportable_verdict(&config, &catalogs[0])?;
+    let mut report = metadata(&config, &ninja_revision, &catalogs[0], load)?;
+    report.push_str(
+        "tool,tool_version,workload,p10_ms,min_ms,max_ms,\
+         median_peak_rss_kib,min_peak_rss_kib,max_peak_rss_kib\n",
+    );
+    let mut records = Vec::new();
+    let mut raw = String::from("tool,workload,repetition,elapsed_ms\n");
     let workload_count = catalogs.first().map_or(0, Vec::len);
     if catalogs
         .iter()
@@ -593,10 +689,13 @@ fn run() -> Result<(), String> {
                 time_once(tool, &catalog[workload_index])?;
             }
         }
+        let repetitions = config
+            .repetitions
+            .unwrap_or(catalogs[0][workload_index].repetitions);
         let mut samples = (0..tools.len())
-            .map(|_| Vec::with_capacity(config.repetitions))
+            .map(|_| Vec::with_capacity(repetitions))
             .collect::<Vec<_>>();
-        for repetition in 0..config.repetitions {
+        for repetition in 0..repetitions {
             for offset in 0..tools.len() {
                 let tool_index = (repetition + offset) % tools.len();
                 samples[tool_index].push(time_once(
@@ -607,13 +706,22 @@ fn run() -> Result<(), String> {
         }
         for ((tool, catalog), samples) in tools.iter().zip(&catalogs).zip(samples) {
             let workload = &catalog[workload_index];
+            for (repetition, sample) in samples.iter().enumerate() {
+                let _ = writeln!(
+                    raw,
+                    "{},{},{repetition},{:.3}",
+                    tool.name,
+                    workload.name,
+                    sample.elapsed.as_secs_f64() * 1_000.0
+                );
+            }
             let minimum = samples.iter().map(|sample| sample.elapsed).min().unwrap();
             let maximum = samples.iter().map(|sample| sample.elapsed).max().unwrap();
             let mut durations = samples
                 .iter()
                 .map(|sample| sample.elapsed)
                 .collect::<Vec<_>>();
-            let middle = median_duration(&mut durations);
+            let judged = quiet_decile(&mut durations);
             let mut peak_rss = samples
                 .iter()
                 .filter_map(|sample| sample.peak_rss_kib)
@@ -627,7 +735,7 @@ fn run() -> Result<(), String> {
                 tool.name,
                 tool.version.replace(',', "_"),
                 workload.name,
-                middle.as_secs_f64() * 1_000.0,
+                judged.as_secs_f64() * 1_000.0,
                 minimum.as_secs_f64() * 1_000.0,
                 maximum.as_secs_f64() * 1_000.0,
                 middle_rss.map_or_else(String::new, |rss| rss.to_string()),
@@ -637,14 +745,24 @@ fn run() -> Result<(), String> {
             records.push(Record {
                 tool: tool.name,
                 workload: workload.name,
-                median_ms: middle.as_secs_f64() * 1_000.0,
+                statistic_ms: judged.as_secs_f64() * 1_000.0,
                 median_peak_rss_kib: middle_rss,
             });
         }
     }
 
+    let after = load_average().unwrap_or(f64::NAN);
+    let _ = writeln!(
+        report,
+        "# load_average_after={after:.2} (includes this gate's own workloads)"
+    );
+
     if let Some(path) = config.output.as_ref() {
         fs::write(path, &report)
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    }
+    if let Some(path) = config.samples.as_ref() {
+        fs::write(path, &raw)
             .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
     }
     if config.validate {
@@ -683,13 +801,13 @@ mod tests {
                     Record {
                         tool: "ronin",
                         workload,
-                        median_ms: ninja_ms * current_ratio,
+                        statistic_ms: ninja_ms * current_ratio,
                         median_peak_rss_kib: Some(1_000),
                     },
                     Record {
                         tool: "ninja",
                         workload,
-                        median_ms: ninja_ms,
+                        statistic_ms: ninja_ms,
                         median_peak_rss_kib: Some(1_000),
                     },
                 ]
@@ -714,12 +832,12 @@ mod tests {
             .iter()
             .find(|candidate| candidate.tool == "ninja" && candidate.workload == workload)
             .unwrap()
-            .median_ms;
+            .statistic_ms;
         recorded_regression
             .iter_mut()
             .find(|record| record.tool == "ronin" && record.workload == workload)
             .unwrap()
-            .median_ms =
+            .statistic_ms =
             baseline.ronin_ms / baseline.ninja_ms * MAX_RECORDED_RUNTIME_RATIO * 1.01 * ninja;
         assert!(
             validate(&recorded_regression)
@@ -746,12 +864,12 @@ mod tests {
             .iter()
             .find(|candidate| candidate.tool == "ninja" && candidate.workload == workload)
             .unwrap()
-            .median_ms;
+            .statistic_ms;
         ninja_regression
             .iter_mut()
             .find(|record| record.tool == "ronin" && record.workload == workload)
             .unwrap()
-            .median_ms = ninja_ms * 1.21;
+            .statistic_ms = ninja_ms * 1.21;
         assert!(
             validate(&ninja_regression)
                 .unwrap_err()

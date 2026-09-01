@@ -23,7 +23,6 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::thread;
 use std::time::{Duration, Instant};
 
 #[path = "support/make_workloads.rs"]
@@ -32,6 +31,14 @@ use make_workloads::{
     MAKE_WORKLOAD_VERSION, RECURSION_DEPTH, RECURSION_FANOUT, RECURSION_LEAF_TARGETS, WIDE_RULES,
     recursion_units,
 };
+
+#[path = "support/quiet_host.rs"]
+mod quiet_host;
+use quiet_host::{DEFAULT_MAX_LOAD, load_average, require_quiet_host};
+
+#[path = "support/statistic.rs"]
+mod statistic;
+use statistic::{quiet_decile, repetitions_for};
 
 const RECORDED_BASELINE: &str = include_str!("../benchmarks/make-baseline-v1.csv");
 
@@ -49,23 +56,6 @@ const GATED_WORKLOADS: [&str; 4] = ["wide-noop", "recursive-noop", "vim-noop", "
 /// using this as their `make`, and far too slow to run on every release pass.
 /// Recorded in the baseline, measured only under `--clean-build`.
 const CLEAN_BUILD_WORKLOAD: &str = "vim-clean-build";
-
-/// Default ceiling on the one-minute load average. Wall time measured on a
-/// busy machine is not a measurement, and a gate that records one anyway is
-/// worse than no gate: it teaches everyone to ignore it.
-const DEFAULT_MAX_LOAD: f64 = 4.0;
-
-/// How long to wait for the machine to go quiet before giving up on it.
-///
-/// Generous, because the load this gate usually inherits is the release run's
-/// own: a `-j8` build of vim and zsh finishes a few lines above it, and the
-/// one-minute average takes about that long to decay back through 4.0.
-const QUIET_HOST_PATIENCE: Duration = Duration::from_mins(5);
-
-/// How often to look while waiting. Long enough that the watching costs
-/// nothing, short enough that a run does not sit idle after the machine has
-/// already gone quiet.
-const QUIET_HOST_POLL: Duration = Duration::from_secs(5);
 
 struct Tool {
     name: &'static str,
@@ -110,12 +100,16 @@ struct Workload {
     sentinel: PathBuf,
     /// Cleaned with this argument list before each clean-build sample.
     clean_arguments: Vec<String>,
+    /// How many interleaved samples this row takes, from the spread its own
+    /// samples were measured to have. A 34 ms no-op and a 1.8 s incremental
+    /// build do not need the same count and cannot afford it either way.
+    repetitions: usize,
 }
 
 struct Record {
     tool: &'static str,
     workload: &'static str,
-    median_ms: f64,
+    statistic_ms: f64,
 }
 
 struct Baseline {
@@ -128,11 +122,26 @@ struct Config {
     ronin: PathBuf,
     projects: PathBuf,
     scratch: PathBuf,
-    repetitions: usize,
+    /// Set only by `--repetitions`, which overrides every workload's own
+    /// measured count at once. Unset is the normal case and the right one: the
+    /// harness knows which row is a 34 ms no-op and which is a 21 s build, and
+    /// a caller passing one number for the catalog is passing the wrong number
+    /// to at least one of them.
+    repetitions: Option<usize>,
     warmups: usize,
     jobs: usize,
     max_load: f64,
     output: Option<PathBuf>,
+    /// Where to write every individual sample, rather than the summary the
+    /// report carries.
+    ///
+    /// The summary is one number per tool per workload, which is enough to gate
+    /// on and not enough to argue about. Choosing how many repetitions a row
+    /// needs, or which statistic over them is stable, is a question about the
+    /// SPREAD of the samples, and the spread is exactly what a median throws
+    /// away. This is how that question gets answered from measurement instead
+    /// of from assertion.
+    samples: Option<PathBuf>,
     validate: bool,
     clean_build: bool,
 }
@@ -152,11 +161,12 @@ impl Default for Config {
             // against real trees measured on disk is two different questions
             // reported as one table.
             scratch: root.join("target/make-performance"),
-            repetitions: 5,
+            repetitions: None,
             warmups: 1,
             jobs: 8,
             max_load: DEFAULT_MAX_LOAD,
             output: None,
+            samples: None,
             validate: false,
             clean_build: false,
         }
@@ -182,9 +192,11 @@ fn parse_arguments() -> Result<Config, String> {
             "--projects" => config.projects = PathBuf::from(value("--projects")?),
             "--scratch" => config.scratch = PathBuf::from(value("--scratch")?),
             "--repetitions" => {
-                config.repetitions = value("--repetitions")?
-                    .parse()
-                    .map_err(|_| "invalid --repetitions value".to_owned())?;
+                config.repetitions = Some(
+                    value("--repetitions")?
+                        .parse()
+                        .map_err(|_| "invalid --repetitions value".to_owned())?,
+                );
             }
             "--warmups" => {
                 config.warmups = value("--warmups")?
@@ -202,6 +214,7 @@ fn parse_arguments() -> Result<Config, String> {
                     .map_err(|_| "invalid --max-load value".to_owned())?;
             }
             "--output" => config.output = Some(PathBuf::from(value("--output")?)),
+            "--samples" => config.samples = Some(PathBuf::from(value("--samples")?)),
             "--validate" => config.validate = true,
             "--clean-build" => config.clean_build = true,
             "--help" | "-h" => {
@@ -209,14 +222,14 @@ fn parse_arguments() -> Result<Config, String> {
                     "usage: cargo run --release --example make_baseline -- \
                      [--gnu-make PATH] [--ronin-make PATH] [--projects DIR] [--scratch DIR] \
                      [--warmups N] [--repetitions N] [--jobs N] [--max-load LOAD] \
-                     [--output PATH] [--clean-build] [--validate]"
+                     [--output PATH] [--samples PATH] [--clean-build] [--validate]"
                 );
                 std::process::exit(0);
             }
             _ => return Err(format!("unknown argument: {argument}")),
         }
     }
-    if config.repetitions == 0 {
+    if config.repetitions == Some(0) {
         return Err("--repetitions must be positive".into());
     }
     if config.jobs == 0 {
@@ -254,68 +267,6 @@ fn tool(name: &'static str, path: PathBuf) -> Result<Tool, String> {
         path,
         version,
     })
-}
-
-/// The one-minute load average, or `None` where the kernel does not publish
-/// one. Read once before sampling and once after, because a run that started
-/// quiet and finished under somebody else's build recorded that build.
-fn load_average() -> Option<f64> {
-    let loadavg = fs::read_to_string("/proc/loadavg").ok()?;
-    loadavg.split_whitespace().next()?.parse().ok()
-}
-
-/// Wait for a quiet machine, and refuse if one does not arrive.
-///
-/// Waiting rather than refusing outright, because of where this runs:
-/// `scripts/check-release.sh` puts `scripts/check-make-projects.sh` — which
-/// builds the whole of vim and the whole of zsh at `-j8` — a few lines above
-/// it, and has to, since those builds are what make the trees this gate
-/// measures up to date. A gate that refused the moment it inherited the load
-/// average of the work it depends on would fail every release run, and a gate
-/// that fails every run gets deleted. So it sits and watches the average decay
-/// instead, and only gives up if the machine is still busy after
-/// [`QUIET_HOST_PATIENCE`] — which means somebody else's work, not ours.
-///
-/// Checked only before sampling, and that is not an oversight. Once sampling
-/// has begun the one-minute average includes the harness's own workloads —
-/// a `-j8` clean build of vim drives it past any threshold worth setting by
-/// itself — so the reading afterwards measures this gate rather than the
-/// competition for the machine. It is recorded for the reader and not gated
-/// on.
-fn require_quiet_host(config: &Config) -> Result<f64, String> {
-    let Some(mut load) = load_average() else {
-        return Ok(f64::NAN);
-    };
-    let deadline = Instant::now() + QUIET_HOST_PATIENCE;
-    let mut waited = false;
-    // `while load > max` reads as a float comparison in a loop condition,
-    // which the lint is right to question in general and which is exactly
-    // what is wanted here: the average is a float and the ceiling is a float,
-    // and the loop ends when one falls below the other.
-    loop {
-        if load <= config.max_load {
-            return Ok(load);
-        }
-        if Instant::now() >= deadline {
-            return Err(format!(
-                "one-minute load average is still {load:.2} after waiting {} s, above the \
-                 {:.2} this gate will measure at. Wall time from a busy machine is not a \
-                 measurement. Wait for the host to go quiet, or raise --max-load \
-                 deliberately and say so in the record.",
-                QUIET_HOST_PATIENCE.as_secs(),
-                config.max_load
-            ));
-        }
-        if !waited {
-            eprintln!(
-                "make-baseline: load average is {load:.2}, waiting for it to fall below {:.2}",
-                config.max_load
-            );
-            waited = true;
-        }
-        thread::sleep(QUIET_HOST_POLL);
-        load = load_average().unwrap_or(load);
-    }
 }
 
 /// The single directory under `projects` whose name starts with `prefix`.
@@ -384,6 +335,8 @@ fn shared_directories(tools: &[Tool], directory: &Path) -> Vec<PathBuf> {
 
 fn workload_catalog(config: &Config, tools: &[Tool]) -> Result<Vec<Workload>, String> {
     let jobs = format!("-j{}", config.jobs);
+    // Each row's own measured count, unless `--repetitions` overrode the lot.
+    let repetitions = |name: &str| config.repetitions.unwrap_or_else(|| repetitions_for(name));
     let vim = project_tree(&config.projects, "vim-")?;
     let zsh = project_tree(&config.projects, "zsh-")?;
     let mut catalog = vec![
@@ -399,6 +352,7 @@ fn workload_catalog(config: &Config, tools: &[Tool]) -> Result<Vec<Workload>, St
             shape: Shape::NoOp,
             sentinel: PathBuf::from("build/0"),
             clean_arguments: Vec::new(),
+            repetitions: repetitions("wide-noop"),
         },
         Workload {
             name: "recursive-noop",
@@ -412,6 +366,7 @@ fn workload_catalog(config: &Config, tools: &[Tool]) -> Result<Vec<Workload>, St
             shape: Shape::NoOp,
             sentinel: PathBuf::from("sub0/sub0/sub0/build/0"),
             clean_arguments: Vec::new(),
+            repetitions: repetitions("recursive-noop"),
         },
         Workload {
             name: "vim-noop",
@@ -420,6 +375,7 @@ fn workload_catalog(config: &Config, tools: &[Tool]) -> Result<Vec<Workload>, St
             shape: Shape::NoOp,
             sentinel: PathBuf::from("src/vim"),
             clean_arguments: Vec::new(),
+            repetitions: repetitions("vim-noop"),
         },
         Workload {
             name: "zsh-incremental",
@@ -428,6 +384,7 @@ fn workload_catalog(config: &Config, tools: &[Tool]) -> Result<Vec<Workload>, St
             shape: Shape::Incremental,
             sentinel: PathBuf::from("Src/zsh"),
             clean_arguments: Vec::new(),
+            repetitions: repetitions("zsh-incremental"),
         },
     ];
     if config.clean_build {
@@ -438,6 +395,7 @@ fn workload_catalog(config: &Config, tools: &[Tool]) -> Result<Vec<Workload>, St
             shape: Shape::CleanBuild,
             sentinel: PathBuf::from("src/vim"),
             clean_arguments: vec!["clean".to_owned()],
+            repetitions: repetitions(CLEAN_BUILD_WORKLOAD),
         });
     }
     Ok(catalog)
@@ -556,11 +514,6 @@ fn verify_shape(
     ))
 }
 
-fn median(samples: &mut [Duration]) -> Duration {
-    samples.sort_unstable();
-    samples[samples.len() / 2]
-}
-
 fn recorded_baseline() -> Result<BTreeMap<&'static str, Baseline>, String> {
     let mut baseline = BTreeMap::new();
     for (index, line) in RECORDED_BASELINE.lines().enumerate() {
@@ -605,6 +558,19 @@ fn recorded_baseline() -> Result<BTreeMap<&'static str, Baseline>, String> {
 /// these workloads today, and a threshold that says otherwise would fail on
 /// the day it was written and be turned off on the day after. What is recorded
 /// is what was measured, and what is gated is the direction of travel.
+///
+/// THE RECORDED ROWS ARE MEDIANS AND THE RUN'S ARE DECILES, and that is a
+/// deliberate decision rather than an oversight. What is compared is a RATIO,
+/// and a ratio is very nearly independent of which quantile it is taken at:
+/// both tools' distributions shift together under the same contention. Measured
+/// over a 151-repetition pool of every row on both gates, the decile ratio and
+/// the median ratio agree to within 3% on ten of the twelve rows and 6.2% on
+/// the widest — an order of magnitude inside the 20% margin. Re-recording was
+/// measured and declined: `the-make-gate-flaps-because-five-repetitions-is-too-few`
+/// establishes that the rows are not what drifted, and the four Make rows read
+/// 0.56x / 0.98x / 1.70x / 1.05x against a recorded 0.62 / 1.01 / 1.71 / 1.03.
+/// A re-record wants a host under the guard below, not a host the guard is
+/// being raised for.
 fn validate(records: &[Record]) -> Result<(), String> {
     let baseline = recorded_baseline()?;
     let ronin = records
@@ -630,7 +596,7 @@ fn validate(records: &[Record]) -> Result<(), String> {
         let Some(baseline) = baseline.get(workload) else {
             return Err(format!("{workload} has no recorded baseline"));
         };
-        let current_ratio = measured.median_ms / gnu[workload].median_ms;
+        let current_ratio = measured.statistic_ms / gnu[workload].statistic_ms;
         let recorded_ratio = baseline.ronin_ms / baseline.gnu_ms;
         if current_ratio > recorded_ratio * MAX_RECORDED_RUNTIME_RATIO {
             return Err(format!(
@@ -642,7 +608,12 @@ fn validate(records: &[Record]) -> Result<(), String> {
     Ok(())
 }
 
-fn metadata(config: &Config, tools: &[Tool], load: f64) -> Result<String, String> {
+fn metadata(
+    config: &Config,
+    tools: &[Tool],
+    catalog: &[Workload],
+    load: f64,
+) -> Result<String, String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let repository = root.to_str().ok_or("non-UTF-8 repository path")?;
     let revision = command_output(Path::new("git"), &["-C", repository, "rev-parse", "HEAD"])?;
@@ -653,8 +624,13 @@ fn metadata(config: &Config, tools: &[Tool], load: f64) -> Result<String, String
     .is_empty();
     let platform = command_output(Path::new("uname"), &["-a"])?;
     let rustc = command_output(Path::new("rustc"), &["--version"])?;
+    let repetitions = catalog
+        .iter()
+        .map(|workload| format!("{}:{}", workload.name, workload.repetitions))
+        .collect::<Vec<_>>()
+        .join(",");
     let mut header = format!(
-        "# schema=ronin-make-performance-baseline-v1\n\
+        "# schema=ronin-make-performance-baseline-v2\n\
          # workload_version={MAKE_WORKLOAD_VERSION}\n\
          # ronin_revision={revision}\n\
          # ronin_dirty={dirty}\n\
@@ -663,11 +639,16 @@ fn metadata(config: &Config, tools: &[Tool], load: f64) -> Result<String, String
          # rustc={rustc}\n\
          # jobs={}\n\
          # warmups={}\n\
-         # repetitions={}\n\
+         # repetitions={repetitions}\n\
          # load_average_before={load:.2}\n\
          # max_load={:.2}\n\
-         # noise_control=interleaved tool samples; stdout/stderr discarded; blocking wait, \
-         no sampling thread; MAKEFLAGS/MFLAGS/MAKELEVEL cleared; median wall time; no CPU pinning\n\
+         # noise_control=interleaved tool samples with a rotating offset; stdout/stderr \
+         discarded; blocking wait, no sampling thread; MAKEFLAGS/MFLAGS/MAKELEVEL cleared; \
+         tenth-percentile wall time over each row's own repetition count; no CPU pinning\n\
+         # statistic=tenth percentile of the samples. Contention can only ADD time, so the \
+         informative part of a no-op's distribution is its floor; a median sits inside the tail \
+         a busy host writes and refused an unmodified tree up to 19.4% of the time at five \
+         repetitions\n\
          # validation=Ronin/GNU runtime ratio <= {:.0}% of the recorded ratio; no absolute \
          threshold, because Ronin is slower than GNU Make on these workloads and the recorded \
          numbers say so\n\
@@ -675,7 +656,6 @@ fn metadata(config: &Config, tools: &[Tool], load: f64) -> Result<String, String
          {RECURSION_DEPTH} leaf {RECURSION_LEAF_TARGETS})\n",
         config.jobs,
         config.warmups,
-        config.repetitions,
         config.max_load,
         MAX_RECORDED_RUNTIME_RATIO * 100.0,
         recursion_units(),
@@ -684,6 +664,34 @@ fn metadata(config: &Config, tools: &[Tool], load: f64) -> Result<String, String
         let _ = writeln!(header, "# {}={}", tool.name, tool.version);
     }
     Ok(header)
+}
+
+/// Refuse a validating run told to take fewer samples than a row was measured
+/// to need.
+///
+/// `--repetitions` is how a deliberate experiment overrides the counts, and an
+/// experiment is welcome to take five of everything. A GATE is not: five is the
+/// count whose median refused an unmodified tree 9.1% of the time on `vim-noop`
+/// and 19.4% on `dependency-log-load`, and a verdict the harness knows its own
+/// samples cannot support is worse than no verdict. Ask for the measurement or
+/// ask for the gate, not for a gate made of the measurement's leftovers.
+fn refuse_an_unsupportable_verdict(config: &Config, catalog: &[Workload]) -> Result<(), String> {
+    let Some(asked) = config.repetitions.filter(|_| config.validate) else {
+        return Ok(());
+    };
+    for workload in catalog {
+        let needed = repetitions_for(workload.name);
+        if asked < needed {
+            return Err(format!(
+                "--validate with --repetitions {asked}, but {} was measured to need {needed} \
+                 before its statistic is tighter than the margin it is judged against. Drop \
+                 --repetitions and let each row take the count it needs, or drop --validate and \
+                 take the measurement you asked for.",
+                workload.name
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[allow(
@@ -697,15 +705,17 @@ fn run() -> Result<(), String> {
         tool("ronin", config.ronin.clone())?,
     ];
     let gnu = &tools[0];
-    let load = require_quiet_host(&config)?;
+    let load = require_quiet_host("make-baseline", config.max_load)?;
 
     fs::create_dir_all(&config.scratch)
         .map_err(|error| format!("creating {}: {error}", config.scratch.display()))?;
     let catalog = workload_catalog(&config, &tools)?;
+    refuse_an_unsupportable_verdict(&config, &catalog)?;
 
-    let mut report = metadata(&config, &tools, load)?;
-    report.push_str("tool,workload,median_ms,min_ms,max_ms,samples\n");
+    let mut report = metadata(&config, &tools, &catalog, load)?;
+    report.push_str("tool,workload,p10_ms,min_ms,max_ms,samples\n");
     let mut records = Vec::new();
+    let mut raw = String::from("tool,workload,repetition,elapsed_ms\n");
 
     for workload in &catalog {
         // Priming, and it is not only a warmup: the trees arrive built by
@@ -719,8 +729,8 @@ fn run() -> Result<(), String> {
                 time_once(tool, workload, &workload.directories[index], gnu, false)?;
             }
         }
-        let mut samples = vec![Vec::with_capacity(config.repetitions); tools.len()];
-        for repetition in 0..config.repetitions {
+        let mut samples = vec![Vec::with_capacity(workload.repetitions); tools.len()];
+        for repetition in 0..workload.repetitions {
             for offset in 0..tools.len() {
                 // Rotate which tool goes first each repetition, so neither one
                 // systematically inherits the other's cache state.
@@ -735,23 +745,32 @@ fn run() -> Result<(), String> {
             }
         }
         for (tool, mut samples) in tools.iter().zip(samples) {
+            for (repetition, sample) in samples.iter().enumerate() {
+                let _ = writeln!(
+                    raw,
+                    "{},{},{repetition},{:.3}",
+                    tool.name,
+                    workload.name,
+                    sample.as_secs_f64() * 1_000.0
+                );
+            }
             let minimum = samples.iter().copied().min().unwrap_or_default();
             let maximum = samples.iter().copied().max().unwrap_or_default();
             let count = samples.len();
-            let middle = median(&mut samples);
+            let judged = quiet_decile(&mut samples);
             let _ = writeln!(
                 report,
                 "{},{},{:.3},{:.3},{:.3},{count}",
                 tool.name,
                 workload.name,
-                middle.as_secs_f64() * 1_000.0,
+                judged.as_secs_f64() * 1_000.0,
                 minimum.as_secs_f64() * 1_000.0,
                 maximum.as_secs_f64() * 1_000.0,
             );
             records.push(Record {
                 tool: tool.name,
                 workload: workload.name,
-                median_ms: middle.as_secs_f64() * 1_000.0,
+                statistic_ms: judged.as_secs_f64() * 1_000.0,
             });
         }
     }
@@ -773,13 +792,17 @@ fn run() -> Result<(), String> {
                 report,
                 "# ratio {}={:.2}x",
                 workload.name,
-                ronin.median_ms / gnu_record.median_ms
+                ronin.statistic_ms / gnu_record.statistic_ms
             );
         }
     }
 
     if let Some(path) = config.output.as_ref() {
         fs::write(path, &report)
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    }
+    if let Some(path) = config.samples.as_ref() {
+        fs::write(path, &raw)
             .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
     }
     if config.validate {
@@ -837,7 +860,25 @@ mod tests {
             shape,
             sentinel: PathBuf::from(sentinel),
             clean_arguments: Vec::new(),
+            repetitions: repetitions_for(name),
         }
+    }
+
+    /// A workload nobody has measured the spread of takes the careful count,
+    /// and the four real ones take what their own samples said they need.
+    // [spec:ronin:req:performance.make-oracle-baseline/test]
+    #[test]
+    fn every_gated_row_carries_its_measured_repetition_count() {
+        for gated in GATED_WORKLOADS {
+            assert!(
+                repetitions_for(gated) >= 15,
+                "{gated} would be gated on fewer samples than any row was measured to need"
+            );
+        }
+        assert_eq!(
+            repetitions_for("probe-noop"),
+            statistic::DEFAULT_REPETITIONS
+        );
     }
 
     fn subject() -> Tool {
@@ -998,12 +1039,12 @@ mod tests {
                     Record {
                         tool: "gnu-make",
                         workload,
-                        median_ms: baseline.gnu_ms,
+                        statistic_ms: baseline.gnu_ms,
                     },
                     Record {
                         tool: "ronin",
                         workload,
-                        median_ms: baseline.ronin_ms,
+                        statistic_ms: baseline.ronin_ms,
                     },
                 ]
             })
@@ -1022,13 +1063,13 @@ mod tests {
             .iter()
             .find(|record| record.tool == "gnu-make" && record.workload == workload)
             .unwrap()
-            .median_ms;
+            .statistic_ms;
         let recorded = &recorded_baseline().unwrap()[workload];
         regressed
             .iter_mut()
             .find(|record| record.tool == "ronin" && record.workload == workload)
             .unwrap()
-            .median_ms =
+            .statistic_ms =
             recorded.ronin_ms / recorded.gnu_ms * MAX_RECORDED_RUNTIME_RATIO * 1.01 * gnu_ms;
         assert!(validate(&regressed).unwrap_err().contains("regressed"));
     }

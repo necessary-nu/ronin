@@ -8,12 +8,15 @@ ninja_source=${NINJA_SOURCE:-"$repo_root/reference/ninja"}
 ninja_build=${NINJA_BUILD:-"$repo_root/reference/ninja-build"}
 ninja_binary=${NINJA_BINARY:-"$ninja_build/ninja"}
 performance_warmups=${PERFORMANCE_WARMUPS:-2}
-performance_repetitions=${PERFORMANCE_REPETITIONS:-15}
-# Fewer than the Ninja gate's fifteen because these workloads are seconds
-# rather than milliseconds: nine interleaved samples of each is a minute and a
-# half, and fifteen would be four.
 make_performance_warmups=${MAKE_PERFORMANCE_WARMUPS:-1}
-make_performance_repetitions=${MAKE_PERFORMANCE_REPETITIONS:-9}
+
+# Neither gate is told how many repetitions to take any more, and that is the
+# fix rather than an omission. One number for a whole catalog is the wrong
+# number for at least one row in it: `vim-noop` is 34 ms and `zsh-incremental`
+# is 1.8 s, and the count each needs comes from the spread of its own samples,
+# which the harness has measured and this script has not. See
+# examples/support/statistic.rs. `--repetitions` still overrides every row at
+# once, for a deliberate experiment.
 
 cargo fmt --all -- --check
 cargo check --all-targets
@@ -46,8 +49,7 @@ scripts/check-ninja-conformance.sh \
 scripts/check-performance.sh \
     --ninja "$ninja_binary" \
     --ninja-source "$ninja_source" \
-    --warmups "$performance_warmups" \
-    --repetitions "$performance_repetitions"
+    --warmups "$performance_warmups"
 
 # The same question for the other front end, against the tool it stands in for.
 # It runs after check-make-projects.sh above, and has to: its two real
@@ -56,8 +58,7 @@ scripts/check-performance.sh \
 # recorded rather than gated — sixteen seconds a side is too much to spend on
 # every release pass, and `--clean-build` is how you ask for it.
 scripts/check-make-performance.sh \
-    --warmups "$make_performance_warmups" \
-    --repetitions "$make_performance_repetitions"
+    --warmups "$make_performance_warmups"
 
 uncovered=$(nplan spec uncovered --prefix samurai --color never)
 printf '%s\n' "$uncovered"

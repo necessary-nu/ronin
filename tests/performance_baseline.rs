@@ -25,11 +25,18 @@ fn baseline_catalog_and_metadata_remain_complete() {
         "rustc",
         "noise_control",
         "workload_version",
+        // v3's three. A reader cannot tell what a row means without knowing
+        // which statistic summarised it and what the machine was doing while
+        // it was taken, and this gate carried neither until it grew the
+        // quiet-host guard the Make gate already had.
+        "statistic",
+        "load_average_before",
+        "max_load",
     ] {
         assert!(HARNESS.contains(metadata), "missing metadata {metadata}");
     }
     assert!(HARNESS.contains("b51a1e37c2fb89bbefa600bd155e1ce13983f09d"));
-    assert!(HARNESS.contains("ronin-performance-baseline-v2"));
+    assert!(HARNESS.contains("ronin-performance-baseline-v3"));
     assert!(HARNESS.contains("peak_rss_kib"));
     assert!(HARNESS.contains("--validate"));
 

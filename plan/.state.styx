@@ -988,6 +988,7 @@ assertions (
     {id a-unit-with-many-recursive-recipes-is-read-once-per-recipe, kind @complete, author "brendan@necessary.nu", at 2026-08-31T16:58:46.240688897Z}
     {id a-notparallel-unit-runs-its-composed-children-at-once, kind @complete, author "brendan@necessary.nu", at 2026-08-31T15:02:50.208731305Z}
     {id a-sessions-allocations-die-together-and-are-freed-one-by-one, kind @complete, author "brendan@necessary.nu", at 2026-09-01T20:14:20.379630114Z}
+    {id the-make-gate-flaps-because-five-repetitions-is-too-few, kind @complete, author "brendan@necessary.nu", at 2026-09-01T21:33:15.674339972Z}
 )
 
 impl_evidence (
