@@ -88,6 +88,10 @@ struct RuleSemantics {
 
 /// One script as it crossed the sink, kept because the two destinations write
 /// it down differently.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "four independent facts about one rule, each read on its own by a different binding's comparison; a state machine would have to enumerate their sixteen combinations to say less"
+)]
 struct SemanticCommand {
     /// Whether the writer passes it as an argument or through a file, which is
     /// which of the two bindings carries it.
@@ -102,6 +106,12 @@ struct SemanticCommand {
     /// spell. The two paths therefore do not agree about the bytes here, and
     /// cannot, so the comparison judges the script that reached them both.
     respelled: bool,
+    /// The recipe echoes over more than one line, so the narration the two
+    /// sides carry is a different shape rather than different bytes. A binding
+    /// ends at a newline, so the manifest declines the description outright and
+    /// leaves its reader Ninja's own repair — the command — while the sink that
+    /// holds the recipe in memory carries every echoed line.
+    unspellable_description: bool,
 }
 
 /// Semantic overrides keyed by the rule's primary output.
@@ -141,11 +151,16 @@ impl BuildSink for Tee<'_> {
             SinkCommand::ResponseFile(script) => (script, true),
         };
         let respelled = script.contains(&b'\n');
-        let semantic_command = (rule.ignore_errors || respelled).then_some(SemanticCommand {
-            response_file,
-            ignore_errors: rule.ignore_errors,
-            respelled,
-        });
+        let unspellable_description = rule
+            .description
+            .is_some_and(|description| description.contains(&b'\n'));
+        let semantic_command = (rule.ignore_errors || respelled || unspellable_description)
+            .then_some(SemanticCommand {
+                response_file,
+                ignore_errors: rule.ignore_errors,
+                respelled,
+                unspellable_description,
+            });
         self.rule_semantics.insert(
             rule.id,
             RuleSemantics {
@@ -158,7 +173,14 @@ impl BuildSink for Tee<'_> {
     }
 
     fn declare_edge(&mut self, names: &dyn Interner, edge: &SinkEdge<'_>) -> anyhow::Result<()> {
-        let output = names.symtab().name(edge.output).to_vec();
+        // Keyed by the path a graph would give this output rather than the
+        // spelling the Makefile used for it, because that is the key the
+        // comparison looks it up under: both sides are read back through a
+        // graph, and a graph canonicalises on the way in. `preserve_single_dot`
+        // is the case that tells them apart — it names `a/./b`, and every
+        // lookup for it was a miss until this canonicalised too.
+        let mut output = names.symtab().name(edge.output).to_vec();
+        crate::util::canonpath(&mut output);
         if let Some(semantics) = edge.rule.and_then(|rule| self.rule_semantics.remove(&rule)) {
             if let Some(command) = semantics.semantic_command {
                 self.edge_semantics.semantic.insert(output.clone(), command);
@@ -323,6 +345,11 @@ fn describe_command_semantics<'a>(
         "  respelled for the manifest: {}",
         command.respelled
     );
+    let _ = writeln!(
+        described,
+        "  narration the manifest cannot hold: {}",
+        command.unspellable_description
+    );
     Some(command)
 }
 
@@ -466,12 +493,11 @@ fn destination_specific_binding(name: &str, command: Option<&SemanticCommand>) -
     match name {
         "command" => !command.response_file,
         "rspfile_content" => command.response_file,
-        // A script the manifest had to respell cannot be its own narration
-        // there: the binding holds one line, and the reconstruction that
-        // carries the recipe is plumbing rather than the recipe. The sink that
-        // keeps the script in memory narrates it with its own bytes, and the
-        // two spellings are as destination-specific as the command is.
-        "description" => command.respelled,
+        // Narration GNU Make spreads over several echoed lines is narration a
+        // manifest binding cannot hold, so the writer declines it and the
+        // in-memory sink carries it whole. Both are saying the same thing about
+        // the recipe in the only vocabulary each has.
+        "description" => command.unspellable_description,
         _ => false,
     }
 }

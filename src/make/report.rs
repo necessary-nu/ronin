@@ -34,7 +34,7 @@ pub(super) fn duplicate_standard_input() -> RunResult {
 /// Kati identifies Makefile locations correctly, but its standalone reporter
 /// decorates fatal messages with GNU Make's recursive prefix, stars, and
 /// `Stop.` suffix. Those are runner narration, not compiler information.
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(super) fn ordinary_diagnostic(failure: impl Display) -> Vec<u8> {
     format!("{PRODUCT_NAME}: {}\n", diagnostic_body(failure)).into_bytes()
 }
@@ -118,7 +118,7 @@ pub(super) fn cut_short(reported: String) -> RunResult {
 ///
 /// More than one refusal only under `-k`, where `complain()` reports instead of
 /// dying and the update walks on to the next makefile.
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(super) fn refused_makefile(
     reported: String,
     refusals: Vec<(Option<String>, impl Display)>,
@@ -176,7 +176,7 @@ pub(super) fn refused_makefile(
 /// leaves 2 only for a question the makefile cannot answer with no signal in
 /// sight.
 // [spec:ronin:req:make.question-status+1]
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(super) fn answered(
     reported: String,
     question: Result<bool, Error>,
@@ -209,7 +209,7 @@ pub(super) fn answered(
 /// summary. Exit-status translation remains isolated here until the Make
 /// executor boundary is retired.
 ///
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(super) fn finished(
     reported: String,
     up_to_date: bool,
@@ -231,7 +231,7 @@ pub(super) fn finished(
 /// [`refused_makefile`]. GNU Make puts it on the stream carrying the line it
 /// precedes; matching that interleaving would be choosing a stream to reproduce
 /// GNU Make's output order rather than to say where a diagnostic belongs.
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(super) fn complained_of(
     reported: String,
     up_to_date: bool,

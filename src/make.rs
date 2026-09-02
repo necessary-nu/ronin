@@ -415,7 +415,7 @@ pub(crate) struct RefusedMakefile {
 /// once the update has returned. Ronin does not: every name in it has already
 /// been reported one line above, so the pass is GNU's ceremony rather than a
 /// failure that would otherwise go unreported.
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(crate) fn refusal_report(refusals: Vec<RefusedMakefile>) -> Vec<(Option<String>, MakeError)> {
     refusals
         .into_iter()

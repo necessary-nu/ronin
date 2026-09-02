@@ -8,7 +8,7 @@
 //! distinctions are deliberately not part of this gate.
 //!
 //! Why this rather than diffing the two tools' output. Make mode narrates a
-//! build the way the manifest front end does — `[spec:ronin:req:make.narration+1]`
+//! build the way the manifest front end does — `[spec:ronin:req:make.narration+2]`
 //! — so stdout cannot be compared without deciding, case by case, which lines
 //! were narration. That decision is what a classifier is, and a classifier
 //! reports rather than fails. Observable effect is comparable without any such

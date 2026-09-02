@@ -21221,4 +21221,60 @@ children (
             }
         )
     }
+
+    {
+        id a-silenced-recipe-is-narrated-as-its-own-shell-program
+        title "Narrate exactly the recipe lines GNU echoes, and never the command text"
+        kind @fix
+        log (
+            {
+                at 2026-09-02T15:26:42.622190454Z
+                author "brendan@necessary.nu"
+                kind @status
+                text "Todo → Doing (nplan start)"
+            }
+
+            {
+                at 2026-09-02T16:44:01.080418472Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "GNU 4.4.1's echo rule, read from job.c rather than guessed. `start_job_command` prints when `just_print_flag || ISDB (DB_PRINT) || (NONE_SET (flags, COMMANDS_SILENT) && !run_silent)`, and what it prints is `p`: the expanded recipe line with its prefix characters and surrounding blanks removed, verbatim, one `message` call per line and a newline appended to each. A line that is empty once the prefixes are off reaches `next_command` before the print, so it echoes nothing. `.SILENT` is `file.c`'s `snap_deps`: bare sets `run_silent`, with prerequisites sets `COMMANDS_SILENT` per named file.\n\nMeasured against the oracle to confirm each reading: a bare `:` IS echoed (and only then does GNU skip the fork); `@:` prints nothing; a backslash continuation is echoed whole, backslash and embedded newline included; under `.ONESHELL` the whole recipe is one chopped line whose flags are the first written line's, so it echoes as one blob and `@` on the first line silences all of it.\n\nBefore/after on the distilled kbuild fixture (tests/make_narration.rs KBUILD_SHAPED), -j1:\n\n  before                                              after      GNU\n  [1/6] set -e; mkdir -p generated/; trap \"rm -f ...  [1/6]      (nothing)\n  [2/6] echo body > built.c                           [2/6]      (nothing)\n  [3/6]   CC      built.o                             (same)     runtime echo, same text\n  [4/6] :                                             [4/6]      (nothing)\n  [5/6]   STAMP   stamped                             (same)     runtime echo, same text\n  [6/6] set -e ; (set +e ; echo louder ) ; (set +e ;  [6/6] echo louder   echo louder\n        echo hidden ) ; (set +e ; echo loudest )            echo loudest   echo loudest"
+            }
+
+            {
+                at 2026-09-02T16:44:14.439792779Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Where the command-text fallback survived d20febb, and why. It was written into the spec: `[spec:ronin:req:make.narration+1]` ended \"When an ordinary inline recipe supplies no description, its compiled rule uses the expanded recipe text instead of synthesizing a generic `build` description.\" d20febb added the quiet-command hoist ON TOP of that sentence and never touched it, so every path implementing the sentence stayed. There were four, and all four are now closed:\n\n  src/make/sink.rs:1191  executor_rule_bindings   `.or(single_line(script))`\n  src/make/sink.rs:1327  recipe_lines_bindings    the same, for lifted-recursion residue\n  src/make/recipe.rs:323 late binding             `(None, None) => single_line(script)`\n  kati ninja.rs:2908     the manifest writer      `.or(narrated_script(script))`\n\nplus a fifth the front end used to mask: src/build/reporter.rs `describe()`, Ninja's own description-or-command repair. With the front end no longer substituting a script into every description, that one became reachable and would have printed the same shell program. It is answered by `BuildOptions::descriptions_are_complete`, a compiler-boundary fact beside `serve_jobserver`: a compiled graph has no gaps, so an empty description is an answer rather than an absence. The runtime still speaks Ninja — same status line, same token — it is only told that this graph's descriptions are authoritative.\n\nThe rule is now `+2` and says what the description IS rather than what it falls back to. Ten annotation sites moved with it; each still cites the unchanged half (Ninja's shape, not GNU's wording)."
+            }
+
+            {
+                at 2026-09-02T16:44:30.552151673Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Defect 4, the corruption, is not Ronin's and 94b8f68 did not introduce it.\n\nRonin's Ninja reporter writes whole lines and nothing else: `Reporter::clear` is a no-op outside Cargo style, there is no `\\r`, no elide, no overprint, and `truncated()` is the Cargo bar's alone. Every write — status line, FAILED block, child output — goes through `Builder::emit` on the scheduling thread; `emit_rendered` and `emit_below_bar` both `mem::take` the one scratch buffer, so it is never aliased. Non-console children get a pipe for stdout and stderr both (subprocess/spawn.rs configure_output), so no child writes to the terminal beside Ronin. 94b8f68 moved the `clone` call to a pool and left every write where it was.\n\nMeasured rather than argued. 60 edges each printing a 900-column echo and eight 900-column output lines, -j32: 30 runs to a pipe and 20 under a pty, 0 malformed lines, 540/540 output lines and 60/60 status lines every time. Eight edges of 200,000 lines each at -j8: 1,600,000 lines, three runs, none dropped, none malformed.\n\nThe screenshot's frame is not Ronin's either — the `linux [x86_64→x86_64] · building · 03:24` header and its rule come from the harness above it, which repaints a header while very long wrapped lines scroll under it. The lines long enough to collide with that were the bogus shell-program descriptions of defect 1, several terminal rows each; `[10/13]` landing where `'s:^[[:` should be is seven bytes over seven. With defect 1 fixed those lines are gone. Defect 3's stray ` :` is the same shape and the same reason: three CHKSHA1 edges compiled from one rule, one of them showing it. Five hoist shapes probed against the pre-fix binary produce no such suffix, and after this change a description can no longer carry command text at all."
+            }
+
+            {
+                at 2026-09-02T16:44:50.144349854Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Two things the brief did not name, both found by holding GNU as the spec once the description became the echo.\n\n`.SILENT` was an accepted no-op. `ACCEPTED_BUILTIN_TARGETS` listed it under \"special targets asking for what already happens: we never echo a recipe\", which was true only while the description was command text. With the description now BEING the echo, a Makefile writing `.SILENT:` had its recipes narrated where GNU says nothing. Implemented as `file.c`'s `snap_deps` does it, three lines below the `.IGNORE` it now sits beside: bare sets `is_silent_mode`, with prerequisites sets a per-node `is_silent` that seeds `Command::echo` false. Measured both forms against the oracle; `.SILENT: quiet` silences `quiet` and leaves `noisy` echoing, as GNU does.\n\n`--trace` and `-d` show command lines. `job.c`'s print condition is three-termed and the middle one is `ISDB (DB_PRINT)`, which `-d`, `--trace` and `--debug=p` all set: GNU prints EVERY recipe line for such a run, silenced or not, exactly as under `-n`. Ronin had only the `-n` term. `Invocation::debugging()` already computed the DB_ level GNU's way, so this is `verbose = shows_command_lines(invocation)` reading it. This is what turned two upstream rows around — see the classification note."
+            }
+
+            {
+                at 2026-09-02T16:45:21.040573077Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "vim and zsh, narration diffed against GNU 4.4.1 line for line at -j8. `$(MAKE)` expands to whichever binary is running, so that one path is normalised; nothing else is.\n\n  vim 9.2.0957   before: 12 lines only GNU said,  7 only Ronin said\n                 after:   6 lines only GNU said,  0 only Ronin said\n  zsh 5.9.2      before: 748 lines only GNU said, 406 only Ronin said\n                 after:  196 lines only GNU said,   1 only Ronin said\n\nEvery remaining line is one of the two families the operator already ruled on: 6 and 194 are `make[N]: Entering/Leaving directory`, which Ronin has nothing to announce because the recursion is composed into one graph; zsh adds one more `make[N]:` line and one `Nothing to be done for 'all'.`, against Ronin's own one line of `ronin: no work to do.` Not one recipe line GNU echoes is missing, and after this change Ronin echoes nothing GNU does not — the `only Ronin said` column is 0 and 1.\n\nGate counts, each on this worktree:\n  conformance   354 runs / 326 normalised identical / 28 differing / 276 raw — unmoved, twice (before and after the .SILENT work)\n  upstream      unclassified 15, compiler 0, interface 15 — was 18/0/15; four rows moved, all of them favourably\n  equivalence   274 makefiles / 276 graphs / 8 respellings / 56 rejected / 0 disagreements\n  port ledger   170 symbols\n  ninja         425/425 upstream, 10 differential, 92 build-outcome, 3 invocation-boundary; persistence and log content passed\n  projects      vim and zsh built from their own Makefiles, 18s and 40s at -j8\n  fmt, lints    clean\n\nThe upstream rows, each accounted for. targets/ONESHELL.diff.3, .4 and .5 go `unclassified ninja-progress+evaluation` → `narration ninja-progress`: a ONESHELL recipe used to narrate the assembled script, which the classifier could not attribute to any family and left as `evaluation` residue; it now echoes the recipe GNU echoes, so the only difference left is the progress token. features/recursion.diff stays `narration` and gains the `recipe-echo` family, one more component of its difference now named rather than lumped. No row moved away — two `--trace` rows did, on the first pass, when Ronin stopped showing command lines for a silenced recipe under a switch GNU shows them all for; that was the defect the DB_PRINT reading fixed, and with it they return and take a third row with them."
+            }
+
+            {
+                at 2026-09-02T16:46:54.74009999Z
+                author "brendan@necessary.nu"
+                kind @note
+                text "Perf, both gates, p10 on a host left alone for the duration (an earlier run was discarded because a `cargo fmt` landed inside it). `--max-load` not touched.\n\nMake gate, Ronin/GNU p10 ratios against benchmarks/make-baseline-v1.csv:\n  wide-noop        0.665x  recorded 0.618x\n  recursive-noop   1.116x  recorded 1.009x\n  vim-noop         1.644x  recorded 1.710x   — the narration path's own row, and it improved\n  zsh-incremental  1.044x  recorded 1.033x\nEvery row inside the 120%-of-recorded band the gate validates on, and the two rows that actually print per edge — vim-noop and zsh-incremental — are flat or better. Fewer bytes rendered per finished command is the direction this change can only push.\n\nNinja gate: all eight rows validated against the pinned Ninja and the recorded v1 ratios; scheduler-barrier 20.741 ms against Ninja's 38.682, large-manifest-parse 141.099 against 299.008. Exit 0.\n\n`one_graph_however_many_threads_read_it`, five bulk runs at its own -j1/-j8/-j16 schedule: all agreed.\n\nOne test is red and was red before this change: `make_regressions::a_read_that_never_settles_is_still_refused` expects exit 2 from a Makefile that remakes itself forever and gets 0. Reproduced 5/5 on a clean origin/main worktree and again at 94b8f68, so it is neither this change's nor the last three commits'. This change alters how many read passes it takes (3 to 4) and not the outcome — both settle when neither should. It belongs to whoever owns the read backstop in src/make/cli.rs's `fruitless` loop; it is not narration."
+            }
+        )
+    }
 )

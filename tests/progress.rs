@@ -88,7 +88,13 @@ fn a_prune_leaves_the_total() {
 /// The same shape written as a Makefile, which is where it was reported from:
 /// an install pass over a built tree read `[1/79]` … `[4/79]` and stopped. Make
 /// mode narrates a Ninja graph Ninja's way, so the total shrinks here too.
-// [spec:ronin:req:make.narration+1/test]
+///
+/// The recipes are loud so that the whole line can be compared and not just its
+/// counter: what GNU Make echoes for `touch z` is the same text the manifest
+/// above binds as that rule's command, so both languages of this tree print the
+/// reference ninja's own two lines byte for byte. Silencing them would leave
+/// the counters to compare and nothing else.
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(feature = "make")]
 #[test]
 fn make_mode_prunes_the_total_too() {
@@ -97,11 +103,11 @@ fn make_mode_prunes_the_total_too() {
         directory.join("Makefile"),
         "all: z\n\
          z: o1 o2 o3 o4 o5 o6 o7 o8 zsrc\n\
-         \t@touch z\n\
+         \ttouch z\n\
          o1 o2 o3 o4 o5 o6 o7 o8: base\n\
-         \t@touch $@\n\
+         \ttouch $@\n\
          base: src\n\
-         \t@touch -m -d @1000000000 base\n",
+         \ttouch -m -d @1000000000 base\n",
     )
     .unwrap();
     let make = directory.join("make");

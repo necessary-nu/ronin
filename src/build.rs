@@ -71,6 +71,24 @@ pub(crate) struct BuildOptions {
     /// for recipe children. Makefile compilation disables this: recursive Make
     /// units are already inside the graph and use this scheduler directly.
     pub(crate) serve_jobserver: bool,
+    /// Whether every edge that has narration already carries it, so an edge
+    /// with none is an edge with nothing to say.
+    ///
+    /// Ninja's rule is description-or-command, and it is the right rule for a
+    /// manifest: a generator that wrote no description left a gap, and showing
+    /// the command line is the best repair available. A graph the Make front
+    /// end compiled has no such gap. Its descriptions are what GNU Make would
+    /// have echoed, computed from the recipe rather than read off it, so an
+    /// empty one is not a gap but an answer — the recipe silenced itself, and
+    /// GNU Make runs it without a word. Printing the command there would put
+    /// back exactly the shell program the `@` was written to hide.
+    ///
+    /// The voice does not change with this, only whether there is anything to
+    /// say in it: the status line is still Ninja's, and an edge that narrates
+    /// nothing still prints its progress token so the counter stays whole.
+    /// `-v` still overrides both, because asking to see command lines is
+    /// asking regardless of what the Makefile wanted shown.
+    pub(crate) descriptions_are_complete: bool,
     /// Whether a command's own exit status of 130 says the build was cut short.
     ///
     /// Ninja spends 130 on `ExitInterrupted` and then reads every finished
@@ -157,7 +175,7 @@ pub(crate) struct BuildOptions {
     /// would have run still run through the plan in the same order and are
     /// still reported by the ordinary progress line. What changes is the work —
     /// no process starts, and each output is touched instead.
-    // [spec:ronin:req:make.narration+1]
+    // [spec:ronin:req:make.narration+2]
     pub(crate) touch: bool,
     /// Whether every edge that has a command is out of date whatever its
     /// timestamps say, which is GNU Make's `-B` / `--always-make`.
@@ -223,6 +241,7 @@ impl Default for BuildOptions {
             maxload: 0.0,
             jobserver: None,
             serve_jobserver: false,
+            descriptions_are_complete: false,
             command_status_interrupts: true,
             recipe_signal_fails: false,
             working_directory: crate::os::WorkingDirectory::default(),
@@ -1498,7 +1517,7 @@ impl<'a> Builder<'a> {
     /// its target and then put the timestamp back has, as far as either tool
     /// can tell, not written it.
     ///
-    /// Nothing is said about it. `[spec:ronin:req:make.narration+1]` puts Make
+    /// Nothing is said about it. `[spec:ronin:req:make.narration+2]` puts Make
     /// mode's reporting in the manifest front end's shape, so GNU Make's
     /// `*** Deleting file 'x'` is not owed; withdrawing a half-written output
     /// is the same act on both paths through here, and the interrupt path has

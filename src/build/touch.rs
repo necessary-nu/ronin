@@ -8,7 +8,7 @@
 //! and the persistence policy with no idea the run is a touch at all.
 //!
 //! Nothing GNU-voiced is said about it. GNU Make prints `touch <file>` per
-//! output; `[spec:ronin:req:make.narration+1]` puts Make mode's reporting in
+//! output; `[spec:ronin:req:make.narration+2]` puts Make mode's reporting in
 //! the manifest front end's shape, and the edge has already been reported by
 //! the ordinary progress line, so a second line naming the same work in another
 //! tool's words would be narration and not information.
@@ -52,11 +52,11 @@ impl Builder<'_> {
     /// is the ordinary quiet build and needs nothing here.
     ///
     /// Nothing GNU-voiced is said about it. GNU Make prints `touch <file>` per
-    /// output; `[spec:ronin:req:make.narration+1]` puts Make mode's reporting in
+    /// output; `[spec:ronin:req:make.narration+2]` puts Make mode's reporting in
     /// the manifest front end's shape, and the edge has already been reported by
     /// the ordinary progress line, so a second line naming the same work in
     /// another tool's words would be narration and not information.
-    // [spec:ronin:req:make.narration+1]
+    // [spec:ronin:req:make.narration+2]
     pub(super) fn touch_outputs(&self, edge: EdgeId, stood_in_for_a_step: bool) -> BuildResult<()> {
         if !self.options.touch || self.options.dryrun {
             return Ok(());

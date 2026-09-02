@@ -1,7 +1,7 @@
 //! Inputs shared by Make's command-line parser and kati compilation.
 
 use super::jobserver_style::{carried_switches, unknown_jobserver_style};
-use super::{Action, Invocation, JobLimit, Switch, parse_arguments, refuse};
+use super::{Action, DB_PRINT, Invocation, JobLimit, Switch, parse_arguments, refuse};
 use crate::Error;
 use crate::build::BuildOptions;
 use crate::cli::{PRODUCT_NAME, RunResult};
@@ -618,8 +618,12 @@ pub(super) fn evaluated_build_options(
         1
     };
     options.dryrun = invocation.given(Switch::DryRun);
-    options.verbose = options.dryrun;
+    options.verbose = shows_command_lines(invocation);
     options.quiet = invocation.given(Switch::Silent);
+    // [spec:ronin:req:make.narration+2]
+    // Every edge in a compiled graph was given the narration GNU Make would
+    // have echoed for it, so the reporter never has to invent one.
+    options.descriptions_are_complete = true;
     options.maxload = invocation.load.map_or(0.0, |load| load.ceiling);
     if options.jobserver.is_none()
         && let Some(jobs) = invocation.effective_jobs()
@@ -627,6 +631,23 @@ pub(super) fn evaluated_build_options(
         options.jobs = jobs;
     }
     options
+}
+
+/// Whether this invocation prints a recipe line whatever the recipe said.
+///
+/// The first two thirds of `job.c`'s echo condition, which is
+/// `just_print_flag || ISDB (DB_PRINT) || (NONE_SET (flags, COMMANDS_SILENT)
+/// && !run_silent)`. The last third is a fact about the recipe and is compiled
+/// into the edge's description by `[spec:ronin:req:make.narration+2]`; these
+/// two are facts about the invocation, and both mean the same thing here —
+/// show the command line, silenced or not.
+///
+/// `ISDB (DB_PRINT)` is `-d`, `--trace` and `--debug=p`, and it is why `-n` is
+/// not the only switch here: a run asking to be told why each recipe is running
+/// is asking to see the recipes, and GNU Make prints every one of them for it.
+// [spec:ronin:req:make.narration+2]
+pub(super) fn shows_command_lines(invocation: &Invocation) -> bool {
+    invocation.given(Switch::DryRun) || invocation.debugging() & DB_PRINT != 0
 }
 
 /// Split the words GNU Make writes into `MAKEFLAGS`.

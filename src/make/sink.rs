@@ -1184,27 +1184,20 @@ impl GraphSink {
         command: SinkCommand<'_>,
         ignore_errors: bool,
     ) -> Vec<(Binding, Template)> {
-        // A recipe that continued across a newline reaches the shell with the
-        // newline still in it, and a description is one line: `single_line`
-        // takes the continuation back out for the narration alone, leaving the
-        // command the recipe's own bytes.
-        let described = match command {
-            SinkCommand::Inline(script) => Some(kati::ninja::single_line(script)),
-            SinkCommand::ResponseFile(_) => None,
-        };
-        let description = rule.description.map(Bytes::copy_from_slice).or(described);
         let mut bindings = self.command_bindings(
             rule.shell,
             rule.shell_flags,
             command,
             rule.recipe_environment,
         );
-        // [spec:ronin:req:make.narration+1]
-        // Prefer what the Makefile said. Otherwise narrate a short inline
-        // recipe with its own expanded text, without exposing the environment
-        // and shell wrapper needed to execute it.
-        if let Some(description) = description {
-            bindings.push((self.bindings.description, Template::literal(&description)));
+        // [spec:ronin:req:make.narration+2]
+        // The compiler settled this: the description is what GNU Make would
+        // have echoed, or the narration the recipe wrote for itself in a
+        // silenced echo. There is nothing to add here and nothing to guess.
+        // A recipe that echoes nothing binds nothing, which is how a build
+        // this Makefile runs in silence says so.
+        if let Some(description) = rule.description {
+            bindings.push((self.bindings.description, Template::literal(description)));
         }
         // GNU Make decides whether a recipe is current from timestamps alone.
         // Ninja's generator control expresses exactly the command-hash half of
@@ -1328,18 +1321,12 @@ impl GraphSink {
             command,
             rule.recipe_environment,
         );
-        // [spec:ronin:req:make.narration+1]
-        // The recipe's own words where it chose them, and otherwise the text of
-        // the lines being run, which is what the line itself says.
-        let description = rule
-            .description
-            .map(Bytes::copy_from_slice)
-            .or(match command {
-                SinkCommand::Inline(script) => Some(kati::ninja::single_line(script)),
-                SinkCommand::ResponseFile(_) => None,
-            });
-        if let Some(description) = description {
-            bindings.push((self.bindings.description, Template::literal(&description)));
+        // [spec:ronin:req:make.narration+2]
+        // The recipe's own words, and silence where it wrote none. These are
+        // the residual lines of a recipe whose recursion was lifted, so the
+        // echo that belongs to them was read with the rest of the recipe.
+        if let Some(description) = rule.description {
+            bindings.push((self.bindings.description, Template::literal(description)));
         }
         bindings.push((self.bindings.generator, Template::literal(b"1")));
         if ignore_errors {

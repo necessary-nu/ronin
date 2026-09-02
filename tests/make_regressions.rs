@@ -865,12 +865,12 @@ fn keep_going_keeps_the_questions_status() {
 /// GNU Make follows those with a second pass — `main.c`'s `us_failed` arm adds
 /// `Failed to remake makefile 'X'.` for each — and Ronin does not: every name in
 /// that list has already been reported one line above it, so the pass reports no
-/// failure of its own. `[spec:ronin:req:make.narration+1]`.
+/// failure of its own. `[spec:ronin:req:make.narration+2]`.
 ///
 /// GNU Make 4.4.1 on `make -k` here prints, in order: nope1's complaint, its
 /// refusal, nope2's complaint, its refusal, then both summaries, and exits 2
 /// with `all` never run.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[test]
 fn keep_going_refuses_every_makefile() {
     let directory = test_directory("keep-going-refusals");
@@ -939,8 +939,8 @@ fn one_refusal_without_keep_going() {
 ///
 /// The complaint is a diagnostic, so it goes to stderr — where GNU Make puts it
 /// and where every other Ronin diagnostic goes — rather than onto stdout beside
-/// the `build stopped` line it explains. `[spec:ronin:req:make.narration+1]`.
-// [spec:ronin:req:make.narration+1/test]
+/// the `build stopped` line it explains. `[spec:ronin:req:make.narration+2]`.
+// [spec:ronin:req:make.narration+2/test]
 #[test]
 fn lost_remake_reports_its_unread_include() {
     let directory = test_directory("lost-remake-complaint");
@@ -982,8 +982,8 @@ fn lost_remake_reports_its_unread_include() {
 /// each; on `make` it stops after one.mk's. Both exit 2 and neither writes
 /// either fragment. The summaries are GNU runtime narration Ronin does not
 /// repeat — every name in them has already been reported.
-/// `[spec:ronin:req:make.narration+1]`.
-// [spec:ronin:req:make.narration+1/test]
+/// `[spec:ronin:req:make.narration+2]`.
+// [spec:ronin:req:make.narration+2/test]
 #[test]
 fn keep_going_complains_per_lost_makefile() {
     let directory = test_directory("keep-going-lost-makefiles");
@@ -2098,7 +2098,7 @@ fn a_makefile_through_a_recursion_settles() {
     fs::create_dir(directory.join("sub")).unwrap();
     let makefile = "all: ; @printf '%s\\n' '$(GENERATED)' > out\n\n\
                     include gen.mk\n\n\
-                    gen.mk: helper\n\t@printf 'GENERATED := from-generated\\n' > $@\n\n\
+                    gen.mk: helper\n\tprintf 'GENERATED := from-generated\\n' > $@\n\n\
                     helper:\n\t@printf 'h\\n' > helper\n\t@$(MAKE) -C sub marker\n";
     let child = "marker: ; @printf 'child\\n' > marker\n";
     fs::write(directory.join("Makefile"), makefile).unwrap();
@@ -2109,7 +2109,9 @@ fn a_makefile_through_a_recursion_settles() {
     let narrated = String::from_utf8_lossy(&output.stdout).into_owned();
     assert_eq!(output.status.code(), Some(0), "{said}{narrated}");
     // The count is the whole point: a read that never settles remakes the
-    // Makefile once per pass until the backstop stops it.
+    // Makefile once per pass until the backstop stops it. The remaking recipe
+    // is left loud so that count is readable — a silenced one is narrated by
+    // neither Make, and there would be nothing to count.
     assert_eq!(
         narrated.matches("> gen.mk").count(),
         1,
@@ -2373,7 +2375,7 @@ fn a_shell_nothing_needs_is_unasked() {
 /// Recorded from GNU Make 4.4.1, which prints
 /// `echo "new=[p1 sub/p2] d=[. sub] f=[p1 p2]" > log.txt` for this makefile
 /// under `-n`. The values are what is gated; the line around them is Ninja's.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[test]
 fn dry_run_narrates_new_input_names() {
     let directory = test_directory("dry-run-new-inputs");
@@ -2404,20 +2406,25 @@ fn dry_run_narrates_new_input_names() {
 
 /// The same names, in the line an ordinary build prints for the same recipe.
 ///
-/// Not a second spelling of the case above but the other half of it: a build
-/// with no `-n` narrates the recipe's own text where the dry run narrates the
-/// command line, and kati writes the reference into the two differently — bare
-/// in the text, escaped where the text is nested in a double-quoted `-c`
-/// argument. A fix that filled in one spelling would leave the other showing
-/// the placeholder to every reader of an ordinary build.
-// [spec:ronin:req:make.narration+1/test]
+/// Not a second spelling of the case above but the other half of it: a dry run
+/// narrates the command line, an ordinary build narrates the echo, and kati
+/// writes the reference into the two differently — bare in the text, escaped
+/// where the text is nested in a double-quoted `-c` argument. A fix that filled
+/// in one spelling would leave the other showing the placeholder to every
+/// reader of an ordinary build.
+///
+/// The recipe is left loud on purpose. A silenced one is narrated by neither
+/// Make, so the placeholder would have nowhere to show and the case would pass
+/// by saying nothing; the recipe writes its output to a file for the same
+/// reason, which leaves the echo as the only thing that can have printed it.
+// [spec:ronin:req:make.narration+2/test]
 #[test]
 fn a_build_narrates_new_input_names() {
     let directory = test_directory("build-new-inputs");
     fs::create_dir_all(directory.join("sub")).unwrap();
     fs::write(
         directory.join("Makefile"),
-        "all: p1 sub/p2\n\t@echo \"new=[$?] d=[$(?D)] f=[$(?F)]\" > log.txt\n",
+        "all: p1 sub/p2\n\techo \"new=[$?] d=[$(?D)] f=[$(?F)]\" > log.txt\n",
     )
     .unwrap();
     fs::write(directory.join("p1"), "").unwrap();
@@ -2453,7 +2460,7 @@ fn a_build_narrates_new_input_names() {
 /// `echo "first=out.o all=out.o new=out.o" > log.txt` for this makefile under
 /// `-n`: `keep` is newer than `src/out.o`, so the chain's target is remade and
 /// every reference to it is the name as written.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[test]
 fn dry_run_narrates_a_settled_name() {
     let directory = test_directory("dry-run-settled-name");
@@ -2489,7 +2496,7 @@ fn dry_run_narrates_a_settled_name() {
 ///
 /// Recorded from GNU Make 4.4.1, which prints `echo "AR=ar Q=a.o b.o"` for
 /// this makefile under `-n`.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[test]
 fn dry_run_narrates_archive_member_names() {
     let directory = test_directory("dry-run-archive-new-inputs");
@@ -2526,7 +2533,7 @@ fn dry_run_narrates_archive_member_names() {
 ///
 /// Recorded from GNU Make 4.4.1, which starts the child under `-n` and lets it
 /// print `echo "new=[p1 p2]" > log.txt`.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[test]
 fn a_child_narrates_its_own_spelling() {
     let directory = test_directory("dry-run-child-new-inputs");

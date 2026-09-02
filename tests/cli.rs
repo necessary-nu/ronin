@@ -979,7 +979,7 @@ fn make_mode_assigns_what_a_shell_command_printed() {
 /// A variable name is one word, so `x y = 1` is not an assignment at all and
 /// the line is read as a rule, which has no separator.
 // [spec:ronin:req:make.semantics+1/test]
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_refuses_an_assignment_whose_name_is_two_words() {
@@ -2068,7 +2068,7 @@ fn assigned_makeflags_control_build_and_children() {
     );
 }
 
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_synchronizes_each_target_output() {
@@ -2412,7 +2412,7 @@ fn no_builtin_rules_withdraws_the_rules_nobody_wrote() {
     }
 }
 
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_narration_flags_are_accepted_noops() {
@@ -2448,7 +2448,14 @@ fn make_narration_flags_are_accepted_noops() {
     }
 }
 
-// [spec:ronin:req:make.narration+1/test]
+/// A silenced recipe narrates nothing, and the progress token stands alone.
+///
+/// Both lines here carry `@`, so GNU Make 4.4.1 prints not one byte for either
+/// of them. What Ronin adds to that silence is the progress token and only the
+/// progress token: the recipe's own text is the shell program the `@` was
+/// written to hide, and it never stands in for narration the Makefile declined
+/// to write.
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_mode_narrates_recipe_command() {
@@ -2467,10 +2474,66 @@ fn make_mode_narrates_recipe_command() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{stdout}");
-    assert_eq!(
-        stdout,
-        "[1/2] printf '%s\\n' payload > out\n[2/2] cp out installed\n"
+    assert_eq!(stdout, "[1/2] \n[2/2] \n");
+}
+
+/// The narration of a loud recipe is the lines GNU Make echoes, verbatim.
+///
+/// One line each and in the order they run, because `message` in `job.c`
+/// appends a newline to every one of them. The assembled script — the `set -e`,
+/// the subshells, the `;` joins that let one edge stand in for the several
+/// shells GNU Make would have started — is not among them.
+// [spec:ronin:req:make.narration+2/test]
+#[cfg(all(unix, feature = "make"))]
+#[test]
+fn a_loud_recipe_narrates_the_lines_gnu_echoes() {
+    let directory = make_case(
+        "make-loud-recipe-narration",
+        "all: one many colon quiet-colon continued\n\
+         one:\n\
+         \techo alone\n\
+         many:\n\
+         \techo first\n\
+         \t@echo hidden\n\
+         \techo last\n\
+         colon:\n\
+         \t:\n\
+         quiet-colon:\n\
+         \t@:\n\
+         continued:\n\
+         \techo a \\\n\
+         \t  b\n\
+         .PHONY: all one many colon quiet-colon continued\n",
     );
+    let output = make_command(&invoked_as(&directory, "make"), &directory)
+        .arg("-j1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    let expected = concat!(
+        // One loud line narrates its own text.
+        "[1/5] echo alone\n",
+        "alone\n",
+        // A silenced line among loud ones is echoed by neither Make; the two
+        // that are loud are two lines, never one joined with a space.
+        "[2/5] echo first\n",
+        "echo last\n",
+        "first\n",
+        "hidden\n",
+        "last\n",
+        // GNU Make echoes a bare `:` and only then declines to fork for it, so
+        // the echo is the whole of what it prints. `@:` prints nothing at all,
+        // which is the shape kbuild's empty rules take.
+        "[3/5] :\n",
+        "[4/5] \n",
+        // A continuation is one recipe line holding a newline, and GNU Make
+        // hands the whole of it, backslash and all, to `message`.
+        "[5/5] echo a \\\n",
+        "  b\n",
+        "a b\n",
+    );
+    assert_eq!(stdout, expected);
 }
 
 // [spec:ronin:req:product.make-identity/test]
@@ -2977,7 +3040,7 @@ fn make_reference_as_data_stays_recipe() {
 
 /// A composed child uses the same Ninja narrator as every other edge; there is
 /// no recursive Make reporter left to install directory banners around it.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 // [spec:ronin:req:make.recursive-invocation+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
@@ -3018,7 +3081,7 @@ fn recursive_make_uses_ninja_narration() {
 }
 
 /// A Makefile-compiled graph fails in the same shape as a manifest graph.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_recipe_failure_uses_ninja_narration() {
@@ -3050,7 +3113,7 @@ fn make_recipe_failure_uses_ninja_narration() {
 /// Three shapes, each of which used to reach the user as a bare `io::Error`
 /// and nothing else — `Permission denied (os error 13)`, with no path, no
 /// line, and Rust's spelling of an errno that neither front end uses.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_io_failures_name_their_source() {
@@ -3116,7 +3179,7 @@ fn make_io_failures_name_their_source() {
 
 /// Compiler diagnostics keep their Makefile source without borrowing GNU
 /// Make's fatal-error decorations.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn make_evaluation_uses_ordinary_diagnostics() {
@@ -3135,7 +3198,7 @@ fn make_evaluation_uses_ordinary_diagnostics() {
 
 /// `--warn-undefined-variables` says so where an expansion reads a name nothing
 /// defined, and stays quiet where a name is only asked about.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn undefined_variables_are_warned_about_when_asked() {
@@ -3171,7 +3234,7 @@ fn undefined_variables_are_warned_about_when_asked() {
 
 /// Without the switch nothing is said, and the switch reaches a child through
 /// `MAKEFLAGS` the way GNU Make sends it.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn the_undefined_warning_is_off_and_inherited() {
@@ -3202,7 +3265,7 @@ fn the_undefined_warning_is_off_and_inherited() {
 
 /// Text after the assignment on a `define` line is GNU Make's own complaint,
 /// made without stopping the read.
-// [spec:ronin:req:make.narration+1/test]
+// [spec:ronin:req:make.narration+2/test]
 #[cfg(all(unix, feature = "make"))]
 #[test]
 fn extra_text_after_a_define_directive_is_named() {

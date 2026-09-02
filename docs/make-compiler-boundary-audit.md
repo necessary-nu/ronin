@@ -186,7 +186,7 @@ GNU Make's scheduler, timing, wording, or private statuses.
   `ar_member_touch`, which is the only path by which a date ever reaches a
   member of an archive `ar` wrote in its default deterministic mode. GNU Make's
   `touch <file>` line is NOT reproduced: the touched edge is reported by the
-  ordinary Ninja progress line under `[spec:ronin:req:make.narration+1]`, and a
+  ordinary Ninja progress line under `[spec:ronin:req:make.narration+2]`, and a
   second line naming the same work in GNU Make's words would be narration
   rather than information.
 

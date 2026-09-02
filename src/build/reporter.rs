@@ -612,8 +612,13 @@ impl<'a> Subject<'a> {
 
 /// A command's description, or the command itself when there is no
 /// description or the operator asked to see command lines.
+///
+/// The middle case is Ninja's repair for a manifest with a gap in it, and
+/// `descriptions_are_complete` is how a front end says its graph has no gaps:
+/// there the empty description is the answer rather than the absence of one,
+/// and the subject is empty too. `-v` is asked for and so outranks both.
 const fn describe<'a>(options: &BuildOptions, command: Narrated<'a>) -> Subject<'a> {
-    if options.verbose || command.description.is_empty() {
+    if options.verbose || (command.description.is_empty() && !options.descriptions_are_complete) {
         Subject::Command(command.command)
     } else {
         Subject::Described(command.description)

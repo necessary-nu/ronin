@@ -19,7 +19,7 @@ use std::io::Write;
 /// result's standard error where there is not. The words are the compiler's
 /// own and already rendered — a compile-time diagnostic keeps the Makefile
 /// location it points at — so nothing is added to them here.
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(super) fn emit_raised(
     raised: &kati::diagnostics::Diagnostics,
     diagnostics: &mut Option<&mut dyn Write>,
@@ -45,7 +45,7 @@ pub(super) fn emit_raised(
 /// read got past belongs ahead of the refusal that ended the read rather than
 /// after it. With a sink to stream to that ordering is the sink's already; with
 /// none, the two share one buffer and the order has to be built here.
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(super) fn led_by_raised(
     mut refusal: RunResult,
     raised: &kati::diagnostics::Diagnostics,
@@ -67,7 +67,7 @@ mod tests {
     /// through the diagnostic sink when there is one, and into the result's
     /// standard error when there is not. Neither path adds anything to the
     /// words — a compile-time diagnostic already points at its Makefile.
-    // [spec:ronin:req:make.narration+1/test]
+    // [spec:ronin:req:make.narration+2/test]
     #[test]
     fn a_diagnostic_is_streamed_or_retained() {
         let raised = kati::diagnostics::Diagnostics::collected();

@@ -1591,7 +1591,7 @@ fn settle_jobserver(invocation: &mut Invocation, options: &mut BuildOptions) {
 }
 
 /// The scheduler settings this invocation maps onto Ninja's controls.
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 // [spec:ronin:req:make.jobserver+2]
 fn build_options(
     invocation: &mut Invocation,
@@ -1614,8 +1614,14 @@ fn build_options(
         // Make's `-n` maps onto Ninja's dry run and therefore uses Ninja's
         // ordinary verbose dry-run rendering. Debug and trace are accepted
         // interface no-ops and never install a Make narrator.
-        verbose: invocation.given(Switch::DryRun),
+        verbose: interface::shows_command_lines(invocation),
         quiet: invocation.given(Switch::Silent),
+        // [spec:ronin:req:make.narration+2]
+        // The compiler gave every edge the narration GNU Make would have
+        // echoed for it, and silence where GNU Make echoes nothing. Ninja's
+        // repair for a rule that named no description — show the command —
+        // would undo the `@` the recipe was written with.
+        descriptions_are_complete: true,
         // Make's `-l` and Ninja's are one ceiling: the scheduler starts nothing
         // further while the load average is above it, and zero is no ceiling.
         maxload: invocation.load.map_or(0.0, |load| load.ceiling),
@@ -2023,7 +2029,7 @@ pub(crate) fn read_without_building(
 /// Run one Make invocation to its end.
 // [spec:ronin:req:product.make-identity]
 // [spec:ronin:req:make.recursive-invocation+2]
-// [spec:ronin:req:make.narration+1]
+// [spec:ronin:req:make.narration+2]
 pub(crate) fn run(
     runner: &Runner,
     arguments: &[BString],

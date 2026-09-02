@@ -195,16 +195,41 @@ manifest-derived graph is.
 > signal, because the exception above is about `-q`'s own three endings and an
 > interrupt is not one of them.
 
-> [spec:ronin:req:make.narration+1]
+> [spec:ronin:req:make.narration+2]
 > A Makefile becomes a Ninja graph, and a Ninja graph is narrated Ninja's way.
 > Make mode reports progress, failures and diagnostics in the same shape as
 > the manifest front end, rather than reproducing GNU Make's wording. This is
 > a product decision and not a gap: GNU Make's own test suite compares output
 > byte for byte, so it is read for what a Makefile evaluated to rather than
-> for how the build was announced. When an ordinary inline recipe supplies no
-> description, its compiled rule uses the expanded recipe text instead of
-> synthesizing a generic `build` description, so the shared reporter names the
-> action that actually runs. See `make-upstream-suite`.
+> for how the build was announced. See `make-upstream-suite`.
+>
+> The shape is Ninja's; the words are GNU Make's, and they are compiled rather
+> than chosen. A compiled rule's description MUST be exactly the bytes GNU Make
+> 4.4.1 would echo while running that recipe — for each recipe line that
+> `job.c`'s `start_job_command` prints, being a line the recipe did not silence
+> with `@` in a build not under `-s`, the expanded line with its prefix
+> characters and surrounding blanks removed and nothing else done to it, one
+> per line and in order. A line that is empty once its prefixes are off echoes
+> nothing, because GNU Make reaches `next_command` before it prints. Where the
+> recipe silenced itself and wrote its own narration in an echo the compiler
+> can lift, that text is the description instead and the echo does not also
+> run, so the line is said once.
+>
+> A recipe that echoes nothing has an EMPTY description, and MUST NOT be given
+> one. In particular the assembled script MUST NOT stand in for it: the shell
+> and environment wrapper, the `set -e`, the subshells and the separators that
+> let one edge stand in for the several shells GNU Make would have started are
+> not text GNU Make ever echoed, and printing them puts back exactly what the
+> `@` was written to hide. Ninja's rule of showing the command line for a rule
+> that named no description is a repair for a manifest with a gap in it; a
+> compiled graph has no gaps, so Make mode prints the progress token alone and
+> the build says as little as GNU Make's does. `-v`, and the `-n` that implies
+> it, still show the command line: those are asked for.
+>
+> A `build.ninja` binding ends at a newline, so a recipe GNU Make echoes over
+> more than one line is one the manifest writer cannot narrate. It writes no
+> description there and leaves its reader Ninja's own repair, which is why the
+> equivalence gate treats that description as destination-specific.
 
 > [spec:ronin:req:make.recursive-invocation+2]
 > A recursive invocation through `$(MAKE)` that the compiler can statically

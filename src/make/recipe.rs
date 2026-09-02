@@ -315,19 +315,15 @@ impl LateCommands for PendingRecipes {
                 .into_iter()
                 .collect()
         };
-        // [spec:ronin:req:make.narration+1]
-        // The same choice the sink makes for a recipe it expanded itself:
-        // what the Makefile said, or the recipe's own text — never the shell
-        // and environment wrapper needed to run it, and nothing at all for a
-        // script too long to be a description.
-        let description = match (&expanded.description, &launched.response_file) {
-            (Some(text), _) => BString::from(text.to_vec()),
-            // A description is one line, and a recipe that continued across a
-            // newline still holds it here: the continuation comes back out for
-            // the narration and stays in what the shell is given.
-            (None, None) => BString::from(kati::ninja::single_line(&expanded.script).to_vec()),
-            (None, Some(_)) => BString::default(),
-        };
+        // [spec:ronin:req:make.narration+2]
+        // The same answer the sink gives for a recipe it expanded itself: what
+        // GNU Make would have echoed, or the narration the recipe wrote for
+        // itself — never the shell and environment wrapper needed to run it,
+        // and nothing at all where the recipe echoes nothing.
+        let description = expanded
+            .description
+            .as_ref()
+            .map_or_else(BString::default, |text| BString::from(text.to_vec()));
         let (rspfile, rspfile_content) = match launched.response_file {
             Some((path, content)) => (Some(BString::from(path)), BString::from(content)),
             None => (None, BString::default()),
