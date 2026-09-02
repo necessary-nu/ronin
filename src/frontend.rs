@@ -662,6 +662,26 @@ impl BuildGraph {
         Ok(())
     }
 
+    /// Releases `output` from `edge`, leaving nothing generating it.
+    ///
+    /// Two Make target names can spell one file — `sub/../config.h` and
+    /// `config.h` — and both reach this graph's one node for that path, so a
+    /// rule that says nothing but its target's name has to give the node up
+    /// when the rule that makes the file arrives after it. Only a front end
+    /// that knows the released edge says nothing may call this: an edge
+    /// generating nothing is an edge no walk of the graph can reach, which is
+    /// what is wanted of that mention and what a manifest never asks for.
+    pub(crate) fn release_output(&mut self, edge: Edge, output: Node) {
+        if self.arenas.node(output.0).generator != Some(edge.0) {
+            return;
+        }
+        self.arenas.node_mut(output.0).generator = None;
+        let stored = self.arenas.edge_mut(edge.0);
+        stored.out.retain(|node| *node != output.0);
+        let remaining = stored.out.len();
+        stored.set_explicit_output_count(remaining);
+    }
+
     /// Records how many of the outputs attached so far `$out` names.
     pub(crate) fn set_explicit_outputs(&mut self, edge: Edge, count: usize) {
         self.arenas

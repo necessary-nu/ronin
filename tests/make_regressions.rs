@@ -3106,3 +3106,144 @@ fn a_notparallel_parent_leaves_its_child_parallel() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// An automake tree names one generated header under two spellings.
+///
+/// `gcc -MP` writes a rule for every header a compilation read — with no
+/// recipe and no prerequisites — so that a header later deleted from the tree
+/// is a target with nothing to do rather than a prerequisite nothing can make.
+/// It writes them under the path the compiler saw, which for a subdirectory's
+/// source is `sub/../config.h` while the Makefile's own rule says `config.h`.
+///
+/// GNU Make keeps the two apart as two targets. A build graph knows a file by
+/// its canonical path, so both arrive at one node, and the mention must give
+/// way to the rule that makes the file rather than collide with it. Measured
+/// against GNU Make 4.4.1 on xorriso 1.5.8, whose `make install` reaches
+/// `all-am` — and through it both the header's stamp rule and the objects
+/// whose depfiles mention it — from one makefile.
+// [spec:ronin:req:make.compiler-boundary/test]
+#[test]
+fn one_header_under_two_spellings_is_one_rule() {
+    for (label, depfile_first) in [("rule-first", false), ("depfile-first", true)] {
+        let directory = test_directory(&format!("two-spellings-{label}"));
+        fs::create_dir_all(directory.join("sub")).unwrap();
+        // The automake shape: `install` reaches `all-am`, which reaches both
+        // the header's stamp rule and the object whose depfile mentions the
+        // header under the other spelling.
+        let include = "include sub/a.Po\n";
+        let rules = "config.h: stamp-h1\n\
+             \t@test -f $@ || rm -f stamp-h1\n\
+             \t@test -f $@ || $(MAKE) $(AM_MAKEFLAGS) stamp-h1\n\
+             stamp-h1:\n\
+             \t@rm -f stamp-h1\n\
+             \t@echo header > config.h && echo stamp > stamp-h1\n\
+             sub/a.o:\n\
+             \t@echo object > $@\n\
+             all-am: sub/a.o config.h\n\
+             install-am: all-am\n\
+             \t@$(MAKE) $(AM_MAKEFLAGS) install-exec-am\n\
+             install-exec-am:\n\
+             \t@echo installed > installed\n\
+             install: install-am\n\
+             .PHONY: all-am install install-am install-exec-am\n";
+        let makefile = if depfile_first {
+            format!("{include}{rules}")
+        } else {
+            format!("{rules}{include}")
+        };
+        fs::write(directory.join("Makefile"), makefile).unwrap();
+        fs::write(
+            directory.join("sub").join("a.Po"),
+            "sub/a.o: sub/a.c sub/../config.h\n\nsub/a.c:\n\nsub/../config.h:\n",
+        )
+        .unwrap();
+        fs::write(directory.join("sub").join("a.c"), "int a;\n").unwrap();
+
+        let output = make_command(&directory).arg("install").output().unwrap();
+
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "the {label} makefile refused the header its depfile spells twice: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            directory.join("config.h").exists(),
+            "the {label} makefile installed without making the header"
+        );
+        assert!(
+            directory.join("installed").exists(),
+            "the {label} makefile did not reach the install recipe"
+        );
+    }
+}
+
+/// And several such mentions with no rule between them are still one node.
+///
+/// xorriso's `install-exec-am` reaches the objects of six subdirectories and
+/// none of them the header's own rule, so the six `<dir>/../config.h` mentions
+/// collide with each other before any rule that makes the file arrives. They
+/// all say the same nothing, so the first is the one that stands.
+// [spec:ronin:req:make.compiler-boundary/test]
+#[test]
+fn many_mentions_of_one_header_are_one_node() {
+    let directory = test_directory("many-spellings");
+    let mut makefile = String::from("all: one/a.o two/b.o three/c.o\n");
+    for (dir, stem) in [("one", "a"), ("two", "b"), ("three", "c")] {
+        fs::create_dir_all(directory.join(dir)).unwrap();
+        fs::write(
+            directory.join(dir).join(format!("{stem}.Po")),
+            format!("{dir}/{stem}.o: {dir}/../config.h\n\n{dir}/../config.h:\n"),
+        )
+        .unwrap();
+        let _ = writeln!(
+            makefile,
+            "include {dir}/{stem}.Po\n{dir}/{stem}.o: ; @echo object > $@"
+        );
+    }
+    fs::write(directory.join("config.h"), "header\n").unwrap();
+    fs::write(directory.join("Makefile"), makefile).unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "three depfiles spelling one header refused it: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+/// A second rule that says anything at all is still a conflict.
+///
+/// The mention gives way because it states nothing beyond its target's name,
+/// so nothing of it is lost. A rule under the other spelling that carries a
+/// recipe states which commands make the file, and a node has one generator:
+/// there is no answer that keeps both. GNU Make has one because it has two
+/// targets — it runs the first rule and then finds the second's target already
+/// there and current, so which recipe runs turns on the order the goals were
+/// written and on whether the file was there to begin with. Ronin refuses the
+/// makefile instead of picking, which is where this fix deliberately stops:
+/// the merge is only ever the lossless one.
+// [spec:ronin:req:make.compiler-boundary/test]
+#[test]
+fn two_recipes_for_one_path_are_still_refused() {
+    let directory = test_directory("two-recipes");
+    fs::create_dir_all(directory.join("sub")).unwrap();
+    fs::write(
+        directory.join("Makefile"),
+        "all: config.h sub/../config.h\n\
+         config.h: ; @echo one > $@\n\
+         sub/../config.h: ; @echo two > $@\n",
+    )
+    .unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("multiple rules generate config.h"),
+        "two recipes for one path were not refused: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

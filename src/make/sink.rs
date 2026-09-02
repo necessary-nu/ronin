@@ -26,6 +26,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 mod invented;
+mod spellings;
 
 /// The binding names an edge kati produced can carry.
 ///
@@ -294,6 +295,12 @@ pub struct GraphSink {
     /// kati's symbols to Ronin's nodes, so a path shared by many edges is
     /// canonicalized and interned once.
     interned: RapidHashMap<Symbol, Node>,
+    /// The nodes held by an edge that says nothing but its target's name, and
+    /// the edge holding each. See [`Self::mentions_only_its_name`]: a rule
+    /// that makes the file may arrive under another spelling of the same path
+    /// after one of these, and takes the node off it rather than colliding
+    /// with it.
+    mentions: RapidHashMap<Node, Edge>,
     observed_members: RapidHashMap<Symbol, Node>,
     declared_pools: RapidHashSet<Vec<u8>>,
     completion_proxies: usize,
@@ -380,6 +387,7 @@ impl GraphSink {
             settled_edges: Vec::new(),
             subninja_rules: RapidHashMap::default(),
             interned: RapidHashMap::default(),
+            mentions: RapidHashMap::default(),
             observed_members: RapidHashMap::default(),
             declared_pools: RapidHashSet::default(),
             completion_proxies: 0,
@@ -401,6 +409,7 @@ impl GraphSink {
         debug_assert!(self.rules.is_empty());
         debug_assert!(self.subninja_rules.is_empty());
         self.interned.clear();
+        self.mentions.clear();
         self.observed_members.clear();
         self.unit = Unit {
             scope: self.graph.child_scope(parent),
@@ -1564,24 +1573,10 @@ impl BuildSink for GraphSink {
         let peer_outputs = self.node_list(names, edge.peer_outputs)?;
         let disposable_outputs = self.node_list(names, edge.disposable_outputs)?;
         let deferred = self.deferred_edge(names, edge)?;
-        let outputs = if edge.completion_join {
-            self.observed_members.insert(edge.output, completion_output);
-            let proxy = self.completion_proxy()?;
-            self.graph.redirect_node_uses(completion_output, proxy);
-            self.interned.insert(edge.output, proxy);
-            vec![proxy]
-        } else {
-            vec![completion_output]
-        };
+        let outputs = self.published_outputs(edge, completion_output)?;
 
         let bindings = self.edge_bindings(edge);
-        // An archive index dates its members in whole seconds, which the
-        // comparisons that put one on their target side have to read as the end
-        // of that second. Whether an output is one is decided from the name the
-        // Makefile wrote, here, and never from a path the build engine looks at.
-        let low_resolution = std::iter::once(&edge.output)
-            .chain(edge.implicit_outputs)
-            .any(|output| kati::archive::split_archive_name(&output.as_bytes(&names)).is_some());
+        let low_resolution = Self::dates_in_whole_seconds(names, edge);
         if let Some(id) = edge.rule
             && let Some(rule) = self.subninja_rules.remove(&id)
         {
@@ -1606,6 +1601,11 @@ impl BuildSink for GraphSink {
                 peer_outputs,
                 bindings,
             });
+            return Ok(());
+        }
+
+        let mention = Self::mentions_only_its_name(edge);
+        if self.settle_one_path_two_spellings(mention, &outputs, &implicit_outputs) {
             return Ok(());
         }
 
@@ -1662,6 +1662,9 @@ impl BuildSink for GraphSink {
                 }
                 if edge.completion_join {
                     self.graph.set_completion_join(built, completion_output);
+                }
+                if mention && let Some(output) = outputs.first() {
+                    self.mentions.insert(*output, built);
                 }
                 self.unit.edges.push(built);
                 Ok(())
