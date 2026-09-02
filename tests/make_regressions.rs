@@ -3247,3 +3247,130 @@ fn two_recipes_for_one_path_are_still_refused() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// A `::` record left for a later pass holds the records behind it too.
+///
+/// perl 5.44.0's `cpan/Encode/Makefile` is the shape: `subdirs` carries eight
+/// `::` records, each a `cd <dir> && $(MAKE) all`, and every one of them is a
+/// recursive recipe the compilation composes. GNU Make runs one `::` record
+/// after another, so the compiler chains each record's action behind the one
+/// before it — which makes every record but the first read the record before
+/// it and gives the composition a chain of boundaries to walk.
+///
+/// A pass composes what it can and leaves the rest. What it leaves has no
+/// wrapper in the graph, so its outputs have nothing generating them, and the
+/// record after it stages one of those outputs as the work it waits for:
+/// `.ronin_grouped_double/N missing and no known rule to make it`, after the
+/// pass has already run every action it could. Three records are not enough to
+/// show it — the third is the last, and nothing waits on what it left — so
+/// four is the smallest chain that does.
+// [spec:ronin:req:make.compiler-input-staging/test]
+#[test]
+fn a_held_double_colon_record_holds_its_readers() {
+    let directory = test_directory("held-double-colon-chain");
+    // The record MakeMaker writes first, whose `$(MYEXTLIB)` is empty and
+    // whose `$(NOECHO) $(NOOP)` is a recipe that does nothing.
+    let mut makefile = String::from("all: subdirs\nsubdirs ::\n\t@:\n");
+    let children = ["one", "two", "three", "four"];
+    for child in children {
+        fs::create_dir_all(directory.join(child)).unwrap();
+        fs::write(
+            directory.join(child).join("Makefile"),
+            format!("all:\n\t@echo in-{child} > ../{child}.ran\n"),
+        )
+        .unwrap();
+        let _ = writeln!(makefile, "subdirs ::\n\tcd {child} && $(MAKE) all");
+    }
+    fs::write(directory.join("Makefile"), makefile).unwrap();
+
+    let output = make_command(&directory).output().unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a chain of four recursive `::` records refused itself: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    for child in children {
+        assert!(
+            directory.join(format!("{child}.ran")).exists(),
+            "the `{child}` record of the `::` chain never ran: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
+
+/// And the same chain over ordinary targets a recursive recipe makes.
+///
+/// The Linux kernel is that shape: `vmlinux` is made by `$(MAKE) -f
+/// scripts/Makefile.vmlinux` and read by the recipe that installs the modules,
+/// which is another `$(MAKE)`. Nothing invented is involved — every name here
+/// is a real path the makefile wrote — so a pass that leaves the middle recipe
+/// behind leaves `vmlinux` with no rule, and the recipe after it asks the
+/// provisional build for it: `'vmlinux' missing and no known rule to make it`,
+/// after every action of the build has run.
+///
+/// Asserted with the depfile-style mention of `vmlinux` on either side of the
+/// rule that makes it, because a `.cmd` fragment naming a target the makefile
+/// also names is what put the mention next to the wrapper in the report, and
+/// neither order may change the answer.
+// [spec:ronin:req:make.compiler-input-staging/test]
+#[test]
+fn a_held_recursive_recipe_holds_its_readers() {
+    for (label, mention_first) in [("rule-first", false), ("mention-first", true)] {
+        let directory = test_directory(&format!("held-recursive-chain-{label}"));
+        fs::create_dir_all(directory.join("scripts")).unwrap();
+        let mention = "-include .vmlinux.cmd\n";
+        let rules = "vmlinux.o: built-in.a\n\
+             \t$(MAKE) -f scripts/Makefile.vmlinux_o\n\
+             vmlinux: vmlinux.o\n\
+             \t$(MAKE) -f scripts/Makefile.vmlinux\n\
+             modules: vmlinux\n\
+             \t$(MAKE) -f scripts/Makefile.modinst\n\
+             built-in.a:\n\
+             \t@echo ar > $@\n";
+        // Always behind the default goal, so which order is under test is
+        // the mention's place beside the rule and not which rule comes first.
+        let makefile = if mention_first {
+            format!("all: modules\n{mention}{rules}")
+        } else {
+            format!("all: modules\n{rules}{mention}")
+        };
+        fs::write(directory.join("Makefile"), makefile).unwrap();
+        // What a Kbuild `.cmd` fragment leaves beside the rule: the name is a
+        // target and nothing more.
+        fs::write(directory.join(".vmlinux.cmd"), "vmlinux:\n").unwrap();
+        fs::write(
+            directory.join("scripts").join("Makefile.vmlinux_o"),
+            "vmlinux.o:\n\t@echo ld > $@\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("scripts").join("Makefile.vmlinux"),
+            "vmlinux:\n\t@echo ld > $@\n",
+        )
+        .unwrap();
+        fs::write(
+            directory.join("scripts").join("Makefile.modinst"),
+            "modules:\n\t@echo installed > modules.installed\n",
+        )
+        .unwrap();
+
+        let output = make_command(&directory).output().unwrap();
+
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "the {label} chain of recursive recipes refused itself: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            directory.join("vmlinux").exists(),
+            "the {label} chain never made the target its last recipe reads"
+        );
+        assert!(
+            directory.join("modules.installed").exists(),
+            "the {label} chain never reached its last recipe"
+        );
+    }
+}

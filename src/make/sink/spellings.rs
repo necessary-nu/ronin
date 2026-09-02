@@ -29,6 +29,17 @@ impl GraphSink {
     /// grouped or peer or withdrawable output, no directory search behind the
     /// name, no pool, and no recipe that came to nothing for `-t` to stand in
     /// for. Such a rule adds nothing to a node another rule already generates.
+    ///
+    /// No name the compiler invented for itself can answer yes to this, and
+    /// none of them can reach the other side of the settlement either. The
+    /// `::` chain's actions carry the members whose freshness they defer to,
+    /// so `deferred_freshness_outputs` alone disqualifies every one of them;
+    /// its join carries `completion_join`; the record's own target carries
+    /// `declared_by_double_colon`. The two names minted here —
+    /// `.ronin_grouped_join/N` and `.ronin_recipe_stage/N` — are stepped over
+    /// until they are names no rule holds, so neither can be a node a mention
+    /// arrived at first, and `.ronin_grouped_double/N` is chosen the same way
+    /// on kati's side. See `super::invented`.
     pub(super) const fn mentions_only_its_name(edge: &SinkEdge<'_>) -> bool {
         edge.rule.is_none()
             && edge.inputs.is_empty()
@@ -204,6 +215,24 @@ mod tests {
                 "field {which} said something and the rule was still a bare mention"
             );
         }
+    }
+
+    /// A `::` chain's edges are not mentions, whatever else they leave empty.
+    ///
+    /// Their outputs are names the compiler invented, and an invented name
+    /// that could be dropped or handed back would leave the graph referring to
+    /// a node no edge makes. Two fields keep them out and each is enough on
+    /// its own: an action defers its freshness to the members of the record it
+    /// belongs to, and the join that completes the record says so.
+    #[test]
+    fn a_double_colon_edge_is_never_a_mention() {
+        let mut action = a_bare_mention();
+        action.deferred_freshness_outputs = ONE_NAME;
+        assert!(!GraphSink::mentions_only_its_name(&action));
+
+        let mut join = a_bare_mention();
+        join.completion_join = true;
+        assert!(!GraphSink::mentions_only_its_name(&join));
     }
 
     /// A mention reaching a node something already generates is the edge to

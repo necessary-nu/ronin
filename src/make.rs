@@ -1175,7 +1175,15 @@ fn compose_subninjas(
     let mut read_ahead = read_ahead(&ordered, resolve, descendant_context, state, ahead);
     let mut serial_jobs = order::SerialJobs::default();
     for (pending_index, mut pending) in ordered.into_iter().enumerate() {
+        // Held rather than merely skipped, and that is the whole of what makes
+        // the hold reach along a chain. A recipe left here has no wrapper in
+        // the graph, so its outputs have nothing generating them; the recipe
+        // after it reads one of those outputs and would stage it as a boundary
+        // — asking the provisional build for a node no edge makes. Recording
+        // it holds every reader behind it in turn, which is the invariant
+        // [`Holds::reads_a_held_recipe`] is written to state.
         if holds.reads_a_held_recipe(pending_index) {
+            holds.hold(pending_index);
             continue;
         }
         // Whose recipe this is decides which switches its segments run under.

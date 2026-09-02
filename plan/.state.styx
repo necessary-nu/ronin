@@ -994,6 +994,7 @@ assertions (
     {id seven-ninja-rows-drifted-adverse-while-the-gate-flapped, kind @complete, author "brendan@necessary.nu", at 2026-09-01T23:50:59.208117108Z}
     {id ronin-fills-two-and-a-half-of-the-eight-jobs-ninja-fills-five, kind @complete, author "brendan@necessary.nu", at 2026-09-02T02:15:19.647575814Z}
     {id two-target-names-for-one-path-are-refused-as-two-rules, kind @doing, author "brendan@necessary.nu", at 2026-09-02T12:01:24.74979563Z}
+    {id an-invented-node-is-mistaken-for-a-depfile-stub, kind @doing, author "brendan@necessary.nu", at 2026-09-02T15:19:28.688660147Z}
 )
 
 impl_evidence (
