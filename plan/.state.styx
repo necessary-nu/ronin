@@ -1352,4 +1352,9 @@ impl_evidence (
     ), rule_versions_seen (
         {id runtime.typed-runtime-state, version 0}
     )}
+    {id a-silent-edges-bare-token-stays-in-the-scrollback, covered_rules (
+        compat.terminal-status
+    ), covered_claims (
+        {impl_name target-impl, rule compat.terminal-status}
+    )}
 )

@@ -88,7 +88,7 @@ nsh = { git = "https://github.com/necessary-nu/nsh", branch = "master" }
 # runtime does before `main` that dash does not.
 nsh-platform = { git = "https://github.com/necessary-nu/nsh", branch = "master" }
 polling = "3.11.0"
-rustix = { version = "1.1.4", features = ["fs", "process", "termios", "thread"] }
+rustix = { version = "1.1.4", features = ["fs", "process", "pty", "termios", "thread"] }
 signal-hook = { version = "0.3.18", default-features = false }
 
 [profile.release]

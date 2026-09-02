@@ -49,7 +49,11 @@ so Ronin does not create a second jobserver for them.
 
 Ronin's build output is Ninja's by default, so anything that parses it — an
 editor, a wrapper script, a CI log scraper — sees exactly what it would see
-from Ninja, on a terminal and through a pipe alike.
+from Ninja, on a terminal and through a pipe alike: through a pipe one whole
+line per command, and on a terminal each status line overprinted by the next,
+cut to the terminal's width, with only a command's own output and a failure
+staying on screen — Ninja's `LinePrinter`, byte for byte. `-v` and `--quiet`
+leave the terminal alone, as they do under Ninja.
 
 `--output cargo` selects a Cargo-style rendering instead: a right-aligned verb
 taken from the rule's description, what it acted on, and a dimmed counter.

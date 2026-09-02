@@ -42,6 +42,14 @@ const GAUGE_WIDTH: usize = 24;
 /// Return to the start of the line and erase to its end.
 const ERASE_LINE: &[u8] = b"\r\x1b[K";
 
+/// Erase from the cursor to the end of the line, which is what Ninja writes
+/// after an overprinted status line so a shorter line leaves no tail of the
+/// longer one it replaced.
+const ERASE_TO_END: &[u8] = b"\x1b[K";
+
+/// What an overprinted line is shortened with.
+const ELLIPSIS: &[u8] = b"...";
+
 /// Indent that lines a continuation up under the subject.
 const CONTINUATION: [u8; VERB_WIDTH + 1] = [b' '; VERB_WIDTH + 1];
 
@@ -79,6 +87,11 @@ pub(crate) enum ColorChoice {
 pub(crate) struct TerminalContext {
     pub(crate) is_terminal: bool,
     pub(crate) no_color: bool,
+    /// Whether the terminal can be driven with cursor motion: it is a
+    /// terminal, `TERM` is set, and `TERM` is not `dumb`. Ninja's
+    /// `smart_terminal_`, decided by the same three facts.
+    // [spec:ronin:req:compat.terminal-status]
+    pub(crate) smart: bool,
 }
 
 impl OutputStyle {
@@ -215,6 +228,195 @@ pub(crate) struct CargoStyle {
     bar: Option<Bar>,
 }
 
+/// Whether an overprinted line is cut to the terminal's width.
+///
+/// Ninja's `LinePrinter::LineType`. `Full` is what `-v` asks for: a command
+/// line shown whole, however long, because it was asked to be seen.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum LineType {
+    Full,
+    Elide,
+}
+
+/// Where the width an overprinted line is cut to comes from.
+enum Columns {
+    /// The terminal, asked on every print as Ninja asks it, so a window
+    /// resized during the build cuts to its new width from the next line.
+    Terminal,
+    /// A width a test fixed, so the bytes it asserts do not depend on the
+    /// terminal the suite happens to be run in.
+    #[cfg(test)]
+    Fixed(Option<usize>),
+}
+
+/// Ninja's `LinePrinter`, which decides how a line reaches the screen.
+///
+/// On a smart terminal a status line overprints the one before it and leaves
+/// no trace once the next arrives; everything that is not a status line is
+/// first moved below it, and the build's end takes the new line. Anywhere else
+/// every line is written whole. While a `console` command holds the terminal,
+/// every line is held back and released when it lets go.
+///
+/// A port rather than an approximation, because the bytes are the contract:
+/// stock Ninja under a pty is the oracle a test diffs against, and every
+/// branch here answers to one of Ninja's. Like everything else in this file it
+/// appends to a caller-owned buffer and never writes; the supervisor still
+/// owns the write and the flush.
+// [spec:ronin:req:compat.terminal-status]
+pub(super) struct LinePrinter {
+    /// Whether the terminal can be driven with cursor motion at all.
+    smart: bool,
+    /// Whether the cursor is at the start of a blank line.
+    have_blank_line: bool,
+    /// Whether a `console` command holds the terminal.
+    console_locked: bool,
+    /// The status line printed while the console was held, if any. Only the
+    /// most recent is kept: on a smart terminal each would have overprinted
+    /// the last, so the last is the one that would be on screen.
+    line_buffer: Vec<u8>,
+    line_type: LineType,
+    /// Everything else printed while the console was held, in order.
+    output_buffer: Vec<u8>,
+    columns: Columns,
+}
+
+impl LinePrinter {
+    const fn new(smart: bool) -> Self {
+        Self {
+            smart,
+            have_blank_line: true,
+            console_locked: false,
+            line_buffer: Vec::new(),
+            line_type: LineType::Elide,
+            output_buffer: Vec::new(),
+            columns: Columns::Terminal,
+        }
+    }
+
+    const fn is_smart(&self) -> bool {
+        self.smart
+    }
+
+    fn columns(&self) -> Option<usize> {
+        match self.columns {
+            Columns::Terminal => terminal_columns(),
+            #[cfg(test)]
+            Columns::Fixed(columns) => columns,
+        }
+    }
+
+    /// Put a status line on screen, over the previous one where that is
+    /// possible.
+    ///
+    /// Ninja's `LinePrinter::Print`. A narration that spans several lines is
+    /// not one line and cannot be overprinted as one: it is written whole, each
+    /// of its lines erased to the end so no tail of an earlier status line is
+    /// left beside it, and it stays in the scrollback as it would on a pipe.
+    /// That is the recipe GNU Make echoes over several lines — narration a
+    /// manifest cannot hold and Ninja never sees — and being loud, it is shown.
+    fn print(&mut self, out: &mut Vec<u8>, text: &[u8], kind: LineType) {
+        if self.console_locked {
+            self.line_buffer.clear();
+            self.line_buffer.extend_from_slice(text);
+            self.line_type = kind;
+            return;
+        }
+        if self.smart {
+            // Over the previous line, if any.
+            out.push(b'\r');
+        }
+        if self.smart && kind == LineType::Elide {
+            if text.contains(&b'\n') {
+                for (index, line) in text.split(|byte| *byte == b'\n').enumerate() {
+                    if index != 0 {
+                        out.push(b'\n');
+                    }
+                    out.extend_from_slice(line);
+                    out.extend_from_slice(ERASE_TO_END);
+                }
+                out.push(b'\n');
+                self.have_blank_line = true;
+                return;
+            }
+            // Cut to the terminal's width so the line does not wrap: a
+            // wrapped line cannot be taken back with one carriage return.
+            match self.columns() {
+                Some(columns) => elide_middle(out, text, columns),
+                None => out.extend_from_slice(text),
+            }
+            out.extend_from_slice(ERASE_TO_END);
+            self.have_blank_line = false;
+        } else {
+            out.extend_from_slice(text);
+            out.push(b'\n');
+        }
+    }
+
+    fn print_or_buffer(&mut self, out: &mut Vec<u8>, data: &[u8]) {
+        if self.console_locked {
+            self.output_buffer.extend_from_slice(data);
+        } else {
+            out.extend_from_slice(data);
+        }
+    }
+
+    /// Write something that is not a status line, below the status line.
+    ///
+    /// Ninja's `LinePrinter::PrintOnNewLine`.
+    fn print_on_new_line(&mut self, out: &mut Vec<u8>, text: &[u8]) {
+        if self.console_locked && !self.line_buffer.is_empty() {
+            self.output_buffer.extend_from_slice(&self.line_buffer);
+            self.output_buffer.push(b'\n');
+            self.line_buffer.clear();
+        }
+        if !self.have_blank_line {
+            self.print_or_buffer(out, b"\n");
+        }
+        if !text.is_empty() {
+            self.print_or_buffer(out, text);
+        }
+        self.have_blank_line = text.is_empty() || text.last() == Some(&b'\n');
+    }
+
+    /// Hand the terminal to a `console` command, or take it back.
+    ///
+    /// Ninja's `LinePrinter::SetConsoleLocked`. Taking it back releases what
+    /// was held: the output first, on its own line, then the last status line
+    /// printed in the meantime, over it.
+    fn set_console_locked(&mut self, out: &mut Vec<u8>, locked: bool) {
+        if locked == self.console_locked {
+            return;
+        }
+        if locked {
+            self.print_on_new_line(out, b"");
+        }
+        self.console_locked = locked;
+        if !locked {
+            let output = std::mem::take(&mut self.output_buffer);
+            self.print_on_new_line(out, &output);
+            if !self.line_buffer.is_empty() {
+                let line = std::mem::take(&mut self.line_buffer);
+                self.print(out, &line, self.line_type);
+                self.line_buffer = line;
+            }
+            self.output_buffer = output;
+            self.output_buffer.clear();
+            self.line_buffer.clear();
+        }
+    }
+}
+
+/// Everything the Ninja rendering carries between commands.
+pub(crate) struct NinjaStyle {
+    line: LinePrinter,
+    /// Whether the `FAILED:` prefix is coloured, which Ninja does when its
+    /// output supports colour.
+    color: bool,
+    /// Where a line is rendered before the printer decides how to show it,
+    /// reused so the decision costs no allocation per command.
+    scratch: Vec<u8>,
+}
+
 /// How a build narrates itself.
 pub(crate) enum Reporter {
     /// Ninja's own output, which is what Ronin emits unless asked otherwise.
@@ -223,15 +425,23 @@ pub(crate) enum Reporter {
     /// the status template, the description-or-command choice, and the
     /// `FAILED:` block are Ninja-owned output that other tools parse, so the
     /// bytes are fixed by the oracle rather than by taste.
-    Ninja,
+    Ninja(NinjaStyle),
     /// Cargo's shape: a right-aligned verb, then what it acted on.
     Cargo(CargoStyle),
 }
 
 impl Reporter {
-    pub(crate) const fn new(style: OutputStyle, color: bool) -> Self {
+    /// `smart` is whether status lines may be overprinted: the output is a
+    /// terminal that can be driven, and the run is neither verbose nor quiet,
+    /// which is Ninja's `verbosity == NORMAL` guard on the same decision.
+    // [spec:ronin:req:compat.terminal-status]
+    pub(crate) const fn new(style: OutputStyle, color: bool, smart: bool) -> Self {
         match style {
-            OutputStyle::Ninja => Self::Ninja,
+            OutputStyle::Ninja => Self::Ninja(NinjaStyle {
+                line: LinePrinter::new(smart),
+                color,
+                scratch: Vec::new(),
+            }),
             OutputStyle::Cargo => Self::Cargo(CargoStyle {
                 palette: Palette::select(color),
                 // The bar rides with colour rather than with terminal
@@ -241,6 +451,45 @@ impl Reporter {
                 // measurement exactly as it forces escapes out.
                 bar: if color { Some(Bar::new()) } else { None },
             }),
+        }
+    }
+
+    /// Whether a command's status is announced as it starts, and not only as
+    /// it finishes.
+    ///
+    /// Ninja does so on a smart terminal, where the line shows what is running
+    /// and is overprinted by the finish; anywhere else a line per start would
+    /// double the output. A narration of several lines is the one thing a
+    /// smart terminal cannot overprint, so it is written whole and once, when
+    /// the command finishes, as it would be on a pipe.
+    // [spec:ronin:req:compat.terminal-status]
+    pub(super) fn prints_at_start(&self, options: &BuildOptions, command: Narrated<'_>) -> bool {
+        match self {
+            Self::Ninja(style) => {
+                style.line.is_smart() && !describe(options, command).text().contains(&b'\n')
+            }
+            Self::Cargo(_) => false,
+        }
+    }
+
+    /// Hand the terminal to a `console` command, or take it back.
+    // [spec:ronin:req:compat.terminal-status]
+    pub(super) fn set_console_locked(&mut self, out: &mut Vec<u8>, locked: bool) {
+        if let Self::Ninja(style) = self {
+            style.line.set_console_locked(out, locked);
+        }
+    }
+
+    /// Write a command's own output, displacing whatever the rendering had on
+    /// the cursor's line first.
+    // [spec:ronin:req:compat.terminal-status]
+    pub(super) fn output(&mut self, out: &mut Vec<u8>, bytes: &[u8]) {
+        match self {
+            Self::Ninja(style) => style.line.print_on_new_line(out, bytes),
+            Self::Cargo(_) => {
+                self.clear(out);
+                out.extend_from_slice(bytes);
+            }
         }
     }
 
@@ -319,7 +568,18 @@ impl Reporter {
         command: Narrated<'_>,
     ) {
         match self {
-            Self::Ninja => ninja_status(out, progress, options, command),
+            Self::Ninja(style) => {
+                style.scratch.clear();
+                ninja_status(&mut style.scratch, progress, options, command);
+                // `-v` asked for the command line whole; anything else is one
+                // status line, cut to fit where the terminal allows.
+                let kind = if options.verbose {
+                    LineType::Full
+                } else {
+                    LineType::Elide
+                };
+                style.line.print(out, &style.scratch, kind);
+            }
             Self::Cargo(style) => cargo_status(out, style.palette, progress, options, command),
         }
     }
@@ -334,7 +594,18 @@ impl Reporter {
         command: Narrated<'_>,
     ) {
         match self {
-            Self::Ninja => ninja_failure(out, graph, edge, exit_code, command),
+            Self::Ninja(style) => {
+                style.scratch.clear();
+                ninja_failure(
+                    &mut style.scratch,
+                    graph,
+                    edge,
+                    exit_code,
+                    command,
+                    style.color,
+                );
+                style.line.print_on_new_line(out, &style.scratch);
+            }
             Self::Cargo(style) => {
                 cargo_failure(out, style.palette, graph, edge, exit_code, command);
             }
@@ -344,16 +615,141 @@ impl Reporter {
     /// Close out the build, whatever became of it.
     ///
     /// Always called, including when the build failed or was interrupted,
-    /// because the bar must not be left holding a line the shell is about to
-    /// print a prompt on. Ninja says nothing at the end of a build either way.
+    /// because neither rendering may leave the cursor on a line it was still
+    /// drawing on: the bar's line goes back, and an overprinted status line
+    /// gets the newline Ninja's `BuildFinished` gives it, so the shell's
+    /// prompt lands on a line of its own. Ninja says nothing else at the end
+    /// of a build either way.
     pub(super) fn finish(&mut self, out: &mut Vec<u8>, progress: &BuildState, succeeded: bool) {
         self.clear(out);
-        if let Self::Cargo(style) = self
-            && succeeded
-        {
-            cargo_finish(out, style.palette, progress);
+        match self {
+            Self::Ninja(style) => {
+                style.line.set_console_locked(out, false);
+                style.line.print_on_new_line(out, b"");
+            }
+            Self::Cargo(style) => {
+                if succeeded {
+                    cargo_finish(out, style.palette, progress);
+                }
+            }
         }
     }
+}
+
+/// Cut `text` to at most `max_width` columns with `...` in its middle, and
+/// append the result to `out`.
+///
+/// Ninja's `ElideMiddleInPlace`, including its reading of ANSI colour
+/// sequences: those occupy no columns, so they are kept whole wherever they
+/// fall, and one inside the cut is still written so the text after the
+/// ellipsis keeps the colour it would have had. Sequences that are not colour
+/// are counted as text, as Ninja counts them.
+// [spec:ronin:req:compat.terminal-status]
+fn elide_middle(out: &mut Vec<u8>, text: &[u8], max_width: usize) {
+    if text.len() <= max_width {
+        out.extend_from_slice(text);
+        return;
+    }
+    let sequences = color_sequences(text);
+    if sequences.is_empty() {
+        if max_width <= ELLIPSIS.len() {
+            out.extend_from_slice(&ELLIPSIS[..max_width]);
+            return;
+        }
+        let remaining = max_width - ELLIPSIS.len();
+        let left = remaining / 2;
+        let right = remaining - left;
+        out.extend_from_slice(&text[..left]);
+        out.extend_from_slice(ELLIPSIS);
+        out.extend_from_slice(&text[text.len() - right..]);
+        return;
+    }
+    let visible_width = text.len()
+        - sequences
+            .iter()
+            .map(|(start, end)| end - start)
+            .sum::<usize>();
+    if visible_width <= max_width {
+        out.extend_from_slice(text);
+        return;
+    }
+    let ellipsis_width = max_width.min(ELLIPSIS.len());
+    let visible_left = (max_width - ellipsis_width) / 2;
+    let visible_right = (max_width - ellipsis_width) - visible_left;
+    let gap_start = visible_left;
+    let gap_end = visible_width - visible_right;
+
+    // Walk the text once, tracking each byte's column and whether it has one.
+    let mut visible_position = 0;
+    let mut sequence = sequences.iter().peekable();
+    let mut in_sequence = |index: usize| -> bool {
+        while let Some((_, end)) = sequence.peek()
+            && *end <= index
+        {
+            sequence.next();
+        }
+        sequence
+            .peek()
+            .is_some_and(|(start, end)| (*start..*end).contains(&index))
+    };
+    let mut index = 0;
+    // The left span: every byte, visible or not, before the cut begins.
+    while index < text.len() && visible_position != gap_start {
+        if !in_sequence(index) {
+            visible_position += 1;
+        }
+        index += 1;
+    }
+    out.extend_from_slice(&text[..index]);
+    out.extend_from_slice(&ELLIPSIS[..ellipsis_width]);
+    // Inside the cut only the colour sequences survive.
+    while index < text.len() && visible_position != gap_end {
+        let visible = !in_sequence(index);
+        if !visible {
+            out.push(text[index]);
+        }
+        visible_position += usize::from(visible);
+        index += 1;
+    }
+    out.extend_from_slice(&text[index..]);
+}
+
+/// The byte ranges of every ANSI colour sequence in `text`: an escape, `[`,
+/// digits and semicolons, and `m`. Anything else that begins with an escape is
+/// text, as it is to Ninja's `AnsiColorSequenceIterator`.
+fn color_sequences(text: &[u8]) -> Vec<(usize, usize)> {
+    let mut sequences = Vec::new();
+    let mut from = 0;
+    while let Some(offset) = text[from..].iter().position(|byte| *byte == 0x1b) {
+        let start = from + offset;
+        // The shortest colour sequence is four bytes.
+        if start + 4 > text.len() {
+            break;
+        }
+        if text[start + 1] != b'[' {
+            from = start + 1;
+            continue;
+        }
+        let mut end = start + 2;
+        while text
+            .get(end)
+            .is_some_and(|byte| byte.is_ascii_digit() || *byte == b';')
+        {
+            end += 1;
+            if end == text.len() {
+                return sequences;
+            }
+        }
+        if text[end] != b'm' {
+            // Not a colour sequence; a three-byte sequence may have ended
+            // here, so the search restarts after its last byte.
+            from = start + 3;
+            continue;
+        }
+        sequences.push((start, end + 1));
+        from = end + 1;
+    }
+    sequences
 }
 
 /// Render `    Building [=========>       ] 24/83: Building src/graph.cc.o`.
@@ -420,17 +816,25 @@ fn truncated(text: &[u8], columns: usize) -> &[u8] {
 /// wrapped bar the truncation above exists to prevent. Repaints are already
 /// capped at thirty a second, which caps this too.
 fn terminal_width() -> usize {
+    terminal_columns().unwrap_or(ASSUMED_WIDTH)
+}
+
+/// How wide the terminal says it is, when it says.
+///
+/// Ninja reads this with `TIOCGWINSZ` before each overprinted line and elides
+/// only when the answer is a positive width; a terminal that reports none gets
+/// the line whole. The same three outcomes here, so a guess never cuts a line.
+fn terminal_columns() -> Option<usize> {
     #[cfg(unix)]
     {
         rustix::termios::tcgetwinsize(std::io::stdout())
             .ok()
             .map(|size| size.ws_col as usize)
             .filter(|columns| *columns > 0)
-            .unwrap_or(ASSUMED_WIDTH)
     }
     #[cfg(not(unix))]
     {
-        ASSUMED_WIDTH
+        None
     }
 }
 
@@ -457,17 +861,25 @@ fn ninja_status(
         out.extend_from_slice(line.as_bytes());
         out.extend_from_slice(description);
     }
-    out.push(b'\n');
 }
 
+/// Render Ninja's `FAILED:` block: the prefix, red where the output takes
+/// colour, the outputs the command did not produce, and the command itself.
 fn ninja_failure(
     out: &mut Vec<u8>,
     graph: &Graph,
     edge: EdgeId,
     exit_code: i32,
     command: Narrated<'_>,
+    color: bool,
 ) {
+    if color {
+        out.extend_from_slice(b"\x1b[31m");
+    }
     let _ = write!(out, "FAILED: [code={exit_code}] ");
+    if color {
+        out.extend_from_slice(b"\x1b[0m");
+    }
     for output in &graph.edge(edge).out {
         out.extend_from_slice(graph.node_path(*output).as_bytes());
         out.push(b' ');
@@ -617,6 +1029,13 @@ impl<'a> Subject<'a> {
 /// `descriptions_are_complete` is how a front end says its graph has no gaps:
 /// there the empty description is the answer rather than the absence of one,
 /// and the subject is empty too. `-v` is asked for and so outranks both.
+///
+/// An empty subject is not a line to withhold. The status format is written
+/// as it stands — which is what stock Ninja writes for a `--status` format
+/// with no `$description` in it — and what becomes of the line is the
+/// printer's decision, the same one it makes for every other line: overprinted
+/// on a terminal, whole on a pipe. Withholding it would put a hole in the
+/// counter that nothing could tell from a lost edge.
 const fn describe<'a>(options: &BuildOptions, command: Narrated<'a>) -> Subject<'a> {
     if options.verbose || (command.description.is_empty() && !options.descriptions_are_complete) {
         Subject::Command(command.command)
@@ -651,7 +1070,7 @@ mod tests {
         progress.finished = 3;
         progress.total = 7;
         let mut out = Vec::new();
-        Reporter::new(style, false).status(&mut out, &progress, options, command.narrated());
+        Reporter::new(style, false, false).status(&mut out, &progress, options, command.narrated());
         String::from_utf8(out).expect("the fixture renders as text")
     }
 
@@ -754,7 +1173,7 @@ mod tests {
         let command = spec("c++ -c a.cc", "Building a.cc.o");
         let progress = BuildState::new(options.clone());
         let mut out = Vec::new();
-        Reporter::new(OutputStyle::Cargo, true).status(
+        Reporter::new(OutputStyle::Cargo, true, false).status(
             &mut out,
             &progress,
             &options,
@@ -772,14 +1191,14 @@ mod tests {
         let mut progress = BuildState::new(BuildOptions::default());
         progress.finished = 1;
         let mut out = Vec::new();
-        Reporter::new(OutputStyle::Cargo, false).finish(&mut out, &progress, true);
+        Reporter::new(OutputStyle::Cargo, false, false).finish(&mut out, &progress, true);
         let summary = String::from_utf8(out).expect("the summary renders as text");
         assert!(
             summary.starts_with("    Finished 1 command in "),
             "unexpected summary: {summary:?}"
         );
         let mut out = Vec::new();
-        Reporter::new(OutputStyle::Ninja, false).finish(&mut out, &progress, true);
+        Reporter::new(OutputStyle::Ninja, false, false).finish(&mut out, &progress, true);
         assert!(out.is_empty());
     }
 
@@ -789,7 +1208,7 @@ mod tests {
         let options = BuildOptions::default();
         let progress = BuildState::new(options);
         let mut out = Vec::new();
-        Reporter::new(OutputStyle::Cargo, false).finish(&mut out, &progress, true);
+        Reporter::new(OutputStyle::Cargo, false, false).finish(&mut out, &progress, true);
         assert!(out.is_empty());
     }
 
@@ -800,10 +1219,12 @@ mod tests {
         let terminal = TerminalContext {
             is_terminal: true,
             no_color: false,
+            smart: true,
         };
         let suppressed = TerminalContext {
             is_terminal: true,
             no_color: true,
+            smart: true,
         };
         assert!(!ColorChoice::Auto.resolve(piped));
         assert!(ColorChoice::Auto.resolve(terminal));
@@ -815,7 +1236,7 @@ mod tests {
     fn bar_state(reporter: &mut Reporter) -> &mut Bar {
         match reporter {
             Reporter::Cargo(style) => style.bar.as_mut().expect("this rendering has a bar"),
-            Reporter::Ninja => panic!("Ninja has no bar"),
+            Reporter::Ninja(_) => panic!("Ninja has no bar"),
         }
     }
 
@@ -842,16 +1263,16 @@ mod tests {
     // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_rendering_that_is_not_being_styled_paints_no_bar() {
-        let mut plain = Reporter::new(OutputStyle::Cargo, false);
+        let mut plain = Reporter::new(OutputStyle::Cargo, false, false);
         assert_eq!(painted(&mut plain, 1, 4), "");
-        let mut ninja = Reporter::new(OutputStyle::Ninja, true);
+        let mut ninja = Reporter::new(OutputStyle::Ninja, true, false);
         assert_eq!(painted(&mut ninja, 1, 4), "");
     }
 
     // [spec:ronin:req:product.output-style/test]
     #[test]
     fn the_gauge_fills_as_the_build_advances() {
-        let mut reporter = Reporter::new(OutputStyle::Cargo, true);
+        let mut reporter = Reporter::new(OutputStyle::Cargo, true, false);
         let bar = bar_state(&mut reporter);
         bar.subject.extend_from_slice(b"Building src/graph.cc.o");
         let mut show = |finished: usize| {
@@ -879,7 +1300,7 @@ mod tests {
     // [spec:ronin:req:product.output-style/test]
     #[test]
     fn a_painted_bar_is_taken_back_before_anything_displaces_it() {
-        let mut reporter = Reporter::new(OutputStyle::Cargo, true);
+        let mut reporter = Reporter::new(OutputStyle::Cargo, true, false);
         assert!(!painted(&mut reporter, 1, 4).is_empty());
         let mut out = Vec::new();
         reporter.clear(&mut out);
@@ -901,7 +1322,7 @@ mod tests {
     // [spec:ronin:req:product.output-style/test]
     #[test]
     fn repainting_inside_the_budget_is_refused() {
-        let mut reporter = Reporter::new(OutputStyle::Cargo, true);
+        let mut reporter = Reporter::new(OutputStyle::Cargo, true, false);
         let first = Instant::now();
         assert!(
             !painted_as_of(&mut reporter, 1, 4, first).is_empty(),
@@ -937,7 +1358,7 @@ mod tests {
         progress.finished = 2;
         progress.total = 4;
         for succeeded in [true, false] {
-            let mut reporter = Reporter::new(OutputStyle::Cargo, true);
+            let mut reporter = Reporter::new(OutputStyle::Cargo, true, false);
             assert!(!painted(&mut reporter, 2, 4).is_empty());
             let mut out = Vec::new();
             reporter.finish(&mut out, &progress, succeeded);
@@ -958,6 +1379,262 @@ mod tests {
             "\u{e9}\u{e9}".as_bytes()
         );
         assert_eq!(truncated(&[0xff, 0xfe, 0xfd], 2), &[0xff, 0xfe]);
+    }
+
+    /// A Ninja reporter on a terminal of `columns` width, or one that reports
+    /// no width, so the bytes asserted below do not depend on the terminal
+    /// the suite runs in.
+    fn smart_ninja(columns: Option<usize>) -> Reporter {
+        let mut reporter = Reporter::new(OutputStyle::Ninja, false, true);
+        if let Reporter::Ninja(style) = &mut reporter {
+            style.line.columns = Columns::Fixed(columns);
+        }
+        reporter
+    }
+
+    fn status_line(reporter: &mut Reporter, finished: usize, description: &str) -> String {
+        let options = BuildOptions::default();
+        let mut progress = BuildState::new(options.clone());
+        progress.finished = finished;
+        progress.total = 3;
+        let command = spec("true", description);
+        let mut out = Vec::new();
+        reporter.status(&mut out, &progress, &options, command.narrated());
+        String::from_utf8(out).expect("the line renders as text")
+    }
+
+    fn written_output(reporter: &mut Reporter, bytes: &str) -> String {
+        let mut out = Vec::new();
+        reporter.output(&mut out, bytes.as_bytes());
+        String::from_utf8(out).expect("the output renders as text")
+    }
+
+    fn closed(reporter: &mut Reporter) -> String {
+        let mut out = Vec::new();
+        reporter.finish(&mut out, &BuildState::new(BuildOptions::default()), true);
+        String::from_utf8(out).expect("the closing bytes render as text")
+    }
+
+    /// The bytes stock Ninja writes under a pty: a carriage return, the line,
+    /// an erase to the end of it, and no newline — so the next status line
+    /// lands on top of this one and the build's end supplies the newline.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn a_smart_terminal_overprints_each_status_line() {
+        let mut reporter = smart_ninja(None);
+        assert_eq!(
+            status_line(&mut reporter, 0, "said a"),
+            "\r[0/3] said a\x1b[K"
+        );
+        assert_eq!(
+            status_line(&mut reporter, 1, "said a"),
+            "\r[1/3] said a\x1b[K"
+        );
+        assert_eq!(closed(&mut reporter), "\n");
+        assert_eq!(closed(&mut reporter), "", "the newline is owed once");
+    }
+
+    /// Nothing is withheld and nothing is padded: an edge with nothing to say
+    /// writes the format's output, which on a terminal is a counter advancing
+    /// in place, and on a pipe the line stock Ninja writes for a `--status`
+    /// format without `$description`.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn an_empty_narration_is_the_counter_alone() {
+        let options = BuildOptions {
+            descriptions_are_complete: true,
+            ..BuildOptions::default()
+        };
+        assert_eq!(ninja(&options, &spec("@true", "")), "[3/7] \n");
+        let mut reporter = smart_ninja(None);
+        let mut progress = BuildState::new(options.clone());
+        progress.finished = 3;
+        progress.total = 7;
+        let mut out = Vec::new();
+        reporter.status(&mut out, &progress, &options, spec("@true", "").narrated());
+        assert_eq!(out, b"\r[3/7] \x1b[K");
+    }
+
+    /// A command's output is not a status line, so it goes below the one on
+    /// screen; the next status line then starts over on a line of its own.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn output_moves_below_the_status_line() {
+        let mut reporter = smart_ninja(None);
+        assert_eq!(
+            status_line(&mut reporter, 1, "echo x"),
+            "\r[1/3] echo x\x1b[K"
+        );
+        assert_eq!(written_output(&mut reporter, "x\n"), "\nx\n");
+        assert_eq!(
+            status_line(&mut reporter, 2, "said c"),
+            "\r[2/3] said c\x1b[K"
+        );
+        // Output that does not end its line leaves the cursor owing one.
+        assert_eq!(written_output(&mut reporter, "partial"), "\npartial");
+        assert_eq!(closed(&mut reporter), "\n");
+    }
+
+    /// Off a terminal every line is whole, and the printer adds nothing.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn a_pipe_gets_every_line_whole() {
+        let mut reporter = Reporter::new(OutputStyle::Ninja, false, false);
+        assert_eq!(status_line(&mut reporter, 1, "said a"), "[1/3] said a\n");
+        assert_eq!(written_output(&mut reporter, "x\n"), "x\n");
+        assert_eq!(closed(&mut reporter), "");
+    }
+
+    /// A line is cut to the terminal's width with the ellipsis in its middle,
+    /// as Ninja cuts it, and a terminal that reports no width cuts nothing.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn a_long_line_is_cut_to_terminal_width() {
+        let mut reporter = smart_ninja(Some(12));
+        // Twenty-two columns into twelve: nine remain around the ellipsis,
+        // four on the left and five on the right, as Ninja splits them.
+        assert_eq!(
+            status_line(&mut reporter, 1, "0123456789abcdef"),
+            "\r[1/3...bcdef\x1b[K"
+        );
+        let mut reporter = smart_ninja(None);
+        assert_eq!(
+            status_line(&mut reporter, 1, "0123456789abcdef"),
+            "\r[1/3] 0123456789abcdef\x1b[K"
+        );
+    }
+
+    /// A narration of several lines cannot be overprinted as one, so it is
+    /// written whole with every line erased to its end, and it does not leave
+    /// a newline owed; it is not announced as the command starts either.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn a_multi_line_narration_is_written_whole_once() {
+        let mut reporter = smart_ninja(Some(12));
+        let options = BuildOptions::default();
+        assert!(reporter.prints_at_start(&options, spec("x", "one line").narrated()));
+        assert!(!reporter.prints_at_start(&options, spec("x", "echo a\necho b").narrated()));
+        assert_eq!(
+            status_line(&mut reporter, 1, "echo a\necho b"),
+            "\r[1/3] echo a\x1b[K\necho b\x1b[K\n"
+        );
+        assert_eq!(written_output(&mut reporter, "a\n"), "a\n");
+    }
+
+    /// While a `console` command has the terminal every other line waits, and
+    /// when it lets go the output comes first on its own line and the last
+    /// status line printed in the meantime goes over it — Ninja's
+    /// `SetConsoleLocked`, on a terminal and on a pipe.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn a_console_command_holds_every_other_line() {
+        let mut reporter = smart_ninja(None);
+        assert_eq!(
+            status_line(&mut reporter, 0, "console"),
+            "\r[0/3] console\x1b[K"
+        );
+        let mut out = Vec::new();
+        reporter.set_console_locked(&mut out, true);
+        assert_eq!(out, b"\n", "the console starts on a line of its own");
+        assert_eq!(status_line(&mut reporter, 1, "said b"), "");
+        assert_eq!(written_output(&mut reporter, "b\n"), "");
+        assert_eq!(status_line(&mut reporter, 2, "said c"), "");
+        let mut out = Vec::new();
+        reporter.set_console_locked(&mut out, false);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "[1/3] said b\nb\n\r[2/3] said c\x1b[K"
+        );
+
+        let mut reporter = Reporter::new(OutputStyle::Ninja, false, false);
+        assert_eq!(status_line(&mut reporter, 0, "console"), "[0/3] console\n");
+        let mut out = Vec::new();
+        reporter.set_console_locked(&mut out, true);
+        assert!(out.is_empty());
+        assert_eq!(status_line(&mut reporter, 1, "said b"), "");
+        assert_eq!(written_output(&mut reporter, "b\n"), "");
+        let mut out = Vec::new();
+        reporter.set_console_locked(&mut out, false);
+        assert_eq!(String::from_utf8(out).unwrap(), "[1/3] said b\nb\n");
+    }
+
+    fn elided(text: &str, width: usize) -> String {
+        let mut out = Vec::new();
+        elide_middle(&mut out, text.as_bytes(), width);
+        String::from_utf8(out).unwrap()
+    }
+
+    /// Ninja's own `ElideMiddle` cases, plain text.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn elision_matches_ninjas_cases() {
+        let input = "Nothing to elide in this short string.";
+        assert_eq!(elided(input, 80), input);
+        assert_eq!(elided(input, 38), input);
+        assert_eq!(elided(input, 0), "");
+        assert_eq!(elided(input, 1), ".");
+        assert_eq!(elided(input, 2), "..");
+        assert_eq!(elided(input, 3), "...");
+        let input = "01234567890123456789";
+        assert_eq!(elided(input, 4), "...9");
+        assert_eq!(elided(input, 5), "0...9");
+        assert_eq!(elided(input, 9), "012...789");
+        assert_eq!(elided(input, 10), "012...6789");
+        assert_eq!(elided(input, 11), "0123...6789");
+        assert_eq!(elided(input, 19), "01234567...23456789");
+        assert_eq!(elided(input, 20), "01234567890123456789");
+    }
+
+    /// Ninja's own `ElideMiddle` cases with colour sequences, which occupy no
+    /// columns and are kept wherever they fall.
+    // [spec:ronin:req:compat.terminal-status/test]
+    #[test]
+    fn elision_keeps_colour_sequences_where_they_fall() {
+        const MAGENTA: &str = "\x1b[0;35m";
+        const NOTHING: &str = "\x1b[m";
+        const RED: &str = "\x1b[1;31m";
+        const RESET: &str = "\x1b[0m";
+        let input = format!("012345{MAGENTA}67890123456789");
+        assert_eq!(elided(&input, 10), format!("012...{MAGENTA}6789"));
+        assert_eq!(elided(&input, 19), format!("012345{MAGENTA}67...23456789"));
+        let input = format!("Nothing {NOTHING} string.");
+        assert_eq!(elided(&input, 18), input);
+        let input = format!("0{NOTHING}1234567890123456789");
+        assert_eq!(elided(&input, 10), format!("0{NOTHING}12...6789"));
+
+        let input = format!("abcd{RED}efg{RESET}hlkmnopqrstuvwxyz");
+        assert_eq!(elided(&input, 0), format!("{RED}{RESET}"));
+        assert_eq!(elided(&input, 1), format!(".{RED}{RESET}"));
+        assert_eq!(elided(&input, 2), format!("..{RED}{RESET}"));
+        assert_eq!(elided(&input, 3), format!("...{RED}{RESET}"));
+        assert_eq!(elided(&input, 4), format!("...{RED}{RESET}z"));
+        assert_eq!(elided(&input, 5), format!("a...{RED}{RESET}z"));
+        assert_eq!(elided(&input, 6), format!("a...{RED}{RESET}yz"));
+        assert_eq!(elided(&input, 7), format!("ab...{RED}{RESET}yz"));
+        assert_eq!(elided(&input, 8), format!("ab...{RED}{RESET}xyz"));
+        assert_eq!(elided(&input, 9), format!("abc...{RED}{RESET}xyz"));
+        assert_eq!(elided(&input, 10), format!("abc...{RED}{RESET}wxyz"));
+        assert_eq!(elided(&input, 11), format!("abcd...{RED}{RESET}wxyz"));
+        assert_eq!(elided(&input, 12), format!("abcd...{RED}{RESET}vwxyz"));
+        assert_eq!(elided(&input, 15), format!("abcd{RED}ef...{RESET}uvwxyz"));
+        assert_eq!(elided(&input, 16), format!("abcd{RED}ef...{RESET}tuvwxyz"));
+        assert_eq!(elided(&input, 17), format!("abcd{RED}efg...{RESET}tuvwxyz"));
+        assert_eq!(
+            elided(&input, 18),
+            format!("abcd{RED}efg...{RESET}stuvwxyz")
+        );
+        assert_eq!(
+            elided(&input, 19),
+            format!("abcd{RED}efg{RESET}h...stuvwxyz")
+        );
+
+        let input = format!("abcdef{RED}A{RESET}BC");
+        assert_eq!(elided(&input, 4), format!("...{RED}{RESET}C"));
+        assert_eq!(elided(&input, 5), format!("a...{RED}{RESET}C"));
+        assert_eq!(elided(&input, 6), format!("a...{RED}{RESET}BC"));
+        assert_eq!(elided(&input, 7), format!("ab...{RED}{RESET}BC"));
+        assert_eq!(elided(&input, 8), format!("ab...{RED}A{RESET}BC"));
+        assert_eq!(elided(&input, 9), format!("abcdef{RED}A{RESET}BC"));
     }
 
     // [spec:ronin:req:product.output-style/test]

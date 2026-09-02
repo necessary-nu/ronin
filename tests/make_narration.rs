@@ -20,6 +20,11 @@
 //! lines GNU echoed, unprefixed and unaltered. An edge that echoes nothing
 //! prints the token alone. That is the whole of the difference, and this file
 //! is what says so.
+//!
+//! Everything here runs through a pipe, where every line is written whole. On
+//! a terminal the same lines are overprinted as Ninja overprints them, so a
+//! silent edge is a counter advancing in place and leaves nothing behind;
+//! `tests/terminal.rs` is where that is asserted, against stock Ninja.
 #![cfg(all(unix, feature = "make"))]
 
 use std::path::Path;
@@ -246,6 +251,69 @@ fn a_dry_run_still_shows_the_command() {
         .unwrap();
     let said = String::from_utf8_lossy(&output.stdout);
     assert!(said.contains("echo ran"), "{said}");
+}
+
+/// A silenced recipe that fails is not a mystery: the token, then Ninja's
+/// `FAILED:` block naming the target and then the command line, which GNU
+/// Make's own `*** [Makefile:2: all] Error 1` never shows.
+// [spec:ronin:req:make.narration+2/test]
+// [spec:ronin:req:compat.terminal-status/test]
+#[test]
+fn a_silenced_recipe_that_fails_shows_its_command() {
+    let ronin = scratch_with("all:\n\t@false\n.PHONY: all\n", "silent-failure");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ronin"), ronin.join("make")).unwrap();
+    let output = Command::new(ronin.join("make"))
+        .current_dir(&*ronin)
+        .arg("-j1")
+        .env_remove("MAKEFLAGS")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.starts_with("[1/1] \nFAILED: [code=1] all \n"),
+        "{said:?}"
+    );
+    assert!(
+        said.lines()
+            .nth(2)
+            .is_some_and(|line| line.contains("false")),
+        "{said:?}"
+    );
+}
+
+/// `.SILENT` is the Makefile asking for what `@` asks for on every line, so
+/// every edge is a token alone and the counter still counts them all.
+// [spec:ronin:req:make.narration+2/test]
+// [spec:ronin:req:compat.terminal-status/test]
+#[test]
+fn a_silent_makefile_still_counts_every_edge() {
+    let ronin = scratch_with(
+        ".SILENT:\nall: one two\none:\n\techo one\ntwo:\n\techo two\n.PHONY: all one two\n",
+        "dot-silent",
+    );
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ronin"), ronin.join("make")).unwrap();
+    assert_eq!(
+        run(&ronin.join("make"), &ronin),
+        "[1/2] \none\n[2/2] \ntwo\n"
+    );
+}
+
+/// `--trace` and `-d` show every command line, silenced or not, as `-n` does:
+/// GNU Make's print condition has `ISDB (DB_PRINT)` in it.
+// [spec:ronin:req:make.narration+2/test]
+#[test]
+fn a_traced_run_shows_every_command_line() {
+    let ronin = scratch_with("all:\n\t@echo traced\n.PHONY: all\n", "trace");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_ronin"), ronin.join("make")).unwrap();
+    let output = Command::new(ronin.join("make"))
+        .current_dir(&*ronin)
+        .args(["--trace"])
+        .env_remove("MAKEFLAGS")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(said.contains("echo traced"), "{said}");
 }
 
 /// Under `-s` nothing is narrated at all, token included.

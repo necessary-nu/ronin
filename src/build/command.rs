@@ -888,7 +888,12 @@ impl Builder<'_> {
     /// The buffer is moved out of `self` for the duration so that rendering
     /// can borrow the graph, the progress counters and the options while the
     /// bytes accumulate, then put back for the next command to reuse.
-    fn emit_rendered(&mut self, rendering: Rendering<'_>) -> BuildResult<()> {
+    ///
+    /// Reports whether anything reached the sink, because the flush that
+    /// follows a batch is counted: a rendering the reporter held back — a
+    /// status line while a `console` command has the terminal — must not turn
+    /// into a flush of nothing.
+    fn emit_rendered(&mut self, rendering: Rendering<'_>) -> BuildResult<bool> {
         let mut line = std::mem::take(&mut self.status_scratch);
         line.clear();
         self.reporter.clear(&mut line);
@@ -905,9 +910,23 @@ impl Builder<'_> {
                 .reporter
                 .failure(&mut line, self.graph, edge, exit_code, command),
         }
-        let result = self.emit(&line);
+        let wrote = !line.is_empty();
+        let result = if wrote { self.emit(&line) } else { Ok(()) };
         self.status_scratch = line;
-        result
+        result.map(|()| wrote)
+    }
+
+    /// Hand the terminal to a `console` command, or take it back, writing
+    /// whatever the reporter held while the command had it.
+    // [spec:ronin:req:compat.terminal-status]
+    fn emit_console_lock(&mut self, locked: bool) -> BuildResult<bool> {
+        let mut line = std::mem::take(&mut self.status_scratch);
+        line.clear();
+        self.reporter.set_console_locked(&mut line, locked);
+        let wrote = !line.is_empty();
+        let result = if wrote { self.emit(&line) } else { Ok(()) };
+        self.status_scratch = line;
+        result.map(|()| wrote)
     }
 
     /// Let the reporter close out the build and give back the bar's line.
@@ -966,14 +985,18 @@ impl Builder<'_> {
         }
     }
 
-    fn emit_status(&mut self, edge: EdgeId, command: Narrated<'_>) -> BuildResult<()> {
+    fn emit_status(&mut self, edge: EdgeId, command: Narrated<'_>) -> BuildResult<bool> {
         self.emit_explanations(edge)?;
         if self.options.quiet {
-            return Ok(());
+            return Ok(false);
         }
         self.emit_rendered(Rendering::Status(command))
     }
 
+    /// What Ninja's `BuildEdgeStarted` does: announce the command where a
+    /// start is announced — the `console` pool always, a smart terminal for
+    /// every command — and then give a `console` command the terminal.
+    // [spec:ronin:req:compat.terminal-status]
     pub(super) fn command_started(
         &mut self,
         edge: EdgeId,
@@ -982,17 +1005,29 @@ impl Builder<'_> {
         self.progress.started += 1;
         let narration = self.narration(edge, command);
         self.reporter.started(&self.options, narration.narrated());
-        if command.use_console {
-            self.emit_status(edge, narration.narrated())?;
-            self.flush_sinks()?;
-            return Ok(());
+        let mut wrote = false;
+        if command.use_console
+            || self
+                .reporter
+                .prints_at_start(&self.options, narration.narrated())
+        {
+            wrote |= self.emit_status(edge, narration.narrated())?;
         }
-        if self.repaint()? {
+        if command.use_console {
+            wrote |= self.emit_console_lock(true)?;
+        } else {
+            wrote |= self.repaint()?;
+        }
+        if wrote || command.use_console {
             self.flush_sinks()?;
         }
         Ok(())
     }
 
+    /// What Ninja's `BuildEdgeFinished` does, in its order: take the terminal
+    /// back from a `console` command, announce every other command, then the
+    /// failure if there was one, then what the command wrote.
+    // [spec:ronin:req:compat.terminal-status]
     pub(super) fn command_finished(
         &mut self,
         edge: EdgeId,
@@ -1004,19 +1039,20 @@ impl Builder<'_> {
         // The prediction has to be refreshed before the line that reports it.
         status::recalculate_prediction(&mut self.progress);
         self.reporter.ended();
-        let wrote_batch = !command.use_console || failure_code.is_some() || !output.is_empty();
         let narration = self.narration(edge, command);
-        if !command.use_console {
-            self.emit_status(edge, narration.narrated())?;
-        }
+        let announced = if command.use_console {
+            self.emit_console_lock(false)?
+        } else {
+            self.emit_status(edge, narration.narrated())?
+        };
         if let Some(exit_code) = failure_code {
             self.emit_failure(edge, exit_code, narration.narrated())?;
         }
         if !output.is_empty() {
-            self.emit_below_bar(output)?;
+            self.emit_output(output)?;
         }
         let repainted = self.repaint()?;
-        if wrote_batch || repainted {
+        if announced || failure_code.is_some() || !output.is_empty() || repainted {
             self.flush_sinks()?;
         }
         Ok(())
@@ -1033,24 +1069,23 @@ impl Builder<'_> {
             exit_code,
             command,
         })
+        .map(|_| ())
     }
 
-    /// Write bytes the reporter did not render, displacing the bar first.
+    /// Write what a command wrote, through the reporter.
     ///
-    /// A command's own output goes out verbatim, but it still has to take the
-    /// bar's line before it does, or the first line of a compiler diagnostic
-    /// lands on top of the bar.
-    fn emit_below_bar(&mut self, bytes: &[u8]) -> BuildResult<()> {
+    /// A command's own output goes out verbatim, but where it goes is still
+    /// the rendering's decision: it has to take the bar's line, or move below
+    /// an overprinted status line, or wait while a `console` command has the
+    /// terminal — otherwise the first line of a compiler diagnostic lands on
+    /// top of whatever was being drawn.
+    fn emit_output(&mut self, bytes: &[u8]) -> BuildResult<()> {
         let mut line = std::mem::take(&mut self.status_scratch);
         line.clear();
-        self.reporter.clear(&mut line);
-        let result = if line.is_empty() {
-            Ok(())
-        } else {
-            self.emit(&line)
-        };
+        self.reporter.output(&mut line, bytes);
+        let result = self.emit(&line);
         self.status_scratch = line;
-        result.and_then(|()| self.emit(bytes))
+        result
     }
 }
 

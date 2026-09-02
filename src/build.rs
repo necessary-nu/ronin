@@ -85,7 +85,11 @@ pub(crate) struct BuildOptions {
     ///
     /// The voice does not change with this, only whether there is anything to
     /// say in it: the status line is still Ninja's, and an edge that narrates
-    /// nothing still prints its progress token so the counter stays whole.
+    /// nothing still writes its progress token so the counter stays whole.
+    /// What becomes of that line is the printer's decision and the same one it
+    /// makes for every other status line — overprinted on a terminal, whole
+    /// on a pipe — so a build of silent recipes shows a terminal a counter
+    /// advancing in place and nothing else, as a build under Ninja does.
     /// `-v` still overrides both, because asking to see command lines is
     /// asking regardless of what the Makefile wanted shown.
     pub(crate) descriptions_are_complete: bool,
@@ -762,6 +766,10 @@ impl<'a> Builder<'a> {
         let progress = BuildState::new(options.clone());
         let options_style = options.style;
         let options_color = options.color.resolve(options.terminal);
+        // Ninja overprints only at its normal verbosity: `-v` asks for every
+        // command line to stay on screen and `--quiet` for no status line at
+        // all, so neither has a line to overprint.
+        let options_smart = options.terminal.smart && !options.verbose && !options.quiet;
         let mut disk = RealDiskInterface::new(options.working_directory.clone());
         if options.archive_members {
             disk = disk.reading_archive_members();
@@ -801,7 +809,7 @@ impl<'a> Builder<'a> {
             command_scratch: Vec::new(),
             progress,
             progress_carry: ProgressCarry::default(),
-            reporter: Reporter::new(options_style, options_color),
+            reporter: Reporter::new(options_style, options_color, options_smart),
             status_scratch: Vec::new(),
             output_sink,
             diagnostic_sink,

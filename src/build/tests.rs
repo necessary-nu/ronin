@@ -995,9 +995,11 @@ fn ronin_build_streams_description_status_and_buffered_output_in_order() {
         assert!(builder.build_output.is_empty());
         assert!(builder.command_output.is_empty());
     }
+    // The closing newline is Ninja's: the output did not end its line, so
+    // `BuildFinished` ends it (line_printer.cc `PrintOnNewLine("")`).
     assert_eq!(
         String::from_utf8(output).unwrap(),
-        "[1/1] describe output\nchild"
+        "[1/1] describe output\nchild\n"
     );
     fs::remove_dir_all(directory).unwrap();
 }
@@ -1034,9 +1036,15 @@ fn ronin_build_flushes_each_completed_output_batch_once() {
         builder.build().unwrap();
     }
 
-    assert_eq!(output.flushes, 2);
+    // One flush per completed batch, and one for the newline the build owes
+    // at its end because the last output did not end its line.
+    assert_eq!(output.flushes, 3);
     let output = String::from_utf8(output.bytes).unwrap();
-    assert_eq!(output, "[1/2] emitting\nchild[2/2] emitting\nchild");
+    // Stock Ninja's bytes on a pipe, verified against the pinned binary: a
+    // status line is written whole without looking at the cursor, so the
+    // second one lands on `child`, and the output that follows it is moved to
+    // a line of its own because the cursor was still not on a blank one.
+    assert_eq!(output, "[1/2] emitting\nchild[2/2] emitting\n\nchild\n");
     fs::remove_dir_all(directory).unwrap();
 }
 

@@ -145,9 +145,14 @@ impl Runner {
         runner.status_format = std::env::var(NINJA_STATUS_ENV).ok();
         // Asked once, of the real descriptor, because the build writes through
         // a sink that cannot be asked what it is.
+        let is_terminal = std::io::IsTerminal::is_terminal(&std::io::stdout());
         runner.terminal = crate::build::TerminalContext {
-            is_terminal: std::io::IsTerminal::is_terminal(&std::io::stdout()),
+            is_terminal,
             no_color: std::env::var_os(NO_COLOR_ENV).is_some_and(|value| !value.is_empty()),
+            // Ninja's own test, in its own order: a terminal, a `TERM` that is
+            // set, and one that is not `dumb`. An empty `TERM` is set.
+            // [spec:ronin:req:compat.terminal-status]
+            smart: is_terminal && std::env::var_os("TERM").is_some_and(|term| term != "dumb"),
         };
         Ok(runner)
     }

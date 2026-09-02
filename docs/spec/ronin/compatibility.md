@@ -190,6 +190,42 @@ the supported CLI surface.
 > response/depfile cleanup, status rendering, command echoing, buffered child
 > output, and final success or failure match Ninja for supported features.
 
+> [spec:ronin:req:compat.terminal-status]
+> A status line is put on the screen the way Ninja's `LinePrinter` puts it
+> there, and where it goes is decided by the three facts Ninja reads: whether
+> standard output is a terminal whose `TERM` is set and is not `dumb`, and
+> whether the run is verbose or quiet. On such a terminal, in a run that is
+> neither, a status line is printed when a command starts as well as when it
+> finishes, and each one overprints the one before it — a carriage return,
+> the line cut to the terminal's width with `...` in its middle, an erase to
+> the end of the line, and no newline. Anything that is not a status line — a
+> `FAILED:` block, a command's own output — first moves below the status
+> line, and the end of the build takes the new line. Everywhere else — a pipe,
+> a file, `-v`, `--quiet`, and the Make front end's `-n`, `--trace`, `-d` and
+> `-s` — every status line is written whole with a newline, once per command
+> edge as it finishes. A narration that spans several lines — a Make recipe
+> GNU Make echoes line by line, which no manifest can hold and Ninja never
+> sees — is not one line and cannot be overprinted as one: on a terminal it
+> is written whole and once, as the command finishes, each of its lines
+> erased to the end, and it stays on screen as it would on a pipe.
+>
+> The counter counts every command edge in both cases, and there is no
+> suppression in either. An edge whose narration is empty writes the status
+> format's output and nothing after it: on a terminal that is a counter
+> advancing in place, kept only where Ninja keeps any status line — above
+> the output its command wrote, saying whose it is — and on a pipe it is the
+> line stock Ninja writes for a `--status` format that omits `$description`.
+> A silenced Make recipe is such
+> an edge, and a Ronin-invented wrapper is a phony one, which like Ninja's
+> phony edges is neither counted nor narrated. A command in the `console`
+> pool prints its status as it starts; while it holds the console every
+> other line is held back and released when it lets go, as Ninja's
+> `SetConsoleLocked` does. On a terminal that supports colour the `FAILED:`
+> prefix is red, as Ninja's is.
+>
+> This is one behaviour of the Ninja rendering under either front end; it is
+> not a choice of rendering, and `product.output-style` is untouched by it.
+
 ## CLI, tools, and proof
 
 > [spec:ronin:req:compat.cli-and-tools]
