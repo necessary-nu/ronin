@@ -2301,25 +2301,16 @@ impl<'a> Builder<'a> {
                     }
                     Ok(Some(mut prepared)) => {
                         let (launch, pretended) = Self::take_step(&mut prepared, self.pretending());
-                        match processes.spawn(edge, launch, use_console, pretended) {
-                            Ok(()) => {
-                                running[edge.index()] = Some(prepared);
-                                running_slots[edge.index()] = slot;
-                                console_running = use_console;
-                                if use_console {
-                                    break;
-                                }
-                            }
-                            Err(error) => {
-                                if let Some(slot) = slot {
-                                    slot.release();
-                                }
-                                let result = self.finish_edge(prepared, Err(error));
-                                if let Err(error) = self.settle_edge(edge, result) {
-                                    failures += 1;
-                                    last_error = Some(error);
-                                }
-                            }
+                        // The launch is taken, not made: a command that could
+                        // not be started reports that as its own completion,
+                        // which is where the slot is given back and the edge
+                        // settled. See `ProcessSupervisor::spawn`.
+                        processes.spawn(edge, launch, use_console, pretended);
+                        running[edge.index()] = Some(prepared);
+                        running_slots[edge.index()] = slot;
+                        console_running = use_console;
+                        if use_console {
+                            break;
                         }
                     }
                     Err(error) => {

@@ -8,9 +8,15 @@ use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-#[cfg(unix)]
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
+
+/// Making the `clone` call off the thread that schedules. See
+/// [`spawn::SpawnPool`], whose whole reason for existing is documented there.
+mod spawn;
+use spawn::SpawnContext;
+#[cfg(unix)]
+use spawn::{MAX_SPAWNERS, SpawnPool, SpawnRequest, spawner_loop};
 
 type ProcessResult<T> = Result<T, ProcessError>;
 
@@ -164,6 +170,15 @@ enum ProcessEvent<External> {
     },
     #[cfg(not(unix))]
     Finished(ProcessCompletion),
+    /// A launch a spawner thread has finished making, on its way back to the
+    /// thread that schedules. See [`SpawnPool`].
+    #[cfg(unix)]
+    Spawned {
+        edge: EdgeId,
+        command: BString,
+        use_console: bool,
+        started: ProcessResult<Started>,
+    },
     External(External),
 }
 
@@ -266,16 +281,27 @@ pub(crate) struct ProcessSupervisor<External = ()> {
     #[cfg(not(unix))]
     children: HashMap<EdgeId, (u32, bool)>,
     interrupted: Option<Signal>,
-    working_directory: PathBuf,
-    shell: ShellMode,
-    /// Variables imposed on every child, empty unless this build serves a
-    /// jobserver its children are meant to draw on.
+    context: Arc<SpawnContext>,
+    /// Threads that make the `clone` call, so the scheduler does not wear the
+    /// `vfork` suspension. See [`SpawnPool`].
+    #[cfg(unix)]
+    spawners: SpawnPool,
+    /// Launches handed to [`Self::spawners`] and not yet reported back.
     ///
-    /// Imposing nothing is not the same as imposing what is already there:
-    /// with no variables set, `Command` hands the child this process's own
-    /// environment block untouched, and the copy it would otherwise build per
-    /// spawn never happens.
-    environment: Vec<(std::ffi::OsString, Option<std::ffi::OsString>)>,
+    /// Counted rather than inferred, because the two things that must not
+    /// happen before every one of them has landed are stopping the build and
+    /// dropping the supervisor: a child whose parent never learned it exists
+    /// is a child nothing will kill.
+    #[cfg(unix)]
+    pending_spawns: usize,
+    /// External events already taken off the channel and not yet handed back.
+    ///
+    /// The channel carries started launches as well as these, and a launch left
+    /// sitting in it is a child whose output nothing is polling — so every look
+    /// at the channel drains it completely, and what the caller has not asked
+    /// for yet waits here instead of there.
+    #[cfg(unix)]
+    pending_external: VecDeque<External>,
 }
 
 impl<External> ProcessSupervisor<External> {
@@ -337,9 +363,17 @@ impl<External> ProcessSupervisor<External> {
             read_buffer: vec![0; 16 * 1024],
             children: HashMap::default(),
             interrupted: None,
-            shell,
-            working_directory: directory_to_impose(working_directory),
-            environment: environment.to_vec(),
+            context: Arc::new(SpawnContext {
+                shell,
+                working_directory: directory_to_impose(working_directory),
+                environment: environment.to_vec(),
+            }),
+            #[cfg(unix)]
+            spawners: SpawnPool::default(),
+            #[cfg(unix)]
+            pending_spawns: 0,
+            #[cfg(unix)]
+            pending_external: VecDeque::new(),
         })
     }
 
@@ -349,15 +383,159 @@ impl<External> ProcessSupervisor<External> {
         SupervisorWake::Process(completion)
     }
 
+    /// Take everything the channel is holding, and answer with the next
+    /// external event if one of it was for the caller.
+    ///
+    /// Draining rather than peeking is load-bearing. A started launch arriving
+    /// here is a child that exists and whose output descriptor is not in the
+    /// poller yet; leaving it in the channel to return an external event
+    /// sooner would leave the build with nothing to wake it for that child, and
+    /// the poller's notification for it already spent.
     #[cfg(unix)]
-    fn try_channel(&self) -> ProcessResult<Option<SupervisorWake<External>>> {
-        match self.receiver.try_recv() {
-            Ok(ProcessEvent::External(event)) => Ok(Some(SupervisorWake::External(event))),
-            Err(mpsc::TryRecvError::Empty) => Ok(None),
-            Err(mpsc::TryRecvError::Disconnected) => {
-                Err(ProcessError::CompletionChannelDisconnected)
+    fn try_channel(&mut self) -> ProcessResult<Option<SupervisorWake<External>>> {
+        loop {
+            match self.receiver.try_recv() {
+                Ok(ProcessEvent::External(event)) => self.pending_external.push_back(event),
+                Ok(ProcessEvent::Spawned {
+                    edge,
+                    command,
+                    use_console,
+                    started,
+                }) => self.receive_spawned(edge, command, use_console, started),
+                Err(mpsc::TryRecvError::Empty) => {
+                    return Ok(self
+                        .pending_external
+                        .pop_front()
+                        .map(SupervisorWake::External));
+                }
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(ProcessError::CompletionChannelDisconnected);
+                }
             }
         }
+    }
+
+    /// Wait for every launch already handed to a spawner to be reported back.
+    ///
+    /// What the build does next is stop children or drop the supervisor, and
+    /// both walk the live-child table. A launch still in flight is not in it,
+    /// so a build that did not wait here would leave the command it started
+    /// last running behind it.
+    #[cfg(unix)]
+    fn settle_pending_spawns(&mut self) {
+        while self.pending_spawns > 0 {
+            match self.receiver.recv() {
+                Ok(ProcessEvent::External(event)) => self.pending_external.push_back(event),
+                Ok(ProcessEvent::Spawned {
+                    edge,
+                    command,
+                    use_console,
+                    started,
+                }) => self.receive_spawned(edge, command, use_console, started),
+                Err(mpsc::RecvError) => break,
+            }
+        }
+    }
+
+    /// Take a launch a spawner has made into the live-child table.
+    ///
+    /// Everything a started child needs from the scheduling thread happens
+    /// here — the poller registration, the interrupt a build already under one
+    /// owes it, the completion a launch that never started answers with — so
+    /// that the thread which made it did nothing but make it.
+    #[cfg(unix)]
+    fn receive_spawned(
+        &mut self,
+        edge: EdgeId,
+        command: BString,
+        use_console: bool,
+        started: ProcessResult<Started>,
+    ) {
+        use polling::Event;
+
+        debug_assert!(
+            self.pending_spawns > 0,
+            "a reply answers a submitted launch"
+        );
+        self.pending_spawns = self.pending_spawns.saturating_sub(1);
+        let (child, output) = match started {
+            Ok(Started::Running(child, output)) => (child, output),
+            Ok(Started::NeverStarted(reported)) => {
+                self.ready.push_back(ProcessCompletion {
+                    edge,
+                    result: Ok(Some(reported)),
+                });
+                return;
+            }
+            // Reported as the command's own answer rather than returned to the
+            // caller, because the caller has already been told the launch was
+            // accepted. The build reads it out of the completion and settles
+            // the edge with it, which is what it did with the returned error.
+            Err(error) => {
+                self.ready.push_back(ProcessCompletion {
+                    edge,
+                    result: Err(error),
+                });
+                return;
+            }
+        };
+        let process_group = !use_console;
+        let mut child = RunningChild {
+            child,
+            command,
+            process_group,
+            output,
+            output_bytes: Vec::new(),
+            registered: false,
+        };
+        if let Some(signal) = self.interrupted
+            && let Err(error) = signal_process(child.child.id(), process_group, signal)
+        {
+            terminate_and_reap(&mut child);
+            self.ready.push_back(ProcessCompletion {
+                edge,
+                result: Err(error),
+            });
+            return;
+        }
+        let previous = self.children.insert(edge, child);
+        debug_assert!(previous.is_none(), "an edge cannot run twice concurrently");
+
+        if use_console {
+            self.reap_candidates.push(edge);
+            self.reap_backoff = MIN_REAP_INTERVAL;
+            return;
+        }
+        let registration = {
+            let output = self.children[&edge]
+                .output
+                .as_ref()
+                .expect("captured children own an output pipe");
+            // SAFETY: `self.children` owns the stream until `delete` is
+            // called by completion, failure cleanup, or `Drop`.
+            unsafe { self.poller.add(output, Event::readable(edge.event_key())) }
+        };
+        if let Err(source) = registration {
+            let mut child = self
+                .children
+                .remove(&edge)
+                .expect("the child was inserted before registration");
+            terminate_and_reap(&mut child);
+            self.ready.push_back(ProcessCompletion {
+                edge,
+                result: Err(ProcessError::Shell {
+                    edge,
+                    command: child.command,
+                    operation: ShellOperation::RegisterOutput,
+                    source,
+                }),
+            });
+            return;
+        }
+        self.children
+            .get_mut(&edge)
+            .expect("the registered child remains present")
+            .registered = true;
     }
 
     #[cfg(not(unix))]
@@ -389,16 +567,17 @@ impl<External> ProcessSupervisor<External> {
 
 // [spec:ronin:req:compat.process-integration+2]
 impl<External: Send + 'static> ProcessSupervisor<External> {
-    pub(crate) fn spawn(
-        &mut self,
-        edge: EdgeId,
-        launch: Launch,
-        use_console: bool,
-        dryrun: bool,
-    ) -> ProcessResult<()> {
+    /// Ask for a command to be run. Asking cannot fail.
+    ///
+    /// A launch that could not be made is the COMMAND's failure, not the
+    /// request's: it comes back as that edge's completion carrying the error,
+    /// the way a command that ran and said no comes back carrying its status.
+    /// That is what lets the launch happen on another thread — the caller is
+    /// told the request was taken, and told separately how it went.
+    pub(crate) fn spawn(&mut self, edge: EdgeId, launch: Launch, use_console: bool, dryrun: bool) {
         #[cfg(unix)]
         {
-            self.spawn_evented(edge, launch, use_console, dryrun)
+            self.spawn_evented(edge, launch, use_console, dryrun);
         }
         #[cfg(not(unix))]
         {
@@ -406,9 +585,9 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                 unreachable!("a direct launch is decided per recipe line, and only on Unix")
             };
             let sender = self.sender.clone();
-            let working_directory = self.working_directory.clone();
-            let shell = self.shell.clone();
-            let environment = self.environment.clone();
+            let working_directory = self.context.working_directory.clone();
+            let shell = self.context.shell.clone();
+            let environment = self.context.environment.clone();
             self.running += 1;
             std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -437,114 +616,7 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
                 .unwrap_or(Err(ProcessError::ThreadPanicked { edge }));
                 let _ = sender.send(ProcessEvent::Finished(ProcessCompletion { edge, result }));
             });
-            Ok(())
         }
-    }
-
-    /// Start one process, however many attempts that takes.
-    ///
-    /// Two of the retries are GNU Make's and one is Ninja's: a shell-free
-    /// command that turns out to be a script with no `#!` line is exec'd again
-    /// under an interpreter, a shell-free command that cannot be started at
-    /// all is answered for here rather than handed to anyone else, and a
-    /// direct launch Ronin chose for itself falls back to the shell.
-    #[cfg(unix)]
-    fn start(
-        &self,
-        edge: EdgeId,
-        command: &BString,
-        direct: Option<&DirectLaunch>,
-        use_console: bool,
-    ) -> ProcessResult<Started> {
-        use std::os::unix::process::CommandExt;
-
-        let mut mode = self.shell.clone();
-        // Set once a direct launch turns out to be a script with no `#!` line,
-        // which is the one thing GNU Make's own exec does not simply report.
-        let mut interpreter: Option<std::ffi::OsString> = None;
-        loop {
-            let mut shell = direct.map_or_else(
-                || shell_command(command, &self.working_directory, &mode, &self.environment),
-                |direct| {
-                    direct_command(
-                        direct,
-                        interpreter.as_deref(),
-                        &self.working_directory,
-                        &self.environment,
-                    )
-                },
-            );
-            if !use_console {
-                shell.process_group(0);
-            }
-            let output = configure_output(&mut shell, edge, command, use_console)?;
-            match shell.spawn() {
-                Ok(child) => return Ok(Started::Running(child, output)),
-                // A file that is executable and is not a program: GNU Make
-                // reads `ENOEXEC` as "try it as a shell script" and execs it
-                // again under `$SHELL`, or `/bin/sh` where the environment
-                // names none. That is how a recipe naming a script with no
-                // `#!` line runs at all, and it is the only errno the exec
-                // does anything about rather than report.
-                Err(ref source)
-                    if direct.is_some()
-                        && interpreter.is_none()
-                        && source.raw_os_error() == Some(EXEC_FORMAT_ERROR) =>
-                {
-                    interpreter =
-                        Some(self.script_interpreter(
-                            direct.expect("the direct launch was matched above"),
-                        ));
-                }
-                // The one launch that answers for this itself. GNU Make execs
-                // a shell-free command line in the forked child and reports
-                // what the exec said against the command's own name, so the
-                // recipe fails with 127 and the sentence is Make's rather than
-                // a shell's — and there is no shell here to produce one.
-                Err(source) if direct.is_some() => {
-                    return Ok(Started::NeverStarted(failed_to_start(
-                        direct.expect("the direct launch was matched above"),
-                        &source,
-                    )));
-                }
-                // A direct spawn that cannot find the program has not run
-                // anything, so hand the command to the shell and let it
-                // produce the diagnostic and exit status it always would.
-                // Emulating that text here would pin us to one shell's wording.
-                Err(source) if retry_with_shell(&mode, &source) => {
-                    mode = ShellMode::Compat;
-                }
-                Err(source) => {
-                    return Err(ProcessError::Shell {
-                        edge,
-                        command: command.clone(),
-                        operation: ShellOperation::Spawn,
-                        source,
-                    });
-                }
-            }
-        }
-    }
-
-    /// What runs a file that is executable and is not a program.
-    ///
-    /// GNU Make's `exec_command` reads `getenv ("SHELL")` for this and falls
-    /// back to its own default — the environment's shell rather than the one
-    /// the makefile set, because what is being answered is "how does this host
-    /// run a script", not "what does this recipe want".
-    #[cfg(unix)]
-    fn script_interpreter(&self, direct: &DirectLaunch) -> std::ffi::OsString {
-        let named = |environment: &[(std::ffi::OsString, Option<std::ffi::OsString>)]| {
-            environment
-                .iter()
-                .rev()
-                .find(|(name, _)| name == "SHELL")
-                .map(|(_, value)| value.clone())
-        };
-        named(&direct.environment)
-            .or_else(|| named(&self.environment))
-            .unwrap_or_else(|| std::env::var_os("SHELL"))
-            .unwrap_or_else(|| std::ffi::OsString::from(SYSTEM_SHELL))
     }
 
     pub(crate) fn wait(
@@ -650,6 +722,9 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
     pub(crate) fn stop(&mut self) {
         #[cfg(unix)]
         {
+            // A command being launched right now is one this is about to be
+            // asked to have stopped, so it has to exist before the walk.
+            self.settle_pending_spawns();
             let grace = std::time::Instant::now() + INTERRUPT_GRACE;
             let mut backoff = MIN_REAP_INTERVAL;
             while !self.children.is_empty() && std::time::Instant::now() < grace {
@@ -696,26 +771,16 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
         self.running = self.running.saturating_sub(1);
     }
 
-    fn spawn_evented(
-        &mut self,
-        edge: EdgeId,
-        launch: Launch,
-        use_console: bool,
-        dryrun: bool,
-    ) -> ProcessResult<()> {
-        use polling::Event;
-
+    fn spawn_evented(&mut self, edge: EdgeId, launch: Launch, use_console: bool, dryrun: bool) {
         if dryrun {
             self.running += 1;
             self.ready.push_back(ProcessCompletion {
                 edge,
                 result: Ok(None),
             });
-            return Ok(());
+            return;
         }
 
-        #[cfg(feature = "make")]
-        let _directory = crate::make::stable_process_directory_guard();
         let command = launch.rendered();
         let direct = match launch {
             Launch::Shell(_) => None,
@@ -724,68 +789,84 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
             // refusal to the run and never asks for a process.
             Launch::Refused(_) => unreachable!("a refused launch never reaches a spawn"),
         };
-        let (child, output) = match self.start(edge, &command, direct.as_deref(), use_console)? {
-            Started::Running(child, output) => (child, output),
-            Started::NeverStarted(reported) => {
-                self.running += 1;
-                self.ready.push_back(ProcessCompletion {
-                    edge,
-                    result: Ok(Some(reported)),
-                });
-                return Ok(());
-            }
-        };
-        let process_group = !use_console;
-        let mut child = RunningChild {
-            child,
-            command,
-            process_group,
-            output,
-            output_bytes: Vec::new(),
-            registered: false,
-        };
-        if let Some(signal) = self.interrupted
-            && let Err(error) = signal_process(child.child.id(), process_group, signal)
-        {
-            terminate_and_reap(&mut child);
-            return Err(error);
-        }
-        let previous = self.children.insert(edge, child);
-        debug_assert!(previous.is_none(), "an edge cannot run twice concurrently");
-
-        if use_console {
-            self.reap_candidates.push(edge);
-            self.reap_backoff = MIN_REAP_INTERVAL;
-        } else {
-            let registration = {
-                let output = self.children[&edge]
-                    .output
-                    .as_ref()
-                    .expect("captured children own an output pipe");
-                // SAFETY: `self.children` owns the stream until `delete` is
-                // called by completion, failure cleanup, or `Drop`.
-                unsafe { self.poller.add(output, Event::readable(edge.event_key())) }
-            };
-            if let Err(source) = registration {
-                let mut child = self
-                    .children
-                    .remove(&edge)
-                    .expect("the child was inserted before registration");
-                terminate_and_reap(&mut child);
-                return Err(ProcessError::Shell {
-                    edge,
-                    command: child.command,
-                    operation: ShellOperation::RegisterOutput,
-                    source,
-                });
-            }
-            self.children
-                .get_mut(&edge)
-                .expect("the registered child remains present")
-                .registered = true;
-        }
+        // The launch counts against the job budget from the moment it is
+        // asked for, whichever thread ends up making it: a build that only
+        // counted started children would ask for another eight while the first
+        // eight were still being made.
         self.running += 1;
-        Ok(())
+        self.pending_spawns += 1;
+        // Made here when there is nothing to overlap it with. That is every
+        // `-j1` build, whose one thread has nothing else to do while its one
+        // command starts, and every console command, which the build loop only
+        // ever starts with the job budget empty. Handing either to a spawner
+        // would buy nothing and cost a wake-up.
+        if use_console || self.running == 1 {
+            let started = self
+                .context
+                .start(edge, &command, direct.as_deref(), use_console);
+            self.receive_spawned(edge, command, use_console, started);
+            return;
+        }
+        if let Some(request) = self.submit_spawn(SpawnRequest {
+            edge,
+            command,
+            direct,
+            use_console,
+        }) {
+            // No spawner took it and none could be made — a host out of
+            // threads. The launch is still owed an answer, so it is made here
+            // rather than left in a queue nothing will read.
+            let started = self.context.start(
+                request.edge,
+                &request.command,
+                request.direct.as_deref(),
+                use_console,
+            );
+            self.receive_spawned(request.edge, request.command, use_console, started);
+        }
+    }
+
+    /// Hand a launch to a spawner, making one more if none is free to take it.
+    ///
+    /// Grown on demand rather than sized up front: a build whose commands are
+    /// long enough to keep the budget full on its own never needs a second
+    /// thread, and one whose commands are `touch` gets as many as the burst
+    /// asks for, up to [`MAX_SPAWNERS`]. Answers with the launch again when
+    /// there is no thread to make it on, which is the caller's to make itself.
+    fn submit_spawn(&mut self, request: SpawnRequest) -> Option<SpawnRequest> {
+        let queue = self.spawners.queue.clone();
+        let grow = {
+            let mut state = queue
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.waiting.push_back(request);
+            state.waiting.len() > state.idle && self.spawners.workers.len() < MAX_SPAWNERS
+        };
+        if grow {
+            let spawner = {
+                let queue = queue.clone();
+                let context = self.context.clone();
+                let sender = self.sender.clone();
+                let poller = self.poller.clone();
+                std::thread::Builder::new()
+                    .name(String::from("ronin-spawn"))
+                    .spawn(move || spawner_loop(&queue, &context, &sender, &poller))
+            };
+            match spawner {
+                Ok(worker) => self.spawners.workers.push(worker),
+                Err(_) if self.spawners.workers.is_empty() => {
+                    let mut state = queue
+                        .state
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    return state.waiting.pop_back();
+                }
+                Err(_) => {}
+            }
+        }
+        queue.ready.notify_one();
+        None
     }
 
     fn wait_evented(
@@ -1034,6 +1115,10 @@ impl<External: Send + 'static> ProcessSupervisor<External> {
 #[cfg(unix)]
 impl<External> Drop for ProcessSupervisor<External> {
     fn drop(&mut self) {
+        // Before anything is torn down: a child a spawner made and has not
+        // reported yet is a child this walk would not see, and nothing else
+        // would ever kill it.
+        self.settle_pending_spawns();
         if let Some(wake) = self.signal_wake.as_ref() {
             let _ = self.poller.delete(wake);
         }
@@ -1393,35 +1478,6 @@ fn direct_command(
     command
 }
 
-/// What a command the build could not even start reports.
-///
-/// GNU Make's forked child says `strerror (errno)` against the name it was
-/// asked to run and exits 127, for a program that is not there and for one it
-/// may not run alike. The text goes back as the command's own stderr because
-/// that is where GNU Make's copy of it comes from — the child had already
-/// replaced its descriptors before it tried.
-#[cfg(unix)]
-fn failed_to_start(direct: &DirectLaunch, source: &io::Error) -> ProcessOutput {
-    use std::os::unix::process::ExitStatusExt;
-
-    // What the C library would have said, which is what GNU Make prints.
-    let reason = source.raw_os_error().map_or_else(
-        || source.to_string(),
-        |code| io::Error::from_raw_os_error(code).to_string(),
-    );
-    let reason = reason
-        .split(" (os error")
-        .next()
-        .unwrap_or_default()
-        .to_owned();
-    let program = direct.argv[0].as_bytes().as_bstr().to_string();
-    ProcessOutput {
-        status: std::process::ExitStatus::from_raw(COMMAND_NOT_FOUND << 8),
-        stdout: Vec::new(),
-        stderr: format!("{}{program}: {reason}\n", direct.diagnostic_prefix).into_bytes(),
-    }
-}
-
 /// Build the process that runs `command` under `mode`.
 ///
 /// `Auto` skips the shell only where the shell provably has nothing to do;
@@ -1542,63 +1598,6 @@ fn windows_program_and_arguments(command: &[u8]) -> (&[u8], &[u8]) {
         .map_or((command, &[][..]), |end| {
             (&command[..end], command[end..].trim_ascii_start())
         })
-}
-
-/// Give the child a pipe for its output, and keep the read end.
-///
-/// A pipe rather than a socket pair, which is what this used to create. The
-/// output only ever travels one way, so the second direction was never used —
-/// and a socket pair is not a cheap thing to leave unused. Two `AF_UNIX`
-/// sockets carry far more kernel state than a pipe's single buffer, and a
-/// build pays for a fresh one per job: measured here, creating and closing a
-/// non-blocking socket pair costs about 4.9 microseconds against 2.3 for a
-/// pipe and its duplicate. C samurai has always used a pipe.
-///
-/// Only the read end is made non-blocking, because the drain loop reads until
-/// it would block. The child's end must stay blocking, or a command writing
-/// faster than this process reads would see its output fail with `EAGAIN`
-/// rather than wait — which is why the flag cannot simply be passed to
-/// `pipe2`, since that would set it on both ends.
-#[cfg(unix)]
-fn configure_output(
-    shell: &mut Command,
-    edge: EdgeId,
-    command: &BString,
-    use_console: bool,
-) -> ProcessResult<Option<std::io::PipeReader>> {
-    use std::os::fd::OwnedFd;
-
-    if use_console {
-        return Ok(None);
-    }
-    let (reader, writer) = std::io::pipe().map_err(|source| ProcessError::Shell {
-        edge,
-        command: command.clone(),
-        operation: ShellOperation::CreateOutputPipe,
-        source,
-    })?;
-    rustix::fs::fcntl_setfl(&reader, rustix::fs::OFlags::NONBLOCK).map_err(|source| {
-        ProcessError::Shell {
-            edge,
-            command: command.clone(),
-            operation: ShellOperation::ConfigureOutputPipe,
-            source: source.into(),
-        }
-    })?;
-    let stdout: OwnedFd = writer
-        .try_clone()
-        .map_err(|source| ProcessError::Shell {
-            edge,
-            command: command.clone(),
-            operation: ShellOperation::DuplicateOutputPipe,
-            source,
-        })?
-        .into();
-    let stderr: OwnedFd = writer.into();
-    shell
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
-    Ok(Some(reader))
 }
 
 #[cfg(not(unix))]
@@ -1753,18 +1752,27 @@ mod tests {
         let before = thread_count();
         let mut supervisor = ProcessSupervisor::<()>::new().unwrap();
         for index in 0..CHILDREN {
-            supervisor
-                .spawn(
-                    EdgeId::from_event_key(index + 1).expect("test edge key is nonzero"),
-                    Launch::Shell(BString::from("sleep 0.05; printf x")),
-                    false,
-                    false,
-                )
-                .unwrap();
+            supervisor.spawn(
+                EdgeId::from_event_key(index + 1).expect("test edge key is nonzero"),
+                Launch::Shell(BString::from("sleep 0.05; printf x")),
+                false,
+                false,
+            );
         }
         let during = thread_count();
+        // The supervisor's own threads, which is the number the requirement is
+        // about: a constant that does not read the child count.
         assert!(
-            during <= before + 8,
+            supervisor.spawners.workers.len() <= MAX_SPAWNERS,
+            "supervision kept {} spawners for {CHILDREN} children",
+            supervisor.spawners.workers.len()
+        );
+        // And the process did not grow a thread per child. Deliberately loose:
+        // the count is process-wide and the tests beside this one hold
+        // supervisors of their own, each entitled to its own handful of
+        // spawners. Still nowhere near the sixty-four a thread per child costs.
+        assert!(
+            during < before + CHILDREN / 2,
             "evented supervision added {} threads",
             during - before
         );
@@ -1780,20 +1788,116 @@ mod tests {
         assert_eq!(completed, CHILDREN);
     }
 
+    /// A launch a spawner is still making is a child the supervisor owns.
+    ///
+    /// The `clone` call happens on another thread now, so between the request
+    /// and the reply there is a window in which the child exists and the
+    /// live-child table does not know it. Everything that walks that table —
+    /// stopping the build, dropping the supervisor — has to wait for the
+    /// window to close first, or it walks past a running command and leaves it
+    /// behind. Every launch here but the first is made on a spawner.
+    #[cfg(target_os = "linux")]
+    #[test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
+    fn a_launch_still_being_made_is_reaped() {
+        const CHILDREN: usize = 8;
+
+        let mut pids = Vec::new();
+        {
+            let mut supervisor = ProcessSupervisor::<()>::new().unwrap();
+            for index in 0..CHILDREN {
+                supervisor.spawn(
+                    EdgeId::from_event_key(index + 1).expect("test edge key is nonzero"),
+                    Launch::Shell(BString::from("sleep 30")),
+                    false,
+                    false,
+                );
+            }
+            // Dropped with the requests barely older than the loop that made
+            // them, which is the window the settling exists for.
+            supervisor.settle_pending_spawns();
+            pids.extend(supervisor.children.values().map(|child| child.child.id()));
+            assert_eq!(pids.len(), CHILDREN, "every launch reached the child table");
+        }
+        for pid in pids {
+            assert!(
+                !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+                "a command left behind by the drop is still running"
+            );
+        }
+    }
+
+    /// A launch that could not be made is the command's answer, not the
+    /// request's refusal — the contract that lets the `clone` happen off the
+    /// scheduling thread. The first child holds the budget open so the failing
+    /// one is made on a spawner rather than in place.
+    #[cfg(target_os = "linux")]
+    #[test]
+    // [spec:ronin:req:runtime.process-supervisor-scalability/test]
+    fn an_unmakeable_launch_becomes_a_completion() {
+        let holder = EdgeId::from_event_key(1).expect("test edge key is nonzero");
+        let refused = EdgeId::from_event_key(2).expect("test edge key is nonzero");
+        let mut supervisor = ProcessSupervisor::<()>::in_directory(
+            Path::new(""),
+            ShellMode::Program(PathBuf::from("/nonexistent/shell")),
+            &[],
+        )
+        .unwrap();
+        supervisor.spawn(
+            holder,
+            Launch::Direct(Box::new(direct_true())),
+            false,
+            false,
+        );
+        supervisor.spawn(refused, Launch::Shell(BString::from("true")), false, false);
+
+        let mut reported = None;
+        while supervisor.running_len() != 0 {
+            let Some(SupervisorWake::Process(completion)) = supervisor.wait(None).unwrap() else {
+                continue;
+            };
+            if completion.edge == refused {
+                reported = Some(completion.result);
+            }
+        }
+        let Err(error) = reported.expect("the refused edge was reported") else {
+            panic!("a shell that is not there cannot have run");
+        };
+        assert!(
+            matches!(
+                error,
+                ProcessError::Shell {
+                    operation: ShellOperation::Spawn,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    fn direct_true() -> DirectLaunch {
+        DirectLaunch {
+            argv: vec![BString::from("/bin/sleep"), BString::from("0.2")],
+            directory: PathBuf::new(),
+            environment: Vec::new(),
+            diagnostic_prefix: String::new(),
+            starts_no_process: false,
+        }
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     // [spec:ronin:req:runtime.process-supervisor-scalability/test]
     fn dropping_the_supervisor_terminates_process_groups_and_reaps_children() {
         let edge = EdgeId::from_event_key(11 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::<()>::new().unwrap();
-        supervisor
-            .spawn(
-                edge,
-                Launch::Shell(BString::from("sleep 30 & wait")),
-                false,
-                false,
-            )
-            .unwrap();
+        supervisor.spawn(
+            edge,
+            Launch::Shell(BString::from("sleep 30 & wait")),
+            false,
+            false,
+        );
         let pid = supervisor.children[&edge].child.id();
         let children_path = format!("/proc/{pid}/task/{pid}/children");
         let descendant = (0..100)
@@ -1875,14 +1979,12 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(50));
             sender.send(23);
         });
-        supervisor
-            .spawn(
-                edge,
-                Launch::Shell(BString::from("sleep 0.1; printf done")),
-                false,
-                false,
-            )
-            .unwrap();
+        supervisor.spawn(
+            edge,
+            Launch::Shell(BString::from("sleep 0.1; printf done")),
+            false,
+            false,
+        );
 
         let mut external = None;
         let mut completion = None;
@@ -1913,14 +2015,12 @@ mod tests {
     fn ronin_process_supervisor_reports_keyed_signal_completion() {
         let edge = EdgeId::from_event_key(7 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::new().unwrap();
-        supervisor
-            .spawn(
-                edge,
-                Launch::Shell(BString::from("kill -INT $$")),
-                false,
-                false,
-            )
-            .unwrap();
+        supervisor.spawn(
+            edge,
+            Launch::Shell(BString::from("kill -INT $$")),
+            false,
+            false,
+        );
         let completion = supervisor
             .wait(None)
             .unwrap()
@@ -1942,14 +2042,12 @@ mod tests {
     fn ronin_process_supervisor_preserves_stdout_stderr_order() {
         let edge = EdgeId::from_event_key(9 + 1).expect("test edge key is nonzero");
         let mut supervisor = ProcessSupervisor::new().unwrap();
-        supervisor
-            .spawn(
-                edge,
-                Launch::Shell(BString::from("printf out; printf err >&2; printf end")),
-                false,
-                false,
-            )
-            .unwrap();
+        supervisor.spawn(
+            edge,
+            Launch::Shell(BString::from("printf out; printf err >&2; printf end")),
+            false,
+            false,
+        );
         let completion = supervisor
             .wait(None)
             .unwrap()

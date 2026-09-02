@@ -65,23 +65,36 @@ differently loaded hosts, and reading it as though it did is what made this
 gate's drift look like a code regression.** Dividing by Ninja cancels whatever
 slows both tools by the same factor. It does not cancel a change in host state
 the two tools respond to differently, and on these rows they do.
-`scheduler-barrier` is the demonstration: at `-j8` the pinned Ninja achieves
-5.46 CPUs utilised against Ronin's 2.63, and Ronin finishes that row having
+`scheduler-barrier` was the demonstration: at `-j8` the pinned Ninja achieved
+5.46 CPUs utilised against Ronin's 2.63, and Ronin finished that row having
 retired 0.71 of Ninja's user instructions, 0.52 of its kernel cycles and 0.50
-of its task-clock — it is wait-bound where Ninja is CPU-bound, and it loses
-wall anyway. As the host's run queue grows the wait-bound tool pays for every
-wake-up and the CPU-bound one does not, so this row's Ronin/Ninja ratio rises
-with load while both binaries stand still. The recorded rows were taken at 99%
-idle; the same binary that produced them reads 5% to 16% adverse against them
-on a host at load 12–19.
+of its task-clock — wait-bound where Ninja is CPU-bound, and losing wall
+anyway. The recorded rows were taken at 99% idle; the same binary that produced
+them read 5% to 16% adverse against them on a host at load 12–19.
 
-So a comparison against `baseline-v1.csv` is only as portable as the host state
-is similar, and `load_average_before` is what says whether it was. That is what
-the `--max-load` guard is for, and a run that raises it above 4.00 has opted
-out of the record's comparability, not merely out of waiting for quiet. The
-measurement behind all of this — three interleaved windows, two of them
-slot-swapped, running the baseline's own revision beside today's — is in
+**That wait has since been found and removed, so the row no longer reads that
+way.** It was the `vfork` suspension inside `posix_spawn`, charged to the one
+thread that schedules: 266 microseconds a launch, of which only 68 were CPU.
+Launching now happens on a bounded pool of spawner threads
+(`ProcessSupervisor`'s `SpawnPool`), and the row reads 6.4 CPUs utilised
+against Ninja's 5.5, at 0.52 of Ninja's wall. Its Ronin/Ninja ratio also stopped
+moving with host state: measured over four windows between load 10.6 and 16.5 it
+spans 0.520–0.554, where the same four windows spread the old binary's ratio
+across 0.926–1.091.
+
+The lesson about portability outlives the row. A comparison against
+`baseline-v1.csv` is only as portable as the host state is similar, and
+`load_average_before` is what says whether it was. That is what the `--max-load`
+guard is for, and a run that raises it above 4.00 has opted out of the record's
+comparability, not merely out of waiting for quiet. The measurement behind all
+of this — three interleaved windows, two of them slot-swapped, running the
+baseline's own revision beside today's — is in
 [`ninja-baseline-drift-2026-09-02.md`](ninja-baseline-drift-2026-09-02.md).
+
+`baseline-v1.csv`'s `scheduler-barrier` row is now slack by a factor of two and
+has not been re-recorded: every window available since the fix has been a host
+at load 10 or above, and recording a row there is the exact mistake the drift
+above documents. Re-record it on a quiet host.
 
 The current baseline was recorded on a quiet host against a Ninja binary built
 from the pinned source revision with CMake's Release profile. Its provenance,

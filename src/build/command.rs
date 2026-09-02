@@ -697,7 +697,7 @@ impl Builder<'_> {
                 &[],
             )?),
         };
-        supervisor.spawn(edge, launch, false, false)?;
+        supervisor.spawn(edge, launch, false, false);
         let finished = loop {
             match supervisor.wait(None)? {
                 Some(crate::subprocess::SupervisorWake::Process(completion)) => {
@@ -1163,10 +1163,8 @@ impl Builder<'_> {
         }
         let (launch, pretended) = Self::take_step(prepared, self.pretending());
         let use_console = prepared.command.use_console;
-        match processes.spawn(prepared.edge, launch, use_console, pretended) {
-            Ok(()) => Advance::Relaunched,
-            Err(error) => Advance::Finished(Err(error)),
-        }
+        processes.spawn(prepared.edge, launch, use_console, pretended);
+        Advance::Relaunched
     }
 
     /// Whether the recipe has another command line to run, given how the last
