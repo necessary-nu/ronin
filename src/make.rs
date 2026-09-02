@@ -1195,8 +1195,8 @@ fn compose_subninjas(
         // hand: by the time the staged work is built, the wrapper is still
         // wearing the freshness probe and the staged edge is not yet linked to
         // it, so nothing downstream could work it out.
-        let outputs = pending.outputs().collect::<Vec<_>>();
-        let for_makefile = made_for_a_makefile(sink, &state.remakes, &outputs);
+        let for_makefile =
+            made_for_a_makefile(sink, &state.remakes, &pending.outputs().collect::<Vec<_>>());
         let parent_inputs = pending.evaluation_inputs();
         // Work an earlier pass put on the ground stays on it: the closure that
         // pass built is replaced with phony so the final graph runs none of it
@@ -1334,18 +1334,37 @@ fn compose_subninjas(
         }
         subtree_edges.push(wrapper);
     }
+    Ok(settled_unit(
+        targets,
+        subtree_edges,
+        &holds,
+        &serial_jobs,
+        sink,
+    ))
+}
+
+/// The unit `compose_subninjas` hands back once its recipes have been walked:
+/// incomplete while any recipe is held for a later pass, complete — with the
+/// `.NOTPARALLEL` chain wired over what will actually run — once none is.
+fn settled_unit(
+    targets: Vec<Node>,
+    edges: Vec<Edge>,
+    holds: &order::Holds,
+    serial_jobs: &order::SerialJobs,
+    sink: &mut GraphSink,
+) -> ComposedUnit {
     if holds.any() {
-        return Ok(incomplete_unit(targets, subtree_edges));
+        return ComposedUnit {
+            subgraph: UnitSubgraph { targets, edges },
+            complete: false,
+        };
     }
     // [spec:ronin:req:make.notparallel-domain]
     serial_jobs.chain(sink);
-    Ok(ComposedUnit {
-        subgraph: UnitSubgraph {
-            targets,
-            edges: subtree_edges,
-        },
+    ComposedUnit {
+        subgraph: UnitSubgraph { targets, edges },
         complete: true,
-    })
+    }
 }
 
 /// Where one recursive recipe sits in the compilation, and what has already
@@ -1591,13 +1610,6 @@ fn unreadable_child(
             edges: Vec::new(),
         },
         fresh: true,
-    }
-}
-
-const fn incomplete_unit(targets: Vec<Node>, edges: Vec<Edge>) -> ComposedUnit {
-    ComposedUnit {
-        subgraph: UnitSubgraph { targets, edges },
-        complete: false,
     }
 }
 
